@@ -1,6 +1,9 @@
 import { Client } from 'pg';
+import { cornerOwnerSql } from './corner-worker.js';
+import type { UsageRefreshOutcome } from '@beeline/api-contract/daemon';
+import type { AgentSignInStep } from './agent-sign-in.js';
 import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
-import { USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './agent-usage.js';
+import { USAGE_REFRESH_TABLE, USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './agent-usage.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 import { askSql } from './needs-you.js';
@@ -18,6 +21,60 @@ const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
   'corner_owed', 'corner_follows', 'corner_merge_holds',
 ]);
 const PARENT_ONLY_SQL = [...PARENT_ONLY_TABLES].map((table) => `'${table}'`).join(',');
+
+/** Publish only committed state; callers pass their current transaction. */
+type PublishedNotification = LiveNotificationPayload
+  | (AgentSignInStep & Pick<LiveNotificationPayload, 'table' | 'operation' | 'roomId'>)
+  | (LiveNotificationPayload & { outcome: UsageRefreshOutcome });
+
+async function notifyLive(
+  database: Pick<SqlDatabase, 'query'>,
+  payload: PublishedNotification,
+): Promise<void> {
+  await database.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL, JSON.stringify(payload)]);
+}
+
+export function notifyAgentCommand(database: Pick<SqlDatabase, 'query'>, roomId: string, agentId: string) {
+  return notifyLive(database, { table: 'agent_commands', operation: 'UPDATE', roomId, agentId });
+}
+export function notifyMcpWebhook(database: Pick<SqlDatabase, 'query'>, roomId: string) {
+  return notifyLive(database, { table: MCP_WEBHOOK_TABLE, operation: 'INSERT', roomId });
+}
+export function notifySentryWake(database: Pick<SqlDatabase, 'query'>) {
+  return notifyLive(database, { table: 'sentry_wake_state', operation: 'UPDATE', roomId: '' });
+}
+export function notifyConnectorDiscovery(database: Pick<SqlDatabase, 'query'>, ownerId: string) {
+  return notifyLive(database, { table: 'connector_discovery_cache', operation: 'UPDATE', roomId: '', ownerId });
+}
+export function notifyAgentSignIn(database: Pick<SqlDatabase, 'query'>, event: AgentSignInStep) {
+  return notifyLive(database, { table: AGENT_SIGN_IN_TABLE, operation: 'UPDATE', roomId: '', ...event });
+}
+export function publishUsageRefreshResult(database: Pick<SqlDatabase, 'query'>, agentId: string,
+  outcome: UsageRefreshOutcome, requestId?: string) {
+  return notifyLive(database, { table: USAGE_REFRESH_RESULT_TABLE, operation: 'UPDATE', roomId: '', agentId,
+    outcome, ...(requestId ? { requestId } : {}) });
+}
+export function notifyUsageRefreshRequest(database: Pick<SqlDatabase, 'query'>, agentId: string, requestId: string) {
+  return notifyLive(database, { table: USAGE_REFRESH_TABLE, operation: 'UPDATE', roomId: '', agentId, requestId });
+}
+export function notifyAgentConnection(database: Pick<SqlDatabase, 'query'>, agentId: string, epoch: number) {
+  return notifyLive(database, { table: 'agent_connection', operation: 'UPDATE', roomId: '', agentId, epoch });
+}
+export function notifyAgentConfigRoom(database: Pick<SqlDatabase, 'query'>, roomId: string, agentId: string) {
+  return notifyLive(database, { table: 'agent_config', operation: 'UPDATE', roomId, agentId });
+}
+
+/** SQL expressions keep notification and its source write in the same statement. */
+export function notifyCornerStateSql(room: 'NEW.room_id' | 'corner'): string {
+  return `pg_notify('${POSTGRES_LIVE_CHANNEL}',json_build_object('table','corner_state','operation','UPDATE','roomId',${room})::text)`;
+}
+export function notifyDeadlineNoticesSql(): string {
+  return 'count(pg_notify($5,payload::text))';
+}
+export function notifyMcpWakesSql(channel: string): string {
+  return `count(pg_notify(${channel}, jsonb_build_object(
+        'table','${MCP_WEBHOOK_TABLE}','operation','INSERT','roomId',room_id::text)::text))`;
+}
 
 /** Agent-directed Connect / pending_ops wake. Never a catalog or availability. */
 export async function notifyConnectorAssignment(
@@ -104,10 +161,12 @@ BEGIN
         'needsYouCandidate', COALESCE(NEW.presentation,OLD.presentation) IN ('card','system')
           OR (COALESCE(NEW.presentation,OLD.presentation)='message' AND
             ${askSql('COALESCE(NEW.text,OLD.text)')}),
-        -- The newest chat message is a column of the parent's corner row.
-        'cornerParentId', CASE WHEN (NEW.presentation IN ('message','system')
+        -- The newest chat message is a column of the parent's corner row, and
+        -- a corner's newest handoff card is its run state.
+        'cornerParentId', CASE WHEN ((NEW.presentation IN ('message','system')
             OR OLD.presentation IN ('message','system'))
-            AND ${rowChangedSql(CORNER_ROW_MESSAGE_COLUMNS)}
+            AND ${rowChangedSql(CORNER_ROW_MESSAGE_COLUMNS)})
+            OR (TG_OP = 'INSERT' AND NEW.card_type = 'corner-workflow-handoff')
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.room_id, OLD.room_id)) END
       );
     WHEN 'room_read_marks' THEN
@@ -163,7 +222,7 @@ BEGIN
           SELECT jsonb_build_object(
             'parentRoomId', room.parent_id,
             'openedBy', CASE WHEN room.parent_id IS NOT NULL THEN COALESCE(
-              (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
+              ${cornerOwnerSql('room.id')},
               room.created_by
             ) END
           )
@@ -183,6 +242,8 @@ BEGIN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.id, OLD.id),
+        'closeRequested', COALESCE(NEW.parent_id,OLD.parent_id) IS NOT NULL AND
+          CASE WHEN TG_OP='DELETE' THEN OLD.archived_at IS NOT NULL ELSE NEW.archived_at IS NOT NULL END,
         'cornerTextChanged', CASE WHEN TG_OP = 'UPDATE' THEN NEW.name IS DISTINCT FROM OLD.name ELSE false END,
         'repositoryChanged', CASE WHEN TG_OP = 'UPDATE' THEN
           ROW(NEW.repository_key,NEW.repository_remote,NEW.repository_target_branch,
@@ -247,7 +308,7 @@ BEGIN
         'identityId',COALESCE(NEW.identity_id,OLD.identity_id),'removed',false)
         || COALESCE((SELECT jsonb_build_object('parentRoomId',room.parent_id,
           'cornerParentId',room.parent_id,'archived',room.archived_at IS NOT NULL,
-          'openedBy',COALESCE((SELECT owner_agent_id FROM corner_facts WHERE corner_id=room.id),room.created_by))
+          'openedBy',COALESCE(${cornerOwnerSql('room.id')},room.created_by))
           FROM rooms room WHERE room.id=COALESCE(NEW.corner_id,OLD.corner_id)),'{}'::jsonb);
     WHEN 'memberships' THEN
       -- Removing legacy copied rows changes no inherited authority or live session.
@@ -269,7 +330,7 @@ BEGIN
             THEN room.parent_id END,
           'archived', room.archived_at IS NOT NULL,
           'openedBy', CASE WHEN room.parent_id IS NOT NULL THEN COALESCE(
-            (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
+            ${cornerOwnerSql('room.id')},
             room.created_by
           ) END
         )
@@ -280,7 +341,8 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
         'cornerId', COALESCE(NEW.corner_id, OLD.corner_id),
-        'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false),
+        'closeRequested', COALESCE((SELECT archived_at IS NOT NULL FROM rooms
+          WHERE id=COALESCE(NEW.corner_id,OLD.corner_id)),false),
         'cornerParentId', CASE WHEN ${rowChangedSql(CORNER_ROW_FACT_COLUMNS)}
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.corner_id, OLD.corner_id)) END
       );
@@ -711,7 +773,7 @@ export class PostgresLiveListener {
         (payload.table === 'agent_turns' && payload.operation === 'UPDATE'))
       this.pushWake?.();
     if (pushOnly) return;
-    if (payload.table === 'agent_usage_refresh' && payload.agentId) {
+    if (payload.table === USAGE_REFRESH_TABLE && payload.agentId) {
       this.live.publish({
         type: 'usage-refresh', roomId: '', agentId: payload.agentId,
         ...(payload.requestId ? { requestId: payload.requestId } : {}),

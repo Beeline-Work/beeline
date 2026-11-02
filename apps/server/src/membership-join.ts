@@ -1,3 +1,6 @@
+import type { QueryResultRow } from 'pg';
+import { cornerReviewerSql } from './corner-reviewer.js';
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { randomUUID } from 'node:crypto';
 import type { SystemEventKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -201,14 +204,14 @@ export async function joinRooms(
         id: input.identityId,
         name: joiningMention,
       },
-      verb: 'joined',
+      verb: systemMessage("membership-join.joined"),
       ...(context.inviter_id &&
       context.inviter_kind &&
       context.inviter_name &&
       context.inviter_handle
         ? {
             attribution: {
-              verb: 'invited by',
+              verb: systemMessage("membership-join.invited-by"),
               actor: {
                 kind: context.inviter_kind === 'agent' ? ('agent' as const) : ('person' as const),
                 id: context.inviter_id,
@@ -275,4 +278,422 @@ export async function joinRooms(
     );
     return { roomIds, notificationId };
   });
+}
+
+// Membership write primitives. Callers retain their transaction and access checks.
+// Keep each conflict policy explicit: initial joins and restorations differ.
+export function subscribeConfiguredReviewers<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [parentRoomId: string | null],
+) {
+  return database.query<Row>(
+    `UPDATE memberships reviewer_membership
+     SET event_subscriptions=reviewer_membership.event_subscriptions||'["check-passed"]'::jsonb
+     FROM rooms surface
+     JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
+     WHERE surface.parent_id IS NULL AND reviewer_membership.room_id=surface.id
+       AND reviewer_membership.identity_id=parent.reviewer_agent_id
+       AND reviewer_membership.removed_at IS NULL
+       AND NOT reviewer_membership.event_subscriptions @> '["check-passed"]'::jsonb
+       AND ($1::uuid IS NULL OR parent.id=$1)`, values,
+  );
+}
+
+export function removeWorkspaceMemberships<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, identityId: string],
+) {
+  return database.query<Row>(
+    `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`, values,
+  );
+}
+
+export function deleteMembershipSubscription<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, surfaceId: string, agentId: string, event: string],
+) {
+  return database.query<Row>(
+    `WITH surface AS (
+         SELECT room.id,room.parent_id,member.event_subscriptions
+         FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
+         JOIN room_access member ON member.room_id=room.id AND member.identity_id=$3
+           AND member.removed_at IS NULL
+         WHERE room.id=$2 AND (room.id=$1 OR room.parent_id=$1)
+           AND member.event_subscriptions ? $4
+           AND NOT ($4='check-passed' AND ${cornerReviewerSql('room')}=$3)
+       ), room_update AS (
+         UPDATE memberships member SET event_subscriptions=member.event_subscriptions-$4
+         FROM surface WHERE surface.parent_id IS NULL AND member.room_id=surface.id
+           AND member.identity_id=$3 RETURNING member.identity_id
+       ), corner_update AS (
+         INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions)
+         SELECT id,$3,event_subscriptions-$4 FROM surface WHERE parent_id IS NOT NULL
+         ON CONFLICT(corner_id,identity_id) DO UPDATE SET event_subscriptions=
+           COALESCE(corner_person_state.event_subscriptions-$4,EXCLUDED.event_subscriptions)
+         RETURNING identity_id
+       ) SELECT * FROM room_update UNION ALL SELECT * FROM corner_update`, values,
+  );
+}
+
+export function writeSurfaceEventSubscriptions<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, identityId: string, subscriptions: string],
+) {
+  return database.query<Row>(
+    `WITH surface AS (
+      SELECT room.id,room.parent_id,CASE WHEN ${cornerReviewerSql('room')}=$2
+        AND NOT $3::jsonb @> '["check-passed"]'::jsonb
+        THEN $3::jsonb||'["check-passed"]'::jsonb ELSE $3::jsonb END event_subscriptions
+      FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
+      JOIN memberships member ON member.room_id=COALESCE(room.parent_id,room.id)
+        AND member.identity_id=$2 AND member.removed_at IS NULL WHERE room.id=$1
+    ), room_update AS (
+      UPDATE memberships member SET event_subscriptions=surface.event_subscriptions FROM surface
+      WHERE surface.parent_id IS NULL AND member.room_id=surface.id AND member.identity_id=$2
+      RETURNING member.event_subscriptions
+    ), corner_update AS (
+      INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions)
+      SELECT id,$2,event_subscriptions FROM surface WHERE parent_id IS NOT NULL
+      ON CONFLICT(corner_id,identity_id) DO UPDATE SET event_subscriptions=EXCLUDED.event_subscriptions
+      RETURNING event_subscriptions
+    ) SELECT * FROM room_update UNION ALL SELECT * FROM corner_update`, values,
+  );
+}
+
+export function restoreRoomMembership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, roomId: string, identityId: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
+         ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL DO UPDATE SET removed_at=NULL`, values,
+  );
+}
+
+export function ensureRoomMembership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, roomId: string, identityId: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, values,
+  );
+}
+
+/** Bounded backfill SQL; the migration runner supplies its batch limit. */
+export function perItemMembershipSubscriptionCleanupSql(): string {
+  return `UPDATE memberships SET event_subscriptions=COALESCE(
+       (SELECT jsonb_agg(elem) FROM jsonb_array_elements_text(event_subscriptions) elem
+        WHERE NOT (elem=ANY($1::text[]))),
+       '[]'::jsonb
+     )
+     WHERE id IN (SELECT id FROM memberships WHERE event_subscriptions ?| $1::text[] ORDER BY id LIMIT $2)`;
+}
+
+export function createInvitedWorkspaceMembership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, identityId: string, invitedBy: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
+     VALUES($1,NULL,$2,'member',$3)`, values,
+  );
+}
+
+export function writeActiveRoomEventSubscriptions<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [identityId: string, roomId: string, subscriptions: string],
+) {
+  return database.query<Row>(
+    `UPDATE memberships SET event_subscriptions=$3::jsonb
+     WHERE identity_id=$1 AND room_id=$2 AND removed_at IS NULL`, values,
+  );
+}
+
+export function writeActiveRoomMembersEventSubscriptions<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [identityIds: string[], roomId: string, subscriptions: string],
+) {
+  return database.query<Row>(
+    `UPDATE memberships SET event_subscriptions=$3::jsonb
+      WHERE identity_id=ANY($1::text[]) AND room_id=$2 AND removed_at IS NULL`, values,
+  );
+}
+
+export function deleteCornerMembershipBatch<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [] = [],
+) {
+  return database.query<Row>(
+    `DELETE FROM memberships member WHERE member.id IN (
+         SELECT legacy.id FROM memberships legacy JOIN rooms corner ON corner.id=legacy.room_id
+         WHERE corner.parent_id IS NOT NULL ORDER BY legacy.id LIMIT 250
+       ) RETURNING member.id`, values,
+  );
+}
+
+export function ensureInvitedWorkspaceMembership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, identityId: string, invitedBy: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
+         VALUES ($1,NULL,$2,'member',$3) ON CONFLICT DO NOTHING`, values,
+  );
+}
+
+export function restorePairedWorkspaceMembership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, identityId: string, invitedBy: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
+         VALUES ($1,NULL,$2,'member',$3)
+         ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL
+         DO UPDATE SET role='member',removed_at=NULL,joined_at=now(),invited_by=EXCLUDED.invited_by
+           WHERE memberships.removed_at IS NOT NULL
+         RETURNING id`, values,
+  );
+}
+
+export function writeIdentityRoomsEventSubscriptions<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [identityId: string, roomIds: string[], subscriptions: string],
+) {
+  return database.query<Row>(
+    `UPDATE memberships SET event_subscriptions=$3::jsonb
+             WHERE identity_id=$1 AND room_id=ANY($2::uuid[])`, values,
+  );
+}
+
+export function createWorkspaceOwnerMembership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, identityId: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`, values,
+  );
+}
+
+export function joinRoomCreator<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, roomId: string, identityId: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         SELECT $1,$2,$3,role FROM memberships
+         WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$3 AND removed_at IS NULL`, values,
+  );
+}
+
+export function unsubscribeRoomReviewer<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, identityId: string],
+) {
+  return database.query<Row>(
+    `UPDATE memberships member
+             SET event_subscriptions=member.event_subscriptions-'check-passed'
+             FROM rooms room
+             WHERE member.room_id=room.id AND member.identity_id=$2
+               AND member.removed_at IS NULL
+               AND room.id=$1 AND room.parent_id IS NULL`, values,
+  );
+}
+
+export function subscribeRoomReviewer<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, identityId: string],
+) {
+  return database.query<Row>(
+    `UPDATE memberships member
+             SET event_subscriptions=CASE
+               WHEN member.event_subscriptions @> '["check-passed"]'::jsonb
+                 THEN member.event_subscriptions
+               ELSE member.event_subscriptions||'["check-passed"]'::jsonb
+             END
+             FROM rooms room
+             WHERE member.room_id=room.id AND member.identity_id=$2
+               AND member.removed_at IS NULL
+               AND room.id=$1 AND room.parent_id IS NULL`, values,
+  );
+}
+
+export function removeRoomMembership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, identityId: string],
+) {
+  return database.query<Row>(
+    `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, values,
+  );
+}
+
+export function restoreWorkspaceMembershipRole<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, identityId: string, role: string, invitedBy: string],
+) {
+  return database.query<Row>(
+    `UPDATE memberships SET role=$3,removed_at=NULL,invited_by=CASE WHEN removed_at IS NOT NULL THEN $4 ELSE invited_by END
+           WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`, values,
+  );
+}
+
+export function ensureWorkspaceMembershipRole<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, identityId: string, role: string, invitedBy: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
+         VALUES($1,NULL,$2,$3,$4) ON CONFLICT DO NOTHING`, values,
+  );
+}
+
+export function createDirectMessageMembership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, roomId: string, identityId: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, values,
+  );
+}
+
+export function redeemWorkspaceMembership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, identityId: string, invitedBy: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by) VALUES($1,NULL,$2,'member',$3)
+         ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL
+         DO UPDATE SET role='member',removed_at=NULL,invited_by=EXCLUDED.invited_by
+           WHERE memberships.removed_at IS NOT NULL`, values,
+  );
+}
+
+export function removeIdentityMemberships<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [identityId: string],
+) {
+  return database.query<Row>(
+    `UPDATE memberships SET removed_at=now()
+       WHERE identity_id=$1 AND removed_at IS NULL`, values,
+  );
+}
+
+export function transferWorkspaceOwnership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [identityIds: string[]],
+) {
+  return database.query<Row>(
+    `WITH lone AS (
+           SELECT m.workspace_id FROM memberships m
+           WHERE m.room_id IS NULL AND m.role='owner' AND m.removed_at IS NULL
+             AND m.identity_id=ANY($1)
+             AND NOT EXISTS (SELECT 1 FROM memberships o
+                             WHERE o.workspace_id=m.workspace_id AND o.room_id IS NULL
+                               AND o.role='owner' AND o.removed_at IS NULL
+                               AND o.identity_id <> ALL($1))
+         ), heir AS (
+           SELECT DISTINCT ON (l.workspace_id) l.workspace_id,h.identity_id
+           FROM lone l
+           JOIN memberships h ON h.workspace_id=l.workspace_id AND h.room_id IS NULL
+             AND h.role IN ('admin','member') AND h.removed_at IS NULL
+             AND h.identity_id <> ALL($1)
+           JOIN identities hi ON hi.id=h.identity_id AND hi.kind='human'
+           ORDER BY l.workspace_id,h.role,h.joined_at,h.identity_id
+         )
+         UPDATE memberships m SET role='owner' FROM heir
+         WHERE m.workspace_id=heir.workspace_id AND m.identity_id=heir.identity_id`, values,
+  );
+}
+
+export function transferRoomOwnership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [identityIds: string[]],
+) {
+  return database.query<Row>(
+    `WITH lone AS (
+           SELECT m.room_id FROM memberships m JOIN rooms r ON r.id=m.room_id
+           WHERE m.room_id IS NOT NULL AND r.parent_id IS NULL AND r.archived_at IS NULL
+             AND m.role='owner' AND m.removed_at IS NULL AND m.identity_id=ANY($1)
+             AND NOT EXISTS (SELECT 1 FROM memberships o
+                             WHERE o.room_id=m.room_id AND o.role='owner'
+                               AND o.removed_at IS NULL AND o.identity_id <> ALL($1))
+         ), heir AS (
+           SELECT DISTINCT ON (l.room_id) l.room_id,h.identity_id
+           FROM lone l
+           JOIN memberships h ON h.room_id=l.room_id AND h.role IN ('admin','member')
+             AND h.removed_at IS NULL AND h.identity_id <> ALL($1)
+           JOIN identities hi ON hi.id=h.identity_id AND hi.kind='human'
+           ORDER BY l.room_id,h.role,h.joined_at,h.identity_id
+         )
+         UPDATE memberships m SET role='owner' FROM heir
+         WHERE m.room_id=heir.room_id AND m.identity_id=heir.identity_id`, values,
+  );
+}
+
+export function writeSurfacePushState<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, identityId: string, muted: boolean | null],
+) {
+  return database.query<Row>(
+    `WITH surface AS (
+           SELECT room.id,room.parent_id,member.push_muted FROM rooms room
+           JOIN memberships member ON member.room_id=room.id
+             AND member.identity_id=$2 AND member.removed_at IS NULL
+           JOIN identities person ON person.id=$2 AND person.kind='human' WHERE room.id=$1
+         ), room_update AS (
+           UPDATE memberships member SET push_muted=COALESCE($3,member.push_muted) FROM surface
+           WHERE surface.parent_id IS NULL AND member.room_id=surface.id AND member.identity_id=$2
+           RETURNING member.push_muted
+         ), corner_update AS (
+           INSERT INTO corner_person_state(corner_id,identity_id,push_muted)
+           SELECT id,$2,$3 FROM surface WHERE parent_id IS NOT NULL AND $3 IS NOT NULL
+           ON CONFLICT(corner_id,identity_id) DO UPDATE SET push_muted=EXCLUDED.push_muted
+           RETURNING push_muted
+         ) SELECT * FROM room_update UNION ALL SELECT * FROM corner_update
+           UNION ALL SELECT push_muted FROM surface WHERE parent_id IS NOT NULL AND $3 IS NULL`, values,
+  );
+}
+
+export function ensureWorkspaceOwnerMembership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [workspaceId: string, identityId: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+     VALUES($1,NULL,$2,'owner')
+     ON CONFLICT (workspace_id,identity_id) WHERE room_id IS NULL DO NOTHING`, values,
+  );
+}
+
+export function moveRoomMembershipsToWorkspace<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, workspaceId: string],
+) {
+  return database.query<Row>(
+    `UPDATE memberships SET workspace_id=$2 WHERE room_id=$1 AND workspace_id<>$2`, values,
+  );
+}
+
+export function ensureReviewProofMembership<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [roomId: string, identityId: string],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+     SELECT workspace_id,id,$2,'member' FROM rooms WHERE id=$1
+     ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`, values,
+  );
+}
+
+/**
+ * Joins public top-level Rooms in the Room's own Workspace. A fresh member (a
+ * first connection, or a reconnect after Disconnect) rejoins every public
+ * Room; an existing member keeps the Rooms a person removed it from.
+ */
+export function joinMcpPublicRooms<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [identityId: string, workspaceIds: string[], restoreRemoved: boolean],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+  SELECT room.workspace_id,room.id,$1,'member' FROM rooms room
+  WHERE room.workspace_id=ANY($2::uuid[]) AND room.parent_id IS NULL
+    AND room.direct_participants IS NULL AND room.archived_at IS NULL AND room.visibility='public'
+  ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
+  DO UPDATE SET removed_at=NULL WHERE memberships.removed_at IS NOT NULL AND $3::boolean`, values,
+  );
+}
+
+export function restoreMcpWorkspaceMemberships<Row extends QueryResultRow = QueryResultRow>(
+  database: Pick<SqlDatabase, 'query'>, values: [identityId: string, workspaceIds: string[]],
+) {
+  return database.query<Row>(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         SELECT workspace_id,NULL,$1,'member' FROM unnest($2::uuid[]) workspace_id
+         ON CONFLICT(workspace_id,identity_id) WHERE room_id IS NULL
+         DO UPDATE SET removed_at=NULL`, values,
+  );
+}
+
+/** Retire historical bans before their table is dropped. */
+export function retireWorkspaceBansSql(): string {
+  return `DO $$
+BEGIN
+  IF to_regclass('workspace_bans') IS NOT NULL THEN
+    UPDATE memberships m SET removed_at=now()
+    FROM workspace_bans b
+    WHERE m.workspace_id=b.workspace_id AND m.identity_id=b.identity_id AND m.removed_at IS NULL;
+  END IF;
+END;
+$$;
+`;
 }

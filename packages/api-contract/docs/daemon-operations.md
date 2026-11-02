@@ -101,6 +101,5 @@ text })` posts a plain message into a reachable corner from the caller's active 
 `mergeCorner({ cornerId })` is the implementer's merge. Only the corner's implementer may call it.
 It goes through the one merge path, `landCorner`, which squash-merges the current head only when
 `getPrChecksStatus` reports `mergeAllowed`; otherwise it attempts nothing and returns
-`{ status: 'blocked', blocker }`. A reviewer's PASS wakes the implementer to call this operation;
-a person's yes (`orderCornerMerge`, or the phone's `approveCornerMerge`) goes through the same
+`{ status: 'blocked', blocker }`. A reviewer's PASS (`approveCornerMerge`) and a person's yes (`orderCornerMerge`, or the phone's `approveCornerMerge`) goes through the same
 `landCorner` at once.

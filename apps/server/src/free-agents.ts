@@ -1,4 +1,5 @@
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { createCipheriv, createDecipheriv, createECDH, createHash, randomBytes } from 'node:crypto';
 import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beeline/api-contract/phone';
@@ -8,7 +9,12 @@ import type { FreeAgentMachines } from './fly-machines.js';
 import { FlyApiError } from './fly-machines.js';
 import type { LiveHub } from './live.js';
 import { DEFAULT_FREE_AGENT_LIMITS, freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
-import { joinRooms } from './membership-join.js';
+import {
+  createInvitedWorkspaceMembership,
+  writeActiveRoomEventSubscriptions,
+  writeActiveRoomMembersEventSubscriptions,
+  joinRooms,
+} from './membership-join.js';
 import { captureServerError } from './sentry.js';
 import { ensureSystemIdentity, systemLine } from './system-line.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
@@ -341,11 +347,7 @@ export async function createFreeAgentInWorkspace(
       FREE_AGENT_HARNESS,
     ],
   );
-  await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,invited_by)
-     VALUES($1,NULL,$2,'member',$3)`,
-    [input.workspaceId, agent.publicKey, input.creatorId],
-  );
+  await createInvitedWorkspaceMembership(database, [input.workspaceId, agent.publicKey, input.creatorId]);
   await database.query(
     `INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,model,starter_role)
      VALUES($1,$2,$3,$4,$5,$6)`,
@@ -366,11 +368,7 @@ export async function createFreeAgentInWorkspace(
     workspaceJoined: true,
   });
   // Subscribed after its own arrival, so only later joins and leaves wake it.
-  if (!input.team) await database.query(
-    `UPDATE memberships SET event_subscriptions=$3::jsonb
-     WHERE identity_id=$1 AND room_id=$2 AND removed_at IS NULL`,
-    [agent.publicKey, input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)],
-  );
+  if (!input.team) await writeActiveRoomEventSubscriptions(database, [agent.publicKey, input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
   // Reachable from the first moment: a mention before the Machine has booted
   // is a wake to deliver, not an offline agent.
   await database.query(
@@ -617,10 +615,10 @@ export class FreeAgentService {
       )).rows;
       await ensureSystemIdentity(database);
       await systemLine(database, { roomId: input.roomId, authorId: SYSTEM_IDENTITY_ID,
-        subject: { kind: 'system', name: 'Your starter agents' },
-        verb: existing.length ? 'are already in' : 'could not be added',
-        ...(existing.length ? { object: existing.map(agent => `${agent.name} in ${agent.workspace_name}`).join(', ') } : {}),
-        consequence: 'Your account has reached its free-agent limit' });
+        subject: { kind: 'system', name: systemMessage("free-agents.your-starter-agents") },
+        verb: existing.length ? systemMessage("free-agents.are-already-in") : systemMessage("free-agents.could-not-be-added"),
+        ...(existing.length ? { object: existing.map(agent => systemMessage("free-agents.starter-location", agent.name, agent.workspace_name)).join(systemMessage("free-agents.list-separator")) } : {}),
+        consequence: systemMessage("free-agents.your-account-has-reached-its-free-agent-limit") });
       return undefined;
     }
     const beebee = await createFreeAgentInWorkspace(database, this.config, { ...input, silent: true, team: true });
@@ -628,9 +626,7 @@ export class FreeAgentService {
       ...this.config, model: this.config.lunaModel ?? 'openai/gpt-6-luna',
     }, { ...input, name: 'Luna', silent: true, team: true });
     if (!beebee || !luna) throw new Error('starter team provisioning failed');
-    await database.query(`UPDATE memberships SET event_subscriptions=$3::jsonb
-      WHERE identity_id=ANY($1::text[]) AND room_id=$2 AND removed_at IS NULL`,
-      [[beebee, luna], input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
+    await writeActiveRoomMembersEventSubscriptions(database, [[beebee, luna], input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
     await createStarterOnboardingRun(database, { roomId: input.roomId, userId: input.creatorId, beebeeId: beebee, lunaId: luna, timeZone: input.timeZone });
     return beebee;
   }
@@ -831,11 +827,11 @@ export class FreeAgentService {
       roomId: target.room_id,
       id: createHash('sha256').update(`free-agent-start-limit:${event.id}`).digest('hex'),
       subject: { kind: 'agent', id: agentId, name: target.agent_name },
-      verb: 'could not start',
+      verb: systemMessage("free-agents.could-not-start"),
       ...(target.person_id && target.person_handle
-        ? { object: { text: `for @${target.person_handle}`, id: target.person_id } }
+        ? { object: { text: systemMessage("free-agents.for", target.person_handle), id: target.person_id } }
         : {}),
-      consequence: 'the Beeline team has been told. Send a new message to try again',
+      consequence: systemMessage("free-agents.the-beeline-team-has-been-told-send-a-new-message-to-try-again"),
     });
   }
 

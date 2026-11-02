@@ -457,7 +457,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     }
   });
 
-  it('replaces a persistent startup timeout with the shared connection status', async () => {
+  it('shows the approved full-screen recovery after a persistent timeout with nothing cached', async () => {
     deck.connectionState = 'disconnected';
     deck.selectedWorkspace = null;
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
@@ -468,7 +468,18 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     expect(deck.workspaceReads).toBe(2);
     expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
     expect(renderer.root.findAllByProps({ action: 'Retry' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' }).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-deck-unavailable' }).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(0);
+    const copy = renderer.root.findAllByType('Text').map((node: any) => node.props.children);
+    expect(copy).toContain('Beeline couldn’t connect');
+    expect(copy).toContain('Your Rooms can’t load right now. There are no saved messages on this device yet.');
+    const reconnect = renderer.root.findByProps({ testID: 'room-deck-reconnect' });
+    expect(reconnect.props.variant).toBe('secondary');
+    await act(async () => { reconnect.props.onPress(); });
+    await quiet();
+    expect(deck.reconnects).toBe(1);
+    expect(deck.workspaceReads).toBe(3);
+    expect(router.replace).toHaveBeenCalledWith('/beeline/community');
     await act(async () => renderer.unmount());
   });
 
@@ -480,10 +491,11 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
     await quiet();
     expect(renderer.root.findAllByType('Text').length).toBeGreaterThan(0);
-    const retry = renderer.root.findByProps({ action: 'Retry' });
+    const retry = renderer.root.findByProps({ testID: 'room-deck-reconnect' });
     await act(async () => { retry.props.onPress(); });
     await quiet();
     expect(deck.workspaceReads).toBe(2);
+    expect(deck.reconnects).toBe(1);
     expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(0);
     await act(async () => renderer.unmount());
   });
@@ -496,7 +508,27 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     await quiet();
     expect(deck.workspaceReads).toBe(1);
     expect(renderer.root.findAllByProps({ action: 'Retry' }).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: 'room-deck-unavailable' })).toHaveLength(0);
     expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
+    await act(async () => renderer.unmount());
+  });
+
+  it('keeps saved Rooms and the existing in-app banner when a later read fails', async () => {
+    deck.connectionState = 'disconnected';
+    const renderer = await mountDeck();
+    const reads = deck.workspaceReads;
+    deck.workspaceFailures = [new RoomViewHttpError(503, 'unavailable')];
+    const workspaceWatch = deck.subscriptions.find((entry) =>
+      entry.filters.some((filter: any) => filter.kinds?.includes(9000)),
+    );
+    expect(workspaceWatch).toBeTruthy();
+    await act(async () => workspaceWatch!.emit({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:workspaces' } }));
+    await quiet();
+    expect(deck.workspaceReads).toBe(reads + 1);
+    expect(paintedRows(renderer)[0]!.latestMessage?.text).toBe('earlier');
+    expect(renderer.root.findAllByProps({ testID: 'room-deck-unavailable' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' }).length).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: 'connection-status-reconnect' }).length).toBeGreaterThan(0);
     await act(async () => renderer.unmount());
   });
 });

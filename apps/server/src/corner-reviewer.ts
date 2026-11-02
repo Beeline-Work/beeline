@@ -1,15 +1,12 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import type { SqlDatabase } from './database.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { systemLine } from './system-line.js';
 
-/** A corner override replaces the Room's entire reviewer list. */
+/** A corner's reviewer: its override, else the parent Room's reviewer. */
 export function cornerReviewerSql(corner = 'corner', parent = 'parent'): string {
   return `COALESCE((SELECT reviewer_agent_id FROM corner_facts WHERE corner_id=${corner}.id),${parent}.reviewer_agent_id)`;
-}
-
-export function cornerReviewerFallbacksSql(corner = 'corner', parent = 'parent'): string {
-  return `(CASE WHEN (SELECT reviewer_agent_id FROM corner_facts WHERE corner_id=${corner}.id) IS NULL THEN ${parent}.reviewer_fallback_ids ELSE ARRAY[]::text[] END)`;
 }
 
 export async function assertIndependentCornerReviewer(
@@ -39,7 +36,7 @@ export async function setCornerReviewer(
   if (!reviewer) throw new CommandRefusalError('reviewer must be an agent member of the parent Room', 409);
   await assertIndependentCornerReviewer(db, cornerId, reviewer.id, checkAuthors);
   const changed = await db.query(
-    `UPDATE corner_facts SET reviewer_agent_id=$2,updated_at=now()
+    `UPDATE corner_facts SET reviewer_agent_id=$2
      WHERE corner_id=$1 AND reviewer_agent_id IS DISTINCT FROM $2 RETURNING corner_id`, [cornerId, reviewer.id],
   );
   if (!changed.rowCount) return;
@@ -49,6 +46,6 @@ export async function setCornerReviewer(
   const actor = (await db.query<{ name: string }>(`SELECT name FROM identities WHERE id=$1`, [actorId])).rows[0]!;
   await systemLine(db, {
     roomId: cornerId, subject: { kind: 'agent', id: actorId, name: actor.name },
-    verb: 'set the corner reviewer', object: { id: reviewer.id, text: reviewer.name },
+    verb: systemMessage("corner-reviewer.set-the-corner-reviewer"), object: { id: reviewer.id, text: reviewer.name },
   });
 }

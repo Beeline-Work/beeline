@@ -62,3 +62,14 @@ describe('a session’s name', () => {
     expect(pickName('Payments Bot', 'api-claude', n => taken.has(n))).toBe('payments-bot');
   });
 });
+
+// Tables must preserve detection priority without accepting a process-only alias as an MCP client name.
+it('keeps client-name matching separate from process aliases and preserves ambiguous-name precedence', () => {
+  expect(fromClientName('agy')).toBeUndefined();
+  expect(fromProcessName('/usr/bin/agy')).toBe('antigravity');
+  expect(fromClientName('claude')).toBe('claude-code');
+  expect(fromClientName('pi-opencode')).toBe('opencode');
+  expect(fromClientName('gemini-opencode')).toBe('gemini');
+  expect(fromClientName('codex-claude-code')).toBe('claude-code');
+  expect(fromClientName('piano')).toBeUndefined();
+});

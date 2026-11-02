@@ -289,3 +289,13 @@ test('constructor names are metadata while constructor values remain dynamic cod
     "const { name, ...ctor } = error.constructor;",
   ]) assert.ok(scanSource('error.ts', text).some(hit => hit.kind === 'dynamic-code'), text);
 });
+
+test('a new reference to a host already approved as a link is listed as a link, not a new channel', () => {
+  const sites = scanPhoneTree(repo);
+  const base = structuredClone(allowlist);
+  base.entries = base.entries.filter((entry) => entry.file !== 'packages/api-contract/src/system-message-catalog.ts');
+  assert.deepEqual(judgeChannels(sites, allowlist, base), []);
+  const asException = structuredClone(allowlist);
+  asException.entries.find((entry) => entry.file === 'packages/api-contract/src/system-message-catalog.ts').fate = 'exception';
+  assert.ok(judgeChannels(sites, asException, base).some((error) => /system-message-catalog\.ts::origin:github\.com is new/.test(error)));
+});

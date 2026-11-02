@@ -1,3 +1,4 @@
+import { removeWorkspaceMemberships } from './membership-join.js';
 import type { AgentGrantStatus } from '@beeline/api-contract/agent-grants';
 import type { AgentGrantView, RoomViewIdentity } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -86,10 +87,7 @@ export async function retireAgentFromWorkspace(
     [agentId],
   );
   await revokeDaemonCredentials(database, agentId);
-  await database.query(
-    `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
-    [workspaceId, agentId],
-  );
+  await removeWorkspaceMemberships(database, [workspaceId, agentId]);
   // No surface may draw it as a member again, whatever it reads from.
   await database.query(
     `UPDATE identities SET hidden_from_roster=true,updated_at=now()
@@ -99,7 +97,7 @@ export async function retireAgentFromWorkspace(
   await database.query(
     `UPDATE agents SET usage_snapshot=NULL,usage_account_id=NULL,soul=NULL,chosen_voices='{}'::jsonb,selected_model=NULL,selected_effort=NULL,
        model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
-       schedule_ids='[]'::jsonb,squire_report=NULL,squire_work='{}'::jsonb,
+       squire_report=NULL,squire_work='{}'::jsonb,
        yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
        access_policy='{"type":"everyone"}'::jsonb,updated_at=now()
      WHERE agent_id=$1`,

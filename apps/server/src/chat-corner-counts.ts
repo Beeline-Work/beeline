@@ -1,4 +1,6 @@
-import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
+import { cornerReviewerSql } from './corner-reviewer.js';
+import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
+import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { createHash } from 'node:crypto';
 import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
@@ -20,7 +22,7 @@ export type CornerStateRow = {
   archived_at: Date | null;
   locked?: boolean;
   lifecycle: CornerLifecycleView | null;
-  /** The corner lifecycle's projected state (`corner_facts.workflow_state`). */
+  /** The corner run's state: its newest handoff card (`corner-run.ts`). */
   workflow_state?: string | null;
   workflow_outcome?: string | null;
   latest_turn_status: string | null;
@@ -91,6 +93,13 @@ export function cornerScheduledWaitSql(corner: string): string {
       AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs))`;
 }
 
+/** Intrinsic execution history; the opening commander is never corner work. */
+export function cornerLastTurnEndSql(corner: string): string {
+  return `(SELECT max(turn.ended_at) FROM agent_turns turn WHERE turn.room_id=${corner}.id
+    AND turn.agent_id IS DISTINCT FROM ${corner}.created_by
+    AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%')`;
+}
+
 /** Shared corner facts for `FROM rooms c`; `member` checks the viewer's membership. */
 export function cornerFactsSql(viewerExpr: string): {
   columns: string;
@@ -98,9 +107,9 @@ export function cornerFactsSql(viewerExpr: string): {
   member: string;
 } {
   return {
-    columns: `f.locked,f.lifecycle,f.workflow_state,f.workflow_outcome,
+    columns: `f.locked,f.lifecycle,${cornerRunStateSql('f.corner_id')} workflow_state,${cornerRunOutcomeSql('f.corner_id')} workflow_outcome,
       activity.worker_active,activity.reviewer_active,
-      span.last_turn_ended_at,
+      ${cornerLastTurnEndSql('c')} last_turn_ended_at,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
       blocker.kind waiting_kind,blocker.person_name waiting_person_name,
       blocker.person_id waiting_person_id,
@@ -110,7 +119,6 @@ export function cornerFactsSql(viewerExpr: string): {
       owed.owed_viewer,owed.attention`,
     joins: `LEFT JOIN corner_facts f ON f.corner_id=c.id
     ${cornerWorkSql()}
-    LEFT JOIN corner_attention_spans span ON span.corner_id=c.id
     ${cornerBlockerSql()}
     LEFT JOIN LATERAL (SELECT * FROM messages message WHERE message.room_id=c.id
       AND message.presentation IN ('message','system') AND ${visibleChatMessageSql('message')}
@@ -146,7 +154,7 @@ function heldCommandSql(command: string): string {
 
 /** A running turn, or a command still waiting for one, retains the review role recorded by its dispatch. */
 export function cornerWorkSql(ignoreCommander = false): string {
-  const reviewerAgent = `ANY(array_remove(ARRAY[${cornerReviewerSql('c')}]||${cornerReviewerFallbacksSql('c')},NULL))`;
+  const reviewerAgent = `ANY(array_remove(ARRAY[${cornerReviewerSql('c')}],NULL))`;
   const checkPassed = (source: string) =>
     `${source}.system_event->>'kind'='check-passed'
       AND ${source}.system_event->'object'->>'headSha'=f.lifecycle->'pr'->>'headSha'`;
@@ -214,7 +222,7 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
       UNION ALL
       SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at,'question',
         CASE WHEN report.return_room_id=c.id AND report.message_id IS NOT NULL THEN 'message'
-          ELSE 'report' END FROM corner_report_blockers report
+          ELSE 'report' END FROM (${cornerWaitingReportSql('c')}) report
       JOIN identities recipient ON recipient.id=report.person_id
         AND (recipient.kind='human' OR report.person_id=report.commander_id)
       WHERE report.corner_id=c.id

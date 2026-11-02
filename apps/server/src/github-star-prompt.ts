@@ -28,13 +28,14 @@ export const GITHUB_STAR_PROMPT_SCHEMA = `
 CREATE TABLE IF NOT EXISTS github_star_prompts (
   identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
   replies integer NOT NULL DEFAULT 0,
-  reached_milestone integer NOT NULL DEFAULT 0,
   answered_milestone integer NOT NULL DEFAULT 0,
   checked_milestone integer NOT NULL DEFAULT 0,
   closed text CHECK (closed IN ('dismissed','starred')),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE github_star_prompts ADD COLUMN IF NOT EXISTS checked_milestone integer NOT NULL DEFAULT 0;
+-- Derived from replies (reachedMilestoneSql); dropped once no image reads it.
+ALTER TABLE github_star_prompts DROP COLUMN IF EXISTS reached_milestone;
 `;
 
 /** Deduplicate rare due-milestone checks while their GitHub request is pending. */
@@ -48,13 +49,12 @@ interface StarPromptGitHub {
 /**
  * The upsert that counts one committed agent reply toward the person whose
  * message started the command. `command` yields the command's
- * `root_source_message_id` and `milestones` is an int[] expression, so the
- * agent reply statement can run it as one of its own CTEs.
+ * `root_source_message_id`, so the agent reply statement can run it as one
+ * of its own CTEs.
  */
-export function starPromptReplySql(command: string, milestones: string): string {
-  return `INSERT INTO github_star_prompts AS prompt(identity_id,replies,reached_milestone)
-     SELECT source.author_id,1,
-       CASE WHEN 1=ANY(${milestones}) THEN 1 ELSE 0 END
+export function starPromptReplySql(command: string): string {
+  return `INSERT INTO github_star_prompts AS prompt(identity_id,replies)
+     SELECT source.author_id,1
      FROM ${command} command
      JOIN messages source ON source.id=command.root_source_message_id
      JOIN identities person ON person.id=source.author_id
@@ -62,9 +62,16 @@ export function starPromptReplySql(command: string, milestones: string): string 
      LIMIT 1
      ON CONFLICT(identity_id) DO UPDATE SET
        replies=prompt.replies+1,
-       reached_milestone=CASE WHEN prompt.replies+1=ANY(${milestones})
-         THEN prompt.replies+1 ELSE prompt.reached_milestone END,
        updated_at=now()`;
+}
+
+/**
+ * The highest milestone a prompt's reply count has reached (0 before the
+ * first).
+ */
+function reachedMilestoneSql(prompt: string, milestones: string): string {
+  return `SELECT COALESCE(max(milestone),0) milestone FROM unnest(${milestones}) milestone
+    WHERE milestone<=${prompt}.replies`;
 }
 
 /** {@link starPromptReplySql} for a reply that is already committed. */
@@ -76,14 +83,12 @@ export async function recordStarPromptReply(
     starPromptReplySql(
       `(SELECT root_source_message_id FROM agent_commands
         WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND result_message_id=$4)`,
-      '$5::int[]',
     ),
     [
       reply.roomId,
       reply.agentId,
       reply.requestId,
       reply.messageId,
-      STAR_PROMPT_MILESTONES,
     ],
   );
 }
@@ -104,7 +109,7 @@ export async function readStarPrompt(
          SELECT room_id FROM memberships
          WHERE identity_id=$1 AND room_id IS NOT NULL AND removed_at IS NULL
        )
-       SELECT prompt.reached_milestone,prompt.answered_milestone,prompt.checked_milestone,
+       SELECT reached.milestone reached_milestone,prompt.answered_milestone,prompt.checked_milestone,
          EXISTS(
            SELECT 1 FROM rooms JOIN messages message ON message.room_id=rooms.room_id
            WHERE message.author_id=$1
@@ -133,9 +138,10 @@ export async function readStarPrompt(
              AND correction.created_at>now()-make_interval(mins=>$3)
          ) held
        FROM github_star_prompts prompt
+       CROSS JOIN LATERAL (${reachedMilestoneSql('prompt', '$4::int[]')}) reached
        WHERE prompt.identity_id=$1 AND prompt.closed IS NULL
-         AND prompt.reached_milestone>prompt.answered_milestone`,
-      [viewerId, MID_CONVERSATION_SECONDS, CORRECTION_WINDOW_MINUTES],
+         AND reached.milestone>prompt.answered_milestone`,
+      [viewerId, MID_CONVERSATION_SECONDS, CORRECTION_WINDOW_MINUTES, STAR_PROMPT_MILESTONES],
     )
   ).rows[0];
   if (!row || row.held) return { prompt: null };
@@ -149,12 +155,13 @@ export async function readStarPrompt(
         .then(async (starred) => {
           if (starred === 'unknown') return;
           await database.query(
-            `UPDATE github_star_prompts
+            `UPDATE github_star_prompts prompt
              SET checked_milestone=GREATEST(checked_milestone,$2),
                  closed=CASE WHEN $3::boolean THEN 'starred' ELSE closed END,
                  updated_at=now()
-             WHERE identity_id=$1 AND reached_milestone=$2 AND closed IS NULL`,
-            [viewerId, row.reached_milestone, starred],
+             WHERE identity_id=$1 AND closed IS NULL
+               AND (${reachedMilestoneSql('prompt', '$4::int[]')})=$2`,
+            [viewerId, row.reached_milestone, starred, STAR_PROMPT_MILESTONES],
           );
         })
         .catch(() => undefined)

@@ -10,9 +10,8 @@ export const OPERATOR_OWNER_ID = '34cf4160723acd12d205dfbe292614bfec9489b78812d1
 export const OPERATOR_SYSTEM_DM_SCHEMA = `
 CREATE TABLE IF NOT EXISTS operator_system_dm_sends (
  id uuid PRIMARY KEY, caller_id text NOT NULL, owner_id text NOT NULL,
- source_message_id text NOT NULL, recipients jsonb NOT NULL, text_hash text NOT NULL,
- text text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
- recipient_count integer NOT NULL DEFAULT 0
+ source_message_id text NOT NULL, recipients jsonb NOT NULL,
+ text text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS operator_system_dm_deliveries (
  send_id uuid NOT NULL REFERENCES operator_system_dm_sends(id),
@@ -20,6 +19,9 @@ CREATE TABLE IF NOT EXISTS operator_system_dm_deliveries (
  state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','delivered','failed')),
  PRIMARY KEY(send_id,recipient_id)
 );
+-- Retired copies: the hash was never compared and the count is the send's delivery rows.
+ALTER TABLE operator_system_dm_sends DROP COLUMN IF EXISTS text_hash;
+ALTER TABLE operator_system_dm_sends DROP COLUMN IF EXISTS recipient_count;
 CREATE INDEX IF NOT EXISTS operator_system_dm_pending ON operator_system_dm_deliveries(send_id,recipient_id)
  WHERE state='pending';
 `;
@@ -39,7 +41,7 @@ async function authorize(database: SqlDatabase, config: FeedbackConfig, command:
 
 async function operatorSystemDmStatus(database: SqlDatabase, sendId: string) {
   const row = (await database.query<{ recipients: number; delivered: number; failed: number; pending: number }>(
-    `SELECT s.recipient_count recipients,
+    `SELECT count(d.send_id)::int recipients,
       count(*) FILTER(WHERE d.state='delivered')::int delivered,
       count(*) FILTER(WHERE d.state='failed')::int failed,
       count(*) FILTER(WHERE d.state='pending')::int pending
@@ -74,10 +76,9 @@ export async function sendOperatorSystemDm(database: SqlDatabase, config: Feedba
           AND (i.id=selector OR i.handle=selector))`, [selectors]);
       if (missing.rowCount) throw new CommandRefusalError('Every recipient must resolve to an exact human user id or handle', 400);
     }
-    await db.query(`INSERT INTO operator_system_dm_sends(id,caller_id,owner_id,source_message_id,recipients,text_hash,text)
-      VALUES($1,$2,$3,$4,$5::jsonb,$6,$7)`,
-      [sendId, agentId, owner, command!.root_source_message_id, JSON.stringify(all ? 'all' : selectors),
-        createHash('sha256').update(input.text).digest('hex'), input.text]);
+    await db.query(`INSERT INTO operator_system_dm_sends(id,caller_id,owner_id,source_message_id,recipients,text)
+      VALUES($1,$2,$3,$4,$5::jsonb,$6)`,
+      [sendId, agentId, owner, command!.root_source_message_id, JSON.stringify(all ? 'all' : selectors), input.text]);
     await db.query(`INSERT INTO operator_system_dm_deliveries(send_id,recipient_id,workspace_id,state)
       SELECT $1,i.id,w.workspace_id,CASE WHEN w.workspace_id IS NULL THEN 'failed' ELSE 'pending' END
       FROM identities i LEFT JOIN LATERAL (
@@ -86,8 +87,6 @@ export async function sendOperatorSystemDm(database: SqlDatabase, config: Feedba
       ) w ON true
       WHERE i.kind='human' AND NOT i.hidden_from_roster
         AND ($2::boolean OR i.id=ANY($3::text[]) OR i.handle=ANY($3::text[]))`, [sendId, all, selectors]);
-    await db.query(`UPDATE operator_system_dm_sends SET recipient_count=
-      (SELECT count(*) FROM operator_system_dm_deliveries WHERE send_id=$1) WHERE id=$1`, [sendId]);
     return operatorSystemDmStatus(db, sendId);
   });
 }

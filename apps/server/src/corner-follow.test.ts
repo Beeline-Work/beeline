@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { backfillCornerFollows } from './corner-follow.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -51,10 +51,8 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,name,parent_id,created_by) VALUES($1,$3,'Room',NULL,$4),($2,$3,'Corner',$1,$4)`,
     [ROOM, CORNER, WORKSPACE, TEAMMATE],
   );
-  await database.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective) VALUES($1,$2,$3,'Work')`,
-    [CORNER, AGENT, TEAMMATE],
-  );
+  await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'Work')`, [CORNER, AGENT]);
+  await seedCornerOpening(database, { cornerId: CORNER, agentId: AGENT, commissionedBy: TEAMMATE });
   for (const channel of [null, ROOM])
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'owner'),($1,$2,$5,'member')`,
@@ -109,10 +107,8 @@ describe('Mine corners use the push Followed rule', () => {
   });
 
   it('includes a corner the person commissioned', async () => {
-    await database.query(`UPDATE corner_facts SET commissioned_by=$1 WHERE corner_id=$2`, [
-      PERSON,
-      CORNER,
-    ]);
+    await database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [CORNER]);
+    await seedCornerOpening(database, { cornerId: CORNER, agentId: AGENT, commissionedBy: PERSON });
     expect(await mine()).toEqual({ list: true, page: true });
   });
 

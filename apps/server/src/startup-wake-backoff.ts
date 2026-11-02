@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { createHash } from 'node:crypto';
 import { sanitizeTurnReplay } from '@beeline/api-contract/daemon';
@@ -92,7 +93,7 @@ export async function recordStartupWakeOutcome(db: SqlDatabase, input: {
         WHERE member.workspace_id=room.workspace_id AND member.room_id IS NULL
           AND member.identity_id=agent.owner_id AND member.removed_at IS NULL)`, [agentId,input.roomId])).rows[0];
   if (owner) await sendSystemDirectMessage(db,owner.workspace_id,owner.owner_id,
-    `${owner.name} keeps failing to start. Automatic wakes are paused for 5 minutes.`,
+    systemMessage("startup-wake-backoff.keeps-failing-to-start-automatic-wakes-are-paused-for-5-minutes", owner.name),
     createHash('sha256').update(`startup-backoff:${agentId}:${opened.rows[0]!.paused_until.toISOString()}`).digest('hex'));
 }
 

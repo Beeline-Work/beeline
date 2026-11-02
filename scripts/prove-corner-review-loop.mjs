@@ -53,7 +53,6 @@ try {
  assert.equal(pending.body.commands.length,1);
  // A queued reviewer is still waiting after the pending-turn activity grace ends.
  await db.query(`UPDATE agent_turns SET created_at=now()-interval '2 minutes' WHERE room_id=$1`,[corner]);
- await db.query(`UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=$1`,[corner]);
  await refreshCornerAttention(db,corner);
  assert.equal((await db.query(`SELECT count(*)::int count FROM agent_commands WHERE private_payload->>'text' LIKE '%is idle.%'`)).rows[0].count,0);
  const first=pending.body.commands[0];

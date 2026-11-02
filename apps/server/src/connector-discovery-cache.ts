@@ -1,9 +1,9 @@
+import { notifyConnectorDiscovery } from './postgres-live.js';
 import { setImmediate } from 'node:timers';
 import type { RegistryMcpManifest } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import type { McpRegistryClient } from './mcp-registry.js';
 import { companyForMcp } from './company-mcp-discovery.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 type Snapshot = { manifests: readonly RegistryMcpManifest[]; fresh: boolean };
 type Job = { owners: Set<string>; run: () => Promise<void> };
@@ -52,8 +52,7 @@ export class ConnectorDiscoveryCache {
         [key, JSON.stringify(values), ttl]);
         await database.query(`DELETE FROM connector_discovery_cache WHERE cache_key IN
           (SELECT cache_key FROM connector_discovery_cache ORDER BY updated_at DESC OFFSET 200)`);
-        if (changed) for (const owner of job.owners) await database.query(`SELECT pg_notify($1,$2)`,
-          [POSTGRES_LIVE_CHANNEL, JSON.stringify({ table: 'connector_discovery_cache', operation: 'UPDATE', roomId: '', ownerId: owner })]);
+        if (changed) for (const owner of job.owners) await notifyConnectorDiscovery(database, owner);
       });
     } };
     this.pending.set(key, job);

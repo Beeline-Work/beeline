@@ -1,4 +1,4 @@
-import { cornerReviewerSql } from './corner-reviewer.js';
+import { writeSurfaceEventSubscriptions } from './membership-join.js';
 import { SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 
@@ -26,7 +26,7 @@ CREATE INDEX IF NOT EXISTS corner_person_state_identity_idx ON corner_person_sta
 -- authorize themselves: even a saved preference needs a live parent member.
 CREATE OR REPLACE VIEW room_access AS
 SELECT member.id,member.workspace_id,member.room_id,member.identity_id,member.role,
-  member.generation,member.identity_profile,member.invited_by,member.joined_at,
+  1::bigint generation,NULL::jsonb identity_profile,member.invited_by,member.joined_at,
   member.removed_at,member.push_muted,member.event_subscriptions
 FROM memberships member
 WHERE member.room_id IS NULL OR EXISTS (
@@ -73,10 +73,10 @@ export async function migrateCornerPersonState(database: SqlDatabase): Promise<n
            FROM memberships member JOIN rooms corner ON corner.id=member.room_id
            LEFT JOIN memberships parent ON parent.room_id=corner.parent_id AND parent.identity_id=member.identity_id
            WHERE member.id=ANY($1::bigint[])
-         ) INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions,identity_profile,generation,created_at,push_muted)
+         ) INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions,created_at,push_muted)
          SELECT room_id,identity_id,CASE WHEN subscriptions<>inherited_subscriptions THEN subscriptions END,
-           identity_profile,generation,joined_at,push_muted FROM legacy
-         WHERE subscriptions<>inherited_subscriptions OR identity_profile IS NOT NULL OR generation<>1 OR push_muted
+           joined_at,push_muted FROM legacy
+         WHERE subscriptions<>inherited_subscriptions OR push_muted
          ON CONFLICT(corner_id,identity_id) DO NOTHING RETURNING corner_id`,
         [ids, SUBSCRIBABLE_EVENT_KINDS],
       );
@@ -96,26 +96,7 @@ export async function setRoomEventSubscriptions(
   identityId: string,
   kinds: readonly string[],
 ): Promise<string[]> {
-  const result = await database.query<{ event_subscriptions: string[] }>(
-    `WITH surface AS (
-      SELECT room.id,room.parent_id,CASE WHEN ${cornerReviewerSql('room')}=$2
-        AND NOT $3::jsonb @> '["check-passed"]'::jsonb
-        THEN $3::jsonb||'["check-passed"]'::jsonb ELSE $3::jsonb END event_subscriptions
-      FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
-      JOIN memberships member ON member.room_id=COALESCE(room.parent_id,room.id)
-        AND member.identity_id=$2 AND member.removed_at IS NULL WHERE room.id=$1
-    ), room_update AS (
-      UPDATE memberships member SET event_subscriptions=surface.event_subscriptions FROM surface
-      WHERE surface.parent_id IS NULL AND member.room_id=surface.id AND member.identity_id=$2
-      RETURNING member.event_subscriptions
-    ), corner_update AS (
-      INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions)
-      SELECT id,$2,event_subscriptions FROM surface WHERE parent_id IS NOT NULL
-      ON CONFLICT(corner_id,identity_id) DO UPDATE SET event_subscriptions=EXCLUDED.event_subscriptions
-      RETURNING event_subscriptions
-    ) SELECT * FROM room_update UNION ALL SELECT * FROM corner_update`,
-    [roomId, identityId, JSON.stringify(kinds)],
-  );
+  const result = await writeSurfaceEventSubscriptions<{ event_subscriptions: string[] }>(database, [roomId, identityId, JSON.stringify(kinds)]);
   if (!result.rowCount) throw new Error('daemon room access denied');
   return result.rows[0]!.event_subscriptions;
 }

@@ -1,3 +1,6 @@
+import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
+import { cornerCommissionerSql } from './corner-opening.js';
+import { cornerWaitingReportSql, humanReportCornerSql } from './corner-waiting-report.js';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
   CORNER_AGENT_UNREACHABLE_CARD_TYPE,
@@ -15,24 +18,23 @@ const BLOCKING_ITEM = `COALESCE((item.text ~ '^(needs-decision|blocked):[[:space
   OR item.card_type IN ('grant-request','permission','connector-offer',
     'agent-sign-in','app-sign-in','squire-approval')),false)`;
 /** Historical automatic escalations remain readable but never request action. */
-const RETIRED_AUTOMATIC_ATTENTION = [
-  CORNER_CHECKS_BLOCKED_CARD_TYPE, CORNER_REVIEW_DEADLOCK_CARD_TYPE, CORNER_MERGE_YES_CARD_TYPE,
-].map(type => `'${type}'`).join(',');
+function retiredAutomaticAttentionSql(): string {
+  // Resolve imported card names when SQL is built, after cyclic command imports initialize.
+  return [CORNER_CHECKS_BLOCKED_CARD_TYPE, CORNER_REVIEW_DEADLOCK_CARD_TYPE, CORNER_MERGE_YES_CARD_TYPE]
+    .map(type => `'${type}'`).join(',');
+}
 /** Card types owed until resolved, read whatever their age. */
-const NEVER_EXPIRES = [
-  CHOICE_CARD_TYPE,
-  'grant-request',
-  CORNER_AGENT_UNREACHABLE_CARD_TYPE,
-]
-  .map((type) => `'${type}'`)
-  .join(',');
+function neverExpiresSql(): string {
+  return [CHOICE_CARD_TYPE, 'grant-request', CORNER_AGENT_UNREACHABLE_CARD_TYPE]
+    .map((type) => `'${type}'`).join(',');
+}
 
 /** `uuid::text` spells a uuid this way, so a card id matching it compares as the original text did. */
 const CANONICAL_UUID = '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$';
 
 /** The person commissioned corner `finished`, or opened it. */
 function commissionedBySql(finished: string, personIdExpr: string): string {
-  return `(${finished}.commissioned_by=${personIdExpr} OR EXISTS (
+  return `(${cornerCommissionerSql(`${finished}.corner_id`)}=${personIdExpr} OR EXISTS (
     SELECT 1 FROM rooms opened WHERE opened.id=${finished}.corner_id AND opened.created_by=${personIdExpr}))`;
 }
 
@@ -50,7 +52,7 @@ export function addressedToPersonSql(
   personKindExpr: string,
   includeCommissioned = true,
 ): string {
-  return `((COALESCE(${m}.card_type,'') NOT IN (${RETIRED_AUTOMATIC_ATTENTION})) AND (
+  return `((COALESCE(${m}.card_type,'') NOT IN (${retiredAutomaticAttentionSql()})) AND (
     EXISTS (
       SELECT 1 FROM messages addressed
       WHERE addressed.id = ${m}.reply_to_message_id
@@ -96,7 +98,7 @@ export function addressedToPersonSql(
         SELECT 1 FROM corner_facts finished
         WHERE finished.corner_id=${m}.room_id
           AND ${commissionedBySql('finished', personIdExpr)}
-          AND ${m}.author_id=finished.owner_agent_id
+          AND ${m}.author_id=${cornerOwnerSql('finished.corner_id')}
           -- A corner without a pull request path: its parent Room has no repository.
           AND NOT EXISTS (
             SELECT 1 FROM rooms finished_corner
@@ -126,7 +128,7 @@ export function addressedToPersonSql(
  * each person's latest post once instead of once per item, and skips items
  * that can no longer be owed.
  */
-function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent?: string): string {
+function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent?: string, historical = false): string {
   const answered = bulk
     ? `(answered.at IS NULL OR answered.at<=item.created_at)`
     : `NOT EXISTS (
@@ -138,27 +140,7 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent
   // The computed owed-corner CASE below cannot use messages.room_id's index.
   // Bound a one-corner refresh before evaluating it, including both kinds of
   // cross-Room item. Keep the final rules authoritative about attribution.
-  const candidates = parent ? `WITH candidate_items AS MATERIALIZED (
-      SELECT item.id FROM rooms child JOIN messages item ON item.room_id=child.id
-        WHERE child.parent_id=${parent}
-      UNION
-      SELECT item.id FROM rooms child JOIN messages item ON item.card->>'sourceRoomId'=child.id::text
-        WHERE child.parent_id=${parent}
-      UNION
-      SELECT item.id FROM rooms child JOIN agent_commands report ON
-        (CASE WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
-          THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END)=child.id
-        JOIN messages item ON item.request_id=report.id WHERE child.parent_id=${parent}
-    ) ` : corner ? `WITH candidate_items AS MATERIALIZED (
-      SELECT id FROM messages WHERE room_id=${corner}
-      UNION
-      SELECT id FROM messages WHERE card->>'sourceRoomId'=${corner}::text
-      UNION
-      SELECT item.id FROM agent_commands report
-      JOIN messages item ON item.request_id=report.id
-      WHERE (CASE WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
-        THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END)=${corner}
-    ) ` : '';
+  const candidates = corner || parent ? `WITH ${cornerMessageCandidatesSql(corner, parent)} ` : '';
   return `${candidates}SELECT owed_corner.id,person.id,item.id,item.created_at,
       CASE
         WHEN ${BLOCKING_ITEM} THEN CASE
@@ -199,14 +181,14 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent
         : ''
     }
     WHERE item.deleted_at IS NULL AND (${where})
-      AND (item.card->>'reportToId' IS NULL OR item.card->>'waitingAnswered' IS DISTINCT FROM 'true')
+      ${historical ? '' : `AND (item.card->>'reportToId' IS NULL OR item.card->>'waitingAnswered' IS DISTINCT FROM 'true')`}
       AND (item.room_id=owed_corner.id OR EXISTS (
         SELECT 1 FROM memberships source_member WHERE source_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=item.room_id)
           AND source_member.identity_id=person.id AND source_member.removed_at IS NULL))
       ${
         bulk
           ? `AND (${BLOCKING_ITEM} OR item.created_at>now()-interval '${CORNER_OWED_EXPIRY_HOURS} hours'
-        OR (item.card_type IN (${NEVER_EXPIRES})
+        OR (item.card_type IN (${neverExpiresSql()})
           AND (item.card_type<>'${CHOICE_CARD_TYPE}'
             OR COALESCE(item.card->>'status','open')='open')))`
           : ''
@@ -236,8 +218,66 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent
           THEN item.card->>'mode'='question' AND COALESCE(item.card->>'status','open')='open'
             AND ${addressedToPersonSql('item', 'person.id', 'person.handle', 'person.kind')}
         ELSE ${addressedToPersonSql('item', 'person.id', 'person.handle', 'person.kind')}
-          AND ${answered}
+          AND ${historical ? 'true' : answered}
       END`;
+}
+
+/** First answer per historical answerable item; later replies do not restart idle. */
+export function cornerOwedAnswerTimesSql(corner: string): string {
+  return `SELECT min(answer.created_at) ended_at
+    FROM (${cornerOwedRowsSql(`owed_corner.id=${corner}`, false, corner, undefined, true)})
+      owed(corner_id,person_id,message_id,created_at,expires_at,answerable,blocking)
+    JOIN messages item ON item.id=owed.message_id
+    JOIN messages answer ON answer.author_id=owed.person_id
+      AND answer.room_id IN (owed.corner_id,item.room_id)
+      AND answer.presentation='message' AND answer.deleted_at IS NULL
+      AND answer.created_at>owed.created_at
+    WHERE owed.answerable
+    GROUP BY owed.message_id,owed.person_id`;
+}
+
+/** The same answer predicate clears a live report and dates its historical resolution. */
+function reportAnswerSql(report: string, answer: string, order = false): string {
+  if (order) return `${answer}.room_id=${report}.corner_id
+    AND ${answer}.private_payload->>'kind'='order'
+    AND ${answer}.private_payload->>'authorId'=${report}.commander_id`;
+  return `${answer}.presentation='message' AND ${answer}.system_event IS NULL AND ${answer}.deleted_at IS NULL
+    AND ${answer}.room_id IN (${report}.corner_id,${report}.return_room_id)
+    AND ${answer}.created_at>${report}.created_at
+    AND (${answer}.author_id=${report}.commander_id OR EXISTS (
+      SELECT 1 FROM room_access member JOIN identities author ON author.id=member.identity_id
+      WHERE member.room_id=${report}.corner_id AND member.removed_at IS NULL
+        AND author.id=${answer}.author_id AND author.kind='human'))`;
+}
+
+/** Answered worker reports, read from the command/message log, date their resolution. */
+export function cornerReportAnswerTimesSql(corner: string): string {
+  return `WITH report_corner AS MATERIALIZED (
+      SELECT c.id,${cornerImplementerSql('f', 'c')} worker_id FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
+      WHERE c.id=${corner}
+    ), reports AS (
+    SELECT scope.id corner_id,report.room_id return_room_id,report.created_at,report.agent_id commander_id
+    FROM report_corner scope JOIN agent_commands report
+      ON report.private_payload->>'fromRoomId'=scope.id::text AND report.private_payload->>'kind'='report'
+    WHERE report.private_payload->>'authorId'=scope.worker_id
+      AND report.private_payload->>'text' ~ '^(needs-decision|blocked):'
+      AND report.private_payload->>'waitingAnswered'='true'
+    UNION ALL
+    SELECT scope.id,item.room_id,item.created_at,item.card->>'reportToId'
+    FROM report_corner scope JOIN messages item ON item.author_id=scope.worker_id
+    WHERE item.card->>'reportToId' IS NOT NULL
+      AND ${humanReportCornerSql('item')}=scope.id::text
+      AND item.presentation='message' AND item.system_event IS NULL AND item.deleted_at IS NULL
+      AND item.text ~ '^(needs-decision|blocked):'
+      AND item.card->>'waitingAnswered'='true'
+  ) SELECT resolution.ended_at FROM reports report
+    CROSS JOIN LATERAL (SELECT min(answered.at) ended_at FROM (
+      SELECT answer.created_at at FROM messages answer WHERE ${reportAnswerSql('report', 'answer')}
+      UNION ALL
+      SELECT answer.created_at FROM agent_commands answer WHERE ${reportAnswerSql('report', 'answer', true)}
+        -- Orders can clear a wait within the same transaction/timestamp.
+        AND answer.created_at>=report.created_at
+    ) answered) resolution`;
 }
 
 /** Refresh report-derived attention after edits or membership changes in its return Room. */
@@ -256,6 +296,31 @@ function refreshReportedCornersSql(room: string, person: string): string {
 }
 
 const CORNER_OWED_INSERT = `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable,blocking)`;
+
+/** Bound historical message probes to one corner or its parent Room. */
+function cornerMessageCandidatesSql(corner?: string, parent?: string): string {
+  return parent ? `candidate_items AS MATERIALIZED (
+      SELECT item.id FROM rooms child JOIN messages item ON item.room_id=child.id
+        WHERE child.parent_id=${parent}
+      UNION
+      SELECT item.id FROM rooms child JOIN messages item ON item.card->>'sourceRoomId'=child.id::text
+        WHERE child.parent_id=${parent}
+      UNION
+      SELECT item.id FROM rooms child JOIN agent_commands report ON
+        (CASE WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
+          THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END)=child.id
+        JOIN messages item ON item.request_id=report.id WHERE child.parent_id=${parent}
+    )` : corner ? `candidate_items AS MATERIALIZED (
+      SELECT id FROM messages WHERE room_id=${corner}
+      UNION
+      SELECT id FROM messages WHERE card->>'sourceRoomId'=${corner}::text
+      UNION
+      SELECT item.id FROM agent_commands report
+      JOIN messages item ON item.request_id=report.id
+      WHERE (CASE WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
+        THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END)=${corner}
+    )` : '';
+}
 
 /**
  * `corner_owed` holds every open owed item per person, so readers look owed
@@ -279,77 +344,52 @@ CREATE TABLE IF NOT EXISTS corner_report_blockers (
 ALTER TABLE corner_report_blockers ALTER COLUMN report_id DROP NOT NULL;
 ALTER TABLE corner_report_blockers ADD COLUMN IF NOT EXISTS message_id text REFERENCES messages(id) ON DELETE CASCADE;
 ALTER TABLE corner_report_blockers ADD COLUMN IF NOT EXISTS commander_id text REFERENCES identities(id) ON DELETE CASCADE;
-UPDATE corner_report_blockers blocker SET commander_id=report.agent_id FROM agent_commands report
-  WHERE report.id=blocker.report_id AND blocker.commander_id IS NULL;
+-- Keep the legacy table and its FK indexes for later owner-approved removal.
+-- Runtime readers and writers use the report log instead.
 CREATE INDEX IF NOT EXISTS corner_report_blockers_return_room ON corner_report_blockers(return_room_id,person_id);
 CREATE INDEX IF NOT EXISTS corner_report_blockers_message ON corner_report_blockers(message_id);
 CREATE INDEX IF NOT EXISTS corner_private_reports_origin ON agent_commands
   ((private_payload->>'fromRoomId'),(private_payload->>'authorId'),created_at DESC,id DESC)
   WHERE private_payload->>'kind'='report';
--- Recover unresolved reports already sent before this index existed.
-INSERT INTO corner_report_blockers(corner_id,person_id,report_id,return_room_id,created_at,commander_id)
-SELECT corner.id,person.id,report.id,report.room_id,report.created_at,report.agent_id
-FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
-JOIN LATERAL (SELECT command.* FROM agent_commands command
-  WHERE command.private_payload->>'kind'='report'
-    AND command.private_payload->>'fromRoomId'=corner.id::text
-    AND command.private_payload->>'authorId'=COALESCE(fact.worker_agent_id,fact.owner_agent_id)
-  ORDER BY command.created_at DESC,command.id DESC LIMIT 1) report ON true
-JOIN room_access member ON member.room_id=corner.id AND member.removed_at IS NULL
-JOIN identities person ON person.id=member.identity_id
-CROSS JOIN LATERAL (SELECT report.private_payload->>'text' text,'message'::text presentation,
-  corner.id room_id,COALESCE(fact.worker_agent_id,fact.owner_agent_id) author_id) item
-WHERE corner.archived_at IS NULL AND item.text ~ '^(needs-decision|blocked):'
-  AND (person.id=report.agent_id OR (person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}))
-  AND report.private_payload->>'waitingAnswered' IS DISTINCT FROM 'true'
-  AND NOT EXISTS(SELECT 1 FROM messages answer WHERE answer.room_id IN (corner.id,report.room_id)
-    AND (answer.author_id=report.agent_id OR EXISTS(SELECT 1 FROM identities author
-      JOIN room_access member ON member.identity_id=author.id AND member.room_id=corner.id
-      WHERE author.id=answer.author_id AND author.kind='human' AND member.removed_at IS NULL))
-    AND answer.presentation='message' AND answer.system_event IS NULL AND answer.deleted_at IS NULL
-    AND answer.created_at>report.created_at)
-  AND NOT EXISTS(SELECT 1 FROM agent_commands answer WHERE answer.room_id=corner.id
-    AND answer.private_payload->>'kind'='order' AND answer.private_payload->>'authorId'=report.agent_id
-    AND answer.created_at>report.created_at)
-ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION clear_corner_report_blockers() RETURNS trigger LANGUAGE plpgsql AS $report$
+DECLARE scope uuid; answer_author text; answer_at timestamptz; answer_room uuid;
 BEGIN
   IF TG_TABLE_NAME='messages' THEN
-    IF NOT EXISTS(SELECT 1 FROM corner_report_blockers
-      WHERE corner_id=NEW.room_id OR return_room_id=NEW.room_id) THEN
-      RETURN NULL;
-    END IF;
-    WITH answered AS (DELETE FROM corner_report_blockers blocker WHERE NEW.presentation='message'
-      AND NEW.system_event IS NULL AND NEW.deleted_at IS NULL
-      AND (blocker.corner_id=NEW.room_id OR blocker.return_room_id=NEW.room_id)
-      AND blocker.created_at<NEW.created_at
-      AND (blocker.commander_id=NEW.author_id OR EXISTS(SELECT 1 FROM room_access member JOIN identities author ON author.id=member.identity_id
-        WHERE member.room_id=blocker.corner_id AND member.removed_at IS NULL AND author.id=NEW.author_id
-          AND author.kind='human'))
-      RETURNING blocker.report_id,blocker.message_id)
-    , commands AS (UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{waitingAnswered}','true')
-      WHERE id IN (SELECT report_id FROM answered) RETURNING id)
-    UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
-      WHERE id IN (SELECT message_id FROM answered);
+    IF NEW.presentation<>'message' OR NEW.system_event IS NOT NULL OR NEW.deleted_at IS NOT NULL THEN RETURN NULL; END IF;
+    answer_author=NEW.author_id; answer_at=NEW.created_at; answer_room=NEW.room_id;
   ELSIF TG_TABLE_NAME='agent_commands' THEN
     IF NEW.private_payload->>'kind' IS DISTINCT FROM 'order' THEN RETURN NULL; END IF;
-    WITH answered AS (DELETE FROM corner_report_blockers blocker WHERE blocker.corner_id=NEW.room_id
-      AND NEW.private_payload->>'kind'='order'
-      AND blocker.commander_id=NEW.private_payload->>'authorId' RETURNING blocker.report_id,blocker.message_id)
-    , commands AS (UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{waitingAnswered}','true')
-      WHERE id IN (SELECT report_id FROM answered) RETURNING id)
-    UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
-      WHERE id IN (SELECT message_id FROM answered);
+    scope=NEW.room_id; answer_author=NEW.private_payload->>'authorId';
   ELSE
-    IF NEW.lifecycle->'pr'->>'headSha' IS DISTINCT FROM OLD.lifecycle->'pr'->>'headSha'
-      AND NEW.lifecycle->'pr'->>'headSha' IS NOT NULL THEN
-      WITH answered AS (DELETE FROM corner_report_blockers WHERE corner_id=NEW.corner_id RETURNING report_id,message_id)
-      , commands AS (UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{waitingAnswered}','true')
-        WHERE id IN (SELECT report_id FROM answered) RETURNING id)
-      UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
-        WHERE id IN (SELECT message_id FROM answered);
-    END IF;
+    IF NEW.lifecycle->'pr'->>'headSha' IS NOT DISTINCT FROM OLD.lifecycle->'pr'->>'headSha'
+      OR NEW.lifecycle->'pr'->>'headSha' IS NULL THEN RETURN NULL; END IF;
+    scope=NEW.corner_id;
   END IF;
+  WITH answered AS MATERIALIZED (
+    SELECT DISTINCT waiting.report_id,waiting.message_id,waiting.card_id
+    FROM rooms report_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('report_corner')}) waiting
+    WHERE report_corner.parent_id IS NOT NULL
+      AND (report_corner.id=scope OR (scope IS NULL AND report_corner.id::text IN (
+        SELECT answer_room::text
+        UNION SELECT report.private_payload->>'fromRoomId' FROM agent_commands report
+          WHERE report.room_id=answer_room AND report.private_payload->>'kind'='report'
+        UNION SELECT ${humanReportCornerSql('report')} FROM messages report
+          WHERE report.room_id=answer_room AND report.card->>'reportToId' IS NOT NULL
+      )))
+      AND (TG_TABLE_NAME='corner_facts'
+        OR (TG_TABLE_NAME='agent_commands' AND waiting.commander_id=answer_author)
+        OR (TG_TABLE_NAME='messages' AND waiting.created_at<answer_at
+          AND (waiting.corner_id=answer_room OR waiting.return_room_id=answer_room)
+          AND (waiting.commander_id=answer_author OR EXISTS (
+            SELECT 1 FROM room_access member JOIN identities author ON author.id=member.identity_id
+            WHERE member.room_id=waiting.corner_id AND member.removed_at IS NULL
+              AND author.id=answer_author AND author.kind='human'))))
+  ), commands AS (
+    UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{waitingAnswered}','true')
+      WHERE id IN (SELECT report_id FROM answered) RETURNING id
+  )
+  UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
+    WHERE id IN (SELECT message_id FROM answered UNION SELECT card_id FROM answered);
   RETURN NULL;
 END $report$;
 DROP TRIGGER IF EXISTS corner_report_answer ON messages;
@@ -362,10 +402,24 @@ DROP TRIGGER IF EXISTS corner_report_push ON corner_facts;
 CREATE TRIGGER corner_report_push AFTER UPDATE OF lifecycle ON corner_facts FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
 -- A queued automatic wake predating the report is not new input either.
 CREATE OR REPLACE FUNCTION quiet_corner_report_wakes() RETURNS trigger LANGUAGE plpgsql AS $quiet$
+DECLARE corner uuid;
 BEGIN
+  IF TG_TABLE_NAME='agent_commands' THEN
+    IF NEW.private_payload->>'kind' IS DISTINCT FROM 'report' THEN RETURN NULL; END IF;
+    SELECT id INTO corner FROM rooms WHERE NEW.private_payload->>'fromRoomId'=id::text;
+  ELSE
+    IF NEW.card_type='agent-command' AND NEW.card->>'kind'='report' THEN
+      corner=NEW.room_id;
+    ELSIF NEW.card->>'reportToId' IS NOT NULL THEN
+      SELECT id INTO corner FROM rooms WHERE ${humanReportCornerSql('NEW')}=id::text;
+    ELSE RETURN NULL;
+    END IF;
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM rooms report_corner
+    CROSS JOIN LATERAL (${cornerWaitingReportSql('report_corner')}) waiting WHERE report_corner.id=corner) THEN RETURN NULL; END IF;
   WITH cancelled AS (
     UPDATE agent_commands command SET state='cancelled',completed_at=now(),cancellation_reason='corner_waiting'
-    WHERE command.room_id=NEW.corner_id AND command.state='pending' AND command.action IN ('input','resume')
+    WHERE command.room_id=corner AND command.state='pending' AND command.action IN ('input','resume')
       AND command.private_payload->>'kind' IS DISTINCT FROM 'order'
       AND command.private_payload->>'kind' IS DISTINCT FROM 'report'
       AND NOT EXISTS(SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
@@ -377,7 +431,12 @@ BEGIN
   RETURN NULL;
 END $quiet$;
 DROP TRIGGER IF EXISTS corner_report_quiet ON corner_report_blockers;
-CREATE TRIGGER corner_report_quiet AFTER INSERT OR UPDATE ON corner_report_blockers FOR EACH ROW EXECUTE FUNCTION quiet_corner_report_wakes();
+DROP TRIGGER IF EXISTS corner_report_quiet ON agent_commands;
+CREATE TRIGGER corner_report_quiet AFTER INSERT OR UPDATE OF private_payload ON agent_commands
+  FOR EACH ROW EXECUTE FUNCTION quiet_corner_report_wakes();
+DROP TRIGGER IF EXISTS corner_report_quiet ON messages;
+CREATE TRIGGER corner_report_quiet AFTER INSERT OR UPDATE OF card,text ON messages
+  FOR EACH ROW EXECUTE FUNCTION quiet_corner_report_wakes();
 CREATE TABLE IF NOT EXISTS corner_owed (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   person_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -558,10 +617,6 @@ BEGIN
   FROM room_access member
   JOIN identities person ON person.id=member.identity_id AND person.kind='human'
   WHERE member.room_id=NEW.corner_id AND member.removed_at IS NULL;
-  IF TG_OP='UPDATE' AND OLD.commissioned_by IS DISTINCT FROM NEW.commissioned_by
-    AND OLD.commissioned_by IS NOT NULL THEN
-    PERFORM corner_owed_refresh(NEW.corner_id, OLD.commissioned_by);
-  END IF;
   RETURN NULL;
 END
 $corner_owed$;
@@ -570,11 +625,26 @@ CREATE TRIGGER corner_owed_facts_insert AFTER INSERT ON corner_facts
   FOR EACH ROW EXECUTE FUNCTION corner_owed_facts_changed();
 DROP TRIGGER IF EXISTS corner_owed_facts_update ON corner_facts;
 CREATE TRIGGER corner_owed_facts_update
-  AFTER UPDATE OF commissioned_by,owner_agent_id ON corner_facts
+  AFTER UPDATE OF owner_agent_id ON corner_facts
   FOR EACH ROW WHEN (
-    (OLD.commissioned_by,OLD.owner_agent_id) IS DISTINCT FROM
-    (NEW.commissioned_by,NEW.owner_agent_id)
+    OLD.owner_agent_id IS DISTINCT FROM NEW.owner_agent_id
   ) EXECUTE FUNCTION corner_owed_facts_changed();
+
+-- Opening provenance becomes available only when the order is inserted.
+CREATE OR REPLACE FUNCTION corner_owed_opening_inserted() RETURNS trigger
+LANGUAGE plpgsql AS $corner_owed$
+BEGIN
+  PERFORM corner_owed_refresh(NEW.room_id, member.identity_id)
+  FROM room_access member
+  JOIN identities person ON person.id=member.identity_id AND person.kind='human'
+  WHERE member.room_id=NEW.room_id AND member.removed_at IS NULL;
+  RETURN NULL;
+END
+$corner_owed$;
+DROP TRIGGER IF EXISTS corner_owed_opening_insert ON agent_commands;
+CREATE TRIGGER corner_owed_opening_insert AFTER INSERT ON agent_commands
+  FOR EACH ROW WHEN (NEW.reason='corner_objective')
+  EXECUTE FUNCTION corner_owed_opening_inserted();
 
 -- A grant changing status recomputes the cards that ask it: the owed ones,
 -- and any in the grant's own Room. A card that gains a grant is an edit,
@@ -609,34 +679,10 @@ CREATE TRIGGER corner_owed_permission_update AFTER UPDATE OF status ON permissio
   FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
   EXECUTE FUNCTION corner_owed_permission_changed();
 
--- Human-directed reports keep their visible message and share the same waiting index.
-INSERT INTO corner_report_blockers(corner_id,person_id,message_id,return_room_id,created_at,commander_id)
-SELECT DISTINCT ON (owed.corner_id,owed.person_id)
-  owed.corner_id,owed.person_id,report.id,report.room_id,report.created_at,report.card->>'reportToId'
-FROM corner_owed owed JOIN messages report ON report.id=owed.message_id
-JOIN corner_facts fact ON fact.corner_id=owed.corner_id
-WHERE owed.blocking AND report.card->>'reportToId' IS NOT NULL
-  AND report.card->>'waitingAnswered' IS DISTINCT FROM 'true'
-  AND report.author_id=COALESCE(fact.worker_agent_id,fact.owner_agent_id)
-  AND NOT EXISTS(SELECT 1 FROM messages answer JOIN room_access member
-    ON member.room_id=owed.corner_id AND member.identity_id=answer.author_id AND member.removed_at IS NULL
-    JOIN identities person ON person.id=answer.author_id AND person.kind='human'
-    WHERE answer.room_id IN (owed.corner_id,report.room_id) AND answer.presentation='message'
-      AND answer.system_event IS NULL AND answer.deleted_at IS NULL AND answer.created_at>report.created_at)
-  AND NOT EXISTS(SELECT 1 FROM agent_commands answer WHERE answer.room_id=owed.corner_id
-    AND answer.private_payload->>'kind'='order' AND answer.private_payload->>'authorId'=report.card->>'reportToId'
-    AND answer.created_at>report.created_at)
-ORDER BY owed.corner_id,owed.person_id,report.created_at DESC,report.id DESC
-ON CONFLICT DO NOTHING;
-
--- Old writers may have queued work before quieting was installed. Reapply it
--- to restored and existing blockers without changing their waiting timestamps.
-UPDATE corner_report_blockers SET commander_id=commander_id;
-
 -- Existing projection rows from the former automatic escalation policy must
 -- not keep a person waiting after release. History itself stays readable.
 DELETE FROM corner_owed owed USING messages item
-WHERE item.id=owed.message_id AND item.card_type IN (${RETIRED_AUTOMATIC_ATTENTION});
+WHERE item.id=owed.message_id AND item.card_type IN (${retiredAutomaticAttentionSql()});
 `;
 }
 

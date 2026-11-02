@@ -1,3 +1,5 @@
+import { BackgroundWork, startBackgroundWork } from './background-work.js';
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
@@ -178,7 +180,7 @@ export async function createComputerSession(
     throw new Error('computer session id is invalid');
   if (input.expiresAt !== undefined && !Number.isFinite(input.expiresAt))
     throw new Error('computer share expiry is invalid');
-  const title = input.title?.trim().slice(0, 120) || 'Browser';
+  const title = input.title?.trim().slice(0, 120) || systemMessage("computer-session.browser");
   const id = randomBytes(32).toString('base64url');
   const messageId = randomBytes(32).toString('hex');
   const url = computerSessionUrl(id);
@@ -192,8 +194,8 @@ export async function createComputerSession(
       roomId: input.roomId,
       authorId: input.agentId,
       subject: { kind: 'agent', id: input.agentId, name: agent.name },
-      verb: 'shared',
-      object: 'a live browser',
+      verb: systemMessage("computer-session.shared"),
+      object: systemMessage("computer-session.a-live-browser"),
       presentation: 'card',
       cardType: 'computer-session',
       card: { id, url, title, status: 'live' },
@@ -295,20 +297,15 @@ export async function expireComputerSessions(database: SqlDatabase, live: LiveHu
 
 const COMPUTER_EXPIRY_SWEEP_MS = 15_000;
 
-/** Sweeps once now, then on an interval. The returned function stops it. */
+/** Local channel cleanup runs at startup and on its work queue deadline. */
 export function startComputerExpirySweep(database: SqlDatabase, live: LiveHub, intervalMs = COMPUTER_EXPIRY_SWEEP_MS): () => void {
-  let running = false;
-  const sweep = () => {
-    if (running) return;
-    running = true;
-    void expireComputerSessions(database, live)
-      .catch((error: unknown) => console.warn('[computer-share] expiry sweep failed', error instanceof Error ? error.message : error))
-      .finally(() => { running = false; });
-  };
-  sweep();
-  const timer = setInterval(sweep, intervalMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
+  const work = new BackgroundWork();
+  work.add('computer-expiry', intervalMs, async () => {
+    await expireComputerSessions(database, live)
+      .catch((error: unknown) => console.warn('[computer-share] expiry sweep failed', error instanceof Error ? error.message : error));
+  });
+  const stop = startBackgroundWork(work);
+  return () => { void stop(); };
 }
 
 /** One authoritative read when a live viewer's socket reconnects. */

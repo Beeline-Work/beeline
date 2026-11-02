@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { redactReplayError } from '@beeline/api-contract/daemon';
 import { createAgentCommand } from '../../server/src/agent-command.js';
+import { writeCornerObjective } from '../../server/src/corner-objective.js';
 import { migrate } from '../../server/src/database.js';
 import { PgliteDatabase } from '../../server/src/test-support.js';
 const { DaemonService } = await import(process.env.BEELINE_REPLAY_BUILT_PROOF ? '../../server/dist/daemon-service.js' : '../../server/src/daemon-service.js');
@@ -218,11 +219,7 @@ describe('corner-start transient clone against the real server', () => {
       sourceMessageId: REQUEST,
       reason: 'corner_objective',
     });
-    // Navigation comes from the opening order, not the retired corner-facts objective.
-    await database.query(
-      `UPDATE agent_commands SET private_payload=$2::jsonb WHERE id=$1`,
-      [command!.id, JSON.stringify({ objective: 'Ship the importer dry-run flag' })],
-    );
+    await writeCornerObjective(database, CORNER, 'Ship the importer dry-run flag');
     const daemon = new DaemonService(database, new LiveHub(), async () => ({
       token: 'gh-token',
       expiresAt: Math.floor(Date.now() / 1000) + 3600,

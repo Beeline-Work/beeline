@@ -1,3 +1,4 @@
+import { startConnectionWork } from './background-work.js';
 import { voiceTempo, VOICE_PCM_THRESHOLD } from './voice-tempo.js';
 import { VoiceEagerReply } from './voice-eager-reply.js';
 import { VoiceSpeechPrefetch } from './voice-speech-prefetch.js';
@@ -178,12 +179,12 @@ export class VoiceRoomRuntime {
   private lastWorkFinishedAt = 0;
   private endingDeadline: number | null = null;
   private endingTonePlayed = false;
-  private quietCheck?: ReturnType<typeof setInterval>;
+  private quietCheck?: (() => void);
   private checkingInactivity = false;
   private lastTouch = 0;
   private touching = false;
   private leaseExpiry?: ReturnType<typeof setTimeout>;
-  private leaseRenewal?: ReturnType<typeof setInterval>;
+  private leaseRenewal?: (() => void);
   private closed = false;
   private audioDisposed = false;
   private leaseValidUntil = 0;
@@ -292,14 +293,12 @@ export class VoiceRoomRuntime {
     // Sweep missing humans even when no audio or signals arrive.
     // Committed events still drive report reads.
     this.armLeaseExpiry();
-    this.leaseRenewal = setInterval(() => {
+    this.leaseRenewal = startConnectionWork(() => {
       this.task(async () => {
         if (await this.renewLease()) await this.sweepMissingParticipants();
       });
     }, 5000);
-    this.leaseRenewal.unref();
-    this.quietCheck = setInterval(() => this.task(() => this.checkInactivity()), 1000);
-    this.quietCheck.unref();
+    this.quietCheck = startConnectionWork(() => this.task(() => this.checkInactivity()), 1000);
     this.touch();
     await this.countHumans(true).catch(() => {});
     await this.refresh();
@@ -1174,9 +1173,9 @@ export class VoiceRoomRuntime {
     this.closed = true;
     for (const resolve of this.quietWaiters) resolve();
     this.quietWaiters.clear();
-    clearInterval(this.leaseRenewal);
+    this.leaseRenewal?.();
     clearTimeout(this.leaseExpiry);
-    clearInterval(this.quietCheck);
+    this.quietCheck?.();
     this.shutdown.abort();
     for (const human of this.eager.keys()) this.cancelEager(human);
     this.assembler.close();

@@ -1,3 +1,7 @@
+export { assignCornerWorker, seedCornerOpening } from './test-fixtures/corner-commands.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { ensureSystemIdentity, systemLine } from './system-line.js';
+import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -10,11 +14,18 @@ import { DatabaseBackgroundWork } from './database-background-work.js';
 
 export class PgliteDatabase implements SqlDatabase {
   readonly backgroundWork = new DatabaseBackgroundWork();
+  #client: PGliteInterface | undefined;
   // The vector extension is loaded unconditionally: institutional_memory_items
   // and workspace_skills declare `vector(...)` columns in the shared server
   // schema, so every test that runs `migrate()` needs it available, not only
   // the tests that exercise embeddings.
-  constructor(readonly client: PGliteInterface = new PGlite({ extensions: { vector } })) {}
+  constructor(client: PGliteInterface = new PGlite({ extensions: { vector } })) {
+    this.#client = client;
+  }
+  get client(): PGliteInterface {
+    if (!this.#client) throw new Error('Test database is closed');
+    return this.#client;
+  }
   static fromSnapshot(snapshot: Blob | File): PgliteDatabase {
     return new PgliteDatabase(new PGlite({ loadDataDir: snapshot, extensions: { vector } }));
   }
@@ -39,7 +50,17 @@ export class PgliteDatabase implements SqlDatabase {
   }
   async close() {
     await this.backgroundWork.drain();
-    await this.client.close();
+    const client = this.#client;
+    if (!client) return;
+    try {
+      await client.close();
+    } finally {
+      // Vitest 2 keeps instance spies in its registry, including restore closures
+      // that retain services and this wrapper. PGlite.close() stops PostgreSQL
+      // but leaves its WASM heap attached to the engine; release our ownership
+      // so every completed test does not retain another engine (~250 MB).
+      this.#client = undefined;
+    }
   }
   private executor(transaction: Transaction): SqlDatabase {
     return {
@@ -201,3 +222,25 @@ export function describedWorkflow(value: unknown): unknown {
     } : {}),
   };
 }
+
+
+/**
+ * Records a corner run state as its newest handoff card, the way
+ * `corner-lifecycle.ts` writes one; the card is the run state (`corner-run.ts`).
+ */
+export async function recordCornerRun(
+  db: SqlDatabase, cornerId: string, toState: string, outcome?: string,
+): Promise<void> {
+  await ensureSystemIdentity(db);
+  const seq = (await db.query<{ seq: number }>(
+    `SELECT COALESCE(max((card->>'seq')::int),0)+1 seq FROM messages WHERE room_id=$1 AND card_type=$2`,
+    [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
+  )).rows[0]!.seq;
+  await systemLine(db, {
+    roomId: cornerId, authorId: SYSTEM_IDENTITY_ID,
+    subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: '@system' },
+    verb: 'handed off', object: toState, presentation: 'card', cardType: CORNER_LIFECYCLE_CARD_TYPE,
+    card: { runId: cornerId, toState, outcome: outcome ?? null, seq },
+  });
+}
+

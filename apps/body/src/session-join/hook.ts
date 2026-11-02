@@ -4,6 +4,7 @@
 // `usebeeline session hook <app> <event>` runs from an app's hook system or plugin. It records that the session is
 // alive, and prints whatever makes the app show Beeline messages waiting for it. It never fails loudly: a broken
 // Beeline must not break the app.
+import { sessionAgentBehavior } from '../agent-command.js';
 import type { AgentId } from './agents.js';
 import { forgetHookSession, readState, recordHookSession, takeInbox, type JoinedSession } from './store.js';
 
@@ -21,36 +22,19 @@ export function normalizeEvent(event: string, state?: string): 'start' | 'prompt
 
 /** Hook events whose output an app puts in front of the model. */
 export function takesMail(agent: AgentId, event: string): boolean {
-  // Antigravity consumes injectSteps before invocation, and a continue reason at a natural Stop.
-  if (agent === 'antigravity') return ['session-start', 'user-prompt-submit', 'stop'].includes(event);
-  // Plugins ask when the session can take a message; their other calls only report state.
-  if (agent === 'opencode' || agent === 'hermes' || agent === 'zcode') return event === 'poll';
-  if (agent === 'pi') return event === 'poll' || event === 'post-tool-use';
-  return ['session-start', 'user-prompt-submit', 'post-tool-use', 'stop'].includes(event);
+  return (sessionAgentBehavior(agent).mailEvents ?? ['session-start', 'user-prompt-submit', 'post-tool-use', 'stop']).includes(event);
 }
 
 /** The JSON (or text) each app expects from this hook to put `text` in front of the model. */
 export function formatFor(agent: AgentId, event: string, text: string): string {
   const ev = normalizeEvent(event);
-  const specific = (name: string) => ({ hookSpecificOutput: { hookEventName: name, additionalContext: text } });
-  const block = { decision: 'block', reason: text };
-  let out: unknown;
-  if (agent === 'antigravity' && (ev === 'start' || ev === 'prompt')) out = { injectSteps: [{ userMessage: text }] };
-  else if (agent === 'antigravity' && ev === 'stop') out = { decision: 'continue', reason: text };
-  else if ((agent === 'opencode' || agent === 'pi' || agent === 'hermes' || agent === 'zcode') && event === 'poll') return text;
-  else if (agent === 'claude-code' && ev === 'start') out = specific('SessionStart');
-  else if (agent === 'claude-code' && ev === 'prompt') out = specific('UserPromptSubmit');
-  else if (agent === 'claude-code' && ev === 'stop') out = block;
-  else if (agent === 'codex' && ev === 'start') out = specific('SessionStart');
-  else if (agent === 'codex' && ev === 'prompt') out = specific('UserPromptSubmit');
-  else if (agent === 'codex' && ev === 'tool') out = specific('PostToolUse');
-  else if (agent === 'codex' && ev === 'stop') out = block;
-  else if (agent === 'gemini' && ev === 'start') out = specific('SessionStart');
-  else if (agent === 'gemini' && ev === 'prompt') out = specific('BeforeAgent');
-  else if (agent === 'gemini' && ev === 'tool') out = specific('AfterTool');
-  else if (agent === 'gemini' && ev === 'stop') out = { decision: 'deny', reason: text };
-  else return text;
-  return JSON.stringify(out);
+  const policy = sessionAgentBehavior(agent);
+  if (policy.pollText && event === 'poll') return text;
+  const shape = ev && policy.hookOutput?.[ev as 'start' | 'prompt' | 'tool' | 'stop'];
+  if (!shape) return text;
+  if (shape === 'inject') return JSON.stringify({ injectSteps: [{ userMessage: text }] });
+  if (shape === 'block' || shape === 'continue' || shape === 'deny') return JSON.stringify({ decision: shape, reason: text });
+  return JSON.stringify({ hookSpecificOutput: { hookEventName: shape, additionalContext: text } });
 }
 
 export interface HookInput {
@@ -62,6 +46,8 @@ export interface HookInput {
   state?: string;
   pid?: number;
   env?: NodeJS.ProcessEnv;
+  /** The session's identity and Beeline rules, put in front of the model when its session starts. */
+  rules?: (joined: JoinedSession) => string;
 }
 
 /** The joined record this hook's session acts as: its own conversation first, else its folder's. */
@@ -88,8 +74,9 @@ export function runHook(dir: string, input: HookInput, now = Date.now()): string
   const joined = joinedFor(readState(dir).sessions, agent, sessionId, cwd);
   if (!joined || !takesMail(agent, event)) return '';
   const waiting = takeInbox(dir, joined.key);
-  // Say who it is on Beeline once, at session start.
-  const text = waiting;
+  // Say who it is on Beeline and how to work there once, at session start: a reopened or compacted session
+  // otherwise knows only the text of its next delivery.
+  const text = [ev === 'start' && input.rules ? input.rules(joined) : '', waiting].filter(Boolean).join('\n\n');
   if (!text) return '';
   return formatFor(agent, event, text);
 }

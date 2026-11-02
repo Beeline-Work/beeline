@@ -1,5 +1,7 @@
 import { cornerObjectiveSql } from './corner-objective.js';
+import { cornerCommissionerSql, cornerKindSql, cornerRequestSql } from './corner-opening.js';
 import { failConnectingOffers } from './connector-offer-completion.js';
+import { cornerRunStateSql } from './corner-run.js';
 import * as approvalSources from './approval-card-source.js';
 import * as serverSentry from './sentry.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
@@ -19,6 +21,7 @@ import { CORNER_BRIEF_SPEC_MAX_LENGTH } from '@beeline/api-contract/daemon';
 import { migrate } from './database.js';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
 import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { cornerImplementerSql } from './corner-worker.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
@@ -371,7 +374,7 @@ describe('monolith integration', () => {
     // refusal, so it must reach the route's 503 default intact.
     const query = database.query.bind(database);
     const querySpy = vi.spyOn(database, 'query').mockImplementation(async (sql, values) => {
-      if (sql.includes('parent.reviewer_fallback_ids')) throw new Error('database is unavailable');
+      if (sql.includes(') corner_reviewer,')) throw new Error('database is unavailable');
       return query(sql, values);
     });
     try {
@@ -660,7 +663,7 @@ describe('monolith integration', () => {
     await database.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
     // These projection fixtures begin after the approved turn gap has elapsed.
     await database.query(
-      `UPDATE corner_attention_spans SET last_turn_ended_at=now()-interval '40 seconds' WHERE corner_id=$1`,
+      `UPDATE agent_turns SET ended_at=now()-interval '40 seconds' WHERE room_id=$1 AND status<>'working'`,
       [cornerId],
     );
   };
@@ -6256,7 +6259,7 @@ describe('monolith integration', () => {
           close_requested: boolean;
           lifecycle: Record<string, unknown>;
         }>(
-          `SELECT room.archived_at IS NOT NULL archived,fact.close_requested,fact.lifecycle
+          `SELECT room.archived_at IS NOT NULL archived,room.archived_at IS NOT NULL close_requested,fact.lifecycle
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
           [cornerId],
         )
@@ -6338,7 +6341,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ archived: boolean; close_requested: boolean }>(
-          `SELECT room.archived_at IS NOT NULL archived,fact.close_requested
+          `SELECT room.archived_at IS NOT NULL archived,room.archived_at IS NOT NULL close_requested
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
           [cornerId],
         )
@@ -6372,7 +6375,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ close_requested: boolean }>(
-          `SELECT close_requested FROM corner_facts WHERE corner_id=$1`,
+          `SELECT archived_at IS NOT NULL close_requested FROM rooms WHERE id=$1`,
           [cornerId],
         )
       ).rows[0]?.close_requested,
@@ -6388,7 +6391,7 @@ describe('monolith integration', () => {
           close_requested: boolean;
           lifecycle: Record<string, unknown>;
         }>(
-          `SELECT room.archived_at IS NOT NULL archived,fact.close_requested,fact.lifecycle
+          `SELECT room.archived_at IS NOT NULL archived,room.archived_at IS NOT NULL close_requested,fact.lifecycle
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
           [cornerId],
         )
@@ -6491,7 +6494,7 @@ describe('monolith integration', () => {
         kind: string;
         commands: number;
       }>(
-        `SELECT room.name,room.created_by,fact.commissioned_by,${cornerObjectiveSql('room')} objective,fact.kind,
+        `SELECT room.name,room.created_by,${cornerCommissionerSql('room.id')} commissioned_by,${cornerObjectiveSql('room')} objective,${cornerKindSql('room.id')} kind,
           (SELECT count(*)::integer FROM agent_commands WHERE room_id=room.id) commands
          FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
         [cornerId],
@@ -7106,12 +7109,12 @@ describe('monolith integration', () => {
     expect(processWebhook).toHaveBeenCalledTimes(2);
     expect(
       (
-        await database.query<{ received: boolean; payload: unknown }>(
-          `SELECT received_at IS NOT NULL received,payload FROM github_webhook_deliveries WHERE delivery_id=$1`,
+        await database.query<{ received: boolean }>(
+          `SELECT received_at IS NOT NULL received FROM github_webhook_deliveries WHERE delivery_id=$1`,
           ['delivery-1'],
         )
       ).rows,
-    ).toEqual([{ received: true, payload: null }]);
+    ).toEqual([{ received: true }]);
   });
 
   it('never closes a corner from a helper remote-state heartbeat', async () => {
@@ -7142,7 +7145,7 @@ describe('monolith integration', () => {
     ).not.toEqual([{ lifecycle: 'done' }]);
   });
 
-  it('credits the branch agent, not a copied parent owner, on a phone-opened corner merge', async () => {
+  it('credits the opener, not a copied parent owner, on a phone-opened corner merge; recording a branch stores no owner', async () => {
     processWebhook.mockImplementation((event, payload) =>
       githubOperations.processWebhook(event, payload),
     );
@@ -7215,7 +7218,8 @@ describe('monolith integration', () => {
         )
       ).rows,
     ).toEqual([
-      { card_type: 'github-corner-note', author_id: AGENT },
+      // No assignment names an agent owner here, so the person who opened it is credited.
+      { card_type: 'github-corner-note', author_id: HUMAN },
     ]);
     expect(
       (
@@ -7224,26 +7228,7 @@ describe('monolith integration', () => {
           [cornerId],
         )
       ).rows,
-    ).toEqual([{ owner_agent_id: AGENT }]);
-    // A later agent recording a branch never replaces the recorded owner.
-    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [
-      cornerId,
-      candy,
-    ]);
-    await daemonOperation('postCornerRemoteState', {
-      cornerId,
-      branch,
-      state: 'working',
-      checks: 'unknown',
-    });
-    expect(
-      (
-        await database.query<{ owner_agent_id: string | null }>(
-          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
-          [cornerId],
-        )
-      ).rows,
-    ).toEqual([{ owner_agent_id: candy }]);
+    ).toEqual([{ owner_agent_id: null }]);
   });
 
   it('turns signed GitHub branch events into corner notes and closes a merged corner', async () => {
@@ -7279,6 +7264,8 @@ describe('monolith integration', () => {
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
+    // A corner's branch is derived from its id; nothing stores it.
+    const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
     expect(
       (
         await daemonOperation('postCornerPlan', {
@@ -7292,7 +7279,7 @@ describe('monolith integration', () => {
       (
         await daemonOperation('postCornerRemoteState', {
           cornerId,
-          branch: 'fm/widget',
+          branch: branch,
           state: 'working',
           checks: 'unknown',
         })
@@ -7342,7 +7329,7 @@ describe('monolith integration', () => {
             number: 42,
             title: 'Ship the widget',
             html_url: 'https://github.com/owner/widgets/pull/42',
-            head: { ref: 'fm/widget', sha: '0'.repeat(40) },
+            head: { ref: branch, sha: '0'.repeat(40) },
             base: { ref: 'main' },
             mergeable_state: 'clean',
             merged: false,
@@ -7377,7 +7364,7 @@ describe('monolith integration', () => {
         title: 'Handle narrow screens',
       }),
       expect.objectContaining({
-        type: 'pull-request', action: 'opened', branch: 'fm/widget', cornerId,
+        type: 'pull-request', action: 'opened', branch: branch, cornerId,
       }),
     ]);
     // Room-level repository activity: issues and pull requests only. A
@@ -7421,7 +7408,7 @@ describe('monolith integration', () => {
     expect(mainlineCards.rows.some((row) => row.card.type === 'ci')).toBe(false);
     await webhook('push', 'corner-push', {
       ...base,
-      ref: 'refs/heads/fm/widget',
+      ref: `refs/heads/${branch}`,
       after: '1'.repeat(40),
       compare: 'https://github.com/owner/widgets/compare/a...b',
       commits: [{ id: '1' }, { id: '2' }],
@@ -7434,7 +7421,7 @@ describe('monolith integration', () => {
         name: 'typecheck',
         status: 'in_progress',
         html_url: 'https://github.com/owner/widgets/actions/runs/6',
-        check_suite: { head_branch: 'fm/widget', head_sha: '1'.repeat(40) },
+        check_suite: { head_branch: branch, head_sha: '1'.repeat(40) },
       },
     });
     Object.assign(githubApp, {
@@ -7442,7 +7429,7 @@ describe('monolith integration', () => {
         number: 42,
         url: 'https://github.com/owner/widgets/pull/42',
         headSha: '1'.repeat(40),
-        headRef: 'fm/widget',
+        headRef: branch,
         merged: false,
         mergeability: 'clean',
       })),
@@ -7455,7 +7442,7 @@ describe('monolith integration', () => {
         id: 7,
         status: 'completed',
         conclusion: 'failure',
-        head_branch: 'fm/widget',
+        head_branch: branch,
         head_sha: '1'.repeat(40),
         app: { name: 'Beeline CI' },
         url: 'https://github.com/owner/widgets/actions/runs/7',
@@ -7502,7 +7489,7 @@ describe('monolith integration', () => {
         id: 7,
         status: 'completed',
         conclusion: 'success',
-        head_branch: 'fm/widget',
+        head_branch: branch,
         head_sha: '1'.repeat(40),
         app: { name: 'Beeline CI' },
         url: 'https://github.com/owner/widgets/actions/runs/8',
@@ -7517,7 +7504,7 @@ describe('monolith integration', () => {
         status: 'completed',
         conclusion: 'success',
         html_url: 'https://github.com/owner/widgets/actions/runs/6',
-        check_suite: { head_branch: 'fm/widget', head_sha: '1'.repeat(40) },
+        check_suite: { head_branch: branch, head_sha: '1'.repeat(40) },
       },
     });
     await webhook('status', 'corner-checks-passed', {
@@ -7525,7 +7512,7 @@ describe('monolith integration', () => {
       state: 'success',
       sha: '1'.repeat(40),
       target_url: 'https://github.com/owner/widgets/actions/runs/8',
-      branches: [{ name: 'fm/widget' }],
+      branches: [{ name: branch }],
     });
     const cornerBeforeMerge = (await (await request(`/v1/phone/rooms/${cornerId}`)).json()) as {
       messages: Array<{ text: string; presentation: string }>;
@@ -7547,7 +7534,7 @@ describe('monolith integration', () => {
           },
         }),
         expect.objectContaining({
-          text: expect.stringMatching(/^@GitHub pushed 2 commits to fm\/widget · at [0-9a-f]{12}$/),
+          text: expect.stringMatching(/^@GitHub pushed 2 commits to feature\/corner-[0-9a-f]{12} · at [0-9a-f]{12}$/),
         }),
         expect.objectContaining({
           text: '@GitHub started a check typecheck',
@@ -7587,7 +7574,7 @@ describe('monolith integration', () => {
       (
         await daemonOperation('postCornerRemoteState', {
           cornerId,
-          branch: 'fm/widget',
+          branch: branch,
           state: 'working',
           checks: 'unknown',
         })
@@ -7618,7 +7605,7 @@ describe('monolith integration', () => {
     // pull-request webhook must recover them by their durable feature branch.
     await database.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
       cornerId,
-      JSON.stringify({ branch: 'fm/widget', checks: 'unknown', lifecycle: 'working' }),
+      JSON.stringify({ branch: branch, checks: 'unknown', lifecycle: 'working' }),
     ]);
     await webhook('pull_request', 'corner-pr-recovery', {
       ...base,
@@ -7627,7 +7614,7 @@ describe('monolith integration', () => {
         number: 42,
         title: 'Ship the widget',
         html_url: 'https://github.com/owner/widgets/pull/42',
-        head: { ref: 'fm/widget', sha: '1'.repeat(40) },
+        head: { ref: branch, sha: '1'.repeat(40) },
         base: { ref: 'main' },
         mergeable_state: 'clean',
         merged: false,
@@ -7690,7 +7677,7 @@ describe('monolith integration', () => {
         number: 42,
         title: 'Ship the widget',
         html_url: 'https://github.com/owner/widgets/pull/42',
-        head: { ref: 'fm/widget', sha: '1'.repeat(40) },
+        head: { ref: branch, sha: '1'.repeat(40) },
         base: { ref: 'main' },
         merged: true,
         merged_at: '2026-09-02T14:00:00Z',
@@ -7834,7 +7821,7 @@ describe('monolith integration', () => {
       status: 'already-merged',
       pullRequestUrl: 'https://github.com/owner/widgets/pull/42',
     });
-    expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', 'fm/widget');
+    expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branch);
   });
 
   it('serves a corner to every member agent, keeps archive with the opener, and refuses a non-member', async () => {
@@ -8040,15 +8027,15 @@ describe('monolith integration', () => {
     ).toEqual({ count: '0' });
   });
 
-  it('derives an owner for a legacy corner from its first agent-authored message', async () => {
+  it('reads a legacy corner owner from its stored column when no assignment survives', async () => {
     const legacyCornerId = '33333333-3333-4333-8333-333333333333';
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Legacy corner')`,
       [legacyCornerId, WORKSPACE, ROOM, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective) VALUES($1,'Legacy objective')`,
-      [legacyCornerId],
+      `INSERT INTO corner_facts(corner_id,objective,owner_agent_id) VALUES($1,'Legacy objective',$2)`,
+      [legacyCornerId, AGENT],
     );
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'Legacy objective','message')`,
@@ -9171,7 +9158,7 @@ describe('monolith integration', () => {
       objective: string;
       commissioned_by: string;
     }>(
-      `SELECT r.name,${cornerObjectiveSql('r')} objective,cf.commissioned_by
+      `SELECT r.name,${cornerObjectiveSql('r')} objective,${cornerCommissionerSql('r.id')} commissioned_by
        FROM rooms r JOIN corner_facts cf ON cf.corner_id=r.id WHERE r.id=$1`,
       [cornerId],
     );
@@ -9204,7 +9191,7 @@ describe('monolith integration', () => {
     const { cornerId } = (await created.json()) as { cornerId: string };
     await settleCornerWorkPastGap(cornerId);
     // Someone else started it: the viewer neither commissioned nor follows it.
-    await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
+    await database.query(`UPDATE agent_commands SET root_source_message_id='agent-initiated' WHERE room_id=$1 AND reason='corner_objective'`, [
       cornerId,
     ]);
     await database.query(`DELETE FROM corner_follows WHERE corner_id=$1 AND identity_id=$2`, [
@@ -9502,30 +9489,6 @@ describe('monolith integration', () => {
     expect(await state()).toBe('idle');
   });
 
-  it('Reproduction F1-3: a committed human message immediately retries a backed-off claim', async () => {
-    await database.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN]);
-    await database.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','main')`);
-    await database.query(`UPDATE rooms SET repository_remote='https://github.com/owner/widgets.git',github_installation_id=77 WHERE id=$1`, [ROOM]);
-    const opened = await daemonOperation('createCorner', { roomId: ROOM, requestId: 'f1-human-retry', repository: 'owner/widgets', name: 'Recover-merge', objective: 'Recover merge outcome' });
-    expect(opened.status).toBe(200);
-    const { cornerId } = await opened.json() as { cornerId: string };
-    const head = 'a'.repeat(40);
-    await database.query(`UPDATE corner_facts SET workflow_state='review',feature_branch='feature/f1-recovery',merge_attempt_head=$2,lifecycle=jsonb_build_object(
-      'checks','passing','pr',jsonb_build_object('number',7,'headSha',$2::text),
-      'mergeRecovery',jsonb_build_object('attempts',1,'lastAttemptAt',extract(epoch FROM clock_timestamp()),
-        'nextAttemptAt',extract(epoch FROM clock_timestamp())+3600)) WHERE corner_id=$1`, [cornerId, head]);
-    const read = vi.fn().mockRejectedValue(new Error('permissions still denied'));
-    Object.assign(githubApp, { readPullRequest: read });
-    processWebhook.mockImplementation(async (...args: unknown[]) => {
-      await githubOperations.processWebhook(args[0] as string, args[1]);
-    });
-    const sent = await request('/v1/phone/operations/sendRoomMessage', 'POST', { roomId: cornerId, messageId: 'f'.repeat(64), text: 'Permissions repaired; please retry' }, accessToken);
-    expect(sent.status).toBe(200);
-    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
-    await vi.waitFor(async () => expect((await database.query(`SELECT lifecycle->'mergeRecovery'->>'attempts' attempts FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.attempts).toBe('2'));
-    console.info('Reproduction F1-3: wrong=wait for leader/backoff; right=GitHub read immediately after human POST; observed=1 read');
-  });
-
   it('Reproduction F1-8: explicit current-turn artifact resolves and missing ids return 400', async () => {
     const mediaId = '77777777-7777-4777-8777-777777777777';
     const requestId = 'f1-pending-artifact';
@@ -9587,7 +9550,7 @@ describe('monolith integration', () => {
       briefs: number;
     }>(
       `SELECT
-         (SELECT count(*)::integer FROM corner_facts WHERE request_id=$1) corners,
+         (SELECT count(*)::integer FROM rooms corner WHERE corner.parent_id IS NOT NULL AND ${cornerRequestSql('corner.id')}=$1) corners,
          (SELECT count(*)::integer FROM messages
           WHERE room_id=$2 AND card_type='daemon-fact' AND card->>'cornerId'=$3) cards,
          (SELECT count(*)::integer FROM agent_commands
@@ -9854,7 +9817,7 @@ describe('monolith integration', () => {
     });
     expect(response.status).not.toBe(200);
     expect(
-      (await database.query(`SELECT 1 FROM corner_facts WHERE request_id='missing-brief-file'`))
+      (await database.query(`SELECT 1 FROM rooms corner WHERE ${cornerRequestSql('corner.id')}='missing-brief-file'`))
         .rows,
     ).toEqual([]);
     expect(
@@ -9930,7 +9893,7 @@ describe('monolith integration', () => {
     expect(response.status).toBe(400);
     expect(await response.text()).toContain('a brief is required for repository corners');
     expect(
-      (await database.query(`SELECT 1 FROM corner_facts WHERE request_id='missing-code-brief'`))
+      (await database.query(`SELECT 1 FROM rooms corner WHERE ${cornerRequestSql('corner.id')}='missing-code-brief'`))
         .rows,
     ).toEqual([]);
   });
@@ -10108,7 +10071,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query(
-          `SELECT 1 FROM corner_facts WHERE request_id='brief-persistence-failure'`,
+          `SELECT 1 FROM rooms corner WHERE ${cornerRequestSql('corner.id')}='brief-persistence-failure'`,
         )
       ).rows,
     ).toEqual([]);
@@ -10152,7 +10115,6 @@ describe('monolith integration', () => {
         JSON.stringify({ requestId: 'opener-failed', agentId: AGENT, silenceKind: 'allowance-spent' }),
       ]);
       await database.query(`UPDATE messages SET card=jsonb_set(card,'{toState}',to_jsonb($2::text)) WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId, state]);
-      await database.query(`UPDATE corner_facts SET workflow_state=$2 WHERE corner_id=$1`, [cornerId, state]);
       if (health === 'offline')
         await database.query(`DELETE FROM live_outputs WHERE agent_id=$1`, [worker]);
       if (health === 'removed')
@@ -10183,7 +10145,8 @@ describe('monolith integration', () => {
       expect(wakes).toEqual(shouldWake ? [worker] : []);
       expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%revised the corner brief%'`, [cornerId])).rows).toHaveLength(1);
       expect((await database.query<{ worker_agent_id: string; workflow_state: string }>(
-        `SELECT worker_agent_id,workflow_state FROM corner_facts WHERE corner_id=$1`, [cornerId],
+        `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,${cornerRunStateSql('fact.corner_id')} workflow_state FROM corner_facts fact
+         JOIN rooms corner ON corner.id=fact.corner_id WHERE fact.corner_id=$1`, [cornerId],
       )).rows[0]).toEqual({ worker_agent_id: worker, workflow_state: state === 'ask_human' && shouldWake ? 'implement' : state });
     },
   );
@@ -10243,7 +10206,7 @@ describe('monolith integration', () => {
     expect(commands.rows.filter((row) => row.agent_id === reviewerId)).toEqual([]);
     expect(
       (await database.query<{ workflow_state: string }>(
-        `SELECT workflow_state FROM corner_facts WHERE corner_id=$1`, [cornerId],
+        `SELECT ${cornerRunStateSql('$1::uuid')} workflow_state`, [cornerId],
       )).rows[0]?.workflow_state,
     ).toBe('implement');
     expect(
@@ -10280,7 +10243,7 @@ describe('monolith integration', () => {
 
     const stored = await database.query<{ corners: number; cards: number; commands: number }>(
       `SELECT
-         (SELECT count(*)::integer FROM corner_facts WHERE request_id=$1) corners,
+         (SELECT count(*)::integer FROM rooms corner WHERE corner.parent_id IS NOT NULL AND ${cornerRequestSql('corner.id')}=$1) corners,
          (SELECT count(*)::integer FROM messages
           WHERE room_id=$2 AND card_type='daemon-fact'
             AND card->>'cornerId' IN ($3,$4)) cards,
@@ -10334,7 +10297,7 @@ describe('monolith integration', () => {
     const corners = await database.query<{ count: number }>(
       `SELECT count(*)::integer count FROM rooms child
        JOIN corner_facts fact ON fact.corner_id=child.id
-       WHERE child.parent_id=$1 AND fact.request_id=$2 AND child.archived_at IS NULL`,
+       WHERE child.parent_id=$1 AND ${cornerRequestSql('child.id')}=$2 AND child.archived_at IS NULL`,
       [ROOM, input.requestId],
     );
     expect(corners.rows[0]!.count).toBe(1);

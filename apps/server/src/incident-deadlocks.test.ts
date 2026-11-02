@@ -7,7 +7,7 @@ import { GitHubOperations } from './github-operations.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
-import { reassignFailedCornerReviewer, lockCornerLifecycle } from './corner-lifecycle.js';
+import { lockCornerLifecycle } from './corner-lifecycle.js';
 import { createAgentCommand } from './agent-command.js';
 
 const url = process.env.BEELINE_INCIDENT_TEST_POSTGRES_URL;
@@ -107,8 +107,8 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       repository_resolution,github_installation_id) VALUES($1,$2,$3,'Parent','owner/widgets',
       'https://github.com/owner/widgets.git','repository',77)`, [R,W,H]);
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Incident')`, [C,W,R,A]);
-    await db.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,feature_branch,lifecycle,workflow_state)
-      VALUES($1,'Prove recovery',$2,'feature/incident',$3::jsonb,'implement')`, [C,A,JSON.stringify({checks:'passing',
+    await db.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,lifecycle,workflow_state)
+      VALUES($1,'Prove recovery',$2,$3::jsonb,'implement')`, [C,A,JSON.stringify({checks:'passing',
       pr:{number:1,headSha,url:'https://github.com/owner/widgets/pull/1',mergeability:'clean'}})]);
     for (const who of [H,A,B,F]) for (const room of [null,R])
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [W,room,who]);
@@ -146,7 +146,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     } as unknown as GitHubAppClient;
     const payload = {action:'completed',installation:{id:77},repository:{full_name:'owner/widgets'},
       check_run:{name:'lint',status:'completed',conclusion:'failure',head_sha:headSha,
-        check_suite:{head_branch:'feature/incident',head_sha:headSha}}};
+        check_suite:{head_branch:'feature/corner-333333333333',head_sha:headSha}}};
     const first = new GitHubOperations(race.victim, {} as GitHubOAuthClient, app, 'secret');
     const second = new GitHubOperations(race.other, {} as GitHubOAuthClient, app, 'secret');
     const refresh = first.processWebhook('check_run', payload);
@@ -158,7 +158,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     expect(race.attempts()).toBeLessThanOrEqual(3);
     for (const seen of race.statements.slice(0,2)) {
       const lock = seen.findIndex(sql => sql.includes('pg_advisory_xact_lock'));
-      const fact = seen.findIndex(sql => sql.includes('SELECT lifecycle,updated_at::text,merge_attempt_head'));
+      const fact = seen.findIndex(sql => sql.includes('SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE'));
       expect(lock).toBeGreaterThanOrEqual(0);
       expect(fact).toBeGreaterThan(lock);
     }
@@ -168,33 +168,4 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(2);
   });
 
-  it('BEELINE-SERVER-1V: receipt and reassignment recover a PostgreSQL deadlock with one atomic fallback', async () => {
-    await db.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=ARRAY[$3]::text[] WHERE id=$1`, [R,B,F]);
-    for (const who of [B,F]) await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
-      VALUES($1,$2,'presence','presence',$3::jsonb)`, [R,who,JSON.stringify({status:'online',observedAt:Math.floor(Date.now()/1000)})]);
-    const daemon = new DaemonService(db,new LiveHub());
-    Object.assign(daemon,{github:{assertCornerReviewerNotAuthor:async()=>{}}});
-    await systemLine(db,{roomId:C,authorId:H,subject:{kind:'github',name:'GitHub'},verb:'passed a check',kind:'check-passed'});
-    const [command] = (await daemon.execute('getAgentCommands',{roomId:C},B)).commands;
-    expect(command).toBeDefined();
-    await daemon.execute('claimAgentCommand',{roomId:C,commandId:command!.id,generationId:'g1'},B);
-    await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:command!.turnRequestId,generationId:'g1',status:'working'},B);
-    const input = {roomId:C,requestId:command!.turnRequestId,generationId:'g1',status:'failed' as const,
-      reasonKind:'wrong-model' as const,reason:'the selected model is no longer available'};
-    const race = contention(db);
-    const watched = new DaemonService(race.victim,new LiveHub());
-    const receipt = watched.execute('postAgentTurnReceipt',input,B);
-    await race.entered;
-    await Promise.all([receipt,reassignFailedCornerReviewer(race.other,{roomId:C,requestId:input.requestId!,agentId:B})]);
-    expect(race.errors).toEqual(['40P01']);
-    expect(race.attempts()).toBe(2);
-    for (const seen of race.statements)
-      expect(seen[0]).toContain('pg_advisory_xact_lock');
-    expect((await db.query(`SELECT status FROM agent_turns WHERE request_id=$1 AND agent_id=$2`, [input.requestId,B])).rows[0]?.status).toBe('failed');
-    const assignments = () => db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND state='pending'`, [C,F]);
-    expect((await assignments()).rowCount).toBe(1);
-    await reassignFailedCornerReviewer(db,{roomId:C,requestId:input.requestId!,agentId:B});
-    expect((await assignments()).rowCount).toBe(1);
-    expect(race.statements[0]![0]).toContain('pg_advisory_xact_lock');
-  });
 });

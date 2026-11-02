@@ -1,3 +1,5 @@
+import { notifyAgentSignIn } from './postgres-live.js';
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 /**
  * `@agent /login`: the server's relay between the agent owner's phone and the
  * agent's helper. Nothing secret is stored. Every step travels as one
@@ -21,7 +23,6 @@ import {
 } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 export const AGENT_SIGN_IN_TABLE = 'agent_sign_in';
 /** The helper answers `start` with what it read from the harness's own login. */
@@ -37,7 +38,7 @@ export const AGENT_SIGN_IN_NO_ANSWER_MESSAGE =
 export type AgentSignInEvent = Extract<LiveEvent, { type: 'agent-sign-in' }>;
 
 type Step = AgentSignInEvent['step'];
-type AgentSignInStep = AgentSignInEvent extends infer Event
+export type AgentSignInStep = AgentSignInEvent extends infer Event
   ? Event extends AgentSignInEvent
     ? Omit<Event, 'type' | 'roomId'>
     : never
@@ -126,10 +127,7 @@ async function notify(
   database: Pick<SqlDatabase, 'query'>,
   event: AgentSignInStep,
 ): Promise<void> {
-  await database.query(`SELECT pg_notify($1, $2)`, [
-    POSTGRES_LIVE_CHANNEL,
-    JSON.stringify({ table: AGENT_SIGN_IN_TABLE, operation: 'UPDATE', roomId: '', ...event }),
-  ]);
+  await notifyAgentSignIn(database, event);
 }
 
 /**
@@ -312,7 +310,7 @@ export async function reportAgentSignIn(
   if (input.outcome === 'failed') {
     const error =
       (typeof input.error === 'string' ? input.error.trim().slice(0, 500) : '') ||
-      'Sign-in failed on the agent machine.';
+      systemMessage("agent-sign-in.sign-in-failed-on-the-agent-machine");
     await notify(database, { agentId, attemptId, step: 'result', outcome: 'failed', error });
     if (cardId)
       await settleCard(

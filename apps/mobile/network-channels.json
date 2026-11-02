@@ -516,6 +516,13 @@
       "count": 1,
       "fate": "moves-to-socket",
       "why": "RoomViewClient HTTP reads bundled through the @beeline/buzz-client index; phone Room reads move to the main live socket."
+    },
+    {
+      "file": "packages/api-contract/src/system-message-catalog.ts",
+      "kind": "origin:github.com",
+      "count": 1,
+      "fate": "link",
+      "why": "System message template for a fix pull request link; the phone shows and opens it in the browser and never fetches it."
     }
   ]
 }

@@ -1,8 +1,8 @@
+import { notifyAgentCommand } from './postgres-live.js';
 import { createHash } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { queueMcpMentionEvents } from './rooms-mcp-events.js';
 import { recordMcpMemberWebhook } from './rooms-mcp-members.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 export function mentionRouting(memberId: string, roomId: string, messageId: string) {
   return { roomId, messageId, memberId, replyRule: `answer in this Room with replyTo ${messageId}`,
@@ -87,8 +87,7 @@ export async function retryOwedMentions(db: SqlDatabase, now = new Date()): Prom
         lease_expires_at=NULL,generation_id=NULL,result_message_id=NULL,turn_request_id=$3
         WHERE agent_id=$1 AND source_message_id=$2 AND action='input' AND state='complete'`,
       [row.member_id, row.message_id, createHash('sha256').update(`mention:${row.member_id}:${row.message_id}:retry:${attempt}`).digest('hex')]);
-      await tx.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL,
-        JSON.stringify({ table: 'agent_commands', operation: 'UPDATE', roomId: row.room_id, agentId: row.member_id })]);
+      await notifyAgentCommand(tx, row.room_id, row.member_id);
     }
     return due.length;
   });

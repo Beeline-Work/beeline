@@ -1,6 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { clearOwedMention } from './owed-mentions.js';
-import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { INSTITUTIONAL_HISTORY_RESULT_MAX, INSTITUTIONAL_MEMORY_SEARCH_RESULT_MAX, REPOSITORY_SUBSCRIPTION_EVENTS } from '@beeline/api-contract/daemon';
 import { MESSAGE_REACTION_EMOJIS, SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
@@ -9,8 +9,8 @@ import type { DaemonService } from './daemon-service.js';
 import type { ObjectService } from './object-service.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { McpToolError, mcpProvenance } from './rooms-mcp-members.js';
-import { COMMAND_MAX_DEPTH } from './agent-command.js';
-import { mcpWakeHint } from './rooms-mcp-events.js';
+import { createClaimedMcpAgentCommand } from './agent-command.js';
+import { mcpWakeNext } from './rooms-mcp-events.js';
 
 /**
  * Agent tools a connected AI app does not get, with the plain reason it is
@@ -161,7 +161,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
     address: address(), item_ids: { type: 'array', minItems: 1, maxItems: 50, items: { type: 'string' } },
     title: { type: 'string', minLength: 1, maxLength: 120 }, pr_url: { type: 'string', minLength: 1 }, notify: { type: 'boolean' },
   }, ['address', 'item_ids', 'title', 'pr_url']),
-  tool('approve_merge', 'As the corner\'s configured reviewer, record PASS on the exact head SHA. You cannot review a corner you implement or authored. This does not land or release a hold.', {
+  tool('approve_merge', 'As the corner\'s configured reviewer, record PASS on the exact head SHA; the server lands the PR at once when checks are green and no hold stands. You cannot review a corner you implement or authored. This never releases a hold.', {
     address: address('Corner id.'), headSha: { type: 'string', pattern: '^[0-9a-fA-F]{40}$' },
   }, ['address', 'headSha']),
   tool('merge_corner', 'Land a corner through the live gate: green checks, a yes on the exact head, and no hold.', { address: address('Corner id.') }, ['address']),
@@ -320,13 +320,9 @@ export class RoomsMcpAgentTools {
          JOIN identities author ON author.id=m.author_id
          WHERE mention.member_id=$1 AND mention.room_id=$2 ORDER BY (author.kind='human') DESC,mention.seq DESC LIMIT 1`,
         [member, roomId])).rows[0]?.id;
-      const id = randomBytes(32).toString('hex');
-      await tx.query(
-        `INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,
-           root_source_message_id,agent_depth,state,generation_id,lease_expires_at,claimed_at)
-         VALUES($1,$2,$3,NULL,$1,'input','mcp_call',$4,$5,$6,'claimed',$7,now()+interval '90 seconds',now())`,
-        [id, roomId, member, chain?.root_command_id ?? id, chain?.root_source_message_id ?? requester ?? id,
-          chain ? Math.min(chain.agent_depth + 1, COMMAND_MAX_DEPTH) : 0, generationId]);
+      const id = await createClaimedMcpAgentCommand(tx, {
+        roomId, agentId: member, generationId, parent: chain ?? undefined, requesterMessageId: requester,
+      });
       await this.startTurn(tx, roomId, member, id, generationId);
       return { roomId, requestId: id, generationId, commandId: id, order: false };
     });
@@ -712,5 +708,5 @@ export async function pendingMcpWakes(db: SqlDatabase, member: string) {
          AND member.identity_id=$1 AND member.removed_at IS NULL)
      ORDER BY command.created_at,command.id LIMIT 30`, [member])).rows
     .map(row => ({ id: row.id, address: row.room_id, reason: row.reason, ...(row.kind ? { kind: row.kind } : {}),
-      ...(row.text ? { text: row.text } : {}), createdAt: row.created_at, next: mcpWakeHint(row.kind) }));
+      ...(row.text ? { text: row.text } : {}), createdAt: row.created_at, next: mcpWakeNext(row.kind, row.reason) }));
 }

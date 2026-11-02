@@ -183,7 +183,7 @@ describe('corner merge instructions', () => {
     const none = cornerMergeInstruction();
     expect(none).toContain('report blocked: to your commander');
     const reviewed = cornerMergeInstruction('echo');
-    expect(reviewed).toContain('its PASS wakes you to merge');
+    expect(reviewed).toContain('its PASS lands the PR');
     expect(reviewed).toContain('the reviewer (echo)');
     for (const instruction of [none, reviewed]) {
       expect(instruction).toContain('A PR lands through merge_corner only with live green checks');
@@ -201,7 +201,7 @@ describe('corner merge instructions', () => {
     expect(instruction).toContain('call approve_merge with the reviewed head SHA as a tool argument');
     expect(instruction).toContain('FAIL: order the worker');
     expect(instruction).toContain('report done: PASS to your commander');
-    expect(instruction).toContain('PASS wakes the implementer to land');
+    expect(instruction).toContain('PASS lands the PR once checks are green and no hold stands');
     expect(instruction).toContain('If your commander explicitly orders you to land');
     expect(instruction).not.toContain('gh pr merge');
     expect(cornerReviewerInstruction({ ...reviewer, isReviewer: false })).toBeUndefined();

@@ -173,8 +173,7 @@ it('Reproduction FR-report: rejects corner progress disguised as done before a P
 // Real GitHub/webhook timing is represented by the provider fixture: no webhook is sent.
 it.each([true, false])('DONE-PR-1: report resolves an unregistered PR (exists: %s)', async exists => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  const branch = 'feature/corner-report-race';
-  await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [opened.cornerId, branch]);
+  const branch = `feature/corner-${opened.cornerId.replaceAll('-', '').slice(0,12)}`;
   await db.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
     VALUES(77,$1,'42','owner','User','selected','active') ON CONFLICT DO NOTHING`, [HUMAN]);
   await db.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)

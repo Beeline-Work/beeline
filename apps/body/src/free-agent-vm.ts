@@ -3,7 +3,7 @@ import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { LEGACY_ACCESS_POLICY } from './access-policy.js';
-import { resolveAgentCommand } from './agent-command.js';
+import { agentBehavior, resolveAgentCommand } from './agent-command.js';
 import { loadBodyConfig, parseEnvFile } from './config.js';
 import { activateDaemonTransport } from './daemon-api-client.js';
 import { runMachineHelper } from './machine-helper.js';
@@ -185,7 +185,7 @@ async function freeAgentPiCommand(env: NodeJS.ProcessEnv) {
 /** Reconcile persisted environment before starting sessions, including existing Pi runtimes. */
 async function upgradeFreeAgentHarness(configPath: string, env: NodeJS.ProcessEnv): Promise<void> {
   const runtime = await readRuntimeRecord(configPath);
-  if ((runtime.agentKind !== 'pi' && runtime.agentKind !== 'opencode') || !runtime.llmEnvFile)
+  if (!agentBehavior(runtime.agentKind).hostedModelConfig || !runtime.llmEnvFile)
     throw new Error('unsupported persisted free agent harness');
   const original = await readFile(runtime.llmEnvFile, 'utf8');
   const previous = parseEnvFile(runtime.llmEnvFile);
@@ -206,7 +206,7 @@ async function upgradeFreeAgentHarness(configPath: string, env: NodeJS.ProcessEn
   normalized.BEELINE_FREE_AGENT_MAX_TURN_SECONDS ??= '900';
   if (!normalized.BEELINE_FREE_AGENT_MODEL_TOKEN)
     throw new Error('free agent proxy configuration is missing');
-  if (runtime.agentKind === 'opencode') {
+  if (agentBehavior(runtime.agentKind).hostedModelConfig === 'inline-provider') {
     const provider = JSON.parse(previous.OPENCODE_CONFIG_CONTENT ?? '{}').provider?.beeline;
     if (!provider?.options?.baseURL) throw new Error('free agent proxy configuration is missing');
     const model = runtime.modelSelection?.model;

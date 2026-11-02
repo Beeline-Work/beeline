@@ -4,6 +4,7 @@
 // A Codex thread's rollout records each turn's start (`task_started`) and end (`task_complete`, `turn_aborted`).
 // `codex queue --thread <id> --message <text>` hands a message to a running thread: it runs after the current turn,
 // or at once if the thread is idle.
+import { sessionAgentBehavior } from '../agent-command.js';
 import { execFile } from 'node:child_process';
 import { closeSync, fstatSync, openSync, readSync, readdirSync, readlinkSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -74,7 +75,7 @@ export function scanCodex(proc = '/proc'): CodexSession[] {
   for (const name of pids) {
     const pid = Number(name);
     const command = proc === '/proc' ? processCommand(pid) : undefined;
-    if (proc === '/proc' && (!command || fromProcessName(command) !== 'codex')) continue;
+    if (proc === '/proc' && (!command || sessionAgentBehavior(fromProcessName(command)).delivery !== 'queue')) continue;
     let fds: string[];
     try { fds = readdirSync(join(proc, name, 'fd')); } catch { continue; }
     for (const fd of fds) {

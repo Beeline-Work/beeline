@@ -1,3 +1,4 @@
+import { startConnectionWork } from './background-work.js';
 import { owedMentions } from './owed-mentions.js';
 import { serveEmailImage } from './email-images.js';
 import { createPhoneOperationDispatcher, PhoneOperationError, type PhoneOperationDispatcher } from './phone-operations.js';
@@ -534,27 +535,8 @@ export function createBeelineServer(options: ServerOptions): Server {
   // answered the previous ping by the next tick is dead and is terminated;
   // the helper drops a socket that stops pinging it and reconnects.
   const heartbeatMs = options.liveHeartbeatMs ?? LIVE_HEARTBEAT_MS;
-  const heartbeatSockets = new Map<WebSocket, boolean>();
+  const heartbeatStops = new Map<WebSocket, () => void>();
   const intakeCheckpoints = new Map<WebSocket, () => void>();
-  const heartbeat = setInterval(() => {
-    for (const [client, answered] of heartbeatSockets) {
-      if (!answered) {
-        liveCounters.heartbeatTerminations++;
-        heartbeatSockets.delete(client);
-        intakeCheckpoints.delete(client);
-        client.terminate();
-        continue;
-      }
-      heartbeatSockets.set(client, false);
-      try {
-        client.ping();
-        intakeCheckpoints.get(client)?.();
-      } catch {
-        // A socket that cannot queue a ping misses the next tick.
-      }
-    }
-  }, heartbeatMs);
-  heartbeat.unref?.();
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
@@ -656,7 +638,8 @@ export function createBeelineServer(options: ServerOptions): Server {
     // Connections stay held across a restart: helpers reconnect to a running
     // instance, and this instance's lease releases whatever never returns.
     shuttingDown = true;
-    clearInterval(heartbeat);
+    for (const stopHeartbeat of heartbeatStops.values()) stopHeartbeat();
+    heartbeatStops.clear();
     releaseConnectionEpochs?.();
     for (const client of webSockets.clients) client.terminate();
     webSockets.close();
@@ -834,13 +817,30 @@ export function createBeelineServer(options: ServerOptions): Server {
       };
       if (principal.kind !== 'phone') {
         watchConnectionEpochs();
-        heartbeatSockets.set(client, true);
-        client.on('pong', () => {
-          if (heartbeatSockets.has(client)) heartbeatSockets.set(client, true);
-        });
+        let answered = true;
+        const stopHeartbeat = startConnectionWork(() => {
+          if (!answered) {
+            liveCounters.heartbeatTerminations++;
+            stopHeartbeat();
+            heartbeatStops.delete(client);
+            intakeCheckpoints.delete(client);
+            client.terminate();
+            return;
+          }
+          answered = false;
+          try {
+            client.ping();
+            intakeCheckpoints.get(client)?.();
+          } catch {
+            // A socket that cannot queue a ping misses the next tick.
+          }
+        }, heartbeatMs);
+        heartbeatStops.set(client, stopHeartbeat);
+        client.on('pong', () => { answered = true; });
         const trackSubscriptions = (count: () => number) => socketSubscriptions.set(client, count);
         client.on('close', () => {
-          heartbeatSockets.delete(client);
+          stopHeartbeat();
+          heartbeatStops.delete(client);
           intakeCheckpoints.delete(client);
           socketSubscriptions.delete(client);
         });

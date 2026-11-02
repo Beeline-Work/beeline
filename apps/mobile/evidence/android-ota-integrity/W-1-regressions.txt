@@ -1,0 +1,29 @@
+BEFORE
+Exception in thread "main" java.lang.IllegalStateException: Compiling JS failed: Buffer is smaller than the size stated in the file header. Expected at least 13000398 bytes but got 5390336 bytes
+Exception in thread "main" java.lang.IllegalStateException: Compiling JS failed: Buffer is smaller than the size stated in the file header. Expected at least 13000398 bytes but got 5390336 bytes
+✖ W-1: truncated cached bundle starts the last good or embedded update (275.263422ms)
+✖ W-1: interrupted retry stays safe and the later full download launches (241.556531ms)
+ℹ tests 2
+ℹ pass 0
+ℹ fail 2
+✖ W-1: truncated cached bundle starts the last good or embedded update (275.263422ms)
+✖ W-1: interrupted retry stays safe and the later full download launches (241.556531ms)
+AFTER
+APP_STARTED update=1 bytes=13000398
+APP_STARTED update=1 bytes=13000398
+APP_STARTED update=1 bytes=13000398
+APP_STARTED update=1 bytes=13000398
+PASS W-1-fallback
+APP_STARTED update=1 bytes=13000398
+APP_STARTED update=1 bytes=13000398
+APP_STARTED update=2 bytes=13000398
+APP_STARTED update=1 bytes=13000398
+APP_STARTED update=2 bytes=13000398
+APP_STARTED update=1 bytes=13000398
+APP_STARTED update=2 bytes=13000398
+PASS W-1-retry
+✔ W-1: truncated cached bundle starts the last good or embedded update (486.990635ms)
+✔ W-1: interrupted retry stays safe and the later full download launches (1182.141856ms)
+ℹ tests 2
+ℹ pass 2
+ℹ fail 0

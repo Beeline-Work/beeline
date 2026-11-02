@@ -70,7 +70,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { NATIVE_SHELL_OUTPUT_SCRIPT, nativeShellHookCommand, nativeShellHookConfig } from './native-shell-output.js';
 import { DRAW_AVATAR_SKILL_NAME, drawAvatarSkillMarkdown } from './draw-avatar-skill.js';
-import type { AgentKind } from './agent-command.js';
+import { AGENT_BEHAVIORS, IMPORTED_MCP_KINDS, SHARED_CREDENTIALS, agentBehavior, type AgentKind } from './agent-command.js';
 import { androidAgentEnv } from './android-agent-env.js';
 import {
   BEELINE_REVIEW_SKILL_NAME,
@@ -103,40 +103,7 @@ import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
 
 const AGENT_PRIVATE_STATE_ENV = 'BEELINE_AGENT_PRIVATE_DIR';
 
-/**
- * Credential files shared back into an isolated harness state directory,
- * keyed by the state directory the harness was pointed at. `source` is
- * relative to the operator's real `$HOME`; `target` to the isolated dir.
- */
-export const SHARED_CREDENTIALS: Array<{
-  dir: 'claude' | 'codex' | 'grok' | 'pi' | 'cursor' | 'user';
-  source: string;
-  target: string;
-}> = [
-  // Claude Code relocates ~/.claude wholesale via CLAUDE_CONFIG_DIR; the OAuth
-  // credentials live inside it, so an isolated dir needs them linked back.
-  { dir: 'claude', source: '.claude/.credentials.json', target: '.credentials.json' },
-  // Codex CLI relocates ~/.codex via CODEX_HOME; auth.json holds its login.
-  { dir: 'codex', source: '.codex/auth.json', target: 'auth.json' },
-  // Grok relocates ~/.grok via GROK_HOME; auth.json holds its login (same
-  // shape as codex).
-  { dir: 'grok', source: '.grok/auth.json', target: 'auth.json' },
-  { dir: 'pi', source: '.pi/agent/auth.json', target: 'auth.json' },
-  // Cursor CLI stores chat/MCP state under ~/.cursor/; cursor-agent reads
-  // CURSOR_HOME to relocate that data directory. The login is NOT there:
-  // cursor-agent reads ~/.config/cursor/auth.json (XDG config). Beeline
-  // remaps HOME to the isolated user/ dir, so the login has to be linked
-  // into that HOME or every Room/corner except one that was patched by
-  // hand fails with "Authentication required".
-  { dir: 'cursor', source: '.cursor/agent-cli-state.json', target: 'agent-cli-state.json' },
-  { dir: 'user', source: '.config/cursor/auth.json', target: '.config/cursor/auth.json' },
-  // OpenCode stores provider logins under XDG data, which follows isolated HOME.
-  {
-    dir: 'user',
-    source: '.local/share/opencode/auth.json',
-    target: '.local/share/opencode/auth.json',
-  },
-];
+export { SHARED_CREDENTIALS } from './agent-command.js';
 
 /**
  * Goose keeps no auth.json: its provider, its model and its keys all live in
@@ -283,8 +250,8 @@ export function freshHarnessLoginLine(kind: AgentKind | undefined, machine: stri
  * primitive.
  */
 const HARNESS_MCP_CONFIGS = [
-  { dir: 'codex' as const, toml: '.codex/config.toml' },
-  { dir: 'grok' as const, toml: '.grok/config.toml' },
+  { dir: 'codex' as const, toml: '.codex/config.toml', roomDefaults: AGENT_BEHAVIORS.codex.roomTomlDefaults },
+  { dir: 'grok' as const, toml: '.grok/config.toml', roomDefaults: AGENT_BEHAVIORS.grok.roomTomlDefaults },
 ];
 
 /**
@@ -524,7 +491,7 @@ export async function repairRoomAgentCredentialLinks(input: {
       // Failure retries use the shared source instead, so a failed detached
       // refresh cannot trap the session. A busy lock keeps the detached login
       // here until the next pass.
-      if (input.writeBackNewerClaudeLogin && credential.dir === 'claude' && stats.isFile()) {
+      if (input.writeBackNewerClaudeLogin && credential.writeBack && stats.isFile()) {
         const outcome = await writeBackDetachedClaudeLogin(target, source);
         if (outcome !== 'not-newer') continue;
       }
@@ -547,7 +514,7 @@ export async function writeBackRoomClaudeLogin(input: {
   root: string;
   operatorHome?: string;
 }): Promise<'linked' | 'not-newer' | 'busy' | 'absent'> {
-  const claude = SHARED_CREDENTIALS.find((credential) => credential.dir === 'claude')!;
+  const claude = SHARED_CREDENTIALS.find((credential) => credential.writeBack)!;
   const source = resolve(input.operatorHome ?? homedir(), claude.source);
   if (!existsSync(source)) return 'busy';
   const target = resolve(input.root, claude.dir, claude.target);
@@ -570,7 +537,7 @@ export function watchRoomClaudeLogin(input: {
   root: string;
   operatorHome?: string;
 }): FSWatcher | undefined {
-  const claude = SHARED_CREDENTIALS.find((credential) => credential.dir === 'claude')!;
+  const claude = SHARED_CREDENTIALS.find((credential) => credential.writeBack)!;
   if (!existsSync(resolve(input.operatorHome ?? homedir(), claude.source))) return undefined;
   const dir = resolve(input.root, claude.dir);
   let pass = Promise.resolve();
@@ -611,7 +578,7 @@ export function watchRoomClaudeLogin(input: {
  * plaintext store; the linked file stays for Claude Code builds without it.
  */
 export function sharedClaudeLoginEnv(operatorHome: string): Record<string, string> {
-  const claude = SHARED_CREDENTIALS.find((credential) => credential.dir === 'claude')!;
+  const claude = SHARED_CREDENTIALS.find((credential) => credential.writeBack)!;
   const source = resolve(operatorHome, claude.source);
   return existsSync(source) ? { CLAUDE_SECURESTORAGE_CONFIG_DIR: dirname(source) } : {};
 }
@@ -666,7 +633,7 @@ export async function prepareRoomAgentHome(
     await repairRoomAgentCredentialLinks({
       root,
       operatorHome,
-      writeBackNewerClaudeLogin: input.agentKind === 'claude',
+      writeBackNewerClaudeLogin: agentBehavior(input.agentKind).sharedLoginWriteBack === true,
     });
   } catch (error) {
     if (input.failClosed || input.resourceAuthFile) throw error;
@@ -710,7 +677,7 @@ export async function prepareRoomAgentHome(
       CODEX_CONFIG: JSON.stringify(nativeShellHookConfig(codexHookCommand, 'PreToolUse')),
       BEELINE_CODEX_SHELL_HOOK_COMMAND: codexHookCommand,
     } : {}),
-    ...(input.agentKind === 'claude' ? sharedClaudeLoginEnv(operatorHome) : {}),
+    ...(agentBehavior(input.agentKind).sharedLoginWriteBack === true ? sharedClaudeLoginEnv(operatorHome) : {}),
     ...androidAgentEnv({
       root,
       operatorHome,
@@ -766,7 +733,7 @@ async function provisionAgentSkillsAndMcp(
       // A Codex Room needs this config even when the operator shares no MCP
       // servers: Codex otherwise enables internal collaboration by default.
       const section =
-        config.dir === 'codex'
+        config.roomDefaults
           ? [CODEX_ROOM_AGENT_LOCKDOWN_TOML, CODEX_ROOM_WEB_SEARCH_TOML, mcpSection]
               .filter(Boolean)
               .join('\n')
@@ -1199,29 +1166,12 @@ export function mountedImportedMcpServerNames(
   if (input.preparedEnv) {
     const env = input.preparedEnv;
     const home = env.HOME ?? input.operatorHome ?? homedir();
-    const kind = input.agentKind;
-    if (!kind || kind === 'codex') {
-      addTomlMcpNames(names, resolve(env.CODEX_HOME ?? resolve(home, '.codex'), 'config.toml'));
-    }
-    if (!kind || kind === 'grok') {
-      addTomlMcpNames(names, resolve(env.GROK_HOME ?? resolve(home, '.grok'), 'config.toml'));
-    }
-    if (!kind || kind === 'claude') {
-      addClaudeMcpNames(names, resolve(env.CLAUDE_CONFIG_DIR ?? home, '.claude.json'));
-    }
-    if (!kind || kind === 'goose') {
-      addGooseExtensionNames(
-        names,
-        env.GOOSE_PATH_ROOT
-          ? resolve(env.GOOSE_PATH_ROOT, 'config/config.yaml')
-          : resolve(home, '.config/goose/config.yaml'),
-      );
-    }
-    if (!kind || kind === 'pi') {
-      addClaudeMcpNames(
-        names,
-        resolve(env.PI_CODING_AGENT_DIR ?? resolve(home, '.pi/agent'), PI_MCP_CONFIG.target),
-      );
+    for (const config of importedMcpConfigs(input.agentKind)) {
+      const hasHome = config.format === 'extensions' ? Boolean(env[config.homeEnv]) : env[config.homeEnv] !== undefined;
+      const path = hasHome
+        ? resolve(env[config.homeEnv]!, config.file)
+        : resolve(home, config.source);
+      addMcpNamesFromMap(names, readImportedMcpServers(config.format, path));
     }
   } else {
     collectImportedMcpNames(input.operatorHome ?? homedir(), names, input.agentKind);
@@ -1242,7 +1192,6 @@ export function hostImportedMcpDeclarations(
   } = {},
 ): Record<string, Record<string, unknown>> {
   const operatorHome = input.operatorHome ?? homedir();
-  const kind = input.agentKind;
   const declarations: Record<string, Record<string, unknown>> = {};
   const add = (servers: Record<string, unknown> | undefined) => {
     if (!servers) return;
@@ -1250,17 +1199,8 @@ export function hostImportedMcpDeclarations(
       if (isHostMcpDeclaration(name, value)) declarations[name] = recordValue(value) ?? {};
     }
   };
-  if (!kind || kind === 'codex')
-    add(readTomlMcpServers(resolve(operatorHome, '.codex/config.toml')));
-  if (!kind || kind === 'grok') add(readTomlMcpServers(resolve(operatorHome, '.grok/config.toml')));
-  if (!kind || kind === 'claude') {
-    add(recordValue(readJsonObject(resolve(operatorHome, '.claude.json'))?.mcpServers));
-  }
-  if (!kind || kind === 'goose') {
-    add(readGooseExtensions(resolve(operatorHome, '.config/goose/config.yaml')));
-  }
-  if (!kind || kind === 'pi') {
-    add(recordValue(readJsonObject(resolve(operatorHome, PI_MCP_CONFIG.source))?.mcpServers));
+  for (const config of importedMcpConfigs(input.agentKind)) {
+    add(readImportedMcpServers(config.format, resolve(operatorHome, config.source)));
   }
   return declarations;
 }
@@ -1322,44 +1262,26 @@ export function expectedMountedImportedMcpServerNames(input: {
   return [...new Set([...local, ...grantedHost])].sort((left, right) => left.localeCompare(right));
 }
 
+function importedMcpConfigs(kind?: AgentKind) {
+  const behaviors = kind ? [agentBehavior(kind)] : IMPORTED_MCP_KINDS.map(kind => AGENT_BEHAVIORS[kind]);
+  return behaviors.flatMap((behavior) => behavior.importedMcp ? [behavior.importedMcp] : []);
+}
+
+function readImportedMcpServers(format: 'toml' | 'json' | 'extensions', path: string): Record<string, unknown> | undefined {
+  if (format === 'toml') return readTomlMcpServers(path);
+  if (format === 'extensions') return readGooseExtensions(path);
+  return recordValue(readJsonObject(path)?.mcpServers);
+}
+
 function collectImportedMcpNames(operatorHome: string, names: Set<string>, kind?: AgentKind): void {
-  if (!kind || kind === 'codex') {
-    addLocalMcpNames(names, readTomlMcpServers(resolve(operatorHome, '.codex/config.toml')));
-  }
-  if (!kind || kind === 'grok') {
-    addLocalMcpNames(names, readTomlMcpServers(resolve(operatorHome, '.grok/config.toml')));
-  }
-  if (!kind || kind === 'claude') {
-    addLocalMcpNames(
-      names,
-      recordValue(readJsonObject(resolve(operatorHome, '.claude.json'))?.mcpServers),
-    );
-  }
-  if (!kind || kind === 'goose') {
-    addLocalMcpNames(
-      names,
-      readGooseExtensions(resolve(operatorHome, '.config/goose/config.yaml')),
-    );
-  }
-  if (!kind || kind === 'pi') {
-    addLocalMcpNames(
-      names,
-      recordValue(readJsonObject(resolve(operatorHome, PI_MCP_CONFIG.source))?.mcpServers),
-    );
+  for (const config of importedMcpConfigs(kind)) {
+    addLocalMcpNames(names, readImportedMcpServers(config.format, resolve(operatorHome, config.source)));
   }
 }
 
 function addLocalMcpNames(names: Set<string>, servers: Record<string, unknown> | undefined): void {
   if (!servers) return;
   for (const name of Object.keys(localMcpServers(servers))) names.add(name);
-}
-
-function addTomlMcpNames(names: Set<string>, path: string): void {
-  addMcpNamesFromMap(names, readTomlMcpServers(path));
-}
-
-function addClaudeMcpNames(names: Set<string>, path: string): void {
-  addMcpNamesFromMap(names, recordValue(readJsonObject(path)?.mcpServers));
 }
 
 function readTomlMcpServers(path: string): Record<string, unknown> | undefined {
@@ -1390,10 +1312,6 @@ function addMcpNamesFromMap(
 ): void {
   if (!servers) return;
   for (const name of Object.keys(servers)) names.add(name);
-}
-
-function addGooseExtensionNames(names: Set<string>, path: string): void {
-  addMcpNamesFromMap(names, readGooseExtensions(path));
 }
 
 function readExistingText(path: string): string | undefined {

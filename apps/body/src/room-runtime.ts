@@ -51,7 +51,6 @@ import {
   fetchRepositoryCache,
 } from './repository-cache-repair.js';
 import {
-  DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR,
   resolveMaxWarmSessions,
   resolvePerRoomLiveSessions,
   resolveSessionIdleMs,
@@ -452,39 +451,6 @@ async function originContains(gitCommonDir: string, head: string): Promise<boole
   return Boolean(result.stdout.trim());
 }
 
-/**
- * Before a swapped-out implementer's copy is deleted, every unpushed change
- * goes to a backup branch on origin. The corner branch is never written, so
- * the new implementer starts from what was pushed. Returns what was done.
- */
-async function saveCheckoutBeforeRelease(input: {
-  path: string; gitCommonDir: string; cornerId: string; agentId: string; env: NodeJS.ProcessEnv;
-}): Promise<string> {
-  const git = (args: string[]) => execFileAsync('git', ['-C', input.path, ...args],
-    { env: input.env, encoding: 'utf8', timeout: 120_000, killSignal: 'SIGKILL', maxBuffer: 4 * 1024 * 1024 });
-  const dirty = (await git(['status', '--porcelain=v1', '--untracked-files=all'])).stdout.trim();
-  if (dirty) {
-    await git(['add', '--all']);
-    await git(['commit', '--no-verify', '--quiet', '-m', 'Save unpushed work before implementer swap']);
-  }
-  const head = (await git(['rev-parse', '--verify', 'HEAD'])).stdout.trim();
-  const stashes = [...new Set((await git(['stash', 'list', '--format=%H'])).stdout.trim().split('\n').filter(Boolean))];
-  const backup = `beeline/backup/${input.cornerId.slice(0, 12)}-${input.agentId.slice(0, 8)}`;
-  const refspecs: string[] = [];
-  if (!await originContains(input.gitCommonDir, head)) refspecs.push(`${head}:refs/heads/${backup}`);
-  // Each reflog entry is an independent stash, not an ancestor of the newest.
-  // Content-addressed refs preserve all entries and allow safe publication retries.
-  for (const stash of stashes) refspecs.push(`${stash}:refs/heads/${backup}-stash-${stash}`);
-  if (!refspecs.length) return 'I had no unpushed work.';
-  // Never clear local recovery data after a failed or partially successful push.
-  await git(['push', 'origin', ...refspecs]);
-  if (stashes.length) await git(['stash', 'clear']);
-  if (refspecs.length === stashes.length) return `I pushed my ${stashes.length} stash entries to ${backup}-stash-<commit> branches. My current HEAD was already published.`;
-  const what = dirty ? 'uncommitted edits (saved as one commit)' : 'unpushed commits';
-  return `I pushed my ${what}${stashes.length ? ` and ${stashes.length} stash entries (to ${backup}-stash-<commit> branches)` : ''} to branch ${backup} (${head.slice(0, 12)}).`;
-
-}
-
 interface DesiredCorner {
   cornerId: string;
   parentRoomId: string;
@@ -665,9 +631,6 @@ export class RoomRuntimeCoordinator {
     this.scheduler = new SessionScheduler({
       ...(fixedWorkspaceCeiling ? { maxLiveSessions: Number(fixedWorkspaceCeiling) } : {}),
       perRoomLiveSessions: resolvePerRoomLiveSessions(process.env),
-      workspaceFloor: Number(
-        process.env.BEELINE_BODY_MAX_SESSIONS_FLOOR ?? String(DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR),
-      ),
       activeRoomCount: () => this.activeRoomCount(),
       idleMs: resolveSessionIdleMs(process.env),
       maxWarmSessions: resolveMaxWarmSessions(process.env),
@@ -1427,28 +1390,6 @@ export class RoomRuntimeCoordinator {
         }
         return { ...worktree, writable };
       };
-      const releaseCheckout = async (): Promise<string> => {
-        const own = worktree ?? (existsSync(resolve(ownCheckout!.path, '.git')) ? ownCheckout! : undefined);
-        if (!own) return 'I had no copy of this corner\'s code on this machine.';
-        const { token } = await this.options.daemonApi.execute('getRoomGitHubToken', { roomId: corner.parentRoomId });
-        let saved: string;
-        try {
-          saved = await saveCheckoutBeforeRelease({
-            path: own.path, gitCommonDir: own.gitCommonDir, cornerId: corner.cornerId,
-            agentId: this.agent.publicKey, env: githubGitEnv(token),
-          });
-        } catch (error) {
-          const why = (error instanceof Error ? error.message : String(error)).split('\n')[0];
-          return `I could not push my unpushed work (${why}), so I kept my copy at ${own.path}.`;
-        }
-        await this.reapCornerWorktree({ ...own, cornerId: corner.cornerId, branch: featureBranch!,
-          parentRoomId: corner.parentRoomId, token: '' });
-        if (existsSync(own.path)) return `${saved} My copy at ${own.path} is still on disk; cleanup retries it.`;
-        worktree = undefined;
-        const running = this.running.get(corner.cornerId);
-        if (running) running.worktree = undefined;
-        return `${saved} I deleted my copy at ${own.path}.`;
-      };
       const repositoryReadOnly = Boolean(restore.brief) && !cornerHasRepositoryWork(restore.brief);
       const checkout = repositoryBacked ? await prepareCheckout(!repositoryReadOnly) : undefined;
       const activatedReadOnly = checkout ? !checkout.writable : repositoryReadOnly;
@@ -1481,7 +1422,6 @@ export class RoomRuntimeCoordinator {
         ...(checkout
           ? {
               prepareCheckout,
-              releaseCheckout,
               repository: {
                 featureBranch: featureBranch!,
                 targetBranch: targetBranch!,

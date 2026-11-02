@@ -1,12 +1,17 @@
+import {
+  joinMcpPublicRooms,
+  restoreMcpWorkspaceMemberships,
+  removeIdentityMemberships,
+} from './membership-join.js';
+import { notifyMcpWebhook } from './postgres-live.js';
 import { mentionRouting } from './owed-mentions.js';
-import { queueMcpMentionEvents, deliverMcpEvents } from './rooms-mcp-events.js';
+import { queueMcpMentionEvents, deliverMcpEvents, mcpWakeNext } from './rooms-mcp-events.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { Agent, request as httpsRequest } from 'node:https';
 import { MCP_STARTER_ROUTINE, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 import { fetchMcpLogo, mcpMemberAvatar, mcpClientName } from './rooms-mcp-logos.js';
 import { normalizeAvatar } from './durable-avatar.js';
 import { openSecrets, sealSecrets } from './free-agents.js';
@@ -17,18 +22,6 @@ import { routeAgentResult, type CommandRow } from './agent-command.js';
 function mcpMemberIdentityId(clientId: string, ownerId: string): string {
   return createHash('sha256').update(`rooms-mcp-member:v1:${clientId}:${ownerId}`).digest('hex');
 }
-
-/**
- * Joins public top-level Rooms in the Room's own Workspace. A fresh member (a
- * first connection, or a reconnect after Disconnect) rejoins every public
- * Room; an existing member keeps the Rooms a person removed it from.
- */
-const JOIN_PUBLIC_ROOMS = `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-  SELECT room.workspace_id,room.id,$1,'member' FROM rooms room
-  WHERE room.workspace_id=ANY($2::uuid[]) AND room.parent_id IS NULL
-    AND room.direct_participants IS NULL AND room.archived_at IS NULL AND room.visibility='public'
-  ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-  DO UPDATE SET removed_at=NULL WHERE memberships.removed_at IS NOT NULL AND $3::boolean`;
 
 /** A refusal the calling client can act on; its message is returned as is. */
 export class McpToolError extends Error {}
@@ -167,15 +160,9 @@ export async function ensureMcpMember(
       [input.clientId, input.ownerId, memberId, modelLabel, selection],
     )).rows[0]?.fresh ?? false;
     if (workspaces.length) {
-      await tx.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         SELECT workspace_id,NULL,$1,'member' FROM unnest($2::uuid[]) workspace_id
-         ON CONFLICT(workspace_id,identity_id) WHERE room_id IS NULL
-         DO UPDATE SET removed_at=NULL`,
-        [memberId, workspaces],
-      );
-      await tx.query(JOIN_PUBLIC_ROOMS, [memberId, workspaces, fresh]);
-      if (!fresh && addedWorkspaces.length) await tx.query(JOIN_PUBLIC_ROOMS, [memberId, addedWorkspaces, true]);
+      await restoreMcpWorkspaceMemberships(tx, [memberId, workspaces]);
+      await joinMcpPublicRooms(tx, [memberId, workspaces, fresh]);
+      if (!fresh && addedWorkspaces.length) await joinMcpPublicRooms(tx, [memberId, addedWorkspaces, true]);
     }
     if (avatar) await defaultMcpMemberAvatar(tx, memberId, avatar);
     return memberId;
@@ -297,13 +284,25 @@ export async function recordMcpMemberWebhook(
     [id, memberId, roomId, messageId, text.slice(0, 16_000)],
   );
   // Delivered on commit: a listener sends it at once, with no polling.
-  await db.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL,
-    JSON.stringify({ table: MCP_WEBHOOK_TABLE, operation: 'INSERT', roomId })]);
+  await notifyMcpWebhook(db, roomId);
   return { callId: id, memberId, roomId, messageId };
 }
 
 function routingInstruction(row: {member_id: string; room_id: string; message_id: string}): string {
   return `Room ID ${row.room_id}; message ID ${row.message_id}; member ID ${row.member_id}; answer in this Room with replyTo ${row.message_id}.`;
+}
+
+/**
+ * An order, report, lifecycle or scheduled wake has no Room message to reply
+ * to: its outbox row names the command. The body is the MCP Events `wake`
+ * payload (`rooms-mcp-events.ts`), so a webhook, an event and list_mentions agree.
+ */
+function wakeBody(row: { member_id: string; room_id: string; command_id: string | null; command_reason: string | null;
+  command_kind: string | null; command_text: string | null; body: string }) {
+  const next = mcpWakeNext(row.command_kind, row.command_reason);
+  return { memberId: row.member_id, roomId: row.room_id, address: row.room_id, commandId: row.command_id, id: row.command_id,
+    reason: row.command_reason, kind: row.command_kind, text: row.command_text ?? row.body, next, cursor: null,
+    instruction: `Private ${row.command_kind ?? row.command_reason ?? 'wake'} for you at ${row.room_id}, not a tag: do not reply with replyTo. ${next}` };
 }
 
 /**
@@ -329,6 +328,7 @@ export async function deliverMcpMemberWebhooks(
       call_id: string; member_id: string; room_id: string; message_id: string;
       body: string; callback_url: string | null; callback_secret: string | null; deliverable: boolean;
       author_id: string | null; author_handle: string | null; author_name: string | null; author_kind: string | null; cursor: string | null;
+      command_id: string | null; command_reason: string | null; command_kind: string | null; command_text: string | null;
     }>(
       `WITH claimed AS (
          UPDATE rooms_mcp_webhook_outbox outbox SET attempts=attempts+1,claimed_at=now()
@@ -342,7 +342,9 @@ export async function deliverMcpMemberWebhooks(
        SELECT claimed.call_id,claimed.member_id,claimed.room_id,claimed.message_id,claimed.body,
          COALESCE(member.callback_url,client.callback_url) callback_url,
          CASE WHEN member.callback_url IS NOT NULL THEN member.callback_secret END callback_secret,
-         message.author_id,author.handle author_handle,author.name author_name,author.kind author_kind,mention.seq::text cursor,(
+         message.author_id,author.handle author_handle,author.name author_name,author.kind author_kind,mention.seq::text cursor,
+         command.id command_id,command.reason command_reason,command.private_payload->>'kind' command_kind,
+         left(COALESCE(command.private_payload->>'text',source.text),16000) command_text,(
            room.id IS NOT NULL AND room.archived_at IS NULL
            AND EXISTS (SELECT 1 FROM room_access room_member
              WHERE room_member.room_id=claimed.room_id AND room_member.identity_id=claimed.member_id
@@ -357,7 +359,9 @@ export async function deliverMcpMemberWebhooks(
        LEFT JOIN rooms room ON room.id=claimed.room_id
        LEFT JOIN messages message ON message.id=claimed.message_id
        LEFT JOIN identities author ON author.id=message.author_id
-       LEFT JOIN rooms_mcp_mentions mention ON mention.member_id=claimed.member_id AND mention.message_id=claimed.message_id`,
+       LEFT JOIN rooms_mcp_mentions mention ON mention.member_id=claimed.member_id AND mention.message_id=claimed.message_id
+       LEFT JOIN agent_commands command ON message.id IS NULL AND command.id=claimed.message_id AND command.agent_id=claimed.member_id
+       LEFT JOIN messages source ON source.id=command.source_message_id`,
     );
     const row = claimed.rows[0];
     if (!row) break;
@@ -375,7 +379,7 @@ export async function deliverMcpMemberWebhooks(
       const response = await transport(row.callback_url, {
         headers: { 'content-type': 'application/json',
           ...(row.callback_secret ? { authorization: `Bearer ${openSecrets<string>(webhookKey(), row.callback_secret)}` } : {}) },
-        body: JSON.stringify({ ...mentionRouting(row.member_id, row.room_id, row.message_id),
+        body: JSON.stringify(row.command_id ? wakeBody(row) : { ...mentionRouting(row.member_id, row.room_id, row.message_id),
           author: row.author_id ? { id: row.author_id, handle: row.author_handle, name: row.author_name } : null,
           text: row.body, cursor: row.cursor, instruction: row.author_kind === 'agent' && row.author_handle
             ? `${routingInstruction(row)} ${MCP_TAG_INSTRUCTION} Start your reply with @${row.author_handle} to wake the asking agent.`
@@ -431,7 +435,7 @@ export async function backfillMcpMemberRoomsAndAvatars(db: SqlDatabase): Promise
      JOIN identities identity ON identity.id=member.member_id`,
   );
   for (const member of members.rows) {
-    if (member.workspaces.length) await db.query(JOIN_PUBLIC_ROOMS, [member.member_id, member.workspaces, false]);
+    if (member.workspaces.length) await joinMcpPublicRooms(db, [member.member_id, member.workspaces, false]);
     await db.transaction(async tx => {
       // Serialize with set_profile, whose identity update precedes its avatar write.
       const current = (await tx.query<{ avatar: string | null }>(
@@ -462,10 +466,7 @@ export async function retireMcpMember(
   const member = await mcpMemberId(db, clientId, ownerId);
   if (!member) return;
   await db.transaction(async (tx) => {
-    await tx.query(
-      `UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND removed_at IS NULL`,
-      [member],
-    );
+    await removeIdentityMemberships(tx, [member]);
     await tx.query(`UPDATE identities SET hidden_from_roster=true,updated_at=now() WHERE id=$1`, [
       member,
     ]);

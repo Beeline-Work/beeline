@@ -470,6 +470,10 @@ export function judgeChannels(sites, allowlist, baseAllowlist) {
     for (const [key, entry] of allowed) {
       const was = before.get(key);
       if (!was && newlyCovered.some((root) => entry.file.startsWith(`${root}/`))) continue;
+      // Naming a host the base list already approves as a link is a link, not a
+      // new channel; fetching it is still caught by its call-site kind.
+      if (!was && entry.fate === 'link' && entry.kind.startsWith('origin:') &&
+        (baseAllowlist.entries ?? []).some((other) => other.kind === entry.kind && other.fate === 'link')) continue;
       if (!was) errors.push(`${ALLOWLIST_PATH}: ${key} is new. The list of phone network channels may only shrink.`);
       else if (entry.count > was.count)
         errors.push(`${ALLOWLIST_PATH}: ${key} grew from ${was.count} to ${entry.count}. The list of phone network channels may only shrink.`);

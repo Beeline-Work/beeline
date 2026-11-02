@@ -1,0 +1,132 @@
+diff --git a/node_modules/expo-updates/android/src/main/java/expo/modules/updates/UpdatesUtils.kt b/node_modules/expo-updates/android/src/main/java/expo/modules/updates/UpdatesUtils.kt
+--- a/node_modules/expo-updates/android/src/main/java/expo/modules/updates/UpdatesUtils.kt
++++ b/node_modules/expo-updates/android/src/main/java/expo/modules/updates/UpdatesUtils.kt
+@@ -110,6 +110,20 @@
+     }
+   }
+ 
++  // A READY database row does not prove that its cached bundle survived process death.
++  fun isValidLaunchAsset(asset: AssetEntity, updatesDirectory: File): Boolean {
++    val relativePath = asset.relativePath ?: return false
++    val file = File(updatesDirectory, relativePath)
++    if (!file.isFile || (asset.expectedHash == null && asset.hash == null)) return false
++    return try {
++      val actual = sha256(file)
++      (asset.expectedHash == null || asset.expectedHash == toBase64Url(actual)) &&
++        (asset.hash == null || actual.contentEquals(asset.hash))
++    } catch (_: IOException) {
++      false
++    }
++  }
++
+   @Throws(NoSuchAlgorithmException::class, IOException::class)
+   fun verifySHA256AndWriteToFile(inputStream: InputStream, destination: File, expectedBase64URLEncodedHash: String?): ByteArray {
+     DigestInputStream(inputStream, MessageDigest.getInstance("SHA-256")).use { digestInputStream ->
+@@ -130,13 +144,12 @@
+       if (expectedBase64URLEncodedHash != null && expectedBase64URLEncodedHash != hashBase64String) {
+         throw IOException("File download was successful but base64url-encoded SHA-256 did not match expected; expected: $expectedBase64URLEncodedHash; actual: $hashBase64String")
+       }
+-      // only rename after the hash has been verified
+-      // Since renameTo() does not expose detailed errors, and can fail if source and destination
+-      // are not on the same mount point, we do a copyTo followed by delete
+-      // if there are two assets with identical content, they will be written to the same file path,
+-      // so we allow overwrites
++      // The temporary file is a sibling on the same filesystem. Publish it atomically:
++      // copying here can leave a truncated destination if Android kills the process.
+       try {
+-        tmpFile.copyTo(destination, true)
++        if (!tmpFile.renameTo(destination)) {
++          throw IOException("Could not atomically publish verified asset $destination")
++        }
+       } catch (e: NoSuchFileException) {
+         throw IOException("File download was successful, but temp file ${tmpFile.absolutePath} does not exist")
+       } catch (e: Exception) {
+diff --git a/node_modules/expo-updates/android/src/main/java/expo/modules/updates/launcher/DatabaseLauncher.kt b/node_modules/expo-updates/android/src/main/java/expo/modules/updates/launcher/DatabaseLauncher.kt
+--- a/node_modules/expo-updates/android/src/main/java/expo/modules/updates/launcher/DatabaseLauncher.kt
++++ b/node_modules/expo-updates/android/src/main/java/expo/modules/updates/launcher/DatabaseLauncher.kt
+@@ -25,6 +25,7 @@
+ import kotlinx.coroutines.awaitAll
+ import org.json.JSONObject
+ import java.io.File
++import java.io.IOException
+ 
+ /**
+  * Implementation of [Launcher] that uses the SQLite database and expo-updates file store as the
+@@ -164,7 +165,30 @@
+       filteredLaunchableUpdates.add(update)
+     }
+     val manifestFilters = ManifestMetadata.getManifestFilters(database, configuration)
+-    return selectionPolicy.selectUpdateToLaunch(filteredLaunchableUpdates, manifestFilters)
++    while (true) {
++      val candidate = selectionPolicy.selectUpdateToLaunch(filteredLaunchableUpdates, manifestFilters)
++        ?: return null
++      // Embedded bytes come from the APK; development bundles come from Metro.
++      if (candidate.status == UpdateStatus.DEVELOPMENT || candidate.id == embeddedUpdate?.updateEntity?.id) {
++        return candidate
++      }
++      val asset = database.updateDao().loadLaunchAssetForUpdate(candidate.id)
++      if (asset != null && UpdatesUtils.isValidLaunchAsset(asset, updatesDirectory)) return candidate
++
++      // Keep this retryable, rather than counting it as a failed JS launch (which
++      // prevents a later update check from downloading the same update again).
++      if (asset == null) throw IOException("Missing launch asset for update ${candidate.id}")
++      database.updateDao().markUpdatesWithMissingAssets(listOf(asset))
++      val file = asset.relativePath?.let { File(updatesDirectory, it) }
++      if (file != null && file.exists() && !file.delete()) {
++        throw IOException("Could not remove invalid cached launch asset $file")
++      }
++      logger.warn("Rejected invalid cached launch asset for update ${candidate.id}", UpdatesErrorCode.AssetsFailedToLoad)
++      // Multiple updates may share this asset. Reload the launchable set after
++      // marking all its dependents PENDING, then choose the last good update.
++      val remainingIds = database.updateDao().loadLaunchableUpdatesForScope(configuration.scopeKey).map { it.id }.toSet()
++      filteredLaunchableUpdates.removeAll { it.id !in remainingIds }
++    }
+   }
+ 
+   private fun embeddedAssetFileMap(): MutableMap<AssetEntity, String> {
+@@ -216,6 +240,10 @@
+   ): File? {
+     val assetFile = File(updatesDirectory, asset.relativePath ?: "")
+     var assetFileExists = assetFile.exists()
++    if (assetFileExists && asset.isLaunchAsset && !UpdatesUtils.isValidLaunchAsset(asset, updatesDirectory)) {
++      if (!assetFile.delete()) throw IOException("Could not remove invalid cached launch asset $assetFile")
++      assetFileExists = false
++    }
+     if (!assetFileExists) {
+       // something has gone wrong, we're missing this asset
+       // first we check to see if a copy is embedded in the binary
+diff --git a/node_modules/expo-updates/android/src/main/java/expo/modules/updates/loader/Loader.kt b/node_modules/expo-updates/android/src/main/java/expo/modules/updates/loader/Loader.kt
+--- a/node_modules/expo-updates/android/src/main/java/expo/modules/updates/loader/Loader.kt
++++ b/node_modules/expo-updates/android/src/main/java/expo/modules/updates/loader/Loader.kt
+@@ -164,6 +164,14 @@
+     }
+ 
+     if (existingUpdateEntity != null && existingUpdateEntity.status == UpdateStatus.READY) {
++      val launchAsset = database.updateDao().loadLaunchAssetForUpdate(existingUpdateEntity.id)
++      if (launchAsset != null && !UpdatesUtils.isValidLaunchAsset(launchAsset, updatesDirectory)) {
++        database.updateDao().markUpdatesWithMissingAssets(listOf(launchAsset))
++        existingUpdateEntity.status = UpdateStatus.PENDING
++      }
++    }
++
++    if (existingUpdateEntity != null && existingUpdateEntity.status == UpdateStatus.READY) {
+       // hooray, we already have this update downloaded and ready to go!
+       updateEntity = existingUpdateEntity
+       return finish()
+@@ -203,6 +211,16 @@
+         // in case we need them later on in this class
+         database.assetDao().mergeAndUpdateAsset(matchingDbEntry, assetEntity)
+         assetEntity = matchingDbEntry
++      }
++
++      // A process killed during an older non-atomic publication may have left
++      // this PENDING update with a partial file. Never promote it just because
++      // the filename exists, including when another update shares the asset.
++      if (assetEntity.isLaunchAsset && assetEntity.relativePath != null &&
++        !UpdatesUtils.isValidLaunchAsset(assetEntity, updatesDirectory)
++      ) {
++        val file = File(updatesDirectory, assetEntity.relativePath!!)
++        if (file.exists() && !file.delete()) throw IOException("Could not remove invalid cached launch asset $file")
+       }
+ 
+       // if we already have a local copy of this asset, don't try to download it again!

@@ -41,7 +41,6 @@ describe('mounted monolith auth', () => {
   let processWebhook: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
-    vi.stubEnv('PHONE_GITHUB_EXCHANGE_ENDPOINT', '');
     database = await migratedDatabase();
     await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     let mountedForVerification: MonolithAuthMount | undefined;

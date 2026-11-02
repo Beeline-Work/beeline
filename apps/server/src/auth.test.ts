@@ -460,28 +460,17 @@ describe('opaque token ceremony', () => {
     await migrate(db);
     expect((await db.query(`SELECT 1 FROM workspaces WHERE id=$1`, [welcomeId])).rowCount).toBe(0);
   });
-  it('redeems only the one-use auth ticket and receives no GitHub access token', async () => {
-    const request = vi.fn(async (_url: string, init?: RequestInit) => {
-      expect(init?.method).toBe('POST');
-      expect(JSON.parse(String(init?.body))).toEqual({ ticket: 'ticket-proof' });
-      return new Response(JSON.stringify({ subject: '42', login: 'owner', name: 'Owner' }), {
-        status: 200,
-      });
-    });
-    vi.stubGlobal('fetch', request);
-    vi.stubEnv('PHONE_GITHUB_EXCHANGE_ENDPOINT', 'https://auth.example/phone-exchange');
-    await expect(verifierFromEnvironment(vi.fn())('ticket-proof')).resolves.toEqual({
-      subject: '42',
-      login: 'owner',
-      name: 'Owner',
-    });
-    vi.unstubAllGlobals();
+  it('consumes tickets through mounted auth in production, including local-shaped input', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    const mounted = vi.fn(async () => ({ subject: '42', login: 'owner', name: 'Owner' }));
+    await verifierFromEnvironment(mounted)('ticket-proof');
+    await verifierFromEnvironment(mounted)('local:owner');
+    expect(mounted.mock.calls).toEqual([['ticket-proof'], ['local:owner']]);
     vi.unstubAllEnvs();
   });
   it('uses local identities in development and the mounted verifier by default', async () => {
     const mounted = vi.fn(async () => ({ subject: '42', login: 'owner', name: 'Owner' }));
     vi.stubEnv('NODE_ENV', 'test');
-    vi.stubEnv('PHONE_GITHUB_EXCHANGE_ENDPOINT', '');
     await expect(verifierFromEnvironment(mounted)('local:octocat')).resolves.toEqual({
       subject: 'local-octocat',
       login: 'octocat',

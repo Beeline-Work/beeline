@@ -37,6 +37,26 @@
   independently. It checks Android; the fast static native-import gate covers
   both platforms. An OTA promoted without the optional proof is recorded UNPROVEN.
 
+## Production origin checks
+
+Production native release jobs and OTA exports pin `EXPO_PUBLIC_BUZZY_MONOLITH_URL`
+to `https://server.usebeeline.app`. Native release builds use a fresh Metro temp
+cache; each OTA platform's first export clears Metro's cache. A rig's inlined
+URL must never survive into a production artifact.
+
+Before uploading an Android AAB, `scripts/assert-mobile-release-origin.mjs`
+checks both its native `assets/app.config` and the Hermes `loadAppConfig`
+override. A native production URL alone is insufficient: an inlined
+`EXPO_PUBLIC_*` value overrides it at runtime. The check fails closed if it
+cannot verify the embedded function. It adds no app runtime behavior.
+
+Locally built store binaries also need a build-number/runtime identity in
+`apps/mobile/store/native-runtime-builds.json` or the release record. EAS's
+cloud-build inventory does not contain local builds. Publication is still
+verified against Play/App Store Connect; adding an identity does not admit an
+unpublished runtime. The next release rereads live store state before choosing
+OTA targets.
+
 ## Routine release
 
 Firstmate calls the first-party `dispatch_release` agent tool with `{}`, without
@@ -106,7 +126,10 @@ installable when processing finishes, with no release rerun required.
 
 Installed helpers use the verified bundles published earlier by the daemon
 promotion step to `https://usebeeline.app/dl/manifest.json`, independently of
-npm. The final release notification wakes connected helpers; their first socket
+npm. The final release notification verifies that the live Pages manifest matches the
+release version and source commit, then wakes connected helpers even if another
+component or release bookkeeping failed. A no-op release sends no notice.
+Notification failure never changes the authoritative release outcome; their first socket
 registration also checks this channel. Downloads and activation follow the
 [helper update channel](cli-bundle-channel.md), so npm processing does not delay
 fleet updates.
@@ -302,13 +325,20 @@ desktop updater counter, and the store builds this pipeline uploaded.
 published before `release.json` existed is read as a migration record whose
 OTA branch is the legacy `production` branch.
 
-Jobs hand facts to each other only through job outputs. Public JSON metadata
-uses the `b64:` transport in `scripts/release-job-output.mjs`; it carries no
-credentials. Raw JSON punctuation can match masked lines of a multiline secret,
-which makes GitHub drop the whole output. The result job validates its state,
-identity and required previous record before applying checkpoints. Missing or
-invalid metadata reports `release-state:missing`, `release-state:invalid`,
-`previous-record:missing` or `previous-record:invalid` and blocks publication.
+Jobs hand component facts and scalar plan flags through job outputs. The result
+job reconstructs its state from those flags and rereads the newest published
+GitHub Release record, requiring its version and source to match the baseline
+pinned by initialize. Missing flags, changed baseline identity, inconsistent
+no-op or desktop version, and invalid metadata block publication. The original
+large `release_state` output is not emitted or consumed: GitHub dropped even
+its base64 form in run 41456438656 after secret-mask false positives. No Actions
+artifact or cache carries release state.
+
+Public JSON used by the OTA and observational bookkeeping legs still uses the
+`b64:` transport in `scripts/release-job-output.mjs`; it carries no credentials.
+A result job never relies on that encoded previous-record output. Reconstruction
+reports `release-plan:invalid`, `previous-record:missing` or
+`previous-record:invalid` and fails closed.
 
 A component-complete attempt whose result job failed has not published a
 release record. The next dispatch reads the newest **published** release,
@@ -319,6 +349,11 @@ Rerunning an old Actions run still uses its old workflow and checked-out scripts
 not pick up a later pipeline fix.
 Do not promote an empty draft or infer a delivered record from Actions success:
 the permanent record must include validated component and rollback facts.
+
+There is no record-only recovery workflow. A component-complete failed attempt
+must not be published from Actions success alone; use the existing audited
+recovery dispatch after the pipeline fix is on main. A rerun of an old run
+keeps its old workflow and scripts and cannot pick up this handoff fix.
 
 No Actions artifact, cache or run lookup carries state between jobs or runs. Artifacts carry build
 outputs only: Mac helper binaries, the Android AAB for the emulator proof,
@@ -416,6 +451,13 @@ including cancellations before initialization. It uses trusted default-branch
 code on a hosted runner to file a GitHub issue labeled `release-failure`. A marker
 keyed by run ID and serialized delivery prevent duplicates across redelivery,
 reruns and closed issues. It never downloads or executes triggering artifacts.
+Failure issues record the failed job names. A successful preflight comments with
+its run link and closes earlier preflight issues. A successful unified release
+closes earlier unified-release issues only when every recorded failed job
+succeeded in that run; skipped jobs are not recovery. Older issues without job
+records require every component job to succeed, with none skipped. Issues created
+at or after the recovering run started stay open, and OTA success never closes a
+preflight issue. Recovery comments and closures are idempotent on redelivery.
 The existing saved `feedback-triage-steps` procedure's pull step includes all open
 issues with that label, without an age cutoff, alongside feedback and Sentry.
 This is the GitHub issue intake path, not a new server endpoint.

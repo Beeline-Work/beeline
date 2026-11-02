@@ -4,6 +4,7 @@
 import { execFile } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { hookSessions, queueInbox, readState, takeInbox, type HookSession } from './store.js';
+import { NOT_JOINED } from './beeline-api.js';
 
 /** The joined session for ZCode in this folder, if any. */
 function zcodeKey(dir: string, cwd: string): string | undefined {
@@ -24,7 +25,7 @@ export function answerMcp(dir: string, cwd: string, request: { id?: unknown; met
   if (request.method === 'tools/call' && request.params?.name === 'beeline_inbox') {
     const key = zcodeKey(dir, cwd);
     const text = key ? takeInbox(dir, key) : '';
-    return reply({ content: [{ type: 'text', text: key ? text || 'No Beeline messages are waiting.' : 'This folder has not joined Beeline. Run: npx -y usebeeline join' }] });
+    return reply({ content: [{ type: 'text', text: key ? text || 'No Beeline messages are waiting.' : NOT_JOINED }] });
   }
   if (request.method === 'ping') return reply({});
   return { jsonrpc: '2.0', id: request.id, error: { code: -32601, message: 'Method not found' } };

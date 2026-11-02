@@ -10,7 +10,7 @@ import { STARTUP_WAKE_BACKOFF_SCHEMA } from './startup-wake-backoff.js';
 import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
 import { backfillMcpMemberRoomsAndAvatars, backfillMcpMembers } from './rooms-mcp-members.js';
 import { seedPreregisteredMcpClients } from './rooms-mcp-preregistered.js';
-import { backfillCornerHoldMessages } from './corner-holds.js';
+import { backfillCornerHoldMessages, releaseArchivedCornerHolds } from './corner-holds.js';
 import { OPERATOR_SYSTEM_DM_SCHEMA } from './operator-system-dm.js';
 import { OPERATOR_FINANCES_SCHEMA } from './operator-finances.js';
 import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
@@ -60,12 +60,17 @@ import { backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, closeStal
 import { retireAgentClasses } from './agent-class-retirement.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
-import { syncTopLevelSharedRoomRoles } from './membership-join.js';
+import {
+  retireWorkspaceBansSql,
+  perItemMembershipSubscriptionCleanupSql,
+  syncTopLevelSharedRoomRoles,
+} from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
 import { cancelArchivedCornerAssignments, cancelStaleClosedCornerStops } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
+import { cornerWaitingFunctionSql } from './corner-waiting-report.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
 import { logLockHolders, retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
@@ -813,11 +818,8 @@ UPDATE workspaces SET internal=true WHERE NOT internal AND id IN (
 );
 
 
-CREATE TABLE IF NOT EXISTS service_review_notice_deliveries (
-  identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
-  provider_id text NOT NULL,
-  sent_at timestamptz NOT NULL
-);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS service_review_notice_deliveries;
 CREATE TABLE IF NOT EXISTS service_review_visits (
   agent_id text,
   run_id text,
@@ -866,11 +868,7 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_updated_at timestamptz;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_name text;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_resolution text NOT NULL DEFAULT 'none';
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES identities(id);
--- Retained but unused: a reviewer class, replaced by reviewer_fallback_ids
--- (retireAgentClasses converts it). A later migration can drop it.
-ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_class text;
--- Agents tried in order after reviewer_agent_id when it is unhealthy or its
--- review turn fails (agent-health.ts). Empty unless reviewer_agent_id is set.
+-- Retired reviewer fallbacks: nothing reads them; a later release drops the column.
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_fallback_ids text[] NOT NULL DEFAULT '{}';
 CREATE INDEX IF NOT EXISTS rooms_workspace_idx ON rooms(workspace_id, updated_at DESC);
 CREATE INDEX IF NOT EXISTS rooms_parent_idx ON rooms(parent_id, updated_at DESC);
@@ -891,15 +889,7 @@ CREATE TABLE IF NOT EXISTS memberships (
 -- person simply needs a fresh invite to rejoin (the invite itself is now
 -- single-use). Existing ban rows become plain removals before the table goes,
 -- so no banned person is restored by the drop.
-DO $$
-BEGIN
-  IF to_regclass('workspace_bans') IS NOT NULL THEN
-    UPDATE memberships m SET removed_at=now()
-    FROM workspace_bans b
-    WHERE m.workspace_id=b.workspace_id AND m.identity_id=b.identity_id AND m.removed_at IS NULL;
-  END IF;
-END;
-$$;
+${retireWorkspaceBansSql()}
 DROP TRIGGER IF EXISTS membership_workspace_ban ON memberships;
 DROP FUNCTION IF EXISTS enforce_workspace_ban();
 DROP TABLE IF EXISTS workspace_bans;
@@ -955,7 +945,6 @@ CREATE TABLE IF NOT EXISTS agents (
   model_catalog jsonb NOT NULL DEFAULT '[]'::jsonb,
   model_unavailable text CHECK (model_unavailable IN ('model','effort','selection')),
   commands jsonb NOT NULL DEFAULT '[]'::jsonb,
-  schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb,
   yolo_mode boolean NOT NULL DEFAULT true,
   yolo_set_by text,
   yolo_set_at timestamptz,
@@ -975,7 +964,8 @@ CREATE TABLE IF NOT EXISTS usage_accounts (
 );
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS usage_account_id bigint REFERENCES usage_accounts(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS agents_usage_account ON agents(usage_account_id) WHERE usage_account_id IS NOT NULL;
-ALTER TABLE agents ADD COLUMN IF NOT EXISTS schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
+-- Retired: never non-empty in production; nothing reads it since schedules moved to the server.
+ALTER TABLE agents DROP COLUMN IF EXISTS schedule_ids;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT true;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
@@ -1199,18 +1189,8 @@ CREATE INDEX IF NOT EXISTS messages_event_root_idx ON messages(event_root_cause_
 CREATE INDEX IF NOT EXISTS messages_room_page_idx ON messages(room_id, created_at DESC, id DESC);
 CREATE INDEX IF NOT EXISTS messages_request_idx ON messages(room_id, request_id) WHERE request_id IS NOT NULL;
 
-CREATE TABLE IF NOT EXISTS legacy_room_events (
-  id text PRIMARY KEY,
-  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  kind integer NOT NULL,
-  created_at timestamptz NOT NULL,
-  raw_page_candidate boolean NOT NULL DEFAULT true,
-  conversation_candidate boolean NOT NULL DEFAULT false
-);
-ALTER TABLE legacy_room_events ADD COLUMN IF NOT EXISTS raw_page_candidate boolean NOT NULL DEFAULT true;
-ALTER TABLE legacy_room_events ADD COLUMN IF NOT EXISTS conversation_candidate boolean NOT NULL DEFAULT false;
-CREATE INDEX IF NOT EXISTS legacy_room_events_page_idx
-  ON legacy_room_events(room_id, created_at DESC, id);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS legacy_room_events;
 
 CREATE TABLE IF NOT EXISTS agent_turns (
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -1862,16 +1842,8 @@ CREATE TABLE IF NOT EXISTS permission_authority (
 );
 CREATE INDEX IF NOT EXISTS permission_authority_room_idx ON permission_authority(room_id);
 
-CREATE TABLE IF NOT EXISTS mission_authority (
-  mission_id text NOT NULL,
-  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  principal_id text NOT NULL REFERENCES identities(id),
-  exercise text NOT NULL,
-  status text NOT NULL CHECK (status IN ('authorized', 'denied', 'unavailable')),
-  generation bigint NOT NULL DEFAULT 1,
-  PRIMARY KEY (mission_id, room_id, principal_id, exercise)
-);
-CREATE INDEX IF NOT EXISTS mission_authority_room_idx ON mission_authority(room_id);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS mission_authority;
 
 CREATE TABLE IF NOT EXISTS work_schedules (
   schedule_id text NOT NULL,
@@ -1929,16 +1901,8 @@ WHERE agent_schedules.id=labels.id AND agent_schedules.title IS NULL;
 
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS last_reported_blocking_run_id text;
 ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS updated_by text REFERENCES identities(id);
-CREATE TABLE IF NOT EXISTS workflow_owner_transfers (
-  id bigserial PRIMARY KEY,
-  workflow_id uuid NOT NULL REFERENCES workspace_skills(id) ON DELETE CASCADE,
-  room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  actor_id text NOT NULL REFERENCES identities(id),
-  previous_owner_id text REFERENCES identities(id),
-  new_owner_id text NOT NULL REFERENCES identities(id),
-  created_at timestamptz NOT NULL DEFAULT now()
-);
-CREATE INDEX IF NOT EXISTS workflow_owner_transfers_room_idx ON workflow_owner_transfers(room_id);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS workflow_owner_transfers;
 WITH resolved AS (
   SELECT schedule.id,${scheduleWorkflowSlugSql('schedule.workspace_id', 'schedule.message')} slug
   FROM agent_schedules schedule WHERE schedule.workflow_slug IS NULL
@@ -2046,16 +2010,6 @@ CREATE INDEX IF NOT EXISTS corner_facts_reviewer_agent_idx ON corner_facts(revie
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS title_generated boolean NOT NULL DEFAULT false;
 
 -- Cleanup intents survive archival and provider failures.
-CREATE TABLE IF NOT EXISTS corner_pr_closures (
-  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
-  attempts integer NOT NULL DEFAULT 0,
-  next_attempt_at timestamptz NOT NULL DEFAULT now(),
-  finished_at timestamptz,
-  last_error text
-);
-CREATE INDEX IF NOT EXISTS corner_pr_closures_due_idx
-  ON corner_pr_closures(next_attempt_at) WHERE finished_at IS NULL;
-
 CREATE TABLE IF NOT EXISTS corner_branch_deletions (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
   installation_id bigint,
@@ -2132,9 +2086,42 @@ CREATE TABLE IF NOT EXISTS corner_validation_stages (
   PRIMARY KEY (corner_id,brief_revision,head_sha,stage)
 );
 
-DROP TABLE IF EXISTS corner_apps;
-DROP TABLE IF EXISTS corner_app_bindings;
-DROP TABLE IF EXISTS corner_app_installations;
+-- Retired storage only (SENTRY-22). Older images still join these tables on
+-- ordinary corner reads during rolling deployment and rollback. Preserve rows;
+-- CREATE IF NOT EXISTS also repairs databases where #3221 already dropped them.
+-- No current tools/routes/UI use these tables. Remove only in a separate contract
+-- migration after all live AND rollback images no longer reference them.
+CREATE TABLE IF NOT EXISTS corner_apps (
+  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  slug text NOT NULL,
+  author_agent_id text NOT NULL REFERENCES identities(id),
+  definition jsonb NOT NULL,
+  revision integer NOT NULL DEFAULT 1 CHECK (revision > 0),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (corner_id, slug)
+);
+CREATE INDEX IF NOT EXISTS corner_apps_author_idx ON corner_apps(author_agent_id);
+CREATE UNIQUE INDEX IF NOT EXISTS corner_apps_command_idx
+  ON corner_apps(corner_id,(definition->>'command'));
+
+CREATE TABLE IF NOT EXISTS corner_app_installations (
+  id uuid PRIMARY KEY,
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  installed_by text NOT NULL REFERENCES identities(id),
+  developer_agent_id text REFERENCES identities(id),
+  manifest jsonb NOT NULL,
+  connected_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS corner_app_installations_workspace_idx
+  ON corner_app_installations(workspace_id,connected_at DESC);
+CREATE TABLE IF NOT EXISTS corner_app_bindings (
+  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  installation_id uuid NOT NULL REFERENCES corner_app_installations(id) ON DELETE RESTRICT,
+  instance_id uuid NOT NULL UNIQUE,
+  bound_by text NOT NULL REFERENCES identities(id),
+  bound_at timestamptz NOT NULL DEFAULT now()
+);
 
 -- Check verdicts come from GitHub's statusCheckRollup. Retire the old webhook-derived cache.
 DROP TABLE IF EXISTS corner_check_facts;
@@ -2328,15 +2315,12 @@ CREATE INDEX IF NOT EXISTS github_auth_flows_expiry_idx ON github_auth_flows(exp
 
 CREATE TABLE IF NOT EXISTS github_webhook_deliveries (
   delivery_id text PRIMARY KEY,
-  event_type text NOT NULL,
-  payload jsonb NOT NULL,
-  received_at timestamptz NOT NULL DEFAULT now(),
-  processed_at timestamptz
+  received_at timestamptz NOT NULL DEFAULT now()
 );
--- Keep these nullable during the rolling deploy so the previous server image
--- can still write its old shape. New writes use only delivery_id/received_at.
-ALTER TABLE github_webhook_deliveries ALTER COLUMN event_type DROP NOT NULL;
-ALTER TABLE github_webhook_deliveries ALTER COLUMN payload DROP NOT NULL;
+-- The old payload shape: NULL on every row in production on 2026-11-02.
+ALTER TABLE github_webhook_deliveries DROP COLUMN IF EXISTS event_type;
+ALTER TABLE github_webhook_deliveries DROP COLUMN IF EXISTS payload;
+ALTER TABLE github_webhook_deliveries DROP COLUMN IF EXISTS processed_at;
 
 CREATE TABLE IF NOT EXISTS push_devices (
   token text PRIMARY KEY,
@@ -2356,15 +2340,14 @@ ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 
 -- One row per iOS device: when it was last sent a silent shade clear
--- (PushDeliveryLoop.sendReadClears). cleared_through and cleared_through_room
--- are no longer read or written; they stay for rolling-update compatibility.
+-- (PushDeliveryLoop.sendReadClears).
 CREATE TABLE IF NOT EXISTS push_read_clears (
   device_token text PRIMARY KEY REFERENCES push_devices(token) ON DELETE CASCADE,
-  cleared_through timestamptz NOT NULL,
-  cleared_through_room text NOT NULL DEFAULT '',
   sent_at timestamptz NOT NULL DEFAULT now()
 );
-ALTER TABLE push_read_clears ALTER COLUMN cleared_through DROP NOT NULL;
+-- Retired: neither read nor written, and empty in production on 2026-11-02.
+ALTER TABLE push_read_clears DROP COLUMN IF EXISTS cleared_through;
+ALTER TABLE push_read_clears DROP COLUMN IF EXISTS cleared_through_room;
 -- No longer read or written; it stays for rolling-update compatibility.
 ALTER TABLE room_read_marks ADD COLUMN IF NOT EXISTS read_at timestamptz;
 CREATE INDEX IF NOT EXISTS room_read_marks_identity_read_idx
@@ -2411,9 +2394,10 @@ CREATE TABLE IF NOT EXISTS workspace_deletion_notices (
   id bigserial PRIMARY KEY,
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   workspace_id uuid NOT NULL,
-  workspace_name text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- The name is read from workspace_deletions.
+ALTER TABLE workspace_deletion_notices DROP COLUMN IF EXISTS workspace_name;
 CREATE INDEX IF NOT EXISTS workspace_deletion_notices_identity_idx
   ON workspace_deletion_notices(identity_id, created_at);
 
@@ -2742,23 +2726,9 @@ CREATE TABLE IF NOT EXISTS room_choice_votes (
 -- A workflow gate answer's optional note, delivered to the woken agent.
 ALTER TABLE room_choice_votes ADD COLUMN IF NOT EXISTS note text;
 
-CREATE TABLE IF NOT EXISTS import_runs (
-  import_id text PRIMARY KEY,
-  source_fingerprint text NOT NULL,
-  state text NOT NULL CHECK (state IN ('running', 'complete', 'failed')),
-  checkpoint jsonb NOT NULL DEFAULT '{}'::jsonb,
-  started_at timestamptz NOT NULL DEFAULT now(),
-  completed_at timestamptz,
-  error text
-);
-
-CREATE TABLE IF NOT EXISTS import_items (
-  import_id text NOT NULL REFERENCES import_runs(import_id) ON DELETE CASCADE,
-  source_type text NOT NULL,
-  source_id text NOT NULL,
-  imported_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (import_id, source_type, source_id)
-);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS import_items;
+DROP TABLE IF EXISTS import_runs;
 
 -- Workbench: per-human connector provisioning. One row per (Workspace,
 -- owner, connector type, machine): a connection belongs to whoever
@@ -3118,8 +3088,8 @@ CREATE TABLE IF NOT EXISTS operation_outcomes_hourly (
 -- here. The saved feedback-triage workflow reads this table through a
 -- read-only grant, and notify_feedback_fixed resolves items once a fix merges.
 -- Message ids only, plus the text of a person's own @system report. The
--- issue_* columns and feedback_issue_comments are retired GitHub-filing state,
--- kept for rolling-update compatibility.
+-- issue_* columns are retired GitHub-filing state, kept for rolling-update
+-- compatibility.
 CREATE TABLE IF NOT EXISTS feedback_items (
   id text PRIMARY KEY,
   source_kind text NOT NULL CHECK (source_kind IN ('agent','human')),
@@ -3177,14 +3147,8 @@ CREATE INDEX IF NOT EXISTS feedback_items_issue_idx
   ON feedback_items(issue_repository, issue_number) WHERE issue_number IS NOT NULL;
 CREATE INDEX IF NOT EXISTS feedback_items_workspace_idx ON feedback_items(workspace_id);
 CREATE INDEX IF NOT EXISTS feedback_items_room_idx ON feedback_items(room_id) WHERE room_id IS NOT NULL;
--- The one server-maintained report-count comment per linked issue.
-CREATE TABLE IF NOT EXISTS feedback_issue_comments (
-  repository text NOT NULL,
-  issue_number integer NOT NULL,
-  comment_id bigint NOT NULL,
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (repository, issue_number)
-);
+-- Retired: empty in production on 2026-11-02 and written by nothing on main.
+DROP TABLE IF EXISTS feedback_issue_comments;
 
 -- First-party Google Workspace consent is retired. Existing sealed grants
 -- cannot be moved to a different OAuth client, so disconnect the old rows and
@@ -3291,11 +3255,6 @@ export async function migrate(
     database, 'github_webhook_deliveries_received_idx',
     `CREATE INDEX CONCURRENTLY github_webhook_deliveries_received_idx
      ON github_webhook_deliveries(received_at)`,
-  ));
-  await retryMigrationStep('webhook payload drain index', () => createIndexConcurrently(
-    database, 'github_webhook_deliveries_payload_idx',
-    `CREATE INDEX CONCURRENTLY github_webhook_deliveries_payload_idx
-     ON github_webhook_deliveries(received_at) WHERE payload IS NOT NULL`,
   ));
   await retryMigrationStep('terminal push claim expiry index', () => createIndexConcurrently(
     database, 'push_delivery_claims_terminal_idx',
@@ -3482,6 +3441,18 @@ export async function migrate(
        WHERE state='active' AND embedding IS NULL`,
     ));
   await database.query('DROP INDEX IF EXISTS workspace_skills_embedding_idx');
+  // A corner's run state is its newest handoff card (corner-run.ts).
+  await retryMigrationStep('corner run card index', () => createIndexConcurrently(
+    database, 'messages_corner_run_card_idx',
+    `CREATE INDEX CONCURRENTLY messages_corner_run_card_idx
+     ON messages (room_id, ((card->>'seq')::int) DESC) WHERE card_type='corner-workflow-handoff'`,
+  ));
+  // A corner's worker and owner are its assignment commands (corner-worker.ts).
+  await retryMigrationStep('corner assignment index', () => createIndexConcurrently(
+    database, 'agent_commands_corner_assignment_idx',
+    `CREATE INDEX CONCURRENTLY agent_commands_corner_assignment_idx
+     ON agent_commands (room_id, inbox_sequence) WHERE reason IN ('corner_objective','human_tag')`,
+  ));
   await createIndexConcurrently(
     database, 'messages_corner_fact_idx',
     `CREATE INDEX CONCURRENTLY messages_corner_fact_idx
@@ -3600,7 +3571,18 @@ export async function migrate(
   ));
   await ddlScript('corner person state', CORNER_PERSON_STATE_SCHEMA);
   await ddlScript('corner membership guard', CORNER_MEMBERSHIPS_SCHEMA);
+  await retryMigrationStep('corner human report return index', () => createIndexConcurrently(
+    database, 'corner_human_reports_return',
+    `CREATE INDEX CONCURRENTLY corner_human_reports_return ON messages(room_id,created_at DESC,id DESC)
+     WHERE card->>'reportToId' IS NOT NULL`,
+  ));
+  await retryMigrationStep('corner human report worker index', () => createIndexConcurrently(
+    database, 'corner_human_reports_worker',
+    `CREATE INDEX CONCURRENTLY corner_human_reports_worker ON messages(author_id,created_at DESC,id DESC)
+     WHERE card->>'reportToId' IS NOT NULL`,
+  ));
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
+  await ddlScript('corner explicit wait function', cornerWaitingFunctionSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
@@ -3611,6 +3593,7 @@ export async function migrate(
 /** Idempotent data work runs after both schema owners have expanded. Each step
  * commits separately, so retrying a release resumes completed work. */
 export async function migrateData(database: SqlDatabase): Promise<void> {
+  await releaseArchivedCornerHolds(database);
   await backfillCornerHoldMessages(database);
   const dataStep = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
     let result!: T;
@@ -3657,7 +3640,6 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'terminal-push-claims-v1', compactPushClaims));
   if (searchDocuments)
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
-  await dataStep('corner owner backfill', () => backfillCornerOwners(database));
   await dataStep('corner owed backfill', () => backfillCornerOwed(database));
   await dataStep('continuous corner names', () =>
     workflowBackfillOnce(database, 'corner-names-continuous-v1', hyphenateCornerNames));
@@ -3701,21 +3683,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   if (blockers)
     console.log(`reconcileCornerMergeBlockers: dispatched ${blockers} implementer command(s)`);
   const classes = await dataStep('agent class retirement', () => retireAgentClasses(database));
-  if (classes.convertedRooms || classes.clearedRooms.length || classes.runs)
-    console.log(
-      `retireAgentClasses: converted ${classes.convertedRooms} Room reviewer class(es) to agent lists, ` +
-        `cleared ${classes.clearedRooms.length} with no matching agent` +
-        (classes.clearedRooms.length
-          ? ` (${classes.clearedRooms.map((room) => `${room.name} ${room.id}`).join(', ')})`
-          : '') +
-        `, converted ${classes.runs} workflow run(s)`,
-    );
-  await dataStep('empty reviewer fallbacks', () => boundedMigrationUpdate(database,
-    'empty reviewer fallbacks',
-    `UPDATE rooms SET reviewer_fallback_ids=array_remove(reviewer_fallback_ids,'')
-     WHERE id IN (SELECT id FROM rooms WHERE ''=ANY(reviewer_fallback_ids) ORDER BY id LIMIT $1)`,
-    [],
-  ));
+  if (classes.runs) console.log(`retireAgentClasses: converted ${classes.runs} workflow run(s)`);
   const reviewers = await dataStep('corner reviewers', () =>
     reconcileConfiguredCornerReviewers(database));
   console.log(
@@ -3999,8 +3967,7 @@ async function boundedMigrationUpdate(
   }
 }
 
-/** Clear legacy JSON without one long row lock or table rewrite. The old
- * payload column remains nullable until every server runs the new image. */
+/** Expire old deliveries without one long row lock. */
 export async function compactWebhookDeliveries(database: SqlDatabase): Promise<void> {
   const expired = await boundedMigrationUpdate(database, 'expired webhook deliveries',
     `DELETE FROM github_webhook_deliveries delivery
@@ -4008,15 +3975,7 @@ export async function compactWebhookDeliveries(database: SqlDatabase): Promise<v
        SELECT delivery_id FROM github_webhook_deliveries
        WHERE received_at<now()-interval '30 days'
        ORDER BY received_at,delivery_id LIMIT $1 FOR UPDATE SKIP LOCKED)`, [], 1000);
-  const cleared = await boundedMigrationUpdate(database, 'webhook payloads',
-    `UPDATE github_webhook_deliveries delivery
-     SET payload=NULL,event_type=NULL,processed_at=NULL
-     WHERE delivery.delivery_id IN (
-       SELECT delivery_id FROM github_webhook_deliveries
-       WHERE payload IS NOT NULL
-       ORDER BY received_at,delivery_id LIMIT $1 FOR UPDATE SKIP LOCKED)`, [], 1000);
-  if (expired || cleared)
-    console.log(`compactWebhookDeliveries: expired ${expired}, cleared ${cleared} payload(s)`);
+  if (expired) console.log(`compactWebhookDeliveries: expired ${expired}`);
 }
 
 export async function compactPushClaims(database: SqlDatabase): Promise<void> {
@@ -4136,12 +4095,7 @@ export async function backfillSystemEventKinds(database: SqlDatabase): Promise<v
  */
 export async function backfillPerItemEventSubscriptions(database: SqlDatabase): Promise<number> {
   return boundedMigrationUpdate(database, 'per-item event subscriptions',
-    `UPDATE memberships SET event_subscriptions=COALESCE(
-       (SELECT jsonb_agg(elem) FROM jsonb_array_elements_text(event_subscriptions) elem
-        WHERE NOT (elem=ANY($1::text[]))),
-       '[]'::jsonb
-     )
-     WHERE id IN (SELECT id FROM memberships WHERE event_subscriptions ?| $1::text[] ORDER BY id LIMIT $2)`,
+    perItemMembershipSubscriptionCleanupSql(),
     [PER_ITEM_EVENT_KINDS],
   );
 }
@@ -4167,24 +4121,6 @@ export async function backfillCornerOwed(database: SqlDatabase): Promise<void> {
     if ((current.rows[0]?.version ?? 0) >= 26) return;
   }
   await database.query(cornerOwedBackfillSql());
-}
-
-export async function backfillCornerOwners(database: SqlDatabase): Promise<void> {
-  await database.query(`
-    UPDATE corner_facts fact
-    SET owner_agent_id=COALESCE(
-      (
-        SELECT room.created_by FROM rooms room JOIN identities agent ON agent.id=room.created_by
-        WHERE room.id=fact.corner_id AND agent.kind='agent'
-      ),
-      (
-        SELECT message.author_id FROM messages message JOIN identities agent ON agent.id=message.author_id
-        WHERE message.room_id=fact.corner_id AND agent.kind='agent'
-        ORDER BY message.created_at,message.id LIMIT 1
-      )
-    )
-    WHERE fact.owner_agent_id IS NULL
-  `);
 }
 
 export async function measureDatabase(database: SqlDatabase): Promise<{

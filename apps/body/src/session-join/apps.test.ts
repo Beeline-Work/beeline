@@ -180,7 +180,7 @@ describe('setup is additive and reversible', () => {
     queueInbox(dir, member.key, 'Beeline: @ana tagged you');
     expect(answerMcp(dir, cwd, { id: 2, method: 'tools/call', params: { name: 'beeline_inbox' } })).toMatchObject({ result: { content: [{ text: 'Beeline: @ana tagged you' }] } });
     expect(answerMcp(dir, cwd, { id: 3, method: 'tools/call', params: { name: 'beeline_inbox' } })).toMatchObject({ result: { content: [{ text: 'No Beeline messages are waiting.' }] } });
-    expect(answerMcp(dir, '/other', { id: 4, method: 'tools/call', params: { name: 'beeline_inbox' } })).toMatchObject({ result: { content: [{ text: expect.stringContaining('has not joined') }] } });
+    expect(answerMcp(dir, '/other', { id: 4, method: 'tools/call', params: { name: 'beeline_inbox' } })).toMatchObject({ result: { content: [{ text: expect.stringMatching(/^This session is not joined to Beeline from here..*do not run usebeeline join unless they ask/) }] } });
     expect(answerMcp(dir, cwd, { method: 'notifications/initialized' })).toBeUndefined();
     setupAgent('zcode', context(home, true));
     expect(JSON.parse(readFileSync(join(home, '.agents/mcp.json'), 'utf8'))).toEqual({ mcpServers: { memory: { command: 'npx' } } });

@@ -1,3 +1,5 @@
+import { restoreRoomMembership } from './membership-join.js';
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { approvalAsk } from './tray-approval-ask.js';
 import { createAgentCommand, type CommandRow, routeSystemCommand } from './agent-command.js';
@@ -25,7 +27,8 @@ import {
  * The one producer of every system notification in a Room or Workspace.
  *
  * Every membership note, yolo change, grant line, failed turn, GitHub fact,
- * corner marker, scheduled prompt and card header is phrased HERE, in one
+ * corner marker, scheduled prompt and card header is composed here from the
+ * System-message catalog, in one
  * grammar (`@beeline/api-contract` `system-events.ts`): `<subject> <verb>
  * [ <object>][ · <consequence>]`. The stored text is what an old phone shows
  * verbatim; the structured `messages.system_event` beside it is what a current
@@ -160,13 +163,7 @@ export async function ensureSystemDirectMessageRoomResult(
     await database.query(`UPDATE rooms SET visibility='invite-only' WHERE id=$1`, [roomId]);
   }
   for (const memberId of participants)
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES ($1,$2,$3,'member')
-       ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-       DO UPDATE SET removed_at=NULL`,
-      [workspaceId, roomId, memberId],
-    );
+    await restoreRoomMembership(database, [workspaceId, roomId, memberId]);
   return { id: roomId, created: Boolean(inserted.rowCount) };
 }
 
@@ -195,7 +192,7 @@ export type SystemPhrase = Pick<
 const CLEAN = /[\s ]+/g;
 
 function clause(value: string): string {
-  return value.replace(CLEAN, ' ').trim();
+  return value.replace(CLEAN, systemMessage("system-line.space")).trim();
 }
 
 /** The text and the structured event for one phrase; pure, so tests can pin both. */
@@ -209,7 +206,7 @@ export function composeSystemLine(phrase: SystemPhrase): { text: string; event: 
   const attribution = phrase.attribution
     ? [clause(phrase.attribution.verb), clause(phrase.attribution.actor.name)]
         .filter(Boolean)
-        .join(' ')
+        .join(systemMessage("system-line.space"))
     : undefined;
   const consequence = phrase.consequence ? clause(phrase.consequence) : attribution || undefined;
   const event: SystemEvent = {
@@ -246,15 +243,15 @@ function agentHandle(name: string): string {
       .replace(/[\u0300-\u036f]/g, '')
       .trim()
       .toLowerCase()
-      .replace(/\s+/g, '_')
-      .replace(/[^a-z0-9_]/g, '') || 'agent'
+      .replace(/\s+/g, systemMessage("system-line.handle-word-separator"))
+      .replace(/[^a-z0-9_]/g, '') || systemMessage("system-line.agent")
   );
 }
 
 /** The canonical mention for an identity addressed by a system line. */
 export function systemIdentityMention(row: IdentityLabelRow): string {
-  if (row.kind === 'human') return row.handle ? `@${row.handle}` : '';
-  return `@${row.handle ?? agentHandle(row.name)}`;
+  if (row.kind === 'human') return row.handle ? systemMessage("system-line.identity-mention", row.handle) : '';
+  return systemMessage("system-line.identity-mention", row.handle ?? agentHandle(row.name));
 }
 
 async function canonicalPhrase(
@@ -282,11 +279,11 @@ async function canonicalPhrase(
     : undefined;
   const fallbackSubjectName =
     phrase.subject.kind === 'agent'
-      ? `@${agentHandle(phrase.subject.name)}`
+      ? systemMessage("system-line.identity-mention", agentHandle(phrase.subject.name))
       : phrase.subject.kind === 'github'
         ? phrase.kind === 'subscription-fired' && phrase.subject.name === 'GitHub'
-          ? 'GitHub'
-          : `@${clause(phrase.subject.name).replace(/^@/, '')}`
+          ? systemMessage("system-line.github")
+          : systemMessage("system-line.identity-mention", clause(phrase.subject.name).replace(/^@/, ''))
         : phrase.subject.name;
   return {
     ...phrase,
@@ -537,8 +534,8 @@ export async function systemLine(
           const firedId = createHash('sha256').update(`room-subscription:${id}:${subscription.id}`).digest('hex');
           const fired = await systemLine(db, {
             id: firedId, roomId: input.roomId, authorId: SYSTEM_IDENTITY_ID,
-            subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' },
-            verb: 'received', object: 'a Room event', consequence: input.kind,
+            subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: systemMessage("system-line.beeline") },
+            verb: systemMessage("system-line.received"), object: systemMessage("system-line.a-room-event"), consequence: input.kind,
             kind: 'subscription-fired', causeId: id, wakes: [subscription.agent_id],
             payload: { source: 'room', event: input.kind, text },
             subscriptionPrompt: subscription.prompt,
@@ -666,8 +663,8 @@ export async function deletedMessageEvent(
   return composeSystemLine(
     await canonicalPhrase(database, {
       subject: identitySubject(deleter),
-      verb: 'deleted',
-      object: 'a message',
+      verb: systemMessage("system-line.deleted"),
+      object: systemMessage("system-line.a-message"),
       ...(authorId === deleterId
         ? {}
         : { attribution: { verb: 'sent by', actor: identitySubject(author) } }),
@@ -684,7 +681,7 @@ export function identitySubject(row: {
   return { kind: row.kind === 'agent' ? 'agent' : 'person', id: row.id, name: row.name };
 }
 
-export const GITHUB_SUBJECT: SystemSubject = { kind: 'github', name: 'GitHub' };
+export const GITHUB_SUBJECT: SystemSubject = { kind: 'github', name: systemMessage("system-line.github") };
 
 /** Retire historical human-facing browser observations without losing agent context. */
 export async function backfillComputerObservations(database: SqlDatabase): Promise<void> {
@@ -705,11 +702,12 @@ export async function backfillComputerObservations(database: SqlDatabase): Promi
 
 /** A plain operator notice in the recipient's existing System thread. */
 export async function sendSystemDirectMessage(database: SqlDatabase, workspaceId: string, recipientId: string,
-  text: string, id: string): Promise<void> {
+  text: string, id: string): Promise<boolean> {
   const member = await database.query(`SELECT 1 FROM memberships WHERE workspace_id=$1 AND identity_id=$2
     AND room_id IS NULL AND removed_at IS NULL`, [workspaceId, recipientId]);
   if (!member.rowCount) throw new Error('System DM recipient has no active Workspace');
   const roomId = await ensureSystemDirectMessageRoom(database, workspaceId, recipientId);
-  await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)
+  const inserted = await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)
     ON CONFLICT(id) DO NOTHING`, [id, roomId, SYSTEM_IDENTITY_ID, text]);
+  return Boolean(inserted.rowCount);
 }

@@ -2,8 +2,8 @@ import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from
 import type { SqlDatabase } from './database.js';
 import type { McpPrincipal } from './rooms-mcp-oauth.js';
 import { openSecrets, sealSecrets } from './free-agents.js';
-import { MCP_WEBHOOK_TABLE, postMcpWebhook } from './rooms-mcp-members.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
+import { postMcpWebhook } from './rooms-mcp-members.js';
+import { notifyMcpWakesSql, notifyMcpWebhook, POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 // Replay stays in list_mentions; event cursors are null so queued events cannot be skipped.
 const MENTION_EVENT = {
@@ -156,8 +156,7 @@ export async function queueMcpMentionEvents(db: SqlDatabase, member: string, roo
       delivered_at=NULL,claimed_at=NULL,attempts=0,next_attempt_at=now()
       WHERE $4::integer>0
     RETURNING subscription_id`, [member, room, message, rewake]);
-  if (queued.rowCount) await db.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL,
-    JSON.stringify({ table: MCP_WEBHOOK_TABLE, operation: 'INSERT', roomId: room })]);
+  if (queued.rowCount) await notifyMcpWebhook(db, room);
 }
 
 /**
@@ -171,14 +170,15 @@ export async function queueMcpMentionEvents(db: SqlDatabase, member: string, roo
  * command write stays one statement.
  *
  * Parameters, in order, starting at `first`:
- * the live channel, the order hint, and the hint for every other wake.
+ * the live channel, the order hint, the hint for every other wake, and the review hint.
  */
 export function mcpCommandWakeSql(first: number): { cte: string; join: string; params: readonly string[] } {
   const channel = `$${first}`;
   const orderHint = `$${first + 1}`;
   const wakeHint = `$${first + 2}`;
+  const reviewHint = `$${first + 3}`;
   return {
-    params: [POSTGRES_LIVE_CHANNEL, MCP_ORDER_WAKE_HINT, MCP_WAKE_HINT],
+    params: [POSTGRES_LIVE_CHANNEL, MCP_ORDER_WAKE_HINT, MCP_WAKE_HINT, MCP_REVIEW_WAKE_HINT],
     cte: `queued_mcp_wakes AS (
       INSERT INTO rooms_mcp_event_deliveries(subscription_id,command_id,room_id,event_id,body)
       SELECT s.id,command.id,command.room_id,'evt_'||s.id||'_cmd_'||command.id,
@@ -187,7 +187,8 @@ export function mcpCommandWakeSql(first: number): { cte: string; join: string; p
             'roomId',command.room_id,'address',command.room_id,'commandId',command.id,'id',command.id,
             'reason',command.reason,'kind',command.private_payload->>'kind',
             'text',left(COALESCE(command.private_payload->>'text',source.text),16000),
-            'next',CASE WHEN command.private_payload->>'kind'='order' THEN ${orderHint}::text ELSE ${wakeHint}::text END),
+            'next',CASE WHEN command.reason='corner_review_dispatch' THEN ${reviewHint}::text
+              WHEN command.private_payload->>'kind'='order' THEN ${orderHint}::text ELSE ${wakeHint}::text END),
           'cursor',NULL)::text
       FROM inserted command
       LEFT JOIN messages source ON source.id=command.source_message_id
@@ -203,8 +204,7 @@ export function mcpCommandWakeSql(first: number): { cte: string; join: string; p
       RETURNING room_id
     )`,
     join: `LEFT JOIN LATERAL (
-      SELECT count(pg_notify(${channel}, jsonb_build_object(
-        'table','${MCP_WEBHOOK_TABLE}','operation','INSERT','roomId',room_id::text)::text)) notified
+      SELECT ${notifyMcpWakesSql(channel)} notified
       FROM (SELECT DISTINCT room_id FROM queued_mcp_wakes) notices
     ) mcp_wake_notice ON true`,
   };
@@ -254,4 +254,15 @@ export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, li
     [row.event_id, finished, 30 * 2 ** (row.attempts - 1)]);
   }
   return delivered;
+}
+
+/**
+ * A reviewer dispatch asks for a review, not a plain acknowledgement: its text names the pull request and the
+ * head SHA to review. Webhooks, MCP Events and list_mentions all give it this hint.
+ */
+export const MCP_REVIEW_WAKE_HINT = 'Review this corner: read its brief, pull request and checks (read facets brief, pr and checks), then call approve_merge with the head SHA named above, or post your findings in the corner. Never approve work you implemented or authored.';
+
+/** The hint a wake carries, from its command's reason and private kind. */
+export function mcpWakeNext(kind: string | null | undefined, reason: string | null | undefined): string {
+  return reason === 'corner_review_dispatch' ? MCP_REVIEW_WAKE_HINT : mcpWakeHint(kind);
 }

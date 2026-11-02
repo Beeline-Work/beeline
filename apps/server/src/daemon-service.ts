@@ -225,8 +225,6 @@ import {
   saveInstitutionalMemory,
   searchInstitutionalMemory,
   updateInstitutionalMemory,
-  recordInstitutionalMemoryTurnOutcome,
-  recordInstitutionalServeUsage,
   type InstitutionalMemoryShadowConfig,
 } from './institutional-memory-shadow.js';
 import { AUTHORIZED_ROOMS_CTE, searchInstitutionalHistory } from './institutional-history.js';
@@ -1006,13 +1004,6 @@ export class DaemonService {
               command.id,
               candidate.status === 'cancelled' ? 'cancelled' : 'complete',
             ]);
-            await recordInstitutionalMemoryTurnOutcome(
-              db,
-              scopedRoom!,
-              command.turn_request_id,
-              candidate.status === 'complete',
-              String(candidate.status),
-            );
           }
         }
         return result;
@@ -5060,18 +5051,6 @@ export class DaemonService {
         );
         if (!written.rowCount) return;
         committedTurn = written.rows[0];
-      }
-      // The turn's real cost belongs to the serve it answered, and it is written
-      // here — the same transaction as the receipt — so a serve row can never
-      // carry a measurement for a turn that was refused or never ended.
-      if (!input.heartbeat && input.status !== 'working') {
-        await recordInstitutionalServeUsage(database, {
-          roomId: input.roomId,
-          requestId: input.requestId,
-          agentId,
-          ...(input.inputTokens !== undefined ? { inputTokens: input.inputTokens } : {}),
-          ...(input.promptBytes !== undefined ? { promptBytes: input.promptBytes } : {}),
-        });
       }
       await this.persistTurnTrace(database, input, agentId);
       if (!input.heartbeat) await recordStartupWakeOutcome(database, input, agentId);

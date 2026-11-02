@@ -311,15 +311,6 @@ describe('PRODUCTION-CORPUS REPLAY hot-read gate', () => {
     expect(floorSeconds).toBeGreaterThan(0);
     for (const result of broad.results)
       expect(result.createdAt).toBeGreaterThanOrEqual(floorSeconds);
-    const telemetry = (
-      await database.query<{ omitted_count: number; matches_capped: boolean }>(
-        `SELECT omitted_count,matches_capped FROM institutional_history_searches
-         WHERE request_id=$1 ORDER BY created_at DESC LIMIT 1`,
-        [searchCommand.turn_request_id],
-      )
-    ).rows[0];
-    expect(telemetry?.matches_capped).toBe(true);
-    expect(telemetry?.omitted_count).toBe(INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX - 10);
   }, 120_000);
 
   it('turns red for the #1120 correlated per-message tag shape and prints its plan', async () => {

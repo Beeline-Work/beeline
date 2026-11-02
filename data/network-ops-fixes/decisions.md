@@ -155,3 +155,10 @@ Proofs are in `database.test.ts`, `database-one-attempt.postgres.test.ts` and th
 Delete `retryOnDeadlock` and the timer/attempt policy from migration helpers. `migration-steps.ts` now runs a named release step once and preserves the existing bounded lock-holder diagnostic on timeout. Completed migration steps and the final schema marker retain their existing semantics. A contended release stops before promotion; another explicitly authorized release can resume idempotent steps. No production release is performed for this proof.
 
 GitHub check refresh, confirmed-merge reconciliation and installation synchronization now propagate a contended transaction/statement once. An explicit new event may reread its current provider/head/authority evidence; the failed event cannot replay autonomously. Tests preserve rollback, no partial wakes, current head/fetch fencing, and one committed wake across repeated admitted events. This removes SQL contention retries only; provider read retries and recurring GitHub discovery remain open.
+
+
+## D070 — GitHub check reads return the first provider failure
+
+Remove the exported generic `retryGitHubRead` executor and its installation-token/PR/check-rollup callers. A check read still obtains GitHub's current combined verdict and bounded registration pages, but a provider failure ends that invocation. `Retry-After` and rate-limit classification remain error metadata, with no timer or new call. Four HTTP failures reproduced hidden later success before the fix; idle-day tests now observe one failed request and zero scheduled retry, while a separately admitted read can obtain fresh evidence.
+
+The existing finite request deadline and current-head/authority checks remain. The shared-client suite covers registration pagination, permanent refusals, missing workflows and provider timeout. Legacy queued-check/periodic discovery still exists and is explicitly not closed by this transport-wrapper removal. F16/F18/F22 remain open.

@@ -88,3 +88,6 @@ These counts identify the staged validation run; later changes must rerun affect
 
 
 - F18 release/GitHub SQL contention no longer self-retries. `migration-steps.test.ts` passes10, including two real PostgreSQL lock/diagnostic cases and idle-day no-attempt checks. Focused GitHub31 pass across26 + corrected event-read-count5, covering installation/check/confirmed-merge reconciliation, transaction rollback, head/fetch fences and one wake per committed result. CI and timing references follow the renamed single-attempt helper. Provider retries and periodic GitHub discovery remain open.
+
+
+- F18 GitHub check transport removes the shared retry executor from rollup, installation-token and PR reads. Shared-client104 and server integration18 pass, including 24h no reattempt, retained Retry-After, current-head/permission refusals and shutdown. Auth/emulator and server types plus router/tree guards pass. Queued-check discovery and other recurring provider work remain open.

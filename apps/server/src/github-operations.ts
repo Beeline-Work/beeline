@@ -20,7 +20,6 @@ import {
   githubMergeability,
   transientGitHubError,
   githubRetryDelay,
-  retryGitHubRead,
 } from '@beeline/auth/github';
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { CornerPullRequestResult } from '@beeline/api-contract/daemon';
@@ -2498,9 +2497,9 @@ export class GitHubOperations {
         fetchStartedAt = options?.snapshot?.fetchStartedAt ?? (await database.query<{ started_at: number }>(
           `SELECT extract(epoch FROM clock_timestamp())::double precision started_at`,
         )).rows[0]!.started_at;
-        const token = options?.snapshot ?? await retryGitHubRead(() => this.app.installationToken(Number(target.installation_id), {
+        const token = options?.snapshot ?? await this.app.installationToken(Number(target.installation_id), {
           repositoryIds: [Number(target.repository_id)],
-        }));
+        });
         const rollup = options?.snapshot?.rollup ?? await this.app.readCommitCheckRollup(token.token, repository, checkHeadSha);
         // A push can move GitHub's PR head before either its push or synchronize
         // webhook reaches us. The stored head alone cannot authorize a verdict.
@@ -2522,7 +2521,7 @@ export class GitHubOperations {
         );
         const interruptedOnly = failedChecks.length === 0 && interruptedNames.size > 0;
         const livePr = options?.snapshot?.pr ?? (target.pr_number && (rollup.state === 'passed' || rollup.state === 'failed' || failedChecks.length > 0)
-          ? await retryGitHubRead(() => this.app.readPullRequest(token.token, repository, Number(target.pr_number)))
+          ? await this.app.readPullRequest(token.token, repository, Number(target.pr_number))
           : undefined);
         confirmedPr = livePr;
         if (livePr?.state === 'closed' && !livePr.merged) {

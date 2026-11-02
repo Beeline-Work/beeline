@@ -200,19 +200,24 @@ it.each([false, true])('SENTRY-1D: non-JSON registration refusal retains retry c
   expect(error.message).not.toContain('<html>');
 });
 
-it.each([502, 503, 504, 429])('R-GH-RETRY: shared rollup retries HTTP %s then succeeds', async status => {
+it.each([502, 503, 504, 429])('R-GH-ATTEMPT: shared rollup returns HTTP %s without a timed retry', async status => {
   vi.useFakeTimers();
   try {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response('unavailable', { status })).mockImplementation(passingRollupResponse);
     vi.stubGlobal('fetch', fetchMock);
     const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
-    const result = expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).resolves.toMatchObject({ state: 'passed', total: 1 });
-    await vi.runAllTimersAsync(); await result;
+    const result = app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead).catch(error => error);
+    await vi.advanceTimersByTimeAsync(86_400_000);
+    expect(await result).toMatchObject({ status });
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    // A separate explicit read owns fresh evidence, including registration pages.
+    await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).resolves.toMatchObject({ state: 'passed', total: 1 });
     expect(fetchMock).toHaveBeenCalledTimes(5);
   } finally { vi.useRealTimers(); }
 });
 
-it('R-GH-RETRY: shared rollup exhausts four attempts for a network reset', async () => {
+it('R-GH-RETRY: shared rollup returns a network reset once and stays idle', async () => {
   vi.useFakeTimers();
   try {
     const fetchMock = vi.fn().mockRejectedValue(new TypeError('fetch failed', { cause: Object.assign(new Error('reset'), { code: 'ECONNRESET' }) }));
@@ -220,24 +225,26 @@ it('R-GH-RETRY: shared rollup exhausts four attempts for a network reset', async
     const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
     const result = expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).rejects.toThrow('fetch failed');
     await vi.runAllTimersAsync(); await result;
-    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(86_400_000);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
 });
 
-it('R-GH-RETRY: shared rollup waits for Retry-After and never retries permanent 403', async () => {
+it('R-GH-RETRY: shared rollup preserves Retry-After without scheduling a read', async () => {
   vi.useFakeTimers();
   try {
     const fetchMock = vi.fn().mockResolvedValueOnce(new Response('slow down', { status: 429, headers: { 'retry-after': '2' } })).mockImplementation(passingRollupResponse);
     vi.stubGlobal('fetch', fetchMock);
     const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
-    const result = app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead);
-    await vi.advanceTimersByTimeAsync(1999);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1); await result;
-    expect(fetchMock).toHaveBeenCalledTimes(5);
+    await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).rejects.toMatchObject({ status: 429, retryAfter: '2' });
+    await vi.advanceTimersByTimeAsync(86_400_000);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
     fetchMock.mockReset().mockResolvedValue(new Response('{}', { status: 403 }));
     await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', retryHead)).rejects.toMatchObject({ status: 403 });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledOnce();
   } finally { vi.useRealTimers(); }
 });
 

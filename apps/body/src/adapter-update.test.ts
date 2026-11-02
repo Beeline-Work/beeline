@@ -162,16 +162,6 @@ it('all agent resolvers, including saved global commands, use the promoted adapt
   expect(runtimeAgentCommand(saved, env).command).toBe(old);
 });
 
-// Production Codex startup negotiates and trusts only the generated session hook.
-const nativeHookFixture = `
- else if (r.method === '_codex/hooks/list') {
-   const command = JSON.parse(process.env.CODEX_CONFIG).hooks.PreToolUse[0].hooks[0].command;
-   result = {hooks:[{command,eventName:'preToolUse',source:'sessionFlags',matcher:'^Bash$',key:'generated-shell-hook',currentHash:'fixture-current-hash'}]};
- } else if (r.method === '_codex/hooks/trust') {
-   result = {trusted:r.params.hooks.length === 1 && r.params.hooks[0].key === 'generated-shell-hook' && r.params.hooks[0].currentHash === 'fixture-current-hash'};
- }
-`;
-
 async function adapterProcess(
   root: string,
   mode:
@@ -198,7 +188,6 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
  if (${JSON.stringify(mode)} === 'hooks-unsupported' && r.method.startsWith('_codex/hooks/')) { process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,error:{code:-32601,message:'Method not found'}})+'\\n'); return; }
  let result;
  if (r.method === 'initialize') result = {protocolVersion:${mode === 'protocol' ? 99 : 1},agentCapabilities:${mode === 'capabilities' ? 'null' : '{promptCapabilities:{image:true}}'}};
-${nativeHookFixture}
  else if (r.method === 'session/new') {
    if (${JSON.stringify(mode)} === 'crash') process.exit(23);
    if (${JSON.stringify(mode)} === 'auth' || ${JSON.stringify(mode)} === 'server-error') { process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,error:{code:-32000,message:${JSON.stringify(mode)} === 'auth' ? 'Authentication required: configure a login' : 'Provider unavailable'}})+'\\n'); return; }
@@ -249,15 +238,15 @@ it.each(['pass', 'reject', 'protocol', 'capabilities'] as const)(
   },
 );
 
-it('rejects a Codex candidate without generated native hook support before session creation', async () => {
+it('accepts a Codex candidate without the removed native shell hook support', async () => {
   const { root } = await fixture();
   const { command, trace } = await adapterProcess(root, 'hooks-unsupported');
   await expect(checkAdapterSession({ command, agentKind: 'codex',
     env: { PATH: process.env.PATH!, HOME: root }, timeoutMs: 2000,
-  })).rejects.toThrow('Method not found');
+  })).resolves.toMatchObject({ sessionStart: 'created' });
   const requests = (await readFile(trace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
-  expect(requests.some(request => request.method === '_codex/hooks/list')).toBe(true);
-  expect(requests.some(request => request.method === 'session/new')).toBe(false);
+  expect(requests.some(request => request.method.startsWith('_codex/hooks/'))).toBe(false);
+  expect(requests.some(request => request.method === 'session/new')).toBe(true);
 });
 
 it('serializes independent helper processes into a single install and promotion', async () => {
@@ -335,8 +324,7 @@ it.each(['codex', 'claude', 'pi'] as const)(
       if (kind === 'codex') {
         const requests = (await readFile(join(dirname(command), 'requests.jsonl'), 'utf8'))
           .trim().split('\n').map(line => JSON.parse(line));
-        expect(requests.find(request => request.method === '_codex/hooks/trust')?.params.hooks)
-          .toEqual([{ key: 'generated-shell-hook', currentHash: 'fixture-current-hash' }]);
+        expect(requests.some(request => request.method.startsWith('_codex/hooks/'))).toBe(false);
       }
       expect(capture).toHaveBeenCalledTimes(1);
     } finally {
@@ -444,7 +432,6 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
  const r = JSON.parse(line); if (r.id === undefined) return;
  let result;
  if (r.method === 'initialize') result = {protocolVersion:1,agentCapabilities:{}};
-${nativeHookFixture}
  else if (r.method === 'session/new') {
    const login = path.join(process.env[${JSON.stringify(variable)}], ${JSON.stringify(filename)});
    const linked = fs.lstatSync(login).isSymbolicLink();

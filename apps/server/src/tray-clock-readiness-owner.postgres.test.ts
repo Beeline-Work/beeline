@@ -1,3 +1,5 @@
+import {LiveHub} from './live.js';
+import {TrayClockWork,TRAY_CLOCK_WORK_SCHEMA} from './tray-clock-work.js';
 import {randomUUID} from 'node:crypto';
 import {Pool,type PoolClient} from 'pg';
 import {describe,expect,it} from 'vitest';
@@ -56,6 +58,29 @@ const inventory=async(db:SqlDatabase)=>({
 });
 
 describe.skipIf(!url)('real PostgreSQL readiness at the existing aggregate-owner COMMIT boundary',()=>{
+  it('a parked runner retires health for the other application pool without a new lease or timer',async()=>{
+    const f=await fixture();let runner:TrayClockWork|undefined;
+    try{
+      await f.first.query(TRAY_CLOCK_WORK_SCHEMA);
+      const lock=await f.acquire(),live=new LiveHub(),owner=new BackgroundOwnership(f.first,'first');
+      let listenerReady=true;
+      runner=new TrayClockWork(f.first,live,owner,{listenerReady:()=>listenerReady,wake:()=>{},unavailable:()=>{}});
+      await runner.leadership.acquired(lock,new AbortController().signal);
+      for(let n=0;n<20;n++)if(await runner.run()!==0)break;
+      expect(await readTrayClockHealth(f.second,WS)).toBe(true);
+      listenerReady=false;live.projectionUnavailable();await runner.run();
+      expect(await readTrayClockHealth(f.second,WS)).toBe(false);
+      expect((await f.second.query(`SELECT generation::text,released_at IS NOT NULL released FROM background_leader_owners`)).rows)
+        .toEqual([{generation:'1',released:true}]);
+      for(let n=0;n<10;n++){runner.observeServerLease('first',Date.now()+1000);live.journalChanged(['jobs:tray-clock']);await runner.run();}
+      expect(await readTrayClockHealth(f.second,WS)).toBe(false);
+      listenerReady=true;live.resync();
+      for(let n=0;n<20;n++)if(await runner.run()!==0)break;
+      expect(await readTrayClockHealth(f.second,WS)).toBe(true);
+      expect((await f.second.query(`SELECT generation::text FROM background_leader_owners`)).rows).toEqual([{generation:'2'}]);
+    }finally{await runner?.close();await f.close();}
+  });
+
   it('bounds the actual health overdue probe with cold and generic plans across33024 pending deadlines',async()=>{
     const f=await fixture();
     try{

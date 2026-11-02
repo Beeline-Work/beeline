@@ -39,7 +39,7 @@ describe('actual-schema aggregate-owned Tray readiness composition',()=>{
     attach=()=>runner.leadership.acquired(connection,controller.signal);
     stop=await db.client.listen('beeline_live_v1',raw=>{const value=JSON.parse(raw);if(Array.isArray(value.journalStreams))live.journalChanged(value.journalStreams);});
   });
-  afterEach(async()=>{runner.close();await stop();vi.restoreAllMocks();await db.close();});
+  afterEach(async()=>{await runner.close();await stop();vi.restoreAllMocks();await db.close();});
   const finish=async()=>{for(let n=0;n<40;n++){const delay=await runner.run();if(delay!==0)return delay;}throw new Error('Finite lifecycle fixture did not exhaust');};
   const heads=async()=>(await db.query(`SELECT id,epoch,sequence::text FROM live_streams ORDER BY id`)).rows;
 
@@ -55,6 +55,36 @@ describe('actual-schema aggregate-owned Tray readiness composition',()=>{
     const count=statements.length;for(let n=0;n<20;n++)await runner.run();expect(statements).toHaveLength(count);
     runner.observeServerLease('tray-ready',Date.now()+1000);live.journalChanged([`workspace:${WS}`]);await runner.run();expect(statements).toHaveLength(count);
     expect((await db.query(`SELECT generation::text FROM background_leader_owners`)).rows).toEqual([{generation:'1'}]);
+  });
+
+  it('makes listener-loss retirement durable before returning and only recovers on a real boundary',async()=>{
+    await attach();await finish();expect(await readTrayClockHealth(db,WS)).toBe(true);
+    listenerReady=false;live.projectionUnavailable();await runner.run();
+    expect(runner.status()).toEqual({state:'parked'});
+    expect(await readTrayClockHealth(db,WS)).toBe(false);
+    expect((await db.query(`SELECT released_at IS NOT NULL released FROM background_leader_owners`)).rows).toEqual([{released:true}]);
+    const count=statements.length;
+    for(let n=0;n<10;n++){runner.observeServerLease('tray-ready',Date.now()+1000);live.journalChanged(['jobs:tray-clock']);await runner.run();}
+    expect(statements).toHaveLength(count);
+    listenerReady=true;recovery?.();await finish();expect(await readTrayClockHealth(db,WS)).toBe(true);
+    expect((await db.query(`SELECT generation::text FROM background_leader_owners`)).rows).toEqual([{generation:'2'}]);
+  });
+
+  it('exposes a failed durable retirement without retrying from routine hints',async()=>{
+    await attach();await finish();
+    const release=vi.spyOn(ownership,'release').mockImplementationOnce(async epoch=>{
+      ownership.revoke(epoch);throw new Error('Synthetic retirement connection failure');
+    });
+    listenerReady=false;live.projectionUnavailable();await runner.run();
+    expect(runner.status()).toEqual({state:'parked',retirementFailed:true});
+    for(let n=0;n<10;n++){runner.observeServerLease('tray-ready',Date.now()+1000);live.journalChanged(['jobs:tray-clock']);await runner.run();}
+    expect(release).toHaveBeenCalledOnce();
+    // No successful durable loss propagation is claimed in this case. A real
+    // recovery may supersede the old generation; automatic retry is forbidden.
+    listenerReady=true;recovery?.();await finish();
+    expect(runner.status().retirementFailed).toBeUndefined();
+    expect((await db.query(`SELECT generation::text FROM background_leader_owners`)).rows).toEqual([{generation:'2'}]);
+    expect(await readTrayClockHealth(db,WS)).toBe(true);
   });
 
   it('takes genuine new-empty-Workspace and OLD/NEW Room-move work from the same existing source owner',async()=>{

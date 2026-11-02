@@ -55,6 +55,8 @@ export class TrayClockWork{
   private sourceDirty=false;private readinessDirty=false;private readinessPending=false;private recoveryPending=false;
   private displayJob:Domain={pending:false};private choiceJob:Domain={pending:false};
   private flight?:Promise<number>;
+  private retirement:Promise<void>=Promise.resolve();
+  private retirementFailed=false;
 
   constructor(private readonly database:Database,live:LiveHub,private readonly ownership:BackgroundOwnership,
     private readonly options:TrayClockWorkOptions){
@@ -85,19 +87,27 @@ export class TrayClockWork{
   observeServerLease(instance:string,renewedAt:number,removed=false):void{
     this.ownership.observeServerLease(instance,renewedAt,removed);
   }
-  status():Readonly<{state:State;generation?:string;source?:Position;readinessSource?:Position;display?:Deadline;choice?:Deadline}>{
-    return {state:this.state,...(this.epoch?{generation:this.epoch.generation}:{}),
+  status():Readonly<{state:State;retirementFailed?:true;generation?:string;source?:Position;readinessSource?:Position;display?:Deadline;choice?:Deadline}>{
+    return {state:this.state,...(this.retirementFailed?{retirementFailed:true as const}:{}),...(this.epoch?{generation:this.epoch.generation}:{}),
       ...(this.position?{source:{...this.position}}:{}),...(this.readinessPosition?{readinessSource:{...this.readinessPosition}}:{}),
       ...(this.displayJob.next?{display:this.displayJob.next.claim}:{}),
       ...(this.choiceJob.next?{choice:this.choiceJob.next.claim}:{})};
   }
-  close():void{
-    if(this.state==='closed')return;this.retireConnection();this.state='closed';this.version++;
-    for(const release of this.releases.splice(0))release();
+  async close():Promise<void>{
+    if(this.state!=='closed'){
+      this.retireConnection();this.state='closed';this.version++;
+      for(const release of this.releases.splice(0))release();
+    }
+    await this.flight;await this.retirement;
   }
   private dropEpoch():void{
     this.stopEpoch?.();this.stopEpoch=undefined;
-    const epoch=this.epoch;this.epoch=undefined;if(epoch)this.ownership.revoke(epoch);
+    const epoch=this.epoch;this.epoch=undefined;
+    if(epoch){
+      // release revokes synchronously before its one causal durable write.
+      // A different server must not mistake a parked local epoch for health.
+      this.retirement=this.ownership.release(epoch).catch(()=>{this.retirementFailed=true;});
+    }
   }
   private retireConnection():void{
     this.stopConnection?.();this.stopConnection=undefined;this.connection=undefined;this.connectionSignal=undefined;
@@ -133,6 +143,11 @@ export class TrayClockWork{
   private async acquire():Promise<void>{
     if(!this.connection||this.connectionSignal?.aborted||this.state==='closed')return;
     this.dropEpoch();const version=++this.version;this.state='opening';this.recoveryPending=false;
+    await this.retirement;
+    if(!this.current(version))return;
+    // Only this real acquisition/recovery can replace a failed retirement;
+    // routine lease evidence and journal hints never retry the write.
+    this.retirementFailed=false;
     this.sourceDirty=false;this.readinessDirty=false;this.readinessPending=false;this.readiness.clear();this.healthPublished=false;
     this.displayJob={pending:false};this.choiceJob={pending:false};
     if(!this.options.listenerReady()){this.park('listener',false);return;}
@@ -184,7 +199,7 @@ export class TrayClockWork{
   }
   run():Promise<number>{
     if(this.flight)return this.flight;
-    const next=this.cycle();this.flight=next;void next.finally(()=>{if(this.flight===next)this.flight=undefined;}).catch(()=>{});return next;
+    const next=this.cycle().then(async delay=>{await this.retirement;return delay;});this.flight=next;void next.finally(()=>{if(this.flight===next)this.flight=undefined;}).catch(()=>{});return next;
   }
   private async cycle():Promise<number>{
     if(this.recoveryPending)await this.acquire();

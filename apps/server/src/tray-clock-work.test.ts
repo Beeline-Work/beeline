@@ -54,7 +54,7 @@ describe('unselected existing-leader Tray clock composition',()=>{
       INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES('${WS}',NULL,'${VIEWER}','owner'),('${WS}','${ROOM}','${VIEWER}','owner');`);
   });
   afterEach(async()=>{
-    for(const runner of runners.splice(0))runner.close();
+    for(const runner of runners.splice(0))await runner.close();
     for(const leader of leaders.splice(0))await leader.stop();
     for(const close of cleanups.splice(0))await close();vi.restoreAllMocks();await db.close();
   });

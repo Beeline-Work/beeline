@@ -47,7 +47,7 @@ describe('actual selected turn control socket', () => {
     await Promise.all(releases.splice(0)); await presence.stop(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); await db.close();
   });
   async function connect(enabled = true) {
-    vi.stubEnv('BEELINE_TURN_OWNERSHIP_V1', enabled ? '1' : '0');
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', enabled ? '1' : '0');
     if (!server) {
       server = createBeelineServer({ database: db, live, daemon, connectionPresence: presence, liveHeartbeatMs: 30_000,
         auth: { authenticateDaemon: async (token: string) => token === 'bdt_synthetic' ? agent : null,

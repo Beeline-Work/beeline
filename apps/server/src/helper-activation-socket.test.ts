@@ -19,7 +19,7 @@ describe('actual activation registration and final socket enqueue',()=>{
   const next=async(predicate:(frame:Record<string,any>)=>boolean)=>{let found:Record<string,any>|undefined;await vi.waitFor(()=>{found=frames.find(predicate);expect(found).toBeDefined();});return found!;};
   const send=(frame:Record<string,unknown>)=>socket.send(JSON.stringify({agentId:agent,...frame}));
   beforeAll(async()=>{
-    vi.stubEnv('BEELINE_ACTIVATION_CONTEXT_V1','1');db=await migratedDatabase();await db.query(HELPER_ACTIVATION_SCHEMA);
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1','1');db=await migratedDatabase();await db.query(HELPER_ACTIVATION_SCHEMA);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner'),($2,'agent','Agent')`,[owner,agent]);
     await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)',[agent,owner]);
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Activation socket')`,[workspace]);
@@ -77,7 +77,7 @@ describe('actual activation registration and final socket enqueue',()=>{
       send({type:'activation-context',requestId:'revoked-cut',input:{...identity,source}});
       const reply=await next(frame=>frame.requestId==='revoked-cut');expect(reply).toMatchObject({error:'activation_context_refused'});expect(reply).not.toHaveProperty('result');
     }finally{read.mockRestore();}
-    vi.stubEnv('BEELINE_ACTIVATION_CONTEXT_V1','0');const before=frames.length;
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1','0');const before=frames.length;
     send({type:'register',token,activationContextV1:true});
     expect((await next(frame=>frames.indexOf(frame)>=before&&frame.type==='registered')).capabilities).not.toHaveProperty('activationContextV1');
   });

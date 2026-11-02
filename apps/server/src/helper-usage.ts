@@ -7,7 +7,7 @@ import { applyAccountRead, accountRecord, agentUsageColumns, projectAgentUsage, 
 import type { SqlDatabase } from './database.js';
 import { subscribeCommandCompletion } from './command-completion.js';
 
-export const helperUsageEnabled=()=>process.env.BEELINE_USAGE_ACCOUNT_V1==='1';
+export { networkRouterEnabled as helperUsageEnabled } from './network-router-rollout.js';
 export const HELPER_USAGE_SCHEMA=`
 ${committedCommandNotificationSchema()}
 ALTER TABLE usage_accounts ADD COLUMN IF NOT EXISTS source_revision text;

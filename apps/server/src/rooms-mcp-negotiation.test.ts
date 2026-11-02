@@ -21,7 +21,7 @@ async function fixture(ready:boolean){
 }
 describe('MCP member stream server-first negotiation',()=>{
   it.each([[false,false],[false,true],[true,false],[true,true]] as const)('advertises only deployment flag plus ready committed listener (%s,%s)',async(enabled,ready)=>{
-    vi.stubEnv('BEELINE_MCP_MEMBER_STREAM_V1',enabled?'1':undefined);
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1',enabled?'1':undefined);
     const {origin,query}=await fixture(ready);
     const discovery=await fetch(origin+'/mcp',{method:'POST',headers:{authorization:'Bearer synthetic','content-type':'application/json'},
       body:JSON.stringify({jsonrpc:'2.0',id:1,method:'server/discover',params:{}})});

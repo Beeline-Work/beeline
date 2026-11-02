@@ -6,8 +6,8 @@ import { CornerAccessDatabase } from './corner-access-database.js';
 import type { SqlDatabase } from './database.js';
 import { isCommandOwnerLive } from './turn-ownership.js';
 
-/** Independent gate; an old helper keeps its existing setup reads. */
-export const helperActivationEnabled=()=>process.env.BEELINE_ACTIVATION_CONTEXT_V1==='1';
+/** Protocol negotiation preserves old helper setup reads during the shared rollout. */
+export { networkRouterEnabled as helperActivationEnabled } from './network-router-rollout.js';
 export type ActivationValues=Pick<CommandActivationSnapshot,'configuration'|'roster'|'grants'|'repository'|'corner'>;
 export type ActivationReader=(db:SqlDatabase,command:CommandRow,isCorner:boolean)=>Promise<ActivationValues>;
 

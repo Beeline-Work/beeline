@@ -7,7 +7,7 @@ import { subscribeCommandCompletion } from './command-completion.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
 
 /** Separate rollout floor; enable only after real-PG source/authority proofs. */
-export const memberStreamEnabled=()=>process.env.BEELINE_MCP_MEMBER_STREAM_V1==='1';
+export { networkRouterEnabled as memberStreamEnabled } from './network-router-rollout.js';
 
 /** Compact causes share the existing commit-ordered journal and listener. No
  * personalized DTO or client cache inventory is recorded in the journal. */

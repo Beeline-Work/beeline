@@ -1,6 +1,6 @@
 # Command activation context
 
-`BEELINE_ACTIVATION_CONTEXT_V1=1` selects an independent, server-first protocol.
+`BEELINE_NETWORK_ROUTER_V1=1` is the single temporary router rollout setting. Activation still negotiates its own server-first protocol capability.
 It remains disabled by default. The database migration installs compact
 Workspace authority heads and source triggers; a native runtime number does not
 enable this protocol.

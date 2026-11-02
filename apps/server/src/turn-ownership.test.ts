@@ -27,7 +27,7 @@ describe('effective command ownership', () => {
       FROM agent_commands command ORDER BY command.id`)).rows;
 
   it('keeps legacy null/expiry semantics and a disabled admission gate cannot reinterpret an owned row', async () => {
-    vi.stubEnv('BEELINE_TURN_OWNERSHIP_V1', '0'); expect(turnOwnershipEnabled()).toBe(false);
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', '0'); expect(turnOwnershipEnabled()).toBe(false);
     expect(await active(db)).toEqual([
       { id: 'legacy-dead', active: false, expired: true }, { id: 'legacy-live', active: true, expired: false },
       { id: 'legacy-null', active: null, expired: null }, { id: 'owned', active: true, expired: false },

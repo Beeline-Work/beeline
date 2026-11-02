@@ -119,7 +119,7 @@ async function register(
 
 describe('one machine socket for every agent on a helper machine', () => {
   it.each([true,false])('negotiates real machine usage/overlay registration only with opt-in and gates enabled=%s',async enabled=>{
-    vi.stubEnv('BEELINE_USAGE_ACCOUNT_V1',enabled?'1':'0');vi.stubEnv('BEELINE_HELPER_OVERLAY_V1',enabled?'1':'0');
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1',enabled?'1':'0');
     try{
       const owner='e'.repeat(64),execute=vi.fn(async()=>({id:'synthetic-receipt',createdAt:1}));
       const database={query:vi.fn(async()=>({rows:[{owner_id:owner}],rowCount:1})),transaction:vi.fn()} as unknown as SqlDatabase;

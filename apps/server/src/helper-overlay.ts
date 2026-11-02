@@ -12,7 +12,7 @@ import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 
 /** Independent deployment gate. Never infer support from native/helper version. */
-export const helperOverlayEnabled=()=>process.env.BEELINE_HELPER_OVERLAY_V1==='1';
+export { networkRouterEnabled as helperOverlayEnabled } from './network-router-rollout.js';
 export const HELPER_OVERLAY_SCHEMA=`
 ${committedCommandNotificationSchema()}
 CREATE TABLE IF NOT EXISTS helper_overlay_demand(room_id uuid PRIMARY KEY,revision bigint NOT NULL DEFAULT 0);

@@ -2,7 +2,7 @@ import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-tur
 import type { SqlDatabase } from './database.js';
 
 /** Independent rollout gate. Legacy rows and helpers retain their receipt adapter. */
-export const turnOwnershipEnabled = (): boolean => process.env.BEELINE_TURN_OWNERSHIP_V1 === '1';
+export { networkRouterEnabled as turnOwnershipEnabled } from './network-router-rollout.js';
 const ownedDatabaseOperations = new Set([
   'claimAgentCommand', 'acknowledgeAgentCommand', 'getAgentCommands',
   'postRoomMessage', 'postCornerMessage', 'postAgentTurnReceipt', 'markAgentTurnSilent',

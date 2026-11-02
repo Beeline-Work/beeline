@@ -142,7 +142,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 67,
+      "total": 63,
       "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
     },
     {

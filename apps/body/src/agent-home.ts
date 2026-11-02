@@ -703,8 +703,13 @@ export async function prepareRoomAgentHome(
   const env = tmpLinkReady
     ? roomAgentHomeEnv(root)
     : { ...roomAgentHomeEnv(root), TMPDIR: resolve(root, 'tmp') };
+  const codexHookCommand = nativeShellHookCommand(resolve(root, 'codex', 'beeline-shell-output.cjs'), 'codex');
   return {
     ...env,
+    ...(input.agentKind === 'codex' && process.platform !== 'win32' ? {
+      CODEX_CONFIG: JSON.stringify(nativeShellHookConfig(codexHookCommand, 'PreToolUse')),
+      BEELINE_CODEX_SHELL_HOOK_COMMAND: codexHookCommand,
+    } : {}),
     ...(input.agentKind === 'claude' ? sharedClaudeLoginEnv(operatorHome) : {}),
     ...androidAgentEnv({
       root,
@@ -853,6 +858,9 @@ async function provisionAgentSkillsAndMcp(
     if (failClosed) throw error;
     console.warn('[body] claude web-search settings provisioning failed:', error);
   }
+
+  if (agentKind === 'codex' && process.platform !== 'win32')
+    await writeIsolatedHarnessFile(resolve(root, 'codex', 'beeline-shell-output.cjs'), NATIVE_SHELL_OUTPUT_SCRIPT);
 
   await applyGrantedHostRoutes(
     root,

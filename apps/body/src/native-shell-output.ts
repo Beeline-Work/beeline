@@ -10,7 +10,7 @@ if (process.argv[2] === 'stream') {
   const file = process.argv[3];
   const fd = fs.openSync(file, 'w', 0o600);
   const notice = Buffer.from('\n[Shell output capped; full output: ' + file + '. Read a bounded range to recover omitted text.]\n');
-  const size = 2048;
+  const size = 1024;
   let first = true, total = 0, pending = Buffer.alloc(0), tail = Buffer.alloc(0), capped = false;
   process.stdin.on('data', chunk => {
     fs.writeSync(fd, chunk);
@@ -20,7 +20,7 @@ if (process.argv[2] === 'stream') {
       process.stdout.write(pending.subarray(0, size));
       pending = pending.subarray(size); first = false;
     }
-    if (!capped && total > 8192) { process.stdout.write(notice); capped = true; }
+    if (!capped && total > 4096) { process.stdout.write(notice); capped = true; }
     if (capped) { tail = Buffer.concat([tail, pending]).subarray(-size); pending = Buffer.alloc(0); }
   });
   process.stdin.on('end', () => {
@@ -71,7 +71,7 @@ process.stdin.on('end', () => {
   const first = bytes.subarray(0, size).toString('utf8').replace(/\uFFFD$/u, '');
   const last = bytes.subarray(-size).toString('utf8').replace(/^\uFFFD+/u, '');
   const preview = notice + first + '\n[...]\n' + last;
-  const output = process.argv[2] === 'codex' ? { continue: false, stopReason: preview } : {
+  const output = {
     hookSpecificOutput: { hookEventName: 'PostToolUse',
       updatedToolOutput: { ...result, stdout: preview, stderr: '' } }
   };
@@ -84,6 +84,6 @@ export function nativeShellHookCommand(script: string, harness: 'claude' | 'code
   return `${quote(process.execPath)} ${quote(script)} ${harness}`;
 }
 
-export function nativeShellHookConfig(command: string) {
-  return { hooks: { PostToolUse: [{ matcher: '^Bash$', hooks: [{ type: 'command', command }] }] } };
+export function nativeShellHookConfig(command: string, event: 'PreToolUse' | 'PostToolUse' = 'PostToolUse') {
+  return { hooks: { [event]: [{ matcher: '^Bash$', hooks: [{ type: 'command', command }] }] } };
 }

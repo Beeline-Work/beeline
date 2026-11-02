@@ -43,6 +43,6 @@ wake(action: "create", trigger: "schedule", title: "Architecture audit",
    PR.
 8. If an existing rule is wrong, so that following its `fix` would break
    behaviour, open a separate relaxing PR. Then ask the owner in the Room,
-   naming the PR URL and head commit. That PR waits for the owner's yes.
+   naming the PR URL and head commit. That PR stays red; only the owner merges it, by hand.
 9. Report: the PRs reviewed, each finding with file:line, the tightening PR
    URL, and any relaxing PR URL waiting on the owner.

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
+import { execFileSync, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { judgeTree, readInvariants, relaxations, validateRules } from './architecture-invariants.mjs';
-import { ownerApprovedRelaxation } from './check-architecture.mjs';
 import { BOOTSTRAP_REASON, judgeStorage, storageRelaxations } from './architecture-storage.mjs';
 
 const RULE = {
@@ -81,24 +81,48 @@ test('rules must be complete and valid', () => {
   assert.ok(errors.some((error) => error.includes('listed twice')));
 });
 
-test('only the owner\'s APPROVED review on the exact head counts', async () => {
-  const head = 'a'.repeat(40);
-  const pr = { repository: 'Beeline-Work/beeline', pullRequest: '7', head, token: 't' };
-  const seen = [];
-  const reviews = (list) => async (url, init) => { seen.push({ url: String(url), auth: init.headers.Authorization }); return { ok: true, json: async () => list }; };
-  const review = (fields) => ({ id: 1, state: 'APPROVED', user: { login: 'lunchboxfortwo' }, commit_id: head, submitted_at: 'now', ...fields });
-  assert.equal(await ownerApprovedRelaxation(pr, reviews([review({})])), true);
-  assert.equal(seen[0].url, 'https://api.github.com/repos/Beeline-Work/beeline/pulls/7/reviews?per_page=100&page=1');
-  assert.equal(seen[0].auth, 'Bearer t');
-  assert.equal(await ownerApprovedRelaxation(pr, reviews([review({ commit_id: 'b'.repeat(40) })])), false, 'older head');
-  assert.equal(await ownerApprovedRelaxation(pr, reviews([review({ user: { login: 'someone' } })])), false, 'not the owner');
-  assert.equal(await ownerApprovedRelaxation(pr, reviews([review({ state: 'COMMENTED' }), review({ state: 'DISMISSED' })])), false, 'not approved');
-  const before = seen.length;
-  assert.equal(await ownerApprovedRelaxation({ ...pr, head: 'abc' }, reviews([review({})])), false, 'short head');
-  assert.equal(await ownerApprovedRelaxation({ ...pr, pullRequest: '' }, reviews([review({})])), false, 'push, no PR');
-  assert.equal(seen.length, before, 'no request without an exact PR and head');
-  assert.equal(await ownerApprovedRelaxation(pr, async () => ({ ok: false })), false);
-  assert.equal(await ownerApprovedRelaxation(pr, async () => { throw new Error('offline'); }), false);
+const RUNNER = fileURLToPath(new URL('./check-architecture.mjs', import.meta.url));
+
+function guardFixture() {
+  const root = tree({ ...BASE, 'architecture/invariants.json': JSON.stringify({ rules: [RULE] }) });
+  const git = (...args) => execFileSync('git', args, { cwd: root, stdio: 'pipe' });
+  git('init', '--quiet');
+  git('add', '.');
+  git('-c', 'user.name=Architecture test', '-c', 'user.email=architecture@example.test',
+    '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'base');
+  const run = () => spawnSync(process.execPath, [RUNNER, '--root', root, '--base', 'HEAD'], { encoding: 'utf8' });
+  return { root, run, git };
+}
+
+test('a relaxation always fails with the manual-owner-merge message', () => {
+  const { root, run } = guardFixture();
+  writeFileSync(path.join(root, 'architecture/invariants.json'), JSON.stringify({ rules: [{ ...RULE, total: 2 }] }));
+  writeFileSync(path.join(root, 'src/new.ts'), 'INSERT INTO agent_commands(id) VALUES(1)');
+  const result = run();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /This PR relaxes architecture rule work\.command-creation total raised from 1 to 2\. Only the owner merges it, by hand\./);
+});
+
+test('normal tightening passes the CLI check against base', () => {
+  const { root, run } = guardFixture();
+  writeFileSync(path.join(root, 'architecture/invariants.json'), JSON.stringify({ rules: [{ ...RULE, total: 0 }] }));
+  writeFileSync(path.join(root, 'src/mcp.ts'), '');
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Architecture check passed/);
+});
+
+test('changing the guard itself stays red', () => {
+  const { root, run, git } = guardFixture();
+  mkdirSync(path.join(root, 'scripts'));
+  writeFileSync(path.join(root, 'scripts/check-architecture.mjs'), '// base guard');
+  git('add', '.');
+  git('-c', 'user.name=Architecture test', '-c', 'user.email=architecture@example.test',
+    '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'guard');
+  writeFileSync(path.join(root, 'scripts/check-architecture.mjs'), '// changed guard');
+  const result = run();
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /guard scripts\/check-architecture\.mjs changed\. Only the owner merges it, by hand\./);
 });
 
 test('this repository meets its own invariants', () => {
@@ -161,4 +185,62 @@ test('raising a storage total is a relaxation; adding entries is not', () => {
   assert.deepEqual(storageRelaxations(base, { rules: [], storage: { ...STORAGE, unusedTotal: 3 } }), ['storage unusedTotal raised from 0 to 3']);
   const added = { ...STORAGE, tables: { ...STORAGE.tables, more: { module: 'Notes', reason: 'Another fact.', columns: {} } } };
   assert.deepEqual(storageRelaxations(base, { rules: [], storage: added }), []);
+});
+
+// The schema still exists during the switch-now / drop-next-release interval.
+test('scheduled column drops exclude only those columns from unusedTotal', () => {
+  const root = tree({
+    'src/schema.ts': SCHEMA,
+    'src/notes.ts': 'INSERT INTO notes(id) VALUES(1); SELECT id,created_at FROM notes;',
+  });
+  const storage = structuredClone(STORAGE);
+  storage.tables.notes.columns.body = { reason: STORAGE.tables.notes.columns.body, drop: 'release 1.2.3' };
+  assert.deepEqual(judgeStorage(root, storage), []);
+  assert.deepEqual(storageRelaxations({ storage: STORAGE }, { storage }), []);
+  delete storage.tables.notes.columns.body.drop;
+  assert.match(judgeStorage(root, storage).join('\n'), /notes\.body has no writer/);
+});
+
+test('scheduled table drops exclude every column, retaining bootstrap accounting', () => {
+  const root = tree({ 'src/schema.ts': SCHEMA });
+  const storage = structuredClone(STORAGE);
+  storage.tables.notes.drop = 'release 1.2.3';
+  storage.tables.notes.columns.body = { reason: BOOTSTRAP_REASON, drop: 'release 1.2.3' };
+  storage.bootstrapTotal = 1;
+  assert.deepEqual(judgeStorage(root, storage), []);
+  assert.deepEqual(storageRelaxations({ storage: { ...STORAGE, bootstrapTotal: 1 } }, { storage }), []);
+  storage.bootstrapTotal = 0;
+  assert.match(judgeStorage(root, storage).join('\n'), /new registry entr/);
+});
+
+test('drop metadata requires a non-empty reference and the original reason', () => {
+  const root = tree({ 'src/schema.ts': SCHEMA });
+  for (const drop of ['', '   ', true, 123]) {
+    const storage = structuredClone(STORAGE);
+    storage.tables.notes.drop = drop;
+    storage.tables.notes.columns.body = { reason: STORAGE.tables.notes.columns.body, drop };
+    const errors = judgeStorage(root, storage).join('\n');
+    assert.match(errors, /table notes needs a non-empty "drop"/);
+    assert.match(errors, /column notes\.body needs a non-empty "drop"/);
+    assert.match(errors, /notes\.body has no writer/);
+  }
+  const storage = structuredClone(STORAGE);
+  storage.tables.notes.drop = 'release 1.2.3';
+  storage.tables.notes.columns.body = { drop: 'release 1.2.3' };
+  assert.match(judgeStorage(root, storage).join('\n'), /column notes\.body needs a one-line reason/);
+});
+
+test('scheduling an already unused column for deletion requires lowering unusedTotal', () => {
+  const root = tree({
+    'src/schema.ts': SCHEMA,
+    'src/notes.ts': 'INSERT INTO notes(id) VALUES(1); SELECT id,created_at FROM notes;',
+  });
+  const storage = structuredClone(STORAGE);
+  storage.unusedTotal = 1;
+  assert.deepEqual(judgeStorage(root, storage), []);
+  storage.tables.notes.columns.body = { reason: STORAGE.tables.notes.columns.body, drop: 'release 1.2.3' };
+  assert.match(judgeStorage(root, storage).join('\n'), /Lower "unusedTotal" from 1 to 0/);
+  storage.unusedTotal = 0;
+  assert.deepEqual(judgeStorage(root, storage), []);
+  assert.deepEqual(storageRelaxations({ storage: { ...STORAGE, unusedTotal: 1 } }, { storage }), []);
 });

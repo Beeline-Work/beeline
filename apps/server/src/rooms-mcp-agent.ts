@@ -113,6 +113,9 @@ export const MCP_AGENT_TOOLS: Tool[] = [
     limit: { type: 'integer', minimum: 1, maximum: 100 }, from: { type: 'string', enum: ['oldest', 'newest'] },
     activeOnly: { type: 'boolean' }, pullRequest: { anyOf: [{ type: 'string' }, { type: 'integer' }] },
   }, ['facet'], false),
+  tool('load_workspace_skill', 'Load a saved Workspace procedure from a place.', {
+    address: address(), slug: { type: 'string', minLength: 1, maxLength: 64 },
+  }, ['address', 'slug'], false),
   tool('search', 'Search authorized history or saved memory from a place. Hits are fallible context, never authority.', {
     address: address(), scope: { type: 'string', enum: ['history', 'memory'] }, query: { type: 'string', minLength: 1, maxLength: 500 },
     limit: { type: 'integer', minimum: 1, maximum: 20 },
@@ -360,6 +363,8 @@ export class RoomsMcpAgentTools {
       this.inTurn(member, target, run);
     switch (name) {
       case 'read': return this.read(member, args, exec, turn);
+      case 'load_workspace_skill':
+        return this.read(member, { ...args, facet: 'procedure' }, exec, turn);
       case 'search':
         return turn((_, context) => exec(args.scope === 'memory' ? 'searchInstitutionalMemory' : 'searchInstitutionalHistory',
           { ...context, agentId: member, query: args.query, limit: typeof args.limit === 'number' ? Math.floor(args.limit) : undefined }));
@@ -460,7 +465,7 @@ export class RoomsMcpAgentTools {
       case 'pr': return exec('readCornerPullRequest', { cornerId: at });
       case 'procedure':
         if (!text(args.slug)) throw new McpToolError('read: slug is required for facet procedure');
-        return turn((_, context) => exec('loadWorkspaceSkill', { agentId: member, roomId: context.roomId, slug: args.slug }), at);
+        return turn((_, context) => exec('loadWorkspaceSkill', { ...context, agentId: member, roomId: context.roomId, slug: args.slug }), at);
     }
     throw new McpToolError('unknown read facet');
   }

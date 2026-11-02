@@ -56,7 +56,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     });
     const live = new LiveHub();
     phone = new PhoneService(db, 'http://127.0.0.1', undefined, undefined, live);
-    daemon = new DaemonService(db, live);
+    daemon = new DaemonService(db, live, undefined, undefined, false, undefined, false, undefined,
+      undefined, undefined, { enabled: true, live: true });
     const options = { database: db, auth, phone, daemon, live, mediaMaximumBytes: 1024, roomsMcp: undefined as RoomsMcp | undefined };
     server = createBeelineServer(options);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -2050,6 +2051,16 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: command.id, generationId } as never, AGENT);
       return { roomId: ROOM, requestId: command.turn_request_id, generationId };
     }
+    it('R-MCP-PROCEDURE: loads a saved procedure through the legacy tool name', async () => {
+      const { client } = await connected();
+      await ok(client, 'remember', { address: ROOM, kind: 'procedure', action: 'save',
+        slug: 'mcp-procedure', description: 'Check the saved procedure', markdown: 'Read the saved instructions.' });
+      const loaded = await ok(client, 'load_workspace_skill', { address: ROOM, slug: 'mcp-procedure' });
+      expect(loaded.slug).toBe('mcp-procedure');
+      expect(loaded.markdown).toContain('Read the saved instructions.');
+      const read = await ok(client, 'read', { address: ROOM, facet: 'procedure', slug: 'mcp-procedure' });
+      expect(read).toEqual(loaded);
+    });
     it('R-MCP-PARITY: exposes every agent tool except the documented exclusions', async () => {
       const surface = await import('../../body/src/minimal-tool-surface.js');
       const agentTools = new Set([

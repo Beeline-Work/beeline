@@ -40,6 +40,14 @@ and did not fence subsequent commands.
   `arguments` alias. The trace suite checks concrete tool names, UTF-8 output
   sizes and original sizes supplied by capped MCP results.
 
+The PR repair also runs `R-MCP-PARITY` and `R-MCP-PROCEDURE` in
+`rooms-mcp.test.ts`: the connected MCP catalog exposes `load_workspace_skill`,
+and both that name and `read(facet:procedure)` load the same saved procedure
+with the active turn's authority. The parity exclusions remain unchanged.
+Workflow input validation runs before the original start-card binding path,
+preserving the locked System-message fingerprints `bb92464a5effd869` and
+`2c5f68a0d84e5993`; the lock file is unchanged.
+
 Validation for the split: root typecheck, workspace builds, affected Body and
 server suites, and both built MCP and HTTP workflow proofs are required before
 marking the PR ready. The corner completion report records their output and

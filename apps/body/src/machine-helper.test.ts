@@ -1,5 +1,7 @@
 import { requestMachine } from './machine-control.js';
 import { spawn, execFileSync } from 'node:child_process';
+import * as childProcess from 'node:child_process';
+import { FreeAgentIdle } from './free-agent-idle.js';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
@@ -28,6 +30,11 @@ import {
 import * as sentry from './sentry.js';
 import * as runtime from './runtime.js';
 import { ThinDaemonCore } from './thin-core.js';
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  return { ...actual, execFile: vi.fn(actual.execFile) };
+});
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -169,6 +176,32 @@ describe('one helper process hosts every agent on the machine', () => {
       await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toBe('ready\n'));
       await new Promise(done => setTimeout(done, 600));
       expect(exit).not.toHaveBeenCalled();
+    } finally { signals.emit('SIGTERM'); await running; }
+  });
+
+  it.each([true, false])('restores image services on resume only for hosted machines (%s)', async (hosted) => {
+    const { configPaths, env, signals } = await machine(1);
+    const fake = fakeRuntimes();
+    let idle: FreeAgentIdle | undefined;
+    let wall = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => wall);
+    vi.spyOn(FreeAgentIdle.prototype, 'start').mockImplementation(function (this: FreeAgentIdle) {
+      idle = this;
+    });
+    const running = runMachineHelper({ configPaths, env: { ...env, BEELINE_HOSTED_SERVICES: hosted ? '1' : '0' },
+      signals, runAgent: fake.runAgent, exitProcess: () => undefined,
+      freeAgentIdle: { idleMs: 60_000, requestSleep: async () => false } });
+    try {
+      await vi.waitFor(() => expect(fake.runAgent).toHaveBeenCalledTimes(1));
+      const exec = vi.spyOn(childProcess, 'execFile').mockImplementation((...args: unknown[]) => {
+        (args.at(-1) as (error: null) => void)(null);
+        return {} as childProcess.ChildProcess;
+      });
+      wall += 600_000;
+      await idle!.tick();
+      if (hosted) expect(exec).toHaveBeenCalledWith('/bin/sh', ['/opt/beeline/hosted-services.sh'],
+        expect.objectContaining({ timeout: 30_000 }), expect.any(Function));
+      else expect(exec).not.toHaveBeenCalled();
     } finally { signals.emit('SIGTERM'); await running; }
   });
 

@@ -202,6 +202,31 @@ export async function lockCornerLifecycle(db: SqlDatabase, cornerId: string): Pr
 }
 
 /**
+ * The corner's own row: created once with the corner, then changed only by
+ * this module (its lock and its reviewer) and by GitHub's display cache.
+ */
+export async function createCornerFacts(db: SqlDatabase, cornerId: string): Promise<void> {
+  await db.query(
+    `INSERT INTO corner_facts(corner_id,lifecycle)
+     VALUES($1,'{"lifecycle":"working","checks":"unknown"}') ON CONFLICT(corner_id) DO NOTHING`,
+    [cornerId],
+  );
+}
+
+/** A person's lock: merges then keep the corner open (`corner lock`). */
+export async function setCornerLockedFact(db: SqlDatabase, cornerId: string, locked: boolean): Promise<void> {
+  await db.query(`UPDATE corner_facts SET locked=$2 WHERE corner_id=$1`, [cornerId, locked]);
+}
+
+/** The corner's own reviewer; returns whether it changed. Callers check authority first. */
+export async function setCornerReviewerFact(db: SqlDatabase, cornerId: string, reviewerId: string): Promise<boolean> {
+  return ((await db.query(
+    `UPDATE corner_facts SET reviewer_agent_id=$2
+     WHERE corner_id=$1 AND reviewer_agent_id IS DISTINCT FROM $2 RETURNING corner_id`, [cornerId, reviewerId],
+  )).rowCount ?? 0) > 0;
+}
+
+/**
  * The newest card wins. Ordering is this file's own monotonic `seq` embedded
  * in the card, never `created_at` (two cards written in one transaction can
  * share a timestamp) or the ids (a uuid start card and sha256 later cards).

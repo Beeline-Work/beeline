@@ -28,7 +28,7 @@
         "apps/server/src/corner-lifecycle.ts",
         "apps/server/src/corner-close.ts"
       ],
-      "total": 24,
+      "total": 17,
       "fix": "Change corner state through the corner module: advanceCorner/lockCornerLifecycle in apps/server/src/corner-lifecycle.ts, or closeCornerState in apps/server/src/corner-close.ts. If the module lacks the write you need, add a named function there and call it."
     },
     {

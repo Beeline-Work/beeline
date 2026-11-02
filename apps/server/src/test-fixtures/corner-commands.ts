@@ -48,3 +48,14 @@ export async function seedCornerOpening(database: SqlDatabase, input: {
   );
   return id;
 }
+
+/** A fixture corner row with exactly the facts a test names. */
+export async function seedCornerFactsRow(
+  db: SqlDatabase, cornerId: string, lifecycle: string | null, locked: boolean, reviewerAgentId: string | null,
+): Promise<void> {
+  await db.query(
+    `INSERT INTO corner_facts(corner_id,lifecycle,locked,reviewer_agent_id)
+     VALUES($1,COALESCE($2::jsonb,'{"lifecycle":"unknown","checks":"unknown"}'::jsonb),$3,$4)`,
+    [cornerId, lifecycle, locked, reviewerAgentId],
+  );
+}

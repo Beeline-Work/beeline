@@ -136,7 +136,7 @@ import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedul
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerPullRequestBestEffort, closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
-import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
+import { advanceCorner, createCornerFacts, lockCornerLifecycle } from './corner-lifecycle.js';
 import type { GitHubOperations, LandCornerOutcome } from './github-operations.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
@@ -8632,11 +8632,7 @@ export class DaemonService {
           input.targetBranch ?? 'main',
         ],
       );
-      await db.query(
-        `INSERT INTO corner_facts(corner_id,lifecycle)
-         VALUES($1,'{"lifecycle":"working","checks":"unknown"}')`,
-        [cornerId],
-      );
+      await createCornerFacts(db, cornerId);
       if (input.hold === true) {
         await setCornerHold(db, { cornerId, sourceMessageId: input.sourceMessageId }, commissionedBy ?? agentId, agentId);
       }

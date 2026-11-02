@@ -166,7 +166,7 @@ import type { CommittedMessageLiveRow, LiveEvent, LiveHub } from './live.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from './permission-cards.js';
-import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
+import { advanceCorner, createCornerFacts, lockCornerLifecycle, setCornerLockedFact } from './corner-lifecycle.js';
 import {
   chatCornerCounts,
   cornerFactsSql,
@@ -275,7 +275,7 @@ import {
 } from './wallet.js';
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
-import { closeCornerPullRequestBestEffort, closeCornerState } from './corner-close.js';
+import { closeCornerPullRequestBestEffort, closeCornerState, markOwnedCornersAbandoned } from './corner-close.js';
 import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -6241,10 +6241,7 @@ export class PhoneService {
     const archived = await this.database.transaction(async database => {
       await authorize(database);
       if (locked !== undefined) {
-        await database.query(
-          `UPDATE corner_facts SET locked=$2 WHERE corner_id=$1`,
-          [roomId, locked],
-        );
+        await setCornerLockedFact(database, roomId, locked);
       } else {
         return (await closeCornerState(database, roomId)).archived;
       }
@@ -6665,11 +6662,7 @@ export class PhoneService {
         if (!replay.rowCount) throw new Error('corner id is already in use');
         return false;
       }
-      await database.query(
-        `INSERT INTO corner_facts(corner_id,lifecycle)
-         VALUES($1,'{"lifecycle":"working","checks":"unknown"}')`,
-        [id],
-      );
+      await createCornerFacts(database, id);
       await advanceCorner(database, id, {
         kind: 'open',
         workspaceId: parent.workspace_id,
@@ -8259,18 +8252,7 @@ export class PhoneService {
       // Each corner closes exactly as a human close does: its workflow run,
       // wake sources and corner state end with the archival.
       for (const corner of closingCorners.rows) await closeCornerState(database, corner.id);
-      await database.query(
-        `UPDATE corner_facts SET lifecycle=lifecycle||$2::jsonb
-         WHERE ${cornerOwnerSql('corner_facts.corner_id')}=ANY($1)`,
-        [
-          gone,
-          JSON.stringify({
-            lifecycle: 'done',
-            outcome: 'abandoned',
-            reason: `${account.name} deleted their account`,
-          }),
-        ],
-      );
+      await markOwnedCornersAbandoned(database, gone, `${account.name} deleted their account`);
       await database.query(
         `DELETE FROM agent_schedules WHERE agent_id=ANY($1) OR creator_id=ANY($1)`,
         [gone],

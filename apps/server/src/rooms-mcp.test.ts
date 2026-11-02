@@ -1,7 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { Webhook } from 'standardwebhooks';
-import { RoomsMcpEvents } from './rooms-mcp-events.js';
+import { MCP_ORDER_WAKE_HINT, RoomsMcpEvents } from './rooms-mcp-events.js';
 import { backfillMcpMemberRoomsAndAvatars, ensureMcpMember, MCP_TAG_INSTRUCTION, postMcpWebhook } from './rooms-mcp-members.js';
 import { randomBytes, createHash, randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
@@ -2168,6 +2168,16 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       // The order reaches the app's webhook at once; no helper claims it.
       expect((await db.query<{ body: string }>('SELECT body FROM rooms_mcp_webhook_outbox WHERE member_id=$1 AND message_id=$2',
         [member, sent.id])).rows[0]?.body).toContain('Order (order): Audit the corner list.');
+      // Reproduction: the delivered body once named the command id as a message to reply to, under tag instructions.
+      const delivered: Record<string, unknown>[] = [];
+      await deliverMcpMemberWebhooks(db, async (_url, init) => { delivered.push(JSON.parse(init.body)); return new Response(null, { status: 204 }); });
+      const orderBody = delivered.find(body => body.commandId === sent.id)!;
+      expect(orderBody).toMatchObject({ memberId: member, roomId: ROOM, address: ROOM, id: sent.id, kind: 'order', reason: 'order',
+        text: expect.stringContaining('Audit the corner list.'), next: MCP_ORDER_WAKE_HINT, cursor: null });
+      expect(orderBody).not.toHaveProperty('replyRule');
+      expect(orderBody).not.toHaveProperty('messageId');
+      expect(String(orderBody.instruction)).not.toMatch(/tagged you|replyTo [0-9a-f]{64}|send_message/);
+      expect(String(orderBody.instruction)).toContain('call report');
       const wakes = (await ok(client, 'list_mentions', {})).wakes as { address: string; kind?: string; text?: string }[];
       expect(wakes).toContainEqual(expect.objectContaining({ address: ROOM, kind: 'order', text: expect.stringContaining('Audit the corner list') }));
       // Another call in that Room leaves the order waiting for its report.

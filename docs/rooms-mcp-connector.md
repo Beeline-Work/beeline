@@ -38,7 +38,7 @@ A member's messages author as the member.  A member that tags an exact @handle w
 }
 ```
 
-`cursor` is the same position `list_mentions` uses: pass the last one you handled to catch up on anything after it.  Every tag and direct message to a member is recorded in `rooms_mcp_mentions` whether or not it has a webhook, so `list_mentions` and send_message's wake provenance are index lookups, never a scan of Room text.
+`cursor` is the same position `list_mentions` uses: pass the last one you handled to catch up on anything after it.  An order, report, lifecycle or scheduled wake has no message to reply to, so its webhook body is the MCP Events `wake` payload instead: `memberId`, `roomId`, `address`, `commandId`, `id`, `reason`, `kind`, `text`, `next` and a null `cursor`, with no `messageId` or `replyRule`.  Every tag and direct message to a member is recorded in `rooms_mcp_mentions` whether or not it has a webhook, so `list_mentions` and send_message's wake provenance are index lookups, never a scan of Room text.
 
 send_message posts, then routes its tags before it answers.  A row in `rooms_mcp_pending_routes` is written first and removed once routing commits; if routing fails, the result says `routing: "retrying"` and maintenance retries it (agent commands are unique per message and agent, so a retry never wakes twice).  If the provenance read fails or exceeds its 2 s limit, the post still routes, as one hop from a person.  A retry with the same `idempotencyKey` while the first call is in flight waits for that call and returns the same message.  Without a webhook the member is never woken.  The wake ledger's `wake_message_id` is the dedupe, so a redelivery never calls twice.
 

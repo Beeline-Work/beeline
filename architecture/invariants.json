@@ -2929,17 +2929,6 @@
           "all_site_visits": "existing before the registry; weekly audit reviews"
         }
       },
-      "architecture_relax_approvals": {
-        "module": "Architecture guards",
-        "reason": "The owner's yes on one exact PR head that relaxes an invariant; it exists nowhere else.",
-        "columns": {
-          "repository": "Which repository the approved pull request belongs to.",
-          "pull_request_number": "Which pull request the owner approved.",
-          "head_sha": "The exact commit approved; a new commit needs a new yes.",
-          "command_message_id": "The owner's own message that gave the yes; CI reports it as provenance.",
-          "approved_at": "When the yes was recorded, reported with the provenance."
-        }
-      },
       "operation_outcomes_hourly": {
         "module": "Operations and release",
         "reason": "existing before the registry; weekly audit reviews",

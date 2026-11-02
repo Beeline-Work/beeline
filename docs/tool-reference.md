@@ -42,7 +42,6 @@ writable. Corners keep the watcher so edits are reflected as work proceeds.
 | `no_reply_needed`         | End a wake that needs no message                                                               |
 | `approve_merge`           | Configured reviewer PASS on the exact head SHA                                                 |
 | `record_merge_yes`        | Record an authorized person's explicit merge yes                                               |
-| `approve_architecture_relax` | Record the owner's yes on the exact PR head that relaxes an architecture rule              |
 | `merge_corner`            | Land a corner through the live gate                                                            |
 | `set_corner_hold`         | Set or release a merge hold                                                                    |
 | `close_corner`            | Cancel work and archive a corner                                                               |

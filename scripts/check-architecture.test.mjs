@@ -81,18 +81,24 @@ test('rules must be complete and valid', () => {
   assert.ok(errors.some((error) => error.includes('listed twice')));
 });
 
-test('the owner record is read for the exact head only', async () => {
+test('only the owner\'s APPROVED review on the exact head counts', async () => {
   const head = 'a'.repeat(40);
+  const pr = { repository: 'Beeline-Work/beeline', pullRequest: '7', head, token: 't' };
   const seen = [];
-  const approve = async (url) => { seen.push(String(url)); return { ok: true, json: async () => ({ approved: true }) }; };
-  assert.equal(await ownerApprovedRelaxation({ repository: 'Beeline-Work/beeline', pullRequest: '7', head }, approve), true);
-  assert.match(seen[0], /\/v1\/public\/architecture-approvals\?repository=Beeline-Work%2Fbeeline&pullRequest=7&head=a{40}$/);
-  assert.equal(await ownerApprovedRelaxation({ repository: 'Beeline-Work/beeline', pullRequest: '7', head: 'abc' }, approve), false);
-  assert.equal(seen.length, 1);
-  const refuse = async () => ({ ok: true, json: async () => ({ approved: false }) });
-  assert.equal(await ownerApprovedRelaxation({ repository: 'r/r', pullRequest: '7', head }, refuse), false);
-  const offline = async () => { throw new Error('offline'); };
-  assert.equal(await ownerApprovedRelaxation({ repository: 'r/r', pullRequest: '7', head }, offline), false);
+  const reviews = (list) => async (url, init) => { seen.push({ url: String(url), auth: init.headers.Authorization }); return { ok: true, json: async () => list }; };
+  const review = (fields) => ({ id: 1, state: 'APPROVED', user: { login: 'lunchboxfortwo' }, commit_id: head, submitted_at: 'now', ...fields });
+  assert.equal(await ownerApprovedRelaxation(pr, reviews([review({})])), true);
+  assert.equal(seen[0].url, 'https://api.github.com/repos/Beeline-Work/beeline/pulls/7/reviews?per_page=100&page=1');
+  assert.equal(seen[0].auth, 'Bearer t');
+  assert.equal(await ownerApprovedRelaxation(pr, reviews([review({ commit_id: 'b'.repeat(40) })])), false, 'older head');
+  assert.equal(await ownerApprovedRelaxation(pr, reviews([review({ user: { login: 'someone' } })])), false, 'not the owner');
+  assert.equal(await ownerApprovedRelaxation(pr, reviews([review({ state: 'COMMENTED' }), review({ state: 'DISMISSED' })])), false, 'not approved');
+  const before = seen.length;
+  assert.equal(await ownerApprovedRelaxation({ ...pr, head: 'abc' }, reviews([review({})])), false, 'short head');
+  assert.equal(await ownerApprovedRelaxation({ ...pr, pullRequest: '' }, reviews([review({})])), false, 'push, no PR');
+  assert.equal(seen.length, before, 'no request without an exact PR and head');
+  assert.equal(await ownerApprovedRelaxation(pr, async () => ({ ok: false })), false);
+  assert.equal(await ownerApprovedRelaxation(pr, async () => { throw new Error('offline'); }), false);
 });
 
 test('this repository meets its own invariants', () => {

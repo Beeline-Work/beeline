@@ -399,6 +399,7 @@ jobs:
           ARCHITECTURE_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
           ARCHITECTURE_PR: ${{ github.event.pull_request.number }}
           ARCHITECTURE_HEAD: ${{ github.event.pull_request.head.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           git fetch --no-tags --depth=1 origin "$ARCHITECTURE_BASE"
           node --test scripts/check-architecture.test.mjs

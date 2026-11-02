@@ -14,7 +14,7 @@ describe('R-SURFACE-DRIFT: AGENT_SURFACE_TOOL_NAMES vs the advertised tools', ()
     ...Object.values(CAPABILITY_ROUTES).flatMap(routes => Object.values(routes))]);
   it('lists no new advertised tool as missing', () => {
     expect(advertised.filter(name => !listed(name))).toEqual([
-      'approve_architecture_relax', 'close_corner_pr', 'dispatch_release', 'notify_feedback_fixed', 'read_operator_system_dm', 'record_merge_yes', 'report_feedback',
+      'close_corner_pr', 'dispatch_release', 'notify_feedback_fixed', 'read_operator_system_dm', 'record_merge_yes', 'report_feedback',
       'repository_io', 'send_operator_system_dm',
     ]);
   });

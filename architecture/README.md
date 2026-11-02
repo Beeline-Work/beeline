@@ -37,12 +37,10 @@ each app so a module cannot grow a second path for the same job.
 | Remove a rule whose pattern matches nothing any more | None. |
 | Raise a `total`, `bootstrapTotal` or `unusedTotal`, remove a live rule, change `pattern`/`flags`/`scope`/`owners`/`distinct` or the storage `scope`, or change the guard scripts | The owner's yes on the exact PR head. |
 
-A relaxing PR fails the check until Beeline holds that yes. The owner answers
-in a normal Beeline Room message, replying to an ask that names the PR and its
-head commit. The agent that message commands calls `approve_architecture_relax`
-with the PR number and head. CI reads the record from
-`GET /v1/public/architecture-approvals` and the job is re-run. A new commit
-needs a new yes.
+A relaxing PR fails the check until the PR has an approving GitHub review from
+the repository owner (`lunchboxfortwo`) on its exact head commit. CI reads the
+PR's reviews with the workflow's `GITHUB_TOKEN`; after the owner approves,
+re-run the TYPECHECK job. A new commit needs a new approval.
 
 CI runs the base commit's copy of the guard, so a PR cannot weaken the check
 that judges it.

@@ -239,7 +239,7 @@ async function run() {
   // Expo's web shell gives the app root the window's height, as a phone screen does.
   const root = document.getElementById('root')!;
   root.style.cssText = 'height:100vh;display:flex;flex-direction:column;overflow:hidden';
-  createRoot(root, { onUncaughtError: (error) => console.error(error) }).render(
+  createRoot(root, { onUncaughtError: (error: unknown) => console.error(error) }).render(
     <GestureHandlerRootView style={{ flex: 1 }}>
       <BuzzChat />
     </GestureHandlerRootView>,

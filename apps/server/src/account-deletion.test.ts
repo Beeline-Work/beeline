@@ -7,6 +7,7 @@ import { migrate } from './database.js';
 import { claimAgentCommand } from './agent-command.js';
 import { setCornerHold } from './corner-holds.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
+import { cornerRunStateSql } from './corner-run.js';
 import { seedCornerOpening, MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth } from './auth.js';
@@ -376,7 +377,7 @@ describe('deleteAccount', () => {
     // It closes through closeCornerState, as a human close does: the corner
     // state machine reaches `closed` with the archival.
     await expectRowCount(
-      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND workflow_state='closed'`,
+      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND ${cornerRunStateSql('corner_id')}='closed'`,
       [CORNER],
       1,
     );
@@ -472,7 +473,7 @@ describe('deleteAccount', () => {
       'corner_facts.owner_agent_id', 'corner_facts.reviewer_agent_id',
       'corner_facts.worker_agent_id', 'corner_merge_approvals.approved_by',
       'corner_merge_holds.actor_id', 'corner_merge_holds.released_by',
-      'corner_merge_holds.set_by_agent_id',
+      'corner_merge_holds.set_by_agent_id', 'corner_validation_stages.actor_id',
       'free_agents.owner_id', 'github_installations.owner_id',
       'identity_successions.new_identity_id', 'identity_successions.old_identity_id',
       'invites.created_by', 'live_outputs.agent_id', 'messages.author_id',

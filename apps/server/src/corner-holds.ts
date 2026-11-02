@@ -30,14 +30,14 @@ export async function activeCornerHolds(
  */
 export async function releaseArchivedCornerHolds(db: SqlDatabase, cornerIds?: readonly string[]): Promise<void> {
   if (cornerIds?.length === 0) return;
+  const stale = `corner.id=hold.corner_id AND corner.archived_at IS NOT NULL AND hold.released_at IS NULL
+     AND ($1::uuid[] IS NULL OR hold.corner_id=ANY($1::uuid[]))`;
+  // System stays lazy: it is created only when there is a hold to release.
+  if (!(await db.query(`SELECT 1 FROM corner_merge_holds hold JOIN rooms corner ON ${stale} LIMIT 1`,
+    [cornerIds ?? null])).rowCount) return;
   await ensureSystemIdentity(db);
-  await db.query(
-    `UPDATE corner_merge_holds hold SET released_at=now(),released_by=$2
-     FROM rooms corner
-     WHERE corner.id=hold.corner_id AND corner.archived_at IS NOT NULL AND hold.released_at IS NULL
-       AND ($1::uuid[] IS NULL OR hold.corner_id=ANY($1::uuid[]))`,
-    [cornerIds ?? null, SYSTEM_IDENTITY_ID],
-  );
+  await db.query(`UPDATE corner_merge_holds hold SET released_at=now(),released_by=$2 FROM rooms corner WHERE ${stale}`,
+    [cornerIds ?? null, SYSTEM_IDENTITY_ID]);
 }
 
 /** Called in the caller's transaction, including corner creation. */

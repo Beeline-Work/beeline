@@ -24,7 +24,7 @@ test('phone shadow observation does not bundle daemon or response schemas or pas
 test('trusted phone owner excludes daemon/response registries within its bundle budget', async () => {
   const result = await build({
     absWorkingDir: fileURLToPath(new URL('..', import.meta.url)),
-    entryPoints: ['packages/net/src/private/admission.ts'],
+    entryPoints: ['packages/net/src/private/phone-owner.ts'],
     bundle: true, platform: 'browser', format: 'esm', minify: true, write: false, metafile: true,
   });
   for (const file of Object.keys(result.metafile.inputs))
@@ -34,6 +34,7 @@ test('trusted phone owner excludes daemon/response registries within its bundle 
   assert.ok(bytes.length <= 64 * 1024, `owner bundle grew to ${bytes.length} bytes`);
   assert.ok(gzipSync(bytes).length <= 16 * 1024, 'owner gzip budget exceeded');
 });
+
 
 test('helper consumer includes all owned adapters but no unrelated route registry', async () => {
   const result = await build({

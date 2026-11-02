@@ -15,9 +15,9 @@
       "default": "./dist/phone-inputs.js"
     },
     "./owner": {
-      "types": "./dist/private/admission.d.ts",
-      "import": "./dist/private/admission.js",
-      "default": "./dist/private/admission.js"
+      "types": "./dist/private/phone-owner.d.ts",
+      "import": "./dist/private/phone-owner.js",
+      "default": "./dist/private/phone-owner.js"
     },
     "./helper-codecs": {
       "types": "./dist/helper-codecs.d.ts",

@@ -1,0 +1,37 @@
+{
+  "cohort": "local PGlite; synthetic16Rooms/256asks",
+  "cold": {
+    "legacy": {
+      "statements": 1,
+      "resultRows": 1,
+      "queryResultBytes": 35,
+      "wireBytes": 13,
+      "p95Ms": 32.79493199999979
+    },
+    "candidate": {
+      "statements": 5,
+      "resultRows": 5,
+      "queryResultBytes": 431,
+      "wireBytes": 796,
+      "p95Ms": 35.375864999999976
+    }
+  },
+  "hundredFocuses": {
+    "legacyReads": 100,
+    "candidateReads": 1
+  },
+  "writes": 0,
+  "journalAdvance": 0,
+  "limits": "No real PostgreSQL WAL/CPU/enqueue or native parse/render claim; other families and actual committed changes not covered.",
+  "acceptance": {
+    "wholeRouter": "OPEN",
+    "coldStatementNonRegression": false,
+    "focusReadReuse": true,
+    "badgeUnder1024Bytes": true,
+    "timing": "10 local samples; not production CPU or enqueue proof"
+  },
+  "source": {
+    "baseCommit": "13b6ac5ed5a15e51fa6ad450cf777f41ae6b793f",
+    "testBlob": "266048e8a5b2171b9e79584bd530c4d14137fc7b"
+  }
+}

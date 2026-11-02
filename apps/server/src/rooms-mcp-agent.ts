@@ -210,7 +210,10 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('react_to_message', 'React to a message with a supported emoji.', {
     address: address(), messageId: { type: 'string' }, emoji: { type: 'string', enum: [...MESSAGE_REACTION_EMOJIS] },
   }, ['address', 'messageId', 'emoji']),
-  tool('no_reply_needed', 'Explicitly decline one tagged message by messageId without posting. Without messageId, mark non-order private wakes at an address handled; tags stay owed. Failed sends never decline tags.', { address: address(), messageId: { type: 'string', pattern: '^[0-9a-f]{64}$' } }, ['address']),
+  tool('no_reply_needed', 'Explicitly decline one tagged message by messageId without posting, or mark one wake handled by commandId (its id under list_mentions wakes). With neither, mark every non-order private wake at the address handled; tags stay owed. Orders are answered with report. Failed sends never decline tags.', {
+    address: address(), messageId: { type: 'string', pattern: '^[0-9a-f]{64}$' },
+    commandId: { type: 'string', pattern: '^[0-9a-f]{64}$', description: 'One wake id from list_mentions wakes.' },
+  }, ['address']),
 ];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -446,10 +449,22 @@ export class RoomsMcpAgentTools {
           if (typeof args.messageId !== 'string' || !/^[0-9a-f]{64}$/.test(args.messageId)) throw new McpToolError('Invalid messageId');
           return { cleared: await clearOwedMention(this.db, member, roomId, args.messageId) };
         }
+        // The same rows pendingMcpWakes lists: pending, or claimed with an expired lease.
+        const waiting = `room_id=$1 AND agent_id=$2 AND action IN ('input','resume') AND reason<>'mcp_call'
+          AND (state='pending' OR (state='claimed' AND lease_expires_at<=now()))`;
+        if (args.commandId !== undefined) {
+          if (typeof args.commandId !== 'string' || !/^[0-9a-f]{64}$/.test(args.commandId)) throw new McpToolError('Invalid commandId');
+          const wake = (await this.db.query<{ kind: string | null }>(
+            `SELECT private_payload->>'kind' kind FROM agent_commands WHERE id=$3 AND ${waiting}`, [roomId, member, args.commandId])).rows[0];
+          if (!wake) return { cleared: 0 };
+          if (wake.kind === 'order') throw new McpToolError('that wake is an order; answer it with report');
+          const cleared = await this.db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$3 AND ${waiting}`,
+            [roomId, member, args.commandId]);
+          return { cleared: cleared.rowCount ?? 0 };
+        }
         const cleared = await this.db.query(
           `UPDATE agent_commands SET state='complete',completed_at=now()
-           WHERE room_id=$1 AND agent_id=$2 AND state='pending' AND action IN ('input','resume')
-             AND COALESCE(private_payload->>'kind','')<>'order'`, [roomId, member]);
+           WHERE ${waiting} AND COALESCE(private_payload->>'kind','')<>'order'`, [roomId, member]);
         return { cleared: cleared.rowCount ?? 0 };
       }
     }

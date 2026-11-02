@@ -9,7 +9,7 @@ import { STARTUP_WAKE_BACKOFF_SCHEMA } from './startup-wake-backoff.js';
 import { ROOMS_MCP_SCHEMA } from './rooms-mcp-schema.js';
 import { backfillMcpMemberRoomsAndAvatars, backfillMcpMembers } from './rooms-mcp-members.js';
 import { seedPreregisteredMcpClients } from './rooms-mcp-preregistered.js';
-import { backfillCornerHoldMessages } from './corner-holds.js';
+import { backfillCornerHoldMessages, releaseArchivedCornerHolds } from './corner-holds.js';
 import { OPERATOR_SYSTEM_DM_SCHEMA } from './operator-system-dm.js';
 import { OPERATOR_FINANCES_SCHEMA } from './operator-finances.js';
 import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
@@ -865,9 +865,6 @@ ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_updated_at timestamptz;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_name text;
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS repository_resolution text NOT NULL DEFAULT 'none';
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES identities(id);
--- Retained but unused: a reviewer class, replaced by reviewer_fallback_ids
--- (retireAgentClasses converts it). A later migration can drop it.
-ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_class text;
 -- Agents tried in order after reviewer_agent_id when it is unhealthy or its
 -- review turn fails (agent-health.ts). Empty unless reviewer_agent_id is set.
 ALTER TABLE rooms ADD COLUMN IF NOT EXISTS reviewer_fallback_ids text[] NOT NULL DEFAULT '{}';
@@ -2045,16 +2042,6 @@ CREATE INDEX IF NOT EXISTS corner_facts_reviewer_agent_idx ON corner_facts(revie
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS title_generated boolean NOT NULL DEFAULT false;
 
 -- Cleanup intents survive archival and provider failures.
-CREATE TABLE IF NOT EXISTS corner_pr_closures (
-  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
-  attempts integer NOT NULL DEFAULT 0,
-  next_attempt_at timestamptz NOT NULL DEFAULT now(),
-  finished_at timestamptz,
-  last_error text
-);
-CREATE INDEX IF NOT EXISTS corner_pr_closures_due_idx
-  ON corner_pr_closures(next_attempt_at) WHERE finished_at IS NULL;
-
 CREATE TABLE IF NOT EXISTS corner_branch_deletions (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
   installation_id bigint,
@@ -2117,19 +2104,6 @@ UPDATE corner_brief_revisions SET build_spec=content
 -- columns above NULL; older rows keep them and are folded into a spec on read.
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS spec text;
 ALTER TABLE corner_brief_revisions ALTER COLUMN content DROP NOT NULL;
--- Retired: nothing reads or writes this table; drop it in a later release.
-CREATE TABLE IF NOT EXISTS corner_validation_stages (
-  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  brief_revision integer NOT NULL,
-  head_sha text NOT NULL,
-  stage text NOT NULL CHECK (stage IN ('intent','base','review','tests','docs','lint_types','publication','ci','final_authorization')),
-  status text NOT NULL CHECK (status IN ('pending','running','passed','failed','skipped','not_applicable')),
-  evidence text NOT NULL DEFAULT '',
-  actor_id text NOT NULL REFERENCES identities(id),
-  updated_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY (corner_id,brief_revision,head_sha,stage)
-);
-
 DROP TABLE IF EXISTS corner_apps;
 DROP TABLE IF EXISTS corner_app_bindings;
 DROP TABLE IF EXISTS corner_app_installations;
@@ -3599,6 +3573,7 @@ export async function migrate(
 /** Idempotent data work runs after both schema owners have expanded. Each step
  * commits separately, so retrying a release resumes completed work. */
 export async function migrateData(database: SqlDatabase): Promise<void> {
+  await releaseArchivedCornerHolds(database);
   await backfillCornerHoldMessages(database);
   const dataStep = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
     let result!: T;
@@ -3685,15 +3660,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   if (blockers)
     console.log(`reconcileCornerMergeBlockers: dispatched ${blockers} implementer command(s)`);
   const classes = await dataStep('agent class retirement', () => retireAgentClasses(database));
-  if (classes.convertedRooms || classes.clearedRooms.length || classes.runs)
-    console.log(
-      `retireAgentClasses: converted ${classes.convertedRooms} Room reviewer class(es) to agent lists, ` +
-        `cleared ${classes.clearedRooms.length} with no matching agent` +
-        (classes.clearedRooms.length
-          ? ` (${classes.clearedRooms.map((room) => `${room.name} ${room.id}`).join(', ')})`
-          : '') +
-        `, converted ${classes.runs} workflow run(s)`,
-    );
+  if (classes.runs) console.log(`retireAgentClasses: converted ${classes.runs} workflow run(s)`);
   await dataStep('empty reviewer fallbacks', () => boundedMigrationUpdate(database,
     'empty reviewer fallbacks',
     `UPDATE rooms SET reviewer_fallback_ids=array_remove(reviewer_fallback_ids,'')

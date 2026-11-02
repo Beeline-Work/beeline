@@ -36,7 +36,7 @@ import {
 } from './agent-sign-in.js';
 import { settleWorkflowGate, startWorkflow } from './workflow-runs.js';
 import { humanRoomAdmin, humanRoomMember } from './workflow-admin.js';
-import { setCornerHold } from './corner-holds.js';
+import { releaseArchivedCornerHolds, setCornerHold } from './corner-holds.js';
 import {
   createAgentCommand,
   dropQueuedOrdersForStop,
@@ -8394,6 +8394,7 @@ export class PhoneService {
          WHERE id=ANY($1::uuid[])`,
         [closingCorners.rows.map((corner) => corner.id)],
       );
+      await releaseArchivedCornerHolds(database, closingCorners.rows.map((corner) => corner.id));
       await database.query(
         `UPDATE corner_facts SET close_requested=true,owner_agent_id=NULL,
            lifecycle=lifecycle||$2::jsonb,updated_at=now()
@@ -8513,6 +8514,7 @@ export class PhoneService {
       for (const [table, column] of [
         ['messages', 'deleted_by'],
         ['corner_brief_revisions', 'author_id'],
+        // Retired and dropped in a later release; absent tables are skipped.
         ['corner_validation_stages', 'actor_id'],
         ['corner_merge_holds', 'actor_id'],
         ['corner_merge_holds', 'released_by'],
@@ -8521,10 +8523,11 @@ export class PhoneService {
         ['workflow_owner_transfers', 'previous_owner_id'],
         ['workflow_owner_transfers', 'new_owner_id'],
       ])
-        await database.query(`UPDATE ${table} SET ${column}=$2 WHERE ${column}=ANY($1)`, [
-          gone,
-          DELETED_ACCOUNT_IDENTITY_ID,
-        ]);
+        if ((await database.query<{ present: boolean }>(`SELECT to_regclass($1) IS NOT NULL present`, [table])).rows[0]!.present)
+          await database.query(`UPDATE ${table} SET ${column}=$2 WHERE ${column}=ANY($1)`, [
+            gone,
+            DELETED_ACCOUNT_IDENTITY_ID,
+          ]);
       // Optional attributions simply lose the deleted id.
       for (const [table, column] of [
         ['corner_facts', 'reviewer_agent_id'],

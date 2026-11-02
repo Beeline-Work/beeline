@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from './database.js';
 import { claimAgentCommand } from './agent-command.js';
 import { setCornerHold } from './corner-holds.js';
@@ -416,7 +417,7 @@ describe('deleteAccount', () => {
       'corner_facts.owner_agent_id', 'corner_facts.reviewer_agent_id',
       'corner_facts.worker_agent_id', 'corner_merge_approvals.approved_by',
       'corner_merge_holds.actor_id', 'corner_merge_holds.released_by',
-      'corner_merge_holds.set_by_agent_id', 'corner_validation_stages.actor_id',
+      'corner_merge_holds.set_by_agent_id',
       'free_agents.owner_id', 'github_installations.owner_id',
       'identity_successions.new_identity_id', 'identity_successions.old_identity_id',
       'invites.created_by', 'live_outputs.agent_id', 'messages.author_id',
@@ -450,7 +451,7 @@ describe('deleteAccount', () => {
     expect(indirect.rows).toEqual([]);
   });
 
-  it('keeps shared corner records and active merge holds under the tombstone', async () => {
+  it('keeps shared corner records under the tombstone and releases holds on the corners it archives', async () => {
     await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, AGENT]);
     await database.query(`UPDATE messages SET deleted_by=$1 WHERE id='m3'`, [OWNER]);
     await database.query(
@@ -475,8 +476,8 @@ describe('deleteAccount', () => {
     );
     await expectRowCount(
       `SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND actor_id=$2
-         AND set_by_agent_id IS NULL AND released_by IS NULL AND released_at IS NULL`,
-      [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+         AND set_by_agent_id IS NULL AND released_by=$3 AND released_at IS NOT NULL`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID, SYSTEM_IDENTITY_ID],
       1,
     );
   });

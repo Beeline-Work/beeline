@@ -1,6 +1,6 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
-import {countNeedsYouItems,countNeedsYouProjection,needsYouItems} from './needs-you.js';
-import {readRouterCut} from './router-projections.js';
+import {countNeedsYouItems,countNeedsYouProjection,readNeedsYouCountSnapshot,needsYouItems} from './needs-you.js';
+import {readRouterCut,readRouterAuthority} from './router-projections.js';
 import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import {PhoneService} from './phone-service.js';
 const VIEWER='a'.repeat(64),PEER='b'.repeat(64),AGENT='c'.repeat(64);
@@ -94,6 +94,7 @@ describe('pure count-only Needs-you projection at one database cut',()=>{
       SELECT 'ask-'||n,$1,$2,'@reader please review',now()-interval '1 hour' FROM generate_series(1,500)n`,[ROOM,PEER]);
     await differential(500);await message('overflow','@reader please review');
     await expect(countNeedsYouProjection(db,WORKSPACE,VIEWER)).rejects.toMatchObject({reason:'budget'});
+    await expect(readNeedsYouCountSnapshot(db,WORKSPACE,VIEWER)).rejects.toMatchObject({reason:'budget'});
     expect(await countNeedsYouItems(db,WORKSPACE,VIEWER)).toBe(500);
   });
   it('applies eligibility before the cap so expired asks and near misses cannot manufacture overflow',async()=>{
@@ -103,4 +104,21 @@ describe('pure count-only Needs-you projection at one database cut',()=>{
       SELECT 'old-'||n,$1,$2,'@reader please review',now()-interval '8 days' FROM generate_series(1,501)n`,[ROOM,PEER]);
     await message('real','@reader please review');await differential(1);
   });
+  it('builds a complete badge snapshot in one SELECT with the same-cut authority and count',async()=>{
+    await message('single-statement','@reader please review');
+    await db.transaction(async tx=>{
+      await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      let statements=0;
+      const observed:typeof tx={transaction:work=>tx.transaction(work),query:(sql,args)=>{statements++;return tx.query(sql,args);}};
+      const snapshot=await new PhoneService(observed,'https://example.test').readRouterSnapshot({family:'needs-you-count',workspaceId:WORKSPACE},VIEWER);
+      expect(statements).toBe(1);
+      expect(snapshot).toMatchObject({family:'needs-you-count',value:{count:1},cut:await readRouterCut(tx,WORKSPACE),
+        authority:await readRouterAuthority(tx,{family:'needs-you-count',workspaceId:WORKSPACE},VIEWER)});
+      expect(snapshot.value).toEqual({count:await countNeedsYouProjection(tx,WORKSPACE,VIEWER)});
+    });
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IS NULL AND workspace_id=$1 AND identity_id=$2`,[WORKSPACE,VIEWER]);
+    await expect(readNeedsYouCountSnapshot(db,WORKSPACE,VIEWER)).rejects.toMatchObject({reason:'authority'});
+    expect((await db.query('SELECT 1 FROM needs_you_marks')).rowCount).toBe(0);
+  });
+
 });

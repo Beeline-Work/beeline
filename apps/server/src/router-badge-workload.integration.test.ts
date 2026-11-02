@@ -3,7 +3,6 @@ import {ReadLanes} from '../../../packages/net/src/private/read-lanes.js';
 import type {SqlDatabase} from './database.js';
 import {migratedDatabase} from './test-support.js';
 import {PhoneService} from './phone-service.js';
-import {buildRouterSnapshot} from './router-projections.js';
 import {countNeedsYouItems} from './needs-you.js';
 
 /** Scoped equal-journey measurement, not whole-router rollout approval. Real
@@ -38,14 +37,14 @@ it('measures cold and repeated badge focus separately against identical authoriz
     const legacy=[],candidate=[];
     for(let i=0;i<10;i++){
       legacy.push(await measure(async observed=>({count:await countNeedsYouItems(observed,workspace,viewer)})));
-      candidate.push(await measure(observed=>buildRouterSnapshot(observed,input,viewer,(tx,args,who)=>phone.buildRouterValue(tx,args,who))));
+      candidate.push(await measure(observed=>new PhoneService(observed,'https://synthetic.invalid').readRouterSnapshot(input,viewer)));
     }
     for(const result of legacy)expect(result.value).toEqual({count:256});
-    for(const result of candidate){expect(result.value).toMatchObject({value:{count:256}});expect(result.wireBytes).toBeLessThanOrEqual(1024);}
+    for(const result of candidate){expect(result.value).toMatchObject({value:{count:256}});expect(result.wireBytes).toBeLessThanOrEqual(1024);expect(result.statements).toBeLessThanOrEqual(legacy[0]!.statements);}
     const lanes=new ReadLanes({origin:'https://synthetic.invalid',principal:viewer,sessionEpoch:1},()=>true);
     let reads=0,legacyFocusReads=0,resolve!:()=>void;
     lanes.subscribe(input,()=>{if(lanes.peek(input).state==='LIVE')resolve();});
-    lanes.connected(1,['needs-you-count'],async()=>{reads++;return buildRouterSnapshot(db,input,viewer,(tx,args,who)=>phone.buildRouterValue(tx,args,who));});
+    lanes.connected(1,['needs-you-count'],async()=>{reads++;return phone.readRouterSnapshot(input,viewer);});
     for(let i=0;i<100;i++){
       expect(await countNeedsYouItems(db,workspace,viewer)).toBe(256);legacyFocusReads++;
       const installed=new Promise<void>(done=>{resolve=done;});

@@ -8518,6 +8518,11 @@ export class PhoneService {
       // history: they keep the tombstone as author, like messages do.
       for (const [table, column] of [
         ['messages', 'deleted_by'],
+        // Retained only for rolling-deployment and rollback compatibility.
+        ['corner_apps', 'author_agent_id'],
+        ['corner_app_installations', 'installed_by'],
+        ['corner_app_installations', 'developer_agent_id'],
+        ['corner_app_bindings', 'bound_by'],
         ['corner_brief_revisions', 'author_id'],
         ['corner_validation_stages', 'actor_id'],
         ['corner_merge_holds', 'actor_id'],

@@ -8,9 +8,11 @@ another run.
 
 ## Routing and CPU budget
 
-The budget files in `infra/ci/` are the proposed replacement for the older
-16-CPU pool policy below. Install and verify those limits before enabling
-any of the ten `beeline-ci@01` through `beeline-ci@10` listeners.
+The budget files in `infra/ci/` replace the older 16-CPU pool policy below.
+They were installed on squire on 2026-11-02. All ten instances were verified
+with a one-CPU quota and 8 GiB hard memory limit, and the pool with a ten-CPU
+quota and 60 GiB hard memory limit. Verify those effective limits before
+enabling any of the ten `beeline-ci@01` through `beeline-ci@10` listeners.
 
 | Checks work | Pull requests | Merge groups / manual dispatch |
 | --- | --- | --- |
@@ -41,7 +43,7 @@ These CPU quotas bound CPU time, not host load average: agents also contribute
 to load, so the load-test measurements remain necessary.
 
 See [`infra/ci/README.md`](../infra/ci/README.md) for activation, measurement and
-abort instructions. The new budget has not yet been applied or load-tested;
+abort instructions. The new budget is installed, but concurrent PR validation remains pending;
 the historical measurements below do not establish the 15-minute target.
 
 ## CI-only host isolation

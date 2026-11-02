@@ -191,9 +191,12 @@ describe('a tag reaches the joined session', () => {
   it('SESSION-JOIN-REJOIN-1 never tells a session to join on its own', async () => {
     const home = scratch();
     const env = { HOME: home, XDG_STATE_HOME: join(home, 'state'), PATH: process.env.PATH ?? '' };
-    const refusal = runSessionCommand(['session', 'tool', 'report', '{}'], env);
+    // An unknown --as key reaches the refusal in every environment.
+    const refusal = runSessionCommand(['session', 'tool', 'report', '{}', '--as', 'codex:/nowhere'], env);
     await expect(refusal).rejects.toThrow('including its --as <member> flag');
     await expect(refusal).rejects.not.toThrow(/Run:? (npx -y )?usebeeline join|join again/);
+    // Without --as the session is looked up from the process tree; whichever refusal that gives, it never says to join.
+    await expect(runSessionCommand(['session', 'tool', 'report', '{}'], env)).rejects.not.toThrow(/Run:? (npx -y )?usebeeline join|join again/);
   });
 
   it('C3 prefixes helper-injected Room messages with the Beeline header', () => {

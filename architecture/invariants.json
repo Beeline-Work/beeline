@@ -114,7 +114,7 @@
         "packages/api-contract/src"
       ],
       "owners": [],
-      "total": 3,
+      "total": 0,
       "fix": "Send the server a capability or setting, not the harness name, and keep the per-harness value in a Record<AgentKind, ...> table beside AGENT_KINDS in apps/body/src/agent-command.ts."
     },
     {
@@ -128,7 +128,7 @@
       "owners": [
         "apps/body/src/agent-command.ts"
       ],
-      "total": 85,
+      "total": 0,
       "fix": "Add the behaviour as a field of a Record<AgentKind, ...> table beside AGENT_KINDS in apps/body/src/agent-command.ts and read that field here instead of comparing the harness name."
     },
     {
@@ -141,7 +141,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 62,
+      "total": 60,
       "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
     },
     {
@@ -154,7 +154,7 @@
         "apps/body/src"
       ],
       "owners": [],
-      "total": 56,
+      "total": 55,
       "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
     },
     {
@@ -167,7 +167,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 13,
+      "total": 11,
       "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
     },
     {
@@ -204,7 +204,7 @@
         "apps/body/src"
       ],
       "owners": [],
-      "total": 30,
+      "total": 29,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -216,7 +216,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 21,
+      "total": 19,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {

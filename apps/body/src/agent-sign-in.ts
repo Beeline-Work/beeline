@@ -16,11 +16,13 @@
  * Grok 1.0.46, Cursor Agent 2026.10.01-e373342); `agent-sign-in.contract.test.ts`
  * pins them. Nothing here logs a code, key, or token.
  */
+import { agentBehavior } from './agent-command.js';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   AGENT_SIGN_IN_ATTEMPT_TTL_MS,
+  AGENT_SIGN_IN_KINDS,
   AGENT_SIGN_IN_PROVIDER_LABELS,
   isAgentSignInHarness,
   type AgentSignInFrame,
@@ -205,16 +207,16 @@ export class AgentSignIn {
 
   async start(attemptId: string): Promise<AgentSignInLink> {
     const { harness } = this.options;
-    if (harness === 'claude')
+    if (AGENT_SIGN_IN_KINDS[harness] === 'paste-code')
       return { kind: 'paste-code', authorizeUrl: this.#claude.start(attemptId) };
-    if (harness === 'codex' || harness === 'grok' || harness === 'cursor')
-      return this.#startCli(attemptId, CLI_SIGN_INS[harness]);
+    const cliSignIn = agentBehavior(harness).cliSignIn;
+    if (cliSignIn) return this.#startCli(attemptId, CLI_SIGN_INS[cliSignIn]);
     return this.#startKey(attemptId);
   }
 
   /** A pasted code (Claude) or key (Pi, Goose, OpenCode). */
   async submit(attemptId: string, value: string): Promise<void> {
-    if (this.options.harness === 'claude') {
+    if (AGENT_SIGN_IN_KINDS[this.options.harness] === 'paste-code') {
       await this.#claude.complete(attemptId, value);
       this.options.onSignedIn?.();
       return;
@@ -329,7 +331,7 @@ export class AgentSignIn {
   async #startKey(attemptId: string): Promise<AgentSignInLink> {
     const { harness } = this.options;
     let provider: AgentSignInKeyProvider | undefined;
-    if (harness === 'opencode') {
+    if (agentBehavior(harness).providerKeyStore === 'auth-file') {
       const prefix = this.options.model?.()?.split('/')[0];
       provider = prefix && prefix in PROVIDER_KEY_ENV ? (prefix as AgentSignInKeyProvider) : undefined;
       if (!provider)
@@ -354,7 +356,7 @@ export class AgentSignIn {
   async #saveKey(provider: AgentSignInKeyProvider, key: string): Promise<void> {
     if (!key) throw new Error(`Paste the ${AGENT_SIGN_IN_PROVIDER_LABELS[provider]} key.`);
     await verifyProviderKey({ provider, apiKey: key, fetchImpl: this.#fetch });
-    if (this.options.harness === 'opencode') {
+    if (agentBehavior(this.options.harness).providerKeyStore === 'auth-file') {
       await writeOpenCodeKey(this.options.operatorHome, provider, key);
     } else {
       if (!this.options.llmEnvFile)

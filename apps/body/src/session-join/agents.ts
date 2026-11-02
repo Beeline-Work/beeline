@@ -1,5 +1,6 @@
 // Ported from Reason Network (src/agent.rs, src/util.rs), Copyright 2026 Reason Machines, Inc.,
 // MIT OR Apache-2.0. See ./NOTICE and ./UPSTREAM.json for the copied commit.
+import { SESSION_AGENT_BEHAVIORS, SESSION_CLIENT_ORDER, sessionAgentBehavior } from '../agent-command.js';
 import { readFileSync } from 'node:fs';
 import { basename } from 'node:path';
 
@@ -40,30 +41,19 @@ export function detectEnv(env: NodeJS.ProcessEnv = process.env): AgentId | undef
 /** From an MCP client's `clientInfo.name`, a hook argument or an override. */
 export function fromClientName(name: string): AgentId | undefined {
   const n = name.toLowerCase();
-  const has = (part: string) => n.includes(part);
-  if (has('claude-code') || has('claude code') || n === 'claude') return 'claude-code';
-  if (has('codex')) return 'codex';
-  if (has('antigravity')) return 'antigravity';
-  if (has('gemini')) return 'gemini';
-  if (has('opencode')) return 'opencode';
-  if (n === 'pi' || n.startsWith('pi-') || n.startsWith('pi ')) return 'pi';
-  if (has('hermes')) return 'hermes';
-  if (n === 'zcode' || n.startsWith('zcode-') || n.startsWith('zcode ')) return 'zcode';
+  for (const agent of SESSION_CLIENT_ORDER) {
+    const policy = sessionAgentBehavior(agent);
+    if (policy.clientNames?.some(part => n.includes(part)) ||
+        policy.clientExactNames?.includes(n) ||
+        (policy.clientPrefix && (n === policy.clientPrefix || n.startsWith(`${policy.clientPrefix}-`) || n.startsWith(`${policy.clientPrefix} `)))) return agent;
+  }
   return undefined;
 }
 
 /** The app a process name belongs to, for apps that set no environment marker. */
 export function fromProcessName(command: string): AgentId | undefined {
   const name = basename(command.split(/\s+/)[0] ?? '').toLowerCase().replace(/\.(exe|js|mjs|cjs)$/, '');
-  if (name === 'claude') return 'claude-code';
-  if (name === 'codex' || name === 'codex-tui') return 'codex';
-  if (name === 'opencode') return 'opencode';
-  if (name === 'pi') return 'pi';
-  if (name === 'gemini') return 'gemini';
-  if (name === 'antigravity' || name === 'agy') return 'antigravity';
-  if (name === 'hermes') return 'hermes';
-  if (name === 'zcode') return 'zcode';
-  return undefined;
+  return AGENTS.find(agent => SESSION_AGENT_BEHAVIORS[agent].processNames?.includes(name));
 }
 
 /** The parent of `pid` from `/proc/<pid>/stat`: `<pid> (<name>) <state> <ppid> …`, where the name may hold spaces. */

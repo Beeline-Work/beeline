@@ -9,6 +9,7 @@ import * as clack from '@clack/prompts';
 import { normalizeAgentPairingCode } from '@beeline/api-contract/phone';
 import { isAgentAccessPolicy, type AgentAccessPolicy } from './access-policy.js';
 import {
+  agentBehavior,
   AUTO_DETECT_AGENT_KINDS,
   detectInstalledAgentCommands,
   installLatestAgentAdapter,
@@ -386,7 +387,7 @@ export async function loadConnectModelCatalog(
   // cursor-agent advertises models through Beeline's ACP bridge at
   // `session/new`; this CLI read remains the fallback when that catalog is empty.
   if (
-    input.harness === 'cursor' &&
+    agentBehavior(input.harness).cliModelCatalog &&
     !catalog.catalog.some((axis) => axis.category === 'model' && axis.options.length) &&
     !catalog.raw.some((axis) => axis.category === 'model' && axis.options.length)
   ) {
@@ -441,11 +442,7 @@ export function soleInstalledConnectHarness(
 }
 
 export function connectHarnessLabel(harness: (typeof CONNECT_HARNESSES)[number]): string {
-  return harness === 'pi'
-    ? 'Pi'
-    : harness === 'opencode'
-      ? 'OpenCode'
-      : harness[0]!.toUpperCase() + harness.slice(1);
+  return agentBehavior(harness).label ?? harness[0]!.toUpperCase() + harness.slice(1);
 }
 
 /**
@@ -877,10 +874,10 @@ function providerEnvironment(
   };
   return {
     [keyNames[selection.provider]]: selection.apiKey,
-    ...(selection.harness === 'goose'
+    ...(agentBehavior(selection.harness).providerModelEnv
       ? {
-          GOOSE_PROVIDER: selection.provider,
-          GOOSE_MODEL: selection.model,
+          [agentBehavior(selection.harness).providerModelEnv!.provider]: selection.provider,
+          [agentBehavior(selection.harness).providerModelEnv!.model]: selection.model,
         }
       : {}),
   };

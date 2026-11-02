@@ -22,7 +22,7 @@ import {
   type UsageRefreshOutcome,
   type UsageWindow,
 } from '@beeline/api-contract/daemon';
-import type { AgentKind } from './agent-command.js';
+import { agentBehavior, type AgentKind } from './agent-command.js';
 
 /** Bundled next to `beeline-cli.mjs` by `scripts/build-beeline-bundle.mjs`. */
 export const QUOTA_AXI_BUNDLE_FILE = 'quota-axi.mjs';
@@ -176,13 +176,12 @@ export function quotaAxiAccountKey(report: unknown, provider: string): string | 
  * store Beeline does not know return undefined and read per agent.
  */
 export function quotaCredentialPath(provider: string, env: Record<string, string>): string | undefined {
+  const credential = agentBehavior(provider).quotaCredential;
+  if (!credential) return;
   const home = env.HOME;
-  const dir =
-    provider === 'claude' ? (env.CLAUDE_CONFIG_DIR ?? (home && join(home, '.claude')))
-      : provider === 'codex' ? (env.CODEX_HOME ?? (home && join(home, '.codex')))
-        : undefined;
+  const dir = env[credential.homeEnv] ?? (home && join(home, credential.directory));
   if (!dir) return;
-  const file = join(dir, provider === 'claude' ? '.credentials.json' : 'auth.json');
+  const file = join(dir, credential.file);
   try {
     return realpathSync(file);
   } catch {

@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -200,4 +201,19 @@ export function describedWorkflow(value: unknown): unknown {
           ? timed({ does: `Perform ${name.replace(/[_-]/g, ' ')}.`, ...state }) : state])),
     } : {}),
   };
+}
+
+/**
+ * A person's tag that assigned `agentId` in a corner, as `routeHumanMessage`
+ * records it. The worker is derived from these commands (`cornerImplementerSql`);
+ * the row is complete, so it wakes nobody.
+ */
+export async function assignCornerWorker(db: SqlDatabase, cornerId: string, agentId: string): Promise<void> {
+  const id = `assign-${randomUUID()}`;
+  await db.query(
+    `INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,root_command_id,
+       root_source_message_id,agent_depth,state,completed_at)
+     VALUES($1,$2,$3,$1,'input','human_tag',$1,$1,0,'complete',now())`,
+    [id, cornerId, agentId],
+  );
 }

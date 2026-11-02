@@ -3,7 +3,7 @@ import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { workflowRunLockKey } from './workflow-runs.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, assignCornerWorker } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';

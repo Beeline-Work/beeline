@@ -6,7 +6,7 @@ import { AcpClient } from '../../body/src/acp.js';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { assembleTurnPrompt, cornerReviewerInstruction } from '../../body/src/prompt-assembly.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { announceAgentLifecycle } from './connection-presence.js';
@@ -1524,7 +1524,8 @@ describe('corner message attribution', () => {
 describe('the corner implementer the workflow wakes follows a person hand-over', () => {
   it('a blocked-checks line keys on the current implementer, not the opener', async () => {
     const head = 'a'.repeat(40);
-    await db.query(`UPDATE corner_facts SET worker_agent_id=$2,lifecycle=$3::jsonb WHERE corner_id=$1`, [
+    await assignCornerWorker(db, C, B);
+    await db.query(`UPDATE corner_facts SET lifecycle=$3::jsonb WHERE corner_id=$1 AND $2::text IS NOT NULL`, [
       C,
       B,
       JSON.stringify({
@@ -1578,7 +1579,8 @@ describe('the corner implementer the workflow wakes follows a person hand-over',
       checkGate,
     );
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
-    await db.query(`UPDATE corner_facts SET worker_agent_id=$2,lifecycle=$3::jsonb WHERE corner_id=$1`, [
+    await assignCornerWorker(db, C, B);
+    await db.query(`UPDATE corner_facts SET lifecycle=$3::jsonb WHERE corner_id=$1 AND $2::text IS NOT NULL`, [
       C,
       B,
       JSON.stringify({

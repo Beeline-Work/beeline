@@ -19,6 +19,7 @@ import { CORNER_BRIEF_SPEC_MAX_LENGTH } from '@beeline/api-contract/daemon';
 import { migrate } from './database.js';
 import { upgradeGrantPolicy } from './grant-policy-upgrade.js';
 import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { cornerImplementerSql } from './corner-worker.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { PhoneService, REVIEW_LOCKED_OPERATIONS } from './phone-service.js';
@@ -10183,7 +10184,8 @@ describe('monolith integration', () => {
       expect(wakes).toEqual(shouldWake ? [worker] : []);
       expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%revised the corner brief%'`, [cornerId])).rows).toHaveLength(1);
       expect((await database.query<{ worker_agent_id: string; workflow_state: string }>(
-        `SELECT worker_agent_id,workflow_state FROM corner_facts WHERE corner_id=$1`, [cornerId],
+        `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,fact.workflow_state FROM corner_facts fact
+         JOIN rooms corner ON corner.id=fact.corner_id WHERE fact.corner_id=$1`, [cornerId],
       )).rows[0]).toEqual({ worker_agent_id: worker, workflow_state: state === 'ask_human' && shouldWake ? 'implement' : state });
     },
   );

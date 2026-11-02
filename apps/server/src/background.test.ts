@@ -2322,6 +2322,27 @@ describe('background advisory-lock ownership', () => {
     } finally { await db.close(); }
   });
 
+  it('ASSIGNMENT-RETAINED: keeps a corner\'s assignment commands past the 30-day command sweep', async () => {
+    const db = await migratedDatabase();
+    try {
+      const agent = 'b'.repeat(64),
+        workspace = '11111111-1111-4111-8111-111111111111',
+        room = '22222222-2222-4222-8222-222222222222',
+        corner = '33333333-3333-4333-8333-333333333333';
+      await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Bee','bee')`, [agent]);
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [room, workspace]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Corner',$3)`, [corner, workspace, room]);
+      for (const [id, roomId, reason] of [['open', corner, 'corner_objective'], ['tag', corner, 'human_tag'],
+        ['check', corner, 'corner_check'], ['room-tag', room, 'human_tag']])
+        await db.query(`INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,root_command_id,
+            root_source_message_id,agent_depth,state,completed_at)
+          VALUES($1,$2,$3,$1,'input',$4,$1,$1,0,'complete',now()-interval '40 days')`, [id, roomId, agent, reason]);
+      await runMaintenance(db);
+      expect((await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows).toEqual([{ id: 'open' }, { id: 'tag' }]);
+    } finally { await db.close(); }
+  });
+
   it('retains imported historical presence while expiring ordinary live output', async () => {
     const db = await migratedDatabase();
     try {

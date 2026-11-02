@@ -1,3 +1,4 @@
+import { cornerImplementerSql } from './corner-worker.js';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import {
   CORNER_AGENT_UNREACHABLE_CARD_TYPE,
@@ -293,12 +294,12 @@ FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
 JOIN LATERAL (SELECT command.* FROM agent_commands command
   WHERE command.private_payload->>'kind'='report'
     AND command.private_payload->>'fromRoomId'=corner.id::text
-    AND command.private_payload->>'authorId'=COALESCE(fact.worker_agent_id,fact.owner_agent_id)
+    AND command.private_payload->>'authorId'=${cornerImplementerSql('fact', 'corner')}
   ORDER BY command.created_at DESC,command.id DESC LIMIT 1) report ON true
 JOIN room_access member ON member.room_id=corner.id AND member.removed_at IS NULL
 JOIN identities person ON person.id=member.identity_id
 CROSS JOIN LATERAL (SELECT report.private_payload->>'text' text,'message'::text presentation,
-  corner.id room_id,COALESCE(fact.worker_agent_id,fact.owner_agent_id) author_id) item
+  corner.id room_id,${cornerImplementerSql('fact', 'corner')} author_id) item
 WHERE corner.archived_at IS NULL AND item.text ~ '^(needs-decision|blocked):'
   AND (person.id=report.agent_id OR (person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}))
   AND report.private_payload->>'waitingAnswered' IS DISTINCT FROM 'true'
@@ -615,9 +616,10 @@ SELECT DISTINCT ON (owed.corner_id,owed.person_id)
   owed.corner_id,owed.person_id,report.id,report.room_id,report.created_at,report.card->>'reportToId'
 FROM corner_owed owed JOIN messages report ON report.id=owed.message_id
 JOIN corner_facts fact ON fact.corner_id=owed.corner_id
+JOIN rooms corner ON corner.id=owed.corner_id
 WHERE owed.blocking AND report.card->>'reportToId' IS NOT NULL
   AND report.card->>'waitingAnswered' IS DISTINCT FROM 'true'
-  AND report.author_id=COALESCE(fact.worker_agent_id,fact.owner_agent_id)
+  AND report.author_id=${cornerImplementerSql('fact', 'corner')}
   AND NOT EXISTS(SELECT 1 FROM messages answer JOIN room_access member
     ON member.room_id=owed.corner_id AND member.identity_id=answer.author_id AND member.removed_at IS NULL
     JOIN identities person ON person.id=answer.author_id AND person.kind='human'

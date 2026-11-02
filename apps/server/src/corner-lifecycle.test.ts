@@ -5,7 +5,7 @@ import type { QueryResultRow } from 'pg';
 import { validateCornerWorkflow } from '@beeline/api-contract/daemon';
 import { migrate, migrateData, type QueryResult, type SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { describedWorkflow, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { describedWorkflow, PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
@@ -36,6 +36,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
+import { cornerImplementerSql } from './corner-worker.js';
 import { getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, workflowRunLockKey } from './workflow-runs.js';
 
 /** Records every SQL statement issued, in order — matches workflow-runs.test.ts's own. */
@@ -231,6 +232,13 @@ beforeEach(async () => {
     number, url: `https://github.com/owner/widgets/pull/${number}`, headSha: githubHead, mergeability: 'clean',
   }));
 });
+
+/** The corner's worker, derived from its assignment commands. */
+async function derivedWorker(cornerId: string): Promise<string | null> {
+  return (await db.query<{ worker: string | null }>(
+    `SELECT ${cornerImplementerSql('fact', 'corner')} worker FROM corner_facts fact
+     JOIN rooms corner ON corner.id=fact.corner_id WHERE fact.corner_id=$1`, [cornerId])).rows[0]?.worker ?? null;
+}
 
 /** Every `workflow-handoff` card for one corner's run, oldest first. */
 async function cards(
@@ -655,7 +663,7 @@ describe('a person-opened corner in a repository Room', () => {
       phone.execute('createHumanCorner', { roomId: R, title: 'Bad-id', cornerId: 'not-a-uuid' }, H),
     ).rejects.toThrow('corner id must be a UUID');
   });
-  it('a swap stops the old implementer\'s running turn and sends it one release wake', async () => {
+  it('NO-SWAP: a person tagging another agent assigns it without stopping the running one', async () => {
     const { id: cornerId } = await phone.execute('createHumanCorner', { roomId: R, title: 'Swap-widget' }, H);
     await say(cornerId, '@hoots fix the widget');
     const [working] = await commands(A, cornerId);
@@ -664,20 +672,12 @@ describe('a person-opened corner in a repository Room', () => {
       generationId: 'g1', agentId: A, status: 'working' }, A);
 
     await say(cornerId, '@goosy take this over');
-    const rows = (await db.query<{ action: string; reason: string; turn_request_id: string }>(
-      `SELECT action,reason,turn_request_id FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-         AND state='pending' ORDER BY created_at,id`, [cornerId, A])).rows;
-    expect(rows).toEqual(expect.arrayContaining([
-      { action: 'stop', reason: 'implementer_swap_stop', turn_request_id: working!.turnRequestId },
-      expect.objectContaining({ action: 'input', reason: 'implementer_released' }),
-    ]));
+    expect(await derivedWorker(cornerId)).toBe(B);
+    expect((await db.query(`SELECT action,reason FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+      AND state='pending'`, [cornerId, A])).rows).toEqual([]);
     expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
-      [cornerId, A, working!.turnRequestId])).rows).toEqual([{ status: 'cancelled' }]);
-
-    // Tagging the current implementer again is no swap.
-    await say(cornerId, '@goosy keep going');
-    expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-      AND reason='implementer_released'`, [cornerId, B])).rowCount).toBe(0);
+      [cornerId, A, working!.turnRequestId])).rows).toEqual([{ status: 'working' }]);
+    console.log('NO-SWAP Demonstrated: the tagged agent became the worker; the running agent kept its turn and got no stop.');
   });
   it('opens on implement with no lane, and the first tagged agent owns it and drives it to checks', async () => {
     const { id: cornerId } = await phone.execute('createHumanCorner', { roomId: R, title: 'Fix-widget' }, H);
@@ -690,16 +690,18 @@ describe('a person-opened corner in a repository Room', () => {
       `SELECT 1 FROM information_schema.columns WHERE table_name='corner_facts' AND column_name='lane'`,
     );
     expect(columns.rowCount).toBe(0);
-    expect((await db.query(`SELECT owner_agent_id,worker_agent_id,kind FROM corner_facts WHERE corner_id=$1`, [cornerId]))
-      .rows[0]).toEqual({ owner_agent_id: null, worker_agent_id: null, kind: 'human' });
+    expect((await db.query(`SELECT owner_agent_id,kind FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+      .rows[0]).toEqual({ owner_agent_id: null, kind: 'human' });
 
     // The first agent a person tags owns the corner; a later tag moves only the implementer.
     await say(cornerId, '@hoots fix the widget');
-    expect((await db.query(`SELECT owner_agent_id,worker_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
-      .rows[0]).toEqual({ owner_agent_id: A, worker_agent_id: A });
+    expect((await db.query(`SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+      .rows[0]).toEqual({ owner_agent_id: A });
+    expect(await derivedWorker(cornerId)).toBe(A);
     await say(cornerId, '@goosy take this over');
-    expect((await db.query(`SELECT owner_agent_id,worker_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
-      .rows[0]).toEqual({ owner_agent_id: A, worker_agent_id: B });
+    expect((await db.query(`SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+      .rows[0]).toEqual({ owner_agent_id: A });
+    expect(await derivedWorker(cornerId)).toBe(B);
 
     // A push on the corner's branch is matched by its prefix and moves the run to checks.
     await github.processWebhook('push', {
@@ -1972,7 +1974,7 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
   it('addresses the requester when the implementing agent cannot receive the checks wake', async () => {
     const cornerId = await open('owner/widgets');
     await fallback(cornerId);
-    await db.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`,[cornerId,F]);
+    await assignCornerWorker(db, cornerId, F);
     await redHead(cornerId, 3, SHA);
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, F]);
     await systemLine(db, {
@@ -2176,13 +2178,7 @@ describe('a person hands the corner to another agent (the implementer follows th
       [W, R, D],
     );
   }
-  const workerOf = async (cornerId: string): Promise<string | null> =>
-    (
-      await db.query<{ worker_agent_id: string | null }>(
-        `SELECT worker_agent_id FROM corner_facts WHERE corner_id=$1`,
-        [cornerId],
-      )
-    ).rows[0]!.worker_agent_id;
+  const workerOf = derivedWorker;
 
   it('a tag in the corner moves the failing-check wake off the opener, leaving owner_agent_id alone', async () => {
     const cornerId = await open('owner/widgets');
@@ -2270,13 +2266,13 @@ describe('a person hands the corner to another agent (the implementer follows th
     const cornerId = await open('owner/widgets');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await say(cornerId, '@goosy what do you think?');
-    expect(await workerOf(cornerId)).toBeNull();
+    expect(await workerOf(cornerId)).toBe(A);
   });
 
   it('a tag in the parent Room does not move a corner implementer', async () => {
     const cornerId = await open('owner/widgets');
     await say(R, '@goosy take this one');
-    expect(await workerOf(cornerId)).toBeNull();
+    expect(await workerOf(cornerId)).toBe(A);
   });
 
   it('an agent tag invites conversation without handing the corner on', async () => {
@@ -2327,7 +2323,7 @@ describe('a person hands the corner to another agent (the implementer follows th
     )!;
     await claim(peerTurn);
     await result(peerTurn, '@goosy take this one');
-    expect(await workerOf(cornerId)).toBeNull();
+    expect(await workerOf(cornerId)).toBe(A);
   });
 
   it('an agent hand-over to the configured reviewer does not take the implementer role', async () => {
@@ -4416,7 +4412,7 @@ describe('Reproduction IDLE-1: corner status says whether its agent runs or wait
   it('restores the current implementer so legacy work goes to the assigned agent', async () => {
     const cornerId = await open('owner/widgets');
     expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).implementerAgentId).toBe(A);
-    await db.query('UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1', [cornerId, B]);
+    await assignCornerWorker(db, cornerId, B);
     expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).implementerAgentId).toBe(B);
   });
 

@@ -847,9 +847,10 @@ async function provisionAgentSkillsAndMcp(
   // remain absent and continue through the Room's fail-closed permission path.
   try {
     const shellHook = resolve(root, 'claude', 'beeline-shell-output.cjs');
-    await writeIsolatedHarnessFile(shellHook, NATIVE_SHELL_OUTPUT_SCRIPT);
+    if (process.platform !== 'win32')
+      await writeIsolatedHarnessFile(shellHook, NATIVE_SHELL_OUTPUT_SCRIPT);
     const settings = { permissions: { allow: ['WebSearch', 'WebFetch'] },
-      ...nativeShellHookConfig(nativeShellHookCommand(shellHook, 'claude')) };
+      ...(process.platform !== 'win32' ? nativeShellHookConfig(nativeShellHookCommand(shellHook, 'claude')) : {}) };
     await writeIsolatedHarnessFile(
       resolve(root, 'claude', 'settings.json'),
       `${JSON.stringify(settings, null, 2)}\n`,

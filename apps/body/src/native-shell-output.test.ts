@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { expect, it } from 'vitest';
-import { NATIVE_SHELL_OUTPUT_CAP, NATIVE_SHELL_OUTPUT_SCRIPT } from './native-shell-output.js';
+import { NATIVE_SHELL_OUTPUT_CAP, NATIVE_SHELL_OUTPUT_SCRIPT, nativeShellHookCommand } from './native-shell-output.js';
 const exec = promisify(execFile);
 
 it.each(['claude', 'codex', 'cursor'])(
@@ -75,5 +75,19 @@ it.each(['codex', 'cursor'])('keeps an interactive stdin prompt visible in %s', 
       child.stdout!.once('data', () => child.stdin!.end('hello\n'));
     });
     expect(result).toBe('prompt> hello');
+  } finally { await rm(directory, { recursive: true, force: true }); }
+});
+
+it('quotes generated hook commands containing apostrophes', async () => {
+  const directory = await mkdtemp(join(tmpdir(), "native-shell-quote-'"));
+  try {
+    const hook = join(directory, 'hook.cjs');
+    await writeFile(hook, NATIVE_SHELL_OUTPUT_SCRIPT);
+    const response = await new Promise<string>((resolve, reject) => {
+      const child = execFile('bash', ['-c', nativeShellHookCommand(hook, 'claude')],
+        (error, stdout) => error ? reject(error) : resolve(stdout));
+      child.stdin!.end(JSON.stringify({ tool_name: 'Read' }));
+    });
+    expect(JSON.parse(response)).toEqual({});
   } finally { await rm(directory, { recursive: true, force: true }); }
 });

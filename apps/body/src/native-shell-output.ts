@@ -79,7 +79,7 @@ process.stdin.on('end', () => {
 `;
 
 export function nativeShellHookCommand(script: string, harness: 'claude' | 'codex' | 'cursor'): string {
-  const quote = (text: string) => `'${text.replace(/'/g, `'\\''`)}'`;
+  const quote = (text: string) => `'${text.replaceAll("'", String.fromCharCode(39, 92, 39, 39))}'`;
   return `${quote(process.execPath)} ${quote(script)} ${harness}`;
 }
 

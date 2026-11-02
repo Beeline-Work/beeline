@@ -5,6 +5,43 @@ import { parse } from 'yaml';
 
 const jobs = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).jobs;
 
+test('Android binary releases publish to production, completed, and send the build for review', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  assert.deepEqual(workflow.on.workflow_dispatch.inputs.store_track.options, ['none', 'production', 'beta']);
+  const steps = workflow.jobs.mobile_native_android.steps;
+  const upload = steps.find((step) => step.id === 'play-upload');
+  // Even selection=mobile-native with store_track=none must publish its Android binary.
+  assert.equal(upload.if, "steps.android_build.outcome == 'success'");
+  assert.equal(upload.env.TRACK, "${{ inputs.store_track == 'beta' && 'beta' || 'production' }}");
+  // All omitted/default/recovery inputs select production. Only explicit beta opts out.
+  for (const track of ['', 'none', 'production', 'beta']) {
+    const expression = upload.env.TRACK.slice(3, -2).replaceAll('inputs.store_track', JSON.stringify(track));
+    assert.equal(Function(`return (${expression})`)(), track === 'beta' ? 'beta' : 'production');
+  }
+  assert.match(upload.run, /RELEASE_STATUS=completed bash scripts\/play-publish.sh/);
+  assert.equal(upload.env.PLAY_DEFER_COMMIT, '1');
+  const commit = steps.find((step) => step.run === 'bash scripts/play-commit-build.sh');
+  assert.equal(commit.if, "steps.play-upload.outputs.edit_id != ''");
+  assert.equal(commit.env.PLAY_LISTING_BASELINE, upload.env.PLAY_LISTING_BASELINE);
+  assert.ok(steps.indexOf(commit) > steps.indexOf(upload));
+  const gate = readFileSync(new URL('./play-commit-build.sh', import.meta.url), 'utf8');
+  assert.ok(gate.indexOf('play-listing-lock.mjs" verify') < gate.indexOf('commit_edit'));
+  assert.match(gate, /commit_edit "\$PLAY_EDIT_ID" send-for-review/);
+  assert.doesNotMatch(gate, /hold-for-review/);
+  const helper = readFileSync(new URL('./play-api.sh', import.meta.url), 'utf8');
+  const review = helper.slice(helper.indexOf('if [ "${2:-}" = "send-for-review" ]'), helper.indexOf('if [ "${PLAY_DRY_RUN:-0}"', helper.indexOf('commit_edit()')));
+  assert.match(review, /:commit\?changesInReviewBehavior=ERROR_IF_IN_REVIEW/);
+  assert.doesNotMatch(review, /changesNotSentForReview/);
+  const eas = JSON.parse(readFileSync(new URL('../apps/mobile/eas.json', import.meta.url), 'utf8'));
+  assert.deepEqual(Object.keys(eas.submit), ['production', 'beta']);
+  assert.equal(eas.submit.production.android.track, 'production');
+  assert.equal(eas.submit.production.android.releaseStatus, 'completed');
+  assert.equal(eas.submit.production.android.changesNotSentForReview, false);
+  assert.equal(eas.submit.beta.android.track, 'beta');
+  assert.equal(eas.submit.beta.android.releaseStatus, 'completed');
+  assert.equal(eas.submit.beta.android.changesNotSentForReview, false);
+});
+
 test('excluding the fingerprint regression from the mobile suite always has isolated coverage', () => {
   const mobile = jobs['mobile-suite'];
   const isolated = jobs['native-fingerprint'];

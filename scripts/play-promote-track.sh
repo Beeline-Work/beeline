@@ -1,40 +1,34 @@
 #!/usr/bin/env bash
 #
-# Promote the most recent release on one Play track onto another (for example
-# internal → beta, where the API name "beta" is Play Console's "Open testing")
-# through the AndroidPublisher REST API. Operator-run: the release's store
-# leg only ever writes a draft to the track it was given, so moving a release
-# onward stays a deliberate manual step (see apps/mobile/docs/store-submission.md).
-#
-# Required environment:
-#   ACCESS_TOKEN     — OAuth access token with the androidpublisher scope
-#   PACKAGE_NAME     — app.usebeeline
-#   FROM_TRACK       — internal | alpha | beta
-#   TO_TRACK         — alpha | beta | production
-#   RELEASE_STATUS   — draft | completed
-#                       draft     = lands on TO_TRACK as "Ready to publish"; you
-#                                   still press Release / Send to testers in Play
-#                                   Console. Safe default for a track's first
-#                                   roll-out, which starts Google's review.
-#                       completed = auto-publishes once any review completes.
-# Optional:
-#   PLAY_DRY_RUN=1   — print the API calls instead of making them (see play-api.sh)
-#
-# Re-running with the same FROM/TO re-sends the same versionCode, which Google
-# rejects with a clear error; a newer FROM_TRACK release promotes cleanly.
+# Operator recovery: promote the newest explicitly selected beta release to
+# production as completed, preserving its name and notes and sending it for
+# review. Listing text/images remain locked unless explicitly authorized.
+# Required: ACCESS_TOKEN, PACKAGE_NAME, FROM_TRACK=beta.
+# Optional: TO_TRACK=production, RELEASE_STATUS=completed, PLAY_DRY_RUN=1.
+# See apps/mobile/docs/store-submission.md for owner-command requirements.
 
 set -euo pipefail
 
 # shellcheck source=scripts/play-api.sh
 source "$(dirname "${BASH_SOURCE[0]}")/play-api.sh"
 
-: "${FROM_TRACK:?FROM_TRACK env var is required (internal|alpha|beta)}"
-: "${TO_TRACK:?TO_TRACK env var is required (alpha|beta|production)}"
-: "${RELEASE_STATUS:?RELEASE_STATUS env var is required (draft|completed)}"
+: "${FROM_TRACK:?FROM_TRACK=beta is required}"
+export TO_TRACK="${TO_TRACK:-production}"
+export RELEASE_STATUS="${RELEASE_STATUS:-completed}"
+if [ "$FROM_TRACK" != beta ] || [ "$TO_TRACK" != production ] || [ "$RELEASE_STATUS" != completed ]; then
+  echo '::error::Recovery promotion requires beta to production with completed status' >&2
+  exit 1
+fi
 
 echo "▸ Creating edit"
 EDIT_ID=$(api POST "$API/edits" -H 'Content-Type: application/json' -d '{}' | json_field id)
 echo "  editId = $EDIT_ID"
+export PLAY_EDIT_ID="$EDIT_ID"
+if [ "${PUBLISH_LISTING:-false}" != true ]; then
+  PLAY_LISTING_BASELINE="${PLAY_LISTING_BASELINE:-$(mktemp)}"
+  export PLAY_LISTING_BASELINE
+  node "$(dirname "${BASH_SOURCE[0]}")/play-listing-lock.mjs" snapshot "$PLAY_LISTING_BASELINE"
+fi
 
 echo "▸ Reading $FROM_TRACK track"
 SOURCE_TRACK=$(api GET "$API/edits/$EDIT_ID/tracks/$FROM_TRACK")
@@ -76,25 +70,7 @@ api PUT "$API/edits/$EDIT_ID/tracks/$TO_TRACK" \
     -H 'Content-Type: application/json' \
     -d "$TO_TRACK_BODY" >/dev/null
 
-# No separate :validate call: Play rejects validate with "Changes cannot be sent
-# for review automatically" for this app even though the commit below carries
-# changesNotSentForReview=true (validate has no such parameter), and commit
-# validates the edit itself before applying it.
-echo "▸ Committing edit"
-commit_edit "$EDIT_ID"
-echo "  $FROM_TRACK → $TO_TRACK promotion committed."
-echo ""
-case "$RELEASE_STATUS" in
-  draft)
-    echo "Release is 'Ready to publish' on $TO_TRACK. Press Release / Send to testers"
-    echo "in Play Console; a track's first roll-out starts Google's review."
-    ;;
-  completed)
-    echo "Release auto-publishes on $TO_TRACK once any Google review completes."
-    ;;
-  *)
-    echo "status=$RELEASE_STATUS — Play Console shows the resulting state."
-    ;;
-esac
-echo ""
+echo "▸ Committing edit after the listing lock"
+bash "$(dirname "${BASH_SOURCE[0]}")/play-commit-build.sh"
+echo "  $FROM_TRACK → $TO_TRACK promotion committed; full rollout follows approval."
 echo "Play Console: $(play_console_url)"

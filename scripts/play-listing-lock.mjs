@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Compare the build edit with its own pre-upload listing, never with repo text.
-// Unsent console changes have no separate API status, so commit remains held.
+// A changed listing stops the build before its automatic review submission.
 // https://developers.google.com/android-publisher/api-ref/rest/v3/edits.images/list
 import { readFileSync, writeFileSync } from 'node:fs';
 

@@ -23,16 +23,55 @@ Starting or joining again is refused with `Calls resume at 12:00 AM`, formatted
 in the budget's timezone, until reset.
 
 The runtime unions server-observed microphone intervals within each call in
-`voice_workspace_usage`; separate calls add to the Workspace total. Usage
-survives Room/call deletion until the Workspace itself is deleted. A pending audio batch
-arms one 250 ms checkpoint outside the audio path; an empty meter owns no timer
-and makes no database observation. Failed nonempty checkpoints retain the same intervals
-for retry; all input in that call pauses at one second of uncommitted time and
-resumes after a successful checkpoint. Abrupt process death can lose at most
-one second per live call. Runtime lease checks fence stale writers. There are
-no per-person counters, private warnings, or per-person budget removals.
-[Android verification](voice-mode-proof/workspace-daily-budget/README.md) records
-the three-minute real-app path and the bounded recovery checks.
+`voice_workspace_usage`; this durable multirange is the accounting watermark.
+Separate calls add to the Workspace total. Usage survives Room/call deletion
+until the Workspace itself is deleted. Actual captured PCM owns one250ms batch;
+empty meters own no timer or database observation. Across authorization buffers,
+pending commits, in-flight commits and queued delivery, each call retains at
+most one second and32,000 bytes of16kHz mono PCM16. Database latency may extend
+the wait for a submitted batch; further input stops at that bound.
+Authorization buffers transfer the same owned backing storage into the meter
+under their live reservation. They do not allocate a second owned PCM copy or
+release quota while the original backing bytes remain queued.
+
+Intervals commit before PCM reaches speech recognition. A second transaction
+holds the exact current runtime-owner row through synchronous PCM enqueue.
+A takeover or expired lease therefore denies delivery without erasing charged
+admission. A process can die after durable admission but before STT delivery;
+that captured audio remains charged. Exactly-once external STT delivery is not
+claimed. Repeated or uncertain interval commits cannot charge the same time twice.
+A failure after synchronous enqueue never restores or replays that PCM.
+
+Failed accounting retains its exact batch and parks without a retry clock.
+A real database recovery permits one attempt; new PCM cannot manufacture a retry.
+End revokes delivery synchronously, waits for an existing commit once and makes
+one final nonempty flush attempt. Failure leaves the interval evidence unresolved;
+there is no close retry loop, and unadmitted PCM is never forwarded. Receipt-driven
+call endings do not await themselves. There are no per-person counters, private
+warnings or per-person budget removals.
+
+Owner evidence is one serialized update per call every five seconds, with a
+15-second lease and one known expiry. It performs no participant or projection
+queries. Failed evidence parks until real database recovery or expiry. Startup,
+committed call-card changes and RTC participant events own participant snapshots.
+Those snapshots share one actor and one dirty bit: a burst retains at most one
+covering follow-up, and a failed read cannot restart itself. Existing Resume
+also admits one owner-evidence attempt behind the five-second quota, then executes
+the captured action once. Departure, session replacement or close cancels the
+pending intent; failed renewal cannot replay it or create a second failure timer.
+Authority events select the exact Workspace and the Room's inherited parent
+membership dependency, then only the affected participant. An incomplete legacy
+identity-only event parks that input without blanket database reads or ending
+other calls; a correlated source or real Resume must reauthorize it.
+An absent session owns one120-second departure deadline; reconnect or session
+replacement cancels its predecessor, and the final departure rechecks both the
+exact session and current runtime owner. Failed expiry cannot rearm itself.
+
+`voice-budget.test.ts`, `voice-room-runtime.test.ts` and the isolated loopback
+`voice-budget.postgres.test.ts` cover accounting, final enqueue and ownership
+races without provider effects. [Earlier Android verification](voice-mode-proof/workspace-daily-budget/README.md)
+records the historical three-minute real-app path; it does not prove this new
+commit-before-forward implementation on a physical device.
 
 **Aura 2 is the only speech provider.** Workspace Settings has no provider
 selection. Agent Profile presents Soul, Model / difficulty, then Voice.

@@ -12,6 +12,7 @@ import { Room, RoomEvent, AudioStream, AudioSource, AudioFrame, LocalAudioTrack,
   TrackPublishOptions, TrackSource, TrackKind, type RemoteParticipant, type RemoteTrack } from '@livekit/rtc-node';
 import { VOICE_DATA_TOPIC, type VoiceSignal, type VoiceBudget } from '@beeline/api-contract/phone';
 import type { VoiceService } from './voice-service.js';
+import type { LiveEvent } from './live.js';
 import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt, type FluxEvent, type VoiceBrain } from './voice-providers.js';
 
 import { VoiceRequestAssembler, voiceNameOnly, voiceContactNameOnly } from './voice-request-assembler.js';
@@ -82,9 +83,13 @@ export class VoiceRoomRuntime {
   private readonly room = new Room();
   private readonly audio = new AudioSource(VOICE_SAMPLE_RATE, 1, 100);
   private readonly inputs = new Map<string, { stt?: VoiceStt; reader: ReadableStreamDefaultReader<AudioFrame>;
-    track: RemoteTrack; participant: RemoteParticipant }>();
+    track: RemoteTrack; participant: RemoteParticipant; releaseBuffered?(): void; buffered?: readonly { data: Int16Array }[] }>();
   private meter?: VoiceAudioMeter;
   private workspaceId = '';
+  private authorityRoomId = '';
+  private readonly authorityPaused = new Set<string>();
+  private readonly authorityVersions = new Map<string, number>();
+  private authorityRevision = 0;
   private budgetDisplay = '';
   private budgetEnding = false;
   private readonly awaitingAnswer = new Set<string>();
@@ -159,12 +164,11 @@ export class VoiceRoomRuntime {
   private endingDeadline: number | null = null;
   private endingTonePlayed = false;
   private quietCheck?: ReturnType<typeof setTimeout>;
-  private checkingInactivity = false;
-  private lastTouch = 0;
-  private touching = false;
+  private inactivityCheck?: Promise<void>;
   private leaseExpiry?: ReturnType<typeof setTimeout>;
   private leaseRenewal?: ReturnType<typeof setInterval>;
   private closed = false;
+  private closeWork?: Promise<void>;
   private audioDisposed = false;
   private leaseValidUntil = 0;
   private refreshPending = false;
@@ -172,8 +176,26 @@ export class VoiceRoomRuntime {
   private readonly queuedReports = new Set<string>();
   private workHydrated = false;
   private readonly pendingWork = new Map<string, { text: string; agent_id: string; human_id: string }>();
-  private readonly missingSince = new Map<string, number>();
-  private constructor(private readonly service: VoiceService, readonly callId: string, readonly roomId: string, private readonly leaseOwner: string) {}
+  private readonly participantSessions = new Map<string, string>();
+  private readonly absent = new Map<string, { session: string; due: number; attempted: boolean; timer?: ReturnType<typeof setTimeout> }>();
+  private participantsRefresh?: Promise<void>;
+  private participantsDirty = false;
+  private readonly resumeIntents = new Map<string, { participant: RemoteParticipant; session: string | undefined;
+    controller: AbortController; promise?: Promise<void> }>();
+  private leaseFlight?: Promise<boolean>;
+  private nextLeaseAt = 0;
+  private leaseParked = false;
+  private leaseRecovery = 0;
+  private leaseRecoveryTimer?: ReturnType<typeof setTimeout>;
+  private leaseRecoveryBackground = false;
+  private leaseRecoveryWait?: { promise: Promise<boolean>; resolve(value: boolean): void; reject(error: unknown): void };
+  private readonly recoveryRelease?: () => void;
+  private constructor(private readonly service: VoiceService, readonly callId: string, readonly roomId: string,
+    private readonly leaseOwner: string, readonly callCardId?: string) {
+    this.recoveryRelease = service.onDatabaseRecovery?.(() => {
+      if (!this.closed) this.task(() => this.recover());
+    });
+  }
 
   /** Terminal boundary for every RTC callback and detached call task. */
   private task(work: () => Promise<unknown> | unknown, human?: string): Promise<void> {
@@ -202,15 +224,16 @@ export class VoiceRoomRuntime {
     return work();
   }
 
-  static async connect(service: VoiceService, callId: string, roomId: string, leaseOwner: string = service.owner) {
-    const runtime = new VoiceRoomRuntime(service, callId, roomId, leaseOwner);
+  static async connect(service: VoiceService, callId: string, roomId: string, leaseOwner: string = service.owner, callCardId?: string) {
+    const runtime = new VoiceRoomRuntime(service, callId, roomId, leaseOwner, callCardId);
     try {
       if (!await runtime.renewLease()) throw new Error('Voice call ownership expired');
       await runtime.start(); return runtime;
     } catch (error) { await runtime.close(); throw error; }
   }
   private async start() {
-    this.workspaceId = await this.retry(() => this.service.workspaceId(this.roomId));
+    const scope = await this.retry(() => this.service.runtimeScope(this.roomId));
+    this.workspaceId = scope.workspaceId; this.authorityRoomId = scope.authorityRoomId;
     const budget = await this.retry(() => this.service.budget.read(this.workspaceId));
     this.meter = new VoiceAudioMeter(this.service.budget, this.callId, this.leaseOwner, this.workspaceId, budget,
       remaining => {
@@ -231,8 +254,7 @@ export class VoiceRoomRuntime {
       if (this.inputs.get(participant.identity)?.participant === participant) this.stopInput(participant.identity);
       // A newer device with the same Beeline identity can replace this RTC
       // participant. Do not let the old socket remove its successor.
-      if (!this.room.remoteParticipants.has(participant.identity) && !this.missingSince.has(participant.identity))
-        this.missingSince.set(participant.identity, performance.now());
+      if (!this.room.remoteParticipants.has(participant.identity)) { this.cancelResume(participant.identity); this.armAbsent(participant.identity); }
     }, participant.identity));
     this.room.on(RoomEvent.DataReceived, (bytes, participant, _kind, topic) => {
       if (!participant || topic !== VOICE_DATA_TOPIC || bytes.length > 2048) return;
@@ -266,31 +288,25 @@ export class VoiceRoomRuntime {
         else await this.resume(participant.identity);
       }, participant.identity);
     });
-    this.room.on(RoomEvent.ParticipantConnected, () => { this.task(() => this.countHumans(true)); });
+    this.room.on(RoomEvent.ParticipantConnected, participant => {
+      this.cancelAbsent(participant.identity);
+      this.task(async () => { await this.reconcileParticipants(); await this.countHumans(true); });
+    });
     this.room.on(RoomEvent.Disconnected, () => { if (!this.closed) this.task(() => this.close()); });
     await this.room.connect(this.service.config.url, await token.toJwt(), { autoSubscribe: true, dynacast: false });
     this.shutdown.signal.throwIfAborted();
     const options = new TrackPublishOptions(); options.source = TrackSource.SOURCE_MICROPHONE;
     await this.room.localParticipant!.publishTrack(LocalAudioTrack.createAudioTrack('beeline-agent-speech', this.audio), options);
     this.shutdown.signal.throwIfAborted();
-    // RTC ownership outlives audio activity, including a parked pending order.
-    // Sweep missing humans even when no audio or signals arrive.
-    // Committed events still drive report reads.
     this.armLeaseExpiry();
-    this.leaseRenewal = setInterval(() => {
-      this.task(async () => {
-        if (await this.renewLease()) await this.sweepMissingParticipants();
-      });
-    }, 5000);
-    this.leaseRenewal.unref();
-    this.touch();
+    this.armLeaseRenewal();
+    await this.reconcileParticipants();
     await this.countHumans(true).catch(() => {});
     await this.refresh();
   }
 
   private async signal(signal: VoiceSignal, human?: string) {
     // A visual countdown must not start heartbeat work or count as activity.
-    if (signal.type !== 'stop' && signal.type !== 'ending' && signal.type !== 'error') this.touch();
     if (!this.closed) await this.room.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify(signal)),
       { reliable: true, topic: VOICE_DATA_TOPIC, ...(human ? { destination_identities: [human] } : {}) });
   }
@@ -306,30 +322,37 @@ export class VoiceRoomRuntime {
     // Start buffering RTC frames immediately: waiting for the STT handshake
     // otherwise clips the first spoken name after a phone publishes its mic.
     const reader = new AudioStream(track, 16_000, 1).getReader();
-    this.inputs.set(human, { reader, track, participant });
+    const buffered: { data: Int16Array; at: number; release(): void }[] = [];
+    const releaseBuffered = () => { for (const frame of buffered) frame.release(); buffered.length = 0; };
+    this.inputs.set(human, { reader, track, participant, releaseBuffered, buffered });
     let stt: VoiceStt | undefined;
-    const send = (data: Int16Array, capturedAt: number) => {
-      if (track.muted) return;
-      const allowed = this.meter?.audio(data.length / 16, capturedAt) ?? 0;
-      if (allowed > 0) stt!.send(data.subarray(0, Math.min(data.length, Math.floor(allowed * 16))));
+    const current = () => !track.muted && !this.closed && !this.authorityPaused.has(human) && this.inputVersions.get(human) === version;
+    const deliver = (admitted: Int16Array) => {
+      if (!current() || performance.now() >= this.leaseValidUntil) return;
+      try { stt!.send(admitted); } catch (error) { void this.failure(error, human); }
     };
-    // Drain the SDK continuously while opening STT; retain at most two seconds.
-    const buffered: { data: Int16Array; at: number }[] = [];
+    const send = (data: Int16Array, capturedAt: number) => {
+      if (current()) this.meter?.capture(data, capturedAt, deliver);
+    };
+    // Authorization buffering shares the meter's call-wide byte/duration cap.
     const pump = (async () => {
       while (!this.closed && this.inputVersions.get(human) === version) {
         const frame = await reader.read();
         if (frame.done) break;
-        this.touch();
         if (stt) send(frame.value.data, Date.now());
         else {
-          buffered.push({ data: frame.value.data.slice(), at: Date.now() });
-          if (buffered.length > 100) buffered.shift();
+          if (track.muted) continue;
+          const release = this.meter?.retain(frame.value.data.length / 16, frame.value.data.byteLength);
+          if (release) buffered.push({ data: frame.value.data.slice(), at: Date.now(), release });
         }
       }
     })();
     void pump.catch(error => this.failure(error, human));
     try {
+      const authorityVersion = ++this.authorityRevision; this.authorityVersions.set(human, authorityVersion);
       await this.retry(() => this.service.access(this.roomId, human));
+      if (this.authorityVersions.get(human) === authorityVersion && this.inputVersions.get(human) === version)
+        this.authorityPaused.delete(human);
       if (!(await this.retry(() => this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL`,
         [this.callId, human]))).rowCount) { this.stopInput(human); return; }
       const [agents, budget, contacts] = await Promise.all([
@@ -340,7 +363,7 @@ export class VoiceRoomRuntime {
            GROUP BY btrim(title) ORDER BY name LIMIT 80`, [this.roomId])),
         this.refreshSpeakingSpeed(human),
       ]);
-      if (this.closed || this.inputVersions.get(human) !== version) return;
+      if (this.closed || this.inputVersions.get(human) !== version) { releaseBuffered(); return; }
       this.task(() => this.enforceBudget(budget));
       if (budget.remainingMs <= 0) { this.stopInput(human); return; }
       const externalContacts = contacts.rows.map(contact => contact.name.slice(0, 80));
@@ -472,16 +495,19 @@ export class VoiceRoomRuntime {
         this.task(() => this.failure(error, human)); this.stopInput(human);
       }, hints);
     } catch (error) {
-      if (this.inputVersions.get(human) !== version) { await reader.cancel().catch(() => {}); return; }
+      if (this.inputVersions.get(human) !== version) { releaseBuffered(); await reader.cancel().catch(() => {}); return; }
       this.stopInput(human); throw error;
     }
-    if (this.closed || this.inputVersions.get(human) !== version) { stt.close(); await reader.cancel().catch(() => {}); return; }
+    if (this.closed || this.inputVersions.get(human) !== version) { releaseBuffered(); stt.close(); await reader.cancel().catch(() => {}); return; }
     this.inputs.set(human, { stt, reader, track, participant });
     try {
-      for (const frame of buffered) send(frame.data, frame.at);
-      buffered.length = 0;
+      while (buffered.length) {
+        const frame = buffered.shift()!;
+        if (current() && this.meter) this.meter.captureReserved(frame.data, frame.at, deliver, frame.release);
+        else frame.release();
+      }
       await pump;
-    } finally { if (this.inputs.get(human)?.stt === stt) this.stopInput(human); }
+    } finally { releaseBuffered(); if (this.inputs.get(human)?.stt === stt) this.stopInput(human); }
   }
   private stopInput(human: string) {
     this.cancelEager(human);
@@ -495,6 +521,7 @@ export class VoiceRoomRuntime {
     const input = this.inputs.get(human);
     if (!input) return;
     this.inputs.delete(human);
+    input.releaseBuffered?.();
     this.humanQuiet(human);
     this.task(() => input.stt?.close(), human);
     this.task(() => input.reader.cancel(), human);
@@ -520,75 +547,196 @@ export class VoiceRoomRuntime {
     } finally { this.budgetEnding = false; }
   }
 
-  private touch() {
-    if (this.closed || this.touching || performance.now() - this.lastTouch < 5000) return;
-    this.lastTouch = performance.now(); this.touching = true;
-    this.task(async () => { try { await this.heartbeat(); } finally { this.touching = false; } });
-  }
   private armLeaseExpiry() {
     clearTimeout(this.leaseExpiry);
     this.leaseExpiry = setTimeout(() => this.task(() => this.close()),
       Math.max(0, this.leaseValidUntil - performance.now()));
     this.leaseExpiry.unref();
   }
-  private async renewLease() {
-    if (this.closed) return false;
+  private armLeaseRenewal() {
+    if (this.closed || this.leaseParked || this.leaseRenewal) return;
+    // Private owner evidence only: no participant, budget or projection read.
+    this.leaseRenewal = setInterval(() => this.task(() => this.renewLease()), 5000);
+    this.leaseRenewal.unref();
+  }
+  private renewLease(): Promise<boolean> {
+    if (this.closed || this.leaseParked) return Promise.resolve(false);
+    if (this.leaseFlight) return this.leaseFlight;
     const requestedAt = performance.now();
-    try {
-      const kept = await this.retry(() => this.service.db.query(`UPDATE voice_calls SET runtime_until=now()+interval '20 seconds'
-        WHERE id=$1 AND runtime_owner=$2 AND ended_at IS NULL AND runtime_until>now()`, [this.callId, this.leaseOwner]));
-      if (!kept.rowCount) { await this.close(); return false; }
-      if (this.closed) return false;
-      this.leaseValidUntil = requestedAt + 20_000;
-      this.armLeaseExpiry();
-      return true;
-    } catch (error) {
-      if (performance.now() >= this.leaseValidUntil) await this.close();
-      throw error;
+    if (requestedAt < this.nextLeaseAt) return Promise.resolve(requestedAt < this.leaseValidUntil);
+    this.nextLeaseAt = requestedAt + 5000;
+    const admittedRecovery = this.leaseRecovery;
+    let renewed = false; let failure: unknown;
+    this.leaseFlight = (async () => {
+      try {
+        const kept = await this.retry(() => this.service.db.query(`UPDATE voice_calls SET runtime_until=clock_timestamp()+interval '15 seconds'
+          WHERE id=$1 AND runtime_owner=$2 AND ended_at IS NULL AND runtime_until>clock_timestamp()`, [this.callId, this.leaseOwner]));
+        if (!kept.rowCount) { await this.close(); return false; }
+        if (this.closed) return false;
+        this.leaseValidUntil = requestedAt + 15_000;
+        this.armLeaseExpiry();
+        renewed = true; return true;
+      } catch (error) {
+        failure = error; this.leaseParked = true;
+        clearInterval(this.leaseRenewal); this.leaseRenewal = undefined;
+        if (performance.now() >= this.leaseValidUntil) await this.close();
+        throw error;
+      }
+    })().finally(() => {
+      this.leaseFlight = undefined;
+      if (this.leaseParked && !this.closed && this.leaseRecovery > admittedRecovery) this.resumeLeaseEvidence();
+      else this.settleLeaseRecovery(renewed, failure);
+    });
+    return this.leaseFlight;
+  }
+  private async recover() {
+    // One actual database recovery boundary; no health probe or failure timer.
+    if (this.leaseParked || this.leaseFlight) {
+      if (!await this.requestLeaseRecovery(true)) return;
     }
+    await this.meter?.recover();
+  }
+  private requestLeaseRecovery(background: boolean): Promise<boolean> {
+    this.leaseRecovery++;
+    this.leaseRecoveryBackground ||= background;
+    if (!this.leaseParked && !this.leaseFlight) return Promise.resolve(performance.now() < this.leaseValidUntil);
+    if (!this.leaseRecoveryWait) {
+      let resolve!: (value: boolean) => void; let reject!: (error: unknown) => void;
+      const promise = new Promise<boolean>((yes, no) => { resolve = yes; reject = no; });
+      void promise.catch(() => {});
+      this.leaseRecoveryWait = { promise, resolve, reject };
+    }
+    if (!this.leaseFlight) this.resumeLeaseEvidence();
+    return this.leaseRecoveryWait.promise;
+  }
+  private settleLeaseRecovery(renewed: boolean, error?: unknown) {
+    clearTimeout(this.leaseRecoveryTimer); this.leaseRecoveryTimer = undefined;
+    const waiting = this.leaseRecoveryWait; this.leaseRecoveryWait = undefined;
+    this.leaseRecoveryBackground = false;
+    if (error) waiting?.reject(error); else waiting?.resolve(renewed);
+  }
+  private resumeLeaseEvidence() {
+    if (this.closed || this.leaseRecoveryTimer || !this.leaseRecoveryWait) return;
+    // This wake belongs to actual recovery/Resume and enforces the control
+    // quota. Its one failed attempt cannot recreate the same intent.
+    this.leaseRecoveryTimer = setTimeout(() => {
+      this.leaseRecoveryTimer = undefined;
+      if (this.closed || !this.leaseParked) { this.settleLeaseRecovery(false); return; }
+      this.leaseParked = false;
+      this.task(async () => { if (await this.renewLease()) this.armLeaseRenewal(); });
+    }, Math.max(0, Math.ceil(this.nextLeaseAt - performance.now())));
+    this.leaseRecoveryTimer.unref();
   }
 
+  /** Existing explicit resume action, never invoked by PCM or lease ticks. */
   private async heartbeat() {
     if (!await this.renewLease()) return;
-    // Token refresh does not re-grant Beeline membership: remove a retired/removed member.
-    for (const participant of this.room.remoteParticipants.values()) {
-      this.missingSince.delete(participant.identity);
-      try { await this.retry(() => this.service.access(this.roomId, participant.identity)); }
-      catch (error) {
-        if (error instanceof Error && error.message === 'voice call access denied')
-          await this.service.leave(this.callId, participant.identity, true);
-        else await this.failure(error, participant.identity);
-      }
-    }
-    await this.sweepMissingParticipants();
+    await this.revalidateParticipants();
+    await this.reconcileParticipants();
     await this.countHumans();
     await this.refresh();
   }
-
-  private async sweepMissingParticipants() {
-    if (this.closed) return;
-    const missing = await this.retry(() => this.service.db.query<{ identity_id: string }>(
-      `SELECT identity_id FROM voice_participants WHERE call_id=$1 AND left_at IS NULL
-        AND NOT identity_id=ANY($2::text[])`,
-      [this.callId, [...this.room.remoteParticipants.keys()]]));
-    const absent = new Set(missing.rows.map(participant => participant.identity_id));
-    for (const identity of this.missingSince.keys()) if (!absent.has(identity)) this.missingSince.delete(identity);
-    for (const participant of missing.rows) {
-      const since = this.missingSince.get(participant.identity_id);
-      if (since === undefined) this.missingSince.set(participant.identity_id, performance.now());
-      // Allow RTC's retry window and a fresh mobile join after a radio handoff.
-      else if (performance.now() - since >= 120_000 && !this.room.remoteParticipants.has(participant.identity_id)) {
-        await this.service.leave(this.callId, participant.identity_id, true);
-        this.missingSince.delete(participant.identity_id);
+  async revalidateAuthorityChange(event: Extract<LiveEvent, { type: 'invalidate' }>): Promise<void> {
+    if (this.closed || !this.workspaceId) return;
+    if (event.workspaceId && event.workspaceId !== this.workspaceId) return;
+    if (event.roomId && event.roomId !== this.roomId && event.roomId !== this.authorityRoomId) return;
+    const human = event.readerId ?? event.targetAgentId ?? event.personId;
+    if (human && !this.room.remoteParticipants.has(human) && !this.inputs.has(human) && !this.participantSessions.has(human)) return;
+    if (!event.roomId && !event.workspaceId) {
+      // Legacy incomplete evidence cannot select a Workspace. Park only this
+      // known person's input, without querying or ending other calls. A real
+      // correlated source/Resume must reauthorize before any later PCM.
+      if (human) {
+        this.authorityVersions.set(human, ++this.authorityRevision);
+        this.authorityPaused.add(human); this.cancelResume(human); this.stopInput(human);
+      }
+      return;
+    }
+    await this.revalidateParticipants(human);
+  }
+  async revalidateParticipants(affectedHuman?: string) {
+    for (const participant of this.room.remoteParticipants.values()) {
+      if (affectedHuman && participant.identity !== affectedHuman) continue;
+      if (this.closed) return;
+      const version = ++this.authorityRevision; this.authorityVersions.set(participant.identity, version);
+      try {
+        await this.retry(() => this.service.access(this.roomId, participant.identity));
+        if (!this.closed && this.authorityVersions.get(participant.identity) === version) this.authorityPaused.delete(participant.identity);
+      }
+      catch (error) {
+        if (this.closed || this.authorityVersions.get(participant.identity) !== version) continue;
+        if (error instanceof Error && error.message === 'voice call access denied') {
+          this.authorityPaused.add(participant.identity); this.cancelResume(participant.identity); this.stopInput(participant.identity);
+          await this.service.leave(this.callId, participant.identity, true,
+            this.participantSessions.get(participant.identity), undefined, this.leaseOwner);
+        } else await this.failure(error, participant.identity);
       }
     }
   }
+
+  private cancelAbsent(human: string) {
+    const absent = this.absent.get(human);
+    clearTimeout(absent?.timer); this.absent.delete(human);
+  }
+  private armAbsent(human: string) {
+    if (this.closed || this.room.remoteParticipants.has(human)) return;
+    const session = this.participantSessions.get(human);
+    if (session === undefined) return;
+    const previous = this.absent.get(human);
+    if (previous?.session === session) return;
+    this.cancelAbsent(human);
+    const absent = { session, due: performance.now() + 120_000, attempted: false,
+      timer: undefined as ReturnType<typeof setTimeout> | undefined };
+    this.absent.set(human, absent);
+    absent.timer = setTimeout(() => {
+      absent.timer = undefined;
+      if (this.closed || this.absent.get(human) !== absent || absent.attempted ||
+        this.participantSessions.get(human) !== absent.session || this.room.remoteParticipants.has(human)) return;
+      absent.attempted = true;
+      this.task(() => this.service.leave(this.callId, human, true, absent.session, undefined, this.leaseOwner), human);
+    }, Math.max(0, absent.due - performance.now()));
+    absent.timer.unref();
+  }
+  /** Startup and actual participant/card source changes own this snapshot.
+   * Session IDs remain server-private and fence late device departures. */
+  reconcileParticipants(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    this.participantsDirty = true;
+    if (this.participantsRefresh) return this.participantsRefresh;
+    let failed = false;
+    this.participantsRefresh = (async () => {
+      while (this.participantsDirty && !this.closed) {
+        this.participantsDirty = false;
+        try {
+          const current = await this.retry(() => this.service.db.query<{ identity_id: string; session_id: string }>(
+            `SELECT identity_id,session_id FROM voice_participants WHERE call_id=$1 AND left_at IS NULL LIMIT 513`, [this.callId]));
+          if (this.closed) return;
+          if (current.rows.length > 512) { await this.close(); throw new Error('Voice participant bound exceeded'); }
+          const sessions = new Map(current.rows.map(row => [row.identity_id, row.session_id]));
+          for (const human of this.participantSessions.keys()) if (!sessions.has(human)) this.participantLeft(human);
+          for (const [human, intent] of this.resumeIntents) if (sessions.get(human) !== intent.session) this.cancelResume(human);
+          this.participantSessions.clear();
+          for (const [human, session] of sessions) {
+            this.participantSessions.set(human, session);
+            if (this.room.remoteParticipants.has(human)) this.cancelAbsent(human);
+            else this.armAbsent(human);
+          }
+        } catch (error) {
+          failed = true; this.participantsDirty = false; throw error;
+        }
+      }
+    })().finally(() => {
+      this.participantsRefresh = undefined;
+      if (!failed && this.participantsDirty && !this.closed) this.task(() => this.reconcileParticipants());
+    });
+    return this.participantsRefresh;
+  }
   /** Audio frames and lease traffic are not speech. Only real activity resets this window. */
-  private async checkInactivity() {
-    if (this.closed || this.checkingInactivity) return;
-    this.checkingInactivity = true;
+  private checkInactivity(): Promise<void> {
+    if (this.closed) return Promise.resolve();
+    if (this.inactivityCheck) return this.inactivityCheck;
     clearTimeout(this.quietCheck); this.quietCheck = undefined;
-    try {
+    this.inactivityCheck = (async () => {
       const { pending: work, finishedAt } = await this.retry(() => this.service.callWorkState(this.callId));
       if (work) this.markCallActivity();
       if (finishedAt > this.lastWorkFinishedAt) {
@@ -624,7 +772,8 @@ export class VoiceRoomRuntime {
       const currentQuiet = performance.now() - this.lastActivity;
       if (!work && !this.closed && currentQuiet < 60_000)
         this.armInactivity(currentQuiet < 45_000 ? 45_000 : currentQuiet < 50_000 ? 50_000 : 60_000);
-    } finally { this.checkingInactivity = false; }
+    })().finally(() => { this.inactivityCheck = undefined; });
+    return this.inactivityCheck;
   }
 
   private armInactivity(afterMs = 45_000) {
@@ -660,6 +809,11 @@ export class VoiceRoomRuntime {
   }
 
   participantLeft(human: string) {
+    this.authorityVersions.delete(human);
+    this.authorityPaused.delete(human);
+    this.cancelResume(human);
+    this.cancelAbsent(human);
+    this.participantSessions.delete(human);
     this.humanQuiet(human);
     this.assembler.cancel(human);
     this.targets.delete(human);
@@ -1125,8 +1279,7 @@ export class VoiceRoomRuntime {
           for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
           pending = pending.subarray(frameBytes);
           this.markCallActivity();
-          this.touch();
-          const voiced = first && samples.some(sample => Math.abs(sample) > VOICE_PCM_THRESHOLD);
+            const voiced = first && samples.some(sample => Math.abs(sample) > VOICE_PCM_THRESHOLD);
           if (voiced) { first = false; await onFirstVoicedFrame?.(); }
           if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
           await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
@@ -1139,7 +1292,6 @@ export class VoiceRoomRuntime {
         const samples = new Int16Array(Math.floor(pending.length / 2));
         for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
         this.markCallActivity();
-        this.touch();
         const voiced = first && samples.some(sample => Math.abs(sample) > VOICE_PCM_THRESHOLD);
         if (voiced) { first = false; await onFirstVoicedFrame?.(); }
         if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
@@ -1158,37 +1310,76 @@ export class VoiceRoomRuntime {
 
   get isClosed() { return this.closed; }
 
-  async resume(human: string) {
+  private cancelResume(human: string) {
+    this.resumeIntents.get(human)?.controller.abort();
+    if (!this.leaseRecoveryBackground && ![...this.resumeIntents.values()].some(intent => !intent.controller.signal.aborted))
+      this.settleLeaseRecovery(false);
+  }
+  resume(human: string): Promise<void> {
+    const existing = this.resumeIntents.get(human);
+    if (existing && !existing.controller.signal.aborted) return existing.promise!;
     const participant = this.room.remoteParticipants.get(human);
-    if (!participant) throw new Error('voice transport disconnected');
-    await this.heartbeat();
-    for (const publication of participant.trackPublications.values()) {
-      if (publication.track?.kind === TrackKind.KIND_AUDIO) this.task(() => this.listen(publication.track!, participant), human);
-    }
-    await this.refresh();
-    // Older clients wait for playback to finish before restoring their mic.
-    // A protected multi-human idle can resume with no report to produce that signal.
-    if (!this.speaking) await this.signal({ type: 'speaker', agentId: null }, human);
+    if (!participant || this.closed) return Promise.reject(new Error('voice transport disconnected'));
+    const intent = { participant, session: this.participantSessions.get(human), controller: new AbortController(),
+      promise: undefined as Promise<void> | undefined };
+    this.resumeIntents.set(human, intent);
+    intent.promise = (async () => {
+      let stop!: () => void;
+      const canceled = new Promise<never>((_resolve, reject) => {
+        stop = () => reject(new DOMException('Voice Resume source changed', 'AbortError'));
+        intent.controller.signal.addEventListener('abort', stop, { once: true });
+      });
+      try {
+        const evidence = this.leaseParked || this.leaseFlight ? this.requestLeaseRecovery(false) : this.renewLease();
+        const owned = await Promise.race([evidence, canceled]);
+        const current = () => !this.closed && !intent.controller.signal.aborted &&
+          this.room.remoteParticipants.get(human) === participant && this.participantSessions.get(human) === intent.session;
+        if (!owned || !current()) throw new DOMException('Voice Resume source changed', 'AbortError');
+        await this.revalidateParticipants();
+        if (!current()) throw new DOMException('Voice Resume source changed', 'AbortError');
+        for (const publication of participant.trackPublications.values()) {
+          if (publication.track?.kind === TrackKind.KIND_AUDIO) this.task(() => this.listen(publication.track!, participant), human);
+        }
+        await this.refresh();
+        if (current() && !this.speaking) await this.signal({ type: 'speaker', agentId: null }, human);
+      } finally { intent.controller.signal.removeEventListener('abort', stop); }
+    })().finally(() => { if (this.resumeIntents.get(human) === intent) this.resumeIntents.delete(human); });
+    return intent.promise;
   }
 
-  async close() {
-    if (this.closed) return;
+  close(): Promise<void> {
+    if (this.closeWork) return this.closeWork;
     this.closed = true;
+    for (const input of this.inputs.values()) input.releaseBuffered?.();
+    for (const human of this.resumeIntents.keys()) this.cancelResume(human);
+    this.settleLeaseRecovery(false);
     for (const resolve of this.quietWaiters) resolve();
     this.quietWaiters.clear();
     clearInterval(this.leaseRenewal);
     clearTimeout(this.leaseExpiry);
+    clearTimeout(this.leaseRecoveryTimer);
     clearTimeout(this.quietCheck);
     this.shutdown.abort();
     for (const human of this.eager.keys()) this.cancelEager(human);
     this.assembler.close();
+    // Closing the meter revokes queued callbacks synchronously. Attach the
+    // error observer immediately even if transport disposal subsequently waits.
+    const meterClose = Promise.resolve(this.meter?.close()).catch(error => {
+      captureServerError(error, { surface: 'voice-cleanup' });
+    });
+    this.closeWork = this.finishClose(meterClose);
+    return this.closeWork;
+  }
+  private async finishClose(meterClose: Promise<void>) {
     const cleanup = async (work: () => unknown) => {
       try { await work(); } catch (error) { captureServerError(error, { surface: 'voice-cleanup' }); }
     };
     await cleanup(() => { this.speaking?.abort(); this.clearAudioQueue(); });
-    this.missingSince.clear();
+    this.recoveryRelease?.();
+    for (const human of this.absent.keys()) this.cancelAbsent(human);
+    this.participantSessions.clear();
     for (const human of this.inputs.keys()) await cleanup(() => this.stopInput(human));
-    await cleanup(() => this.meter?.close());
+    await meterClose;
     await cleanup(() => this.room.disconnect());
     this.audioDisposed = true;
     await cleanup(() => this.audio.close());

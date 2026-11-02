@@ -1,10 +1,11 @@
 import { EventEmitter } from 'node:events';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { voiceTempo } from './voice-tempo.js';
 import { markdownToSpeech } from './markdown-to-speech.js';
 import { VoiceService } from './voice-service.js';
 import * as telemetry from './sentry.js';
 
+afterEach(() => { vi.useRealTimers(); });
 const state = vi.hoisted(() => ({ room: undefined as any, streams: [] as ReadableStream<any>[], audio: undefined as any }));
 vi.mock('@livekit/rtc-node', () => ({
   Room: class extends EventEmitter {
@@ -23,9 +24,14 @@ vi.mock('@livekit/rtc-node', () => ({
   LocalAudioTrack: { createAudioTrack: vi.fn() }, TrackPublishOptions: class {},
   TrackSource: { SOURCE_MICROPHONE: 1 }, TrackKind: { KIND_AUDIO: 1 }, AudioFrame: class { constructor(readonly data: Int16Array) {} },
 }));
+vi.mock('livekit-server-sdk', async original => {
+  const actual = await original<typeof import('livekit-server-sdk')>();
+  return { ...actual, RoomServiceClient: class { async removeParticipant() {} async deleteRoom() {} } };
+});
 import { VoiceRoomRuntime, spokenReport, confirmedVoiceSpeech, voiceInterrupt, voicePlaybackEcho } from './voice-room-runtime.js';
 import { AuraSpeech, OpenRouterVoiceBrain, VoiceQuotaError } from './voice-providers.js';
 import { VoiceService as RealVoiceService } from './voice-service.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
@@ -69,27 +75,21 @@ it('multi-human-silence-1: resume without a report acknowledges idle playback to
   } finally { await runtime.close(); }
 });
 
-it('retains an absent RTC participant through a short radio handoff and resets the reconnect grace on return', async () => {
-  let clock = 0;
-  const now = vi.spyOn(performance, 'now').mockImplementation(() => clock);
-  const { service } = conversationService(1);
-  const leave = vi.fn(async () => {});
-  service.db.query.mockImplementation(async (sql: string) => ({ rowCount: 1,
-    rows: sql.includes('SELECT identity_id FROM voice_participants') && !state.room.remoteParticipants.has('human')
-      ? [{ identity_id: 'human' }] : [] as any }));
-  const runtime = await VoiceRoomRuntime.connect({ ...service, leave } as unknown as VoiceService, 'call', 'room');
-  const tick = () => (runtime as any).heartbeat();
+it('uses one versioned absence deadline and cancels it when RTC returns before another departure', async () => {
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','Date','performance']}); const {service}=conversationService(1);const leave=vi.fn(async()=>{});
+  service.db.query.mockImplementation(async(sql:string)=>({rowCount:1,rows:sql.includes('SELECT identity_id,session_id')
+    ?[{identity_id:'human',session_id:'first'}]:[] as any}));
+  const runtime=await VoiceRoomRuntime.connect({...service,leave} as unknown as VoiceService,'call','room');
   try {
-    const human = { identity: 'human' };
-    state.room.remoteParticipants.delete('human'); state.room.emit('left', human);
-    clock = 60_000; await tick(); expect(leave).not.toHaveBeenCalled();
-    state.room.remoteParticipants.set('human', human);
-    clock = 119_000; await tick();
-    state.room.remoteParticipants.delete('human'); state.room.emit('left', human);
-    clock = 180_000; await tick(); expect(leave).not.toHaveBeenCalled();
-    clock = 240_000; await tick(); expect(leave).toHaveBeenCalledOnce();
-    console.log('60-second RTC loss => participant retained; return resets grace; abandoned transport eventually removed');
-  } finally { await runtime.close(); now.mockRestore(); }
+    const human={identity:'human'};state.room.remoteParticipants.delete('human');state.room.emit('left',human);
+    await vi.advanceTimersByTimeAsync(60_000);expect(leave).not.toHaveBeenCalled();
+    state.room.remoteParticipants.set('human',human);state.room.emit('joined',human);
+    await vi.advanceTimersByTimeAsync(60_000);expect(leave).not.toHaveBeenCalled();
+    state.room.remoteParticipants.delete('human');state.room.emit('left',human);
+    await vi.advanceTimersByTimeAsync(119_999);expect(leave).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);expect(leave).toHaveBeenCalledTimes(1);expect(leave).toHaveBeenCalledWith('call','human',true,'first',undefined,'owner');
+    await vi.advanceTimersByTimeAsync(300_000);expect(leave).toHaveBeenCalledOnce();
+  }finally{await runtime.close();vi.useRealTimers();}
 });
 
 it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports send natural text to synthesis', async () => {
@@ -97,7 +97,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
   const spoken: string[] = [];
   const answer = '**Hello, friend.**\n\n[Visit](https://example.com/a_(b)/details).\n\n```ts\nignore me\n```\n\nHi @jellybean.';
   let reports: any[] = [];
-  const service = { workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+  const service = { runtimeScope: vi.fn(async (roomId: string) => ({workspaceId:'human',authorityRoomId:roomId})), workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { fence: async (_call: string, _owner: string, enqueue: () => void) => { enqueue(); return true; }, read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
     brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
       for (const character of answer) delta(character);
       return { text: answer };
@@ -121,7 +121,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
 it('cancels microphone input and sends a targeted quota signal when Flux rejects the handshake', async () => {
   const cancel = vi.fn();
   state.streams = [new ReadableStream({ cancel })];
-  const service = { workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+  const service = { runtimeScope: vi.fn(async (roomId: string) => ({workspaceId:'human',authorityRoomId:roomId})), workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { fence: async (_call: string, _owner: string, enqueue: () => void) => { enqueue(); return true; }, read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
     stt: vi.fn(async () => { throw new VoiceQuotaError(); }) }, access: vi.fn(async () => {}),
     humanCount: vi.fn(async () => 1), agents: vi.fn(async () => []), db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) },
     runtimeClosed: vi.fn() } as unknown as VoiceService;
@@ -144,7 +144,7 @@ it('buffers first microphone frames during authorization and ignores stale STT f
   const callbacks: Array<() => void> = [];
   const inputs: Array<{ send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }> = [];
   const service = {
-    workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+    runtimeScope: vi.fn(async (roomId: string) => ({workspaceId:'human',authorityRoomId:roomId})), workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { fence: async (_call: string, _owner: string, enqueue: () => void) => { enqueue(); return true; }, read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
       stt: vi.fn(async (_event, failure) => {
         callbacks.push(failure); const input = { send: vi.fn(), close: vi.fn() }; inputs.push(input); return input;
       }) },
@@ -177,14 +177,14 @@ const roster = [
 function conversationService(humans = 2) {
   const speech = { synthesize: vi.fn(async function* () { yield new Uint8Array([200, 1, 200, 1]); }) };
   const service = {
-    workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', stt: vi.fn(),
+    runtimeScope: vi.fn(async (roomId: string) => ({workspaceId:'human',authorityRoomId:roomId})), workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { fence: async (_call: string, _owner: string, enqueue: () => void) => { enqueue(); return true; }, read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', stt: vi.fn(),
       brain: { answer: vi.fn(async (_agent, _history, onText) => {
         onText('First sentence. Second sentence! Third sentence.');
         return { text: 'First sentence. Second sentence! Third sentence.', order: false };
       }) } },
     lastActiveAgent: vi.fn(async (): Promise<string | undefined> => undefined),
     humanCount: vi.fn(async () => humans), agents: vi.fn(async () => roster), speech: vi.fn(async () => speech),
-    access: vi.fn(async () => {}), reviseHuman: vi.fn(async () => {}), recordHuman: vi.fn(async () => 'source'), recordAnswer: vi.fn(async () => {}),
+    access: vi.fn(async () => {}), leave: vi.fn(async () => {}), reviseHuman: vi.fn(async () => {}), recordHuman: vi.fn(async () => 'source'), recordAnswer: vi.fn(async () => {}),
     dispatch: vi.fn(async () => {}), db: { query: vi.fn(async (sql: string, parameters?: any[]) => ({ rowCount: 1,
       rows: sql.includes('identity_id=ANY') ? (parameters?.[1] ?? []).map((identity_id: string) => ({identity_id})) : [] })) }, runtimeClosed: vi.fn(),
   };
@@ -586,7 +586,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
     } finally { removeListener(); note(`TTS stop: ${text}`); }
   }) };
   const service = {
-    workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+    runtimeScope: vi.fn(async (roomId: string) => ({workspaceId:'human',authorityRoomId:roomId})), workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { fence: async (_call: string, _owner: string, enqueue: () => void) => { enqueue(); return true; }, read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
       stt: vi.fn(async (onEvent: typeof receive) => { receive = onEvent; return { send() {}, close() {} }; }),
       brain: { answer: vi.fn(async (_agent: unknown, history: readonly { content: string }[], onText: (text: string) => void, _signal: AbortSignal) => {
         if (history.at(-1)?.content === 'stop') return { text: '', order: false };
@@ -1019,7 +1019,7 @@ it('Reproduction voice-name-1: switches transcript, reply and voice together and
   ];
   const recordHuman = vi.fn(async () => 'source');
   const answer = vi.fn(async () => ({ text: '' }));
-  const service = { workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', brain: { answer } },
+  const service = { runtimeScope: vi.fn(async (roomId: string) => ({workspaceId:'human',authorityRoomId:roomId})), workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { fence: async (_call: string, _owner: string, enqueue: () => void) => { enqueue(); return true; }, read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', brain: { answer } },
     access: vi.fn(async () => {}),
     lastActiveAgent: vi.fn(async () => undefined),
     humanCount: vi.fn(async () => 1), agents: vi.fn(async () => agents), recordHuman, recordAnswer: vi.fn(async () => {}),
@@ -2071,7 +2071,7 @@ it('Reproduction VOICE-IDS-7: the synthesis path never receives a leaked ID when
   for (const { answer, leak, keep } of cases) {
     const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
     const spoken: string[] = [];
-    const service = { workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({ pending: false, finishedAt: 0 })), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+    const service = { runtimeScope: vi.fn(async (roomId: string) => ({workspaceId:'human',authorityRoomId:roomId})), workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({ pending: false, finishedAt: 0 })), endInactive: vi.fn(async () => false), budget: { fence: async (_call: string, _owner: string, enqueue: () => void) => { enqueue(); return true; }, read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
       brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
         for (const character of answer) delta(character);
         return { text: answer };
@@ -2097,7 +2097,7 @@ it('Reproduction VOICE-IDS-7: the synthesis path never receives a leaked ID when
 });
 
 
-it('keeps first-audio delivery independent of an in-flight accounting checkpoint', async () => {
+it('gates microphone PCM on its durable checkpoint while reply playback remains independent', async () => {
   const { service } = conversationService(2);
   let release!: () => void;
   service.budget.record.mockImplementationOnce(() => new Promise(resolve => { release = () => resolve({
@@ -2118,14 +2118,15 @@ it('keeps first-audio delivery independent of an in-flight accounting checkpoint
     await vi.waitFor(() => expect(service.config.stt).toHaveBeenCalled());
     frames.enqueue({ data: new Int16Array(320) });
     await vi.waitFor(() => expect(release).toBeDefined());
-    const sent = input.mock.calls.length;
+    expect(input).not.toHaveBeenCalled();
     frames.enqueue({ data: new Int16Array(320) });
-    await vi.waitFor(() => expect(input.mock.calls.length).toBeGreaterThan(sent));
+    await new Promise(resolve=>setImmediate(resolve));
+    expect(input).not.toHaveBeenCalled();
     await runtime.utterance('human', 'Ruby, timing during blocked checkpoint');
     const after = timings().at(-1)!;
     expect(state.audio.captureFrame).toHaveBeenCalled();
     expect(after).toBeLessThan(100);
-    console.log(`VOICE-BUDGET-LATENCY before=${before.toFixed(3)}ms after=${after.toFixed(3)}ms; checkpoint still unresolved at first audio; controlled providers and RTC.`);
+    console.log(`VOICE-BUDGET-LATENCY before=${before.toFixed(3)}ms after=${after.toFixed(3)}ms; checkpoint still unresolved at reply playback; microphone PCM remains staged; controlled providers and RTC.`);
   } finally { release?.(); await runtime.close(); }
 });
 
@@ -2157,12 +2158,12 @@ it('broadcasts the shared countdown to every participant and ends the workspace 
 it('Reproduction VOICE-BOUND-2: two call audio pumps retain independent one-second bounds and one daily budget', async () => {
   const db = new PgliteDatabase();
   const { VoiceBudgetStore } = await import('./voice-budget.js');
-  await db.query(`CREATE TABLE voice_calls(id text PRIMARY KEY,runtime_owner text,runtime_until timestamptz, room_id text);
+  await db.query(`CREATE TABLE voice_calls(id text PRIMARY KEY,runtime_owner text,runtime_until timestamptz, room_id text,ended_at timestamptz);
     CREATE TABLE rooms(id text,workspace_id text);
     INSERT INTO rooms VALUES('room','human');
     CREATE TABLE voice_participants(call_id text,identity_id text);
     CREATE TABLE voice_workspace_usage(workspace_id text,call_id text,day_start bigint,audio int8multirange DEFAULT '{}',PRIMARY KEY(workspace_id,call_id,day_start));
-    INSERT INTO voice_calls VALUES('a','owner','2099-01-01','room'),('b','owner','2099-01-01','room');
+    INSERT INTO voice_calls VALUES('a','owner','2099-01-01','room',NULL),('b','owner','2099-01-01','room',NULL);
     INSERT INTO voice_participants VALUES('a','human'),('b','human');`);
   let now = Date.now();
   const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
@@ -2190,42 +2191,24 @@ it('Reproduction VOICE-BOUND-2: two call audio pumps retain independent one-seco
       await until(() => !!(runtime as any).inputs.get('human')?.stt);
       failures.push(vi.spyOn(stores[i]!, 'record').mockRejectedValue(new Error('database outage')));
     }
-    for (let i = 0; i < 2; i++) {
-      now += 500; frames[i]!.enqueue({ data: new Int16Array(8000) });
-      await until(() => sends[i]!.mock.calls.length === 1);
+    for (let i=0;i<2;i++) {
+      now+=500;frames[i]!.enqueue({data:new Int16Array(8000)});
+      await until(()=>(runtimes[i] as any).meter.diagnostics().heldBytes===16_000);
+      expect(sends[i]).not.toHaveBeenCalled();
       await expect((runtimes[i] as any).meter.flush()).rejects.toThrow('outage');
     }
-    for (let i = 0; i < 2; i++) {
-      now += 1000; frames[i]!.enqueue({ data: new Int16Array(16000) });
-      await until(() => sends[i]!.mock.calls.length === 2);
-    }
-    await new Promise(resolve => setTimeout(resolve, 20));
-    const forwardedMs = sends.flatMap(send => send.mock.calls).reduce((sum, [pcm]) => sum + pcm.length / 16, 0);
-    expect(forwardedMs).toBe(2000);
-    expect(sends.map(send => send.mock.calls.reduce((sum, [pcm]) => sum + pcm.length / 16, 0))).toEqual([1000, 1000]);
-    // A process death restores only committed state: this deliberately accepts
-    // one second per stream, as specified in brief revision 5.
-    const snapshot = PgliteDatabase.fromSnapshot(await db.snapshot());
-    try {
-      expect((await new VoiceBudgetStore(snapshot).read('human')).remainingMs).toBe(3600000);
-    } finally { await snapshot.close(); }
-    now += 1000;
-    for (const stream of frames) stream.enqueue({ data: new Int16Array(16000) });
-    await new Promise(resolve => setTimeout(resolve, 20));
-    expect(sends.map(send => send.mock.calls.length)).toEqual([2, 2]);
-    failures[0]!.mockRestore();
-    await (runtimes[0] as any).meter.flush();
-    now += 20;
-    for (const stream of frames) stream.enqueue({ data: new Int16Array(320) });
-    await until(() => sends[0]!.mock.calls.length === 3);
-    expect(sends[1]!.mock.calls.length).toBe(2);
-    // Only the recovered stream resumes; the other keeps its own failed batch.
-    failures[1]!.mockRestore();
-    await (runtimes[1] as any).meter.flush();
-    expect((await stores[0]!.read('human')).remainingMs).toBe(3598000);
-    expect((await stores[1]!.read('human')).remainingMs).toBe(3598000);
-
-    console.log(`VOICE-BOUND-2 service path: two RTC readers -> two independent runtimes/stores -> STT.send=${forwardedMs}ms total, 1000ms per stream; snapshot loss=2000ms; both stop, one recovers independently, and both stores observe the same 2000ms durable daily usage.`);
+    now+=1000;for(const stream of frames)stream.enqueue({data:new Int16Array(16000)});
+    await new Promise(resolve=>setImmediate(resolve));
+    expect(sends.map(send=>send.mock.calls.length)).toEqual([0,0]);
+    expect(runtimes.map(runtime=>(runtime as any).meter.diagnostics().heldBytes)).toEqual([16_000,16_000]);
+    const snapshot=PgliteDatabase.fromSnapshot(await db.snapshot());
+    try{expect((await new VoiceBudgetStore(snapshot).read('human')).remainingMs).toBe(3600000);}finally{await snapshot.close();}
+    failures[0]!.mockRestore();await (runtimes[0] as any).meter.recover();
+    expect(sends[0]).toHaveBeenCalledOnce();expect(sends[1]).not.toHaveBeenCalled();
+    failures[1]!.mockRestore();await (runtimes[1] as any).meter.recover();
+    expect(sends[1]).toHaveBeenCalledOnce();
+    expect((await stores[0]!.read('human')).remainingMs).toBe(3599000);
+    expect((await stores[1]!.read('human')).remainingMs).toBe(3599000);
   } finally {
     failures.forEach(spy => spy.mockRestore());
     for (const runtime of runtimes) await runtime.close();
@@ -2238,7 +2221,6 @@ it('CALL-ERROR-1: a database access outage retains the caller; confirmed denial 
   const leave = vi.fn(async () => {});
   const runtime = await VoiceRoomRuntime.connect({ ...service, leave } as unknown as VoiceService, 'call', 'room');
   try {
-    await vi.waitFor(() => expect((runtime as any).touching).toBe(false));
     service.access.mockClear();
     service.access.mockRejectedValueOnce(Object.assign(new Error('network interrupted'), { code: 'ECONNRESET' }));
     await (runtime as any).heartbeat();
@@ -2277,9 +2259,9 @@ it('CALL-ERROR-1: cleanup continues after a failing meter and disconnect', async
 it('CALL-ERROR-1: one failed lease attempt retains valid ownership, then expiry closes only the worker', async () => {
   const { service } = conversationService(1);
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
-  await vi.waitFor(() => expect((runtime as any).touching).toBe(false));
   vi.useFakeTimers();
   try {
+    (runtime as any).nextLeaseAt=0;
     service.db.query.mockRejectedValue(Object.assign(new Error('database outage'), { code: '08006' }));
     const failed = expect((runtime as any).renewLease()).rejects.toThrow('database outage');
     await vi.advanceTimersByTimeAsync(2000); await failed;
@@ -2348,10 +2330,10 @@ it('shortens only spoken reports, preserving sentence boundaries and the source 
 
 it.each(['stay', 'turn', 'leave'] as const)('reports wait for human quiet and recheck the caller: %s', async action => {
   const { service, speech } = conversationService(2);
-  let claimed = false;
+  let claimed = false, available = false;
   const report = { source_message_id: 'order', id: 'report', text: 'Done.\n\n' + 'Details. '.repeat(100), agent_id: 'ruby', human_id: 'human' };
   service.db.query.mockImplementation(async (sql: string) => {
-    if (sql.startsWith('SELECT DISTINCT ON')) return { rowCount: claimed ? 0 : 1, rows: claimed ? [] : [report] };
+    if (sql.startsWith('SELECT DISTINCT ON')) return { rowCount: available && !claimed ? 1 : 0, rows: available && !claimed ? [report] : [] };
     if (sql.startsWith('UPDATE voice_orders')) claimed = true;
     return { rowCount: 1, rows: [] };
   });
@@ -2359,9 +2341,13 @@ it.each(['stay', 'turn', 'leave'] as const)('reports wait for human quiet and re
   try {
     (runtime as any).targets.set('human', 'ruby');
     (runtime as any).humanSpeaking.add('human');
+    // This committed report arrives after the caller/target are established.
+    // Startup hydration must not race the test's actual quiet-wait scenario.
+    available = true;
     await runtime.refresh();
     await new Promise(resolve => setImmediate(resolve));
     expect(speech.synthesize).not.toHaveBeenCalled();
+    expect(claimed).toBe(false);
     if (action === 'turn') (runtime as any).targets.set('human', 'goose');
     if (action === 'leave') { state.room.remoteParticipants.delete('human'); runtime.participantLeft('human'); }
     (runtime as any).humanQuiet('human');
@@ -3335,7 +3321,6 @@ it('inactivity deadlines read only at warning, tone and end, then park until rea
 it('voice access failure stays parked until an independent resumed action', async () => {
   const { service } = conversationService(1);
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
-  await vi.waitFor(() => expect((runtime as any).touching).toBe(false));
   vi.useFakeTimers();
   service.access.mockClear();
   service.access.mockRejectedValue(Object.assign(new Error('Synthetic unavailable'), { code: 'ECONNRESET' }));
@@ -3351,4 +3336,211 @@ it('voice access failure stays parked until an independent resumed action', asyn
     await runtime.resume('human');
     expect(service.access).toHaveBeenCalledTimes(2);
   } finally { vi.useRealTimers(); await runtime.close(); }
+});
+
+it('F17: five-second owner evidence is serialized and contains no participant, budget or projection observation',async()=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','Date','performance']});const {service}=conversationService(1);
+  const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  try{
+    service.db.query.mockClear();service.access.mockClear();service.humanCount.mockClear();service.budget.read.mockClear();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(service.db.query).toHaveBeenCalledTimes(2);
+    expect(service.db.query.mock.calls.every(([sql])=>sql.includes("UPDATE voice_calls SET runtime_until=clock_timestamp()+interval '15 seconds'"))).toBe(true);
+    expect(service.access).not.toHaveBeenCalled();expect(service.humanCount).not.toHaveBeenCalled();expect(service.budget.read).not.toHaveBeenCalled();
+  }finally{await runtime.close();vi.useRealTimers();}
+});
+
+it('F17: failed control evidence owns no failure retry; actual recovery duringflight is latched once behind the quota',async()=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','Date','performance']});const {service}=conversationService(1);let recover!:()=>void;
+  const runtime=await VoiceRoomRuntime.connect({...service,onDatabaseRecovery:(callback:()=>void)=>{recover=callback;return()=>{};}} as unknown as VoiceService,'call','room');
+  const original=service.db.query.getMockImplementation()!;let reject!:(error:Error)=>void;
+  try{
+    service.db.query.mockImplementationOnce(()=>new Promise((_resolve,no)=>{reject=no;}));
+    (runtime as any).nextLeaseAt=0;
+    const attempt=(runtime as any).renewLease();const failed=expect(attempt).rejects.toThrow('controlled outage');
+    recover();reject(new Error('controlled outage'));await failed;
+    service.db.query.mockClear();service.db.query.mockImplementation(original);
+    await vi.advanceTimersByTimeAsync(4999);expect(service.db.query).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);expect(service.db.query).toHaveBeenCalledOnce();
+    expect(service.db.query.mock.calls[0]![0]).toContain('UPDATE voice_calls SET runtime_until');
+    expect(runtime.isClosed).toBe(false);
+  }finally{await runtime.close();vi.useRealTimers();}
+});
+
+it('F17: an absence deadline carries the exact participant session and cannot remove its replacement',async()=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','Date','performance']});const {service}=conversationService(1);let session='old';
+  service.db.query.mockImplementation(async(sql:string)=>({rowCount:1,rows:sql.includes('SELECT identity_id,session_id')
+    ?[{identity_id:'human',session_id:session}]:[] as any}));
+  const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  try{
+    const human={identity:'human'};state.room.remoteParticipants.delete('human');state.room.emit('left',human);
+    await vi.advanceTimersByTimeAsync(60_000);session='replacement';await runtime.reconcileParticipants();
+    await vi.advanceTimersByTimeAsync(60_000);expect(service.leave).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(service.leave).toHaveBeenCalledTimes(1);expect(service.leave).toHaveBeenCalledWith('call','human',true,'replacement',undefined,'owner');
+  }finally{await runtime.close();vi.useRealTimers();}
+});
+
+it('F17: a failed absence expiry parks that exact source version instead of creating another observation deadline',async()=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','Date','performance']});const {service}=conversationService(1);
+  service.db.query.mockImplementation(async(sql:string)=>({rowCount:1,rows:sql.includes('SELECT identity_id,session_id')
+    ?[{identity_id:'human',session_id:'same'}]:[] as any}));
+  service.leave.mockRejectedValue(new Error('controlled expiry outage'));
+  const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  try{
+    state.room.remoteParticipants.delete('human');state.room.emit('left',{identity:'human'});
+    await vi.advanceTimersByTimeAsync(120_000);expect(service.leave).toHaveBeenCalledOnce();
+    await runtime.reconcileParticipants();await vi.advanceTimersByTimeAsync(240_000);
+    expect(service.leave).toHaveBeenCalledOnce();
+  }finally{await runtime.close();vi.useRealTimers();}
+});
+
+it('F17: one thousand participant source wakes retain one actor and at most one covering followup',async()=>{
+  const {service}=conversationService(1);const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  let release!:(result:any)=>void;let reads=0;
+  const original=service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation((sql,params)=>{
+    if(sql.includes('SELECT identity_id,session_id')){reads++;if(reads===1)return new Promise(resolve=>{release=resolve;});}
+    return original(sql,params);
+  });
+  try{
+    const first=runtime.reconcileParticipants();
+    for(let i=0;i<1000;i++)expect(runtime.reconcileParticipants()).toBe(first);
+    expect(reads).toBe(1);release({rowCount:0,rows:[]});await first;expect(reads).toBe(2);
+    expect((runtime as any).participantsRefresh).toBeUndefined();
+  }finally{await runtime.close();}
+});
+
+it('F17: a failed participant actor parks its burst without rearming until another actual source wake',async()=>{
+  const {service}=conversationService(1);const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  let reject!:(error:Error)=>void;let reads=0;const original=service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation((sql,params)=>{
+    if(sql.includes('SELECT identity_id,session_id')){reads++;if(reads===1)return new Promise((_resolve,no)=>{reject=no;});}
+    return original(sql,params);
+  });
+  try{
+    const first=runtime.reconcileParticipants();const failed=expect(first).rejects.toThrow('participant outage');
+    for(let i=0;i<1000;i++)expect(runtime.reconcileParticipants()).toBe(first);
+    reject(new Error('participant outage'));await failed;
+    await new Promise(resolve=>setImmediate(resolve));expect(reads).toBe(1);
+    await runtime.reconcileParticipants();expect(reads).toBe(2);
+  }finally{await runtime.close();}
+});
+
+it.each(['closed','replaced','exhausted'])('F17: %s preauthorization input frees its raw PCM references without waiting for the old pump',async(reason)=>{
+  const {service}=conversationService(1);let authorize!:()=>void;
+  service.access.mockImplementationOnce(()=>new Promise<void>(resolve=>{authorize=resolve;}));
+  service.config.stt.mockResolvedValue({send:vi.fn(),close:vi.fn()});
+  const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  let frames!:ReadableStreamDefaultController<any>;
+  state.streams=[new ReadableStream({start(controller){frames=controller;}}),new ReadableStream()];
+  try{
+    state.room.emit('track',{kind:1},{},{identity:'human'});frames.enqueue({data:new Int16Array(320)});
+    await vi.waitFor(()=>expect((runtime as any).meter.diagnostics().heldBytes).toBe(640));
+    const raw=(runtime as any).inputs.get('human').buffered;expect(raw).toHaveLength(1);
+    if(reason==='closed'){
+      const close=runtime.close();expect(raw).toHaveLength(0);authorize();await close;
+    }else if(reason==='replaced'){
+      state.room.emit('track',{kind:1},{},{identity:'human'});expect(raw).toHaveLength(0);authorize();
+    }else{
+      service.budget.read.mockResolvedValue({remainingMs:0,resetAt:Date.now()+86400000,timeZone:'UTC'});
+      authorize();await vi.waitFor(()=>expect(raw).toHaveLength(0));
+    }
+    expect((runtime as any).meter.diagnostics().heldBytes).toBe(0);
+  }finally{authorize?.();await runtime.close();}
+});
+
+it.each([false,true])('F17: explicit Resume waits for its one admitted owner-evidence attempt before effects; failure=%s',async(fail)=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','Date','performance']});const {service}=conversationService(1);
+  const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  state.room.remoteParticipants.set('human',{identity:'human',trackPublications:new Map()});
+  clearInterval((runtime as any).leaseRenewal);(runtime as any).leaseRenewal=undefined;
+  (runtime as any).leaseParked=true;(runtime as any).nextLeaseAt=performance.now()+5000;
+  service.db.query.mockClear();service.access.mockClear();state.room.localParticipant.publishData.mockClear();
+  if(fail)service.db.query.mockRejectedValueOnce(new Error('Resume owner evidence unavailable'));
+  try{
+    const resume=runtime.resume('human');expect(runtime.resume('human')).toBe(resume);
+    const outcome=fail?expect(resume).rejects.toThrow('evidence unavailable'):resume;
+    await vi.advanceTimersByTimeAsync(4999);expect(service.access).not.toHaveBeenCalled();expect(service.db.query).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);await outcome;
+    const updates=()=>service.db.query.mock.calls.filter(([sql])=>sql.includes('UPDATE voice_calls SET runtime_until=clock_timestamp()')).length;
+    expect(updates()).toBe(1);
+    if(fail){await vi.advanceTimersByTimeAsync(5000);expect(updates()).toBe(1);expect(service.access).not.toHaveBeenCalled();}
+    else expect(service.access).toHaveBeenCalledOnce();
+  }finally{await runtime.close();vi.useRealTimers();}
+});
+
+it('F17: participant departure cancels a quota-waiting Resume intent before owner or action effects',async()=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','Date','performance']});const {service}=conversationService(1);
+  const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  state.room.remoteParticipants.set('human',{identity:'human',trackPublications:new Map()});
+  clearInterval((runtime as any).leaseRenewal);(runtime as any).leaseRenewal=undefined;
+  (runtime as any).leaseParked=true;(runtime as any).nextLeaseAt=performance.now()+5000;
+  service.db.query.mockClear();service.access.mockClear();
+  try{
+    const resume=runtime.resume('human');const canceled=expect(resume).rejects.toMatchObject({name:'AbortError'});
+    runtime.participantLeft('human');await canceled;await vi.advanceTimersByTimeAsync(5000);
+    expect(service.db.query).not.toHaveBeenCalled();expect(service.access).not.toHaveBeenCalled();
+  }finally{await runtime.close();vi.useRealTimers();}
+});
+
+it('F17: concurrent inactivity callers join the full end boundary instead of returning before cleanup',async()=>{
+  vi.useFakeTimers({toFake:['setTimeout','clearTimeout','setInterval','clearInterval','Date','performance']});
+  const {service}=conversationService(1);const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  let finish!:()=>void;let entered!:()=>void;
+  const started=new Promise<void>(resolve=>{entered=resolve;});
+  service.endInactive.mockImplementationOnce(async()=>{entered();await new Promise<void>(resolve=>{finish=resolve;});return true;});
+  try{
+    (runtime as any).lastActivity=performance.now()-60_000;
+    const first=(runtime as any).checkInactivity();await started;
+    const second=(runtime as any).checkInactivity();expect(second).toBe(first);
+    let completed=false;void second.then(()=>{completed=true;});
+    await Promise.resolve();expect(completed).toBe(false);expect(service.endInactive).toHaveBeenCalledOnce();
+    finish();await Promise.all([first,second]);expect(completed).toBe(true);
+  }finally{finish?.();await runtime.close();vi.useRealTimers();}
+});
+
+it('F17: authority sources select only the exact Workspace or inherited parent Room, with zero unrelated call observations',async()=>{
+  const live=new LiveHub(),denied=new Set<string>();
+  const scopes:Record<string,{workspace_id:string;authority_room_id:string}>={
+    'child-a':{workspace_id:'workspace-a',authority_room_id:'parent-a'},
+    'room-b':{workspace_id:'workspace-b',authority_room_id:'room-b'},
+  };
+  const query=vi.fn(async(sql:string,values?:unknown[])=>{
+    if(sql.startsWith('SELECT workspace_id,COALESCE'))return {rowCount:1,rows:[scopes[String(values?.[0])]]};
+    if(sql.includes('FROM voice_workspace_usage'))return {rowCount:1,rows:[{used:'0'}]};
+    if(sql.includes('count(*)::int count FROM voice_participants'))return {rowCount:1,rows:[{count:1}]};
+    if(sql.startsWith('SELECT r.id FROM rooms'))return {rowCount:denied.has(String(values?.[0]))?0:1,
+      rows:denied.has(String(values?.[0]))?[]:[{id:values?.[0]}]};
+    return {rowCount:1,rows:[]};
+  });
+  const database={query,transaction:async(work:any)=>work(database)};
+  const fixture=conversationService(1);const service=new RealVoiceService(database as any,live,{...fixture.service.config,speech:fixture.speech});
+  const leave=vi.spyOn(service,'leave').mockResolvedValue(undefined);
+  let first:VoiceRoomRuntime|undefined,second:VoiceRoomRuntime|undefined;
+  try{
+    first=await service.ensureRuntime({id:'call-a',room_id:'child-a',message_id:'card-a',started_at:new Date(),ended_at:null}) as VoiceRoomRuntime;
+    const roomA=state.room;roomA.remoteParticipants.set('human',{identity:'human',trackPublications:new Map()});
+    second=await service.ensureRuntime({id:'call-b',room_id:'room-b',message_id:'card-b',started_at:new Date(),ended_at:null}) as VoiceRoomRuntime;
+    state.room.remoteParticipants.set('human',{identity:'human',trackPublications:new Map()});
+    query.mockClear();
+    live.publish({type:'invalidate',roomId:'',reason:'postgres:memberships',workspaceId:'workspace-unrelated',readerId:'human'});
+    await new Promise(resolve=>setImmediate(resolve));expect(query).not.toHaveBeenCalled();expect(leave).not.toHaveBeenCalled();
+    denied.add('child-a');
+    live.publish({type:'invalidate',roomId:'',reason:'postgres:memberships',workspaceId:'workspace-a',readerId:'human'});
+    await new Promise(resolve=>setImmediate(resolve));
+    expect(query).toHaveBeenCalledTimes(1);expect(query.mock.calls[0]![1]).toEqual(['child-a','human',SYSTEM_IDENTITY_ID]);
+    expect(leave).toHaveBeenCalledTimes(1);expect(leave.mock.calls[0]![0]).toBe('call-a');expect(second.isClosed).toBe(false);
+    query.mockClear();leave.mockClear();
+    live.publish({type:'invalidate',roomId:'parent-a',reason:'postgres:memberships',workspaceId:'workspace-a',targetAgentId:'human'});
+    await new Promise(resolve=>setImmediate(resolve));expect(query).toHaveBeenCalledTimes(1);expect(leave.mock.calls[0]![0]).toBe('call-a');
+    query.mockClear();leave.mockClear();
+    // Explicit legacy incomplete source parks only input, with no blanket DB
+    // read or permanent call close. Real Resume reauthorizes its own scope.
+    live.publish({type:'invalidate',roomId:'',reason:'postgres:memberships',readerId:'human'});
+    await new Promise(resolve=>setImmediate(resolve));expect(query).not.toHaveBeenCalled();expect(leave).not.toHaveBeenCalled();
+    expect(first.isClosed).toBe(false);expect(second.isClosed).toBe(false);
+    await second.resume('human');expect((second as any).authorityPaused.has('human')).toBe(false);
+    expect((first as any).authorityPaused.has('human')).toBe(true);
+  }finally{leave.mockRestore();await service.close();}
 });

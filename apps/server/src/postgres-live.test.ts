@@ -14,6 +14,7 @@ import {
   notifyAgentConfigChange,
   notifyConnectorAssignment,
   POSTGRES_LIVE_CHANNEL,
+  POSTGRES_LIVE_SCHEMA,
   PostgresLiveListener,
   type LivePgClient,
 } from './postgres-live.js';
@@ -751,6 +752,28 @@ describe('Postgres live fanout', () => {
           event.roomId === freshRoom,
       ),
     );
+  });
+
+  it('carries exact Workspace and identity on committed membership insert, revoke and deletion', async () => {
+    // Install this trigger revision explicitly; the root owns production markers.
+    await database.query(POSTGRES_LIVE_SCHEMA);
+    const live = new LiveHub(), client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener); const received: LiveEvent[] = [];
+    live.subscribeAll(event => received.push(event)); void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    const changes = () => received.filter(event => event.type === 'invalidate' && event.reason === 'postgres:memberships' &&
+      event.roomId === '' && event.workspaceId === WORKSPACE && event.readerId === AUTHOR && event.targetAgentId === AUTHOR);
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, AUTHOR]);
+    await eventually(() => changes().length === 1);
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`, [WORKSPACE, AUTHOR]);
+    await eventually(() => changes().length === 2);
+    await database.query(`DELETE FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`, [WORKSPACE, AUTHOR]);
+    await eventually(() => changes().length === 3);
+    expect(client.payloads.map(value => JSON.parse(value)).filter(value => value.table === 'memberships'))
+      .toEqual(expect.arrayContaining(['INSERT','UPDATE','DELETE'].map(operation => expect.objectContaining({
+        operation, workspaceId: WORKSPACE, identityId: AUTHOR, roomId: '',
+      }))));
   });
 
   it('pushes an expired Registry OAuth attempt when its server clock ends', async () => {

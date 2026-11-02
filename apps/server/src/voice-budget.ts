@@ -39,11 +39,11 @@ export class VoiceBudgetStore {
   }
 
   async record(call: string, owner: string, workspace: string, intervals: readonly AudioInterval[]): Promise<VoiceBudget | null> {
-    return this.db.transaction(async db => {
+    const budget = await this.db.transaction(async db => {
       await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`voice-budget:${workspace}`]);
       // A stale runtime may neither spend nor remove a successor's participant.
       const lease = await db.query(`SELECT 1 FROM voice_calls c JOIN rooms r ON r.id=c.room_id
-        WHERE c.id=$1 AND c.runtime_owner=$2 AND c.runtime_until>now()
+        WHERE c.id=$1 AND c.runtime_owner=$2 AND c.runtime_until>clock_timestamp() AND c.ended_at IS NULL
         AND r.workspace_id=$3 FOR SHARE OF c`, [call, owner, workspace]);
       if (!lease.rowCount) return null;
       const now = this.now();
@@ -65,20 +65,43 @@ export class VoiceBudgetStore {
       }
       return this.read(workspace, db);
     });
+    return budget;
+  }
+
+  /** Usage is durable before entering this second transaction. Retain the
+   * exact owner row through synchronous enqueue, so takeover cannot fit
+   * between a permission reply and a later PCM callback. */
+  fence(call: string, owner: string, enqueue: () => void): Promise<boolean> {
+    return this.db.transaction(async db => {
+      const current = await db.query(`SELECT 1 FROM voice_calls
+        WHERE id=$1 AND runtime_owner=$2 AND runtime_until>clock_timestamp() AND ended_at IS NULL FOR SHARE`, [call, owner]);
+      if (!current.rowCount) return false;
+      enqueue(); return true;
+    });
   }
 }
 
-/** PCM forwarding performs only local arithmetic. The ordered checkpoint lane
- * retains failed batches for idempotent retry and bounds uncommitted audio to
- * one second per call. The durable daily budget is shared per workspace. */
+/** Captured PCM stays bounded until its exact usage interval is durable.
+ * The multirange is the persistent watermark: duplicate/uncertain commits
+ * cannot charge twice. A failed obligation parks until actual recovery. */
 export class VoiceAudioMeter {
   private pending: AudioInterval[] = [];
   private inFlight: AudioInterval[] = [];
+  private pendingFrames: Array<{ run(): void; release(): void }> = [];
+  private inFlightFrames: Array<{ run(): void; release(): void }> = [];
   private lastEnd = 0;
   private budget: VoiceBudget;
   private flushing?: Promise<void>;
+  private closing?: Promise<void>;
   private closed = false;
+  private parked = false;
+  private fenced = false;
   private paused = false;
+  private heldBytes = 0;
+  private heldMilliseconds = 0;
+  private readonly reservations = new Set<() => void>();
+  private readonly reservationDetails = new WeakMap<() => void, { milliseconds: number; bytes: number; transferred: boolean }>();
+  private recovery = 0;
   private timer?: ReturnType<typeof setTimeout>;
   constructor(private readonly store: VoiceBudgetStore, private readonly call: string,
     private readonly owner: string, private readonly workspace: string, initial: VoiceBudget,
@@ -87,9 +110,9 @@ export class VoiceAudioMeter {
     this.budget = initial;
   }
 
-  /** Actual pending audio owns one accounting wake. An idle call owns none. */
   private armCheckpoint(): void {
-    if (this.closed || this.timer || !this.pending.length) return;
+    if (this.closed || this.parked || this.fenced || this.timer || this.flushing ||
+      (!this.pending.length && !this.pendingFrames.length)) return;
     this.timer = setTimeout(() => {
       this.timer = undefined;
       void this.flush().catch(() => {});
@@ -97,10 +120,57 @@ export class VoiceAudioMeter {
     this.timer.unref();
   }
 
-  /** Returns the permitted PCM duration; zero means drop this frame, never queue
-   * it behind storage. Audio with no frames (mute/reconnect) spends no time. */
+  /** Shared across authorization buffering, pending and in-flight delivery.
+   * 16kHz mono PCM16: at most32,000 retained bytes and one second per call,
+   * including simultaneous microphones. Return no reservation when parked. */
+  retain(milliseconds: number, bytes: number): (() => void) | undefined {
+    if (this.closed || this.parked || this.fenced || !Number.isFinite(milliseconds) || milliseconds <= 0 ||
+      !Number.isSafeInteger(bytes) || bytes <= 0 || this.heldBytes + bytes > 32_000 ||
+      this.heldMilliseconds + milliseconds > 1000) return undefined;
+    this.heldBytes += bytes; this.heldMilliseconds += milliseconds;
+    let held = true;
+    const release = () => { if (!held) return; held = false; this.reservations.delete(release); this.reservationDetails.delete(release);
+      this.heldBytes -= bytes; this.heldMilliseconds -= milliseconds; };
+    this.reservations.add(release); this.reservationDetails.set(release, { milliseconds, bytes, transferred: false }); return release;
+  }
+
+  /** The only runtime forwarding boundary. The owned copy is bounded before
+   * allocation and delivered only after commit plus a current-owner recheck. */
+  capture(data: Int16Array, capturedAt: number, deliver: (data: Int16Array) => void): void {
+    const milliseconds = data.length / 16;
+    const release = this.retain(milliseconds, data.byteLength);
+    if (!release) return;
+    const allowed = this.audio(milliseconds, capturedAt);
+    if (!allowed) { release(); return; }
+    this.reservationDetails.get(release)!.transferred = true;
+    this.queueOwned(data.slice(0, Math.min(data.length, Math.floor(allowed * 16))), deliver, release);
+  }
+
+  /** Move an already-owned authorization buffer under the SAME live quota.
+   * No second allocation or early quota release; shortened views keep their
+   * entire backing buffer charged until delivery/cancel. */
+  captureReserved(data: Int16Array, capturedAt: number, deliver: (data: Int16Array) => void, release: () => void): void {
+    const reservation = this.reservationDetails.get(release);
+    if (!reservation || reservation.transferred || reservation.bytes !== data.byteLength || data.byteOffset !== 0 ||
+      data.buffer.byteLength !== data.byteLength ||
+      reservation.milliseconds !== data.length / 16) return;
+    reservation.transferred = true;
+    const allowed = this.audio(reservation.milliseconds, capturedAt);
+    if (!allowed) { release(); return; }
+    this.queueOwned(data.subarray(0, Math.min(data.length, Math.floor(allowed * 16))), deliver, release);
+  }
+
+  private queueOwned(data: Int16Array, deliver: (data: Int16Array) => void, release: () => void): void {
+    let copy: Int16Array | undefined = data;
+    let live = true;
+    this.pendingFrames.push({ run: () => { if (live && copy && !this.closed && !this.fenced) deliver(copy); },
+      release: () => { live = false; copy = undefined; release(); } });
+    this.armCheckpoint();
+  }
+
   audio(milliseconds: number, capturedAt = this.now()): number {
-    if (this.closed) return 0;
+    if (this.closed || this.parked || this.fenced || !Number.isFinite(milliseconds) || milliseconds <= 0 ||
+      !Number.isSafeInteger(capturedAt) || capturedAt > this.now() + 1000) return 0;
     const now = this.now();
     const today = voiceBudgetDay(now).start;
     if (now >= this.budget.resetAt)
@@ -110,8 +180,6 @@ export class VoiceAudioMeter {
     const todayUncommitted = unsettled.reduce((sum, [a, b]) => sum + Math.max(0, b - Math.max(today, a)), 0);
     const end = capturedAt;
     const frameStart = end - Math.ceil(milliseconds);
-    // Bridge scheduling jitter while the microphone stays live. This also
-    // keeps a continuous call from accumulating thousands of tiny ranges.
     const start = this.lastEnd && frameStart - this.lastEnd < 100
       ? this.lastEnd : Math.max(this.lastEnd, frameStart);
     const elapsed = Math.max(0, end - start);
@@ -120,7 +188,6 @@ export class VoiceAudioMeter {
     if (elapsed > duration && uncommitted >= 1000 && !this.paused) {
       this.paused = true; this.log('Voice input paused at the one-second accounting checkpoint bound');
     }
-    // Simultaneous microphones may forward audio but never add time twice.
     if (!elapsed) return uncommitted < 1000 && this.budget.remainingMs > todayUncommitted ? milliseconds : 0;
     if (!duration) return 0;
     const acceptedEnd = start + duration;
@@ -132,42 +199,93 @@ export class VoiceAudioMeter {
     return duration === elapsed ? milliseconds : Math.min(duration, milliseconds);
   }
 
-  flush(): Promise<void> {
+  /** A real successful database operation owns one recovery attempt. If it
+   * races a failing commit, latch that source generation until the lane frees. */
+  recover(): Promise<void> {
+    if (this.closed || this.fenced) return Promise.resolve();
+    this.recovery++;
+    if (this.flushing) return this.flushing.catch(() => {});
+    if (!this.parked) return Promise.resolve();
+    this.parked = false;
+    return this.flush();
+  }
+
+  flush(): Promise<void> { return this.commit(false); }
+  private commit(terminal: boolean): Promise<void> {
     if (this.flushing) return this.flushing;
     clearTimeout(this.timer); this.timer = undefined;
-    if (!this.pending.length) return Promise.resolve();
+    if (this.fenced || (!terminal && (this.closed || this.parked)) ||
+      (!this.pending.length && !this.pendingFrames.length)) return Promise.resolve();
+    const admittedRecovery = this.recovery;
     this.inFlight = this.pending; this.pending = [];
+    this.inFlightFrames = this.pendingFrames; this.pendingFrames = [];
     this.flushing = (async () => {
       let budget: VoiceBudget | null;
+      let enqueued = false;
       try {
         budget = await this.store.record(this.call, this.owner, this.workspace, this.inFlight);
-      } catch (error) {
-        this.pending = [...this.inFlight, ...this.pending]; this.inFlight = [];
-        this.log('Voice accounting checkpoint failed; retrying');
+        if (budget && !terminal && this.inFlightFrames.length) {
+          const current = await this.store.fence(this.call, this.owner, () => {
+            enqueued = true;
+            for (const frame of this.inFlightFrames) {
+              try { if (!this.closed) frame.run(); }
+              catch { this.log('Voice PCM delivery failed after durable accounting admission'); }
+              finally { frame.release(); }
+            }
+          });
+          if (!current) budget = null;
+        }
+      }
+      catch (error) {
+        // A fence commit/ack can fail AFTER synchronous enqueue. Those exact
+        // callbacks must never be restored or replayed; usage already committed.
+        if (!enqueued) {
+          this.pending = [...this.inFlight, ...this.pending];
+          this.pendingFrames = [...this.inFlightFrames, ...this.pendingFrames];
+        }
+        this.inFlight = []; this.inFlightFrames = [];
+        this.parked = true;
+        this.log('Voice accounting checkpoint failed; awaiting database recovery');
         throw error;
       }
       this.inFlight = [];
-      if (budget) this.budget = budget;
+      const frames = this.inFlightFrames; this.inFlightFrames = [];
+      if (!budget) {
+        this.fenced = true;
+        for (const frame of this.pendingFrames) frame.release();
+        this.pendingFrames = [];
+      } else this.budget = budget;
+      for (const frame of frames) frame.release();
       if (this.paused) { this.paused = false; this.log('Voice input resumed after accounting checkpoint'); }
-      // Receipt handlers must not be awaited: ending the call also closes meters.
+      // Never await receipt: it may end the call and close this very meter.
       this.receipt(budget);
     })().finally(() => {
       this.flushing = undefined;
-      // This retains an existing nonempty accounting obligation, including
-      // failed interval commits. It never observes an empty call's budget.
-      this.armCheckpoint();
+      if (this.parked && !this.closed && !this.fenced && this.recovery > admittedRecovery) {
+        this.parked = false; void this.flush().catch(() => {});
+      } else this.armCheckpoint();
     });
     return this.flushing;
   }
 
-  async close() {
+  diagnostics() {
+    return { pendingMilliseconds: [...this.pending, ...this.inFlight].reduce((sum, [a, b]) => sum + b - a, 0),
+      heldMilliseconds: this.heldMilliseconds, heldBytes: this.heldBytes,
+      parked: this.parked, fenced: this.fenced, closed: this.closed };
+  }
+
+  close(): Promise<void> {
+    if (this.closing) return this.closing;
+    // Revoke delivery synchronously, before any database await can complete.
     this.closed = true; clearTimeout(this.timer); this.timer = undefined;
-    if (this.flushing) await this.flushing.catch(() => {});
-    // A normal leave must retain the last batch just like an active meter.
-    // A successor lease makes record return null and ends this retry lane.
-    while (this.pending.length) {
-      try { await this.flush(); }
-      catch { await new Promise(resolve => setTimeout(resolve, 250)); }
-    }
+    for (const frame of [...this.pendingFrames, ...this.inFlightFrames]) frame.release();
+    for (const release of this.reservations) release();
+    this.closing = (async () => {
+      if (this.flushing) await this.flushing.catch(() => {});
+      // One end-boundary attempt; a failure retains the exact interval evidence
+      // and rejects. Those frames were never forwarded to a provider.
+      await this.commit(true);
+    })();
+    return this.closing;
   }
 }

@@ -45,12 +45,21 @@ export class VoiceService {
         const human = event.personId;
         for (const runtime of this.runtimes.values()) void runtime.then(r => r?.refreshSpeakingSpeed(human)).catch(() => {});
       }
+      if (event.type === 'invalidate' && ['postgres:memberships','postgres:rooms','postgres:workspaces'].includes(event.reason)) {
+        for (const runtime of this.runtimes.values()) void runtime.then(r => r?.revalidateAuthorityChange(event)).catch(() => {});
+      }
       if (event.type === 'invalidate') {
         for (const runtime of this.runtimes.values()) void runtime.then(r => {
-          if (r?.roomId === event.roomId) return Promise.all([r.countHumans(), r.refresh()]);
+          if (r?.roomId === event.roomId) return Promise.all([r.countHumans(), r.refresh(),
+            ...(event.reason === 'voice-participants' || event.reason === 'postgres:messages' && !!r.callCardId && event.messageId === r.callCardId
+              ? [r.reconcileParticipants()] : [])]);
         }).catch(() => {});
       }
     });
+  }
+
+  onDatabaseRecovery(listener: () => void): () => void {
+    return CornerAccessDatabase.physical(this.db).onRecovery?.(listener) ?? (() => {});
   }
 
   async access(roomId: string, humanId: string, db = this.db) {
@@ -68,6 +77,13 @@ export class VoiceService {
     const row = (await db.query<{ workspace_id: string }>('SELECT workspace_id FROM rooms WHERE id=$1', [roomId])).rows[0];
     if (!row) throw new Error('voice room missing');
     return row.workspace_id;
+  }
+
+  async runtimeScope(roomId: string): Promise<{ workspaceId: string; authorityRoomId: string }> {
+    const row = (await this.db.query<{ workspace_id: string; authority_room_id: string }>(
+      'SELECT workspace_id,COALESCE(parent_id,id) authority_room_id FROM rooms WHERE id=$1', [roomId])).rows[0];
+    if (!row) throw new Error('voice room missing');
+    return { workspaceId: row.workspace_id, authorityRoomId: row.authority_room_id };
   }
 
   async endWorkspaceCalls(workspaceId: string) {
@@ -298,11 +314,13 @@ export class VoiceService {
     if (row.ended_at) await db.query(`UPDATE messages SET presentation=$2,created_at=$3 WHERE id=$1`, [row.message_id, 'system', row.ended_at]);
   }
 
-  async leave(callId: string, humanId: string, disconnected = false, sessionId?: string, inactivity?: { owner: string; stillInactive(): boolean; ended: boolean }): Promise<void> {
+  async leave(callId: string, humanId: string, disconnected = false, sessionId?: string, inactivity?: { owner: string; stillInactive(): boolean; ended: boolean }, runtimeOwner?: string): Promise<void> {
     const resumed = new Error('Voice activity resumed');
     const row = await this.db.transaction(async db => {
       const call = (await db.query<CallRow>(`SELECT * FROM voice_calls WHERE id=$1 FOR UPDATE`, [callId])).rows[0];
       if (!call || call.ended_at) return null;
+      if (runtimeOwner && !(await db.query(`SELECT 1 FROM voice_calls WHERE id=$1
+        AND runtime_owner=$2 AND runtime_until>clock_timestamp()`, [callId, runtimeOwner])).rowCount) return null;
       if (inactivity) {
         const owned = await db.query(`SELECT 1 FROM voice_calls WHERE id=$1 AND runtime_owner=$2 AND runtime_until>now()`, [callId, inactivity.owner]);
         if (!owned.rowCount || await this.hasCallWork(callId, db) || !inactivity.stillInactive()) return null;
@@ -348,11 +366,11 @@ export class VoiceService {
     // this runtime attempt, so a stale close cannot release a successor's lease.
     const leaseOwner = `${this.owner}:${randomUUID()}`;
     const pending = (async () => {
-      const claimed = await this.db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=now()+interval '20 seconds'
-        WHERE id=$1 AND ended_at IS NULL AND (runtime_until IS NULL OR runtime_until<now())
+      const claimed = await this.db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=clock_timestamp()+interval '15 seconds'
+        WHERE id=$1 AND ended_at IS NULL AND (runtime_until IS NULL OR runtime_until<clock_timestamp())
         AND EXISTS(SELECT 1 FROM voice_participants p WHERE p.call_id=voice_calls.id AND p.left_at IS NULL)`, [row.id, leaseOwner]);
       if (!claimed.rowCount) return undefined;
-      return VoiceRoomRuntime.connect(this, row.id, row.room_id, leaseOwner);
+      return VoiceRoomRuntime.connect(this, row.id, row.room_id, leaseOwner, row.message_id);
     })().catch(async error => {
       await this.db.query(`UPDATE voice_calls SET runtime_until=NULL WHERE id=$1 AND runtime_owner=$2`, [row.id, leaseOwner]);
       throw error;

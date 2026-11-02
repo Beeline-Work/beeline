@@ -276,6 +276,7 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id::text, OLD.room_id::text, ''),
         'identityId', COALESCE(NEW.identity_id, OLD.identity_id),
+        'workspaceId', COALESCE(NEW.workspace_id, OLD.workspace_id),
         'removed', CASE
           WHEN TG_OP = 'DELETE' THEN true
           ELSE COALESCE(NEW.removed_at IS NOT NULL, false)
@@ -1133,6 +1134,7 @@ export class PostgresLiveListener {
       ...(payload.table === 'memberships' && !payload.roomId && payload.identityId
         ? { readerId: payload.identityId }
         : {}),
+      ...(payload.table === 'memberships' && payload.workspaceId ? { workspaceId: payload.workspaceId } : {}),
       ...(payload.messageId ? { messageId: payload.messageId } : {}),
       ...(payload.requestId ? { requestId: payload.requestId } : {}),
       ...(payload.turnStatus === 'working' || payload.turnStatus === 'complete' ||

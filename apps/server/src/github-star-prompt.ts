@@ -67,6 +67,16 @@ export function starPromptReplySql(command: string, milestones: string): string 
        updated_at=now()`;
 }
 
+/**
+ * The highest milestone a prompt's reply count has reached (0 before the
+ * first). Replies only ever increase by one, so this equals the value the
+ * reply upsert stores in `reached_milestone`, which readers no longer use.
+ */
+function reachedMilestoneSql(prompt: string, milestones: string): string {
+  return `SELECT COALESCE(max(milestone),0) milestone FROM unnest(${milestones}) milestone
+    WHERE milestone<=${prompt}.replies`;
+}
+
 /** {@link starPromptReplySql} for a reply that is already committed. */
 export async function recordStarPromptReply(
   database: SqlDatabase,
@@ -104,7 +114,7 @@ export async function readStarPrompt(
          SELECT room_id FROM memberships
          WHERE identity_id=$1 AND room_id IS NOT NULL AND removed_at IS NULL
        )
-       SELECT prompt.reached_milestone,prompt.answered_milestone,prompt.checked_milestone,
+       SELECT reached.milestone reached_milestone,prompt.answered_milestone,prompt.checked_milestone,
          EXISTS(
            SELECT 1 FROM rooms JOIN messages message ON message.room_id=rooms.room_id
            WHERE message.author_id=$1
@@ -133,9 +143,10 @@ export async function readStarPrompt(
              AND correction.created_at>now()-make_interval(mins=>$3)
          ) held
        FROM github_star_prompts prompt
+       CROSS JOIN LATERAL (${reachedMilestoneSql('prompt', '$4::int[]')}) reached
        WHERE prompt.identity_id=$1 AND prompt.closed IS NULL
-         AND prompt.reached_milestone>prompt.answered_milestone`,
-      [viewerId, MID_CONVERSATION_SECONDS, CORRECTION_WINDOW_MINUTES],
+         AND reached.milestone>prompt.answered_milestone`,
+      [viewerId, MID_CONVERSATION_SECONDS, CORRECTION_WINDOW_MINUTES, STAR_PROMPT_MILESTONES],
     )
   ).rows[0];
   if (!row || row.held) return { prompt: null };
@@ -149,12 +160,13 @@ export async function readStarPrompt(
         .then(async (starred) => {
           if (starred === 'unknown') return;
           await database.query(
-            `UPDATE github_star_prompts
+            `UPDATE github_star_prompts prompt
              SET checked_milestone=GREATEST(checked_milestone,$2),
                  closed=CASE WHEN $3::boolean THEN 'starred' ELSE closed END,
                  updated_at=now()
-             WHERE identity_id=$1 AND reached_milestone=$2 AND closed IS NULL`,
-            [viewerId, row.reached_milestone, starred],
+             WHERE identity_id=$1 AND closed IS NULL
+               AND (${reachedMilestoneSql('prompt', '$4::int[]')})=$2`,
+            [viewerId, row.reached_milestone, starred, STAR_PROMPT_MILESTONES],
           );
         })
         .catch(() => undefined)

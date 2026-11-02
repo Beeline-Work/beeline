@@ -9502,30 +9502,6 @@ describe('monolith integration', () => {
     expect(await state()).toBe('idle');
   });
 
-  it('Reproduction F1-3: a committed human message immediately retries a backed-off claim', async () => {
-    await database.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status) VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN]);
-    await database.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch) VALUES(101,77,'owner/widgets','main')`);
-    await database.query(`UPDATE rooms SET repository_remote='https://github.com/owner/widgets.git',github_installation_id=77 WHERE id=$1`, [ROOM]);
-    const opened = await daemonOperation('createCorner', { roomId: ROOM, requestId: 'f1-human-retry', repository: 'owner/widgets', name: 'Recover-merge', objective: 'Recover merge outcome' });
-    expect(opened.status).toBe(200);
-    const { cornerId } = await opened.json() as { cornerId: string };
-    const head = 'a'.repeat(40);
-    await database.query(`UPDATE corner_facts SET workflow_state='review',feature_branch='feature/f1-recovery',merge_attempt_head=$2,lifecycle=jsonb_build_object(
-      'checks','passing','pr',jsonb_build_object('number',7,'headSha',$2::text),
-      'mergeRecovery',jsonb_build_object('attempts',1,'lastAttemptAt',extract(epoch FROM clock_timestamp()),
-        'nextAttemptAt',extract(epoch FROM clock_timestamp())+3600)) WHERE corner_id=$1`, [cornerId, head]);
-    const read = vi.fn().mockRejectedValue(new Error('permissions still denied'));
-    Object.assign(githubApp, { readPullRequest: read });
-    processWebhook.mockImplementation(async (...args: unknown[]) => {
-      await githubOperations.processWebhook(args[0] as string, args[1]);
-    });
-    const sent = await request('/v1/phone/operations/sendRoomMessage', 'POST', { roomId: cornerId, messageId: 'f'.repeat(64), text: 'Permissions repaired; please retry' }, accessToken);
-    expect(sent.status).toBe(200);
-    await vi.waitFor(() => expect(read).toHaveBeenCalledTimes(1));
-    await vi.waitFor(async () => expect((await database.query(`SELECT lifecycle->'mergeRecovery'->>'attempts' attempts FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.attempts).toBe('2'));
-    console.info('Reproduction F1-3: wrong=wait for leader/backoff; right=GitHub read immediately after human POST; observed=1 read');
-  });
-
   it('Reproduction F1-8: explicit current-turn artifact resolves and missing ids return 400', async () => {
     const mediaId = '77777777-7777-4777-8777-777777777777';
     const requestId = 'f1-pending-artifact';

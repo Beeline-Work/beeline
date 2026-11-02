@@ -9,7 +9,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { routeSystemCommand } from './agent-command.js';
-import { advanceCorner, claimCornerMergeAttempt, cornerMergeGate, reassignFailedCornerReviewer } from './corner-lifecycle.js';
+import { advanceCorner, confirmCornerMergeAuthority, cornerMergeGate, reassignFailedCornerReviewer } from './corner-lifecycle.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 
 const H = 'a'.repeat(64);
@@ -376,14 +376,13 @@ describe('approve_merge with a reviewer list', () => {
       approved: true,
       open: true,
     });
-    // The claim also requires a brief; this one predates repositoryWork, so it may merge.
+    // Merging also requires a brief; this one predates repositoryWork, so it may merge.
     await db.query(
       `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
        VALUES($1,1,'Do work',$2,$3)`,
       [C, OWNER_AGENT, R],
     );
-    expect(await claimCornerMergeAttempt(db, C, '1'.repeat(40))).toBe(true);
-    expect(await claimCornerMergeAttempt(db, C, '1'.repeat(40))).toBe(false);
+    expect(await confirmCornerMergeAuthority(db, C, '1'.repeat(40))).toBe(true);
   });
 
   it('accepts an approval from a fallback reviewer', async () => {

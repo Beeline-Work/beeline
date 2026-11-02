@@ -158,7 +158,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     expect(race.attempts()).toBeLessThanOrEqual(3);
     for (const seen of race.statements.slice(0,2)) {
       const lock = seen.findIndex(sql => sql.includes('pg_advisory_xact_lock'));
-      const fact = seen.findIndex(sql => sql.includes('SELECT lifecycle,updated_at::text,merge_attempt_head'));
+      const fact = seen.findIndex(sql => sql.includes('SELECT lifecycle,updated_at::text FROM corner_facts'));
       expect(lock).toBeGreaterThanOrEqual(0);
       expect(fact).toBeGreaterThan(lock);
     }

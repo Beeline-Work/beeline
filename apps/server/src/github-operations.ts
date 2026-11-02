@@ -31,12 +31,10 @@ import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import {
   advanceCorner,
   blockingReview,
-  claimCornerMergeAttempt,
+  confirmCornerMergeAuthority,
   lockCornerLifecycle,
   cornerMergeGate,
   cornerMergeability,
-  unfinishedCornerMergeClaims,
-  clearUnfinishedCornerMergeClaim,
 } from './corner-lifecycle.js';
 import {
   queueCornerMergeConflict,
@@ -1445,7 +1443,7 @@ export class GitHubOperations {
       )
     ).rows[0];
     if (!target) return notAttempted('the merge target no longer matches the corner head or linked GitHub repository');
-    if (!(await claimCornerMergeAttempt(this.database, cornerId, status.headSha, onBlocked)))
+    if (!(await confirmCornerMergeAuthority(this.database, cornerId, status.headSha, onBlocked)))
       return { status: 'not-attempted' };
     try {
       const result = await this.app.mergePullRequest(
@@ -1459,7 +1457,7 @@ export class GitHubOperations {
         await this.database.query(
           `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
              jsonb_build_object('headSha',$2::text)),updated_at=now()
-           WHERE corner_id=$1 AND merge_attempt_head=$2`, [cornerId, status.headSha],
+           WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`, [cornerId, status.headSha],
         );
         await this.reconcileQueuedCorners(cornerId);
         this.onRoomChanged?.(cornerId);
@@ -1483,7 +1481,7 @@ export class GitHubOperations {
           confirmedUnqueued = !queue.entry;
           if (queue.entry && queue.headSha === status.headSha) {
             await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
-              jsonb_build_object('headSha',$2::text)),updated_at=now() WHERE corner_id=$1 AND merge_attempt_head=$2`,
+              jsonb_build_object('headSha',$2::text)),updated_at=now() WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`,
               [cornerId, status.headSha]);
             await this.reconcileQueuedCorners(cornerId);
             this.onRoomChanged?.(cornerId);
@@ -1499,8 +1497,8 @@ export class GitHubOperations {
       }
       const reason = error instanceof Error ? error.message : String(error);
       if (queueAttempted && !confirmedUnqueued) {
-        // Leave the review-stage claim recoverable when enqueue acceptance
-        // cannot yet be read, rather than inscribing a terminal refusal.
+        // Enqueue acceptance cannot be read yet: inscribe no refusal. The
+        // merge_group webhook, or the next hold or yes, reads the queue live.
         return { status: 'refused', reason };
       }
       await advanceCorner(this.database, cornerId, {
@@ -1514,7 +1512,7 @@ export class GitHubOperations {
       return { status: 'refused', reason };
     }
     // Do not depend on delivery of the closed webhook after a successful
-    // merge. A failed confirmation leaves the claim for background recovery.
+    // merge. A failed confirmation is settled by the merge webhook or merged-PR reconciliation.
     try {
       const token = await this.app.installationToken(Number(target.installation_id), {
         repositoryIds: [Number(target.repository_id)],
@@ -1593,8 +1591,8 @@ export class GitHubOperations {
     await database.transaction(async db => {
       await lockCornerLifecycle(db, cornerId);
       const removed = await db.query<{ archived: boolean }>(
-        `UPDATE corner_facts fact SET merge_attempt_head=NULL,
-           lifecycle=(lifecycle-'pr'-'mergeQueue'-'mergeRecovery'-'checksSummary')||
+        `UPDATE corner_facts fact SET
+           lifecycle=(lifecycle-'pr'-'mergeQueue'-'checksSummary')||
              CASE WHEN corner.archived_at IS NULL THEN '{"lifecycle":"working","checks":"unknown"}'::jsonb
                ELSE '{}'::jsonb END,
            updated_at=now()
@@ -1653,10 +1651,8 @@ export class GitHubOperations {
       if (!payload || typeof payload !== 'object' || Array.isArray(payload)) return;
       const body = payload as Record<string, unknown>;
       // The authenticated phone route uses this internal signal after a human message commits.
-      if (event === 'beeline:human-message' && typeof body.cornerId === 'string') {
-        await this.recoverUnfinishedMergeClaims(body.cornerId);
-        return;
-      }
+      // Retired: merge recovery no longer waits on a person's message.
+      if (event === 'beeline:human-message') return;
       if (event === 'merge_group') {
         await this.reconcileQueuedCorners();
         return;
@@ -1977,22 +1973,30 @@ export class GitHubOperations {
   }
 
   /** Reconcile committed queue facts against GitHub; never enqueue from a wake. */
+  /**
+   * Settles merge-queue entries against the live gate. For one corner (a hold,
+   * a withdrawn yes, a merge attempt) it reads GitHub's queue live even when no
+   * entry is cached, so an enqueue whose response was lost is still dequeued
+   * once the gate closes.
+   */
   async reconcileQueuedCorners(cornerId?: string): Promise<void> {
     const rows = (await this.database.query<CornerWebhookTarget & {
-      repository: string; number: number; head_sha: string; combined_sha: string | null;
+      repository: string; number: number; head_sha: string; combined_sha: string | null; cached: boolean;
     }>(`SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
       COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary,
       repository.repository_id,repository.installation_id,repository.full_name repository,
       (fact.lifecycle->'pr'->>'number')::int number,
-      fact.lifecycle->'mergeQueue'->>'headSha' head_sha,
-      fact.lifecycle->'mergeQueue'->>'combinedSha' combined_sha
+      COALESCE(fact.lifecycle->'mergeQueue'->>'headSha',fact.lifecycle->'pr'->>'headSha') head_sha,
+      fact.lifecycle->'mergeQueue'->>'combinedSha' combined_sha,
+      fact.lifecycle ? 'mergeQueue' cached
       FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
       JOIN rooms parent ON parent.id=corner.parent_id
       JOIN github_repositories repository ON repository.installation_id=parent.github_installation_id
         AND repository.active AND lower(repository.full_name)=lower(regexp_replace(regexp_replace(
           COALESCE(parent.repository_remote,parent.repository_key,''),
           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-      WHERE corner.archived_at IS NULL AND fact.lifecycle ? 'mergeQueue'
+      WHERE corner.archived_at IS NULL
+        AND (fact.lifecycle ? 'mergeQueue' OR ($1::uuid IS NOT NULL AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'))
         AND ($1::uuid IS NULL OR corner.id=$1)`, [cornerId ?? null])).rows;
     for (const row of rows) {
       try {
@@ -2005,10 +2009,13 @@ export class GitHubOperations {
           continue;
         }
         const queue = await this.app.readPullRequestQueue(token.token, row.repository, row.number);
+        // Nothing queued and nothing recorded: no merge is waiting in the queue.
+        if (!queue.entry && !row.cached) continue;
         const gate = await cornerMergeGate(this.database, row.corner_id, { number: row.number, headSha: row.head_sha });
         if (queue.entry && gate.open && queue.headSha === row.head_sha) {
-          await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeQueue,combinedSha}',to_jsonb($3::text))
-            WHERE corner_id=$1 AND lifecycle->'mergeQueue'->>'headSha'=$2`,
+          await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
+              jsonb_build_object('headSha',$2::text,'combinedSha',$3::text))
+            WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`,
             [row.corner_id, row.head_sha, queue.entry.headCommit?.oid ?? row.combined_sha ?? '']);
           continue;
         }
@@ -2020,7 +2027,8 @@ export class GitHubOperations {
         await this.database.transaction(async db => {
           await lockCornerLifecycle(db, row.corner_id);
           const changed = await db.query(`UPDATE corner_facts SET lifecycle=lifecycle-'mergeQueue',updated_at=now()
-            WHERE corner_id=$1 AND lifecycle->'mergeQueue'->>'headSha'=$2 RETURNING 1`, [row.corner_id, row.head_sha]);
+            WHERE corner_id=$1 AND COALESCE(lifecycle->'mergeQueue'->>'headSha',lifecycle->'pr'->>'headSha')=$2
+            RETURNING 1`, [row.corner_id, row.head_sha]);
           if (!changed.rowCount) return;
           await advanceCorner(db, row.corner_id, { kind: 'merge-refused', headSha: row.head_sha, confirmedUnmerged: true, reason });
         });
@@ -2031,72 +2039,9 @@ export class GitHubOperations {
     }
   }
 
-  /** The leader recovers unfinished claims; it never sends a merge itself. */
-  async recoverUnfinishedMergeClaims(cornerId?: string): Promise<void> {
-    await this.reconcileQueuedCorners(cornerId);
-    for (const claim of await unfinishedCornerMergeClaims(this.database, cornerId)) {
-      try {
-        const target = (await this.database.query<CornerWebhookTarget & { repository: string; branch: string }>(
-          `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
-             COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary,
-             github.repository_id,github.installation_id,github.full_name repository,fact.feature_branch branch
-           FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
-           JOIN corner_facts fact ON fact.corner_id=corner.id
-           JOIN github_repositories github ON github.installation_id=parent.github_installation_id
-             AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
-               COALESCE(parent.repository_remote,parent.repository_key,''),
-               '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-           WHERE corner.id=$1 AND fact.feature_branch IS NOT NULL`, [claim.corner_id],
-        )).rows[0];
-        if (!target) throw new Error(`Repository target unavailable for PR #${claim.number}`);
-        const token = await this.app.installationToken(Number(target.installation_id), {
-          repositoryIds: [Number(target.repository_id)],
-        });
-        const pr = await this.app.readPullRequest(token.token, target.repository, claim.number);
-        if (pr.merged) {
-          if (pr.headRef !== target.branch || pr.headSha !== claim.head_sha)
-            throw new Error(`Merged PR #${claim.number} does not match the claimed branch and head`);
-          await this.recordConfirmedCornerMerge(target, target.repository, claim.number, pr, claim.head_sha);
-        } else {
-          // An enqueue may have succeeded just before the process lost its
-          // response. Keep that claim and recover the provider's queued fact.
-          const queue = await this.app.readPullRequestQueue(token.token, target.repository, claim.number);
-          if (queue.entry && queue.headSha === claim.head_sha) {
-            await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
-              jsonb_build_object('headSha',$2::text)),updated_at=now() WHERE corner_id=$1 AND merge_attempt_head=$2`,
-              [claim.corner_id, claim.head_sha]);
-            await this.reconcileQueuedCorners(claim.corner_id);
-            continue;
-          }
-          // Only a fresh explicit gated request can attempt another merge.
-          await clearUnfinishedCornerMergeClaim(this.database, claim.corner_id, claim.head_sha, claim.number);
-        }
-      } catch (error) {
-        const lastError = (error instanceof Error ? error.message : String(error)).slice(0, 500);
-        await this.database.transaction(async db => {
-          await lockCornerLifecycle(db, claim.corner_id);
-          const row = (await db.query<{ attempts: number }>(
-            `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeRecovery}',jsonb_build_object(
-               'attempts',COALESCE((lifecycle->'mergeRecovery'->>'attempts')::int,0)+1,
-               'lastAttemptAt',extract(epoch FROM clock_timestamp()),'lastError',$4::text,
-               'nextAttemptAt',extract(epoch FROM clock_timestamp())+LEAST(3600,
-                 300*power(2,LEAST(4,COALESCE((lifecycle->'mergeRecovery'->>'attempts')::int,0))))))
-             WHERE corner_id=$1 AND merge_attempt_head=$2 AND (lifecycle->'pr'->>'number')::int=$3
-             RETURNING (lifecycle->'mergeRecovery'->>'attempts')::int attempts`,
-            [claim.corner_id, claim.head_sha, claim.number, lastError],
-          )).rows[0];
-          if (row?.attempts === 5)
-            await advanceCorner(db, claim.corner_id, { kind: 'merge-unconfirmed', number: claim.number, error: lastError });
-        });
-        this.onRoomChanged?.(claim.corner_id);
-        console.error(`[server] unfinished merge recovery failed for ${claim.corner_id}:`, lastError);
-      }
-    }
-  }
-
   private async recordConfirmedCornerMerge(
     target: CornerWebhookTarget, repository: string, number: number,
-    pr: Awaited<ReturnType<GitHubAppClient['readPullRequest']>>, unfinishedClaimHead?: string,
+    pr: Awaited<ReturnType<GitHubAppClient['readPullRequest']>>,
   ) {
     if (!pr.headRef) return;
     await this.mergeCorner(target, {
@@ -2106,7 +2051,7 @@ export class GitHubOperations {
       ...(pr.mergeCommitSha ? { mergeCommitSha: pr.mergeCommitSha } : {}),
       ...(pr.mergedBy ? { mergedBy: pr.mergedBy } : {}),
       commits: 0, files: 0,
-    }, this.database, number, unfinishedClaimHead);
+    }, this.database, number);
   }
 
   /** Recover merged or unmerged closed PRs when GitHub's close webhook was missed. */
@@ -2820,8 +2765,8 @@ export class GitHubOperations {
           const currentRow = (
             await database.query<{ lifecycle: CornerLifecycleView & {
               checksSummary?: { fetchStartedAt?: number };
-            }; updated_at: string; merge_attempt_head: string | null }>(
-              `SELECT lifecycle,updated_at::text,merge_attempt_head FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+            }; updated_at: string }>(
+              `SELECT lifecycle,updated_at::text FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
               [target.corner_id],
             )
           ).rows[0];
@@ -2984,13 +2929,6 @@ export class GitHubOperations {
           );
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
-          // A live checks read may repair the header while an earlier merge
-          // awaits confirmation. Its writes must not restart that claim's
-          // recovery grace period, which is anchored to updated_at.
-          if (options?.snapshot && currentRow.merge_attempt_head)
-            await database.query(`UPDATE corner_facts SET updated_at=$2::timestamptz
-              WHERE corner_id=$1 AND merge_attempt_head=$3`,
-            [target.corner_id, currentRow.updated_at, currentRow.merge_attempt_head]);
         });
         // A supplied transaction belongs to its caller: only the owner can
         // roll back and replay the complete unit after lock contention.
@@ -3106,24 +3044,18 @@ export class GitHubOperations {
     },
     database: SqlDatabase = this.database,
     expectedPrNumber?: number,
-    unfinishedClaimHead?: string,
   ) {
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
     let updated = false;
     await retryOnDeadlock(() => database.transaction(async (database) => {
       updated = false;
       await lockCornerLifecycle(database, target.corner_id);
-      if (unfinishedClaimHead) {
-        const claim = (await unfinishedCornerMergeClaims(database, target.corner_id))[0];
-        if (claim?.head_sha !== unfinishedClaimHead || claim.number !== expectedPrNumber) return;
-      }
       const current = (
         await database.query<{ lifecycle: CornerLifecycleView; feature_branch: string | null; locked: boolean }>(
           `SELECT lifecycle,feature_branch,locked FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
           [target.corner_id],
         )
       ).rows[0];
-      if (unfinishedClaimHead && current?.feature_branch !== pullRequest.branch) return;
       const currentLifecycle = current?.lifecycle;
       if (expectedPrNumber && currentLifecycle?.pr?.number !== expectedPrNumber) return;
       // The branch lookup runs outside this transaction, so a second pull
@@ -3167,8 +3099,8 @@ export class GitHubOperations {
       if (!locked) await abandonCornerWorkflowRuns(database, target.corner_id);
       if (!locked) await deleteCornerWakeSources(database, [target.corner_id]);
       await database.query(
-        `UPDATE corner_facts SET close_requested=$3,merge_attempt_head=NULL,
-           lifecycle=((lifecycle-'mergeRecovery'-'mergeQueue') -
+        `UPDATE corner_facts SET close_requested=$3,
+           lifecycle=((lifecycle-'mergeQueue') -
              CASE WHEN $4 THEN ARRAY['pr','outcome','checksSummary'] ELSE ARRAY[]::text[] END)||$2::jsonb,
            updated_at=now() WHERE corner_id=$1`,
         [

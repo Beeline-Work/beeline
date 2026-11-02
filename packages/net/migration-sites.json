@@ -562,14 +562,6 @@
       "phase": "M4"
     },
     {
-      "id": "apps/mobile/sources/app/(app)/beeline/settings/identity.tsx::ota-update",
-      "file": "apps/mobile/sources/app/(app)/beeline/settings/identity.tsx",
-      "kind": "ota-update",
-      "count": 2,
-      "compatibility": "legacy-only",
-      "phase": "M4"
-    },
-    {
       "id": "apps/mobile/sources/app/_layout.tsx::import:posthog-react-native",
       "file": "apps/mobile/sources/app/_layout.tsx",
       "kind": "import:posthog-react-native",
@@ -597,7 +589,7 @@
       "id": "apps/mobile/sources/auth/github-auth-session.ts::fetch-impl",
       "file": "apps/mobile/sources/auth/github-auth-session.ts",
       "kind": "fetch-impl",
-      "count": 3,
+      "count": 2,
       "compatibility": "legacy-only",
       "phase": "M4"
     },

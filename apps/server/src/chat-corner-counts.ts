@@ -1,7 +1,7 @@
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { createHash } from 'node:crypto';
 import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
-import { cornerOwedLookupSql } from './corner-owed.js';
+import { cornerOwedItemsSql, cornerOwedLookupSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
 import { visibleChatMessageSql } from './read-cursor.js';
 import type {
@@ -205,7 +205,7 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
         CASE WHEN item.card_type IN ('squire-approval','permission','grant-request') THEN 'approve'
           WHEN item.card_type IN ('connector-offer','app-sign-in','agent-sign-in') THEN 'connect'
           ELSE 'question' END reason,'message'::text kind
-      FROM corner_owed owed
+      FROM (${cornerOwedItemsSql('c.id')}) owed
       JOIN messages item ON item.id=owed.message_id
       JOIN memberships current_member ON current_member.room_id=c.parent_id
         AND current_member.identity_id=owed.person_id AND current_member.removed_at IS NULL

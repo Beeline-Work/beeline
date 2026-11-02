@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it } from 'vitest';
-import { backfillCornerOwed, type SqlDatabase } from './database.js';
-import { addressedToPersonSql, cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { type SqlDatabase } from './database.js';
+import { addressedToPersonSql, cornerOwedItemsSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { PhoneService } from './phone-service.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
@@ -22,7 +22,7 @@ type Facts = {
   header: boolean | undefined;
 };
 
-describe('corner_owed', () => {
+describe('OWED-DERIVED', () => {
   let database: PgliteDatabase;
   let phone: PhoneService;
   let clock = 0;
@@ -100,29 +100,9 @@ describe('corner_owed', () => {
     list: { state: 'waiting', attention: true }, page: { state: 'waiting' }, header: true,
   };
 
-  /**
-   * The triggers' incremental rows equal the rows recomputed from scratch
-   * by the rule the backfill reads (the old per-read scan's rule).
-   */
-  const expectTableMatchesMessages = async () => {
-    const owed = `SELECT corner_id::text,person_id,message_id FROM %s
-      WHERE expires_at IS NULL OR expires_at>now() ORDER BY 1,2,3`;
-    await database.query(`DROP TABLE IF EXISTS corner_owed_expected`);
-    await database.query(`CREATE TEMP TABLE corner_owed_expected (LIKE corner_owed INCLUDING INDEXES)`);
-    await database.query(
-      cornerOwedBackfillSql().replace(
-        'INSERT INTO corner_owed(',
-        'INSERT INTO corner_owed_expected(',
-      ),
-    );
-    const actual = await database.query(owed.replace('%s', 'corner_owed'));
-    const expected = await database.query(owed.replace('%s', 'corner_owed_expected'));
-    expect(actual.rows).toEqual(expected.rows);
-  };
-
   const step = async (expected: Facts, viewer = OWNER) => {
     expect(await facts(viewer)).toEqual(expected);
-    await expectTableMatchesMessages();
+    expect((await database.query('SELECT * FROM corner_owed')).rows).toEqual([]);
   };
 
   beforeEach(async () => {
@@ -164,7 +144,7 @@ describe('corner_owed', () => {
     );
   });
 
-  it('reads a tag owed until the person posts, and attention only until they open the corner', async () => {
+  it('OWED-DERIVED: reads a tag owed until the person posts, and attention only until they open the corner', async () => {
     await post('done', AGENT, 'Done for now.');
     await step(idle);
     await post('tag', AGENT, '@owner matte or gloss?');
@@ -316,19 +296,17 @@ describe('corner_owed', () => {
     },
   );
 
-  it('release migration clears historical automatic attention and preserves a real failed wake', async () => {
-    await post('legacy-attention', AGENT, 'Checks still fail.', {
-      presentation: 'system', cardType: 'corner-checks-blocked',
-    });
-    await database.query(`INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable)
-      SELECT room_id,$1,id,created_at,NULL,true FROM messages WHERE id='legacy-attention'`, [OWNER]);
-    await post('failed-wake', AGENT, 'Agent could not be reached.', {
-      presentation: 'system', cardType: 'corner-agent-unreachable',
-      card: { agentId: AGENT, recipientIds: [OWNER], status: 'open' },
-    });
+  it('leaves legacy rows inert while removing all maintenance functions', async () => {
+    await post('stale', AGENT, 'No request');
+    await database.query(`INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,answerable,blocking)
+      VALUES($1,$2,'stale',now(),true,true)`, [CORNER,OWNER]);
     await database.query(cornerOwedSchemaSql());
-    expect((await database.query<{ message_id: string }>(`SELECT message_id FROM corner_owed`)).rows)
-      .toEqual([{ message_id: 'failed-wake' }]);
+    expect(await facts()).toEqual(idle);
+    expect((await database.query('SELECT * FROM corner_owed')).rowCount).toBe(1);
+    expect((await database.query(`SELECT proname FROM pg_proc
+      WHERE proname IN ('corner_owed_refresh','corner_owed_recompute_message','corner_owed_message_changed',
+        'corner_owed_member_changed','corner_owed_handle_changed','corner_owed_facts_changed',
+        'corner_owed_grant_changed','corner_owed_permission_changed')`)).rows).toEqual([]);
   });
 
   it('expires a tag after a day, including one moved back in time', async () => {
@@ -365,13 +343,15 @@ describe('corner_owed', () => {
     );
     const question = () =>
       database.query(
-        `SELECT message_id FROM corner_owed WHERE corner_id=$1 AND person_id=$2`,
+        `SELECT message_id FROM (${cornerOwedItemsSql('$1::uuid')}) owed WHERE person_id=$2`,
         [CORNER, OWNER],
       );
     expect((await question()).rows).toEqual([{ message_id: 'forwarded-question' }]);
-    await database.query('SELECT corner_owed_refresh($1,$2)', [CORNER, OWNER]);
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, OWNER]);
+    expect((await question()).rows).toEqual([]);
+    await database.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [ROOM, OWNER]);
     expect((await question()).rows).toEqual([{ message_id: 'forwarded-question' }]);
-    await expectTableMatchesMessages();
+    expect((await database.query('SELECT * FROM corner_owed')).rows).toEqual([]);
   });
 
   it('owes a later joiner what was already addressed to them, and nothing once they leave', async () => {
@@ -398,60 +378,89 @@ describe('corner_owed', () => {
     await step(idle);
   });
 
-  it('backfills what is already owed when the release adds the table', async () => {
-    await post('tag', AGENT, '@owner matte or gloss?');
-    await post('tag-other', AGENT, '@other gloss?');
-    await database.query(`DELETE FROM corner_owed`);
-    expect(await facts()).toEqual(idle);
-    await backfillCornerOwed(database);
-    await step(owedToViewer);
+  it('OWED-DERIVED: a blocking tag waits for its person and clears when answered', async () => {
+    await post('blocking-tag', AGENT, 'needs-decision: @owner matte or gloss?');
+    await step(blockingToViewer);
+    await post('blocking-answer', OWNER, 'Matte');
+    await step(idle);
   });
 
-  it('reads chat-list owed facts from corner_owed with only an item-id lookup for the reason', async () => {
+  it('OWED-DERIVED: keeps a question older than 24 hours owed with zero stored rows', async () => {
+    await post('old-question', AGENT, 'Pick one', { presentation: 'card', cardType: 'choice',
+      card: { mode: 'question', status: 'open', requester: { pubkey: OWNER } },
+      at: `now()-interval '3 days'` });
+    await step(blockingToViewer);
+  });
+
+  it('OWED-DERIVED: expires an item at its explicit deadline', async () => {
+    await post('expiring', AGENT, 'needs-decision: @owner choose', {
+      card: { expiresAt: Date.now()+60_000 },
+    });
+    await step(blockingToViewer);
+    await database.query(`UPDATE messages SET card=jsonb_set(card,'{expiresAt}',to_jsonb($1::bigint))
+      WHERE id='expiring'`, [Date.now()-1]);
+    await step(idle);
+  });
+
+  it('OWED-DERIVED: counts a report from another Room and clears it when answered there', async () => {
+    await database.query(`INSERT INTO agent_commands(id,room_id,agent_id,reason,private_payload,turn_request_id,root_command_id,root_source_message_id,agent_depth,action,state)
+      VALUES('report-command',$1,$2,'report',$3::jsonb,'report-command','report-command','report-command',0,'input','complete')`, [CORNER,AGENT,
+      JSON.stringify({ kind: 'report', originCornerId: CORNER })]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,request_id)
+      VALUES('cross-room-report',$1,$2,'needs-decision: @owner choose','report-command')`, [ROOM,AGENT]);
+    await step(blockingToViewer);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+      VALUES('cross-room-answer',$1,$2,'Choose matte',now()+interval '1 second')`, [ROOM,OWNER]);
+    await step(idle);
+    await database.query(`UPDATE messages SET deleted_at=now() WHERE id='cross-room-answer'`);
+    await step(blockingToViewer);
+  });
+
+  it('OWED-DERIVED: archived corners owe nothing and derive again when reopened', async () => {
+    await post('open-ask', AGENT, 'needs-decision: @owner choose');
+    await step(blockingToViewer);
+    await database.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [CORNER]);
+    expect((await phone.readRoom(CORNER,OWNER))?.cornerOwed).toBe(false);
+    expect((await database.query(`SELECT * FROM (${cornerOwedItemsSql('$1::uuid')}) owed`, [CORNER])).rows).toEqual([]);
+    await database.query('UPDATE rooms SET archived_at=NULL WHERE id=$1', [CORNER]);
+    await step(blockingToViewer);
+  });
+
+  it('OWED-DERIVED: uses indexed message probes for the corner-list owed read', async () => {
     const queries: { sql: string; values: unknown[] }[] = [];
-    const spy = new PhoneService(
-      {
-        query: (sql: string, values?: unknown[]) => {
-          queries.push({ sql, values: values ?? [] });
-          return database.query(sql, values);
-        },
-        transaction: (work) => database.transaction(work),
-      } as SqlDatabase,
-      ORIGIN,
-    );
-    await post('tag', AGENT, '@owner matte or gloss?');
+    const spy = new PhoneService({
+      query: (sql: string, values?: unknown[]) => {
+        queries.push({ sql, values: values ?? [] });
+        return database.query(sql, values);
+      },
+      transaction: (work) => database.transaction(work),
+    } as SqlDatabase, ORIGIN);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text)
+      SELECT 'history-' || n,$1,$2,'Unrelated history' FROM generate_series(1,2500) n`, [ROOM,AGENT]);
+    await post('tag', AGENT, 'needs-decision: @owner matte or gloss?');
+    await database.query('ANALYZE messages');
     await spy.readChats(WORKSPACE, OWNER);
-    const corners = queries.find((query) => query.sql.includes('FROM corner_owed'));
+    const corners = queries.find(query => query.sql.includes('candidate_items'))!;
     expect(corners).toBeDefined();
     const plan = await database.query<{ 'QUERY PLAN': unknown }>(
-      `EXPLAIN (FORMAT JSON) ${corners!.sql}`,
-      corners!.values,
-    );
-    const scans: { relation: string; alias: string }[] = [];
+      `EXPLAIN (FORMAT JSON) ${corners.sql}`, corners.values);
+    const scans: Record<string, unknown>[] = [];
+    const indexes: string[] = [];
     const walk = (node: Record<string, unknown>) => {
-      if (typeof node['Relation Name'] === 'string')
-        scans.push({ relation: node['Relation Name'], alias: String(node.Alias) });
+      if (node['Relation Name'] === 'messages') scans.push(node);
+      if (typeof node['Index Name'] === 'string') indexes.push(node['Index Name']);
       for (const child of (node.Plans as Record<string, unknown>[] | undefined) ?? []) walk(child);
     };
     const root = plan.rows[0]!['QUERY PLAN'];
     walk((typeof root === 'string' ? JSON.parse(root) : root)[0].Plan);
-    expect(scans).toContainEqual({ relation: 'corner_owed', alias: 'owed_item' });
-    // The combined deck enrichment also reads the unread cursor and DM peer
-    // activity. Review activity additionally looks up its dispatched source
-    // by message id. The waiting reason reads the indexed blocker message by
-    // its primary key too; owed facts still come from corner_owed.
-    const messageScans = scans.filter((scan) => scan.relation === 'messages');
-    // Running, pending and held activity each resolve their dispatched check
-    // source by id; these do not recover owed facts.
-    const isDispatchSource = (alias: string) => /^source(?:_\d+)?$/.test(alias);
-    expect(messageScans.filter((scan) => isDispatchSource(scan.alias))).toHaveLength(3);
-    expect(messageScans.filter((scan) => scan.alias === 'item')).toHaveLength(1);
-    expect(corners!.sql).toContain('JOIN messages item ON item.id=owed.message_id');
-    // Each unread-cursor branch checks legacy corner visibility against the
-    // indexed call-site cards. These scans do not recover owed facts.
-    const callsiteScans = messageScans.filter((scan) => scan.alias.startsWith('callsite'));
-    expect(callsiteScans).toHaveLength(2);
-    expect(messageScans.filter((scan) => scan.alias !== 'item' && !isDispatchSource(scan.alias) &&
-      !scan.alias.startsWith('callsite'))).toHaveLength(3);
+    expect(scans.length).toBeGreaterThan(0);
+    expect(scans.filter(scan => scan['Node Type'] === 'Seq Scan')).toEqual([]);
+    expect(indexes).toContain('messages_room_page_idx');
+    expect(indexes).toContain('messages_source_room_idx');
+    expect(scans.some(scan => String(scan['Index Cond']).includes('request_id = report'))).toBe(true);
+    expect(scans.filter(scan => scan['Index Name'] === 'messages_pkey' && !scan['Index Cond'])).toEqual([]);
+    expect(indexes).toContain('messages_room_author_answer_idx');
+    expect((await database.query('SELECT * FROM corner_owed')).rows).toEqual([]);
   });
+  afterEach(async () => { await database.close(); });
 });

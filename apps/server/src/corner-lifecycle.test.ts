@@ -1,3 +1,4 @@
+import { cornerOwedItemsSql } from './corner-owed.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1986,7 +1987,7 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
     expect((await commands(A, R)).some(c => c.reason === 'report' && c.source.body.startsWith('blocked:'))).toBe(true);
     const [recovered] = await commands(A, cornerId);
     await claim(recovered!);
-    expect((await db.query(`SELECT 1 FROM corner_owed WHERE corner_id=$1 AND person_id=$2`,
+    expect((await db.query(`SELECT 1 FROM (${cornerOwedItemsSql('$1::uuid')}) owed WHERE person_id=$2`,
       [cornerId, H])).rowCount).toBe(0);
   });
 
@@ -4306,6 +4307,8 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
 async function asLegacyNoCodeCorner(cornerId: string) {
   await db.query(`ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS lane text NOT NULL DEFAULT 'code'`);
   await db.query(`DROP TRIGGER IF EXISTS corner_owed_facts_update ON corner_facts`);
+  await db.query(`CREATE OR REPLACE FUNCTION corner_owed_facts_changed() RETURNS trigger
+    LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$`);
   await db.query(
     `CREATE TRIGGER corner_owed_facts_update
        AFTER UPDATE OF commissioned_by,owner_agent_id,lane ON corner_facts

@@ -43,7 +43,7 @@
     {
       "file": "apps/server/src/chat-corner-counts.ts",
       "declaration": "cornerBlockerSql",
-      "sha256": "99c2e608aea8018d9b6fefd1f6557a9df45def43617e8f849a45590a73e5dc86"
+      "sha256": "01572a10a99fd1abfbe60395df595070bfefcc25d160f0f3e9e297c0af5a539e"
     },
     {
       "file": "packages/api-contract/src/phone-types.ts",

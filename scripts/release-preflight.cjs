@@ -1,23 +1,18 @@
 // Runs on a hosted runner so an offline release runner cannot hide a failed preflight.
-exports.watchRunners = async ({ github, context, core, wait = ms => new Promise(resolve => setTimeout(resolve, ms)), attempts = 30 }) => {
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
-      ...context.repo, run_id: context.runId, per_page: 100,
-    });
-    const probes = jobs.filter(job => job.name.startsWith('Runner probe '));
-    if (probes.length === 3 && probes.every(job => job.status === 'completed')) {
-      const failed = probes.filter(job => job.conclusion !== 'success');
-      if (failed.length) throw new Error(`Release runner probes failed: ${failed.map(job => job.name).join(', ')}`);
-      core.info('All release runner labels executed node -v successfully.');
-      return;
-    }
-    if (attempt + 1 < attempts) await wait(10000);
-  }
-  core.setFailed('Release runner probes did not finish within five minutes. Inspect queued probes for offline/busy labels; inspect running probes for Node setup failures. Cancelling queued work.');
-  await github.rest.actions.cancelWorkflowRun({ ...context.repo, run_id: context.runId });
+exports.validateRunnerResults = async ({ github, context, core }) => {
+  // The workflow dependency is the completion signal. Inspect its result once.
+  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    ...context.repo, run_id: context.runId, per_page: 100,
+  });
+  const probes = jobs.filter(job => job.name.startsWith('Runner probe '));
+  if (probes.length !== 3 || probes.some(job => job.status !== 'completed'))
+    throw new Error('Release runner completion is unavailable; inspect queued/offline labels before proceeding.');
+  const failed = probes.filter(job => job.conclusion !== 'success');
+  if (failed.length) throw new Error(`Release runner probes failed: ${failed.map(job => job.name).join(', ')}`);
+  core.info('All release runner labels executed node -v successfully.');
 };
 
-exports.triageFailure = async ({ github, context, run = context.payload.workflow_run, wait = ms => new Promise(resolve => setTimeout(resolve, ms)) }) => {
+exports.triageFailure = async ({ github, context, run = context.payload.workflow_run }) => {
   if (!['failure', 'cancelled'].includes(run.conclusion)) return;
   if (!['.github/workflows/unified-release.yml', '.github/workflows/release-preflight.yml'].includes(run.path)) return;
   const marker = `<!-- release-failure:${run.id} -->`;
@@ -44,11 +39,7 @@ exports.triageFailure = async ({ github, context, run = context.payload.workflow
     labels: ['release-failure'],
     body: `${marker}\n\n${run.html_url}\n\nConclusion: ${run.conclusion}\nSource: ${run.head_sha}\nAttempt: ${run.run_attempt}\n\nInspect failed jobs and queued runner labels. Repair the cause before the next release; this item does not authorize a deployment.`,
   });
-  // Confirm visibility before releasing workflow concurrency: GitHub issue
-  // lists can lag creation even with cache-busting headers.
-  for (let attempt = 0; attempt < 30; attempt++) {
-    if ((await listIssues()).some(issue => issue.body?.includes(marker))) return created;
-    await wait(2000);
-  }
-  throw new Error(`Triage issue ${created.data?.number} was created but is not yet visible in listings; inspect it before retrying.`);
+  // The mutation response is its receipt. A stale list cannot improve that
+  // receipt; ambiguous API failures propagate without a retry or second create.
+  return created;
 };

@@ -26,13 +26,15 @@ jobs:
           node-version-file: .nvmrc
       - run: node -v
   runners_online:
+    needs: runner
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 7
     steps:
       - uses: actions/checkout@v4
       - uses: actions/github-script@v7
         with:
-          script: await require('./scripts/release-preflight.cjs').watchRunners({github, context, core});
+          script: await require('./scripts/release-preflight.cjs').validateRunnerResults({github, context, core});
   native:
     runs-on: ubuntu-latest
     timeout-minutes: 15

@@ -11,7 +11,7 @@ started_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 head_sha="" error="" phase="lane check" owned_device="" emulator_pid="" nightly_pid=""
 host_locked=false
 
-# shellcheck disable=SC2317 # Invoked indirectly by the EXIT trap.
+# shellcheck disable=SC2317,SC2329 # Invoked indirectly by the EXIT trap.
 cleanup() {
   local status=$?
   trap - EXIT

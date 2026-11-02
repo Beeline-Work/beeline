@@ -90,6 +90,9 @@ describe('unselected background-owned display expiry adapter',()=>{
   });
 
   it('does not publish a decided Squire card or a sign-in owner who lost membership before expiry',async()=>{
+    const other='c'.repeat(64);
+    await db.query(`INSERT INTO identities VALUES($1,'human','other')`,[other]);
+    await db.query(`INSERT INTO memberships VALUES($1,NULL,$3,NULL),($1,$2,$3,NULL)`,[workspace,room,other]);
     for(const [id,type,card] of [
       ['sign-in','agent-sign-in',{ownerId:viewer,status:'pending',expiresAt:947462400000}],
       ['squire','squire-approval',{approvalId:'approval',sourceRoomId:room,status:'pending',expiresAt:947462400000}],

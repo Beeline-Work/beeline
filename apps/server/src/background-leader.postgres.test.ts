@@ -33,4 +33,37 @@ describe.skipIf(!url)('real PostgreSQL blocking leader ownership',()=>{
       await Promise.all(leaders.map(leader=>leader.stop()));await Promise.all(pools.map(pool=>pool.end()));
     }
   });
+  it('shares the unchanged lock with a polling old-server owner during a rolling deploy', async () => {
+    const oldPool = new Pool({ connectionString: url, max: 1 });
+    const newPool = new Pool({ connectionString: url, max: 1 });
+    const old = await oldPool.connect();
+    const waiting = deferred();
+    const entered = deferred();
+    const leader = new BackgroundLeader({ connectDedicated: async () => {
+      const client = await newPool.connect();
+      const query = client.query.bind(client);
+      client.query = ((sql: string, values?: unknown[]) => {
+        const result = query(sql, values);
+        if (sql.includes('pg_advisory_lock')) waiting.resolve();
+        return result;
+      }) as typeof client.query;
+      return client;
+    } }, async () => { entered.resolve(); return Infinity; });
+    try {
+      const key = 0x0bee11;
+      expect((await old.query('SELECT pg_try_advisory_lock($1) locked', [key])).rows[0].locked).toBe(true);
+      void leader.run();
+      await waiting.promise;
+      await old.query('SELECT pg_advisory_unlock($1)', [key]);
+      await entered.promise;
+      expect((await old.query('SELECT pg_try_advisory_lock($1) locked', [key])).rows[0].locked).toBe(false);
+      await leader.stop();
+      expect((await old.query('SELECT pg_try_advisory_lock($1) locked', [key])).rows[0].locked).toBe(true);
+    } finally {
+      await leader.stop();
+      old.release(true);
+      await Promise.all([oldPool.end(), newPool.end()]);
+    }
+  });
+
 });

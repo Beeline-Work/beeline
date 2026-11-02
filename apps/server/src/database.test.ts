@@ -996,6 +996,24 @@ describe('PostgresDatabase reconnects', () => {
     expect(client.query).toHaveBeenNthCalledWith(2, 'COMMIT');
   });
 
+  it('makes one dedicated checkout attempt and reports recovery only after admitted database work', async () => {
+    const failure = new Error('Connection terminated unexpectedly');
+    const query = vi.fn().mockResolvedValue(result([{ answer: 1 }]));
+    const pool = poolWithQuery(query);
+    vi.mocked(pool.connect).mockRejectedValueOnce(failure);
+    const pause = vi.fn(async () => {});
+    const database = new PostgresDatabase('', 5, { pool, pause });
+    const recovered = vi.fn();
+    const unsubscribe = database.onRecovery(recovered);
+    await expect(database.connectDedicated()).rejects.toBe(failure);
+    expect(pool.connect).toHaveBeenCalledOnce();
+    expect(pause).not.toHaveBeenCalled();
+    expect(recovered).not.toHaveBeenCalled();
+    await database.query('SELECT 1');
+    expect(recovered).toHaveBeenCalledOnce();
+    unsubscribe();
+  });
+
   it('handles an error emitted by a dedicated client', async () => {
     const client = Object.assign(new EventEmitter(), {
       query: vi.fn(),

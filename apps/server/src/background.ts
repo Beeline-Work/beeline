@@ -25,7 +25,6 @@ import { addressedToPersonSql } from './corner-owed.js';
 import { pushDirectAttentionSql } from './push-attention.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 
-const BACKGROUND_LOCK_KEY = 0x0bee11;
 const PUSH_MAX_ATTEMPTS = 3;
 /** Bound concurrent device sends after serial claim/suppress. APNS can take
  * up to APNS_REQUEST_TIMEOUT_MS per token; serializing 100 candidates on the
@@ -1000,100 +999,6 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
   }
 }
 
-/**
- * Exactly one process owns background work. PostgreSQL releases the advisory
- * lock automatically when this dedicated connection dies, allowing its peer
- * to acquire it without a queue, worker process, or lease clock.
- */
-export class BackgroundLeader {
-  #stopped = false;
-  #running: Promise<void> | undefined;
-  #client: LeaderConnection | undefined;
-  #wake: (() => void) | undefined;
-  #wakePending = false;
-
-  constructor(
-    private readonly database: { connectDedicated(): Promise<LeaderConnection> },
-    private readonly cycle: (newLeader: boolean) => Promise<number | void>,
-    private readonly reconciliationMs = 60_000,
-  ) {}
-
-  run(): Promise<void> {
-    return this.#running ??= this.runLoop();
-  }
-
-  private async runLoop(): Promise<void> {
-    while (!this.#stopped) {
-      try {
-        const client = await this.database.connectDedicated();
-        this.#client = client;
-        const lock = await client.query<{ locked: boolean }>(
-          `SELECT pg_try_advisory_lock($1) locked`,
-          [BACKGROUND_LOCK_KEY],
-        );
-        if (!lock.rows[0]?.locked) {
-          client.release();
-          this.#client = undefined;
-          await this.wait();
-          continue;
-        }
-        let newLeader = true;
-        while (!this.#stopped) {
-          // Detect a dead lock-owning connection before any work can fire.
-          await client.query('SELECT 1');
-          if (this.#stopped) break;
-          const nextDelay = await this.cycle(newLeader);
-          newLeader = false;
-          await this.wait(
-            typeof nextDelay === 'number'
-              ? Math.max(0, Math.min(nextDelay, this.reconciliationMs))
-              : this.reconciliationMs,
-          );
-        }
-      } catch (error) {
-        captureServerError(error);
-        console.error('[background] leader cycle failed', error);
-        await this.wait();
-      } finally {
-        this.#client?.release(true);
-        this.#client = undefined;
-      }
-    }
-  }
-
-  async stop(): Promise<void> {
-    this.#stopped = true;
-    this.#wake?.();
-    await this.#running;
-  }
-
-  /** Recompute background work after a committed database notification. */
-  wake(): void {
-    if (this.#wake) this.#wake();
-    else this.#wakePending = true;
-  }
-
-  private wait(milliseconds = this.reconciliationMs): Promise<void> {
-    if (this.#stopped) return Promise.resolve();
-    if (this.#wakePending) {
-      this.#wakePending = false;
-      return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-      const timer = setTimeout(done, milliseconds);
-      timer.unref?.();
-      const self = this;
-      function done() {
-        clearTimeout(timer);
-        if (self.#wake === done) self.#wake = undefined;
-        self.#wakePending = false;
-        resolve();
-      }
-      this.#wake = done;
-    });
-  }
-}
-
 export interface BackgroundJobHealth {
   lastSuccessAt: number | null;
   lastErrorAt: number | null;
@@ -1146,9 +1051,4 @@ export class BackgroundJobRunner {
       health.lastDurationMs = Math.max(0, this.now() - startedAt);
     }
   }
-}
-
-export interface LeaderConnection {
-  query<Row = Record<string, unknown>>(sql: string, values?: unknown[]): Promise<{ rows: Row[] }>;
-  release(destroy?: boolean): void;
 }

@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  BackgroundLeader,
   BackgroundJobRunner,
   createPushTestSender,
   MediaExpiryLoop,
@@ -10,7 +9,6 @@ import {
   READ_CLEAR_MAX_CHANNELS,
   READ_CLEAR_MAX_MESSAGE_IDS,
   runMaintenance,
-  type LeaderConnection,
 } from './background.js';
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
@@ -62,87 +60,8 @@ describe('background advisory-lock ownership', () => {
     });
   });
 
-  it('releases and reconnects after its dedicated connection health check fails', async () => {
-    let connections = 0;
-    let released = false;
-    let cycles = 0;
-    const connectDedicated = async (): Promise<LeaderConnection> => {
-      connections += 1;
-      const connection = connections;
-      return {
-        query: async <Row>(sql: string) => {
-          if (sql === 'SELECT 1' && connection === 1) throw new Error('connection died');
-          if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] as Row[] };
-          return { rows: [{} as Row] };
-        },
-        release: (destroy) => {
-          if (connection === 1 && destroy) released = true;
-        },
-      };
-    };
-    const leader = new BackgroundLeader(
-      { connectDedicated },
-      async () => {
-        cycles += 1;
-      },
-      1,
-    );
-    const running = leader.run();
-
-    await until(() => cycles > 0);
-    leader.stop();
-    await running;
-
-    expect(connections).toBeGreaterThanOrEqual(2);
-    expect(released).toBe(true);
-  });
-
-  it('marks only the first cycle under each acquired lock for recovery', async () => {
-    const lock = new FakeAdvisoryLock();
-    const firstCycles: boolean[] = [];
-    const leader = new BackgroundLeader(
-      { connectDedicated: () => lock.connect('recovery') },
-      async (newLeader) => { firstCycles.push(newLeader); },
-      1,
-    );
-    const running = leader.run();
-    await until(() => firstCycles.length > 2);
-    leader.stop();
-    await running;
-    expect(firstCycles[0]).toBe(true);
-    expect(firstCycles.slice(1).every((item) => item === false)).toBe(true);
-  });
-
-  it('moves work to the peer after the lock-holder connection dies', async () => {
-    const lock = new FakeAdvisoryLock();
-    let first = 0;
-    let second = 0;
-    const leaderA = new BackgroundLeader(
-      { connectDedicated: () => lock.connect('a') },
-      async () => {
-        first += 1;
-      },
-      5,
-    );
-    const leaderB = new BackgroundLeader(
-      { connectDedicated: () => lock.connect('b') },
-      async () => {
-        second += 1;
-      },
-      5,
-    );
-    const runningA = leaderA.run();
-    const runningB = leaderB.run();
-    await until(() => first > 1);
-    expect(second).toBe(0);
-    lock.killOwner();
-    leaderA.stop();
-    await until(() => second > 1);
-    leaderB.stop();
-    await Promise.all([runningA, runningB]);
-    expect(first).toBeGreaterThan(1);
-    expect(second).toBeGreaterThan(1);
-  });
+  // Actual lock transfer, failure recovery and initial-cycle admission are
+  // exercised in background-leader.test.ts and its real PostgreSQL proof.
   it('bounds push history before resolving tags and still delivers a fresh mention', async () => {
     const db = await migratedDatabase();
     try {
@@ -2449,36 +2368,3 @@ describe('media TTL sweep', () => {
     }
   });
 });
-
-class FakeAdvisoryLock {
-  owner: string | undefined;
-  dead = new Set<string>();
-  sequence = 0;
-  async connect(process: string): Promise<LeaderConnection> {
-    const id = `${process}-${++this.sequence}`;
-    return {
-      query: async <Row>(sql: string) => {
-        if (this.dead.has(id)) throw new Error('connection died');
-        if (sql.includes('pg_try_advisory_lock')) {
-          const locked = !this.owner || this.owner === id;
-          if (locked) this.owner = id;
-          return { rows: [{ locked }] as Row[] };
-        }
-        return { rows: [{} as Row] };
-      },
-      release: () => {
-        if (this.owner === id) this.owner = undefined;
-      },
-    };
-  }
-  killOwner() {
-    if (this.owner) this.dead.add(this.owner);
-  }
-}
-async function until(check: () => boolean) {
-  const started = Date.now();
-  while (!check()) {
-    if (Date.now() - started > 1000) throw new Error('condition timeout');
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
-}

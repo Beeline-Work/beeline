@@ -62,6 +62,38 @@ describe('source and deadline owned background leadership',()=>{
     lock.clients[0]!.lose();await settle();await vi.advanceTimersByTimeAsync(86_400_000);
     expect(connect).toHaveBeenCalledTimes(2);expect(cycle).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);await leader.stop();
   });
+  it('does not replenish replacement admission before the new owner finishes recovery', async () => {
+    vi.useFakeTimers();
+    const lock = new Ownership();
+    let finish!: () => void;
+    const recovery = new Promise<void>(resolve => { finish = resolve; });
+    let recovered!: () => void;
+    const cycle = vi.fn().mockResolvedValueOnce(Infinity).mockImplementationOnce(() => recovery).mockResolvedValue(Infinity);
+    const leader = new BackgroundLeader({ connectDedicated: lock.connect,
+      onRecovery: listener => { recovered = listener; return () => {}; } }, cycle);
+    void leader.run();
+    await settle();
+    lock.clients[0]!.lose();
+    lock.clients[0]!.emit('end');
+    await settle();
+    expect(lock.clients).toHaveLength(2);
+    lock.clients[1]!.lose();
+    finish();
+    await settle();
+    await vi.advanceTimersByTimeAsync(86_400_000);
+    expect(lock.clients).toHaveLength(2);
+    expect(cycle).toHaveBeenCalledTimes(2);
+    expect(vi.getTimerCount()).toBe(0);
+    recovered();
+    await settle();
+    expect(lock.clients).toHaveLength(3);
+    // Completed initial work restores admission for a later incident.
+    lock.clients[2]!.lose();
+    await settle();
+    expect(lock.clients).toHaveLength(4);
+    await leader.stop();
+  });
+
   it('runs an actual deadline once, retains a committed wake received in flight, and then parks',async()=>{
     vi.useFakeTimers();const lock=new Ownership();let leader:BackgroundLeader;
     const cycle=vi.fn().mockResolvedValueOnce(5000).mockImplementationOnce(async()=>{leader.wake();return Infinity;}).mockResolvedValue(Infinity);

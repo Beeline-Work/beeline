@@ -28,6 +28,7 @@ export class BackgroundLeader {
   private acquiring = false;
   private lost = false;
   private wakePending = false;
+  private replacementAllowed = true;
   private resume?: () => void;
   private stopRecovery?: () => void;
   private retireOwner?: () => void;
@@ -40,7 +41,7 @@ export class BackgroundLeader {
 
   run(): Promise<void> {
     if (!this.running) {
-      this.stopRecovery = this.database.onRecovery?.(() => this.wake());
+      this.stopRecovery = this.database.onRecovery?.(() => { this.replacementAllowed = true; this.wake(); });
       this.running = this.runLoop();
     }
     return this.running;
@@ -60,11 +61,19 @@ export class BackgroundLeader {
         if(owned&&client)try{this.hooks?.lost(client);}catch(error){captureServerError(error);}
       };
       const disconnected = () => {
+        if (this.stopped || this.lost) return;
         retire();
         this.lost = true;
-        // Losing the actual owning connection permits one replacement. A
-        // failed replacement has no timer and waits for another real boundary.
-        this.wake();
+        // An opened replacement is not recovery. Only a completed initial
+        // business cycle or an independent database recovery restores this
+        // allowance. error + end on the same backend is one incident.
+        if (this.replacementAllowed) {
+          this.replacementAllowed = false;
+          this.wake();
+        } else {
+          this.wakePending = false;
+          this.resume?.();
+        }
       };
       try {
         this.lost = false; this.acquiring = true;
@@ -88,6 +97,7 @@ export class BackgroundLeader {
           this.wakePending = false;
           const delay = await this.cycle(initial); initial = false;
           if (this.stopped || this.lost) break;
+          this.replacementAllowed = true;
           await this.wait(typeof delay === 'number' ? delay : Infinity);
         }
       } catch (error) {

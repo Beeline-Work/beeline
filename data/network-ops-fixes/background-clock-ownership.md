@@ -136,10 +136,10 @@ Root's staged integration emits one `control:tray-clock` frame per socket and
 parks only local Tray state. The modern Tray cohort requires the installed
 shared consumer, and a parked consumer refuses snapshot admission before a read.
 Projection24 and mobile-owner28 pass, including a late opening reply that cannot
-restore parked data and an unaffected visible Room list. This phone/socket slice
-is not yet in the combined PR; the owner bundle still exceeds its unchanged
-budget. Full production composition, workload/cohort proof and the removal sweep
-remain open. No additional whole finding is closed.
+restore parked data and an unaffected visible Room list. The phone/socket slice
+is now in the combined PR and the aggregate owner bundle passes the hard budget
+set by instruction034. Full production composition, workload/cohort proof and
+the removal sweep remain open. No additional whole finding is closed.
 
 Acquisition loss is also fenced after the claim returns: listener or exact-owner
 loss during the claim await retires the returned generation durably, even when
@@ -147,3 +147,20 @@ it was never installed as the runner epoch. Retirement retains the captured
 backend identity and drains outstanding releases. Both race regressions failed
 with `released_at` still null before the fix; runner13 and real PostgreSQL14
 pass after it. No source hint retries the retirement or reopens the runner.
+
+
+## Production leader selection
+
+The production entry point now selects `background-leader.ts`; the former
+`background.ts` polling leader is removed. PostgreSQL holds the same advisory
+lock across old/new server overlap. An actual backend loss admits one
+replacement, and a brief open does not replenish it: the initial business cycle
+must complete while that connection remains current. A distinct database
+recovery can also reopen admission. Duplicate error/end events are one loss.
+
+The Tray ownership, schema/readiness and shared availability composition remain
+unselected. Existing job schedules still return their own deadlines; this
+change removes leader probes, not their remaining recurring work. The actual
+pool checkout beneath leadership must also make one attempt; the caller owns
+recovery. Leadership, shutdown, expiry and real PostgreSQL overlap proofs
+cover this boundary. Full F16/F17/F18 closure remains open.

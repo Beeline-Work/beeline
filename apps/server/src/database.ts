@@ -577,36 +577,37 @@ export class PostgresDatabase implements ClosableDatabase {
     }
   }
 
+  /** One physical acquisition. The listener/leader owns recovery admission. */
   async connectDedicated(): Promise<PoolClient> {
-    return this.#retryTransientConnection(async () => {
-      const startedAt = performance.now();
-      let client: PoolClient;
-      let waiters = 0;
-      try {
-        const checkout = this.#pool.connect();
-        waiters = this.#pool.waitingCount;
-        client = await checkout;
-      } catch (error) {
-        this.#telemetry.checkoutFailures++;
-        throw error;
-      }
-      this.#recordWait(performance.now() - startedAt, waiters);
-      const acquiredAt = performance.now();
-      const onError = (error: Error) => {
-        console.error('dedicated postgres client error', error);
-      };
-      client.on('error', onError);
-      const release = client.release.bind(client);
-      let released = false;
-      client.release = ((destroy?: boolean | Error) => {
-        if (released) return;
-        released = true;
-        this.#recordActive(performance.now() - acquiredAt);
-        client.removeListener('error', onError);
-        release(destroy);
-      }) as PoolClient['release'];
-      return client;
-    });
+    const startedAt = performance.now();
+    let client: PoolClient;
+    let waiters = 0;
+    try {
+      const checkout = this.#pool.connect();
+      waiters = this.#pool.waitingCount;
+      client = await checkout;
+    } catch (error) {
+      this.#telemetry.checkoutFailures++;
+      this.#noteFailure(error);
+      throw error;
+    }
+    this.#recordWait(performance.now() - startedAt, waiters);
+    const acquiredAt = performance.now();
+    const onError = (error: Error) => {
+      this.#noteFailure(error);
+      console.error('dedicated postgres client error', error);
+    };
+    client.on('error', onError);
+    const release = client.release.bind(client);
+    let released = false;
+    client.release = ((destroy?: boolean | Error) => {
+      if (released) return;
+      released = true;
+      this.#recordActive(performance.now() - acquiredAt);
+      client.removeListener('error', onError);
+      release(destroy);
+    }) as PoolClient['release'];
+    return client;
   }
 
   close(): Promise<void> {

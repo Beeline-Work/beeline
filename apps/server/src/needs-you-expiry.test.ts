@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events';
 import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BackgroundLeader } from './background.js';
+import { BackgroundLeader } from './background-leader.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
 import { PhoneService } from './phone-service.js';
@@ -291,17 +291,27 @@ describe('Needs-you expiry sweep', () => {
   it('sweeps only on the process that holds the background lock', async () => {
     const runOnce = vi.spyOn(DeadlineExpiry.prototype, 'runOnce');
     const loop = new DeadlineExpiry(database);
-    let released = false;
+    let waiting!: () => void;
+    const entered = new Promise<void>(resolve => { waiting = resolve; });
+    let cancel!: () => void;
+    const released = vi.fn(() => cancel?.());
     const leader = new BackgroundLeader({
       connectDedicated: async () => ({
-        query: async <Row>() => ({ rows: [{ locked: false }] as Row[] }),
-        release: () => { released = true; },
+        query: async <Row>(sql: string) => {
+          if (sql.includes('pg_advisory_lock')) {
+            waiting();
+            await new Promise<void>((_resolve, reject) => { cancel = () => reject(new Error('closed')); });
+          }
+          return { rows: [] as Row[] };
+        },
+        release: released,
       }),
-    }, async () => { await loop.runOnce(); }, 10);
+    }, async () => { await loop.runOnce(); });
     const running = leader.run();
-    await eventually(() => released);
-    leader.stop();
+    await entered;
+    await leader.stop();
     await running;
+    expect(released).toHaveBeenCalledOnce();
     expect(runOnce).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { BackgroundJobRunner, BackgroundLeader, type LeaderConnection } from './background.js';
+import { BackgroundJobRunner } from './background.js';
+import { BackgroundLeader, type LeaderConnection } from './background-leader.js';
 import { captureServerError } from './sentry.js';
 
 vi.mock('./sentry.js', () => ({ captureServerError: vi.fn() }));
@@ -67,12 +68,12 @@ describe('background shutdown', () => {
     expect(client.release).toHaveBeenCalledOnce();
   }, 1000);
 
-  it('does not start a cycle when stopped during the connection health check', async () => {
+  it('does not start a cycle when stopped during lock acquisition', async () => {
     const checking = deferred();
     const resume = deferred();
     const client = connection();
     client.query = async <Row>(sql?: string) => {
-      if (sql === 'SELECT 1') {
+      if (sql?.includes('pg_advisory_lock')) {
         checking.resolve();
         await resume.promise;
       }

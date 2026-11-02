@@ -25,7 +25,6 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import {
-  BackgroundLeader,
   BackgroundJobRunner,
   createPushTestSender,
   MediaExpiryLoop,
@@ -34,6 +33,7 @@ import {
 } from './background.js';
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { PendingAttachmentCleanupLoop } from './pending-attachment-cleanup.js';
+import { BackgroundLeader } from './background-leader.js';
 import { BackgroundWork } from './background-work.js';
 import { OperationOutcomes, startOperationOutcomeFlush } from './operation-outcomes.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
@@ -547,7 +547,7 @@ async function main() {
         ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
       }));
   });
-  const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader), reconciliationMs);
+  const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader));
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   const wakeSystemDms=()=>wakeWork('operator-system-dms','committed-system-dm');
   const wakeChoices = () => wakeWork('choices', 'choice-expiry');

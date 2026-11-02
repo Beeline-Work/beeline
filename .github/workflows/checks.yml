@@ -390,6 +390,28 @@ jobs:
           git fetch --no-tags --depth=1 origin "$CHANNEL_BASE"
           node --test scripts/phone-network-channels.test.mjs
           node scripts/check-phone-network-channels.mjs --base "$CHANNEL_BASE"
+      # The base commit's copy of the guard judges the PR, so a PR cannot
+      # weaken its own check. A merge group was already judged as its PRs.
+      - name: Keep each module's sinks in their owner files
+        env:
+          ARCHITECTURE_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
+          ARCHITECTURE_PR: ${{ github.event.pull_request.number }}
+          ARCHITECTURE_HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$ARCHITECTURE_BASE"
+          node --test scripts/check-architecture.test.mjs
+          runner=scripts
+          if git cat-file -e "$ARCHITECTURE_BASE:scripts/check-architecture.mjs" 2>/dev/null; then
+            runner="$RUNNER_TEMP/architecture-guard"
+            mkdir -p "$runner"
+            git show "$ARCHITECTURE_BASE:scripts/check-architecture.mjs" > "$runner/check-architecture.mjs"
+            git show "$ARCHITECTURE_BASE:scripts/architecture-invariants.mjs" > "$runner/architecture-invariants.mjs"
+          fi
+          if [ -n "$ARCHITECTURE_PR" ]; then
+            node "$runner/check-architecture.mjs" --root . --base "$ARCHITECTURE_BASE"
+          else
+            node "$runner/check-architecture.mjs" --root .
+          fi
       # `npx turbo run typecheck` misses two of the three legs the root script
       # runs: the isolated mobile app (its own tsconfig and node_modules, which
       # turbo does not see) and tsconfig.scripts.json. This gate is unfiltered

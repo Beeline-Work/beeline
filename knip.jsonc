@@ -31,6 +31,8 @@
       // Shell hooks and device harnesses invoke these by path, outside the
       // JavaScript module graph Knip can follow.
       "entry": [
+        // TYPECHECK runs the base commit's copy of the architecture guard by path.
+        "scripts/check-architecture.mjs",
         // The CI baseline runbook invokes this read-only GitHub measurement CLI by path.
         "scripts/ci-baseline.mjs",
         // Play upload and commit shell scripts invoke the CD listing lock by path.

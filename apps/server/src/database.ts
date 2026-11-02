@@ -64,7 +64,7 @@ import { syncTopLevelSharedRoomRoles } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
-import { cancelArchivedCornerAssignments } from './corner-close.js';
+import { cancelArchivedCornerAssignments, cancelStaleClosedCornerStops } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
@@ -3645,6 +3645,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'webhook-retention-v1', compactWebhookDeliveries));
   await dataStep('archived corner assignments', () =>
     workflowBackfillOnce(database, 'archived-corner-assignments-v1', cancelArchivedCornerAssignments));
+  await dataStep('stale closed corner stops', () =>
+    workflowBackfillOnce(database, 'closed-corner-stops-v1', cancelStaleClosedCornerStops));
   await dataStep('archived corner wakes', () =>
     workflowBackfillOnce(database, 'archived-corner-wakes-v1', deleteArchivedCornerWakeSources));
   await dataStep('completed command turns', () =>

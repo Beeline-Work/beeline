@@ -40,6 +40,13 @@ describe('owned immutable native byte disk', () => {
     expect(await store.get('key')).toBeNull(); expect(mocks.reads).not.toHaveBeenCalledWith(uri);
     expect(mocks.files.has(uri)).toBe(false);
   });
+  it('rejects an oversized index from stat before decoding any of its bytes', async () => {
+    const uri = `${directory}index.json`;
+    mocks.files.set(uri, { text: '[]', size: 1024 * 1024 + 1 });
+    expect(await createArtifactByteStore().get('key')).toBeNull();
+    expect(mocks.reads).not.toHaveBeenCalledWith(uri);
+    expect(mocks.deleted).toHaveBeenCalledWith(directory);
+  });
   // This proof encodes actual 25MiB buffers; the longer budget covers bounded
   // CPU work under serialized Vitest3, not a network wait or relaxed limit.
   it('keeps resident plus atomic temporary bytes below128MiB, including same-key replacement', async () => {

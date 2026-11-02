@@ -51,17 +51,20 @@ unchanged.
 
 The temporary migrated database template is an uncompressed tar image, shared
 immutably within each worker by its unique run path. Every test database still
-has its own PGlite filesystem and mutable state. The snapshot helper retains
-gzip as its default for persisted callers. Snapshot round-trip tests cover
-both formats, independent copies and rollback. Large read-history fixtures
+has its own PGlite filesystem and mutable state. Eight feature fixtures also
+clone that schema instead of rerunning migrations before every case; explicit
+migration and backfill proofs still run their migrations. Object-service
+fixtures close each database after the test. The snapshot helper retains gzip
+as its default for persisted callers. Snapshot round-trip tests cover both
+formats, independent copies and rollback. Large read-history fixtures
 keep their rows and query-plan assertions while avoiding unrelated write
 fanout during bulk seeding; foreign keys remain active and hooks resume
 before the behavior under test.
 
 The workflow suite is split across four files with a shared per-file fixture.
 All 170 test names and the original test blocks are retained. Scheduling
-weights use the passing CI profile, with explicit local estimates for changed
-fixtures until a new real run refreshes them. The balancer reserves each
+weights use the latest passing CI profile; source revision and measurement
+time are recorded with the weights. The balancer reserves each
 shard's isolated-suite and integration-batch cost before assigning its
 ordinary files.
 
@@ -69,7 +72,9 @@ The required TYPECHECK job executes two workspace lanes through
 `scripts/run-ci-workspace-checks.mjs` and `scripts/ci-workspace-tasks.sh`.
 Mobile occupies one lane with two isolated workers; root typecheck and the
 conditional dead-code/fingerprint/export tasks run sequentially in the other.
-All previous policy checks, including the trusted-base architecture guard,
+The root typecheck already generates mobile routes and checks the mobile
+project, so the lane does not repeat that compiler invocation. All previous
+policy checks, including the trusted-base architecture guard,
 remain in the task script. Required mobile/dead-code/fingerprint/export
 contexts keep their original conditions and take individual, fail-closed
 verdicts from the recorded task outputs. A failing task does not hide later
@@ -120,9 +125,22 @@ was approximately 24 minutes at ten CPUs. The
 [initial passing run](https://github.com/Beeline-Work/beeline/actions/runs/41523839846)
 completed in 27m20s with a 37.04 GiB sampled memory peak, no OOM or helper
 restart, and all 41 PR-head checks green. Firstmate accepted that delivery.
-The follow-up targets twelve minutes or less on the same pool; its real-run
-measurement and concurrent-PR validation remain required. Quotas alone do not
-prove capacity.
+The [first follow-up trial](https://github.com/Beeline-Work/beeline/actions/runs/41539926797)
+passed all 41 head checks in 38m12s under overlapping real CI runs. Server jobs
+waited as much as 17m03s for a listener; shard five then executed in 15m44s,
+including 7m09s for its largest file, instead of timing out. Approximate
+per-job CI CPU attribution was 178.02 CPU-minutes; total pool work was 381.11
+CPU-minutes because it includes the other runs. Sampled pool memory peaked at
+38.38 GiB, available host memory stayed above 74.37 GiB, and no OOM or helper
+restart occurred. Whole-host one-minute load reached 33.89. There was no local
+profiling during this trial.
+
+This is not twelve-minute acceptance. That measured head's own CPU work would
+require about 17m48s at ten CPUs even with perfect utilization and no queue or
+setup cost. Further fixture reductions and duplicate-compiler removal follow
+that measurement; their real-run result remains pending. The follow-up still
+targets twelve minutes or less on the same pool. Three overlapping passing PRs
+at the target remain unverified; quotas alone do not prove capacity.
 
 Whole-host load includes independent Beeline agents, Gradle and emulators;
 record it as context. Abort trials on CI budget violations, sustained memory

@@ -3522,8 +3522,6 @@ export async function migrate(
 /** Idempotent data work runs after both schema owners have expanded. Each step
  * commits separately, so retrying a release resumes completed work. */
 export async function migrateData(database: SqlDatabase): Promise<void> {
-  await releaseArchivedCornerHolds(database);
-  await backfillCornerHoldMessages(database);
   const dataStep = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
     let result!: T;
     await retryMigrationStep(name, async () => {
@@ -3531,6 +3529,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     });
     return result;
   };
+  await dataStep('archived corner holds', () => releaseArchivedCornerHolds(database));
+  await dataStep('corner hold messages', () => backfillCornerHoldMessages(database));
   await dataStep('push outbox cutover', () => workflowBackfillOnce(
     database, 'push-outbox-v1', backfillPushOutbox));
   await dataStep('free agent connection guide', () =>
@@ -3587,7 +3587,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'feedback-triage-prompt-cases-v1', backfillFeedbackTriageWorkflow));
   await dataStep('feedback triage latest counts', () =>
     workflowBackfillOnce(database, 'feedback-triage-latest-count-v1', backfillFeedbackTriageWorkflow));
-  await workflowBackfillOnce(database, 'welcome-video-v1', backfillWelcomeVideoWorkflow);
+  await dataStep('welcome video workflow', () =>
+    workflowBackfillOnce(database, 'welcome-video-v1', backfillWelcomeVideoWorkflow));
   await dataStep('feedback signal walk', () =>
     workflowBackfillOnce(database, 'feedback-signal-walk-v1', backfillFeedbackSignalWalk));
   await dataStep('workspace walk history', () =>
@@ -3918,9 +3919,12 @@ export async function compactPushClaims(database: SqlDatabase): Promise<void> {
  * inside either roster receive deterministic numeric suffixes.
  */
 export async function backfillAgentHandles(database: SqlDatabase): Promise<number> {
-  const agents = await database.query<{ id: string; created_at: Date }>(
-    `SELECT id,created_at FROM identities WHERE kind='agent' ORDER BY created_at,id`,
-  );
+  let agents!: QueryResult<{ id: string; created_at: Date }>;
+  await retryMigrationStep('agent handle candidates', async () => {
+    agents = await database.query(
+      `SELECT id,created_at FROM identities WHERE kind='agent' ORDER BY created_at,id`,
+    );
+  });
   let changed = 0;
   for (const agent of agents.rows) {
     let updated = 0;

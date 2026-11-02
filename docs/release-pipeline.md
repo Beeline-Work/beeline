@@ -224,6 +224,12 @@ that marker and exits with an explicit release-migration error when the schema
 is absent or stale. A Machine restart therefore cannot rerun or queue a
 migration behind live traffic.
 
+Every schema statement and data step, including optional release retirement,
+uses the bounded lock retry in `apps/server/src/migration-retry.ts` for both
+`40P01` and `55P03`. Completed steps keep their transaction boundaries.
+`migration-retry.test.ts` exercises transient and persistent contention against
+isolated loopback PostgreSQL via `BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL`.
+
 The promotion records the two current Machine image refs, builds and pushes one
 tagged Fly image (the image that ships; there is no separate build), and
 chooses the lexically first Machine as the canary. The Dockerfile stamps the

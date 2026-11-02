@@ -1,3 +1,4 @@
+import { systemMessage } from './system-message-catalog.js';
 import type { WorkflowReadContract } from './workflow-contracts.js';
 import type { WorkflowRunStatus } from './phone-operations.js';
 
@@ -10,7 +11,7 @@ export function workflowRunStatus(
   recorded?: WorkflowRunStatus,
 ): WorkflowRunStatus {
   const declared = contract.handoffs[state];
-  return recorded ?? (declared?.kind === 'terminal' ? declared.status : 'live');
+  return recorded ?? (declared?.kind === 'terminal' ? declared.status : systemMessage("workflow-run-status.live"));
 }
 
 /** Only the last visit of a live run can be current. */

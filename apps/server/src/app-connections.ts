@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { machineSquireReport } from './squire-machine.js';
 import { randomUUID } from 'node:crypto';
 import {
@@ -358,9 +359,9 @@ type Derived = {
 };
 
 /** A composio row that is not actually connected — a fresh sign-in is the remedy. */
-const APP_SIGN_IN_NEEDS_ATTENTION = 'App sign-in needs attention';
+const APP_SIGN_IN_NEEDS_ATTENTION = systemMessage("app-connections.app-sign-in-needs-attention");
 const APP_SIGN_IN_TIMEOUT_MS = 10 * 60_000;
-const APP_SIGN_IN_TIMED_OUT = 'App sign-in timed out. Open the connection card and sign in again.';
+const APP_SIGN_IN_TIMED_OUT = systemMessage("app-connections.app-sign-in-timed-out-open-the-connection-card-and-sign-in-again");
 
 export async function failAppSignInCards(database: SqlDatabase, appId: string, reason: string): Promise<void> {
   await database.query(
@@ -374,7 +375,7 @@ export async function failAppSignInCards(database: SqlDatabase, appId: string, r
 /** The app's live state, read from whatever serves it — never stored twice. */
 async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: ComposioApps): Promise<Derived> {
   if (row.transport === 'composio') {
-    if (!composio) return { status: 'error', errorMessage: 'App sign-in is unavailable' };
+    if (!composio) return { status: 'error', errorMessage: systemMessage("app-connections.app-sign-in-is-unavailable") };
     if (row.sign_in_error) return { status: 'error', errorMessage: row.sign_in_error };
     if (!row.composio_account_id) return { status: 'connecting' };
     let account;
@@ -382,7 +383,7 @@ async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: Compo
       account = await composio.accountStatus(row.composio_account_id, row.owner_identity_id,
         composioToolkitForApp(row.app_key));
     } catch {
-      return { status: 'error', errorMessage: 'App connection could not be checked. Try again.' };
+      return { status: 'error', errorMessage: systemMessage("app-connections.app-connection-could-not-be-checked-try-again") };
     }
     if (account.status === 'failed')
       return { status: 'error', errorMessage: account.reason ?? APP_SIGN_IN_NEEDS_ATTENTION };
@@ -409,10 +410,10 @@ async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: Compo
         ).rows[0]
       : undefined;
     if (!connector || connector.status === 'disconnected')
-      return { status: 'error', errorMessage: 'The MCP connection was removed; reconnect it' };
+      return { status: 'error', errorMessage: systemMessage("app-connections.the-mcp-connection-was-removed-reconnect-it") };
     if (connector.status === 'connected') return { status: 'connected' };
     if (connector.status === 'error')
-      return { status: 'error', errorMessage: connector.status_error ?? 'Connection failed' };
+      return { status: 'error', errorMessage: connector.status_error ?? systemMessage("app-connections.connection-failed") };
     const needsSquire = connector.sign_in?.url
       ? !(await squireConnected(database, row.owner_identity_id, row.machine_id))
       : false;
@@ -429,12 +430,12 @@ async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: Compo
     return {
       status: 'error',
       needsSquire: true,
-      errorMessage: 'Connect Trusty Squire in Connectors first',
+      errorMessage: systemMessage("app-connections.connect-trusty-squire-in-connectors-first"),
     };
   if (connections[0])
     return {
       status: 'error',
-      errorMessage: 'Its vault key needs attention in Trusty Squire',
+      errorMessage: systemMessage("app-connections.its-vault-key-needs-attention-in-trusty-squire"),
       connectionReference: connections[0].reference,
     };
   return { status: 'connecting' };
@@ -1041,7 +1042,7 @@ export async function completeComposioSignIn(
   try {
     completed = await composio.completeAuth(sessionUri, viewerId);
   } catch (error) {
-    const reason = error instanceof Error ? error.message : 'App sign-in failed';
+    const reason = error instanceof Error ? error.message : systemMessage("app-connections.app-sign-in-failed");
     await database.query(
       `UPDATE workspace_apps SET sign_in_error=$3,composio_link_expires_at=NULL,updated_at=now()
        WHERE id=$1::uuid AND owner_identity_id=$2 AND transport='composio'
@@ -1063,7 +1064,7 @@ export async function completeComposioSignIn(
     let verified: Awaited<ReturnType<ComposioApps['accountStatus']>>;
     try { verified = await composio.accountStatus(completed.accountId, viewerId, completed.toolkit); }
     catch (error) {
-      const reason = error instanceof Error ? error.message : 'App sign-in failed';
+      const reason = error instanceof Error ? error.message : systemMessage("app-connections.app-sign-in-failed");
       await db.query(`UPDATE workspace_apps SET sign_in_error=$2,composio_link_expires_at=NULL,updated_at=now() WHERE id=$1::uuid`,
         [pending.id, reason]);
       await failAppSignInCards(db, pending.id, reason);
@@ -1120,7 +1121,7 @@ export async function beginComposioAppSignIn(
     let link;
     try { link = await composio.link(ownerId, toolkit); }
     catch (error) {
-      const reason = error instanceof Error ? error.message : 'App sign-in failed';
+      const reason = error instanceof Error ? error.message : systemMessage("app-connections.app-sign-in-failed");
       await db.query(`UPDATE workspace_apps SET sign_in_error=$2,composio_account_id=NULL,composio_link_expires_at=NULL,updated_at=now() WHERE id=$1::uuid`,
         [row.id, reason]);
       await failAppSignInCards(db, row.id, reason);

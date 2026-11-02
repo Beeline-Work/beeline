@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { createCipheriv, createDecipheriv, createECDH, createHash, randomBytes } from 'node:crypto';
 import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beeline/api-contract/phone';
@@ -800,11 +801,11 @@ export class FreeAgentService {
       roomId: target.room_id,
       id: createHash('sha256').update(`free-agent-start-limit:${event.id}`).digest('hex'),
       subject: { kind: 'agent', id: agentId, name: target.agent_name },
-      verb: 'could not start',
+      verb: systemMessage("free-agents.could-not-start"),
       ...(target.person_id && target.person_handle
-        ? { object: { text: `for @${target.person_handle}`, id: target.person_id } }
+        ? { object: { text: systemMessage("free-agents.for", target.person_handle), id: target.person_id } }
         : {}),
-      consequence: 'the Beeline team has been told. Send a new message to try again',
+      consequence: systemMessage("free-agents.the-beeline-team-has-been-told-send-a-new-message-to-try-again"),
     });
   }
 

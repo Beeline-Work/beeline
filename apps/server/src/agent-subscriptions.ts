@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import { validateScheduleTitle } from './schedule-title.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -423,9 +424,9 @@ export async function fireServiceSubscriptions(db: SqlDatabase, body: Record<str
       if (!current) return false;
       const line = await systemLine(tx, {
         id, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,
-        subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' },
-        verb: 'received', object: 'a Slack message', consequence: row.service_channel_name
-          ? `#${row.service_channel_name}` : undefined,
+        subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: systemMessage("agent-subscriptions.beeline") },
+        verb: systemMessage("agent-subscriptions.received"), object: systemMessage("agent-subscriptions.a-slack-message"), consequence: row.service_channel_name
+          ? systemMessage("agent-subscriptions.channel-name", row.service_channel_name) : undefined,
         kind: 'subscription-fired', wakes: [row.agent_id],
         payload: { source: 'service', service: 'Slack', event: 'new_message',
           channel: row.service_channel_name ? `#${row.service_channel_name}` : row.service_channel_id,

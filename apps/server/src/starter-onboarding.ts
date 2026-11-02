@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { CommandRefusalError } from './command-refusal.js';
 import type { ObjectService } from './object-service.js';
 import { randomBytes, randomUUID } from 'node:crypto';
@@ -8,9 +9,9 @@ import { identityFaceDataUri } from './identity-face.js';
 import { recordOnboardingEvent } from './signin-funnel.js';
 
 export const STARTER_OPTIONS = [
-  { label: 'Make a welcome video and post it to my YouTube', consequence: 'Beebee makes it, Luna checks it, you approve the post' },
-  { label: 'Play tic-tac-toe with me', consequence: 'You and Beebee against Luna' },
-  { label: 'Something else', consequence: 'Tell us the job in your own words' },
+  { label: systemMessage("starter-onboarding.make-a-welcome-video-and-post-it-to-my-youtube"), consequence: systemMessage("starter-onboarding.beebee-makes-it-luna-checks-it-you-approve-the-post") },
+  { label: systemMessage("starter-onboarding.play-tic-tac-toe-with-me"), consequence: systemMessage("starter-onboarding.you-and-beebee-against-luna") },
+  { label: systemMessage("starter-onboarding.something-else"), consequence: systemMessage("starter-onboarding.tell-us-the-job-in-your-own-words") },
 ] as const;
 
 export function starterHello(name: string) {
@@ -38,7 +39,7 @@ export async function postStarterWelcome(database: SqlDatabase, input: {
   ]);
   const choice = await postRoomChoice(database, {
     roomId: input.roomId, agentId: input.agentId, mode: 'question',
-    prompt: 'Pick a first job',
+    prompt: systemMessage("starter-onboarding.pick-a-first-job"),
     options: STARTER_OPTIONS
       .map(option => ({ ...option })),
   });
@@ -97,8 +98,8 @@ export async function postStarterVideoPreview(database: SqlDatabase, objects: Ob
   if (!video?.mimeType.startsWith('video/') || !frame?.mimeType.startsWith('image/') || !frame.url)
     throw new Error('The preview needs a video clip and an image frame from this Room');
   const posted = await postRoomChoice(database, { roomId: input.roomId, agentId: input.agentId, mode: 'question',
-    prompt: input.title.trim(), constraint: `Visibility: ${input.visibility}`,
-    options: [{ label: 'Post', consequence: 'Post' }, { label: 'Cancel', consequence: 'Cancel' }] });
+    prompt: input.title.trim(), constraint: systemMessage("starter-onboarding.visibility", input.visibility),
+    options: [{ label: systemMessage("starter-onboarding.post"), consequence: systemMessage("starter-onboarding.post") }, { label: systemMessage("starter-onboarding.cancel"), consequence: systemMessage("starter-onboarding.cancel") }] });
   await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`, [posted.messageId,
     JSON.stringify({ videoPreview: { videoObjectId: input.videoObjectId, frameUrl: frame.url,
       title: input.title.trim(), description: input.description, visibility: input.visibility } })]);
@@ -139,9 +140,9 @@ async function buildStarterGame(database: SqlDatabase, roomId: string, userId: s
 
 async function postStarterNextStep(database: SqlDatabase, roomId: string, agentId: string) {
   const choice = await postRoomChoice(database, {
-    roomId, agentId, mode: 'question', prompt: 'After your game, what next?', options: [
-      { label: 'Invite a friend to play', consequence: 'Invite a friend to play' },
-      { label: 'Give us a real task', consequence: 'Give us a real task' },
+    roomId, agentId, mode: 'question', prompt: systemMessage("starter-onboarding.after-your-game-what-next"), options: [
+      { label: systemMessage("starter-onboarding.invite-a-friend-to-play"), consequence: systemMessage("starter-onboarding.invite-a-friend-to-play") },
+      { label: systemMessage("starter-onboarding.give-us-a-real-task"), consequence: systemMessage("starter-onboarding.give-us-a-real-task") },
     ],
   });
   await database.query(`UPDATE messages SET created_at=clock_timestamp(),card=card || '{"starterOnboarding":"next"}'::jsonb WHERE id=$1`, [choice.messageId]);

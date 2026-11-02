@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { workflowRunStatus, type WorkflowReadContract } from '@beeline/api-contract/phone';
 import { workflowTimerId } from '../workflow-timer-id.js';
 import { workflowRunStatusUnsavedSql } from '../workflow-run-saved-status.js';
@@ -99,7 +100,7 @@ export async function saveUnsavedWorkflowRunStatus(database: SqlDatabase): Promi
       } catch {
         console.warn(`saveUnsavedWorkflowRunStatus: run ${start.id} has an unreadable pinned contract`);
       }
-      const status = workflowRunStatus(contract, head.card.toState, head.card.cancellation ? 'abandoned' : head.card.status);
+      const status = workflowRunStatus(contract, head.card.toState, head.card.cancellation ? systemMessage("workflow-cleanup.abandoned") : head.card.status);
       await db.query(
         `UPDATE messages SET card=(card - 'active') || jsonb_build_object('runStatus',$2::text) WHERE id=$1`,
         [start.id, status],

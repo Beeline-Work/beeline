@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import type { ConnectorOfferCardView } from '@beeline/api-contract/connector-offers';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
@@ -119,7 +120,7 @@ async function settleConnectingOffers(
         kind: offer.accepted_kind,
         name: offer.accepted_name,
       }) : { kind: 'system', name: connectorName },
-      verb: offer.accepted_by ? (offer.intent === 'reconnect' ? 'reconnected' : 'added') : 'reconnected automatically',
+      verb: offer.accepted_by ? (offer.intent === 'reconnect' ? systemMessage("connector-offer-completion.reconnected") : systemMessage("connector-offer-completion.added")) : systemMessage("connector-offer-completion.reconnected-automatically"),
       ...(offer.accepted_by ? { object: connectorName } : {}),
       kind: 'connector-offer-decided',
       ...(offer.command_id ? { commandId: offer.command_id } : {}),

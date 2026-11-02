@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import {
@@ -170,9 +171,9 @@ export async function vaultSaveHttp(
         const line = await systemLine(database, {
           roomId,
           subject: { kind: 'person', id: actor, name: row.card.ownerName },
-          verb: 'saved a vault entry',
-          object: `${metadata.service} / ${metadata.label}`,
-          consequence: `${result.reference} · fields: ${metadata.fields.map((field) => field.name).join(', ')} · hosts: ${(result.allowedHosts ?? metadata.allowedHosts).join(', ')}`,
+          verb: systemMessage("vault-save-http.saved-a-vault-entry"),
+          object: systemMessage("vault-save-http.entry-title", metadata.service, metadata.label),
+          consequence: systemMessage("vault-save-http.fields-hosts", result.reference, metadata.fields.map((field) => field.name).join(systemMessage("vault-save-http.list-separator")), (result.allowedHosts ?? metadata.allowedHosts).join(systemMessage("vault-save-http.list-separator"))),
         });
         const parent = (
           await database.query<CommandRow>(

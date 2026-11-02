@@ -1,3 +1,4 @@
+import { systemMessage } from './system-message-catalog.js';
 /**
  * Agent Grants (design note: "Agent Grants", 3 Sep 2026): the one shared
  * vocabulary for the grant loop. The server stores grants, the phone decides
@@ -44,8 +45,8 @@ export const AGENT_GRANT_REASON_MAX_LENGTH = 1_000;
 export function connectionInstallName(grant: { kind: AgentGrantKind; target: string; appName?: string }): string | undefined {
   if (grant.kind !== 'mcp' || !grant.target.startsWith('connection-install:')) return undefined;
   const key = grant.target.slice('connection-install:'.length);
-  return grant.appName ?? (key === 'github' ? 'GitHub'
-    : key ? key.charAt(0).toUpperCase() + key.slice(1) : 'this app');
+  return grant.appName ?? (key === 'github' ? systemMessage("agent-grants.github")
+    : key ? key.charAt(0).toUpperCase() + key.slice(1) : systemMessage("agent-grants.this-app"));
 }
 
 export function isAgentGrantKind(value: unknown): value is AgentGrantKind {

@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { RoomSubscriptionView, WebhookCallView } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -219,7 +220,7 @@ export async function ingestSubscriptionWebhook(db: SqlDatabase, id: string, raw
     let payload: unknown;
     try { payload = JSON.parse(raw.toString('utf8')); } catch { payload = raw.toString('utf8'); }
     const line = await systemLine(tx, { id: messageId, roomId: row.room_id, authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: 'Beeline' }, verb: 'received', object: 'a webhook call',
+      subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: systemMessage("subscription-webhooks.beeline") }, verb: systemMessage("subscription-webhooks.received"), object: systemMessage("subscription-webhooks.a-webhook-call"),
       kind: 'subscription-fired', wakes: [row.agent_id],
       payload: { source: 'webhook', event: 'webhook.called', body: payload },
       subscriptionPrompt: row.prompt, subscriptionWorkflowSlug: row.workflow_slug ?? undefined });

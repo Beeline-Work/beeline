@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
@@ -178,7 +179,7 @@ export async function createComputerSession(
     throw new Error('computer session id is invalid');
   if (input.expiresAt !== undefined && !Number.isFinite(input.expiresAt))
     throw new Error('computer share expiry is invalid');
-  const title = input.title?.trim().slice(0, 120) || 'Browser';
+  const title = input.title?.trim().slice(0, 120) || systemMessage("computer-session.browser");
   const id = randomBytes(32).toString('base64url');
   const messageId = randomBytes(32).toString('hex');
   const url = computerSessionUrl(id);
@@ -192,8 +193,8 @@ export async function createComputerSession(
       roomId: input.roomId,
       authorId: input.agentId,
       subject: { kind: 'agent', id: input.agentId, name: agent.name },
-      verb: 'shared',
-      object: 'a live browser',
+      verb: systemMessage("computer-session.shared"),
+      object: systemMessage("computer-session.a-live-browser"),
       presentation: 'card',
       cardType: 'computer-session',
       card: { id, url, title, status: 'live' },

@@ -1,0 +1,6338 @@
+{
+  "agent-command.agent-mention": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`@${target.handle}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "@Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "@null"
+      }
+    ]
+  },
+  "agent-command.did-not": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`did not ${action}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "did not Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "did not null"
+      }
+    ]
+  },
+  "agent-command.did-not-sign-in": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'did not sign in'",
+    "cases": [
+      {
+        "values": [],
+        "output": "did not sign in"
+      }
+    ]
+  },
+  "agent-command.did-not-take-a-new-key": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'did not take a new key'",
+    "cases": [
+      {
+        "values": [],
+        "output": "did not take a new key"
+      }
+    ]
+  },
+  "agent-command.did-not-sign-in-to": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`did not sign in to ${AGENT_SIGN_IN_SERVICE_LABELS[loginHarness]}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "did not sign in to Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "did not sign in to null"
+      }
+    ]
+  },
+  "agent-command.only-its-owner-may-sign-it-in": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'only its owner may sign it in'",
+    "cases": [
+      {
+        "values": [],
+        "output": "only its owner may sign it in"
+      }
+    ]
+  },
+  "agent-command.sign-in-from-beeline-is-not-available-for-its-harness": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'sign-in from Beeline is not available for its harness'",
+    "cases": [
+      {
+        "values": [],
+        "output": "sign-in from Beeline is not available for its harness"
+      }
+    ]
+  },
+  "agent-command.asked-for-a-new-key": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'asked for a new key'",
+    "cases": [
+      {
+        "values": [],
+        "output": "asked for a new key"
+      }
+    ]
+  },
+  "agent-command.started-a-sign-in": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`started a ${AGENT_SIGN_IN_SERVICE_LABELS[harness]} sign-in`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "started a Ada 1 / café · \n$& {x} sign-in"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "started a null sign-in"
+      }
+    ]
+  },
+  "agent-command.its-owner-finishes-it-in-this-card": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'its owner finishes it in this card'",
+    "cases": [
+      {
+        "values": [],
+        "output": "its owner finishes it in this card"
+      }
+    ]
+  },
+  "agent-command.supports-lifecycle-commands": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'supports lifecycle commands'",
+    "cases": [
+      {
+        "values": [],
+        "output": "supports lifecycle commands"
+      }
+    ]
+  },
+  "agent-command.restart-status-stop-retry-debug-help-login": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'restart · status · stop · retry · debug · help · /login'",
+    "cases": [
+      {
+        "values": [],
+        "output": "restart · status · stop · retry · debug · help · /login"
+      }
+    ]
+  },
+  "agent-command.is-online": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'is online'",
+    "cases": [
+      {
+        "values": [],
+        "output": "is online"
+      }
+    ]
+  },
+  "agent-command.is-offline": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'is offline'",
+    "cases": [
+      {
+        "values": [],
+        "output": "is offline"
+      }
+    ]
+  },
+  "agent-command.one-turn-is-running": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'one turn is running'",
+    "cases": [
+      {
+        "values": [],
+        "output": "one turn is running"
+      }
+    ]
+  },
+  "agent-command.no-turn-is-running": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'no turn is running'",
+    "cases": [
+      {
+        "values": [],
+        "output": "no turn is running"
+      }
+    ]
+  },
+  "agent-command.lifecycle": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`lifecycle ${target.lifecycle_id ?? 'unknown'}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "lifecycle Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "lifecycle null"
+      }
+    ]
+  },
+  "agent-command.unknown": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'unknown'",
+    "cases": [
+      {
+        "values": [],
+        "output": "unknown"
+      }
+    ]
+  },
+  "agent-command.release": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`release ${target.release_version ?? 'unknown'}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "release Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "release null"
+      }
+    ]
+  },
+  "agent-command.source": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`source ${target.source_sha?.slice(0, 12) ?? 'unknown'}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "source Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "source null"
+      }
+    ]
+  },
+  "agent-command.turn": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`turn ${active.request_id}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "turn Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "turn null"
+      }
+    ]
+  },
+  "agent-command.no-active-turn": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'no active turn'",
+    "cases": [
+      {
+        "values": [],
+        "output": "no active turn"
+      }
+    ]
+  },
+  "agent-command.reported-diagnostics": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'reported diagnostics'",
+    "cases": [
+      {
+        "values": [],
+        "output": "reported diagnostics"
+      }
+    ]
+  },
+  "agent-command.separator": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "' · '",
+    "cases": [
+      {
+        "values": [],
+        "output": " · "
+      }
+    ]
+  },
+  "agent-command.has-nothing-to-stop": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'has nothing to stop'",
+    "cases": [
+      {
+        "values": [],
+        "output": "has nothing to stop"
+      }
+    ]
+  },
+  "agent-command.stopped-its-running-turn": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'stopped its running turn'",
+    "cases": [
+      {
+        "values": [],
+        "output": "stopped its running turn"
+      }
+    ]
+  },
+  "agent-command.queued-dropped": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} queued Ada 2 / café · \n$& {x} dropped"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null queued 0 dropped"
+      }
+    ]
+  },
+  "agent-command.order": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'order'",
+    "cases": [
+      {
+        "values": [],
+        "output": "order"
+      }
+    ]
+  },
+  "agent-command.orders": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'orders'",
+    "cases": [
+      {
+        "values": [],
+        "output": "orders"
+      }
+    ]
+  },
+  "agent-command.has-no-failed-turn-to-retry": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'has no failed turn to retry'",
+    "cases": [
+      {
+        "values": [],
+        "output": "has no failed turn to retry"
+      }
+    ]
+  },
+  "agent-command.queued-a-retry-for-its-last-failed-turn": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'queued a retry for its last failed turn'",
+    "cases": [
+      {
+        "values": [],
+        "output": "queued a retry for its last failed turn"
+      }
+    ]
+  },
+  "agent-command.already-has-a-restart-in-progress": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'already has a restart in progress'",
+    "cases": [
+      {
+        "values": [],
+        "output": "already has a restart in progress"
+      }
+    ]
+  },
+  "agent-command.queued-a-restart": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'queued a restart'",
+    "cases": [
+      {
+        "values": [],
+        "output": "queued a restart"
+      }
+    ]
+  },
+  "agent-command.running-turn-will-drain-first": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'running turn will drain first'",
+    "cases": [
+      {
+        "values": [],
+        "output": "running turn will drain first"
+      }
+    ]
+  },
+  "agent-command.helper-will-reconnect-to-confirm": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'helper will reconnect to confirm'",
+    "cases": [
+      {
+        "values": [],
+        "output": "helper will reconnect to confirm"
+      }
+    ]
+  },
+  "agent-command.1-hour": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'1 hour'",
+    "cases": [
+      {
+        "values": [],
+        "output": "1 hour"
+      }
+    ]
+  },
+  "agent-command.failed-queued-dropped-by-a-stop-the-running-turn-was-cancelled": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`failed: ${dropped.rowCount} queued ${dropped.rowCount === 1 ? 'order was' : 'orders were'} dropped by a Stop; the running turn was cancelled`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "failed: Ada 1 / café · \n$& {x} queued Ada 2 / café · \n$& {x} dropped by a Stop; the running turn was cancelled"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "failed: null queued 0 dropped by a Stop; the running turn was cancelled"
+      }
+    ]
+  },
+  "agent-command.order-was": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'order was'",
+    "cases": [
+      {
+        "values": [],
+        "output": "order was"
+      }
+    ]
+  },
+  "agent-command.orders-were": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'orders were'",
+    "cases": [
+      {
+        "values": [],
+        "output": "orders were"
+      }
+    ]
+  },
+  "agent-command.pull-request": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`pull request #${row.number}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "pull request #Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "pull request #null"
+      }
+    ]
+  },
+  "agent-command.this-head": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'this head'",
+    "cases": [
+      {
+        "values": [],
+        "output": "this head"
+      }
+    ]
+  },
+  "agent-command.requested-another-check-of": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'requested another check of'",
+    "cases": [
+      {
+        "values": [],
+        "output": "requested another check of"
+      }
+    ]
+  },
+  "agent-command.checks-fail-on-and-a-check-has-not-finished-for": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`checks fail on ${pullRequest} and a check has not finished for ${CORNER_CHECK_STUCK_AFTER}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "checks fail on Ada 1 / café · \n$& {x} and a check has not finished for Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "checks fail on null and a check has not finished for 0"
+      }
+    ]
+  },
+  "agent-command.checks-still-fail-on-and-the-fix-turn-ended-with-nothing-new-push": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "`checks still fail on ${pullRequest} and the fix turn ended with nothing new pushed`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "checks still fail on Ada 1 / café · \n$& {x} and the fix turn ended with nothing new pushed"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "checks still fail on null and the fix turn ended with nothing new pushed"
+      }
+    ]
+  },
+  "agent-command.found-failing-checks-on": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'found failing checks on'",
+    "cases": [
+      {
+        "values": [],
+        "output": "found failing checks on"
+      }
+    ]
+  },
+  "agent-command.blocked-pr-is-a-draft-marking-it-ready-for-review-failed": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'blocked: PR is a draft; marking it ready for review failed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "blocked: PR is a draft; marking it ready for review failed"
+      }
+    ]
+  },
+  "agent-command.found-merge-conflicts-in": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'found merge conflicts in'",
+    "cases": [
+      {
+        "values": [],
+        "output": "found merge conflicts in"
+      }
+    ]
+  },
+  "agent-command.github": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'GitHub'",
+    "cases": [
+      {
+        "values": [],
+        "output": "GitHub"
+      }
+    ]
+  },
+  "agent-command.passed-checks": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'passed checks'",
+    "cases": [
+      {
+        "values": [],
+        "output": "passed checks"
+      }
+    ]
+  },
+  "agent-command.aggregate-checks": {
+    "source": "apps/server/src/agent-command.ts",
+    "before": "'aggregate checks'",
+    "cases": [
+      {
+        "values": [],
+        "output": "aggregate checks"
+      }
+    ]
+  },
+  "agent-schedules.the-schedule": {
+    "source": "apps/server/src/agent-schedules.ts",
+    "before": "`The ${current.workflow_slug} schedule`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "The Ada 1 / café · \n$& {x} schedule"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "The null schedule"
+      }
+    ]
+  },
+  "agent-schedules.skipped-a-run": {
+    "source": "apps/server/src/agent-schedules.ts",
+    "before": "'skipped a run'",
+    "cases": [
+      {
+        "values": [],
+        "output": "skipped a run"
+      }
+    ]
+  },
+  "agent-schedules.run-is-active-at-step-in-state-for-min": {
+    "source": "apps/server/src/agent-schedules.ts",
+    "before": "`run ${live.runId} is active at step ${live.state} in state ${live.status} for ${elapsedMinutes} min`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}",
+          "Ada 4 / café · \n$& {x}"
+        ],
+        "output": "run Ada 1 / café · \n$& {x} is active at step Ada 2 / café · \n$& {x} in state Ada 3 / café · \n$& {x} for Ada 4 / café · \n$& {x} min"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false,
+          ""
+        ],
+        "output": "run null is active at step 0 in state false for  min"
+      }
+    ]
+  },
+  "agent-sign-in.sign-in-failed-on-the-agent-machine": {
+    "source": "apps/server/src/agent-sign-in.ts",
+    "before": "'Sign-in failed on the agent machine.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Sign-in failed on the agent machine."
+      }
+    ]
+  },
+  "agent-subscriptions.beeline": {
+    "source": "apps/server/src/agent-subscriptions.ts",
+    "before": "'Beeline'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Beeline"
+      }
+    ]
+  },
+  "agent-subscriptions.received": {
+    "source": "apps/server/src/agent-subscriptions.ts",
+    "before": "'received'",
+    "cases": [
+      {
+        "values": [],
+        "output": "received"
+      }
+    ]
+  },
+  "agent-subscriptions.a-slack-message": {
+    "source": "apps/server/src/agent-subscriptions.ts",
+    "before": "'a Slack message'",
+    "cases": [
+      {
+        "values": [],
+        "output": "a Slack message"
+      }
+    ]
+  },
+  "agent-subscriptions.channel-name": {
+    "source": "apps/server/src/agent-subscriptions.ts",
+    "before": "`#${row.service_channel_name}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "#Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "#null"
+      }
+    ]
+  },
+  "app-connections.app-sign-in-needs-attention": {
+    "source": "apps/server/src/app-connections.ts",
+    "before": "'App sign-in needs attention'",
+    "cases": [
+      {
+        "values": [],
+        "output": "App sign-in needs attention"
+      }
+    ]
+  },
+  "app-connections.app-sign-in-timed-out-open-the-connection-card-and-sign-in-again": {
+    "source": "apps/server/src/app-connections.ts",
+    "before": "'App sign-in timed out. Open the connection card and sign in again.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "App sign-in timed out. Open the connection card and sign in again."
+      }
+    ]
+  },
+  "app-connections.app-sign-in-is-unavailable": {
+    "source": "apps/server/src/app-connections.ts",
+    "before": "'App sign-in is unavailable'",
+    "cases": [
+      {
+        "values": [],
+        "output": "App sign-in is unavailable"
+      }
+    ]
+  },
+  "app-connections.app-connection-could-not-be-checked-try-again": {
+    "source": "apps/server/src/app-connections.ts",
+    "before": "'App connection could not be checked. Try again.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "App connection could not be checked. Try again."
+      }
+    ]
+  },
+  "app-connections.the-mcp-connection-was-removed-reconnect-it": {
+    "source": "apps/server/src/app-connections.ts",
+    "before": "'The MCP connection was removed; reconnect it'",
+    "cases": [
+      {
+        "values": [],
+        "output": "The MCP connection was removed; reconnect it"
+      }
+    ]
+  },
+  "app-connections.connection-failed": {
+    "source": "apps/server/src/app-connections.ts",
+    "before": "'Connection failed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Connection failed"
+      }
+    ]
+  },
+  "app-connections.connect-trusty-squire-in-connectors-first": {
+    "source": "apps/server/src/app-connections.ts",
+    "before": "'Connect Trusty Squire in Connectors first'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Connect Trusty Squire in Connectors first"
+      }
+    ]
+  },
+  "app-connections.its-vault-key-needs-attention-in-trusty-squire": {
+    "source": "apps/server/src/app-connections.ts",
+    "before": "'Its vault key needs attention in Trusty Squire'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Its vault key needs attention in Trusty Squire"
+      }
+    ]
+  },
+  "app-connections.app-sign-in-failed": {
+    "source": "apps/server/src/app-connections.ts",
+    "before": "'App sign-in failed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "App sign-in failed"
+      }
+    ]
+  },
+  "commander.stopped": {
+    "source": "apps/server/src/commander.ts",
+    "before": "'stopped'",
+    "cases": [
+      {
+        "values": [],
+        "output": "stopped"
+      }
+    ]
+  },
+  "commander.s-running-turn": {
+    "source": "apps/server/src/commander.ts",
+    "before": "`${systemIdentityMention({ ...worker, kind: 'agent' })}'s running turn`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}'s running turn"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null's running turn"
+      }
+    ]
+  },
+  "commander.queued-dropped": {
+    "source": "apps/server/src/commander.ts",
+    "before": "`${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} queued Ada 2 / café · \n$& {x} dropped"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null queued 0 dropped"
+      }
+    ]
+  },
+  "commander.order": {
+    "source": "apps/server/src/commander.ts",
+    "before": "'order'",
+    "cases": [
+      {
+        "values": [],
+        "output": "order"
+      }
+    ]
+  },
+  "commander.orders": {
+    "source": "apps/server/src/commander.ts",
+    "before": "'orders'",
+    "cases": [
+      {
+        "values": [],
+        "output": "orders"
+      }
+    ]
+  },
+  "commander.ordered": {
+    "source": "apps/server/src/commander.ts",
+    "before": "'ordered'",
+    "cases": [
+      {
+        "values": [],
+        "output": "ordered"
+      }
+    ]
+  },
+  "commander.reported-to": {
+    "source": "apps/server/src/commander.ts",
+    "before": "'reported to'",
+    "cases": [
+      {
+        "values": [],
+        "output": "reported to"
+      }
+    ]
+  },
+  "computer-session.browser": {
+    "source": "apps/server/src/computer-session.ts",
+    "before": "'Browser'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Browser"
+      }
+    ]
+  },
+  "computer-session.shared": {
+    "source": "apps/server/src/computer-session.ts",
+    "before": "'shared'",
+    "cases": [
+      {
+        "values": [],
+        "output": "shared"
+      }
+    ]
+  },
+  "computer-session.a-live-browser": {
+    "source": "apps/server/src/computer-session.ts",
+    "before": "'a live browser'",
+    "cases": [
+      {
+        "values": [],
+        "output": "a live browser"
+      }
+    ]
+  },
+  "connection-presence.agent-mention": {
+    "source": "apps/server/src/connection-presence.ts",
+    "before": "`@${restart.handle}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "@Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "@null"
+      }
+    ]
+  },
+  "connection-presence.reconnected-after-restart": {
+    "source": "apps/server/src/connection-presence.ts",
+    "before": "'reconnected after restart'",
+    "cases": [
+      {
+        "values": [],
+        "output": "reconnected after restart"
+      }
+    ]
+  },
+  "connector-offer-completion.reconnected": {
+    "source": "apps/server/src/connector-offer-completion.ts",
+    "before": "'reconnected'",
+    "cases": [
+      {
+        "values": [],
+        "output": "reconnected"
+      }
+    ]
+  },
+  "connector-offer-completion.added": {
+    "source": "apps/server/src/connector-offer-completion.ts",
+    "before": "'added'",
+    "cases": [
+      {
+        "values": [],
+        "output": "added"
+      }
+    ]
+  },
+  "connector-offer-completion.reconnected-automatically": {
+    "source": "apps/server/src/connector-offer-completion.ts",
+    "before": "'reconnected automatically'",
+    "cases": [
+      {
+        "values": [],
+        "output": "reconnected automatically"
+      }
+    ]
+  },
+  "corner-holds.set-a-merge-hold": {
+    "source": "apps/server/src/corner-holds.ts",
+    "before": "'set a merge hold'",
+    "cases": [
+      {
+        "values": [],
+        "output": "set a merge hold"
+      }
+    ]
+  },
+  "corner-holds.citation": {
+    "source": "apps/server/src/corner-holds.ts",
+    "before": "`${citation.source_name}: “${citation.source_text}”`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}: “Ada 2 / café · \n$& {x}”"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null: “0”"
+      }
+    ]
+  },
+  "corner-lifecycle.system": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'@system'",
+    "cases": [
+      {
+        "values": [],
+        "output": "@system"
+      }
+    ]
+  },
+  "corner-lifecycle.opened": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'opened'",
+    "cases": [
+      {
+        "values": [],
+        "output": "opened"
+      }
+    ]
+  },
+  "corner-lifecycle.corner": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'corner'",
+    "cases": [
+      {
+        "values": [],
+        "output": "corner"
+      }
+    ]
+  },
+  "corner-lifecycle.handed-off": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'handed off'",
+    "cases": [
+      {
+        "values": [],
+        "output": "handed off"
+      }
+    ]
+  },
+  "corner-lifecycle.pushed": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'pushed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "pushed"
+      }
+    ]
+  },
+  "corner-lifecycle.revision-work": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'revision_work'",
+    "cases": [
+      {
+        "values": [],
+        "output": "revision_work"
+      }
+    ]
+  },
+  "corner-lifecycle.rechecked": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'rechecked'",
+    "cases": [
+      {
+        "values": [],
+        "output": "rechecked"
+      }
+    ]
+  },
+  "corner-lifecycle.merge-unconfirmed": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'merge_unconfirmed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "merge_unconfirmed"
+      }
+    ]
+  },
+  "corner-lifecycle.could-not-confirm-the-merge-of": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'could not confirm the merge of'",
+    "cases": [
+      {
+        "values": [],
+        "output": "could not confirm the merge of"
+      }
+    ]
+  },
+  "corner-lifecycle.pull-request": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "`pull request #${event.number}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "pull request #Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "pull request #null"
+      }
+    ]
+  },
+  "corner-lifecycle.merge-outcome-is-unconfirmed": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "`${event.error} · merge outcome is unconfirmed`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} · merge outcome is unconfirmed"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null · merge outcome is unconfirmed"
+      }
+    ]
+  },
+  "corner-lifecycle.pr-closed": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'pr_closed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "pr_closed"
+      }
+    ]
+  },
+  "corner-lifecycle.landed": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'landed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "landed"
+      }
+    ]
+  },
+  "corner-lifecycle.closed": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'closed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "closed"
+      }
+    ]
+  },
+  "corner-lifecycle.the-configured-reviewer-is-unreachable-or-unhealthy": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'the configured reviewer is unreachable or unhealthy'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the configured reviewer is unreachable or unhealthy"
+      }
+    ]
+  },
+  "corner-lifecycle.the-corner-has-no-implementer": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'the corner has no implementer'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the corner has no implementer"
+      }
+    ]
+  },
+  "corner-lifecycle.the-reviewer-command-could-not-be-queued-on-restore-reviewer-acce": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "`the reviewer command could not be queued on ${headSha ?? 'this head'}${queued.error ? `: ${queued.error}` : ''}; restore reviewer access or choose an available reviewer`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "the reviewer command could not be queued on Ada 1 / café · \n$& {x}Ada 2 / café · \n$& {x}; restore reviewer access or choose an available reviewer"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "the reviewer command could not be queued on null0; restore reviewer access or choose an available reviewer"
+      }
+    ]
+  },
+  "corner-lifecycle.this-head": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'this head'",
+    "cases": [
+      {
+        "values": [],
+        "output": "this head"
+      }
+    ]
+  },
+  "corner-lifecycle.dispatch-error": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "`: ${queued.error}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": ": Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": ": null"
+      }
+    ]
+  },
+  "corner-lifecycle.approved": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'approved'",
+    "cases": [
+      {
+        "values": [],
+        "output": "approved"
+      }
+    ]
+  },
+  "corner-lifecycle.no-reviewer-is-configured": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'no reviewer is configured'",
+    "cases": [
+      {
+        "values": [],
+        "output": "no reviewer is configured"
+      }
+    ]
+  },
+  "corner-lifecycle.blocked": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "`blocked: ${reason}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "blocked: Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "blocked: null"
+      }
+    ]
+  },
+  "corner-lifecycle.the-implementer-cannot-be-woken-to-arrange-review": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'The implementer cannot be woken to arrange review'",
+    "cases": [
+      {
+        "values": [],
+        "output": "The implementer cannot be woken to arrange review"
+      }
+    ]
+  },
+  "corner-lifecycle.the-reviewer-completed-its-review-of-the-current-head": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "`the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "the reviewer completed its review of the current headAda 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "the reviewer completed its review of the current headnull"
+      }
+    ]
+  },
+  "corner-lifecycle.prior-verdict-and-evidence": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "`; prior verdict and evidence: ${evidence}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "; prior verdict and evidence: Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "; prior verdict and evidence: null"
+      }
+    ]
+  },
+  "corner-lifecycle.requested-review-of": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'requested review of'",
+    "cases": [
+      {
+        "values": [],
+        "output": "requested review of"
+      }
+    ]
+  },
+  "corner-lifecycle.unknown-dispatch-error": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'unknown dispatch error'",
+    "cases": [
+      {
+        "values": [],
+        "output": "unknown dispatch error"
+      }
+    ]
+  },
+  "corner-lifecycle.no-reviewer-on-the-configured-list-is-healthy-enough-to-continue": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'no reviewer on the configured list is healthy enough to continue'",
+    "cases": [
+      {
+        "values": [],
+        "output": "no reviewer on the configured list is healthy enough to continue"
+      }
+    ]
+  },
+  "corner-lifecycle.the-fallback-reviewer-command-could-not-be-queued": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "`the fallback reviewer command could not be queued${queued.error ? `: ${queued.error}` : ''}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "the fallback reviewer command could not be queuedAda 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "the fallback reviewer command could not be queuednull"
+      }
+    ]
+  },
+  "corner-lifecycle.merge-refused": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'merge_refused'",
+    "cases": [
+      {
+        "values": [],
+        "output": "merge_refused"
+      }
+    ]
+  },
+  "corner-lifecycle.refused-to-merge": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'refused to merge'",
+    "cases": [
+      {
+        "values": [],
+        "output": "refused to merge"
+      }
+    ]
+  },
+  "corner-lifecycle.blocked-configured-reviewer-could-not-be-reached": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "`blocked: configured reviewer ${input.reviewerName ?? input.reviewerId} could not be reached: ${input.reason}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "blocked: configured reviewer Ada 1 / café · \n$& {x} could not be reached: Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "blocked: configured reviewer null could not be reached: 0"
+      }
+    ]
+  },
+  "corner-lifecycle.blocked-no-reviewer-on-the-configured-list-is-healthy-arrange-a-r": {
+    "source": "apps/server/src/corner-lifecycle.ts",
+    "before": "'blocked: no reviewer on the configured list is healthy; arrange a reviewer or restore access'",
+    "cases": [
+      {
+        "values": [],
+        "output": "blocked: no reviewer on the configured list is healthy; arrange a reviewer or restore access"
+      }
+    ]
+  },
+  "corner-reviewer.set-the-corner-reviewer": {
+    "source": "apps/server/src/corner-reviewer.ts",
+    "before": "'set the corner reviewer'",
+    "cases": [
+      {
+        "values": [],
+        "output": "set the corner reviewer"
+      }
+    ]
+  },
+  "daemon-service.mcp-server": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'MCP server'",
+    "cases": [
+      {
+        "values": [],
+        "output": "MCP server"
+      }
+    ]
+  },
+  "daemon-service.this-repository": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'This repository'",
+    "cases": [
+      {
+        "values": [],
+        "output": "This repository"
+      }
+    ]
+  },
+  "daemon-service.has-no-commits-yet-push-a-first-commit-and-i-ll-pick-it-up": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "\"has no commits yet - push a first commit and I'll pick it up.\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "has no commits yet - push a first commit and I'll pick it up."
+      }
+    ]
+  },
+  "daemon-service.install-or-grant-the-beeline-github-app": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'Install or grant the Beeline GitHub App'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Install or grant the Beeline GitHub App"
+      }
+    ]
+  },
+  "daemon-service.to-access-this-repository": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'to access this repository.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "to access this repository."
+      }
+    ]
+  },
+  "daemon-service.wants-a-vault-entry": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'wants a vault entry'",
+    "cases": [
+      {
+        "values": [],
+        "output": "wants a vault entry"
+      }
+    ]
+  },
+  "daemon-service.vault-entry-title": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`${metadata.service} / ${metadata.label}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} / Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null / 0"
+      }
+    ]
+  },
+  "daemon-service.passed-checks-on": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'passed checks on'",
+    "cases": [
+      {
+        "values": [],
+        "output": "passed checks on"
+      }
+    ]
+  },
+  "daemon-service.this-zero-check-pull-request": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'this zero-check pull request'",
+    "cases": [
+      {
+        "values": [],
+        "output": "this zero-check pull request"
+      }
+    ]
+  },
+  "daemon-service.connected": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'connected'",
+    "cases": [
+      {
+        "values": [],
+        "output": "connected"
+      }
+    ]
+  },
+  "daemon-service.the-requesting-agent-can-continue-the-original-task": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'the requesting agent can continue the original task'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the requesting agent can continue the original task"
+      }
+    ]
+  },
+  "daemon-service.needs": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'needs'",
+    "cases": [
+      {
+        "values": [],
+        "output": "needs"
+      }
+    ]
+  },
+  "daemon-service.provider-sign-in": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'provider sign-in'",
+    "cases": [
+      {
+        "values": [],
+        "output": "provider sign-in"
+      }
+    ]
+  },
+  "daemon-service.the-provider-sign-in-page-is-ready-connect-this-tool-through-trus": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'the provider sign-in page is ready · connect this tool through Trusty Squire'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the provider sign-in page is ready · connect this tool through Trusty Squire"
+      }
+    ]
+  },
+  "daemon-service.tailscale-sign-in": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'Tailscale sign-in'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Tailscale sign-in"
+      }
+    ]
+  },
+  "daemon-service.click-the-link-to-join-this-machine-to-the-tailnet": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'click the link to join this machine to the tailnet'",
+    "cases": [
+      {
+        "values": [],
+        "output": "click the link to join this machine to the tailnet"
+      }
+    ]
+  },
+  "daemon-service.closed": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'closed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "closed"
+      }
+    ]
+  },
+  "daemon-service.link-purchase-at": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`Link purchase at ${input.merchant}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Link purchase at Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "Link purchase at null"
+      }
+    ]
+  },
+  "daemon-service.usd": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`${(input.amount / 100).toFixed(2)} USD · ${input.description}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} USD · Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null USD · 0"
+      }
+    ]
+  },
+  "daemon-service.link": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'Link'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Link"
+      }
+    ]
+  },
+  "daemon-service.needs-your-approval-for": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'needs your approval for'",
+    "cases": [
+      {
+        "values": [],
+        "output": "needs your approval for"
+      }
+    ]
+  },
+  "daemon-service.trusty-squire": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'trusty-squire'",
+    "cases": [
+      {
+        "values": [],
+        "output": "trusty-squire"
+      }
+    ]
+  },
+  "daemon-service.the-request-to": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`The request to ${action}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "The request to Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "The request to null"
+      }
+    ]
+  },
+  "daemon-service.expired": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'expired'",
+    "cases": [
+      {
+        "values": [],
+        "output": "expired"
+      }
+    ]
+  },
+  "daemon-service.was-allowed": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'was allowed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "was allowed"
+      }
+    ]
+  },
+  "daemon-service.was-denied": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'was denied'",
+    "cases": [
+      {
+        "values": [],
+        "output": "was denied"
+      }
+    ]
+  },
+  "daemon-service.google-sign-in": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'Google sign-in'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Google sign-in"
+      }
+    ]
+  },
+  "daemon-service.asked-to": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`asked ${requester.handle ? `@${requester.handle}` : ''} to`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "asked Ada 1 / café · \n$& {x} to"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "asked null to"
+      }
+    ]
+  },
+  "daemon-service.requester-mention": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`@${requester.handle}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "@Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "@null"
+      }
+    ]
+  },
+  "daemon-service.an-agent": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'An agent'",
+    "cases": [
+      {
+        "values": [],
+        "output": "An agent"
+      }
+    ]
+  },
+  "daemon-service.emitted": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'emitted'",
+    "cases": [
+      {
+        "values": [],
+        "output": "emitted"
+      }
+    ]
+  },
+  "daemon-service.your-agent": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'Your agent'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Your agent"
+      }
+    ]
+  },
+  "daemon-service.saved-its-avatar": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'saved its avatar'",
+    "cases": [
+      {
+        "values": [],
+        "output": "saved its avatar"
+      }
+    ]
+  },
+  "daemon-service.your-avatar-is-ready": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'Your avatar is ready.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Your avatar is ready."
+      }
+    ]
+  },
+  "daemon-service.needs-a-different-model": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'needs a different model'",
+    "cases": [
+      {
+        "values": [],
+        "output": "needs a different model"
+      }
+    ]
+  },
+  "daemon-service.open-this-agent-s-settings-and-choose-an-available-model-or-effor": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'Open this agent’s settings and choose an available model or effort.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Open this agent’s settings and choose an available model or effort."
+      }
+    ]
+  },
+  "daemon-service.the-previous-model": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'The previous model'",
+    "cases": [
+      {
+        "values": [],
+        "output": "The previous model"
+      }
+    ]
+  },
+  "daemon-service.the-default-model": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'the default model'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the default model"
+      }
+    ]
+  },
+  "daemon-service.switched-models": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'switched models'",
+    "cases": [
+      {
+        "values": [],
+        "output": "switched models"
+      }
+    ]
+  },
+  "daemon-service.is-no-longer-offered-now-using": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`${oldModelName} is no longer offered; now using ${newModelName}.`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} is no longer offered; now using Ada 2 / café · \n$& {x}."
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null is no longer offered; now using 0."
+      }
+    ]
+  },
+  "daemon-service.proposed-a-target-branch": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'proposed a target branch'",
+    "cases": [
+      {
+        "values": [],
+        "output": "proposed a target branch"
+      }
+    ]
+  },
+  "daemon-service.instead-of": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`instead of ${input.from}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "instead of Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "instead of null"
+      }
+    ]
+  },
+  "daemon-service.needs-a-connection-to": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'needs a connection to'",
+    "cases": [
+      {
+        "values": [],
+        "output": "needs a connection to"
+      }
+    ]
+  },
+  "daemon-service.sign-in-to-continue-the-request": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'Sign in to continue the request.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Sign in to continue the request."
+      }
+    ]
+  },
+  "daemon-service.complete-this-sign-in-to-connect-the-tool": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'complete this sign-in to connect the tool'",
+    "cases": [
+      {
+        "values": [],
+        "output": "complete this sign-in to connect the tool"
+      }
+    ]
+  },
+  "daemon-service.space": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "' '",
+    "cases": [
+      {
+        "values": [],
+        "output": " "
+      }
+    ]
+  },
+  "daemon-service.asked-to-switch": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`asked ${addresseeMention} to switch`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "asked Ada 1 / café · \n$& {x} to switch"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "asked null to switch"
+      }
+    ]
+  },
+  "daemon-service.offered": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`offered ${addresseeMention}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "offered Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "offered null"
+      }
+    ]
+  },
+  "daemon-service.s-google-account": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`${connectorName}'s Google account`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}'s Google account"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null's Google account"
+      }
+    ]
+  },
+  "daemon-service.opened-a-corner": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'opened a corner'",
+    "cases": [
+      {
+        "values": [],
+        "output": "opened a corner"
+      }
+    ]
+  },
+  "daemon-service.revised-the-corner-brief": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'revised the corner brief'",
+    "cases": [
+      {
+        "values": [],
+        "output": "revised the corner brief"
+      }
+    ]
+  },
+  "daemon-service.revision": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`Revision ${revision}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Revision Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "Revision null"
+      }
+    ]
+  },
+  "daemon-service.agent": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`Agent ${agentId.slice(0, 8)}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Agent Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "Agent null"
+      }
+    ]
+  },
+  "daemon-service.wants-to-connect": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'wants to connect'",
+    "cases": [
+      {
+        "values": [],
+        "output": "wants to connect"
+      }
+    ]
+  },
+  "daemon-service.and": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "' and '",
+    "cases": [
+      {
+        "values": [],
+        "output": " and "
+      }
+    ]
+  },
+  "daemon-service.wants": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'wants'",
+    "cases": [
+      {
+        "values": [],
+        "output": "wants"
+      }
+    ]
+  },
+  "daemon-service.to-connect": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`${agent.name} to connect ${connectionInstallName(grant)}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} to connect Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null to connect 0"
+      }
+    ]
+  },
+  "daemon-service.to": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "`${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : grant.kind === 'shared_asset' ? 'isolate' : 'use'} ${grant.target}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} to Ada 2 / café · \n$& {x} Ada 3 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false
+        ],
+        "output": "null to 0 false"
+      }
+    ]
+  },
+  "daemon-service.read": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'read'",
+    "cases": [
+      {
+        "values": [],
+        "output": "read"
+      }
+    ]
+  },
+  "daemon-service.write": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'write'",
+    "cases": [
+      {
+        "values": [],
+        "output": "write"
+      }
+    ]
+  },
+  "daemon-service.isolate": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'isolate'",
+    "cases": [
+      {
+        "values": [],
+        "output": "isolate"
+      }
+    ]
+  },
+  "daemon-service.use": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'use'",
+    "cases": [
+      {
+        "values": [],
+        "output": "use"
+      }
+    ]
+  },
+  "feedback.https-github-com-pull": {
+    "source": "apps/server/src/feedback.ts",
+    "before": "`https://github.com/${config.repository}/pull/${number}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "https://github.com/Ada 1 / café · \n$& {x}/pull/Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "https://github.com/null/pull/0"
+      }
+    ]
+  },
+  "feedback.fixed": {
+    "source": "apps/server/src/feedback.ts",
+    "before": "`Fixed: ${title} ${url}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Fixed: Ada 1 / café · \n$& {x} Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "Fixed: null 0"
+      }
+    ]
+  },
+  "first-party-integrations.a-member": {
+    "source": "apps/server/src/first-party-integrations.ts",
+    "before": "'A member'",
+    "cases": [
+      {
+        "values": [],
+        "output": "A member"
+      }
+    ]
+  },
+  "first-party-integrations.connected": {
+    "source": "apps/server/src/first-party-integrations.ts",
+    "before": "'connected'",
+    "cases": [
+      {
+        "values": [],
+        "output": "connected"
+      }
+    ]
+  },
+  "first-party-integrations.the-request-can-continue": {
+    "source": "apps/server/src/first-party-integrations.ts",
+    "before": "'The request can continue.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "The request can continue."
+      }
+    ]
+  },
+  "free-agent-turn-close.ran-out-of-free-allowance-mid-task": {
+    "source": "apps/server/src/free-agent-turn-close.ts",
+    "before": "'ran out of free allowance mid-task'",
+    "cases": [
+      {
+        "values": [],
+        "output": "ran out of free allowance mid-task"
+      }
+    ]
+  },
+  "free-agent-turn-close.hit-the-15-minute-limit": {
+    "source": "apps/server/src/free-agent-turn-close.ts",
+    "before": "'hit the 15-minute limit'",
+    "cases": [
+      {
+        "values": [],
+        "output": "hit the 15-minute limit"
+      }
+    ]
+  },
+  "free-agent-turn-close.ended-without-a-reply": {
+    "source": "apps/server/src/free-agent-turn-close.ts",
+    "before": "'ended without a reply'",
+    "cases": [
+      {
+        "values": [],
+        "output": "ended without a reply"
+      }
+    ]
+  },
+  "free-agent-turn-close.stopped-after-a-runtime-failure": {
+    "source": "apps/server/src/free-agent-turn-close.ts",
+    "before": "'stopped after a runtime failure'",
+    "cases": [
+      {
+        "values": [],
+        "output": "stopped after a runtime failure"
+      }
+    ]
+  },
+  "free-agent-turn-close.stopped-before-replying": {
+    "source": "apps/server/src/free-agent-turn-close.ts",
+    "before": "'stopped before replying'",
+    "cases": [
+      {
+        "values": [],
+        "output": "stopped before replying"
+      }
+    ]
+  },
+  "free-agent-turn-close.connect-your-own-agent-from-members-to-continue": {
+    "source": "apps/server/src/free-agent-turn-close.ts",
+    "before": "'connect your own agent from Members to continue'",
+    "cases": [
+      {
+        "values": [],
+        "output": "connect your own agent from Members to continue"
+      }
+    ]
+  },
+  "free-agent-turn-close.it-resets-at-midnight-utc-ask-to-continue-then": {
+    "source": "apps/server/src/free-agent-turn-close.ts",
+    "before": "'it resets at midnight UTC; ask to continue then'",
+    "cases": [
+      {
+        "values": [],
+        "output": "it resets at midnight UTC; ask to continue then"
+      }
+    ]
+  },
+  "free-agent-turn-close.say-continue-to-pick-up-where-work-stopped": {
+    "source": "apps/server/src/free-agent-turn-close.ts",
+    "before": "'say \"continue\" to pick up where work stopped'",
+    "cases": [
+      {
+        "values": [],
+        "output": "say \"continue\" to pick up where work stopped"
+      }
+    ]
+  },
+  "free-agents.could-not-start": {
+    "source": "apps/server/src/free-agents.ts",
+    "before": "'could not start'",
+    "cases": [
+      {
+        "values": [],
+        "output": "could not start"
+      }
+    ]
+  },
+  "free-agents.for": {
+    "source": "apps/server/src/free-agents.ts",
+    "before": "`for @${target.person_handle}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "for @Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "for @null"
+      }
+    ]
+  },
+  "free-agents.the-beeline-team-has-been-told-send-a-new-message-to-try-again": {
+    "source": "apps/server/src/free-agents.ts",
+    "before": "'the Beeline team has been told. Send a new message to try again'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the Beeline team has been told. Send a new message to try again"
+      }
+    ]
+  },
+  "github-operations.pull-request": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'pull_request'",
+    "cases": [
+      {
+        "values": [],
+        "output": "pull_request"
+      }
+    ]
+  },
+  "github-operations.check-run": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'check_run'",
+    "cases": [
+      {
+        "values": [],
+        "output": "check_run"
+      }
+    ]
+  },
+  "github-operations.found-merge-conflicts-in": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'found merge conflicts in'",
+    "cases": [
+      {
+        "values": [],
+        "output": "found merge conflicts in"
+      }
+    ]
+  },
+  "github-operations.pull-request-2": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "`pull request #${row.number}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "pull request #Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "pull request #null"
+      }
+    ]
+  },
+  "github-operations.github": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'github'",
+    "cases": [
+      {
+        "values": [],
+        "output": "github"
+      }
+    ]
+  },
+  "github-operations.merged": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'merged'",
+    "cases": [
+      {
+        "values": [],
+        "output": "merged"
+      }
+    ]
+  },
+  "github-operations.pull-request-3": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "`Pull request #${integer(pullRequest?.number) ?? ''}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Pull request #Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "Pull request #null"
+      }
+    ]
+  },
+  "github-operations.opened-a-pull-request": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'opened a pull request'",
+    "cases": [
+      {
+        "values": [],
+        "output": "opened a pull request"
+      }
+    ]
+  },
+  "github-operations.pushed": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'pushed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "pushed"
+      }
+    ]
+  },
+  "github-operations.commit-to": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "`${commits} commit${commits === 1 ? '' : 's'} to `",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} commitAda 2 / café · \n$& {x} to "
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null commit0 to "
+      }
+    ]
+  },
+  "github-operations.s": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'s'",
+    "cases": [
+      {
+        "values": [],
+        "output": "s"
+      }
+    ]
+  },
+  "github-operations.at": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "`at ${head.slice(0, 12)}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "at Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "at null"
+      }
+    ]
+  },
+  "github-operations.passed": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'passed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "passed"
+      }
+    ]
+  },
+  "github-operations.started": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'started'",
+    "cases": [
+      {
+        "values": [],
+        "output": "started"
+      }
+    ]
+  },
+  "github-operations.cancelled": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'cancelled'",
+    "cases": [
+      {
+        "values": [],
+        "output": "cancelled"
+      }
+    ]
+  },
+  "github-operations.found-failing-checks-on": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'found failing checks on'",
+    "cases": [
+      {
+        "values": [],
+        "output": "found failing checks on"
+      }
+    ]
+  },
+  "github-operations.a-check": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "`${label} a check`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} a check"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null a check"
+      }
+    ]
+  },
+  "github-operations.the-pull-request": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "'the pull request'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the pull request"
+      }
+    ]
+  },
+  "github-operations.failing": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "`failing ${failing.join(', ')}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "failing Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "failing null"
+      }
+    ]
+  },
+  "github-operations.list-separator": {
+    "source": "apps/server/src/github-operations.ts",
+    "before": "', '",
+    "cases": [
+      {
+        "values": [],
+        "output": ", "
+      }
+    ]
+  },
+  "grant-policy-upgrade.system": {
+    "source": "apps/server/src/grant-policy-upgrade.ts",
+    "before": "'@system'",
+    "cases": [
+      {
+        "values": [],
+        "output": "@system"
+      }
+    ]
+  },
+  "grant-policy-upgrade.revoked-a-legacy-grant-for": {
+    "source": "apps/server/src/grant-policy-upgrade.ts",
+    "before": "'revoked a legacy grant for'",
+    "cases": [
+      {
+        "values": [],
+        "output": "revoked a legacy grant for"
+      }
+    ]
+  },
+  "grant-policy-upgrade.grant-target": {
+    "source": "apps/server/src/grant-policy-upgrade.ts",
+    "before": "`${grant.kind} ${grant.target}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null 0"
+      }
+    ]
+  },
+  "grant-policy-upgrade.permission-policy-upgraded": {
+    "source": "apps/server/src/grant-policy-upgrade.ts",
+    "before": "'permission policy upgraded'",
+    "cases": [
+      {
+        "values": [],
+        "output": "permission policy upgraded"
+      }
+    ]
+  },
+  "membership-join.joined": {
+    "source": "apps/server/src/membership-join.ts",
+    "before": "'joined'",
+    "cases": [
+      {
+        "values": [],
+        "output": "joined"
+      }
+    ]
+  },
+  "membership-join.invited-by": {
+    "source": "apps/server/src/membership-join.ts",
+    "before": "'invited by'",
+    "cases": [
+      {
+        "values": [],
+        "output": "invited by"
+      }
+    ]
+  },
+  "corner-names.separator": {
+    "source": "apps/server/src/migrations/corner-names.ts",
+    "before": "'-'",
+    "cases": [
+      {
+        "values": [],
+        "output": "-"
+      }
+    ]
+  },
+  "corner-names.corner": {
+    "source": "apps/server/src/migrations/corner-names.ts",
+    "before": "`corner-${corner.id.slice(0, 8)}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "corner-Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "corner-null"
+      }
+    ]
+  },
+  "corner-names.suffixed-name": {
+    "source": "apps/server/src/migrations/corner-names.ts",
+    "before": "`${base}-${suffix}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}-Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null-0"
+      }
+    ]
+  },
+  "workflow-cleanup.abandoned": {
+    "source": "apps/server/src/migrations/workflow-cleanup.ts",
+    "before": "'abandoned'",
+    "cases": [
+      {
+        "values": [],
+        "output": "abandoned"
+      }
+    ]
+  },
+  "phone-service.message-deleted": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'Message deleted'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Message deleted"
+      }
+    ]
+  },
+  "phone-service.could-not-be-reached": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'could not be reached'",
+    "cases": [
+      {
+        "values": [],
+        "output": "could not be reached"
+      }
+    ]
+  },
+  "phone-service.not-a-member-of-this-corner": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'not a member of this corner'",
+    "cases": [
+      {
+        "values": [],
+        "output": "not a member of this corner"
+      }
+    ]
+  },
+  "phone-service.did-not-answer": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'did not answer'",
+    "cases": [
+      {
+        "values": [],
+        "output": "did not answer"
+      }
+    ]
+  },
+  "phone-service.only-may-address-ask-the-user-for-permission-to-access-the-agent": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "`only ${personMention(agent.owner_handle) ?? 'the owner'} may address ${agentMention}. Ask the user for permission to access the agent in the members page`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "only Ada 1 / café · \n$& {x} may address Ada 2 / café · \n$& {x}. Ask the user for permission to access the agent in the members page"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "only null may address 0. Ask the user for permission to access the agent in the members page"
+      }
+    ]
+  },
+  "phone-service.the-owner": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'the owner'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the owner"
+      }
+    ]
+  },
+  "phone-service.its-helper-is-offline": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'its helper is offline'",
+    "cases": [
+      {
+        "values": [],
+        "output": "its helper is offline"
+      }
+    ]
+  },
+  "phone-service.stopped": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'stopped'",
+    "cases": [
+      {
+        "values": [],
+        "output": "stopped"
+      }
+    ]
+  },
+  "phone-service.turn-cancelled": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "`turn cancelled${dropped ? ` · ${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` : ''}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "turn cancelledAda 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "turn cancellednull"
+      }
+    ]
+  },
+  "phone-service.queued-dropped": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "` · ${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": " · Ada 1 / café · \n$& {x} queued Ada 2 / café · \n$& {x} dropped"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": " · null queued 0 dropped"
+      }
+    ]
+  },
+  "phone-service.order": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'order'",
+    "cases": [
+      {
+        "values": [],
+        "output": "order"
+      }
+    ]
+  },
+  "phone-service.orders": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'orders'",
+    "cases": [
+      {
+        "values": [],
+        "output": "orders"
+      }
+    ]
+  },
+  "phone-service.declined": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'declined'",
+    "cases": [
+      {
+        "values": [],
+        "output": "declined"
+      }
+    ]
+  },
+  "phone-service.edit-files": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'edit files'",
+    "cases": [
+      {
+        "values": [],
+        "output": "edit files"
+      }
+    ]
+  },
+  "phone-service.allowed": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'allowed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "allowed"
+      }
+    ]
+  },
+  "phone-service.denied": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'denied'",
+    "cases": [
+      {
+        "values": [],
+        "output": "denied"
+      }
+    ]
+  },
+  "phone-service.to": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "`${systemIdentityMention({\n            id: agent.pubkey,\n            kind: agent.kind,\n            name: agent.name,\n            handle: agent.handle ?? null,\n          })} to ${tool}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} to Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null to 0"
+      }
+    ]
+  },
+  "phone-service.opened-a-corner": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'opened a corner'",
+    "cases": [
+      {
+        "values": [],
+        "output": "opened a corner"
+      }
+    ]
+  },
+  "phone-service.changed-room-visibility-to": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'changed room visibility to'",
+    "cases": [
+      {
+        "values": [],
+        "output": "changed room visibility to"
+      }
+    ]
+  },
+  "phone-service.left": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'left'",
+    "cases": [
+      {
+        "values": [],
+        "output": "left"
+      }
+    ]
+  },
+  "phone-service.removed": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'removed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "removed"
+      }
+    ]
+  },
+  "phone-service.approved": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'approved'",
+    "cases": [
+      {
+        "values": [],
+        "output": "approved"
+      }
+    ]
+  },
+  "phone-service.approved-once": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'approved once'",
+    "cases": [
+      {
+        "values": [],
+        "output": "approved once"
+      }
+    ]
+  },
+  "phone-service.grant-target": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "`${grant.kind} ${grant.target}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null 0"
+      }
+    ]
+  },
+  "phone-service.turned-yolo-on-for": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'turned yolo on for'",
+    "cases": [
+      {
+        "values": [],
+        "output": "turned yolo on for"
+      }
+    ]
+  },
+  "phone-service.turned-yolo-off-for": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'turned yolo off for'",
+    "cases": [
+      {
+        "values": [],
+        "output": "turned yolo off for"
+      }
+    ]
+  },
+  "phone-service.grant-requests-are-now-approved-automatically": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'grant requests are now approved automatically'",
+    "cases": [
+      {
+        "values": [],
+        "output": "grant requests are now approved automatically"
+      }
+    ]
+  },
+  "phone-service.grant-requests-now-ask-before-running": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'grant requests now ask before running'",
+    "cases": [
+      {
+        "values": [],
+        "output": "grant requests now ask before running"
+      }
+    ]
+  },
+  "phone-service.a-member": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'A member'",
+    "cases": [
+      {
+        "values": [],
+        "output": "A member"
+      }
+    ]
+  },
+  "phone-service.connected": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'connected'",
+    "cases": [
+      {
+        "values": [],
+        "output": "connected"
+      }
+    ]
+  },
+  "phone-service.the-request-can-continue": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "'The request can continue.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "The request can continue."
+      }
+    ]
+  },
+  "phone-service.person-mention": {
+    "source": "apps/server/src/phone-service.ts",
+    "before": "`@${trimmed}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "@Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "@null"
+      }
+    ]
+  },
+  "provider-webhooks.beeline": {
+    "source": "apps/server/src/provider-webhooks.ts",
+    "before": "'Beeline'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Beeline"
+      }
+    ]
+  },
+  "provider-webhooks.received": {
+    "source": "apps/server/src/provider-webhooks.ts",
+    "before": "'received'",
+    "cases": [
+      {
+        "values": [],
+        "output": "received"
+      }
+    ]
+  },
+  "provider-webhooks.a-linear-issue": {
+    "source": "apps/server/src/provider-webhooks.ts",
+    "before": "'a Linear issue'",
+    "cases": [
+      {
+        "values": [],
+        "output": "a Linear issue"
+      }
+    ]
+  },
+  "provider-webhooks.a-stripe-payment": {
+    "source": "apps/server/src/provider-webhooks.ts",
+    "before": "'a Stripe payment'",
+    "cases": [
+      {
+        "values": [],
+        "output": "a Stripe payment"
+      }
+    ]
+  },
+  "repository-onboarding.suggested-work": {
+    "source": "apps/server/src/repository-onboarding.ts",
+    "before": "'suggested work'",
+    "cases": [
+      {
+        "values": [],
+        "output": "suggested work"
+      }
+    ]
+  },
+  "repository-onboarding.offered-a-repository": {
+    "source": "apps/server/src/repository-onboarding.ts",
+    "before": "'offered a repository'",
+    "cases": [
+      {
+        "values": [],
+        "output": "offered a repository"
+      }
+    ]
+  },
+  "repository-onboarding.choose-or-create-a-repository": {
+    "source": "apps/server/src/repository-onboarding.ts",
+    "before": "'Choose or create a repository'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Choose or create a repository"
+      }
+    ]
+  },
+  "repository-subscription-line.opened-issue": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "'opened issue'",
+    "cases": [
+      {
+        "values": [],
+        "output": "opened issue"
+      }
+    ]
+  },
+  "repository-subscription-line.closed-issue": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "'closed issue'",
+    "cases": [
+      {
+        "values": [],
+        "output": "closed issue"
+      }
+    ]
+  },
+  "repository-subscription-line.reopened-issue": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "'reopened issue'",
+    "cases": [
+      {
+        "values": [],
+        "output": "reopened issue"
+      }
+    ]
+  },
+  "repository-subscription-line.opened-pull-request": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "'opened pull request'",
+    "cases": [
+      {
+        "values": [],
+        "output": "opened pull request"
+      }
+    ]
+  },
+  "repository-subscription-line.merged-pull-request": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "'merged pull request'",
+    "cases": [
+      {
+        "values": [],
+        "output": "merged pull request"
+      }
+    ]
+  },
+  "repository-subscription-line.closed-pull-request": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "'closed pull request'",
+    "cases": [
+      {
+        "values": [],
+        "output": "closed pull request"
+      }
+    ]
+  },
+  "repository-subscription-line.reopened-pull-request": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "'reopened pull request'",
+    "cases": [
+      {
+        "values": [],
+        "output": "reopened pull request"
+      }
+    ]
+  },
+  "repository-subscription-line.starred": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "'starred'",
+    "cases": [
+      {
+        "values": [],
+        "output": "starred"
+      }
+    ]
+  },
+  "repository-subscription-line.unstarred": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "'unstarred'",
+    "cases": [
+      {
+        "values": [],
+        "output": "unstarred"
+      }
+    ]
+  },
+  "repository-subscription-line.space": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "' '",
+    "cases": [
+      {
+        "values": [],
+        "output": " "
+      }
+    ]
+  },
+  "repository-subscription-line.clipped-title": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "`${title.slice(0, 79).trimEnd()}…`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}…"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null…"
+      }
+    ]
+  },
+  "repository-subscription-line.item-number": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "`#${details.number}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "#Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "#null"
+      }
+    ]
+  },
+  "repository-subscription-line.github": {
+    "source": "apps/server/src/repository-subscription-line.ts",
+    "before": "'GitHub'",
+    "cases": [
+      {
+        "values": [],
+        "output": "GitHub"
+      }
+    ]
+  },
+  "room-choice.asked": {
+    "source": "apps/server/src/room-choice.ts",
+    "before": "'asked'",
+    "cases": [
+      {
+        "values": [],
+        "output": "asked"
+      }
+    ]
+  },
+  "room-choice.of-voted-for": {
+    "source": "apps/server/src/room-choice.ts",
+    "before": "`${responses.length} of ${choice.electorate.length} voted for ${winner.label}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} of Ada 2 / café · \n$& {x} voted for Ada 3 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false
+        ],
+        "output": "null of 0 voted for false"
+      }
+    ]
+  },
+  "room-choice.asked-a-poll": {
+    "source": "apps/server/src/room-choice.ts",
+    "before": "'asked a poll'",
+    "cases": [
+      {
+        "values": [],
+        "output": "asked a poll"
+      }
+    ]
+  },
+  "room-choice.expired-no-answer": {
+    "source": "apps/server/src/room-choice.ts",
+    "before": "'expired · no answer'",
+    "cases": [
+      {
+        "values": [],
+        "output": "expired · no answer"
+      }
+    ]
+  },
+  "room-choice.skipped": {
+    "source": "apps/server/src/room-choice.ts",
+    "before": "`skipped · @${handleOf(viewer)}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "skipped · @Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "skipped · @null"
+      }
+    ]
+  },
+  "room-choice.skipped-2": {
+    "source": "apps/server/src/room-choice.ts",
+    "before": "'skipped'",
+    "cases": [
+      {
+        "values": [],
+        "output": "skipped"
+      }
+    ]
+  },
+  "room-choice.someone": {
+    "source": "apps/server/src/room-choice.ts",
+    "before": "'someone'",
+    "cases": [
+      {
+        "values": [],
+        "output": "someone"
+      }
+    ]
+  },
+  "room-choice.picked": {
+    "source": "apps/server/src/room-choice.ts",
+    "before": "`picked ${option.letter} · @${handleOf(viewer)}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "picked Ada 1 / café · \n$& {x} · @Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "picked null · @0"
+      }
+    ]
+  },
+  "room-choice.picked-2": {
+    "source": "apps/server/src/room-choice.ts",
+    "before": "'picked'",
+    "cases": [
+      {
+        "values": [],
+        "output": "picked"
+      }
+    ]
+  },
+  "starter-onboarding.make-a-welcome-video-and-post-it-to-my-youtube": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'Make a welcome video and post it to my YouTube'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Make a welcome video and post it to my YouTube"
+      }
+    ]
+  },
+  "starter-onboarding.beebee-makes-it-luna-checks-it-you-approve-the-post": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'Beebee makes it, Luna checks it, you approve the post'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Beebee makes it, Luna checks it, you approve the post"
+      }
+    ]
+  },
+  "starter-onboarding.play-tic-tac-toe-with-me": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'Play tic-tac-toe with me'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Play tic-tac-toe with me"
+      }
+    ]
+  },
+  "starter-onboarding.you-and-beebee-against-luna": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'You and Beebee against Luna'",
+    "cases": [
+      {
+        "values": [],
+        "output": "You and Beebee against Luna"
+      }
+    ]
+  },
+  "starter-onboarding.something-else": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'Something else'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Something else"
+      }
+    ]
+  },
+  "starter-onboarding.tell-us-the-job-in-your-own-words": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'Tell us the job in your own words'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Tell us the job in your own words"
+      }
+    ]
+  },
+  "starter-onboarding.pick-a-first-job": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'Pick a first job'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Pick a first job"
+      }
+    ]
+  },
+  "starter-onboarding.visibility": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "`Visibility: ${input.visibility}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Visibility: Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "Visibility: null"
+      }
+    ]
+  },
+  "starter-onboarding.post": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'Post'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Post"
+      }
+    ]
+  },
+  "starter-onboarding.cancel": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'Cancel'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Cancel"
+      }
+    ]
+  },
+  "starter-onboarding.after-your-game-what-next": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'After your game, what next?'",
+    "cases": [
+      {
+        "values": [],
+        "output": "After your game, what next?"
+      }
+    ]
+  },
+  "starter-onboarding.invite-a-friend-to-play": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'Invite a friend to play'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Invite a friend to play"
+      }
+    ]
+  },
+  "starter-onboarding.give-us-a-real-task": {
+    "source": "apps/server/src/starter-onboarding.ts",
+    "before": "'Give us a real task'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Give us a real task"
+      }
+    ]
+  },
+  "startup-wake-backoff.keeps-failing-to-start-automatic-wakes-are-paused-for-5-minutes": {
+    "source": "apps/server/src/startup-wake-backoff.ts",
+    "before": "`${owner.name} keeps failing to start. Automatic wakes are paused for 5 minutes.`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} keeps failing to start. Automatic wakes are paused for 5 minutes."
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null keeps failing to start. Automatic wakes are paused for 5 minutes."
+      }
+    ]
+  },
+  "subscription-webhooks.beeline": {
+    "source": "apps/server/src/subscription-webhooks.ts",
+    "before": "'Beeline'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Beeline"
+      }
+    ]
+  },
+  "subscription-webhooks.received": {
+    "source": "apps/server/src/subscription-webhooks.ts",
+    "before": "'received'",
+    "cases": [
+      {
+        "values": [],
+        "output": "received"
+      }
+    ]
+  },
+  "subscription-webhooks.a-webhook-call": {
+    "source": "apps/server/src/subscription-webhooks.ts",
+    "before": "'a webhook call'",
+    "cases": [
+      {
+        "values": [],
+        "output": "a webhook call"
+      }
+    ]
+  },
+  "system-line.space": {
+    "source": "apps/server/src/system-line.ts",
+    "before": "' '",
+    "cases": [
+      {
+        "values": [],
+        "output": " "
+      }
+    ]
+  },
+  "system-line.handle-word-separator": {
+    "source": "apps/server/src/system-line.ts",
+    "before": "'_'",
+    "cases": [
+      {
+        "values": [],
+        "output": "_"
+      }
+    ]
+  },
+  "system-line.agent": {
+    "source": "apps/server/src/system-line.ts",
+    "before": "'agent'",
+    "cases": [
+      {
+        "values": [],
+        "output": "agent"
+      }
+    ]
+  },
+  "system-line.identity-mention": {
+    "source": "apps/server/src/system-line.ts",
+    "before": "`@${row.handle}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "@Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "@null"
+      }
+    ]
+  },
+  "system-line.github": {
+    "source": "apps/server/src/system-line.ts",
+    "before": "'GitHub'",
+    "cases": [
+      {
+        "values": [],
+        "output": "GitHub"
+      }
+    ]
+  },
+  "system-line.beeline": {
+    "source": "apps/server/src/system-line.ts",
+    "before": "'Beeline'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Beeline"
+      }
+    ]
+  },
+  "system-line.received": {
+    "source": "apps/server/src/system-line.ts",
+    "before": "'received'",
+    "cases": [
+      {
+        "values": [],
+        "output": "received"
+      }
+    ]
+  },
+  "system-line.a-room-event": {
+    "source": "apps/server/src/system-line.ts",
+    "before": "'a Room event'",
+    "cases": [
+      {
+        "values": [],
+        "output": "a Room event"
+      }
+    ]
+  },
+  "turn-silence-notice.space": {
+    "source": "apps/server/src/turn-silence-notice.ts",
+    "before": "' '",
+    "cases": [
+      {
+        "values": [],
+        "output": " "
+      }
+    ]
+  },
+  "turn-silence-notice.failed": {
+    "source": "apps/server/src/turn-silence-notice.ts",
+    "before": "`failed: ${place.name} (${input.roomId}): ${reason || classified.fault || 'agent turn failed'}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}"
+        ],
+        "output": "failed: Ada 1 / café · \n$& {x} (Ada 2 / café · \n$& {x}): Ada 3 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false
+        ],
+        "output": "failed: null (0): false"
+      }
+    ]
+  },
+  "turn-silence-notice.agent-turn-failed": {
+    "source": "apps/server/src/turn-silence-notice.ts",
+    "before": "'agent turn failed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "agent turn failed"
+      }
+    ]
+  },
+  "unfinished-app-sign-ins.app-sign-in-timed-out-open-the-connection-card-and-sign-in-again": {
+    "source": "apps/server/src/unfinished-app-sign-ins.ts",
+    "before": "'App sign-in timed out. Open the connection card and sign in again.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "App sign-in timed out. Open the connection card and sign in again."
+      }
+    ]
+  },
+  "vault-save-http.saved-a-vault-entry": {
+    "source": "apps/server/src/vault-save-http.ts",
+    "before": "'saved a vault entry'",
+    "cases": [
+      {
+        "values": [],
+        "output": "saved a vault entry"
+      }
+    ]
+  },
+  "vault-save-http.entry-title": {
+    "source": "apps/server/src/vault-save-http.ts",
+    "before": "`${metadata.service} / ${metadata.label}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} / Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null / 0"
+      }
+    ]
+  },
+  "vault-save-http.fields-hosts": {
+    "source": "apps/server/src/vault-save-http.ts",
+    "before": "`${result.reference} · fields: ${metadata.fields.map((field) => field.name).join(', ')} · hosts: ${(result.allowedHosts ?? metadata.allowedHosts).join(', ')}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} · fields: Ada 2 / café · \n$& {x} · hosts: Ada 3 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false
+        ],
+        "output": "null · fields: 0 · hosts: false"
+      }
+    ]
+  },
+  "vault-save-http.list-separator": {
+    "source": "apps/server/src/vault-save-http.ts",
+    "before": "', '",
+    "cases": [
+      {
+        "values": [],
+        "output": ", "
+      }
+    ]
+  },
+  "voice-service.voice-call": {
+    "source": "apps/server/src/voice-service.ts",
+    "before": "'Voice call'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Voice call"
+      }
+    ]
+  },
+  "voice-service.started": {
+    "source": "apps/server/src/voice-service.ts",
+    "before": "'started'",
+    "cases": [
+      {
+        "values": [],
+        "output": "started"
+      }
+    ]
+  },
+  "voice-service.call": {
+    "source": "apps/server/src/voice-service.ts",
+    "before": "'Call'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Call"
+      }
+    ]
+  },
+  "voice-service.ended": {
+    "source": "apps/server/src/voice-service.ts",
+    "before": "'ended'",
+    "cases": [
+      {
+        "values": [],
+        "output": "ended"
+      }
+    ]
+  },
+  "voice-service.no-one-spoke-for-60s": {
+    "source": "apps/server/src/voice-service.ts",
+    "before": "' · No one spoke for 60s'",
+    "cases": [
+      {
+        "values": [],
+        "output": " · No one spoke for 60s"
+      }
+    ]
+  },
+  "voice-service.separator": {
+    "source": "apps/server/src/voice-service.ts",
+    "before": "` · ${row.end_reason}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": " · Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": " · null"
+      }
+    ]
+  },
+  "voice-service.silence": {
+    "source": "apps/server/src/voice-service.ts",
+    "before": "'silence'",
+    "cases": [
+      {
+        "values": [],
+        "output": "silence"
+      }
+    ]
+  },
+  "wallet-notices.detail-separator": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "'; '",
+    "cases": [
+      {
+        "values": [],
+        "output": "; "
+      }
+    ]
+  },
+  "wallet-notices.could-not-complete": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "'could not complete'",
+    "cases": [
+      {
+        "values": [],
+        "output": "could not complete"
+      }
+    ]
+  },
+  "wallet-notices.confirmed": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "'confirmed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "confirmed"
+      }
+    ]
+  },
+  "wallet-notices.submitted": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "'submitted'",
+    "cases": [
+      {
+        "values": [],
+        "output": "submitted"
+      }
+    ]
+  },
+  "wallet-notices.you": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "'you'",
+    "cases": [
+      {
+        "values": [],
+        "output": "you"
+      }
+    ]
+  },
+  "wallet-notices.initiator-not-known-to-beeline": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "'initiator not known to Beeline'",
+    "cases": [
+      {
+        "values": [],
+        "output": "initiator not known to Beeline"
+      }
+    ]
+  },
+  "wallet-notices.wallet": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "'Wallet'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Wallet"
+      }
+    ]
+  },
+  "wallet-notices.on": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "`${next.operation} ${next.amountText} on ${next.chain} · ${next.counterparty}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}",
+          "Ada 4 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} Ada 2 / café · \n$& {x} on Ada 3 / café · \n$& {x} · Ada 4 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false,
+          ""
+        ],
+        "output": "null 0 on false · "
+      }
+    ]
+  },
+  "wallet-notices.confirmation-pending": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "'confirmation pending'",
+    "cases": [
+      {
+        "values": [],
+        "output": "confirmation pending"
+      }
+    ]
+  },
+  "wallet-notices.left": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "`${next.balanceAfterUsd} left`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} left"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null left"
+      }
+    ]
+  },
+  "wallet-notices.separator": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "' · '",
+    "cases": [
+      {
+        "values": [],
+        "output": " · "
+      }
+    ]
+  },
+  "wallet.wallet": {
+    "source": "apps/server/src/wallet.ts",
+    "before": "'Wallet'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Wallet"
+      }
+    ]
+  },
+  "wallet.granted": {
+    "source": "apps/server/src/wallet.ts",
+    "before": "'granted'",
+    "cases": [
+      {
+        "values": [],
+        "output": "granted"
+      }
+    ]
+  },
+  "wallet.agents-permission-to-sign": {
+    "source": "apps/server/src/wallet.ts",
+    "before": "'agents permission to sign'",
+    "cases": [
+      {
+        "values": [],
+        "output": "agents permission to sign"
+      }
+    ]
+  },
+  "wallet.until-revoked": {
+    "source": "apps/server/src/wallet.ts",
+    "before": "'until revoked'",
+    "cases": [
+      {
+        "values": [],
+        "output": "until revoked"
+      }
+    ]
+  },
+  "wallet.agent-mention": {
+    "source": "apps/server/src/wallet.ts",
+    "before": "`@${row.handle}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "@Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "@null"
+      }
+    ]
+  },
+  "wallet.signed": {
+    "source": "apps/server/src/wallet.ts",
+    "before": "'signed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "signed"
+      }
+    ]
+  },
+  "wallet.eip-712-typed-data": {
+    "source": "apps/server/src/wallet.ts",
+    "before": "'EIP-712 typed data'",
+    "cases": [
+      {
+        "values": [],
+        "output": "EIP-712 typed data"
+      }
+    ]
+  },
+  "wallet.an-agent": {
+    "source": "apps/server/src/wallet.ts",
+    "before": "'An agent'",
+    "cases": [
+      {
+        "values": [],
+        "output": "An agent"
+      }
+    ]
+  },
+  "workbench.link": {
+    "source": "apps/server/src/workbench.ts",
+    "before": "'Link'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Link"
+      }
+    ]
+  },
+  "workbench.mcp-connector": {
+    "source": "apps/server/src/workbench.ts",
+    "before": "'MCP Connector'",
+    "cases": [
+      {
+        "values": [],
+        "output": "MCP Connector"
+      }
+    ]
+  },
+  "workbench.b": {
+    "source": "apps/server/src/workbench.ts",
+    "before": "`${bytes} B`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} B"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null B"
+      }
+    ]
+  },
+  "workbench.kb": {
+    "source": "apps/server/src/workbench.ts",
+    "before": "`${(bytes / 1024).toFixed(1)} kB`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} kB"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null kB"
+      }
+    ]
+  },
+  "workbench.mb": {
+    "source": "apps/server/src/workbench.ts",
+    "before": "`${(bytes / (1024 * 1024)).toFixed(1)} MB`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} MB"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null MB"
+      }
+    ]
+  },
+  "workbench.calls": {
+    "source": "apps/server/src/workbench.ts",
+    "before": "`${records.length} calls · ${formatBytes(totalBytes)}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} calls · Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null calls · 0"
+      }
+    ]
+  },
+  "workbench.grant": {
+    "source": "apps/server/src/workbench.ts",
+    "before": "`grant ${records[0]!.grantLabel ?? records[0]!.grantId}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "grant Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "grant null"
+      }
+    ]
+  },
+  "workbench.separator": {
+    "source": "apps/server/src/workbench.ts",
+    "before": "' · '",
+    "cases": [
+      {
+        "values": [],
+        "output": " · "
+      }
+    ]
+  },
+  "workbench.agent": {
+    "source": "apps/server/src/workbench.ts",
+    "before": "'agent'",
+    "cases": [
+      {
+        "values": [],
+        "output": "agent"
+      }
+    ]
+  },
+  "workbench.used": {
+    "source": "apps/server/src/workbench.ts",
+    "before": "'used'",
+    "cases": [
+      {
+        "values": [],
+        "output": "used"
+      }
+    ]
+  },
+  "workflow-runs.offline": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'offline'",
+    "cases": [
+      {
+        "values": [],
+        "output": "offline"
+      }
+    ]
+  },
+  "workflow-runs.recent-failure": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'recent failure'",
+    "cases": [
+      {
+        "values": [],
+        "output": "recent failure"
+      }
+    ]
+  },
+  "workflow-runs.out-of-credit": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'out of credit'",
+    "cases": [
+      {
+        "values": [],
+        "output": "out of credit"
+      }
+    ]
+  },
+  "workflow-runs.not-in-this-room": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'not in this Room'",
+    "cases": [
+      {
+        "values": [],
+        "output": "not in this Room"
+      }
+    ]
+  },
+  "workflow-runs.earlier-on-the-list": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'earlier on the list'",
+    "cases": [
+      {
+        "values": [],
+        "output": "earlier on the list"
+      }
+    ]
+  },
+  "workflow-runs.eligible": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'eligible'",
+    "cases": [
+      {
+        "values": [],
+        "output": "eligible"
+      }
+    ]
+  },
+  "workflow-runs.agent-health": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`${names.get(id)} ${why}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null 0"
+      }
+    ]
+  },
+  "workflow-runs.list-separator": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "', '",
+    "cases": [
+      {
+        "values": [],
+        "output": ", "
+      }
+    ]
+  },
+  "workflow-runs.no-agent-on-the-role-s-list": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`No agent on the ${input.role} role's list`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "No agent on the Ada 1 / café · \n$& {x} role's list"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "No agent on the null role's list"
+      }
+    ]
+  },
+  "workflow-runs.is-healthy": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'is healthy'",
+    "cases": [
+      {
+        "values": [],
+        "output": "is healthy"
+      }
+    ]
+  },
+  "workflow-runs.ask-an-agent-to-call-assign-workflow-role-to-bind-another-agent-i": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`${reasons ? `${reasons} in run ${shortRunId(input.runId)}; ` : `in run ${shortRunId(input.runId)}; `}ask an agent to call assign_workflow_role to bind another agent in this Room`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}ask an agent to call assign_workflow_role to bind another agent in this Room"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "nullask an agent to call assign_workflow_role to bind another agent in this Room"
+      }
+    ]
+  },
+  "workflow-runs.in-run": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`${reasons} in run ${shortRunId(input.runId)}; `",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} in run Ada 2 / café · \n$& {x}; "
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null in run 0; "
+      }
+    ]
+  },
+  "workflow-runs.in-run-2": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`in run ${shortRunId(input.runId)}; `",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "in run Ada 1 / café · \n$& {x}; "
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "in run null; "
+      }
+    ]
+  },
+  "workflow-runs.h": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`${seconds / 3600} h`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} h"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null h"
+      }
+    ]
+  },
+  "workflow-runs.min": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`${seconds / 60} min`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} min"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null min"
+      }
+    ]
+  },
+  "workflow-runs.s": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`${seconds} s`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} s"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null s"
+      }
+    ]
+  },
+  "workflow-runs.space": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "' '",
+    "cases": [
+      {
+        "values": [],
+        "output": " "
+      }
+    ]
+  },
+  "workflow-runs.choose-the-next-step-for": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`Choose the next step for ${input.contract.name.replace(/[-_]/g, ' ')}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Choose the next step for Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "Choose the next step for null"
+      }
+    ]
+  },
+  "workflow-runs.no-answer-in-applies": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`No answer in ${durationText(input.state.timeoutSeconds)} applies ${input.state.default}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "No answer in Ada 1 / café · \n$& {x} applies Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "No answer in null applies 0"
+      }
+    ]
+  },
+  "workflow-runs.continue-to": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`Continue to ${target.replace(/[-_]/g, ' ')}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Continue to Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "Continue to null"
+      }
+    ]
+  },
+  "workflow-runs.the-workflow": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'the workflow'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the workflow"
+      }
+    ]
+  },
+  "workflow-runs.moved": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'moved'",
+    "cases": [
+      {
+        "values": [],
+        "output": "moved"
+      }
+    ]
+  },
+  "workflow-runs.to-because-in-run-of": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`${from ? `from ${names.get(from)} ` : ''}to ${names.get(input.picked)} because ${input.why} in run ${shortRunId(runId)} of ${run.workflowSlug}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}",
+          "Ada 4 / café · \n$& {x}",
+          "Ada 5 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}to Ada 2 / café · \n$& {x} because Ada 3 / café · \n$& {x} in run Ada 4 / café · \n$& {x} of Ada 5 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false,
+          "",
+          42
+        ],
+        "output": "nullto 0 because false in run  of 42"
+      }
+    ]
+  },
+  "workflow-runs.from": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`from ${names.get(from)} `",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "from Ada 1 / café · \n$& {x} "
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "from null "
+      }
+    ]
+  },
+  "workflow-runs.applied": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'applied'",
+    "cases": [
+      {
+        "values": [],
+        "output": "applied"
+      }
+    ]
+  },
+  "workflow-runs.timeout": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'timeout'",
+    "cases": [
+      {
+        "values": [],
+        "output": "timeout"
+      }
+    ]
+  },
+  "workflow-runs.at-and-went-to-because-nobody-on-the-role-is-left-in-run-of": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`at ${scope.stateName} and went to ${toState} because nobody on the ${role} role is left${reasons ? ` (${reasons})` : ''} in run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}",
+          "Ada 4 / café · \n$& {x}",
+          "Ada 5 / café · \n$& {x}",
+          "Ada 6 / café · \n$& {x}"
+        ],
+        "output": "at Ada 1 / café · \n$& {x} and went to Ada 2 / café · \n$& {x} because nobody on the Ada 3 / café · \n$& {x} role is leftAda 4 / café · \n$& {x} in run Ada 5 / café · \n$& {x} of Ada 6 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false,
+          "",
+          42,
+          null
+        ],
+        "output": "at null and went to 0 because nobody on the false role is left in run 42 of null"
+      }
+    ]
+  },
+  "workflow-runs.health-reasons": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "` (${reasons})`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": " (Ada 1 / café · \n$& {x})"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": " (null)"
+      }
+    ]
+  },
+  "workflow-runs.cancelled-workflow": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'cancelled workflow'",
+    "cases": [
+      {
+        "values": [],
+        "output": "cancelled workflow"
+      }
+    ]
+  },
+  "workflow-runs.run": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`run ${shortRunId(input.runId)}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "run Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "run null"
+      }
+    ]
+  },
+  "workflow-runs.handed-off": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'handed off'",
+    "cases": [
+      {
+        "values": [],
+        "output": "handed off"
+      }
+    ]
+  },
+  "workflow-runs.run-of": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`run ${shortRunId(input.runId)} of ${run.workflowSlug}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "run Ada 1 / café · \n$& {x} of Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "run null of 0"
+      }
+    ]
+  },
+  "workflow-runs.skipped": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'skipped'",
+    "cases": [
+      {
+        "values": [],
+        "output": "skipped"
+      }
+    ]
+  },
+  "workflow-runs.answered": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'answered'",
+    "cases": [
+      {
+        "values": [],
+        "output": "answered"
+      }
+    ]
+  },
+  "workflow-runs.picked": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'picked'",
+    "cases": [
+      {
+        "values": [],
+        "output": "picked"
+      }
+    ]
+  },
+  "workflow-runs.so-applied-and-run-went-to": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`so ${label} applied and run ${shortRunId(scope.runId)} went to ${toState}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}"
+        ],
+        "output": "so Ada 1 / café · \n$& {x} applied and run Ada 2 / café · \n$& {x} went to Ada 3 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false
+        ],
+        "output": "so null applied and run 0 went to false"
+      }
+    ]
+  },
+  "workflow-runs.by-message-at-so-run-went-to": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`by message at ${scope.stateName} so run ${shortRunId(scope.runId)} went to ${toState}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}"
+        ],
+        "output": "by message at Ada 1 / café · \n$& {x} so run Ada 2 / café · \n$& {x} went to Ada 3 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false
+        ],
+        "output": "by message at null so run 0 went to false"
+      }
+    ]
+  },
+  "workflow-runs.at-so-run-went-to": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`at ${scope.stateName} so run ${shortRunId(scope.runId)} went to ${toState}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}"
+        ],
+        "output": "at Ada 1 / café · \n$& {x} so run Ada 2 / café · \n$& {x} went to Ada 3 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false
+        ],
+        "output": "at null so run 0 went to false"
+      }
+    ]
+  },
+  "workflow-runs.the-gate-of": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`The ${scope.stateName} gate of ${scope.run.workflowSlug}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "The Ada 1 / café · \n$& {x} gate of Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "The null gate of 0"
+      }
+    ]
+  },
+  "workflow-runs.took-its-default": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'took its default'",
+    "cases": [
+      {
+        "values": [],
+        "output": "took its default"
+      }
+    ]
+  },
+  "workflow-runs.skipped-it-in-run": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`${systemIdentityMention({ ...viewer, handle: viewer.handle ?? null }) || viewer.name} skipped it in run ${shortRunId(scope.runId)}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} skipped it in run Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null skipped it in run 0"
+      }
+    ]
+  },
+  "workflow-runs.at-and-went-to-because-nobody-answered-in-in-run-of": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`at ${scope.stateName} and went to ${toState} because nobody answered in ${after} in run ${shortRunId(scope.runId)} of ${scope.run.workflowSlug}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}",
+          "Ada 3 / café · \n$& {x}",
+          "Ada 4 / café · \n$& {x}",
+          "Ada 5 / café · \n$& {x}"
+        ],
+        "output": "at Ada 1 / café · \n$& {x} and went to Ada 2 / café · \n$& {x} because nobody answered in Ada 3 / café · \n$& {x} in run Ada 4 / café · \n$& {x} of Ada 5 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0,
+          false,
+          "",
+          42
+        ],
+        "output": "at null and went to 0 because nobody answered in false in run  of 42"
+      }
+    ]
+  },
+  "workflow-runs.nobody-answered-in-in-run": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`nobody answered in ${after} in run ${shortRunId(scope.runId)}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "nobody answered in Ada 1 / café · \n$& {x} in run Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "nobody answered in null in run 0"
+      }
+    ]
+  },
+  "workflow-runs.of": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "` of ${durationText(seconds)}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": " of Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": " of null"
+      }
+    ]
+  },
+  "workflow-runs.closed": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'closed'",
+    "cases": [
+      {
+        "values": [],
+        "output": "closed"
+      }
+    ]
+  },
+  "workflow-runs.as-failed-at-because-it-passed-its-deadline": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`as failed at ${scope.stateName} because it passed its deadline${after}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "as failed at Ada 1 / café · \n$& {x} because it passed its deadlineAda 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "as failed at null because it passed its deadline0"
+      }
+    ]
+  },
+  "workflow-runs.as-abandoned-at-because-its-corner-closed": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "`as abandoned at ${scope.stateName} because its corner closed`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "as abandoned at Ada 1 / café · \n$& {x} because its corner closed"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "as abandoned at null because its corner closed"
+      }
+    ]
+  },
+  "workflow-runs.unknown": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'unknown'",
+    "cases": [
+      {
+        "values": [],
+        "output": "unknown"
+      }
+    ]
+  },
+  "workflow-runs.live": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'live'",
+    "cases": [
+      {
+        "values": [],
+        "output": "live"
+      }
+    ]
+  },
+  "workflow-runs.started-workflow": {
+    "source": "apps/server/src/workflow-runs.ts",
+    "before": "'started workflow'",
+    "cases": [
+      {
+        "values": [],
+        "output": "started workflow"
+      }
+    ]
+  },
+  "agent-grants.github": {
+    "source": "packages/api-contract/src/agent-grants.ts",
+    "before": "'GitHub'",
+    "cases": [
+      {
+        "values": [],
+        "output": "GitHub"
+      }
+    ]
+  },
+  "agent-grants.this-app": {
+    "source": "packages/api-contract/src/agent-grants.ts",
+    "before": "'this app'",
+    "cases": [
+      {
+        "values": [],
+        "output": "this app"
+      }
+    ]
+  },
+  "agent-sign-in.claude": {
+    "source": "packages/api-contract/src/agent-sign-in.ts",
+    "before": "'Claude'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Claude"
+      }
+    ]
+  },
+  "agent-sign-in.chatgpt": {
+    "source": "packages/api-contract/src/agent-sign-in.ts",
+    "before": "'ChatGPT'",
+    "cases": [
+      {
+        "values": [],
+        "output": "ChatGPT"
+      }
+    ]
+  },
+  "agent-sign-in.grok": {
+    "source": "packages/api-contract/src/agent-sign-in.ts",
+    "before": "'Grok'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Grok"
+      }
+    ]
+  },
+  "agent-sign-in.cursor": {
+    "source": "packages/api-contract/src/agent-sign-in.ts",
+    "before": "'Cursor'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Cursor"
+      }
+    ]
+  },
+  "agent-sign-in.its-provider": {
+    "source": "packages/api-contract/src/agent-sign-in.ts",
+    "before": "'its provider'",
+    "cases": [
+      {
+        "values": [],
+        "output": "its provider"
+      }
+    ]
+  },
+  "approval-copy.reveal-a-key": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "'reveal a key'",
+    "cases": [
+      {
+        "values": [],
+        "output": "reveal a key"
+      }
+    ]
+  },
+  "approval-copy.buy": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "`buy ${first || 'an item'}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "buy Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "buy null"
+      }
+    ]
+  },
+  "approval-copy.an-item": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "'an item'",
+    "cases": [
+      {
+        "values": [],
+        "output": "an item"
+      }
+    ]
+  },
+  "approval-copy.edit-a-key": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "'edit a key'",
+    "cases": [
+      {
+        "values": [],
+        "output": "edit a key"
+      }
+    ]
+  },
+  "approval-copy.delete-a-key": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "'delete a key'",
+    "cases": [
+      {
+        "values": [],
+        "output": "delete a key"
+      }
+    ]
+  },
+  "approval-copy.edit-a-card": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "'edit a card'",
+    "cases": [
+      {
+        "values": [],
+        "output": "edit a card"
+      }
+    ]
+  },
+  "approval-copy.sign-in-to": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "`sign in to ${first.replace(/^Sign in to /i, '') || 'a site'}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "sign in to Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "sign in to null"
+      }
+    ]
+  },
+  "approval-copy.a-site": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "'a site'",
+    "cases": [
+      {
+        "values": [],
+        "output": "a site"
+      }
+    ]
+  },
+  "approval-copy.confirm-a-purchase": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "'confirm a purchase'",
+    "cases": [
+      {
+        "values": [],
+        "output": "confirm a purchase"
+      }
+    ]
+  },
+  "approval-copy.request-a-vouch": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "'request a vouch'",
+    "cases": [
+      {
+        "values": [],
+        "output": "request a vouch"
+      }
+    ]
+  },
+  "approval-copy.use-a-passkey": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "'use a passkey'",
+    "cases": [
+      {
+        "values": [],
+        "output": "use a passkey"
+      }
+    ]
+  },
+  "approval-copy.use-trusty-squire": {
+    "source": "packages/api-contract/src/approval-copy.ts",
+    "before": "'use Trusty Squire'",
+    "cases": [
+      {
+        "values": [],
+        "output": "use Trusty Squire"
+      }
+    ]
+  },
+  "connector-offers.still-no-raw-key-in-chat": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "'still no raw key in chat'",
+    "cases": [
+      {
+        "values": [],
+        "output": "still no raw key in chat"
+      }
+    ]
+  },
+  "connector-offers.this-changes-your-connectors-once-it-is-added-i-can": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "`This changes your Connectors. Once it is added, I can ${clause} — ${boundary}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "This changes your Connectors. Once it is added, I can Ada 1 / café · \n$& {x} — Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "This changes your Connectors. Once it is added, I can null — 0"
+      }
+    ]
+  },
+  "connector-offers.this-changes-your-connectors-once-it-is-added-i-can-sign-up-and-s": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "`This changes your Connectors. Once it is added, I can sign up and sign in to websites for you and use keys its vault holds — ${CONNECTOR_OFFER_KEY_BOUNDARY}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "This changes your Connectors. Once it is added, I can sign up and sign in to websites for you and use keys its vault holds — Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "This changes your Connectors. Once it is added, I can sign up and sign in to websites for you and use keys its vault holds — null"
+      }
+    ]
+  },
+  "connector-offers.this-changes-your-connectors-once-it-is-added-you-sign-in-to-goog": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "'This changes your Connectors. Once it is added, you sign in to Google yourself and I work through that sign-in — I never see your password'",
+    "cases": [
+      {
+        "values": [],
+        "output": "This changes your Connectors. Once it is added, you sign in to Google yourself and I work through that sign-in — I never see your password"
+      }
+    ]
+  },
+  "connector-offers.this-changes-your-connectors-once-it-is-added-i-can-pay-from-your": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "`This changes your Connectors. Once it is added, I can pay from your wallet — ${boundary}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "This changes your Connectors. Once it is added, I can pay from your wallet — Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "This changes your Connectors. Once it is added, I can pay from your wallet — null"
+      }
+    ]
+  },
+  "connector-offers.this-changes-your-connectors-once-it-is-added-i-can-use-the-tool": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "`This changes your Connectors. Once it is added, I can use the tool from there — ${boundary}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "This changes your Connectors. Once it is added, I can use the tool from there — Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "This changes your Connectors. Once it is added, I can use the tool from there — null"
+      }
+    ]
+  },
+  "connector-offers.sign-in-to-google-once-so-trusty-squire-can-sign-in-to-websites-a": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "'Sign in to Google once, so Trusty Squire can sign in to websites and APIs for you hands-free.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Sign in to Google once, so Trusty Squire can sign in to websites and APIs for you hands-free."
+      }
+    ]
+  },
+  "connector-offers.you-ll-sign-in-to-google-again-with-the-account-trusty-squire-sho": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "\"You'll sign in to Google again, with the account Trusty Squire should use. The account signed in now is replaced for every task on this machine.\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "You'll sign in to Google again, with the account Trusty Squire should use. The account signed in now is replaced for every task on this machine."
+      }
+    ]
+  },
+  "connector-offers.then-i-can": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "`${line} Then I can ${clause}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} Then I can Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null Then I can 0"
+      }
+    ]
+  },
+  "connector-offers.i-never-see-your-password": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "'I never see your password'",
+    "cases": [
+      {
+        "values": [],
+        "output": "I never see your password"
+      }
+    ]
+  },
+  "connector-offers.you-can-revoke-permission-any-time": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "'you can revoke permission any time'",
+    "cases": [
+      {
+        "values": [],
+        "output": "you can revoke permission any time"
+      }
+    ]
+  },
+  "connector-offers.its-credentials-stay-in-the-tool-never-in-chat": {
+    "source": "packages/api-contract/src/connector-offers.ts",
+    "before": "'its credentials stay in the tool, never in chat'",
+    "cases": [
+      {
+        "values": [],
+        "output": "its credentials stay in the tool, never in chat"
+      }
+    ]
+  },
+  "room-choices.space": {
+    "source": "packages/api-contract/src/room-choices.ts",
+    "before": "' '",
+    "cases": [
+      {
+        "values": [],
+        "output": " "
+      }
+    ]
+  },
+  "room-choices.closed-no-votes": {
+    "source": "packages/api-contract/src/room-choices.ts",
+    "before": "'closed · no votes'",
+    "cases": [
+      {
+        "values": [],
+        "output": "closed · no votes"
+      }
+    ]
+  },
+  "room-choices.tied": {
+    "source": "packages/api-contract/src/room-choices.ts",
+    "before": "`tied · ${tied.join(' and ')}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "tied · Ada 1 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "tied · null"
+      }
+    ]
+  },
+  "room-choices.and": {
+    "source": "packages/api-contract/src/room-choices.ts",
+    "before": "' and '",
+    "cases": [
+      {
+        "values": [],
+        "output": " and "
+      }
+    ]
+  },
+  "room-choices.closed-of-voted": {
+    "source": "packages/api-contract/src/room-choices.ts",
+    "before": "`closed · ${votedCount} of ${electorateCount} voted`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "closed · Ada 1 / café · \n$& {x} of Ada 2 / café · \n$& {x} voted"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "closed · null of 0 voted"
+      }
+    ]
+  },
+  "scheduled-prompts.beeline-scheduler": {
+    "source": "packages/api-contract/src/scheduled-prompts.ts",
+    "before": "'Beeline Scheduler'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Beeline Scheduler"
+      }
+    ]
+  },
+  "scheduled-prompts.ran-a-schedule-for": {
+    "source": "packages/api-contract/src/scheduled-prompts.ts",
+    "before": "'ran a schedule for'",
+    "cases": [
+      {
+        "values": [],
+        "output": "ran a schedule for"
+      }
+    ]
+  },
+  "system-events.separator": {
+    "source": "packages/api-contract/src/system-events.ts",
+    "before": "' · '",
+    "cases": [
+      {
+        "values": [],
+        "output": " · "
+      }
+    ]
+  },
+  "system-events.and": {
+    "source": "packages/api-contract/src/system-events.ts",
+    "before": "`${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} and Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null and 0"
+      }
+    ]
+  },
+  "system-events.list-separator": {
+    "source": "packages/api-contract/src/system-events.ts",
+    "before": "', '",
+    "cases": [
+      {
+        "values": [],
+        "output": ", "
+      }
+    ]
+  },
+  "system-events.space": {
+    "source": "packages/api-contract/src/system-events.ts",
+    "before": "' '",
+    "cases": [
+      {
+        "values": [],
+        "output": " "
+      }
+    ]
+  },
+  "system-events.with-object": {
+    "source": "packages/api-contract/src/system-events.ts",
+    "before": "`${head} ${event.object.text}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null 0"
+      }
+    ]
+  },
+  "turn-silence.its-provider-is-failing-switch-its-model-in-the-agent-s-settings": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "\"its provider is failing; switch its model in the agent's settings.\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "its provider is failing; switch its model in the agent's settings."
+      }
+    ]
+  },
+  "turn-silence.node": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'Node'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Node"
+      }
+    ]
+  },
+  "turn-silence.its-interpreter": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'its interpreter'",
+    "cases": [
+      {
+        "values": [],
+        "output": "its interpreter"
+      }
+    ]
+  },
+  "turn-silence.it-couldn-t-start-the-background-service-can-t-find-install-on-th": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "`it couldn't start: the background service can't find ${dependency}. Install ${dependency === 'Node' ? 'Node' : 'the required interpreter'} on this computer, then run \\`beeline connect\\``",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "it couldn't start: the background service can't find Ada 1 / café · \n$& {x}. Install Ada 2 / café · \n$& {x} on this computer, then run `beeline connect`"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "it couldn't start: the background service can't find null. Install 0 on this computer, then run `beeline connect`"
+      }
+    ]
+  },
+  "turn-silence.the-required-interpreter": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'the required interpreter'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the required interpreter"
+      }
+    ]
+  },
+  "turn-silence.it-couldn-t-start-its-program-or-interpreter-is-missing-reinstall": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "\"it couldn't start: its program or interpreter is missing. Reinstall the agent on this computer with `beeline connect`\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "it couldn't start: its program or interpreter is missing. Reinstall the agent on this computer with `beeline connect`"
+      }
+    ]
+  },
+  "turn-silence.the-turn-stalled": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'the turn stalled'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the turn stalled"
+      }
+    ]
+  },
+  "turn-silence.the-repository": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'the repository'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the repository"
+      }
+    ]
+  },
+  "turn-silence.clipped-consequence": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "`${consequence.slice(0, Math.max(1, budget - 1))}…`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}…"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null…"
+      }
+    ]
+  },
+  "turn-silence.could-not-answer": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'could not answer'",
+    "cases": [
+      {
+        "values": [],
+        "output": "could not answer"
+      }
+    ]
+  },
+  "turn-silence.the-selected-model-isn-t-available-pick-another-in-the-agent-s-se": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "\"the selected model isn't available. Pick another in the agent's settings.\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "the selected model isn't available. Pick another in the agent's settings."
+      }
+    ]
+  },
+  "turn-silence.the-provider-allowance-is-spent-until-top-up-or-move-the-agent-to": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "`the provider allowance is spent until ${until}. Top up, or move the agent to another provider.`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "the provider allowance is spent until Ada 1 / café · \n$& {x}. Top up, or move the agent to another provider."
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "the provider allowance is spent until null. Top up, or move the agent to another provider."
+      }
+    ]
+  },
+  "turn-silence.the-provider-allowance-is-spent-top-up-or-move-the-agent-to-anoth": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'the provider allowance is spent. Top up, or move the agent to another provider.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the provider allowance is spent. Top up, or move the agent to another provider."
+      }
+    ]
+  },
+  "turn-silence.the-helper-could-not-authenticate-with-the-provider-check-its-log": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "\"the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine."
+      }
+    ]
+  },
+  "turn-silence.needs-a-new-provider-key": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'needs a new provider key'",
+    "cases": [
+      {
+        "values": [],
+        "output": "needs a new provider key"
+      }
+    ]
+  },
+  "turn-silence.needs-a-sign-in": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "`needs a ${AGENT_SIGN_IN_SERVICE_LABELS[harness]} sign-in`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "needs a Ada 1 / café · \n$& {x} sign-in"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "needs a null sign-in"
+      }
+    ]
+  },
+  "turn-silence.send-login-here": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "`send @${handle} login here.`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "send @Ada 1 / café · \n$& {x} login here."
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "send @null login here."
+      }
+    ]
+  },
+  "turn-silence.if-that-fails-its-owner-can-run-beeline-connect-on-its-machine": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "`${command} If that fails, its owner can run \\`beeline connect\\` on its machine.`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} If that fails, its owner can run `beeline connect` on its machine."
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null If that fails, its owner can run `beeline connect` on its machine."
+      }
+    ]
+  },
+  "turn-silence.the-helper-couldn-t-get-a-working-copy-of-check-the-repository-is": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "`the helper couldn't get a working copy of ${classified.repo ?? 'the repository'}. Check the repository is reachable.`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "the helper couldn't get a working copy of Ada 1 / café · \n$& {x}. Check the repository is reachable."
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "the helper couldn't get a working copy of null. Check the repository is reachable."
+      }
+    ]
+  },
+  "turn-silence.the-helper-is-out-of-date-run-beeline-start-on-the-helper-s-machi": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "\"the helper is out of date. Run `beeline start` on the helper's machine.\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "the helper is out of date. Run `beeline start` on the helper's machine."
+      }
+    ]
+  },
+  "turn-silence.was-interrupted-by-an-update": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'was interrupted by an update'",
+    "cases": [
+      {
+        "values": [],
+        "output": "was interrupted by an update"
+      }
+    ]
+  },
+  "turn-silence.the-request-is-queued-to-resume": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'the request is queued to resume.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the request is queued to resume."
+      }
+    ]
+  },
+  "turn-silence.is-offline": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'is offline'",
+    "cases": [
+      {
+        "values": [],
+        "output": "is offline"
+      }
+    ]
+  },
+  "turn-silence.the-helper-is-unreachable-if-it-stays-offline-run-beeline-start-o": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "\"the helper is unreachable. If it stays offline, run `beeline start` on its machine.\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "the helper is unreachable. If it stays offline, run `beeline start` on its machine."
+      }
+    ]
+  },
+  "turn-silence.the-request-no-longer-fits-the-model-s-context-window-start-a-new": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "\"the request no longer fits the model's context window. Start a new corner, or pick a model with a larger window.\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "the request no longer fits the model's context window. Start a new corner, or pick a model with a larger window."
+      }
+    ]
+  },
+  "turn-silence.the-session-likely-hit-its-memory-limit-run-fewer-tools-at-once-o": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'the session likely hit its memory limit. Run fewer tools at once or split the task.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "the session likely hit its memory limit. Run fewer tools at once or split the task."
+      }
+    ]
+  },
+  "turn-silence.space": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "' '",
+    "cases": [
+      {
+        "values": [],
+        "output": " "
+      }
+    ]
+  },
+  "turn-silence.is-waiting": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'is waiting'",
+    "cases": [
+      {
+        "values": [],
+        "output": "is waiting"
+      }
+    ]
+  },
+  "turn-silence.stopped-retrying-after-two-tries": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'Stopped retrying after two tries.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Stopped retrying after two tries."
+      }
+    ]
+  },
+  "turn-silence.stopped-retrying-after-three-tries": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'Stopped retrying after three tries.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Stopped retrying after three tries."
+      }
+    ]
+  },
+  "turn-silence.resending-your-message": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "'Resending your message.'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Resending your message."
+      }
+    ]
+  },
+  "turn-silence.fault-and-remedy": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "`${fault}. ${remedy}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}. Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null. 0"
+      }
+    ]
+  },
+  "turn-silence.fault-sentence": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "`${fault}.`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}."
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null."
+      }
+    ]
+  },
+  "turn-silence.provider-fault": {
+    "source": "packages/api-contract/src/turn-silence.ts",
+    "before": "`${PROVIDER_OUTAGE_POINTER} ${detail}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null 0"
+      }
+    ]
+  },
+  "voice.elapsed-time": {
+    "source": "packages/api-contract/src/voice.ts",
+    "before": "`${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}:Ada 2 / café · \n$& {x}"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null:0"
+      }
+    ]
+  },
+  "workflow-run-status.live": {
+    "source": "packages/api-contract/src/workflow-run-status.ts",
+    "before": "'live'",
+    "cases": [
+      {
+        "values": [],
+        "output": "live"
+      }
+    ]
+  },
+  "system-line.agent-name": {
+    "source": "apps/server/src/turn-silence-notice.ts",
+    "before": "\"The agent\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "The agent"
+      }
+    ]
+  },
+  "daemon-service.retry-suffix": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "\" answered after a retry\"",
+    "cases": [
+      {
+        "values": [],
+        "output": " answered after a retry"
+      }
+    ]
+  },
+  "daemon-service.answered-after-a-retry": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "\"answered after a retry\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "answered after a retry"
+      }
+    ]
+  },
+  "system-line.mention-prefix": {
+    "source": "apps/server/src/daemon-service.ts",
+    "before": "'@'",
+    "cases": [
+      {
+        "values": [],
+        "output": "@"
+      }
+    ]
+  },
+  "system-line.deleted": {
+    "source": "apps/server/src/system-line.ts",
+    "before": "'deleted'",
+    "cases": [
+      {
+        "values": [],
+        "output": "deleted"
+      }
+    ]
+  },
+  "system-line.a-message": {
+    "source": "apps/server/src/system-line.ts",
+    "before": "'a message'",
+    "cases": [
+      {
+        "values": [],
+        "output": "a message"
+      }
+    ]
+  },
+  "tray-approval-ask.approve": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "`Approve ${card.purpose === 'squire-spending' ? 'spending with ' + field('tool') : 'write access to ' + field('repository')}?`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Approve Ada 1 / café · \n$& {x}?"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "Approve null?"
+      }
+    ]
+  },
+  "tray-approval-ask.spending-with": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "'spending with '",
+    "cases": [
+      {
+        "values": [],
+        "output": "spending with "
+      }
+    ]
+  },
+  "tray-approval-ask.write-access-to": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "'write access to '",
+    "cases": [
+      {
+        "values": [],
+        "output": "write access to "
+      }
+    ]
+  },
+  "tray-approval-ask.connect": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "`Connect ${field('connectorName')}?`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Connect Ada 1 / café · \n$& {x}?"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "Connect null?"
+      }
+    ]
+  },
+  "tray-approval-ask.sign-in-to": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "`Sign in to ${field('name')}?`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Sign in to Ada 1 / café · \n$& {x}?"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "Sign in to null?"
+      }
+    ]
+  },
+  "tray-approval-ask.approval-question": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "`${card.linkKind === 'passkey' ? 'Use your passkey for' : card.linkKind === 'vouch' ? 'Vouch for' : 'Approve'} ${field('title')}?`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x} Ada 2 / café · \n$& {x}?"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "null 0?"
+      }
+    ]
+  },
+  "tray-approval-ask.use-your-passkey-for": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "'Use your passkey for'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Use your passkey for"
+      }
+    ]
+  },
+  "tray-approval-ask.vouch-for": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "'Vouch for'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Vouch for"
+      }
+    ]
+  },
+  "tray-approval-ask.approve-2": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "'Approve'",
+    "cases": [
+      {
+        "values": [],
+        "output": "Approve"
+      }
+    ]
+  },
+  "tray-approval-ask.allow": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "`Allow ${grant.kind === 'command' ? 'running' : 'access to'} ${grant.target}?`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}",
+          "Ada 2 / café · \n$& {x}"
+        ],
+        "output": "Allow Ada 1 / café · \n$& {x} Ada 2 / café · \n$& {x}?"
+      },
+      {
+        "values": [
+          null,
+          0
+        ],
+        "output": "Allow null 0?"
+      }
+    ]
+  },
+  "tray-approval-ask.running": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "'running'",
+    "cases": [
+      {
+        "values": [],
+        "output": "running"
+      }
+    ]
+  },
+  "tray-approval-ask.access-to": {
+    "source": "apps/server/src/tray-approval-ask.ts",
+    "before": "'access to'",
+    "cases": [
+      {
+        "values": [],
+        "output": "access to"
+      }
+    ]
+  },
+  "tray-ask.1": {
+    "source": "packages/api-contract/src/tray-ask.ts",
+    "before": "'$1'",
+    "cases": [
+      {
+        "values": [],
+        "output": "$1"
+      }
+    ]
+  },
+  "tray-ask.1-2": {
+    "source": "packages/api-contract/src/tray-ask.ts",
+    "before": "'$1$2'",
+    "cases": [
+      {
+        "values": [],
+        "output": "$1$2"
+      }
+    ]
+  },
+  "tray-ask.space": {
+    "source": "packages/api-contract/src/tray-ask.ts",
+    "before": "' '",
+    "cases": [
+      {
+        "values": [],
+        "output": " "
+      }
+    ]
+  },
+  "tray-ask.clipped-ask": {
+    "source": "packages/api-contract/src/tray-ask.ts",
+    "before": "`${head.slice(0, boundary > 100 ? boundary : head.length).trimEnd()}…`",
+    "cases": [
+      {
+        "values": [
+          "Ada 1 / café · \n$& {x}"
+        ],
+        "output": "Ada 1 / café · \n$& {x}…"
+      },
+      {
+        "values": [
+          null
+        ],
+        "output": "null…"
+      }
+    ]
+  },
+  "voice.0": {
+    "source": "packages/api-contract/src/voice.ts",
+    "before": "'0'",
+    "cases": [
+      {
+        "values": [],
+        "output": "0"
+      }
+    ]
+  },
+  "voice-service.today-s-60-minutes-are-used": {
+    "source": "apps/server/src/voice-service.ts",
+    "before": "\"Today's 60 minutes are used\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "Today's 60 minutes are used"
+      }
+    ]
+  }
+}

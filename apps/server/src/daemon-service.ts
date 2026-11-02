@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { owedMentions, clearOwedMention, mentionReplyKey, mentionReplyId } from './owed-mentions.js';
 import { YouTubeUploadRefusal } from './composio-apps.js';
 import { missingReviewAttachments } from './review-evidence.js';
@@ -270,7 +271,7 @@ export const INBOX_REPLAY_REWIND_MS = 5_000;
  * so no coordinate can read as a handle either.
  */
 function registrySubject(serverName: string | null): string {
-  return serverName?.replace(/^@+/, '').trim() || 'MCP server';
+  return serverName?.replace(/^@+/, '').trim() || systemMessage("daemon-service.mcp-server");
 }
 
 function registryMcpRouteName(serverName: string, connectorId: string): string {
@@ -1528,8 +1529,8 @@ export class DaemonService {
           id: createHash('sha256').update(`room-empty-repository:v1:${roomId}`).digest('hex'),
           roomId,
           authorId: SYSTEM_IDENTITY_ID,
-          subject: { kind: 'system', name: 'This repository' },
-          verb: "has no commits yet - push a first commit and I'll pick it up.",
+          subject: { kind: 'system', name: systemMessage("daemon-service.this-repository") },
+          verb: systemMessage("daemon-service.has-no-commits-yet-push-a-first-commit-and-i-ll-pick-it-up"),
         });
         return { id: line.id, createdAt: seconds(new Date()) } as Output<Name>;
       }
@@ -1558,8 +1559,8 @@ export class DaemonService {
                 .digest('hex'),
               roomId,
               authorId: SYSTEM_IDENTITY_ID,
-              subject: { kind: 'system', name: 'Install or grant the Beeline GitHub App' },
-              verb: 'to access this repository.',
+              subject: { kind: 'system', name: systemMessage("daemon-service.install-or-grant-the-beeline-github-app") },
+              verb: systemMessage("daemon-service.to-access-this-repository"),
             });
             throw new CommandRefusalError('Room repository access needs the Beeline GitHub App', 409);
           }
@@ -2125,7 +2126,7 @@ export class DaemonService {
           ownerId: context.owner.pubkey, ownerName: context.owner.name, status: 'pending' };
         const line = await systemLine(this.database, { roomId: cardInput.roomId,
           subject: { kind: 'agent', id: authenticatedAgentId, name: context.agent.name },
-          verb: 'wants a vault entry', object: `${metadata.service} / ${metadata.label}`,
+          verb: systemMessage("daemon-service.wants-a-vault-entry"), object: systemMessage("daemon-service.vault-entry-title", metadata.service, metadata.label),
           consequence: metadata.purpose, presentation: 'card', cardType: 'vault-save',
           card: { ...card, originCommandId: this.authorizedCommand!.id } as unknown as Record<string, unknown> });
         return { id: line.id, createdAt: seconds(new Date()) } as Output<Name>;
@@ -2394,7 +2395,7 @@ export class DaemonService {
         [cornerId, JSON.stringify(lifecycle)],
       );
       await systemLine(db, { roomId: cornerId, authorId: workerAgentId,
-        subject: GITHUB_SUBJECT, verb: 'passed checks on', object: 'this zero-check pull request', kind: 'check-passed' });
+        subject: GITHUB_SUBJECT, verb: systemMessage("daemon-service.passed-checks-on"), object: systemMessage("daemon-service.this-zero-check-pull-request"), kind: 'check-passed' });
     });
   }
 
@@ -2614,8 +2615,8 @@ export class DaemonService {
             roomId: row.install_room_id,
             authorId: SYSTEM_IDENTITY_ID,
             subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
-            verb: 'connected',
-            consequence: 'the requesting agent can continue the original task',
+            verb: systemMessage("daemon-service.connected"),
+            consequence: systemMessage("daemon-service.the-requesting-agent-can-continue-the-original-task"),
             kind: 'connector-offer-decided',
             commandId: row.install_command_id,
             wakes: [row.install_agent_id],
@@ -2775,9 +2776,9 @@ export class DaemonService {
       roomId: target.install_room_id,
       authorId: SYSTEM_IDENTITY_ID,
       subject: { kind: 'system', name: registrySubject(row.registry_server_name) },
-      verb: 'needs',
-      object: { text: 'provider sign-in', url: signIn.url },
-      consequence: 'the provider sign-in page is ready · connect this tool through Trusty Squire',
+      verb: systemMessage("daemon-service.needs"),
+      object: { text: systemMessage("daemon-service.provider-sign-in"), url: signIn.url },
+      consequence: systemMessage("daemon-service.the-provider-sign-in-page-is-ready-connect-this-tool-through-trus"),
       kind: 'connector-offer-decided',
       commandId: target.install_command_id,
       wakes: [target.install_agent_id],
@@ -2824,9 +2825,9 @@ export class DaemonService {
       authorId: SYSTEM_IDENTITY_ID,
       id: createHash('sha256').update(`tailscale-signin:${connectorId}:${url}`).digest('hex'),
       subject: { kind: 'agent', id: agentId, name: row.helper_name },
-      verb: 'needs',
-      object: { text: 'Tailscale sign-in', url },
-      consequence: 'click the link to join this machine to the tailnet',
+      verb: systemMessage("daemon-service.needs"),
+      object: { text: systemMessage("daemon-service.tailscale-sign-in"), url },
+      consequence: systemMessage("daemon-service.click-the-link-to-join-this-machine-to-the-tailnet"),
     });
   }
 
@@ -4044,7 +4045,7 @@ export class DaemonService {
     await systemLine(this.database, {
       roomId: input.cornerId,
       subject: { kind: 'agent', id: agentId, name: (await this.identity(agentId)).name },
-      verb: 'closed',
+      verb: systemMessage("daemon-service.closed"),
       object: { text: closed.title, url: closed.url },
     });
     return { status: 'closed', pullRequestNumber: closed.number, url: closed.url };
@@ -4611,11 +4612,11 @@ export class DaemonService {
              RETURNING 1
            ), recovered AS (
              UPDATE messages failure SET
-               text=COALESCE('@'||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name')||' answered after a retry',
+               text=COALESCE($15::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name')||$13::text,
                system_event=jsonb_set(
                  jsonb_set(failure.system_event,'{subject,name}',
-                   to_jsonb(COALESCE('@'||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name'))),
-                 '{verb}',to_jsonb('answered after a retry'::text)
+                   to_jsonb(COALESCE($15::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name'))),
+                 '{verb}',to_jsonb($14::text)
                ),
                card=jsonb_set(failure.card,'{state}',to_jsonb('recovered'::text))
              FROM settled,identities agent
@@ -4716,6 +4717,9 @@ export class DaemonService {
           input.generationId,
           STAR_PROMPT_MILESTONES,
           steps,
+          systemMessage("daemon-service.retry-suffix"),
+          systemMessage("daemon-service.answered-after-a-retry"),
+          systemMessage("system-line.mention-prefix"),
         ],
       );
       if (this.livePaintDiagnostics) databaseAwaitResolvedAt = Date.now();
@@ -5252,14 +5256,14 @@ export class DaemonService {
       [context.workspace_id, ownerId]);
     if (!member.rowCount) throw new Error('resource owner access denied');
     const roomId = await ensureSystemDirectMessageRoom(this.database, context.workspace_id, ownerId);
-    const title = `Link purchase at ${input.merchant}`;
-    const detail = `${(input.amount / 100).toFixed(2)} USD · ${input.description}`.slice(0, 500);
+    const title = systemMessage("daemon-service.link-purchase-at", input.merchant);
+    const detail = systemMessage("daemon-service.usd", (input.amount / 100).toFixed(2), input.description).slice(0, 500);
     const source = await this.approvalSource('squire-approval');
     const line = await systemLine(this.database, {
       id: createHash('sha256').update(`link-approval:${requestId}`).digest('hex'),
       roomId, authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', name: 'Link' },
-      verb: 'needs your approval for', object: title, consequence: detail,
+      subject: { kind: 'system', name: systemMessage("daemon-service.link") },
+      verb: systemMessage("daemon-service.needs-your-approval-for"), object: title, consequence: detail,
       presentation: 'card', cardType: 'squire-approval',
       card: {
         agent: { pubkey: agentId, kind: 'agent', name: context.agent_name,
@@ -5353,9 +5357,9 @@ export class DaemonService {
       authorId: SYSTEM_IDENTITY_ID,
       subject: {
         kind: 'system',
-        name: connectorDisplayName('trusty-squire'),
+        name: connectorDisplayName(systemMessage("daemon-service.trusty-squire")),
       },
-      verb: 'needs your approval for',
+      verb: systemMessage("daemon-service.needs-your-approval-for"),
       object: input.title.trim(),
       consequence: input.detail.trim(),
       presentation: 'card',
@@ -5438,8 +5442,8 @@ export class DaemonService {
       id,
       roomId: input.roomId,
       authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', name: `The request to ${action}` },
-      verb: input.status === 'expired' ? 'expired' : input.status === 'approved' ? 'was allowed' : 'was denied',
+      subject: { kind: 'system', name: systemMessage("daemon-service.the-request-to", action) },
+      verb: input.status === 'expired' ? systemMessage("daemon-service.expired") : input.status === 'approved' ? systemMessage("daemon-service.was-allowed") : systemMessage("daemon-service.was-denied"),
       // A resume kind: it answers the turn that asked for this approval, and
       // must never start a second one (`RESUME_KINDS`).
       kind: 'squire-approval-decided',
@@ -5553,8 +5557,8 @@ export class DaemonService {
         id: messageId,
         roomId: input.roomId,
         subject: { kind: 'agent', id: agentId, name: context.agent.name },
-        verb: 'needs',
-        object: 'Google sign-in',
+        verb: systemMessage("daemon-service.needs"),
+        object: systemMessage("daemon-service.google-sign-in"),
         consequence: reason,
         presentation: 'card',
         cardType: 'connector-offer',
@@ -5664,7 +5668,7 @@ export class DaemonService {
         id: created,
         roomId: input.roomId,
         subject: { kind: 'agent', id: agentId, name: agent.name },
-        verb: `asked ${requester.handle ? `@${requester.handle}` : ''} to`,
+        verb: systemMessage("daemon-service.asked-to", requester.handle ? systemMessage("daemon-service.requester-mention", requester.handle) : ''),
         object: tool,
         presentation: 'card',
         requestId: input.requestId,
@@ -5917,13 +5921,13 @@ export class DaemonService {
     const causeId = active.rows[0]?.request_id;
     if (!causeId) throw new Error('invalid event: this agent has no turn running here');
     const self = await this.database.query<{ name: string }>(
-      `SELECT COALESCE(NULLIF(name,''),'An agent') name FROM identities WHERE id=$1`,
-      [agentId],
+      `SELECT COALESCE(NULLIF(name,''),$2::text) name FROM identities WHERE id=$1`,
+      [agentId, systemMessage("daemon-service.an-agent")],
     );
     const line = await systemLine(this.database, {
       roomId: input.roomId,
-      subject: { kind: 'agent', id: agentId, name: self.rows[0]?.name ?? 'An agent' },
-      verb: 'emitted',
+      subject: { kind: 'agent', id: agentId, name: self.rows[0]?.name ?? systemMessage("daemon-service.an-agent") },
+      verb: systemMessage("daemon-service.emitted"),
       object: input.kind.slice('agent:'.length),
       consequence,
       kind: input.kind,
@@ -6234,9 +6238,9 @@ export class DaemonService {
         );
       await systemLine(this.database, {
         roomId,
-        subject: { kind: 'agent', id: agentId, name: 'Your agent' },
-        verb: 'saved its avatar',
-        consequence: 'Your avatar is ready.',
+        subject: { kind: 'agent', id: agentId, name: systemMessage("daemon-service.your-agent") },
+        verb: systemMessage("daemon-service.saved-its-avatar"),
+        consequence: systemMessage("daemon-service.your-avatar-is-ready"),
       });
       this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
     }
@@ -6303,8 +6307,8 @@ export class DaemonService {
           .update(`agent-model-unavailable:v1:${agentId}:${input.unavailable}:${prior.updated_at.toISOString()}`)
           .digest('hex'),
         subject: { kind: 'agent', id: agentId, name: prior.name },
-        verb: 'needs a different model',
-        consequence: 'Open this agent’s settings and choose an available model or effort.',
+        verb: systemMessage("daemon-service.needs-a-different-model"),
+        consequence: systemMessage("daemon-service.open-this-agent-s-settings-and-choose-an-available-model-or-effor"),
       });
     }
     // The daemon substitutes a same-family replacement automatically when a
@@ -6329,12 +6333,12 @@ export class DaemonService {
         modelChoiceLabel(
           prior.model_catalog.find((axis) => axis.category === 'model'),
           prior.selected_model,
-        ) ?? 'The previous model';
+        ) ?? systemMessage("daemon-service.the-previous-model");
       const newModelName =
         modelChoiceLabel(
           input.options.find((axis) => axis.category === 'model'),
           input.selection.model,
-        ) ?? 'the default model';
+        ) ?? systemMessage("daemon-service.the-default-model");
       await systemLine(database, {
         roomId,
         authorId: SYSTEM_IDENTITY_ID,
@@ -6344,8 +6348,8 @@ export class DaemonService {
           )
           .digest('hex'),
         subject: { kind: 'agent', id: agentId, name: prior.name },
-        verb: 'switched models',
-        consequence: `${oldModelName} is no longer offered; now using ${newModelName}.`,
+        verb: systemMessage("daemon-service.switched-models"),
+        consequence: systemMessage("daemon-service.is-no-longer-offered-now-using", oldModelName, newModelName),
       });
     }
     return this.writeResult();
@@ -6685,9 +6689,9 @@ export class DaemonService {
       id: messageId,
       roomId: input.roomId,
       subject: { kind: 'agent', id: agentId, name: agent.name },
-      verb: 'proposed a target branch',
+      verb: systemMessage("daemon-service.proposed-a-target-branch"),
       object: input.to,
-      consequence: `instead of ${input.from}`,
+      consequence: systemMessage("daemon-service.instead-of", input.from),
       presentation: 'card',
       requestId: input.requestId,
       cardType: 'target-branch',
@@ -7688,7 +7692,7 @@ export class DaemonService {
         if (existing.rowCount) return;
         await systemLine(database, { roomId: input.roomId,
           subject: { kind: 'agent', id: agentId, name: context.agent.name },
-          verb: 'needs a connection to', object: card.name, consequence: 'Sign in to continue the request.',
+          verb: systemMessage("daemon-service.needs-a-connection-to"), object: card.name, consequence: systemMessage("daemon-service.sign-in-to-continue-the-request"),
           presentation: 'card', cardType: 'app-sign-in', card: { ...card,
             ownerId: context.owner.pubkey, agentId, commandId, status: 'pending',
             ...(continuation ? { continuation } : {}) } });
@@ -7920,8 +7924,8 @@ export class DaemonService {
         if (exists.rowCount) return;
         await systemLine(database, { roomId: input.roomId,
           subject: { kind: 'agent', id: agentId, name: context.agent.name },
-          verb: 'needs a connection to', object: firstParty.name,
-          consequence: 'Sign in to continue the request.', presentation: 'card', cardType: 'app-sign-in',
+          verb: systemMessage("daemon-service.needs-a-connection-to"), object: firstParty.name,
+          consequence: systemMessage("daemon-service.sign-in-to-continue-the-request"), presentation: 'card', cardType: 'app-sign-in',
           card: { appId: firstParty.appId, appKey: firstParty.key, name: firstParty.name,
             ownerId: context.owner.pubkey, agentId, status: 'pending',
             commandId: this.authorizedCommand?.id ?? null, ...(continuation ? { continuation } : {}) } });
@@ -7964,8 +7968,8 @@ export class DaemonService {
         await systemLine(database, {
           roomId: input.roomId,
           subject: { kind: 'agent', id: agentId, name: context.agent.name },
-          verb: 'needs a connection to', object: outcome.name ?? app,
-          consequence: 'Sign in to continue the request.',
+          verb: systemMessage("daemon-service.needs-a-connection-to"), object: outcome.name ?? app,
+          consequence: systemMessage("daemon-service.sign-in-to-continue-the-request"),
           presentation: 'card', cardType: 'app-sign-in',
           card: { appId: outcome.appId, appKey: outcome.appKey,
             name: outcome.name ?? app, ...mark, ownerId: context.owner.pubkey,
@@ -8259,9 +8263,9 @@ export class DaemonService {
             roomId: dmRoomId,
             authorId: SYSTEM_IDENTITY_ID,
             subject: { kind: 'system', name: registrySubject(serverName) },
-            verb: 'needs',
-            object: { text: 'provider sign-in', url: signIn.url },
-            consequence: 'complete this sign-in to connect the tool',
+            verb: systemMessage("daemon-service.needs"),
+            object: { text: systemMessage("daemon-service.provider-sign-in"), url: signIn.url },
+            consequence: systemMessage("daemon-service.complete-this-sign-in-to-connect-the-tool"),
           });
           this.live.publish({ type: 'invalidate', roomId: dmRoomId, reason: 'message', agentId });
         }
@@ -8301,7 +8305,7 @@ export class DaemonService {
       );
     if (typeof input.reason !== 'string' || !input.reason.trim())
       throw new Error('offer reason is required');
-    const reason = input.reason.trim().replace(/\s+/g, ' ');
+    const reason = input.reason.trim().replace(/\s+/g, systemMessage("daemon-service.space"));
     if (reason.length > CONNECTOR_OFFER_REASON_MAX_LENGTH)
       throw new Error('offer reason is invalid: too long');
     const connectorType: ConnectorKind = input.connectorType;
@@ -8437,8 +8441,8 @@ export class DaemonService {
         id: messageId,
         roomId: input.roomId,
         subject: { kind: 'agent', id: agentId, name: context.agent.name },
-        verb: switching ? `asked ${addresseeMention} to switch` : `offered ${addresseeMention}`,
-        object: switching ? `${connectorName}'s Google account` : connectorName,
+        verb: switching ? systemMessage("daemon-service.asked-to-switch", addresseeMention) : systemMessage("daemon-service.offered", addresseeMention),
+        object: switching ? systemMessage("daemon-service.s-google-account", connectorName) : connectorName,
         consequence: reason,
         presentation: 'card',
         cardType: 'connector-offer',
@@ -8760,7 +8764,7 @@ export class DaemonService {
         await systemLine(db, {
           roomId: destination.roomId,
           subject: { kind: 'agent', id: agentId, name: opener.name },
-          verb: 'opened a corner',
+          verb: systemMessage("daemon-service.opened-a-corner"),
           kind: destination.roomId === roomId ? 'corner-opened' : undefined,
           object: { text: name, id: cornerId },
           presentation: 'card',
@@ -8903,8 +8907,8 @@ export class DaemonService {
       const note = await systemLine(db, {
         roomId: input.cornerId,
         subject: { kind: 'agent', id: agentId, name: (await this.identity(agentId)).name },
-        verb: 'revised the corner brief',
-        object: { text: `Revision ${revision}`, id: input.cornerId },
+        verb: systemMessage("daemon-service.revised-the-corner-brief"),
+        object: { text: systemMessage("daemon-service.revision", revision), id: input.cornerId },
       });
       const outcome = await advanceCorner(db, input.cornerId, {
         kind: 'brief-revised',
@@ -8978,7 +8982,7 @@ export class DaemonService {
     return {
       pubkey: agentId,
       kind: 'agent' as const,
-      name: row?.name ?? `Agent ${agentId.slice(0, 8)}`,
+      name: row?.name ?? systemMessage("daemon-service.agent", agentId.slice(0, 8)),
     };
   }
   /**
@@ -9284,7 +9288,7 @@ function grantCardPhrase(
 ): SystemPhrase {
   if (grants.every(grant => connectionInstallName(grant))) {
     return { subject: { kind: 'agent', id: agent.pubkey, name: agent.name },
-      verb: 'wants to connect', object: grants.map(grant => connectionInstallName(grant)).join(' and ') };
+      verb: systemMessage("daemon-service.wants-to-connect"), object: grants.map(grant => connectionInstallName(grant)).join(systemMessage("daemon-service.and")) };
   }
   return {
     subject: {
@@ -9292,14 +9296,14 @@ function grantCardPhrase(
       id: requester.pubkey,
       name: requester.name,
     },
-    verb: 'wants',
+    verb: systemMessage("daemon-service.wants"),
     object: grants
       .map(
         (grant) =>
-          connectionInstallName(grant) ? `${agent.name} to connect ${connectionInstallName(grant)}`
-            : `${agent.name} to ${grant.kind === 'path' ? 'read' : grant.kind === 'repository' ? 'write' : grant.kind === 'shared_asset' ? 'isolate' : 'use'} ${grant.target}`,
+          connectionInstallName(grant) ? systemMessage("daemon-service.to-connect", agent.name, connectionInstallName(grant))
+            : systemMessage("daemon-service.to", agent.name, grant.kind === 'path' ? systemMessage("daemon-service.read") : grant.kind === 'repository' ? systemMessage("daemon-service.write") : grant.kind === 'shared_asset' ? systemMessage("daemon-service.isolate") : systemMessage("daemon-service.use"), grant.target),
       )
-      .join(' and '),
+      .join(systemMessage("daemon-service.and")),
   };
 }
 

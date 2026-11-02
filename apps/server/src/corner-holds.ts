@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash } from 'node:crypto';
 import { resolveCornerBriefApproval } from './corner-brief.js';
 import { CommandRefusalError } from './command-refusal.js';
@@ -100,9 +101,9 @@ async function writeHoldMessage(
   const phrase = {
     subject: { kind: actor?.kind === 'agent' ? 'agent' as const : 'person' as const,
       id: actorId, name: actor?.name ?? actorId },
-    verb: 'set a merge hold',
+    verb: systemMessage("corner-holds.set-a-merge-hold"),
     ...(citation?.source_text !== null && citation?.source_text !== undefined
-      ? { consequence: `${citation.source_name}: “${citation.source_text}”` } : {}),
+      ? { consequence: systemMessage("corner-holds.citation", citation.source_name, citation.source_text) } : {}),
   };
   await systemLine(db, { id, roomId: cornerId, authorId: actorId, ...phrase });
   // A repeated set may cite a newer request; keep the existing hold line and

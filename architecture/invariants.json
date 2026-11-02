@@ -28,7 +28,7 @@
         "apps/server/src/corner-lifecycle.ts",
         "apps/server/src/corner-close.ts"
       ],
-      "total": 36,
+      "total": 27,
       "fix": "Change corner state through the corner module: advanceCorner/lockCornerLifecycle in apps/server/src/corner-lifecycle.ts, or closeCornerState in apps/server/src/corner-close.ts. If the module lacks the write you need, add a named function there and call it."
     },
     {
@@ -192,7 +192,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 21,
+      "total": 18,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -228,7 +228,7 @@
         "packages"
       ],
       "owners": [],
-      "total": 5,
+      "total": 4,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     }
   ],
@@ -237,8 +237,8 @@
       "apps/server/src",
       "apps/auth/src"
     ],
-    "bootstrapTotal": 1812,
-    "unusedTotal": 191,
+    "bootstrapTotal": 1802,
+    "unusedTotal": 189,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -689,7 +689,8 @@
           "finished_at": "existing before the registry; weekly audit reviews",
           "last_error": "existing before the registry; weekly audit reviews",
           "require_containment": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
       },
       "corner_brief_revisions": {
         "module": "Corner state machine",
@@ -724,24 +725,45 @@
           "commissioned_by": "existing before the registry; weekly audit reviews",
           "objective": "existing before the registry; weekly audit reviews",
           "lifecycle": "existing before the registry; weekly audit reviews",
-          "plan": "existing before the registry; weekly audit reviews",
-          "request_id": "existing before the registry; weekly audit reviews",
-          "open_idempotency_key": "existing before the registry; weekly audit reviews",
-          "feature_branch": "existing before the registry; weekly audit reviews",
-          "close_requested": "existing before the registry; weekly audit reviews",
+          "plan": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "request_id": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "open_idempotency_key": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "feature_branch": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
+          "close_requested": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
           "kind": "existing before the registry; weekly audit reviews",
           "updated_at": "existing before the registry; weekly audit reviews",
           "locked": "existing before the registry; weekly audit reviews",
           "worker_agent_id": "existing before the registry; weekly audit reviews",
-          "opened_from_corner_id": "existing before the registry; weekly audit reviews",
+          "opened_from_corner_id": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
           "workflow_state": "existing before the registry; weekly audit reviews",
           "workflow_outcome": "existing before the registry; weekly audit reviews",
-          "merge_attempt_head": "existing before the registry; weekly audit reviews",
+          "merge_attempt_head": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          },
           "reviewer_agent_id": "existing before the registry; weekly audit reviews",
-          "title_generated": "existing before the registry; weekly audit reviews",
-          "command_check_state": "existing before the registry; weekly audit reviews",
-          "review_handback_head": "existing before the registry; weekly audit reviews",
-          "review_handback_count": "existing before the registry; weekly audit reviews"
+          "title_generated": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          }
         }
       },
       "corner_follows": {
@@ -808,17 +830,6 @@
           "created_at": "existing before the registry; weekly audit reviews"
         }
       },
-      "corner_pr_closures": {
-        "module": "Corner state machine",
-        "reason": "existing before the registry; weekly audit reviews",
-        "columns": {
-          "corner_id": "existing before the registry; weekly audit reviews",
-          "attempts": "existing before the registry; weekly audit reviews",
-          "next_attempt_at": "existing before the registry; weekly audit reviews",
-          "finished_at": "existing before the registry; weekly audit reviews",
-          "last_error": "existing before the registry; weekly audit reviews"
-        }
-      },
       "corner_report_blockers": {
         "module": "Corner state machine",
         "reason": "existing before the registry; weekly audit reviews",
@@ -830,7 +841,8 @@
           "created_at": "existing before the registry; weekly audit reviews",
           "message_id": "existing before the registry; weekly audit reviews",
           "commander_id": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
       },
       "corner_validation_stages": {
         "module": "Corner state machine",
@@ -1933,8 +1945,10 @@
           "reviewer_agent_id": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews",
           "updated_at": "existing before the registry; weekly audit reviews",
-          "reviewer_class": "existing before the registry; weekly audit reviews",
-          "reviewer_fallback_ids": "existing before the registry; weekly audit reviews"
+          "reviewer_fallback_ids": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
+          }
         }
       },
       "rooms_mcp_admission": {
@@ -3008,7 +3022,8 @@
         "savingAttempt": "existing before the registry; weekly audit reviews",
         "fromState": "existing before the registry; weekly audit reviews",
         "commandId": "existing before the registry; weekly audit reviews",
-        "trigger": "existing before the registry; weekly audit reviews"
+        "trigger": "existing before the registry; weekly audit reviews",
+        "reportToId": "the person a human-directed worker report addresses; written with the report, it scopes the derived wait"
       },
       "legacy_event": {
         "turnGenerationId": "existing before the registry; weekly audit reviews"

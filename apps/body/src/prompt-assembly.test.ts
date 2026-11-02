@@ -619,7 +619,7 @@ describe('prompt assembly guards', () => {
       expect(text, name).not.toContain('gh pr merge');
       expect(text, name).not.toMatch(/approved [0-9a-f<][^`]*, merge/);
     }
-    expect(CORNER_CHECKS_NUDGE).toContain("a reviewer's PASS wakes you to merge with merge_corner");
+    expect(CORNER_CHECKS_NUDGE).toContain("a reviewer's PASS lands the PR; if you are woken to merge, call merge_corner");
     expect(CORNER_CHECKS_NUDGE).toContain('Use merge_corner for landing.');
   });
 

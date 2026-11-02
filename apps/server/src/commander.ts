@@ -1,3 +1,5 @@
+import { cornerOpenedFromSql } from './corner-opening.js';
+import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
@@ -13,7 +15,7 @@ import {
   type CommandRow,
   type PrivateCommandPayload,
 } from './agent-command.js';
-import { resolveCurrentMemberMentions, tagsKnownIdentitySql } from './message-mentions.js';
+import { resolveCurrentMemberMentions } from './message-mentions.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { systemIdentityMention, systemLine } from './system-line.js';
@@ -85,8 +87,7 @@ export async function assertCornerCommandTarget(
        UNION
        SELECT parent.id FROM ancestors ancestor
        JOIN rooms room ON room.id=ancestor.id
-       LEFT JOIN corner_facts fact ON fact.corner_id=room.id
-       CROSS JOIN LATERAL (VALUES (room.parent_id),(fact.opened_from_corner_id)) parent(id)
+       CROSS JOIN LATERAL (VALUES (room.parent_id),(${cornerOpenedFromSql('room.id')})) parent(id)
        WHERE parent.id IS NOT NULL
      ) SELECT 1 FROM ancestors WHERE id<>$1 AND id::text=lower($2)
        AND NOT ($3::boolean AND id=(SELECT parent_id FROM rooms WHERE id=$1)) LIMIT 1`,
@@ -440,6 +441,16 @@ export async function reportToCommander(
     seen.add(hash);
     return true;
   });
+  // Capture a superseded human report before inserting the new newest wait.
+  // Clear its corner_owed item only after the new report is stored successfully.
+  // Private reports retain their delivery authority until an actual answer.
+  const supersededHumanReports = !options.automatic && origin && /^(needs-decision|blocked):/.test(text)
+    ? (await db.query<{ message_id: string }>(`SELECT DISTINCT waiting.message_id FROM rooms waiting_corner
+        JOIN corner_facts fact ON fact.corner_id=waiting_corner.id
+        CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting
+        WHERE waiting_corner.id=$1 AND ${cornerImplementerSql('fact', 'waiting_corner')}=$2
+          AND waiting.report_id IS NULL AND waiting.message_id<>$3`, [origin,agentId,reportId])).rows.map(row => row.message_id)
+    : [];
   if (member.kind === 'agent') {
     // Automatic agent-only system status is private coordination. Only the
     // idle alert opts into waking the commander inside its corner, so its
@@ -521,40 +532,19 @@ export async function reportToCommander(
   }
   // The corner keeps a collapsed record of what its agent reported, so a
   // person reading a relay can open the full text where it was written.
-  let reportMessageId = member.kind === 'human' ? reportId : null;
   if (!options.automatic && (returnRoom !== roomId || member.kind === 'agent') &&
     (await db.query('SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL', [roomId])).rowCount) {
     await recordAgentCommandCard(db, { id: reportId, cornerId: roomId, kind: 'report', authorId: agentId,
       recipientId: recipient, text, status: /^(done|blocked|needs-decision|failed):/.exec(text)?.[1] });
-    if (member.kind === 'agent' && returnRoom === roomId)
-      reportMessageId = createHash('sha256').update(`agent-command-card:${reportId}`).digest('hex');
   }
+  if (supersededHumanReports.length) await db.query(
+    `UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
+     WHERE presentation='message' AND system_event IS NULL AND id=ANY($1::text[])`, [supersededHumanReports]);
   // Keep the reporting turn's evidence address with its head, including private reports.
   if (!options.automatic && command?.review_context) await db.query(
     `UPDATE agent_commands SET review_context=jsonb_set(review_context,'{reportIds}',
        COALESCE(review_context->'reportIds','[]'::jsonb)||jsonb_build_array($2::text)) WHERE id=$1`,
     [command.id,reportId]);
-  if (!options.automatic && origin && (await db.query(
-    'SELECT 1 FROM corner_facts WHERE corner_id=$1 AND COALESCE(worker_agent_id,owner_agent_id)=$2', [origin,agentId])).rowCount) {
-    if (/^(needs-decision|blocked):/.test(text)) {
-      await db.query(`UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
-        WHERE presentation='message' AND system_event IS NULL
-          AND id IN (SELECT message_id FROM corner_report_blockers WHERE corner_id=$1) AND id<>$2`, [origin,reportId]);
-      await db.query('DELETE FROM corner_report_blockers WHERE corner_id=$1', [origin]);
-      await db.query(
-      `INSERT INTO corner_report_blockers(corner_id,person_id,report_id,return_room_id,commander_id,message_id)
-       SELECT $1,person.id,$2,$3,$6,$7 FROM identities person
-       LEFT JOIN room_access member ON member.identity_id=person.id AND member.room_id=$1 AND member.removed_at IS NULL
-       CROSS JOIN (SELECT $4::text text,'message'::text presentation,$1::uuid room_id,$5::text author_id) item
-       WHERE (person.id=$6 OR (member.identity_id IS NOT NULL AND person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}))
-       AND EXISTS(SELECT 1 FROM corner_facts fact WHERE fact.corner_id=$1
-         AND COALESCE(fact.worker_agent_id,fact.owner_agent_id)=$5)
-       ON CONFLICT(corner_id,person_id) DO UPDATE SET report_id=EXCLUDED.report_id,
-         return_room_id=EXCLUDED.return_room_id,created_at=EXCLUDED.created_at,
-         commander_id=EXCLUDED.commander_id,message_id=EXCLUDED.message_id`,
-      [origin, member.kind === 'agent' ? reportId : null, returnRoom, text, agentId, recipient, reportMessageId]);
-    }
-  }
   if (assignment) await db.query(`UPDATE agent_commands SET report_outcome=
     CASE WHEN report_outcome IN ('done','failed') THEN report_outcome ELSE $2 END WHERE id=$1`,
     [assignment.id, /^(done|blocked|failed|needs-decision):/.exec(text)?.[1] ?? 'reported']);
@@ -689,8 +679,7 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
          UNION ALL
          SELECT ancestor.id,ancestor.archived_at,child.hop+1,child.path||ancestor.id
          FROM ancestry child JOIN rooms room ON room.id=child.id
-         LEFT JOIN corner_facts fact ON fact.corner_id=room.id
-         JOIN rooms ancestor ON ancestor.id=COALESCE(fact.opened_from_corner_id,room.parent_id)
+         JOIN rooms ancestor ON ancestor.id=COALESCE(${cornerOpenedFromSql('room.id')},room.parent_id)
          WHERE NOT ancestor.id=ANY(child.path)
        ) SELECT ancestry.id FROM ancestry
        WHERE ancestry.archived_at IS NULL

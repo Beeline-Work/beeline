@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { cornerRunStateSql } from './corner-run.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -6,7 +7,7 @@ import { AcpClient } from '../../body/src/acp.js';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { assembleTurnPrompt, cornerReviewerInstruction } from '../../body/src/prompt-assembly.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { announceAgentLifecycle } from './connection-presence.js';
@@ -14,7 +15,7 @@ import { LiveHub } from './live.js';
 import { PushDeliveryLoop } from './background.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, noteBlockedCornerChecks, reconcileConfiguredCornerReviewers, REVIEWER_DISPATCH_REASONS, reviewerDispatchCarriesHead, routeSystemCommand } from './agent-command.js';
-import { advanceCorner, reassignFailedCornerReviewer } from './corner-lifecycle.js';
+import { advanceCorner } from './corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 const H = 'a'.repeat(64),
@@ -98,7 +99,6 @@ beforeEach(async () => {
   await db.query(`DELETE FROM agent_startup_backoff`);
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM corner_merge_approvals`);
-  await db.query(`DELETE FROM corner_report_blockers`);
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM live_outputs`);
   await db.query(`DELETE FROM messages WHERE room_id=$1`, [C]);
@@ -108,16 +108,15 @@ beforeEach(async () => {
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}'::text[]`);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,command_check_state=NULL,
-       review_handback_head=NULL,review_handback_count=0,commissioned_by=$1,worker_agent_id=NULL`,
-    [H],
+    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,worker_agent_id=NULL`,
   );
+  await seedCornerOpening(db, { cornerId: C, commissionedBy: H });
 });
 
 /** Put the corner in the state a green transition leaves it in. */
 async function greenHead(number: number, headSha: string, checks = 'passing') {
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -403,7 +402,7 @@ describe('corner message attribution', () => {
     headSha = '2'.repeat(40);
     await db.query(
       `UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle-'checksSummary','{checks}','"unknown"'),
-       '{pr,headSha}',to_jsonb($2::text)),command_check_state=NULL WHERE corner_id=$1`,
+       '{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
       [C, headSha],
     );
     const opening = await createAgentCommand(db, {
@@ -498,7 +497,7 @@ describe('corner message attribution', () => {
     // subscription — the production review flow.
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
       [
         C,
         JSON.stringify({
@@ -542,7 +541,7 @@ describe('corner message attribution', () => {
     await result(review!, 'The reproduction is missing. Fix that and push.');
     expect(await commands(A, C)).toEqual([]);
     expect((await db.query<{ workflow_state: string }>(
-      `SELECT workflow_state FROM corner_facts WHERE corner_id=$1`, [C],
+      `SELECT ${cornerRunStateSql('$1::uuid')} workflow_state`, [C],
     )).rows[0]?.workflow_state).toBe('review');
   });
 
@@ -690,12 +689,13 @@ describe('corner message attribution', () => {
     const [review] = await commands(B, C);
     await claim(review!);
     await result(review!, 'FAIL: demonstrate the missing user path.');
-    await db.query(`INSERT INTO corner_report_blockers(corner_id,person_id,return_room_id) VALUES($1,$2,$3)`, [C, H, R]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card)
+      VALUES('explicit-wait',$1,$2,'blocked: waiting for a decision','message',jsonb_build_object('reportToId',$3::text))`, [C, A, H]);
     for (let cycle = 0; cycle < 3; cycle++) await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toHaveLength(0);
     expect(await commands(A, C)).toHaveLength(0);
     expect((await commands(A, R)).filter(c => c.reason === 'report')).toHaveLength(0);
-    await db.query(`DELETE FROM corner_report_blockers WHERE corner_id=$1`, [C]);
+    await db.query(`UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true') WHERE room_id=$1 AND card->>'reportToId' IS NOT NULL`, [C]);
     await reconcileConfiguredCornerReviewers(db, R);
     expect((await commands(A, C)).filter(c => c.reason === 'corner_review_needed')).toHaveLength(1);
   });
@@ -717,7 +717,8 @@ describe('corner message attribution', () => {
     expect(await commands(B, C)).toHaveLength(0);
     await claim(repair!);
     await result(repair!, 'Waiting for the requested evidence before pushing.');
-    await db.query(`INSERT INTO corner_report_blockers(corner_id,person_id,return_room_id) VALUES($1,$2,$3)`, [C, H, R]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card)
+      VALUES('explicit-wait',$1,$2,'blocked: waiting for a decision','message',jsonb_build_object('reportToId',$3::text))`, [C, A, H]);
     for (let cycle = 0; cycle < 3; cycle++) await reconcileConfiguredCornerReviewers(db, R);
     const failures = await db.query(`SELECT id FROM agent_commands WHERE reason='report'
       AND private_payload->>'text' LIKE '%implementer cannot be woken%'`);
@@ -785,9 +786,9 @@ describe('corner message attribution', () => {
     expect(await commands(B, C)).toEqual([]);
     await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toEqual([]);
-    expect((await db.query<{ workflow_state: string; review_handback_count: number }>(
-      `SELECT workflow_state,review_handback_count FROM corner_facts WHERE corner_id=$1`, [C],
-    )).rows[0]).toEqual({ workflow_state: 'review', review_handback_count: 0 });
+    expect((await db.query<{ workflow_state: string }>(
+      `SELECT ${cornerRunStateSql('corner_id')} workflow_state FROM corner_facts WHERE corner_id=$1`, [C],
+    )).rows[0]).toEqual({ workflow_state: 'review' });
   });
 
   it('returns a completed review without PASS to the implementer without re-waking the reviewer on that head', async () => {
@@ -960,7 +961,7 @@ describe('corner message attribution', () => {
     const headA = '3'.repeat(40), headB = '4'.repeat(40);
     const green = async (number: number, headSha: string) => {
       await db.query(
-        `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+        `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
         [C, JSON.stringify({ checks: 'passing', lifecycle: 'in-review', pr: { number, url: `https://github.com/acme/repo/pull/${number}`, headSha } })],
       );
       await systemLine(db, { roomId: C, authorId: H, subject: { kind: 'github', name: 'GitHub' },
@@ -1051,14 +1052,6 @@ describe('corner message attribution', () => {
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='corner-merge-yes'`, [C])).rowCount).toBe(0);
   });
 
-  it('reports an unavailable reviewer list privately to its commander', async () => {
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B, reviewerFallbackIds: [A] }, H);
-    await greenHead(25, '9'.repeat(40));
-    expect(await commands(B, C)).toHaveLength(0);
-    expect((await commands(A, R)).filter(command => command.reason === 'report')
-      .some(command => command.private && command.source.body.startsWith('blocked: no reviewer on the configured list'))).toBe(true);
-    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%healthy enough to review%'`, [C])).rowCount).toBe(0);
-  });
 
   it('reports the failure privately and wakes the implementer when reviewer command insertion cannot queue', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
@@ -1208,7 +1201,7 @@ describe('corner message attribution', () => {
         roomId: C,
         agentId: A,
         sourceMessageId: sourceId,
-        reason: 'corner_objective',
+        reason: 'human_tag',
       });
       const [worker] = await commands(A, C);
       await claim(worker!);
@@ -1273,7 +1266,7 @@ describe('corner message attribution', () => {
       B,
     ]);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
       [
         C,
         JSON.stringify({
@@ -1292,7 +1285,7 @@ describe('corner message attribution', () => {
     });
     const routed = (
       await db.query<{ agent_id: string; reason: string }>(
-        `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1`,
+        `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1 AND state IN ('pending','claimed')`,
         [C],
       )
     ).rows;
@@ -1308,7 +1301,7 @@ describe('corner message attribution', () => {
       B,
     ]);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
       [
         C,
         JSON.stringify({
@@ -1327,20 +1320,12 @@ describe('corner message attribution', () => {
     });
     const routed = (
       await db.query<{ agent_id: string; reason: string }>(
-        `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1`,
+        `SELECT agent_id,reason FROM agent_commands WHERE room_id=$1 AND state IN ('pending','claimed')`,
         [C],
       )
     ).rows;
     expect(routed).toEqual([{ agent_id: A, reason: 'corner_review_needed' }]);
     expect((await commands(A, C))[0]?.source.body).toContain('the configured reviewer is unreachable');
-    expect(
-      (
-        await db.query<{ command_check_state: string | null }>(
-          `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`,
-          [C],
-        )
-      ).rows[0]?.command_check_state,
-    ).toBeNull();
     expect(
       (
         await db.query<{ text: string }>(
@@ -1407,7 +1392,6 @@ describe('corner message attribution', () => {
       await advanceCorner(db, C, { kind: 'checks-pending' });
       await greenHead(95, head);
       await reconcileConfiguredCornerReviewers(db, R);
-      await reassignFailedCornerReviewer(db, { roomId: C, requestId: review!.turnRequestId, agentId: B });
       expect(await commands(B, C)).toEqual([]);
       await greenHead(95, 'f'.repeat(40));
       expect((await commands(B, C)).length).toBeGreaterThan(0);
@@ -1500,7 +1484,6 @@ describe('corner message attribution', () => {
     await routeSystemCommand(db, { roomId: C, sourceMessageId: sourceId, kind: 'check-passed', targets: [B] });
     await advanceCorner(db, C, { kind: 'checks', result: 'passing', sourceMessageId: sourceId });
     await reconcileConfiguredCornerReviewers(db, R);
-    await reassignFailedCornerReviewer(db, { roomId: C, requestId: review!.turnRequestId, agentId: B });
     const afterPaths = (await db.query<{ id: string; reason: string }>(
       `SELECT id,reason FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND NOT (id=ANY($3::text[]))`,
       [C, B, [...verdicted]],
@@ -1527,7 +1510,7 @@ describe('corner message attribution', () => {
     expect(nextHead?.source.body).toContain('1'.repeat(40));
     // A repair handback is an order whose purpose is repair. It is not a repeat review.
     expect(reviewerDispatchCarriesHead('order', undefined, { purpose: 'repair', headSha: '1'.repeat(40) })).toBe(false);
-    await db.query(`DELETE FROM corner_report_blockers WHERE corner_id=$1`, [C]);
+    await db.query(`UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true') WHERE room_id=$1 AND card->>'reportToId' IS NOT NULL`, [C]);
     const parent = (await db.query(`SELECT * FROM agent_commands WHERE id=$1`, [nextHead!.id])).rows[0];
     const handback = await createAgentCommand(db, {
       roomId: C, agentId: B, sourceMessageId: null, reason: 'order', parent,
@@ -1542,7 +1525,8 @@ describe('corner message attribution', () => {
 describe('the corner implementer the workflow wakes follows a person hand-over', () => {
   it('a blocked-checks line keys on the current implementer, not the opener', async () => {
     const head = 'a'.repeat(40);
-    await db.query(`UPDATE corner_facts SET worker_agent_id=$2,lifecycle=$3::jsonb WHERE corner_id=$1`, [
+    await assignCornerWorker(db, C, B);
+    await db.query(`UPDATE corner_facts SET lifecycle=$3::jsonb WHERE corner_id=$1 AND $2::text IS NOT NULL`, [
       C,
       B,
       JSON.stringify({
@@ -1596,7 +1580,8 @@ describe('the corner implementer the workflow wakes follows a person hand-over',
       checkGate,
     );
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
-    await db.query(`UPDATE corner_facts SET worker_agent_id=$2,lifecycle=$3::jsonb WHERE corner_id=$1`, [
+    await assignCornerWorker(db, C, B);
+    await db.query(`UPDATE corner_facts SET lifecycle=$3::jsonb WHERE corner_id=$1 AND $2::text IS NOT NULL`, [
       C,
       B,
       JSON.stringify({

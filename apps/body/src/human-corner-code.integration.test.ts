@@ -10,6 +10,8 @@ import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { migrate } from '../../server/src/database.js';
 import { MemoryObjectStorage, PgliteDatabase } from '../../server/src/test-support.js';
+import { cornerRunStateSql } from '../../server/src/corner-run.js';
+import { cornerOwnerSql } from '../../server/src/corner-worker.js';
 import { ObjectService } from '../../server/src/object-service.js';
 import { ARTIFACT_MAXIMUM_BYTES } from '../../../packages/api-contract/src/artifacts.js';
 import { TokenAuth } from '../../server/src/auth.js';
@@ -391,7 +393,7 @@ it(
     ).rows;
     const fact = (
       await database.query<{ workflow_state: string; owner_agent_id: string | null }>(
-        `SELECT workflow_state,owner_agent_id FROM corner_facts WHERE corner_id=$1`,
+        `SELECT ${cornerRunStateSql('$1::uuid')} workflow_state,${cornerOwnerSql('$1::uuid')} owner_agent_id`,
         [cornerId],
       )
     ).rows[0]!;

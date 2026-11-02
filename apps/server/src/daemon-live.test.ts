@@ -173,6 +173,19 @@ describe('one machine socket for every agent on a helper machine', () => {
     expect(client.socket.readyState).toBe(WebSocket.OPEN);
   });
 
+  it.each(['postgres:rooms', 'postgres:corner_facts'])('BRANCH-DERIVED: sends corner completion from archived state via %s', async reason => {
+    const live = new LiveHub();
+    const { port } = await start({ live });
+    const client = await machine(port);
+    await register(client, AGENT_A, 'bdt_a');
+    client.send({ type: 'subscribe', agentId: AGENT_A, roomId: 'corner-a' });
+    await client.next(frame => frame.type === 'subscribed');
+    live.publish({ type: 'invalidate', roomId: 'corner-a', reason, closeRequested: true });
+    expect(await client.next(frame => frame.type === 'corner-complete')).toMatchObject({
+      roomId: 'corner-a', agentId: AGENT_A,
+    });
+  });
+
   it('drops only the agent that floods the socket; its sibling keeps its slot and its work', async () => {
     const stalled: Array<() => void> = [];
     const canReadRooms = vi.fn((ids: readonly string[], agentId: string) =>

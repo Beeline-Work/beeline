@@ -1,4 +1,6 @@
-import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
+import { cornerReviewerSql } from './corner-reviewer.js';
+import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
+import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { createHash } from 'node:crypto';
 import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
@@ -20,7 +22,7 @@ export type CornerStateRow = {
   archived_at: Date | null;
   locked?: boolean;
   lifecycle: CornerLifecycleView | null;
-  /** The corner lifecycle's projected state (`corner_facts.workflow_state`). */
+  /** The corner run's state: its newest handoff card (`corner-run.ts`). */
   workflow_state?: string | null;
   workflow_outcome?: string | null;
   latest_turn_status: string | null;
@@ -98,7 +100,7 @@ export function cornerFactsSql(viewerExpr: string): {
   member: string;
 } {
   return {
-    columns: `f.locked,f.lifecycle,f.workflow_state,f.workflow_outcome,
+    columns: `f.locked,f.lifecycle,${cornerRunStateSql('f.corner_id')} workflow_state,${cornerRunOutcomeSql('f.corner_id')} workflow_outcome,
       activity.worker_active,activity.reviewer_active,
       span.last_turn_ended_at,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
@@ -146,7 +148,7 @@ function heldCommandSql(command: string): string {
 
 /** A running turn, or a command still waiting for one, retains the review role recorded by its dispatch. */
 export function cornerWorkSql(ignoreCommander = false): string {
-  const reviewerAgent = `ANY(array_remove(ARRAY[${cornerReviewerSql('c')}]||${cornerReviewerFallbacksSql('c')},NULL))`;
+  const reviewerAgent = `ANY(array_remove(ARRAY[${cornerReviewerSql('c')}],NULL))`;
   const checkPassed = (source: string) =>
     `${source}.system_event->>'kind'='check-passed'
       AND ${source}.system_event->'object'->>'headSha'=f.lifecycle->'pr'->>'headSha'`;
@@ -214,7 +216,7 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
       UNION ALL
       SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at,'question',
         CASE WHEN report.return_room_id=c.id AND report.message_id IS NOT NULL THEN 'message'
-          ELSE 'report' END FROM corner_report_blockers report
+          ELSE 'report' END FROM (${cornerWaitingReportSql('c')}) report
       JOIN identities recipient ON recipient.id=report.person_id
         AND (recipient.kind='human' OR report.person_id=report.commander_id)
       WHERE report.corner_id=c.id

@@ -1,17 +1,18 @@
+import { cornerKindSql } from './corner-opening.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { validateCornerWorkflow } from '@beeline/api-contract/daemon';
-import { migrate, type QueryResult, type SqlDatabase } from './database.js';
-import { describedWorkflow, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { migrate, migrateData, type QueryResult, type SqlDatabase } from './database.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { describedWorkflow, PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
 import { LiveHub } from './live.js';
 import { backfillArchivedCornerCleanup } from './corner-cleanup-backfill.js';
-import { enqueueCornerBranchDeletion } from './corner-branch-cleanup.js';
-import { enqueueCornerPullRequestClosure } from './corner-close.js';
+import { deleteArchivedCornerBranch } from './corner-branch-cleanup.js';
 import { systemLine } from './system-line.js';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { addressedToPersonSql } from './corner-owed.js';
@@ -23,7 +24,7 @@ import {
   CORNER_LIFECYCLE_CONTRACT,
   CORNER_LIFECYCLE_SLUG,
   cornerMergeGate,
-  claimCornerMergeAttempt,
+  confirmCornerMergeAuthority,
   deleteStoredCornerWorkflows,
 } from './corner-lifecycle.js';
 import {
@@ -36,6 +37,8 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
+import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
+import { cornerRunStateSql } from './corner-run.js';
 import { getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, workflowRunLockKey } from './workflow-runs.js';
 
 /** Records every SQL statement issued, in order — matches workflow-runs.test.ts's own. */
@@ -232,6 +235,13 @@ beforeEach(async () => {
   }));
 });
 
+/** The corner's worker, derived from its assignment commands. */
+async function derivedWorker(cornerId: string): Promise<string | null> {
+  return (await db.query<{ worker: string | null }>(
+    `SELECT ${cornerImplementerSql('fact', 'corner')} worker FROM corner_facts fact
+     JOIN rooms corner ON corner.id=fact.corner_id WHERE fact.corner_id=$1`, [cornerId])).rows[0]?.worker ?? null;
+}
+
 /** Every `workflow-handoff` card for one corner's run, oldest first. */
 async function cards(
   cornerId: string,
@@ -298,10 +308,6 @@ async function claim(c: AgentCommand, generationId = 'g1') {
 async function pushToCorner(cornerId: string, headSha: string) {
   const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
   githubHead = headSha;
-  await db.query(
-    `UPDATE corner_facts SET feature_branch=COALESCE(feature_branch,$2) WHERE corner_id=$1`,
-    [cornerId, branch],
-  );
   await github.processWebhook('push', {
     installation: { id: 77 },
     repository: { id: 101, full_name: 'owner/widgets' },
@@ -566,7 +572,7 @@ describe('corner lock', () => {
     expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).state).not.toBe('archived');
     expect((await phone.readRoom(cornerId, H))?.cornerLifecycle?.pr).toBeUndefined();
     expect(await currentState(cornerId)).toBe('implement');
-    expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).state).not.toBe('archived');
+    expect(await daemon.execute('getCornerRestoreState', { cornerId }, A)).toMatchObject({ closeRequested: false, archived: false });
     expect((await phone.readCorners(R, H))!.corners.find(c => c.corner.id === cornerId)!.state).not.toBe('archived');
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1
       AND card->>'type'='corner-complete' AND card->>'cornerId'=$2
@@ -655,7 +661,7 @@ describe('a person-opened corner in a repository Room', () => {
       phone.execute('createHumanCorner', { roomId: R, title: 'Bad-id', cornerId: 'not-a-uuid' }, H),
     ).rejects.toThrow('corner id must be a UUID');
   });
-  it('a swap stops the old implementer\'s running turn and sends it one release wake', async () => {
+  it('NO-SWAP: a person tagging another agent assigns it without stopping the running one', async () => {
     const { id: cornerId } = await phone.execute('createHumanCorner', { roomId: R, title: 'Swap-widget' }, H);
     await say(cornerId, '@hoots fix the widget');
     const [working] = await commands(A, cornerId);
@@ -664,20 +670,12 @@ describe('a person-opened corner in a repository Room', () => {
       generationId: 'g1', agentId: A, status: 'working' }, A);
 
     await say(cornerId, '@goosy take this over');
-    const rows = (await db.query<{ action: string; reason: string; turn_request_id: string }>(
-      `SELECT action,reason,turn_request_id FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-         AND state='pending' ORDER BY created_at,id`, [cornerId, A])).rows;
-    expect(rows).toEqual(expect.arrayContaining([
-      { action: 'stop', reason: 'implementer_swap_stop', turn_request_id: working!.turnRequestId },
-      expect.objectContaining({ action: 'input', reason: 'implementer_released' }),
-    ]));
+    expect(await derivedWorker(cornerId)).toBe(B);
+    expect((await db.query(`SELECT action,reason FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+      AND state='pending'`, [cornerId, A])).rows).toEqual([]);
     expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
-      [cornerId, A, working!.turnRequestId])).rows).toEqual([{ status: 'cancelled' }]);
-
-    // Tagging the current implementer again is no swap.
-    await say(cornerId, '@goosy keep going');
-    expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-      AND reason='implementer_released'`, [cornerId, B])).rowCount).toBe(0);
+      [cornerId, A, working!.turnRequestId])).rows).toEqual([{ status: 'working' }]);
+    console.log('NO-SWAP Demonstrated: the tagged agent became the worker; the running agent kept its turn and got no stop.');
   });
   it('opens on implement with no lane, and the first tagged agent owns it and drives it to checks', async () => {
     const { id: cornerId } = await phone.execute('createHumanCorner', { roomId: R, title: 'Fix-widget' }, H);
@@ -690,16 +688,18 @@ describe('a person-opened corner in a repository Room', () => {
       `SELECT 1 FROM information_schema.columns WHERE table_name='corner_facts' AND column_name='lane'`,
     );
     expect(columns.rowCount).toBe(0);
-    expect((await db.query(`SELECT owner_agent_id,worker_agent_id,kind FROM corner_facts WHERE corner_id=$1`, [cornerId]))
-      .rows[0]).toEqual({ owner_agent_id: null, worker_agent_id: null, kind: 'human' });
+    expect((await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id,${cornerKindSql('corner_id')} kind FROM corner_facts WHERE corner_id=$1`, [cornerId]))
+      .rows[0]).toEqual({ owner_agent_id: null, kind: 'human' });
 
     // The first agent a person tags owns the corner; a later tag moves only the implementer.
     await say(cornerId, '@hoots fix the widget');
-    expect((await db.query(`SELECT owner_agent_id,worker_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
-      .rows[0]).toEqual({ owner_agent_id: A, worker_agent_id: A });
+    expect((await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`, [cornerId]))
+      .rows[0]).toEqual({ owner_agent_id: A });
+    expect(await derivedWorker(cornerId)).toBe(A);
     await say(cornerId, '@goosy take this over');
-    expect((await db.query(`SELECT owner_agent_id,worker_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
-      .rows[0]).toEqual({ owner_agent_id: A, worker_agent_id: B });
+    expect((await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`, [cornerId]))
+      .rows[0]).toEqual({ owner_agent_id: A });
+    expect(await derivedWorker(cornerId)).toBe(B);
 
     // A push on the corner's branch is matched by its prefix and moves the run to checks.
     await github.processWebhook('push', {
@@ -711,7 +711,7 @@ describe('a person-opened corner in a repository Room', () => {
       pusher: { name: 'goosy' },
     });
     expect((await db.query(`SELECT feature_branch FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toEqual({ feature_branch: branchOf(cornerId) });
+      .toEqual({ feature_branch: null });
     expect(await currentState(cornerId)).toBe('checks');
   });
 });
@@ -719,14 +719,10 @@ describe('a person-opened corner in a repository Room', () => {
 describe('checks dispatch (rows 6-8)', () => {
   it('a push records implement -> checks', async () => {
     const cornerId = await open('owner/widgets');
-    await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [
-      cornerId,
-      'feature/corner-test01',
-    ]);
     await github.processWebhook('push', {
       installation: { id: 77 },
       repository: { id: 101, full_name: 'owner/widgets' },
-      ref: 'refs/heads/feature/corner-test01',
+      ref: `refs/heads/${branchOf(cornerId)}`,
       after: '1'.repeat(40),
       commits: [{}],
       pusher: { name: 'hoots' },
@@ -855,7 +851,7 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
     return cornerId;
   }
 
-  it("an approved review records review -> review and wakes the implementer to merge", async () => {
+  it("an approved review records review -> review and wakes nobody to merge", async () => {
     const cornerId = await toReview();
     const [review] = await commands(B, cornerId);
     await claim(review!);
@@ -865,7 +861,24 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
     expect(await cards(cornerId)).toContainEqual(
       expect.objectContaining({ fromState: 'review', outcome: 'approved', toState: 'review' }),
     );
-    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_land')).toHaveLength(1);
+    expect(await reasons(cornerId, A)).not.toContain('corner_land');
+  });
+
+  it('PASS-LANDS: a reviewer PASS on a green head lands the PR at once', async () => {
+    const cornerId = await toReview();
+    const [review] = await commands(B, cornerId);
+    await claim(review!);
+    githubHead = '7'.repeat(40);
+    githubRollupState = 'passed';
+    const landing = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, id => github.landCorner(id));
+    Object.assign(landing, { github: { assertCornerReviewerNotAuthor: async () => {} } });
+    await expect(landing.execute('approveCornerMerge', { cornerId, headSha: '7'.repeat(40) }, B))
+      .resolves.toMatchObject({ status: 'approved' });
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+    expect(await reasons(cornerId, A)).not.toContain('corner_land');
+    console.log('PASS-LANDS Demonstrated: the reviewer PASS reached landCorner with no implementer merge_corner turn.');
   });
 
   it('a review that ends without a PASS records nothing and stays in review', async () => {
@@ -888,7 +901,8 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
     expect((await commands(A, cornerId)).some(c => c.reason === 'order')).toBe(true);
     expect(await currentState(cornerId)).toBe('review');
     await daemon.execute('approveCornerMerge', { cornerId, headSha: '7'.repeat(40) }, B);
-    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_land')).toHaveLength(1);
+    // The PASS is landed by the server, not handed to the implementer.
+    expect(await reasons(cornerId, A)).not.toContain('corner_land');
   });
 });
 
@@ -1108,12 +1122,10 @@ async function reasons(cornerId: string, agentId: string): Promise<string[]> {
   ).rows.map((row) => row.reason);
 }
 
+/** The run state the phone badge reads: the newest handoff card (`corner-run.ts`). */
 async function projected(cornerId: string): Promise<string | null> {
   return (
-    await db.query<{ workflow_state: string | null }>(
-      `SELECT workflow_state FROM corner_facts WHERE corner_id=$1`,
-      [cornerId],
-    )
+    await db.query<{ workflow_state: string | null }>(`SELECT ${cornerRunStateSql('$1::uuid')} workflow_state`, [cornerId])
   ).rows[0]!.workflow_state;
 }
 
@@ -1216,6 +1228,7 @@ async function revise(cornerId: string, service = daemon) {
 }
 
 const F = 'e'.repeat(64);
+/** Another agent member of the Room; a stored fallback reviewer list is retired and ignored. */
 async function fallback(cornerId: string, online = true) {
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Fallback','fallback') ON CONFLICT DO NOTHING`, [F]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [F, H]);
@@ -1230,7 +1243,7 @@ it.each(['passing', 'unknown', 'unreachable'])('Reproduction F1-2: ask_human rev
   const cornerId = await approved();
   await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, A]);
   await db.query(`UPDATE messages SET card=jsonb_set(card,'{toState}','"ask_human"') WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId]);
-  await db.query(`UPDATE corner_facts SET workflow_state='ask_human',lifecycle=jsonb_set(lifecycle,'{checks}',$2::jsonb) WHERE corner_id=$1`, [cornerId, JSON.stringify(checks === 'unknown' ? 'unknown' : 'passing')]);
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}',$2::jsonb) WHERE corner_id=$1`, [cornerId, JSON.stringify(checks === 'unknown' ? 'unknown' : 'passing')]);
   if (checks === 'unreachable') await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
   const result = await revise(cornerId);
   const state = await currentState(cornerId);
@@ -1315,7 +1328,7 @@ describe('a brief revision wakes only the implementer and keeps the yes', () => 
     `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, A],
   );
 
-  it.each(['removed', 'offline'] as const)('wakes the implementer, not a fallback reviewer, when the primary is %s', async (condition) => {
+  it.each(['removed', 'offline'] as const)('wakes the implementer, not another agent, when the reviewer is %s', async (condition) => {
     const cornerId = await approved();
     await implementerOnline();
     await fallback(cornerId);
@@ -1355,7 +1368,6 @@ describe('a brief revision wakes only the implementer and keeps the yes', () => 
     }
     if (state === 'ask_human') {
       await db.query(`UPDATE messages SET card=jsonb_set(card,'{toState}',to_jsonb($2::text)) WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId, state]);
-      await db.query(`UPDATE corner_facts SET workflow_state=$2 WHERE corner_id=$1`, [cornerId, state]);
     }
     expect(await currentState(cornerId)).toBe(state);
     await implementerOnline();
@@ -1378,41 +1390,27 @@ describe('a brief revision wakes only the implementer and keeps the yes', () => 
 });
 
 describe('Reproduction S-07: every reviewer waits for a quiet corner', () => {
-  it.each([B, F])('holds a review for %s until the worker releases its lease', async (reviewerId) => {
+  it.each([B])('holds a review for %s until the worker releases its lease', async (reviewerId) => {
     const cornerId = await inReview();
-    if (reviewerId === F) await fallback(cornerId);
     const worker = (await commands(A, cornerId))[0]!;
     await claim(worker);
     const source = await systemLine(db, { roomId: cornerId, subject: { kind: 'agent', id: A, name: 'Hoots' }, verb: 'revised the corner brief', object: 'Revision 2' });
     const review = await createAgentCommand(db, { roomId: cornerId, agentId: reviewerId, sourceMessageId: source.id, reason: 'corner_check' });
     const delivered = (await commands(reviewerId, cornerId)).some(c => c.id === review!.id);
-    console.info(`Reproduction S-07: ${reviewerId === F ? 'fallback' : 'primary'} review with live worker lease → delivered=${delivered}`);
+    console.info(`Reproduction S-07: reviewer review with live worker lease → delivered=${delivered}`);
     expect(delivered).toBe(false);
     await terminalResult(worker, 'Worker finished');
     expect((await commands(reviewerId, cornerId)).some(c => c.id === review!.id)).toBe(true);
   });
 
-  it.each([B, F])('delivers unrelated commands to %s while the worker is busy', async (reviewerId) => {
+  it.each([B])('delivers unrelated commands to %s while the worker is busy', async (reviewerId) => {
     const cornerId = await inReview();
-    if (reviewerId === F) await fallback(cornerId);
     await claim((await commands(A, cornerId))[0]!);
     const source = await systemLine(db, { roomId: cornerId, subject: { kind: 'human', id: H, name: 'Human' }, verb: 'recorded a note' });
     const ordinary = await createAgentCommand(db, { roomId: cornerId, agentId: reviewerId, sourceMessageId: source.id, reason: 'human_tag' });
     expect((await commands(reviewerId, cornerId)).some(c => c.id === ordinary!.id)).toBe(true);
   });
 
-  it('holds a fallback checks-passed review and releases it on lease expiry', async () => {
-    const cornerId = await open('owner/widgets');
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await fallback(cornerId);
-    const worker = (await commands(A, cornerId))[0]!;
-    await claim(worker);
-    await greenHead(cornerId, 7, SHA);
-    expect(await reasons(cornerId, F)).toContain('subscribed_event');
-    expect(await commands(F, cornerId)).toEqual([]);
-    await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [worker.id]);
-    expect(await commands(F, cornerId)).toHaveLength(1);
-  });
 });
 
 describe('Reproduction R5a: entry paths lock the run before corner rows', () => {
@@ -1481,7 +1479,7 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
   });
 });
 
-describe('Reproduction R5b: authority changes between gate read and claim', () => {
+describe('Reproduction R5b: authority changes between gate read and merge', () => {
   /** A GitHubOperations whose first repository-target read (after the gate read) runs `change` first. */
   function racedWith(change: () => Promise<void>) {
     const state = { injected: false };
@@ -1498,8 +1496,17 @@ describe('Reproduction R5b: authority changes between gate read and claim', () =
     return { state, raced: new GitHubOperations(interposed, {} as GitHubOAuthClient, githubApp as unknown as GitHubAppClient, 'secret') };
   }
 
-  it.each(['hold', 'membership'])('%s stops the claim', async change => {
+  /** GitHub merges once: after the first merge the live pull request reads merged. */
+  function mergesOnceOnGitHub(cornerId: string) {
+    githubApp.mergePullRequest.mockImplementationOnce(async () => {
+      githubApp.readPullRequest.mockResolvedValue({ number: 7, url: 'https://github.com/owner/widgets/pull/7',
+        headSha: SHA, headRef: branchOf(cornerId), baseRef: 'main', merged: true, mergedAt: '2026-01-01T00:00:00Z' });
+    });
+  }
+
+  it.each(['hold', 'membership'])('%s stops the merge', async change => {
     const cornerId = await approved();
+    mergesOnceOnGitHub(cornerId);
     let holdId: string | undefined;
     const { state, raced } = racedWith(async () => {
       if (change === 'hold') holdId = (await phone.execute('setCornerHold', { cornerId }, H)).holdId;
@@ -1508,8 +1515,6 @@ describe('Reproduction R5b: authority changes between gate read and claim', () =
     expect(await raced.landCorner(cornerId)).toBe(false);
     expect(state.injected).toBe(true);
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-    expect((await db.query(`SELECT merge_attempt_head FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ merge_attempt_head: null });
     if (change === 'hold') await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId! }, H);
     if (change === 'membership') await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [R, B]);
     expect(await implementersMerge(raced)).toBe(1);
@@ -1517,8 +1522,9 @@ describe('Reproduction R5b: authority changes between gate read and claim', () =
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
   });
 
-  it.each(['brief', 'yolo'])('%s does not stop the claim (a brief edit keeps the yes; yolo is not part of the gate)', async change => {
+  it.each(['brief', 'yolo'])('%s does not stop the merge (a brief edit keeps the yes; yolo is not part of the gate)', async change => {
     const cornerId = await approved();
+    mergesOnceOnGitHub(cornerId);
     const { state, raced } = racedWith(async () => {
       if (change === 'brief') await revise(cornerId);
       if (change === 'yolo') await db.query(`UPDATE agents SET yolo_mode=false WHERE agent_id=$1`, [A]);
@@ -1538,7 +1544,7 @@ describe('advanceCorner rejects an event the current state does not allow (AC-1)
       const cornerId = await open('owner/widgets');
       const before = await cards(cornerId);
       expect(
-        await advanceCorner(db, cornerId, { kind: 'merge-unconfirmed', number: 7, error: 'timeout' }),
+        await advanceCorner(db, cornerId, { kind: 'checks-pending' }),
       ).toEqual({
         state: 'implement',
         accepted: false,
@@ -1549,11 +1555,23 @@ describe('advanceCorner rejects an event the current state does not allow (AC-1)
       });
       expect(await cards(cornerId)).toEqual(before);
       expect(await projected(cornerId)).toBe('implement');
-      expect(info).toHaveBeenCalledWith(expect.stringContaining(`${cornerId}: ignored merge-unconfirmed in implement`));
+      expect(info).toHaveBeenCalledWith(expect.stringContaining(`${cornerId}: ignored checks-pending in implement`));
       expect(info).toHaveBeenCalledWith(expect.stringContaining(`${cornerId}: ignored approval in implement`));
     } finally {
       info.mockRestore();
     }
+  });
+});
+
+describe('RUN-FROM-CARDS: the run state is the newest handoff card, never a corner_facts copy', () => {
+  it('the badge input moves with cards while corner_facts keeps no state', async () => {
+    const cornerId = await inReview();
+    expect(await projected(cornerId)).toBe('review');
+    expect((await db.query(`SELECT workflow_state,workflow_outcome FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toEqual({ workflow_state: null, workflow_outcome: null });
+    const visible = (await phone.readCorners(R, H))!.corners.find(row => row.corner.id === cornerId);
+    expect(visible).toBeDefined();
+    console.log('RUN-FROM-CARDS Demonstrated: run state review came from the newest card; corner_facts workflow columns stayed NULL.');
   });
 });
 
@@ -1727,10 +1745,10 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
       checks: 'pending', lifecycle: 'in-review',
       pr: { number: 7, url: 'https://github.com/owner/widgets/pull/7', headSha: SHA, title: 'Ship the widget' },
     })]);
-    // The reviewer reported blocked while the gate was still pending. The head did not move.
+    // The worker reported blocked while the gate was still pending. The head did not move.
     await db.query(
-      `INSERT INTO corner_report_blockers(corner_id,person_id,return_room_id,commander_id) VALUES($1,$2,$1,$3)`,
-      [cornerId, H, B],
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card) VALUES('pending-gate-report',$1,$2,'blocked: waiting for checks','message',jsonb_build_object('reportToId',$3::text))`,
+      [cornerId, A, H],
     );
     await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"passing"') WHERE corner_id=$1`, [cornerId]);
     const source = await systemLine(db, {
@@ -1967,7 +1985,7 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
   it('addresses the requester when the implementing agent cannot receive the checks wake', async () => {
     const cornerId = await open('owner/widgets');
     await fallback(cornerId);
-    await db.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`,[cornerId,F]);
+    await assignCornerWorker(db, cornerId, F);
     await redHead(cornerId, 3, SHA);
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, F]);
     await systemLine(db, {
@@ -2171,13 +2189,7 @@ describe('a person hands the corner to another agent (the implementer follows th
       [W, R, D],
     );
   }
-  const workerOf = async (cornerId: string): Promise<string | null> =>
-    (
-      await db.query<{ worker_agent_id: string | null }>(
-        `SELECT worker_agent_id FROM corner_facts WHERE corner_id=$1`,
-        [cornerId],
-      )
-    ).rows[0]!.worker_agent_id;
+  const workerOf = derivedWorker;
 
   it('a tag in the corner moves the failing-check wake off the opener, leaving owner_agent_id alone', async () => {
     const cornerId = await open('owner/widgets');
@@ -2186,7 +2198,7 @@ describe('a person hands the corner to another agent (the implementer follows th
     expect(
       (
         await db.query<{ owner_agent_id: string }>(
-          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
+          `SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`,
           [cornerId],
         )
       ).rows[0]!.owner_agent_id,
@@ -2265,13 +2277,13 @@ describe('a person hands the corner to another agent (the implementer follows th
     const cornerId = await open('owner/widgets');
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await say(cornerId, '@goosy what do you think?');
-    expect(await workerOf(cornerId)).toBeNull();
+    expect(await workerOf(cornerId)).toBe(A);
   });
 
   it('a tag in the parent Room does not move a corner implementer', async () => {
     const cornerId = await open('owner/widgets');
     await say(R, '@goosy take this one');
-    expect(await workerOf(cornerId)).toBeNull();
+    expect(await workerOf(cornerId)).toBe(A);
   });
 
   it('an agent tag invites conversation without handing the corner on', async () => {
@@ -2322,7 +2334,7 @@ describe('a person hands the corner to another agent (the implementer follows th
     )!;
     await claim(peerTurn);
     await result(peerTurn, '@goosy take this one');
-    expect(await workerOf(cornerId)).toBeNull();
+    expect(await workerOf(cornerId)).toBe(A);
   });
 
   it('an agent hand-over to the configured reviewer does not take the implementer role', async () => {
@@ -2386,7 +2398,8 @@ describe("the configured reviewer's verdict (AC-4)", () => {
     await expect(approve(cornerId)).resolves.toMatchObject({ headSha: SHA });
     await result(asked!, `approved ${SHA}`);
     expect(await currentState(cornerId)).toBe('review');
-    expect(await reasons(cornerId, A)).toContain('corner_land');
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true });
+    expect(await reasons(cornerId, A)).not.toContain('corner_land');
   });
 
   it('rejects a caller who is not the configured reviewer and a stale head by name; a brief revision does not stale it', async () => {
@@ -2475,7 +2488,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect(await implementersMerge()).toBe(0);
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
   });
-  it('wakes the implementer after green checks and PASS, merges the exact head on its merge_corner, then lands on the merge webhook', async () => {
+  it('after green checks and PASS, merge_corner merges the exact head, then lands on the merge webhook', async () => {
     const cornerId = await inReview();
     const implementerBefore = await reasons(cornerId, A);
     const [review] = await commands(B, cornerId);
@@ -2483,7 +2496,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await approve(cornerId);
     await result(review!, `approved ${SHA}`);
     expect(await currentState(cornerId)).toBe('review');
-    expect(await reasons(cornerId, A)).toEqual([...implementerBefore, 'corner_land']);
+    expect(await reasons(cornerId, A)).toEqual(implementerBefore);
     githubHead = SHA;
     githubRollupState = 'passed';
     // Nothing merges until the implementer asks.
@@ -2505,7 +2518,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect(await currentState(cornerId)).toBe('landed');
     expect(await projected(cornerId)).toBe('landed');
     expect((await reasons(cornerId, A)).filter(reason => reason !== 'corner_close'))
-      .toEqual([...implementerBefore, 'corner_land']);
+      .toEqual(implementerBefore);
     expect((await db.query(`SELECT 1 FROM agent_commands
       WHERE room_id=$1 AND agent_id=$2 AND action='stop' AND reason='corner_close'`, [cornerId, A])).rowCount)
       .toBe(assignmentsBefore);
@@ -2531,8 +2544,8 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived).toBe(true);
     expect(await currentState(cornerId)).toBe('closed');
     expect((await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
-    expect((await db.query(`SELECT released_at FROM corner_merge_holds WHERE id=$1`, [hold.holdId])).rows[0]!.released_at).toBeNull();
-    console.log(`R1 Demonstrated: ${path} close closes the PR and archives the held corner.`);
+    expect((await db.query(`SELECT released_at FROM corner_merge_holds WHERE id=$1`, [hold.holdId])).rows[0]!.released_at).not.toBeNull();
+    console.log(`R1 Demonstrated: ${path} close closes the PR, archives the held corner and releases its hold.`);
   });
 
   it.each(['agent', 'phone'] as const)('R1 %s close still archives when GitHub fails', async path => {
@@ -2652,7 +2665,6 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await db.query(`UPDATE messages SET card=card||'{"toState":"ask_human","outcome":"changes_requested"}'::jsonb
       WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type=$2 ORDER BY (card->>'seq')::int DESC LIMIT 1)`,
       [cornerId, CORNER_LIFECYCLE_CARD_TYPE]);
-    await db.query(`UPDATE corner_facts SET workflow_state='ask_human',workflow_outcome='changes_requested' WHERE corner_id=$1`, [cornerId]);
     const event = {
       action: 'closed', installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' },
       pull_request: { number: 7, html_url: 'https://github.com/owner/widgets/pull/7', title: 'Widget', merged: false,
@@ -2941,7 +2953,7 @@ describe('GitHub refusing the merge (AC-6)', () => {
   it.each([405, 409])('HTTP %i returns the corner to implement and wakes the implementer with the reason', async (status) => {
     const cornerId = await approved();
     const reason = `GitHub pull request merge failed: HTTP ${status}: Base branch was modified`;
-    githubApp.mergePullRequest.mockRejectedValueOnce(new Error(reason));
+    githubApp.mergePullRequest.mockRejectedValue(new Error(reason));
     await implementersMerge();
     expect(await currentState(cornerId)).toBe('implement');
     expect(await cards(cornerId)).toContainEqual(
@@ -2955,186 +2967,25 @@ describe('GitHub refusing the merge (AC-6)', () => {
     ).rows;
     expect(lines).toHaveLength(1);
     expect(lines[0]!.text).toContain(`HTTP ${status}`);
-    // No second attempt on the refused head.
+    // Nothing records the attempt: a fresh merge_corner retries the head live,
+    // and the same refusal is neither repeated in the corner nor re-woken.
     await implementersMerge();
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(2);
+    expect(await currentState(cornerId)).toBe('implement');
+    expect((await reasons(cornerId, A)).filter((r) => r === 'corner_merge_refused')).toHaveLength(1);
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%refused to merge%'`, [cornerId])).rowCount)
+      .toBe(1);
     // The queued recovery command keeps the badge working even before claim.
     const listed = (await phone.readCorners(R, H))!.corners.find((row) => row.corner.id === cornerId);
     expect(listed).toMatchObject({ state: 'working' });
   });
 });
 
-describe('unfinished merge claim recovery (R6a–R6f)', () => {
+describe('MERGE-LIVE: merges read GitHub live; nothing records an attempt', () => {
   function mergeDaemon(operations = github) {
     return new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input, confirmZeroChecks) => operations.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, (id, onBlocked) => operations.landCornerOutcome(id, onBlocked));
-  }
-
-  it('Reproduction MERGE-RETRY-PROD: confirmed draft refusal, undraft, and merge_corner retry merge the same head once', async () => {
-    const cornerId = await approved();
-    let draft = true;
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
-    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id));
-    const reason = 'GitHub pull request merge failed: HTTP 405: Pull Request is still a draft';
-    githubApp.mergePullRequest.mockImplementation(async () => {
-      if (draft) throw new Error(reason);
-      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
-    });
-    expect(await wiredDaemon.execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'blocked', blocker: reason });
-    expect(await claimHead(cornerId)).toBeNull();
-    expect(await currentState(cornerId)).toBe('implement');
-    draft = false;
-    expect(await wiredDaemon.execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'merge-started', headSha: SHA });
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(2);
-    expect(await currentState(cornerId)).toBe('landed');
-  });
-
-  it.each(['hold', 'pending checks', 'missing review', 'stale head'] as const)(
-    'Reproduction merge-check-mismatch: checks and mergeCorner agree on %s', async blocker => {
-      const cornerId = await approved();
-      if (blocker === 'hold') await phone.execute('setCornerHold', { cornerId }, H);
-      if (blocker === 'pending checks') githubRollupState = 'pending';
-      if (blocker === 'missing review')
-        await db.query('DELETE FROM corner_merge_approvals WHERE corner_id=$1', [cornerId]);
-      if (blocker === 'stale head') githubHead = '9'.repeat(40);
-
-      const checks = await github.prChecksStatus({ cornerId });
-      const merged = await mergeDaemon().execute('mergeCorner', { cornerId }, A);
-      expect(checks.mergeAllowed).toBe(false);
-      expect(merged).toMatchObject({ status: 'blocked', blocker: checks.blockedReason });
-      console.info(`Reproduction merge-check-mismatch (${blocker}): checks=${checks.mergeAllowed} reason=${checks.blockedReason}; mergeCorner=${JSON.stringify(merged)}`);
-    },
-  );
-
-  it('Reproduction merge-check-mismatch: closed corner with pending checks returns the same reason through both service paths at the exact head', async () => {
-    const cornerId = await approved();
-    await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
-    githubRollupState = 'pending';
-
-    const service = mergeDaemon();
-    const checks = await service.execute('getPrChecksStatus', { cornerId }, A);
-    const merged = await service.execute('mergeCorner', { cornerId }, A);
-
-    expect(checks).toMatchObject({ headSha: SHA, checks: 'pending', mergeAllowed: false,
-      blockedReason: 'the corner is closed; checks are pending' });
-    expect(merged).toEqual({ status: 'blocked', blocker: checks.blockedReason, holds: [] });
-    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-  });
-
-  it.each(['checks', 'read', 'target', 'approval', 'claim'] as const)(
-    'Reproduction MERGE-RETRY-REASON: %s rejection after a confirmed refusal names the actual blocker', async change => {
-      const cornerId = await approved();
-      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
-      githubApp.mergePullRequest.mockRejectedValueOnce(new Error('HTTP 405: Pull Request is still a draft'));
-      expect(await mergeDaemon().execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked' });
-      expect(await claimHead(cornerId)).toBeNull();
-      expect(await currentState(cornerId)).toBe('implement');
-      let operations = github;
-      let expected: string;
-      if (change === 'checks') {
-        githubApp.readCommitCheckRollup.mockResolvedValueOnce({ state: 'passed', total: 1, failing: [], checks: [] })
-          .mockResolvedValueOnce({ state: 'pending', total: 1, failing: [], checks: [] });
-        expected = 'checks are pending';
-      } else if (change === 'read') {
-        githubApp.readPullRequest.mockResolvedValueOnce(providerPr(cornerId)).mockRejectedValueOnce(new Error('provider read unavailable'));
-        expected = 'GitHub merge gate read failed';
-      } else if (change === 'target' || change === 'approval') {
-        const interposed: SqlDatabase = {
-          transaction: work => db.transaction(work),
-          query: async <Row extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]) => {
-            const result = await db.query<Row>(sql, values);
-            if (sql.includes("SELECT (fact.lifecycle->'pr'->>'number')::int number,fact.feature_branch")) {
-              if (change === 'target') return { rows: [], rowCount: 0 };
-              await db.query(`DELETE FROM corner_merge_approvals WHERE corner_id=$1`, [cornerId]);
-            }
-            return result;
-          },
-        };
-        operations = new GitHubOperations(interposed, {} as GitHubOAuthClient, githubApp as unknown as GitHubAppClient, 'secret');
-        expected = change === 'target'
-          ? 'the merge target no longer matches the corner head or linked GitHub repository'
-          : 'no yes on this head';
-      } else {
-        expect(await claimCornerMergeAttempt(db, cornerId, SHA)).toBe(true);
-        expected = 'a merge attempt for this head is still awaiting GitHub confirmation';
-      }
-      expect(await mergeDaemon(operations).execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'blocked', blocker: expected, holds: [] });
-      expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it.each(['REST', 'queue'] as const)('Reproduction MERGE-RETRY: %s draft refusals allow merge_corner to retry the same head', async path => {
-    const cornerId = await approved();
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
-    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id));
-    const reason = 'GitHub pull request merge failed: HTTP 405: Pull Request is still a draft';
-    for (let attempt = 0; attempt < 2; attempt++) {
-      githubApp.mergePullRequest.mockImplementationOnce(async () => {
-        if (path === 'queue' && attempt === 0) {
-          // A concurrent same-head lifecycle event must not strand the claim.
-          await advanceCorner(db, cornerId, { kind: 'push', headSha: SHA, contents: { headSha: SHA } });
-          expect(await currentState(cornerId)).toBe('checks');
-        }
-        throw path === 'queue'
-          ? Object.assign(new Error(reason), { queueAttempted: true })
-          : Object.assign(new GitHubHttpError('GitHub pull request merge', 405), { mergeAttempted: true });
-      });
-      if (path === 'REST') githubApp.readPullRequestQueue.mockRejectedValueOnce(new Error('queue read unavailable'));
-      expect(await wiredDaemon.execute('mergeCorner', { cornerId }, A)).toMatchObject({ status: 'blocked' });
-      expect(await claimHead(cornerId)).toBeNull();
-    }
-    githubApp.mergePullRequest.mockImplementationOnce(async () => {
-      if (path === 'queue') {
-        githubApp.readPullRequestQueue.mockResolvedValue({ id: 'PR_7', headSha: SHA, entry: { id: 'MQ_7' } });
-        return 'queued';
-      }
-      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
-    });
-    expect(await wiredDaemon.execute('mergeCorner', { cornerId }, A))
-      .toEqual({ status: path === 'queue' ? 'queued' : 'merge-started', headSha: SHA });
-    if (path === 'queue') {
-      expect(await claimHead(cornerId)).toBe(SHA);
-      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
-      await recover();
-    }
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(3);
-    expect(await currentState(cornerId)).toBe('landed');
-    console.info(`Reproduction MERGE-RETRY (${path}): draft refused twice; same-head merge_corner retry merged and archived.`);
-  });
-
-  it('Reproduction MERGE-RETRY: a 4xx before the REST merge does not release an uncertain claim', async () => {
-    const cornerId = await approved();
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
-    githubApp.mergePullRequest.mockRejectedValueOnce(new GitHubHttpError('GitHub queue configuration', 403));
-    githubApp.readPullRequestQueue.mockRejectedValueOnce(new Error('queue read unavailable'));
-    expect(await github.landCornerOutcome(cornerId)).toMatchObject({ status: 'refused' });
-    expect(await claimHead(cornerId)).toBe(SHA);
-    expect(await github.landCornerOutcome(cornerId)).toEqual({ status: 'not-attempted' });
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
-  });
-
-  it('Reproduction MERGE-RETRY: an unresolved refusal receipt stays recoverable in implement', async () => {
-    const cornerId = await approved();
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
-    githubApp.mergePullRequest.mockRejectedValueOnce(new TypeError('response lost'));
-    githubApp.readPullRequestQueue.mockRejectedValueOnce(new Error('queue read unavailable'));
-    expect(await github.landCornerOutcome(cornerId)).toMatchObject({ status: 'refused' });
-    expect(await claimHead(cornerId)).toBe(SHA);
-    expect(await currentState(cornerId)).toBe('implement');
-    await backdate(cornerId);
-    await recover();
-    expect(await claimHead(cornerId)).toBeNull();
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
-    expect(await github.landCornerOutcome(cornerId)).toEqual({ status: 'started' });
-  });
-
-  async function recover() {
-    await github.recoverUnfinishedMergeClaims();
   }
 
   function providerPr(cornerId: string, merged = false, headSha = SHA) {
@@ -3143,23 +2994,6 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
       headSha, headRef: branchOf(cornerId), baseRef: 'main', merged, mergeability: 'clean',
       ...(merged ? { mergedAt: '2026-01-01T00:00:00Z', mergeCommitSha: '8'.repeat(40) } : {}),
     };
-  }
-
-  async function backdate(cornerId: string) {
-    await db.query(`UPDATE corner_facts SET updated_at=now()-interval '1 hour' WHERE corner_id=$1`, [cornerId]);
-  }
-
-  async function claimed(stale = true) {
-    const cornerId = await approved();
-    expect(await claimCornerMergeAttempt(db, cornerId, SHA)).toBe(true);
-    if (stale) await backdate(cornerId);
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
-    return cornerId;
-  }
-
-  async function claimHead(cornerId: string) {
-    return (await db.query(`SELECT merge_attempt_head FROM corner_facts WHERE corner_id=$1`, [cornerId]))
-      .rows[0]!.merge_attempt_head;
   }
 
   async function landing(cornerId: string) {
@@ -3171,13 +3005,26 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
       .not.toBeNull();
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%merged%'`, [cornerId])).rowCount)
       .toBe(1);
-    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card->>'type'='corner-complete'`, [R])).rowCount)
-      .toBe(0);
-    const visible = (await phone.readCorners(R, H, false, true))?.corners.find(row => row.corner.id === cornerId);
-    expect(visible).toMatchObject({ state: 'archived', lifecycle: { outcome: 'landed' } });
   }
 
-  it('Reproduction MA-1: a successful gated merge archives without the closed webhook', async () => {
+  it('Reproduction MERGE-RETRY-PROD: confirmed draft refusal, undraft, and merge_corner retry merge the same head once', async () => {
+    const cornerId = await approved();
+    let draft = true;
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
+    const reason = 'GitHub pull request merge failed: HTTP 405: Pull Request is still a draft';
+    githubApp.mergePullRequest.mockImplementation(async () => {
+      if (draft) throw new Error(reason);
+      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
+    });
+    expect(await mergeDaemon().execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'blocked', blocker: reason });
+    expect(await currentState(cornerId)).toBe('implement');
+    draft = false;
+    expect(await mergeDaemon().execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'merge-started', headSha: SHA });
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(2);
+    expect(await currentState(cornerId)).toBe('landed');
+  });
+
+  it('a successful gated merge archives without the closed webhook, once', async () => {
     const cornerId = await approved();
     githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, false));
     githubApp.mergePullRequest.mockImplementationOnce(async () => {
@@ -3186,361 +3033,50 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
     expect(await implementersMerge()).toBe(1);
     await landing(cornerId);
     await github.reconcileMergedCorners();
-    await recover();
     await landing(cornerId);
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
   });
 
-  it('Reproduction MA-1: failed confirmation retains the claim and later recovery archives once', async () => {
+  it('a lost merge response is settled by the live pull request read: merged lands, no refusal', async () => {
+    const cornerId = await approved();
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, false));
+    githubApp.mergePullRequest.mockImplementationOnce(async () => {
+      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
+      throw new TypeError('fetch failed');
+    });
+    expect(await github.landCornerOutcome(cornerId)).toEqual({ status: 'started' });
+    await landing(cornerId);
+    expect(await reasons(cornerId, A)).not.toContain('corner_merge_refused');
+  });
+
+  it('an unreadable outcome is settled later by the merge webhook, with no stored claim', async () => {
     const cornerId = await approved();
     githubApp.mergePullRequest.mockImplementationOnce(async () => {
       githubApp.readPullRequest.mockRejectedValue(new Error('temporary GitHub outage'));
     });
     expect(await implementersMerge()).toBe(1);
-    expect(await claimHead(cornerId)).toBe(SHA);
-    await recover(); // Still inside the grace deadline.
     expect(await currentState(cornerId)).toBe('review');
-    await backdate(cornerId);
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
-    await recover();
-    await landing(cornerId);
-    await recover();
-    await landing(cornerId);
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
-  });
-
-  it('Reproduction F2-1: human input keeps a fresh merge claim until its grace deadline', async () => {
-    const cornerId = await claimed(false);
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, false));
-    await phone.execute('sendRoomMessage', {
-      roomId: cornerId, messageId: randomBytes(32).toString('hex'), text: 'Any update?',
-    }, H);
-    await recover();
-    const observed = await claimHead(cornerId);
-    console.info(`Reproduction F2-1: wrong=claim cleared after human message; right=claim kept until grace; observed=${observed}`);
-    expect(githubApp.readPullRequest).not.toHaveBeenCalled();
-    expect(observed).toBe(SHA);
-  });
-
-  it.each([true, false])('Reproduction F1-3: recovery backs off and confirms merged=%s after human input', async merged => {
-    const cornerId = await claimed();
-    githubApp.readPullRequest.mockRejectedValue(new Error('permission denied'));
-    await recover();
-    const reads = githubApp.readPullRequest.mock.calls.length;
-    await recover();
-    console.info(`Reproduction F1-3: wrong=read every tick; right=no read before deadline; observed=${githubApp.readPullRequest.mock.calls.length - reads}`);
-    expect(githubApp.readPullRequest).toHaveBeenCalledTimes(reads);
-    for (let attempt = 2; attempt <= 6; attempt++) {
-      const timing = (await db.query(`SELECT (lifecycle->'mergeRecovery'->>'nextAttemptAt')::double precision - (lifecycle->'mergeRecovery'->>'lastAttemptAt')::double precision delay FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.delay;
-      expect(timing).toBeCloseTo(Math.min(3600, 300 * 2 ** (attempt - 2)), 1);
-      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeRecovery,nextAttemptAt}','0') WHERE corner_id=$1`, [cornerId]);
-      await recover();
-      expect(await currentState(cornerId)).toBe('review');
-    }
-    expect(await currentState(cornerId)).toBe('review');
-    expect(await reasons(cornerId, A)).toContain('corner_merge_unconfirmed');
-    const notes = await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%merge outcome is unconfirmed%'`, [cornerId]);
-    expect(notes.rows).toHaveLength(1);
-    expect(notes.rows[0]!.text).toContain('#7');
-    expect(notes.rows[0]!.text).toContain('permission denied');
-    expect(await claimHead(cornerId)).toBe(SHA);
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, merged));
-    await phone.execute('sendRoomMessage', { roomId: cornerId, messageId: randomBytes(32).toString('hex'), text: 'Permissions repaired' }, H);
-    await recover();
-    expect(await currentState(cornerId)).toBe(merged ? 'landed' : 'implement');
-    expect(await claimHead(cornerId)).toBeNull();
-    expect(Boolean((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at)).toBe(merged);
-    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-  });
-
-  it.each(['missing target', 'different merged head', 'different merged branch'])('Reproduction F1-3: %s remains unconfirmed', async condition => {
-    const cornerId = await claimed();
-    if (condition === 'missing target') await db.query(`UPDATE github_repositories SET active=false WHERE repository_id=101`);
-    else githubApp.readPullRequest.mockResolvedValue({ ...providerPr(cornerId, true, condition === 'different merged head' ? '9'.repeat(40) : SHA), ...(condition === 'different merged branch' ? { headRef: 'feature/somewhere-else' } : {}) });
-    try {
-      await recover();
-      expect(await claimHead(cornerId)).toBe(SHA);
-      expect(await currentState(cornerId)).toBe('review');
-      expect((await db.query(`SELECT lifecycle->'mergeRecovery'->>'attempts' attempts FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.attempts).toBe('1');
-      console.info(`Reproduction F1-3: ${condition}: wrong=unbounded read; right=claim retained with deadline; observed=attempt 1`);
-    } finally { await db.query(`UPDATE github_repositories SET active=true WHERE repository_id=101`); }
-  });
-
-  it('Reproduction MA-2 / R6a: recurring recovery releases an unmerged claim without merging', async () => {
-    const cornerId = await claimed();
-    const claimUpdatedAt = async () => (await db.query<{ updated_at: string }>(
-      `SELECT updated_at::text FROM corner_facts WHERE corner_id=$1`, [cornerId],
-    )).rows[0]!.updated_at;
-    const beforeRead = await claimUpdatedAt();
-    expect(await implementersMerge()).toBe(0);
-    // The live gate repairs its missing header snapshot without extending the
-    // existing claim's recovery grace period.
-    expect(await claimUpdatedAt()).toBe(beforeRead);
-    expect((await db.query(`SELECT lifecycle->'checksSummary'->>'total' total
-      FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.total).toBe('1');
-    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-    for (let cycle = 0; cycle < 3; cycle++) {
-      await recover();
-      expect(await claimHead(cornerId)).toBeNull();
-      expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-    }
-    expect(await currentState(cornerId)).toBe('review');
-    expect(await implementersMerge()).toBe(1);
-    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
-    await mergedWebhook(cornerId, 7, SHA);
-    await landing(cornerId);
-    console.info('MA-2 / R6a demonstrated: repeated recovery clears the claim without merging; a fresh explicit gated request can merge and archive once.');
-  });
-
-  it('Reproduction R6b: a crash after merge records one landing without another merge', async () => {
-    const cornerId = await claimed();
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
-    await recover();
-    await landing(cornerId);
-    await recover();
-    await mergedWebhook(cornerId, 7, SHA);
-    await landing(cornerId);
-    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-    console.info('R6b demonstrated: GitHub-confirmed merge archived once; duplicate recovery and webhook added no card or merge.');
-  });
-
-  it.each([new Error('GitHub pull request merge failed: HTTP 502'), new TypeError('fetch failed')])(
-    'Reproduction R6c: %s after GitHub merged produces a landing, no refusal', async error => {
-      const cornerId = await approved();
-      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
-      githubApp.mergePullRequest.mockImplementationOnce(async () => {
-        githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
-        throw error;
-      });
-      await implementersMerge();
-      expect((await cards(cornerId)).filter(card => card.outcome === 'merge_refused')).toEqual([]);
-      expect(await reasons(cornerId, A)).not.toContain('corner_merge_refused');
-      expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%refused to merge%'`, [cornerId])).rowCount)
-        .toBe(0);
-      await landing(cornerId);
-      console.info('R6c demonstrated: uncertain merge response confirmed landed; no refusal message or implementer wake.');
-    },
-  );
-
-  it('Reproduction R6d: a moved provider head clears the claim without merging', async () => {
-    const cornerId = await claimed();
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, false, '9'.repeat(40)));
-    await recover();
-    expect(await claimHead(cornerId)).toBeNull();
-    expect(await implementersMerge()).toBe(0);
-    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-  });
-
-  it.each(['before read', 'during read'])('Reproduction R6e: a hold %s clears the claim and blocks merge until released', async timing => {
-    const cornerId = await claimed();
-    let holdId: string;
-    if (timing === 'before read') {
-      ({ holdId } = await phone.execute('setCornerHold', { cornerId }, H));
-      await backdate(cornerId);
-    } else {
-      githubApp.readPullRequest.mockImplementationOnce(async () => {
-        ({ holdId } = await phone.execute('setCornerHold', { cornerId }, H));
-        await backdate(cornerId);
-        return providerPr(cornerId);
-      });
-    }
-    await recover();
-    expect(await claimHead(cornerId)).toBeNull();
-    expect(await implementersMerge()).toBe(0);
-    await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId! }, H);
-    expect(await implementersMerge()).toBe(1);
-    expect(await implementersMerge()).toBe(0);
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
-  });
-
-  it('Reproduction R6f(i): a recent claim is not read or cleared', async () => {
-    const cornerId = await claimed(false);
-    await recover();
-    expect(githubApp.readPullRequest).not.toHaveBeenCalled();
-    expect(await claimHead(cornerId)).toBe(SHA);
-    expect(await implementersMerge()).toBe(0);
-  });
-
-  it('Reproduction R1: confirmed HTTP 405 refusals release the head for repeated retries', async () => {
-    const cornerId = await approved();
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      githubApp.mergePullRequest.mockRejectedValueOnce(new Error('HTTP 405: 2 of 13 required status checks are expected'));
-      expect(await github.landCorner(cornerId)).toBe(true);
-      expect(await claimHead(cornerId)).toBeNull();
-      expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_merge_refused')).toHaveLength(attempt);
-    }
-    expect(await github.landCorner(cornerId)).toBe(true);
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(3);
-    expect(await github.landCorner(cornerId)).toBe(false);
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(3);
-    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%refused to merge%'`, [cornerId])).rowCount).toBe(2);
-    await mergedWebhook(cornerId, 7, SHA);
-    const visible = (await phone.readCorners(R, H, false, true))?.corners.find(row => row.corner.id === cornerId);
-    expect(visible).toMatchObject({ state: 'archived', lifecycle: { outcome: 'landed' } });
-    console.info('R1: two confirmed 405 refusals each woke the worker; the same head reached GitHub again and merged once.');
-  });
-
-  it('Reproduction merge-wf-403: merge_corner reports a confirmed 403 refusal, then retries the same head', async () => {
-    const cornerId = await approved();
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
-    const reason = 'GitHub pull request merge failed: HTTP 403: refusing to allow a GitHub App to create or update '
-      + 'workflow `.github/workflows/unified-release.yml` without `workflows` permission';
-    githubApp.mergePullRequest.mockRejectedValueOnce(new Error(reason));
-    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id));
-    await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
-      .resolves.toEqual({ status: 'blocked', blocker: reason });
-    expect(await claimHead(cornerId)).toBeNull();
-    await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
-      .resolves.toEqual({ status: 'merge-started', headSha: SHA });
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(2);
     await mergedWebhook(cornerId, 7, SHA);
     expect(await currentState(cornerId)).toBe('landed');
-    console.info('merge-wf-403: the 403 came back as blocked with its reason; the retry on the same head merged.');
-  });
-
-  it.each(['merged', 'read fails', 'different head', 'different branch'])(
-    'Reproduction R1 safety: %s keeps the head claimed after a merge error', async outcome => {
-      const cornerId = await approved();
-      githubApp.readPullRequest.mockResolvedValueOnce(providerPr(cornerId));
-      if (outcome === 'read fails') githubApp.readPullRequest.mockRejectedValueOnce(new Error('read failed'));
-      else githubApp.readPullRequest.mockResolvedValueOnce({
-        ...providerPr(cornerId, outcome === 'merged', outcome === 'different head' ? '9'.repeat(40) : SHA),
-        ...(outcome === 'different branch' ? { headRef: 'feature/other' } : {}),
-      });
-      githubApp.mergePullRequest.mockRejectedValueOnce(new Error('HTTP 405'));
-      expect(await github.landCorner(cornerId)).toBe(true);
-      if (outcome !== 'merged') expect(await claimHead(cornerId)).toBe(SHA);
-      expect(await github.landCorner(cornerId)).toBe(false);
-      expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
-    },
-  );
-
-  it('Reproduction R6f(ii): a reapproved refused head recovers and merges exactly once on explicit retry', async () => {
-    const cornerId = await approved();
-    githubApp.mergePullRequest.mockRejectedValueOnce(new Error('GitHub pull request merge failed: HTTP 405'));
-    await implementersMerge();
-    // Replay green delivery before reviewing the unchanged, refused head.
-    await greenHead(cornerId, 7, SHA);
-    await approve(cornerId);
-    expect(await currentState(cornerId)).toBe('review');
-    await backdate(cornerId);
-    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
-    githubApp.readPullRequest.mockClear();
-    await recover();
-    expect(githubApp.readPullRequest).toHaveBeenCalledTimes(1);
-    expect(await claimHead(cornerId)).toBeNull();
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
-    githubApp.mergePullRequest.mockImplementationOnce(async () => {
-      githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId, true));
-    });
-    expect(await mergeDaemon().execute('mergeCorner', { cornerId }, A)).toEqual({ status: 'merge-started', headSha: SHA });
-    expect(await currentState(cornerId)).toBe('landed');
-    await recover();
-    expect(await implementersMerge()).toBe(0);
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(2);
-  });
-
-  it('Reproduction R6f(iii): a failed GitHub read leaves the claim intact', async () => {
-    const cornerId = await claimed();
-    githubApp.readPullRequest.mockRejectedValueOnce(new TypeError('fetch failed'));
-    await recover();
-    expect(githubApp.readPullRequest).toHaveBeenCalledTimes(1);
-    expect(await claimHead(cornerId)).toBe(SHA);
-    expect(await implementersMerge()).toBe(0);
-    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-  });
-
-  it.each(['different merged head', 'read fails'])('R6c: %s retains the existing refusal behavior', async outcome => {
-    const cornerId = await approved();
-    const reason = 'GitHub pull request merge failed: HTTP 502';
-    githubApp.mergePullRequest.mockRejectedValueOnce(new Error(reason));
-    githubApp.readPullRequest.mockResolvedValueOnce(providerPr(cornerId));
-    if (outcome === 'read fails') githubApp.readPullRequest.mockRejectedValueOnce(new TypeError('fetch failed'));
-    else githubApp.readPullRequest.mockResolvedValueOnce(providerPr(cornerId, true, '9'.repeat(40)));
-    await implementersMerge();
-    expect(githubApp.readPullRequest).toHaveBeenCalledTimes(2); // Gate read, then one outcome read.
-    expect(await currentState(cornerId)).toBe('implement');
-    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_merge_refused')).toHaveLength(1);
-    expect((await db.query<{ text: string }>(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%refused to merge%'`, [cornerId])).rows)
-      .toEqual([{ text: expect.stringContaining(reason) }]);
-  });
-
-  it.each([false, true])('R6f: revalidates an unmerged/merged=%s claim after the provider read', async merged => {
-    for (const change of ['fresh', 'head', 'number', 'refusal', 'archived', 'state']) {
-      const cornerId = await claimed();
-      githubApp.readPullRequest.mockImplementationOnce(async () => {
-        if (change === 'fresh') await db.query(`UPDATE corner_facts SET updated_at=now() WHERE corner_id=$1`, [cornerId]);
-        if (change === 'head') await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`, [cornerId, '9'.repeat(40)]);
-        if (change === 'number') await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,number}','8') WHERE corner_id=$1`, [cornerId]);
-        if (change === 'refusal') await advanceCorner(db, cornerId, { kind: 'merge-refused', headSha: SHA, reason: 'HTTP 405' });
-        if (change === 'archived') await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
-        if (change === 'state') {
-          await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [cornerId]);
-          await advanceCorner(db, cornerId, { kind: 'checks-pending' });
-        }
-        return providerPr(cornerId, merged);
-      });
-      await recover();
-      expect(await claimHead(cornerId), change).toBe(SHA);
-      expect((await cards(cornerId)).filter(card => card.toState === 'landed'), change).toEqual([]);
-      expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-      // Keep each interposed read isolated from the next scenario's scan.
-      await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
-    }
-  });
-
-  it.each(['recovery open', 'recovery merged', 'uncertain merge'])('R6: %s has no provider call inside a transaction', async path => {
-    const cornerId = path === 'uncertain merge' ? await approved() : await claimed();
-    let depth = 0;
-    const providerDepths: { call: string; depth: number }[] = [];
-    const guarded = (database: SqlDatabase): SqlDatabase => ({
-      query: (sql, values) => database.query(sql, values),
-      transaction: work => database.transaction(async tx => {
-        depth++;
-        try { return await work(guarded(tx)); } finally { depth--; }
-      }),
-    });
-    githubApp.installationToken.mockImplementation(async () => {
-      providerDepths.push({ call: 'token', depth });
-      expect(depth, 'token').toBe(0);
-      return { token: 'tok', expiresAt: '2030-01-01T00:00:00Z' };
-    });
-    let mergeAttempted = false;
-    githubApp.readPullRequest.mockImplementation(async () => {
-      providerDepths.push({ call: 'read PR', depth });
-      expect(depth, 'read PR').toBe(0);
-      return providerPr(cornerId, path === 'recovery merged' || mergeAttempted);
-    });
-    githubApp.mergePullRequest.mockImplementation(async () => {
-      providerDepths.push({ call: 'merge', depth });
-      expect(depth, 'merge').toBe(0);
-      mergeAttempted = true;
-      if (path === 'uncertain merge') throw new TypeError('fetch failed');
-    });
-    githubApp.deleteBranch.mockImplementation(async () => {
-      providerDepths.push({ call: 'delete branch', depth });
-      expect(depth, 'delete branch').toBe(0);
-    });
-    const operation = new GitHubOperations(guarded(db), {} as GitHubOAuthClient, githubApp as unknown as GitHubAppClient, 'secret');
-    if (path === 'uncertain merge') await implementersMerge(operation);
-    else {
-      await operation.recoverUnfinishedMergeClaims();
-      await implementersMerge(operation);
-    }
-    if (path === 'recovery open') expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
-    else await landing(cornerId);
-    expect(providerDepths.length).toBeGreaterThan(0);
-    expect(providerDepths.filter(call => call.depth !== 0)).toEqual([]);
   });
 });
 
-describe('at most one merge attempt per head (AC-7)', () => {
-  it('concurrent sweeps, direct lands and a redelivered verdict merge once', async () => {
+describe('at most one merge per head (AC-7)', () => {
+  it('concurrent sweeps, direct lands and a redelivered verdict merge once, with no refusal', async () => {
     const cornerId = await approved();
+    const merged = {
+      number: 7, url: 'https://github.com/owner/widgets/pull/7', title: 'Ship the widget',
+      headSha: SHA, headRef: branchOf(cornerId), baseRef: 'main', merged: true, mergeability: 'clean',
+      mergedAt: '2026-01-01T00:00:00Z', mergeCommitSha: '8'.repeat(40),
+    };
+    let landedOnGitHub = false;
+    // GitHub merges a pull request once; a later attempt on that head is refused.
+    githubApp.mergePullRequest.mockImplementation(async () => {
+      if (landedOnGitHub) throw new GitHubHttpError('Pull Request is not mergeable', 405);
+      landedOnGitHub = true;
+      githubApp.readPullRequest.mockResolvedValue(merged);
+    });
     await Promise.all([
       implementersMerge(),
       implementersMerge(),
@@ -3549,7 +3085,9 @@ describe('at most one merge attempt per head (AC-7)', () => {
       approve(cornerId),
     ]);
     await implementersMerge();
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+    expect(landedOnGitHub).toBe(true);
+    expect(await currentState(cornerId)).toBe('landed');
+    expect(await reasons(cornerId, A)).not.toContain('corner_merge_refused');
   });
 });
 
@@ -3583,6 +3121,27 @@ describe('the gate stays shut (AC-8)', () => {
     await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, H);
     expect(await implementersMerge()).toBe(1);
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('HOLD-ARCHIVE: closing or merging a corner releases its holds, and migration repairs older ones', async () => {
+    const active = async (cornerId: string) => Number((await db.query<{ n: string }>(
+      `SELECT count(*) n FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL`, [cornerId])).rows[0]!.n);
+    const closed = await approved();
+    await phone.execute('setCornerHold', { cornerId: closed }, H);
+    await phone.execute('requestCornerClose', { roomId: closed }, H);
+    expect(await active(closed)).toBe(0);
+    const merged = await approved();
+    await phone.execute('setCornerHold', { cornerId: merged }, H);
+    await mergedWebhook(merged, 7, SHA);
+    expect(await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [merged])).toMatchObject({ rowCount: 1 });
+    expect(await active(merged)).toBe(0);
+    const stale = await approved();
+    await phone.execute('setCornerHold', { cornerId: stale }, H);
+    await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [stale]);
+    await migrateData(db);
+    expect(await active(stale)).toBe(0);
+    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE corner_id=$1`, [stale])).rows)
+      .toEqual([{ released_by: SYSTEM_IDENTITY_ID }]);
   });
 
   it('R4: holds survive more than 200 messages and deletion, without chat-derived releases', async () => {
@@ -3948,7 +3507,7 @@ describe('zero checks with no reviewer wait for the commander', () => {
         await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
         await expect(approve(cornerId, '8'.repeat(40), B)).rejects.toThrow('STALE_HEAD');
         await approve(cornerId, SHA, B);
-        expect((await reasons(cornerId, A))).toContain('corner_land');
+        expect((await reasons(cornerId, A))).not.toContain('corner_land');
         const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
         expect(await github.landCorner(cornerId)).toBe(false);
         await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, H);
@@ -4011,6 +3570,11 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
 
     // Lifting the hold opens the gate on the same yes; yolo is not part of it.
     await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, H);
+    // GitHub merges once: afterwards the live pull request reads merged.
+    githubApp.mergePullRequest.mockImplementationOnce(async () => {
+      githubApp.readPullRequest.mockResolvedValue({ number: 7, url: 'https://github.com/owner/widgets/pull/7',
+        headSha: SHA, headRef: branchOf(cornerId), baseRef: 'main', merged: true, mergedAt: '2026-01-01T00:00:00Z' });
+    });
     expect(await github.landCorner(cornerId)).toBe(true);
     expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
     expect(await github.landCorner(cornerId)).toBe(false);
@@ -4066,17 +3630,16 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
   });
 
-  it('claimCornerMergeAttempt claims only an open gate on the exact current head, once', async () => {
+  it('confirmCornerMergeAuthority allows only an open gate on the exact current head', async () => {
     const cornerId = await open('owner/widgets');
     await greenHead(cornerId, 7, SHA);
-    expect(await claimCornerMergeAttempt(db, cornerId, SHA)).toBe(false);
+    expect(await confirmCornerMergeAuthority(db, cornerId, SHA)).toBe(false);
     const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
     await order(cornerId);
-    expect(await claimCornerMergeAttempt(db, cornerId, SHA)).toBe(false);
+    expect(await confirmCornerMergeAuthority(db, cornerId, SHA)).toBe(false);
     await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, H);
-    expect(await claimCornerMergeAttempt(db, cornerId, '9'.repeat(40))).toBe(false);
-    expect(await claimCornerMergeAttempt(db, cornerId, SHA)).toBe(true);
-    expect(await claimCornerMergeAttempt(db, cornerId, SHA)).toBe(false);
+    expect(await confirmCornerMergeAuthority(db, cornerId, '9'.repeat(40))).toBe(false);
+    expect(await confirmCornerMergeAuthority(db, cornerId, SHA)).toBe(true);
   });
 
   it("the phone's approve is the same yes: it waits for green checks, then the implementer merges", async () => {
@@ -4197,8 +3760,6 @@ describe('the brief gate on landing: only a brief that assigns repository work m
     await expect(wired().execute('mergeCorner', { cornerId }, A)).rejects.toThrow(REFUSAL);
     await expect(github.landCorner(cornerId)).rejects.toThrow(REFUSAL);
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-    expect((await db.query(`SELECT merge_attempt_head FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ merge_attempt_head: null });
   });
 
   it.each([false, 'none'] as const)('recording yes cannot land when the brief is %s', async (says) => {
@@ -4232,8 +3793,6 @@ describe('the brief gate on landing: only a brief that assigns repository work m
     await expect(github.landCorner(cornerId)).rejects.toThrow(REFUSAL);
     expect(revised).toBe(true);
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-    expect((await db.query(`SELECT merge_attempt_head FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ merge_attempt_head: null });
   });
 
   it('merges when the current brief assigns repository work', async () => {
@@ -4259,7 +3818,6 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
       cornerId,
       CORNER_LIFECYCLE_CARD_TYPE,
     ]);
-    await db.query(`UPDATE corner_facts SET workflow_state=NULL,workflow_outcome=NULL WHERE corner_id=$1`, [cornerId]);
     expect(await backfillCornerLifecycleRuns(db)).toBe(1);
     expect(await projected(cornerId)).toBe('review');
     expect(await cards(cornerId)).toEqual([expect.objectContaining({ toState: 'review', seq: 0, backfilledFrom: 'lifecycle' })]);
@@ -4275,24 +3833,12 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
     expect(await currentState(cornerId)).toBe('landed');
   });
 
-  it('repairs a non-null projection from the authoritative newest card on boot', async () => {
-    const cornerId = await inReview();
-    await db.query(`UPDATE corner_facts SET workflow_state='implement',workflow_outcome=NULL WHERE corner_id=$1`, [cornerId]);
-    const history = await cards(cornerId);
-    expect(await backfillCornerLifecycleRuns(db)).toBe(1);
-    expect(await projected(cornerId)).toBe('review');
-    expect((await db.query(`SELECT workflow_outcome FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.workflow_outcome).toBe('passing');
-    expect(await cards(cornerId)).toEqual(history);
-    expect(await backfillCornerLifecycleRuns(db)).toBe(0);
-  });
-
   it('a corner with no run at all is given one on its next event', async () => {
     const cornerId = await open('owner/widgets');
     await db.query(`DELETE FROM messages WHERE room_id=$1 AND card_type=$2`, [
       cornerId,
       CORNER_LIFECYCLE_CARD_TYPE,
     ]);
-    await db.query(`UPDATE corner_facts SET workflow_state=NULL WHERE corner_id=$1`, [cornerId]);
     await pushToCorner(cornerId, SHA);
     expect(await currentState(cornerId)).toBe('checks');
   });
@@ -4389,7 +3935,7 @@ describe('Reproduction IDLE-1: corner status says whether its agent runs or wait
   it('restores the current implementer so legacy work goes to the assigned agent', async () => {
     const cornerId = await open('owner/widgets');
     expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).implementerAgentId).toBe(A);
-    await db.query('UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1', [cornerId, B]);
+    await assignCornerWorker(db, cornerId, B);
     expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).implementerAgentId).toBe(B);
   });
 
@@ -4497,6 +4043,8 @@ describe('every contract edge (AC-1)', () => {
 
 
 describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
+  beforeEach(() => { Object.assign(phone, { github }); });
+  afterEach(() => { Object.assign(phone, { github: undefined }); });
   it.each(['daemon', 'phone', 'merge'] as const)('CLEANUP-ATTACH-1: %s archival removes pending attachments', async (path) => {
     const cornerId = path === 'merge' ? await inReview() : await open('owner/widgets');
     await db.query(`INSERT INTO agent_pending_attachments
@@ -4509,39 +4057,58 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived).toBe(true);
     expect((await db.query(`SELECT id FROM agent_pending_attachments WHERE room_id=$1`, [cornerId])).rowCount).toBe(0);
   });
-  async function recordedCorner() {
-    const cornerId = await open('owner/widgets');
-    await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [cornerId, branchOf(cornerId)]);
-    return cornerId;
-  }
   async function closeAndClean() {
-    const cornerId = await recordedCorner();
+    const cornerId = await open('owner/widgets');
     await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
     return cornerId;
   }
 
-  it('deletes a branch after closing a corner with no PR', async () => {
+  it('BRANCH-DERIVED: old helper remote posts keep branch fields dead and restore derives branch and close state', async () => {
+    const cornerId = await open('owner/widgets');
+    await daemon.execute('postCornerRemoteState', {
+      cornerId, state: 'working', branch: 'feature/old-helper', checks: 'unknown',
+    }, A);
+    expect((await db.query(`SELECT feature_branch,close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toMatchObject({ feature_branch: null, close_requested: false });
+    expect((await db.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.lifecycle)
+      .not.toHaveProperty('branch');
+    expect(await daemon.execute('getCornerRestoreState', { cornerId }, A)).toMatchObject({
+      featureBranch: branchOf(cornerId), lifecycle: { branch: branchOf(cornerId) }, closeRequested: false,
+    });
+    await daemon.execute('archiveCorner', { cornerId }, A);
+    expect(await daemon.execute('getCornerRestoreState', { cornerId }, A)).toMatchObject({ closeRequested: true });
+    expect(await daemon.execute('getCornerCloseRequests', { cornerId }, A)).toMatchObject({ closeRequested: true });
+    expect((await db.query(`SELECT close_requested FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toEqual({ close_requested: false });
+  });
+
+  it('BRANCH-DERIVED: closes and deletes once after commit, without a queue or repeat on duplicate close', async () => {
+    githubApp.deleteBranch.mockImplementation(async (_installation: number, _repository: number, _name: string, branch: string) => {
+      const rows = await db.query(`SELECT 1 FROM rooms WHERE archived_at IS NOT NULL
+        AND 'feature/corner-'||left(replace(id::text,'-',''),12)=$1`, [branch]);
+      expect(rows.rowCount).toBe(1);
+    });
     const cornerId = await closeAndClean();
+    await phone.execute('requestCornerClose', { roomId: cornerId }, H);
+    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(cornerId));
+    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
   });
 
   it('keeps the branch after close_corner_pr and deletes after the corner closes', async () => {
     const cornerId = await inReview();
     await github.closeCornerPullRequest(cornerId);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
     await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(cornerId));
   });
 
-  it('keeps a branch used by another unarchived corner', async () => {
-    const cornerId = await recordedCorner();
-    const sibling = await recordedCorner();
-    await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [sibling, branchOf(cornerId)]);
+  it('keeps a branch used by an unarchived corner with a colliding prefix', async () => {
+    const cornerId = await open('owner/widgets');
+    const sibling = cornerId.slice(0, -1) + (cornerId.endsWith('0') ? '1' : '0');
+    await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Collision')`, [sibling, W, R]);
+    await db.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`, [sibling]);
     await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
   });
 
@@ -4552,180 +4119,103 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
   });
 
-  it.each(['main', 'release/v2', 'releases/v2', 'release-2026'])('never deletes reserved branch %s', async branch => {
-    const cornerId = await recordedCorner();
-    await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [cornerId, branch]);
-    await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
-    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
-  });
-
   it.each(['default', 'protected'])('keeps a live %s branch', async kind => {
-    const cornerId = await recordedCorner();
-    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: kind === 'default' ? branchOf(cornerId) : 'main', protected: kind === 'protected' });
+    const cornerId = await open('owner/widgets');
+    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: kind === 'default' ? branchOf(cornerId) : 'main', aheadBy: 0, protected: kind === 'protected' });
     await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
   });
 
-  it('persists a failure, waits for backoff, then retries successfully', async () => {
+  it('logs a failed deletion without blocking archival, queuing or retrying', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     githubApp.deleteBranch.mockRejectedValueOnce(new Error('offline'));
     const cornerId = await closeAndClean();
-    expect((await db.query(`SELECT attempts,finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ attempts: 1, finished_at: null, last_error: 'offline' });
-    await github.retryBranchDeletions();
+    await phone.execute('requestCornerClose', { roomId: cornerId }, H);
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at).not.toBeNull();
+    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
-    await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
-    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(2);
-    expect((await db.query(`SELECT finished_at FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0]!.finished_at).not.toBeNull();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('offline'));
+    log.mockRestore();
   });
 
-  it.each([404, 422])('treats deletion HTTP %i as success', async status => {
+  it.each([404, 422])('treats deletion HTTP %i as done', async status => {
     githubApp.deleteBranch.mockRejectedValueOnce(new GitHubHttpError('delete', status));
     const cornerId = await closeAndClean();
-    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: expect.anything(), last_error: null });
-  });
-
-  it('rechecks live protection before retrying a failed deletion', async () => {
-    githubApp.deleteBranch.mockRejectedValueOnce(new Error('offline'));
-    const cornerId = await closeAndClean();
-    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: true });
-    await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
-    expect((await db.query(`SELECT last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0]!.last_error)
-      .toBe('default or protected branch');
+    expect((await db.query(`SELECT 1 FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rowCount).toBe(0);
   });
 
-  it('retries a failed deletion after a merged corner is archived', async () => {
+  it('BRANCH-DERIVED: deletes a merged branch once with no queue', async () => {
     const cornerId = await approved();
-    githubApp.deleteBranch.mockRejectedValueOnce(new Error('offline'));
+    await mergedWebhook(cornerId, 7, SHA);
     await mergedWebhook(cornerId, 7, SHA);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
-    expect((await db.query(`SELECT attempts,finished_at FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ attempts: 1, finished_at: null });
-    await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
-    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(2);
+    expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(cornerId));
+    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
   });
 
-  it('cleans a recorded branch after a person closes the corner', async () => {
-    const cornerId = await recordedCorner();
+  it('cleans the derived branch after a person closes the corner', async () => {
+    const cornerId = await open('owner/widgets');
     await phone.execute('requestCornerClose', { roomId: cornerId }, H);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(cornerId));
   });
 
   it('finishes without deletion if GitHub already removed the branch', async () => {
     githubApp.branchDeletionSafety.mockResolvedValue(undefined);
-    const cornerId = await closeAndClean();
+    await closeAndClean();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
-    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: expect.anything(), last_error: null });
   });
 
-  it('CLEANUP-GIT-1: retries the phone archive PR close after an outage without reopening work', async () => {
-    const cornerId = await inReview();
-    githubApp.closePullRequest.mockRejectedValueOnce(new Error('GitHub unavailable'))
-      .mockRejectedValueOnce(new Error('still unavailable'));
-    await new PhoneService(db, 'http://test', github).execute('requestCornerClose', { roomId: cornerId }, H);
-    expect((await db.query(`SELECT finished_at FROM corner_pr_closures WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: null });
-    await github.retryBranchDeletions();
-    expect((await db.query(`SELECT attempts,last_error,finished_at FROM corner_pr_closures WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ attempts: 1, last_error: 'still unavailable', finished_at: null });
-    await github.retryBranchDeletions();
-    expect(githubApp.closePullRequest).toHaveBeenCalledTimes(2);
-    await db.query(`UPDATE corner_pr_closures SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
-    expect(githubApp.closePullRequest).toHaveBeenCalledTimes(3);
-    expect((await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
-    expect(await currentState(cornerId)).toBe('closed');
-    expect((await db.query(`SELECT finished_at FROM corner_pr_closures WHERE corner_id=$1`, [cornerId])).rows[0]!.finished_at).not.toBeNull();
-    console.log('CLEANUP-GIT-1 Demonstrated: phone close archives during outage; durable retry closes the PR without reopening the corner.');
-  });
-
-  it('CLEANUP-GIT-1: backfills historical archives once and keeps live corners out', async () => {
+  it('CLEANUP-GIT-1: maintenance scans historical archives on each explicit invocation and excludes live corners', async () => {
     const archived = await inReview();
-    const live = await recordedCorner();
+    const live = await open('owner/widgets');
     await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [archived]);
-    await backfillArchivedCornerCleanup(db);
-    await backfillArchivedCornerCleanup(db);
-    expect((await db.query(`SELECT corner_id FROM corner_pr_closures WHERE corner_id=$1`, [archived])).rowCount).toBe(1);
-    expect((await db.query(`SELECT corner_id FROM corner_branch_deletions WHERE corner_id IN ($1,$2)`, [archived, live])).rows)
-      .toEqual([{ corner_id: archived }]);
-    await enqueueCornerBranchDeletion(db);
-    await enqueueCornerPullRequestClosure(db);
-    expect((await db.query(`SELECT corner_id FROM corner_branch_deletions WHERE corner_id=$1`, [archived])).rowCount).toBe(1);
+    const app = githubApp as unknown as GitHubAppClient;
+    const results = await backfillArchivedCornerCleanup(db, app);
+    expect(results).toEqual([{ cornerId: archived, branch: branchOf(archived), status: 'deleted_or_already_absent' }]);
+    expect(githubApp.deleteBranch).not.toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(live));
+    await backfillArchivedCornerCleanup(db, app);
+    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
+    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['head', 'base', 'corner'])('CLEANUP-GIT-1: retries after temporary %s blocker clears', async kind => {
-    const cornerId = await recordedCorner();
+  it.each(['head', 'base'])('CLEANUP-GIT-1: maintenance rechecks a temporary %s blocker only when invoked', async kind => {
     if (kind === 'head') githubApp.openPullRequestsForBranch.mockResolvedValue([42]);
-    if (kind === 'base') githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: true });
-    if (kind === 'corner') {
-      const sibling = await recordedCorner();
-      await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [sibling, branchOf(cornerId)]);
-    }
-    await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
+    else githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: true });
+    await closeAndClean();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
-    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: null, last_error: expect.any(String) });
     githubApp.openPullRequestsForBranch.mockResolvedValue([]);
     githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: false });
-    if (kind === 'corner') await db.query(`UPDATE rooms SET archived_at=now() WHERE id IN
-      (SELECT corner_id FROM corner_facts WHERE feature_branch=$1)`, [branchOf(cornerId)]);
-    await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
+    await backfillArchivedCornerCleanup(db, githubApp as unknown as GitHubAppClient);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
   });
 
-  it('CLEANUP-GIT-1: records retention when the repository mapping is unavailable', async () => {
-    const cornerId = await recordedCorner();
-    const parent = (await db.query<{ repository_key: string; repository_remote: string }>(`SELECT repository_key,repository_remote FROM rooms WHERE id=$1`, [R])).rows[0]!;
-    await db.query(`UPDATE rooms SET repository_key='unknown/missing',repository_remote=NULL
-      WHERE id=(SELECT parent_id FROM rooms WHERE id=$1)`, [cornerId]);
+  it('CLEANUP-GIT-1: reports retention when the repository mapping is unavailable', async () => {
+    const cornerId = await open('owner/widgets');
+    await db.query(`UPDATE rooms SET repository_key='unknown/missing',repository_remote=NULL WHERE id=$1`, [R]);
     await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
-    await enqueueCornerBranchDeletion(db, cornerId);
-    await db.query(`UPDATE rooms SET repository_key=$2,repository_remote=$3 WHERE id=$1`, [R, parent.repository_key, parent.repository_remote]);
-    expect((await db.query(`SELECT finished_at,last_error,repository_id FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: expect.anything(), repository_id: null, last_error: 'GitHub repository is unavailable; branch retained' });
-  });
-
-  it('CLEANUP-GIT-1: records why unpublished branch commits are kept', async () => {
-    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 3, protected: false, openBasePullRequest: false });
-    const cornerId = await closeAndClean();
+    expect(await deleteArchivedCornerBranch(db, githubApp as unknown as GitHubAppClient, cornerId))
+      .toMatchObject({ status: 'kept', reason: 'GitHub repository is unavailable' });
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
-    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: expect.anything(), last_error: 'branch has commits absent from the default branch' });
+    await db.query(`UPDATE rooms SET repository_key='owner/widgets',repository_remote='https://github.com/owner/widgets.git' WHERE id=$1`, [R]);
   });
 
-  it('CLEANUP-GIT-1: historical containment retains a squash-merged branch while normal merge cleanup still works', async () => {
+  it('BRANCH-DERIVED: closing an unmerged corner retains commits absent from the default branch', async () => {
+    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 3, protected: false, openBasePullRequest: false });
+    await closeAndClean();
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('CLEANUP-GIT-1: historical squash-merge cleanup requires the exact merged head (matches=%s)', async matches => {
     const cornerId = await approved();
     githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 2, protected: false, openBasePullRequest: false });
     await mergedWebhook(cornerId, 7, SHA);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
     githubApp.deleteBranch.mockClear();
-    await db.query(`DELETE FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId]);
-    await enqueueCornerBranchDeletion(db, cornerId, true);
-    await github.retryBranchDeletions();
-    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
-    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: expect.anything(), last_error: 'branch has commits absent from the default branch' });
-  });
-
-  it('stops after eight failed attempts', async () => {
-    githubApp.deleteBranch.mockRejectedValue(new Error('offline'));
-    const cornerId = await closeAndClean();
-    await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now(),attempts=7 WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
-    const row = (await db.query(`SELECT attempts,finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0]!;
-    expect(row).toMatchObject({ attempts: 8, finished_at: expect.anything(), last_error: 'offline' });
-    await github.retryBranchDeletions();
-    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(2);
+    const app = { ...githubApp, readBranchHead: vi.fn(async () => matches ? SHA : 'new-unpublished-head') } as unknown as GitHubAppClient;
+    const results = await backfillArchivedCornerCleanup(db, app);
+    expect(results[0]?.status).toBe(matches ? 'deleted_or_already_absent' : 'kept');
+    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(matches ? 1 : 0);
   });
 });
 
@@ -4761,7 +4251,6 @@ describe('merge queue (Reproduction R1)', () => {
     githubApp.readPullRequest.mockClear();
     githubApp.readPullRequestQueue.mockClear();
     await github.reconcileQueuedCorners();
-    await github.recoverUnfinishedMergeClaims();
     expect(githubApp.readPullRequest).not.toHaveBeenCalled();
     expect(githubApp.readPullRequestQueue).not.toHaveBeenCalled();
   });
@@ -4773,8 +4262,8 @@ describe('merge queue (Reproduction R1)', () => {
       state: sha === combinedSha ? 'failed' : 'passed', total: 1,
       failing: sha === combinedSha ? ['TYPECHECK'] : [], checks: [],
     }));
-    await github.recoverUnfinishedMergeClaims();
-    await github.recoverUnfinishedMergeClaims();
+    await github.reconcileQueuedCorners();
+    await github.reconcileQueuedCorners();
     expect(await currentState(cornerId)).toBe('implement');
     expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_merge_refused')).toHaveLength(1);
     expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%Removed from the merge queue%'`, [cornerId])).rows)
@@ -4788,7 +4277,7 @@ describe('merge queue (Reproduction R1)', () => {
     const cornerId = await queued();
     githubApp.readPullRequest.mockResolvedValue({ headSha: SHA, headRef: branchOf(cornerId),
       baseRef: 'main', merged: true, mergedAt: '2026-10-22T15:00:00Z' });
-    await github.recoverUnfinishedMergeClaims();
+    await github.reconcileQueuedCorners();
     expect(await currentState(cornerId)).toBe('landed');
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
   });
@@ -4817,7 +4306,7 @@ describe('merge queue (Reproduction R1)', () => {
 
       githubApp.readPullRequest.mockClear();
       githubApp.readPullRequestQueue.mockClear();
-      await github.recoverUnfinishedMergeClaims(cornerId);
+      await github.reconcileQueuedCorners();
       expect(githubApp.readPullRequest).not.toHaveBeenCalled();
       expect(githubApp.readPullRequestQueue).not.toHaveBeenCalled();
     },
@@ -4833,17 +4322,19 @@ describe('merge queue (Reproduction R1)', () => {
   });
 });
 
-it('R1 recovers an accepted enqueue after its response and first queue read are lost', async () => {
+it('R1 / A6: a hold dequeues an accepted enqueue whose response and first queue read were lost', async () => {
   const cornerId = await approved();
   githubApp.readPullRequest.mockResolvedValue({ headSha: SHA, headRef: branchOf(cornerId), baseRef: 'main', merged: false });
   githubApp.mergePullRequest.mockRejectedValueOnce(Object.assign(new Error('response lost'), { queueAttempted: true }));
   githubApp.readPullRequestQueue.mockRejectedValueOnce(new Error('queue read unavailable'));
   expect(await github.landCornerOutcome(cornerId)).toEqual({ status: 'refused', reason: 'response lost' });
   expect(await currentState(cornerId)).toBe('review');
-  await db.query(`UPDATE corner_facts SET updated_at=now()-interval '1 hour' WHERE corner_id=$1`, [cornerId]);
-  githubApp.readPullRequestQueue.mockResolvedValue({ id: 'PR_7', headSha: SHA, entry: { id: 'MQ_7' } });
-  await github.recoverUnfinishedMergeClaims();
   expect((await phone.readCorners(R, H))!.corners.find(row => row.corner.id === cornerId)?.lifecycle.mergeQueue)
-    .toMatchObject({ headSha: SHA });
+    .toBeUndefined();
+  // GitHub did queue it. A person's hold reads the queue live and takes it out.
+  githubApp.readPullRequestQueue.mockResolvedValue({ id: 'PR_7', headSha: SHA, entry: { id: 'MQ_7' } });
+  await new PhoneService(db, 'http://test', github).execute('setCornerHold', { cornerId }, H);
+  expect(githubApp.dequeuePullRequest).toHaveBeenCalledWith('tok', 'PR_7');
   expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+  console.info('Reproduction A6 Demonstrated: lost enqueue response, then a hold dequeued the live queue entry with no stored claim.');
 });

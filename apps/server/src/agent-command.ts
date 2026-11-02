@@ -1,8 +1,12 @@
 import { subscribeConfiguredReviewers } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
+import { cornerKindSql } from './corner-opening.js';
+import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
-import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
+import { cornerOwnerSql } from './corner-worker.js';
+import { cornerRunStateSql } from './corner-run.js';
+import { cornerReviewerSql } from './corner-reviewer.js';
 import { voiceDateContext } from './voice-reply.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { recordMcpMention, recordMcpMemberWebhook } from './rooms-mcp-members.js';
@@ -27,7 +31,6 @@ import type {
   RoomInboxResult,
 } from '@beeline/api-contract/daemon';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
-import { IMPLEMENTER_RELEASED_REASON } from '@beeline/api-contract/daemon';
 import { isResumeKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { isCornerReviewer } from './agent-health.js';
@@ -136,6 +139,7 @@ ALTER TABLE agent_commands DROP CONSTRAINT IF EXISTS agent_commands_action_check
 ALTER TABLE agent_commands ADD CONSTRAINT agent_commands_action_check CHECK(action IN ('input','resume','stop','restart'));
 CREATE INDEX IF NOT EXISTS agent_commands_delivery ON agent_commands(agent_id,room_id,state,created_at);
 CREATE INDEX IF NOT EXISTS agent_commands_turn ON agent_commands(room_id,agent_id,turn_request_id);
+CREATE INDEX IF NOT EXISTS agent_commands_corner_opening ON agent_commands(room_id) WHERE reason='corner_objective';
 -- source_message_id/result_message_id reference messages(id) with no index,
 -- so deleting a message (e.g. a room or workspace cascade) made Postgres
 -- sequentially scan all of agent_commands for the FK check, once per deleted
@@ -145,12 +149,6 @@ CREATE INDEX IF NOT EXISTS agent_commands_source_message_idx ON agent_commands(s
 CREATE INDEX IF NOT EXISTS agent_commands_result_message_idx ON agent_commands(result_message_id)
   WHERE result_message_id IS NOT NULL;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS command_id text;
--- Retired: nothing reads or writes command_check_state; drop it in a later release.
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS command_check_state text;
--- Handbacks to the corner's worker, counted per pull-request head so a push
--- resets them and a review/fix loop over one commit cannot run forever.
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS review_handback_head text;
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS review_handback_count integer NOT NULL DEFAULT 0;
 ALTER TABLE agent_pending_attachments ADD COLUMN IF NOT EXISTS request_id text;
 ALTER TABLE agent_pending_attachments ADD COLUMN IF NOT EXISTS generation_id text;
 
@@ -190,6 +188,8 @@ CREATE TRIGGER show_dispatched_agent_work AFTER INSERT OR UPDATE OF state,wake_a
 `;
 /** Transport data only: orders and reports never become transcript messages. */
 export type PrivateCommandPayload = {
+  /** Stable tool-call key on the corner's opening order. */
+  openKey?: string;
   ask?: string;
   objective?: string;
   text: string;
@@ -520,7 +520,7 @@ export async function refuseVerdictedReviewerWake(
          WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
            AND turn.request_id=command.turn_request_id AND turn.status='failed'
        )
-       AND command.agent_id=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()})
+       AND command.agent_id=${cornerReviewerSql()}
        AND (
          command.reason='corner_review_dispatch'
          OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed')
@@ -536,9 +536,8 @@ export async function refuseVerdictedReviewerWake(
 /** Automatic work cannot answer a worker's explicit waiting report.
  * A green review wake still goes out: that report is often the pending gate. */
 function waitingReportSql(command: string): string {
-  return `(${command}.action NOT IN ('input','resume') OR NOT EXISTS (
-    SELECT 1 FROM corner_report_blockers blocker WHERE blocker.corner_id=${command}.room_id
-  ) OR ${command}.private_payload->>'kind' IN ('order','report')
+  return `(${command}.action NOT IN ('input','resume') OR NOT corner_has_explicit_wait(${command}.room_id)
+    OR ${command}.private_payload->>'kind' IN ('order','report')
     OR ${command}.reason='corner_review_dispatch'
     OR (${command}.reason='corner_check' AND EXISTS (
       SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
@@ -559,7 +558,7 @@ function reviewerQuietSql(command: string): string {
     SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
     LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
     WHERE corner.id=${command}.room_id
-      AND (${cornerReviewerSql()}=${command}.agent_id OR ${command}.agent_id=ANY(${cornerReviewerFallbacksSql()}))
+      AND ${cornerReviewerSql()}=${command}.agent_id
       AND EXISTS (
         SELECT 1 FROM agent_commands wake LEFT JOIN messages source ON source.id=wake.source_message_id
         WHERE wake.room_id=${command}.room_id AND wake.agent_id=${command}.agent_id
@@ -716,7 +715,7 @@ export async function createAgentCommand(
        FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
        JOIN corner_facts fact ON fact.corner_id=corner.id
        WHERE corner.id=$1 AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-         AND ($3::boolean OR $2=ANY(ARRAY[${cornerReviewerSql()}]||${cornerReviewerFallbacksSql()}))`,
+         AND ($3::boolean OR $2=${cornerReviewerSql()})`,
       [input.roomId, input.agentId, input.reason === 'corner_review_needed'],
     )).rows[0]?.context;
   }
@@ -1286,106 +1285,8 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       sourceMessageId: sourceId,
       reason: source.direct_participants ? 'direct_message' : 'human_tag',
     });
-    if (source.parent_id) {
-      const previous = await setCornerImplementer(db, source.room_id, target);
-      if (previous && previous !== target) await releaseCornerImplementer(db, source.room_id, previous, sourceId);
-    }
   }
   return false;
-}
-
-/**
- * A swapped-out implementer stops writing here. Its running turn is stopped
- * like a person's stop, then one release command tells its helper to stop
- * retained background tools, push unpushed work to a backup branch, delete
- * its private copy and say which in the corner.
- */
-async function releaseCornerImplementer(
-  db: SqlDatabase,
-  cornerId: string,
-  agentId: string,
-  sourceId: string,
-): Promise<void> {
-  // Only a code corner has a copy and branch work to release. Elsewhere a
-  // person tagging another agent is conversation, not a swap.
-  const code = await db.query(
-    `SELECT 1 FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
-     WHERE corner.id=$1 AND parent.repository_resolution='repository'`, [cornerId]);
-  if (!code.rowCount) return;
-  await lockAgentCommandQueue(db, cornerId, agentId);
-  const running = (await db.query<CommandRow>(
-    `SELECT command.* FROM agent_turns turn
-     JOIN agent_commands command ON command.room_id=turn.room_id
-       AND command.agent_id=turn.agent_id AND command.turn_request_id=turn.request_id
-       AND command.action IN ('input','resume')
-     WHERE turn.room_id=$1 AND turn.agent_id=$2 AND turn.status='working'
-       AND command.state='claimed'
-     ORDER BY turn.created_at DESC,command.created_at DESC LIMIT 1 FOR UPDATE OF command`,
-    [cornerId, agentId])).rows[0];
-  if (running) {
-    await createAgentCommand(db, {
-      id: createHash('sha256').update(`implementer-swap-stop:${sourceId}:${running.id}`).digest('hex'),
-      roomId: cornerId, agentId, sourceMessageId: sourceId, turnRequestId: running.turn_request_id,
-      action: 'stop', reason: 'implementer_swap_stop', parent: running, retainDepth: true,
-    });
-    await db.query(
-      `UPDATE agent_turns SET status='cancelled',created_at=now()
-       WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
-      [cornerId, agentId, running.turn_request_id]);
-    await db.query(
-      `UPDATE agent_commands SET state='cancelled',completed_at=now()
-       WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
-         AND action IN ('input','resume') AND state IN ('pending','claimed')`,
-      [cornerId, agentId, running.turn_request_id]);
-  }
-  await createAgentCommand(db, {
-    id: createHash('sha256').update(`implementer-released:${sourceId}:${agentId}`).digest('hex'),
-    roomId: cornerId, agentId, sourceMessageId: sourceId, reason: IMPLEMENTER_RELEASED_REASON,
-    wakeNote: 'A person made another agent this corner\'s implementer. Stop working here.',
-  });
-}
-
-/**
- * A person's agent tag in a corner names that corner's current implementer, so
- * the corner lifecycle's wakes follow the person's choice instead of
- * the corner's never-changing opener (`corner_facts.owner_agent_id`). The
- * parent Room's configured reviewer and its fallbacks hold the review post, so
- * they never take the implementer role from a tag.
- *
- * A corner a person opened (`kind='human'`) has no opener agent. The first
- * agent to take the implementer role here becomes its owner, and keeps it:
- * that is the agent a restarted helper records the feature branch for and
- * whose deliverables the corner owes its requester.
- */
-async function setCornerImplementer(
-  db: SqlDatabase,
-  cornerId: string,
-  agentId: string,
-): Promise<string | undefined> {
-  // Returns the implementer this tag replaced, read under the same row lock.
-  const result = await db.query<{ previous: string | null }>(
-    `WITH prior AS (
-       SELECT fact.corner_id,${cornerImplementerSql('fact', 'corner')} previous
-       FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
-       WHERE fact.corner_id=$1 FOR UPDATE OF fact
-     )
-     UPDATE corner_facts fact
-     SET worker_agent_id=$2,
-         owner_agent_id=CASE WHEN fact.kind='human'
-           THEN COALESCE(fact.owner_agent_id,$2) ELSE fact.owner_agent_id END,
-         updated_at=now()
-     FROM rooms corner
-     JOIN rooms parent ON parent.id=corner.parent_id
-     JOIN prior ON prior.corner_id=corner.id
-     WHERE fact.corner_id=corner.id AND corner.id=$1
-       AND $2<>COALESCE(${cornerReviewerSql()},'')
-       AND NOT ($2=ANY(${cornerReviewerFallbacksSql()}))
-       AND (fact.worker_agent_id IS DISTINCT FROM $2
-            OR (fact.kind='human' AND fact.owner_agent_id IS NULL))
-     RETURNING prior.previous`,
-    [cornerId, agentId],
-  );
-  return result.rows[0]?.previous ?? undefined;
 }
 
 export async function routeAgentResult(
@@ -2299,7 +2200,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
      ) stuck
      WHERE corner.archived_at IS NULL AND ${cornerImplementerSql('fact', 'corner')} IS NOT NULL
        AND fact.lifecycle->>'checks'='failing'
-       AND NOT EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=fact.corner_id)
+       AND NOT EXISTS(SELECT 1 FROM rooms waiting_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting WHERE waiting_corner.id=fact.corner_id)
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
        AND stuck.held
        AND NOT ${recoveredSnapshot}
@@ -2319,7 +2220,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
           AND ${cornerImplementerSql('fact', 'corner')}=$3
           AND fact.lifecycle=$4::jsonb
           AND NOT ${recoveredSnapshot}
-          AND NOT EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=fact.corner_id)
+          AND NOT EXISTS(SELECT 1 FROM rooms waiting_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting WHERE waiting_corner.id=fact.corner_id)
           AND (SELECT newest.id FROM agent_commands newest WHERE newest.room_id=$1
             AND newest.agent_id=$3 AND newest.reason='corner_check'
             ORDER BY newest.created_at DESC,newest.id DESC LIMIT 1) IS NOT DISTINCT FROM $5
@@ -2544,7 +2445,7 @@ export async function reconcileConfiguredCornerReviewers(
     author_id: string;
     head_sha: string;
   }>(
-    `SELECT corner.id corner_id,COALESCE(fact.owner_agent_id,corner.created_by) author_id,
+    `SELECT corner.id corner_id,COALESCE(${cornerOwnerSql('corner.id')},corner.created_by) author_id,
             fact.lifecycle->'pr'->>'headSha' head_sha
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
@@ -2554,7 +2455,7 @@ export async function reconcileConfiguredCornerReviewers(
      WHERE corner.archived_at IS NULL AND fact.lifecycle->>'checks'='passing'
        AND fact.lifecycle->'pr'->>'number' IS NOT NULL
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-       AND COALESCE(fact.owner_agent_id,corner.created_by) IS NOT NULL
+       AND COALESCE(${cornerOwnerSql('corner.id')},corner.created_by) IS NOT NULL
        AND ($1::uuid IS NULL OR parent.id=$1)
        AND NOT EXISTS (
          SELECT 1 FROM agent_commands worker
@@ -2620,7 +2521,7 @@ export async function reconcileConfiguredCornerReviewers(
        ORDER BY message.created_at DESC,message.id DESC LIMIT 1
      ) source ON true
      WHERE corner.archived_at IS NULL
-       AND fact.workflow_state IS DISTINCT FROM 'ask_human'
+       AND ${cornerRunStateSql('fact.corner_id')} IS DISTINCT FROM 'ask_human'
        AND fact.lifecycle->>'checks'='passing'
        AND fact.lifecycle->'pr'->>'number' IS NOT NULL
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
@@ -2642,8 +2543,7 @@ export async function reconcileConfiguredCornerReviewers(
          SELECT 1 FROM agent_commands command
          JOIN messages dispatch ON dispatch.id=command.source_message_id
          WHERE command.room_id=corner.id
-           AND (command.agent_id=${cornerReviewerSql()}
-             OR command.agent_id=ANY(${cornerReviewerFallbacksSql()}))
+           AND command.agent_id=${cornerReviewerSql()}
            AND command.state IN ('pending','claimed') AND command.action='input'
            AND (command.reason='corner_review_dispatch'
              OR (command.reason='subscribed_event' AND

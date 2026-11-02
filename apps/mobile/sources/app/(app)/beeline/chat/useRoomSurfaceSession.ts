@@ -256,7 +256,7 @@ export interface UseRoomSurfaceSessionResult {
   applyRoomMessageResult(message: RoomViewMessage): void;
   applyPendingAgentCommands(commands: NonNullable<RoomView['pendingAgentCommands']>): void;
   applyRoomName(name: string, expected?: string): void;
-  applyRoomReviewers(reviewerAgentId: string | undefined, reviewerFallbackIds: readonly string[]): void;
+  applyRoomReviewer(reviewerAgentId: string | undefined): void;
   /** Exact server-owned unread boundary captured before this visit advances the read mark. */
   firstUnreadMessageId: string | null;
   /** Server counts captured with the opening boundary, before viewport reads advance it. */
@@ -390,10 +390,10 @@ export function useRoomSurfaceSession({
       return next;
     });
   }, []);
-  const applyRoomReviewers = useCallback((reviewerAgentId: string | undefined, reviewerFallbackIds: readonly string[]) => {
+  const applyRoomReviewer = useCallback((reviewerAgentId: string | undefined) => {
     setRoomSurface((current) => {
       if (!current) return current;
-      const next = { ...current, room: { ...current.room, reviewerAgentId, reviewerFallbackIds } };
+      const next = { ...current, room: { ...current.room, reviewerAgentId } };
       reconciledViewRef.current = next;
       return next;
     });
@@ -1476,7 +1476,7 @@ export function useRoomSurfaceSession({
     applyRoomMessageResult,
     applyPendingAgentCommands,
     applyRoomName,
-    applyRoomReviewers,
+    applyRoomReviewer,
     firstUnreadMessageId,
     advanceReadCursor,
     markUnreadFrom,

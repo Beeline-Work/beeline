@@ -97,16 +97,10 @@ export async function ensureReviewProofFixture(
     ],
   );
   await database.query(
-    // owner_agent_id stays NULL: no agent ever works this corner. commissioned_by
-    // is the reviewer itself, so the deck's "mine" gate (chatCornerCounts) counts
-    // the corner as the reviewer's own and the release proof finds its toggle;
-    // deleteAccount clears commissioned_by before deleting the identity row, the
-    // same FK-safety deal it already gives owner_agent_id and worker_agent_id.
-    // DO UPDATE heals a corner seeded before this field was set.
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by)
-     VALUES($1,NULL,$2)
-     ON CONFLICT(corner_id) DO UPDATE SET commissioned_by=EXCLUDED.commissioned_by`,
-    [REVIEW_PROOF_CORNER_ID, reviewerId],
+    // The phone creator owns this proof corner; no agent opening order exists.
+    `INSERT INTO corner_facts(corner_id,owner_agent_id)
+     VALUES($1,NULL) ON CONFLICT(corner_id) DO NOTHING`,
+    [REVIEW_PROOF_CORNER_ID],
   );
 
 }

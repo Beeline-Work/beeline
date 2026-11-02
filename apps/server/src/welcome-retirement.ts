@@ -1,4 +1,5 @@
 import { DEFAULT_WORKSPACE_ID, WELCOME_ROOM_ID } from '@beeline/api-contract/phone';
+import { cornerOwnerSql } from './corner-worker.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { RoomViewIdentity } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -214,7 +215,7 @@ export async function welcomeRetirementPreflight(database: SqlDatabase) {
           AND g.status IN ('pending','approved','once')) live_grants,
        (SELECT count(*)::int FROM agent_schedules s WHERE s.agent_id=i.id AND s.workspace_id=$1) schedules,
        (SELECT count(*)::int FROM corner_facts f JOIN rooms c ON c.id=f.corner_id
-          WHERE f.owner_agent_id=i.id AND c.workspace_id=$1 AND c.archived_at IS NULL) open_corners
+          WHERE ${cornerOwnerSql('c.id')}=i.id AND c.workspace_id=$1 AND c.archived_at IS NULL) open_corners
      FROM memberships m JOIN identities i ON i.id=m.identity_id LEFT JOIN agents a ON a.agent_id=i.id
      WHERE m.workspace_id=$1 AND m.room_id IS NULL AND i.kind='agent'
      ORDER BY i.name,i.id`,

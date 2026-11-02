@@ -1,11 +1,14 @@
+import { cornerCommissionerSql, cornerKindSql, cornerOpenedFromSql, cornerRequestSql } from './corner-opening.js';
 import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { migrate } from './database.js';
 import { claimAgentCommand } from './agent-command.js';
 import { setCornerHold } from './corner-holds.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { cornerRunStateSql } from './corner-run.js';
+import { seedCornerOpening, MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
@@ -84,11 +87,8 @@ describe('deleteAccount', () => {
        WHERE workspace_id=$2 AND room_id IS NULL AND identity_id=$3`,
       [OWNER, WORKSPACE, PARTNER],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,commissioned_by,objective,lifecycle)
-       VALUES($1,$2,$2,$3,'ship it','{"lifecycle":"working"}'::jsonb)`,
-      [CORNER, AGENT, OWNER],
-    );
+    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective,lifecycle) VALUES($1,$2,$3,'ship it','{"lifecycle":"working"}'::jsonb)`, [CORNER, AGENT, AGENT]);
+    await seedCornerOpening(database, { cornerId: CORNER, agentId: AGENT, commissionedBy: OWNER });
     // Authored content: the owner in the shared Room mentioning the partner,
     // the agent in the shared Room mentioning the owner, the owner in the
     // human DM.
@@ -237,6 +237,54 @@ describe('deleteAccount', () => {
     )).rows).toEqual([{ ...before[0], deleted_by: DELETED_ACCOUNT_IDENTITY_ID }]);
   });
 
+  it('PROVENANCE-ORDER derives provenance from the opening order and preserves it through deletion', async () => {
+    const origin = '77777777-7777-4777-8777-777777777777';
+    await database.query(
+      `INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Origin',$4)`,
+      [origin, WORKSPACE, ROOM, AGENT],
+    );
+    await database.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`, [origin]);
+    await database.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [CORNER, AGENT]);
+    await database.query(
+      `UPDATE agent_commands SET turn_request_id='provenance-request',
+         private_payload=private_payload||jsonb_build_object('fromRoomId',$2::text,'openKey','provenance-open')
+       WHERE room_id=$1 AND reason='corner_objective'`, [CORNER, origin],
+    );
+    // Nullable legacy provenance is empty; deliberately stale kind/title flags
+    // prove the nonnullable retired columns no longer influence reads either.
+    await database.query(`UPDATE corner_facts SET kind='human',title_generated=true WHERE corner_id=$1`, [CORNER]);
+    expect((await database.query(`SELECT commissioned_by,opened_from_corner_id,request_id,open_idempotency_key
+      FROM corner_facts WHERE corner_id=$1`, [CORNER])).rows[0]).toEqual({
+      commissioned_by: null, opened_from_corner_id: null, request_id: null, open_idempotency_key: null,
+    });
+    const provenance = async (id: string) => (await database.query(
+      `SELECT ${cornerKindSql('corner.id')} kind,${cornerCommissionerSql('corner.id')} commissioner,
+         ${cornerOpenedFromSql('corner.id')} opened_from,${cornerRequestSql('corner.id')} request
+       FROM rooms corner WHERE corner.id=$1`, [id],
+    )).rows[0];
+    expect(await provenance(CORNER)).toEqual({ kind: 'agent', commissioner: OWNER,
+      opened_from: origin, request: 'provenance-request' });
+    const daemon = new DaemonService(database, new LiveHub());
+    expect(await daemon.execute('getCornerRestoreState', { cornerId: CORNER }, AGENT)).toMatchObject({
+      kind: 'agent', openedFromCornerId: origin, requestId: 'provenance-request',
+    });
+    const human = await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Phone' }, OWNER);
+    expect(await provenance(human.id)).toEqual({ kind: 'human', commissioner: OWNER, opened_from: null, request: null });
+    expect(await daemon.execute('getCornerRestoreState', { cornerId: human.id }, AGENT)).toMatchObject({
+      kind: 'human', titleGenerated: true,
+    });
+    await database.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,author_id,source_room_id)
+      VALUES($1,1,'First brief',$2,$3)`, [human.id, AGENT, ROOM]);
+    expect(await daemon.execute('getCornerRestoreState', { cornerId: human.id }, AGENT)).not.toHaveProperty('titleGenerated');
+    const before = (await database.query(`SELECT id,private_payload,root_source_message_id FROM agent_commands
+      WHERE room_id=$1 AND reason='corner_objective'`, [CORNER])).rows[0]!;
+    await phone.execute('deleteAccount', {}, OWNER);
+    expect((await database.query(`SELECT id,agent_id,private_payload,root_source_message_id FROM agent_commands
+      WHERE id=$1`, [before.id])).rows[0]).toEqual({ ...before, agent_id: DELETED_ACCOUNT_IDENTITY_ID });
+    expect(await provenance(CORNER)).toEqual({ kind: 'agent', commissioner: DELETED_ACCOUNT_IDENTITY_ID,
+      opened_from: origin, request: 'provenance-request' });
+  });
+
   it('deletes an account with stored agent traces and preserves another account (R-ACCOUNT-TRACES)', async () => {
     const partnerAgent = 'c'.repeat(64);
     await database.query(
@@ -321,7 +369,7 @@ describe('deleteAccount', () => {
     await expectRowCount(
       `SELECT 1 FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
        WHERE r.id=$1 AND r.archived_at IS NOT NULL
-         AND f.owner_agent_id IS NULL AND f.close_requested
+         AND f.owner_agent_id IS NULL
          AND f.lifecycle->>'lifecycle'='done' AND f.lifecycle->>'outcome'='abandoned'`,
       [CORNER],
       1,
@@ -329,7 +377,7 @@ describe('deleteAccount', () => {
     // It closes through closeCornerState, as a human close does: the corner
     // state machine reaches `closed` with the archival.
     await expectRowCount(
-      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND workflow_state='closed'`,
+      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND ${cornerRunStateSql('corner_id')}='closed'`,
       [CORNER],
       1,
     );
@@ -493,7 +541,7 @@ describe('deleteAccount', () => {
       [CORNER, DELETED_ACCOUNT_IDENTITY_ID], 1);
   });
 
-  it('keeps shared corner records and active merge holds under the tombstone', async () => {
+  it('keeps shared corner records under the tombstone and releases holds on the corners it archives', async () => {
     await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, AGENT]);
     await database.query(`UPDATE messages SET deleted_by=$1 WHERE id='m3'`, [OWNER]);
     await database.query(
@@ -518,8 +566,8 @@ describe('deleteAccount', () => {
     );
     await expectRowCount(
       `SELECT 1 FROM corner_merge_holds WHERE corner_id=$1 AND actor_id=$2
-         AND set_by_agent_id IS NULL AND released_by IS NULL AND released_at IS NULL`,
-      [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
+         AND set_by_agent_id IS NULL AND released_by=$3 AND released_at IS NOT NULL`,
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID, SYSTEM_IDENTITY_ID],
       1,
     );
   });
@@ -530,6 +578,11 @@ describe('deleteAccount', () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Partner Bee')`, [partnerAgent]);
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [partnerAgent, PARTNER]);
     await database.query(`UPDATE corner_facts SET owner_agent_id=$2,worker_agent_id=$2 WHERE corner_id=$1`, [
+      CORNER,
+      partnerAgent,
+    ]);
+    // The owner is derived from the opening order, so the partner agent opens it.
+    await database.query(`UPDATE agent_commands SET agent_id=$2 WHERE room_id=$1 AND reason='corner_objective'`, [
       CORNER,
       partnerAgent,
     ]);

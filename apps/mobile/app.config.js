@@ -258,6 +258,7 @@ export default {
             typedRoutes: true
         },
         updates: {
+            checkAutomatically: "NEVER",
             url: "https://u.expo.dev/58f1e94e-5ce5-475e-9dde-3eaa9e36699c",
             requestHeaders: {
                 "expo-channel-name": updatesChannel

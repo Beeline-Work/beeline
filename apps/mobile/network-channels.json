@@ -44,13 +44,6 @@
       "why": "Native \"Leave call\" from the call notification; must work while JavaScript is suspended."
     },
     {
-      "file": "apps/mobile/sources/app/(app)/beeline/settings/identity.tsx",
-      "kind": "ota-update",
-      "count": 2,
-      "fate": "exception",
-      "why": "Manual OTA update check and download (Expo Updates)."
-    },
-    {
       "file": "apps/mobile/sources/app/_layout.tsx",
       "kind": "import:posthog-react-native",
       "count": 1,
@@ -67,7 +60,7 @@
     {
       "file": "apps/mobile/sources/auth/github-auth-session.ts",
       "kind": "fetch-impl",
-      "count": 3,
+      "count": 2,
       "fate": "exception",
       "why": "GitHub sign-in reachability check, completion and cancel; before an authenticated socket exists."
     },

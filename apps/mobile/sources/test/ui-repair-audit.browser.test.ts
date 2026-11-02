@@ -64,7 +64,7 @@ for (const width of footerOnly ? [390, 360] : [390])
               'export const captureRef=async()=>"";export default {};';
             shims['expo-clipboard'] =
               'export const getStringAsync=async()=>"";export const setStringAsync=async()=>true;export const setImageAsync=async()=>true;';
-            shims['@/hooks/useUpdates'] =
+            shims['@/hooks/update-provider'] =
               'export const useUpdates=()=>({promptVisible:true,reloadApp:()=>{},dismissPrompt:()=>{}});';
             shims['react-native-unistyles'] = shims['react-native-unistyles'].replace(
               'const theme = { buzz: beelineThemes.obsidian };',

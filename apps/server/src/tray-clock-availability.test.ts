@@ -51,6 +51,36 @@ describe('shared server Tray availability from committed control causes',()=>{
     await notify();expect(actor.ready()).toBe(false);expect(unavailable).toHaveBeenCalledOnce();
   });
 
+  it('parks every consumer even when an earlier socket listener throws',async()=>{
+    const failed=vi.fn(()=>{throw new Error('socket send failed');}),later=vi.fn();
+    const releaseFailed=live.subscribeTrayClockUnavailable(failed);
+    const releaseLater=live.subscribeTrayClockUnavailable(later);
+    try{
+      await owner.release(epoch);
+      // Coalesced recovery must not mask a failed delivery of the loss.
+      epoch=await owner.claim(lock);await new TrayClockHealth(owner).publish(epoch);
+      await notify();
+      expect(failed).toHaveBeenCalledOnce();expect(later).toHaveBeenCalledOnce();
+      expect(unavailable).toHaveBeenCalledWith('owner');expect(actor.ready()).toBe(false);
+      const before=queries;await notify();expect(queries).toBe(before);
+      expect(failed).toHaveBeenCalledOnce();expect(later).toHaveBeenCalledOnce();
+    }finally{releaseFailed();releaseLater();}
+  });
+
+  it('contains an owner callback failure on synchronous listener loss',async()=>{
+    const later=vi.fn(),release=live.subscribeTrayClockUnavailable(later);
+    unavailable.mockImplementation(()=>{throw new Error('owner callback failed');});
+    try{
+      listenerReady=false;
+      expect(()=>live.projectionUnavailable()).not.toThrow();
+      expect(actor.ready()).toBe(false);expect(later).toHaveBeenCalledOnce();
+      const before=queries;await notify();expect(queries).toBe(before);
+      unavailable.mockImplementation(()=>{});listenerReady=true;
+      live.resync();await actor.start();expect(actor.ready()).toBe(true);
+      expect(later).toHaveBeenCalledOnce();
+    }finally{release();}
+  });
+
   it('stays read-idle on unrelated hints and repeated ownership waits',async()=>{
     const before=queries;
     for(let n=0;n<100;n++){live.journalChanged([`workspace:${WS}`]);await actor.start();}

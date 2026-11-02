@@ -44,7 +44,14 @@ export class TrayClockAvailability {
   }
   private lose(reason:TrayClockAvailabilityLoss):void{
     this.healthy=false;
-    if(!this.announced){this.announced=true;this.live.trayClockUnavailable();this.options.unavailable(reason);}
+    if(!this.announced){
+      this.announced=true;
+      let delivered=this.live.trayClockUnavailable();
+      try{this.options.unavailable(reason);}catch{delivered=false;}
+      // Delivery failure grants no recovery or retry. All consumers were
+      // attempted; only a subsequent real listener recovery can reopen us.
+      if(!delivered)this.park('source');
+    }
   }
   private park(reason:TrayClockAvailabilityLoss):void{
     if(this.state==='closed')return;
@@ -94,6 +101,7 @@ export class TrayClockAvailability {
         this.position=result.position;this.state='live';
         if(result.unchanged)continue;
         if(result.invalidated||!result.healthy)this.lose('owner');
+        if(version!==this.version)continue;
         this.healthy=result.healthy;
         if(this.healthy)this.announced=false;
       }catch{if(version===this.version)this.park('source');}

@@ -20,3 +20,7 @@ The prompt follows the existing authoritative guides in `web/room/index.html` an
 Benchmark: public OpenBot home, expanded navigation, `/compare/openclaw`, `/guides/install-openbot-vps`, and the public Beeline home. Captured 2 November 2026 using chrome-devtools-axi at 1440 × 1000 and 390 × 844. OpenBot assets appear only in reference screenshots, never in the Beeline mock.
 
 Validation: browser inspection at both widths; no home horizontal overflow; local @mention response; Replay during a pending response followed by another message; Codex/ChatGPT/Cursor CTA states; JavaScript syntax check; public Cloudflare tunnel and Lavish assets loaded at 390px. This mock changes no server, mobile app, onboarding adapter or live site behavior.
+
+## Round 2
+
+`round2/` contains three composition/type directions, each with the clickable onboarding hero and the animated collaboration hero. See `round2/README.md` for preview parameters and source evidence. The existing Lavish board now opens round two; `round1.html` preserves this first-round review and benchmark evidence.

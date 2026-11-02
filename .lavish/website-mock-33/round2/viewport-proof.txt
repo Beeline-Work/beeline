@@ -1,0 +1,47 @@
+a1 desktop: result: "{\"width\":1440,\"overflow\":false,\"state\":{\"kind\":\"onboarding\",\"beat\":0,\"job\":\"repo\",\"transcript\":\"B\\nBeebee\\nAGENT\\n\\nAlan’s here, @luna. Time to look like we had a plan.\\n\\nL\\nLuna\\nAGENT\\n\\n@beebee, I’m hoping Alan has a website for us to build.\\n\\nB\\nBeebee\\nAGENT\\n\\nHi Alan, I’m Beebee and that’s Luna. We’re your free agents. One of us does the work and the other checks it. What should we start on?\\n\\nWork on my repo\\nBring a project into this Room →\\nMake a welcome video\\nSee the preview-and-approve flow →\\nSomething else\\nMove to a sample request →\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+a1 phone: result: "{\"width\":390,\"overflow\":false,\"state\":{\"kind\":\"onboarding\",\"beat\":0,\"job\":\"repo\",\"transcript\":\"B\\nBeebee\\nAGENT\\n\\nAlan’s here, @luna. Time to look like we had a plan.\\n\\nL\\nLuna\\nAGENT\\n\\n@beebee, I’m hoping Alan has a website for us to build.\\n\\nB\\nBeebee\\nAGENT\\n\\nHi Alan, I’m Beebee and that’s Luna. We’re your free agents. One of us does the work and the other checks it. What should we start on?\\n\\nWork on my repo\\nBring a project into this Room →\\nMake a welcome video\\nSee the preview-and-approve flow →\\nSomething else\\nMove to a sample request →\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+a2 desktop: result: "{\"width\":1440,\"overflow\":false,\"state\":{\"kind\":\"collaboration\",\"beat\":3,\"playing\":false,\"speaker\":\"Alan\",\"text\":\"you're right. Codex, go build item 1 in a corner and @claude, go make the bug fixes in a corner\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+a2 phone: result: "{\"width\":390,\"overflow\":false,\"state\":{\"kind\":\"collaboration\",\"beat\":3,\"playing\":false,\"speaker\":\"Alan\",\"text\":\"you're right. Codex, go build item 1 in a corner and @claude, go make the bug fixes in a corner\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+b1 desktop: result: "{\"width\":1440,\"overflow\":false,\"state\":{\"kind\":\"onboarding\",\"beat\":0,\"job\":\"repo\",\"transcript\":\"B\\nBeebee\\nAGENT\\n\\nAlan’s here, @luna. Time to look like we had a plan.\\n\\nL\\nLuna\\nAGENT\\n\\n@beebee, I’m hoping Alan has a website for us to build.\\n\\nB\\nBeebee\\nAGENT\\n\\nHi Alan, I’m Beebee and that’s Luna. We’re your free agents. One of us does the work and the other checks it. What should we start on?\\n\\nWork on my repo\\nBring a project into this Room →\\nMake a welcome video\\nSee the preview-and-approve flow →\\nSomething else\\nMove to a sample request →\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+b1 phone: result: "{\"width\":390,\"overflow\":false,\"state\":{\"kind\":\"onboarding\",\"beat\":0,\"job\":\"repo\",\"transcript\":\"B\\nBeebee\\nAGENT\\n\\nAlan’s here, @luna. Time to look like we had a plan.\\n\\nL\\nLuna\\nAGENT\\n\\n@beebee, I’m hoping Alan has a website for us to build.\\n\\nB\\nBeebee\\nAGENT\\n\\nHi Alan, I’m Beebee and that’s Luna. We’re your free agents. One of us does the work and the other checks it. What should we start on?\\n\\nWork on my repo\\nBring a project into this Room →\\nMake a welcome video\\nSee the preview-and-approve flow →\\nSomething else\\nMove to a sample request →\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+b2 desktop: result: "{\"width\":1440,\"overflow\":false,\"state\":{\"kind\":\"collaboration\",\"beat\":3,\"playing\":false,\"speaker\":\"Alan\",\"text\":\"you're right. Codex, go build item 1 in a corner and @claude, go make the bug fixes in a corner\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+b2 phone: result: "{\"width\":390,\"overflow\":false,\"state\":{\"kind\":\"collaboration\",\"beat\":3,\"playing\":false,\"speaker\":\"Alan\",\"text\":\"you're right. Codex, go build item 1 in a corner and @claude, go make the bug fixes in a corner\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+c1 desktop: result: "{\"width\":1440,\"overflow\":false,\"state\":{\"kind\":\"onboarding\",\"beat\":0,\"job\":\"repo\",\"transcript\":\"B\\nBeebee\\nAGENT\\n\\nAlan’s here, @luna. Time to look like we had a plan.\\n\\nL\\nLuna\\nAGENT\\n\\n@beebee, I’m hoping Alan has a website for us to build.\\n\\nB\\nBeebee\\nAGENT\\n\\nHi Alan, I’m Beebee and that’s Luna. We’re your free agents. One of us does the work and the other checks it. What should we start on?\\n\\nWork on my repo\\nBring a project into this Room →\\nMake a welcome video\\nSee the preview-and-approve flow →\\nSomething else\\nMove to a sample request →\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+c1 phone: result: "{\"width\":390,\"overflow\":false,\"state\":{\"kind\":\"onboarding\",\"beat\":0,\"job\":\"repo\",\"transcript\":\"B\\nBeebee\\nAGENT\\n\\nAlan’s here, @luna. Time to look like we had a plan.\\n\\nL\\nLuna\\nAGENT\\n\\n@beebee, I’m hoping Alan has a website for us to build.\\n\\nB\\nBeebee\\nAGENT\\n\\nHi Alan, I’m Beebee and that’s Luna. We’re your free agents. One of us does the work and the other checks it. What should we start on?\\n\\nWork on my repo\\nBring a project into this Room →\\nMake a welcome video\\nSee the preview-and-approve flow →\\nSomething else\\nMove to a sample request →\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+c2 desktop: result: "{\"width\":1440,\"overflow\":false,\"state\":{\"kind\":\"collaboration\",\"beat\":3,\"playing\":false,\"speaker\":\"Alan\",\"text\":\"you're right. Codex, go build item 1 in a corner and @claude, go make the bug fixes in a corner\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state
+
+c2 phone: result: "{\"width\":390,\"overflow\":false,\"state\":{\"kind\":\"collaboration\",\"beat\":3,\"playing\":false,\"speaker\":\"Alan\",\"text\":\"you're right. Codex, go build item 1 in a corner and @claude, go make the bug fixes in a corner\"},\"downloads\":[\"Android\",\"iOS\",\"Linux\",\"Mac\",\"Windows\"],\"harnesses\":[\"Claude Code\",\"Codex\",\"OpenCode\",\"Pi\",\"Antigravity\",\"Gemini CLI\",\"Hermes\",\"ZCode\"]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state

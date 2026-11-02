@@ -127,8 +127,7 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
     [cornerId],
   );
   await database.query(
-    `UPDATE corner_facts SET lifecycle=lifecycle||'{"lifecycle":"done","checks":"unknown"}'::jsonb,
-       updated_at=now() WHERE corner_id=$1`,
+    `UPDATE corner_facts SET lifecycle=lifecycle||'{"lifecycle":"done","checks":"unknown"}'::jsonb WHERE corner_id=$1`,
     [cornerId],
   );
   await abandonCornerWorkflowRuns(database, cornerId);

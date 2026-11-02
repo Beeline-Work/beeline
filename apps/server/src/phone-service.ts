@@ -6242,7 +6242,7 @@ export class PhoneService {
       await authorize(database);
       if (locked !== undefined) {
         await database.query(
-          `UPDATE corner_facts SET locked=$2,updated_at=now() WHERE corner_id=$1`,
+          `UPDATE corner_facts SET locked=$2 WHERE corner_id=$1`,
           [roomId, locked],
         );
       } else {
@@ -8261,7 +8261,7 @@ export class PhoneService {
       for (const corner of closingCorners.rows) await closeCornerState(database, corner.id);
       await database.query(
         `UPDATE corner_facts SET owner_agent_id=NULL,
-           lifecycle=lifecycle||$2::jsonb,updated_at=now()
+           lifecycle=lifecycle||$2::jsonb
          WHERE owner_agent_id=ANY($1)`,
         [
           gone,
@@ -8277,13 +8277,13 @@ export class PhoneService {
       // `worker_agent_id` would block `DELETE FROM identities` on its foreign
       // key. Clearing it falls back to the opener, exactly as the column reads.
       await database.query(
-        `UPDATE corner_facts SET worker_agent_id=NULL,updated_at=now()
+        `UPDATE corner_facts SET worker_agent_id=NULL
          WHERE worker_agent_id=ANY($1)`,
         [gone],
       );
       // Clear the retired column's legacy FK until the drop release removes it.
       await database.query(
-        `UPDATE corner_facts SET commissioned_by=NULL,updated_at=now()
+        `UPDATE corner_facts SET commissioned_by=NULL
          WHERE commissioned_by=ANY($1)`,
         [gone],
       );

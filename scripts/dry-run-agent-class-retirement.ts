@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 /**
  * Read-only dry run of `retireAgentClasses` (apps/server/src/agent-class-
- * retirement.ts) against a live database, to list the Rooms the deploy-time
- * migration would clear. The migration itself writes; this script only runs
+ * retirement.ts) against a live database, to list the workflow runs and tags
+ * the deploy-time migration would convert or clear. The migration itself writes; this script only runs
  * its selection queries inside one read-only transaction that is rolled back,
  * so it can be pointed at production without sending a single UPDATE.
  *
@@ -110,26 +110,6 @@ async function main(): Promise<void> {
 const pool = new Pool({ connectionString: url, max: 1 });
 try {
   await pool.query('SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY');
-  const rooms = await pool.query<{
-    id: string;
-    name: string;
-    reviewer_agent_id: string | null;
-    reviewer_class: string;
-  }>(`SELECT id,name,reviewer_agent_id,reviewer_class FROM rooms WHERE reviewer_class IS NOT NULL`);
-
-  const converted: { room: string; class: string; agents: string[] }[] = [];
-  const cleared: { id: string; name: string; class: string }[] = [];
-  const fixed: { id: string; name: string; class: string }[] = [];
-  for (const room of rooms.rows) {
-    const entry = { id: room.id, name: room.name, class: room.reviewer_class };
-    if (room.reviewer_agent_id) fixed.push(entry);
-    else {
-      const matches = await roomAgentsWithClass(pool, room.id, room.reviewer_class);
-      if (matches.length) converted.push({ room: room.name, class: room.reviewer_class, agents: matches.map((m) => m.name) });
-      else cleared.push(entry);
-    }
-  }
-
   const runs = await pool.query(
     `SELECT id,room_id,card->'roleClasses' role_classes FROM messages
      WHERE card_type='workflow-handoff' AND card ? 'roleClasses'`,
@@ -148,10 +128,6 @@ try {
   const tiers = await pool.query(`SELECT count(*)::int cleared FROM workspaces WHERE weight_tier_rules IS NOT NULL`);
 
   console.log(JSON.stringify({
-    roomsWithReviewerClass: rooms.rowCount,
-    fixedReviewerKept: fixed,
-    convertedRooms: converted,
-    clearedRooms: cleared,
     classBoundRunRoles: runsDetail,
     customTagsCleared: tags.rows[0]?.cleared ?? 0,
     weightTierRuleWorkspacesCleared: tiers.rows[0]?.cleared ?? 0,

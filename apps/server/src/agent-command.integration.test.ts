@@ -803,7 +803,7 @@ beforeEach(async () => {
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
   await db.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`, [C]);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,command_check_state=NULL`,
+    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb`,
   );
 });
 
@@ -1463,14 +1463,6 @@ it('keeps a failed-check wake retryable while its opener is unreachable', async 
     kind: 'check-failed',
     object: { text: 'typecheck', headSha },
   });
-  expect(
-    (
-      await db.query<{ command_check_state: string | null }>(
-        `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`,
-        [C],
-      )
-    ).rows[0]?.command_check_state,
-  ).toBeNull();
   await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [
     R,
     B,
@@ -1631,14 +1623,6 @@ it('wakes the implementer without consuming a green transition when the configur
   expect(handback.map(command => command.reason)).toEqual(['corner_review_needed']);
   expect(handback[0]?.source.body).toContain('the configured reviewer is unreachable');
   expect(handback[0]?.source.body).toContain('report the blocker to its commander');
-  expect(
-    (
-      await db.query<{ command_check_state: string | null }>(
-        `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`,
-        [C],
-      )
-    ).rows[0]?.command_check_state,
-  ).toBeNull();
   expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%could not be reached%'`, [C])).rowCount).toBe(0);
   await expect(
     daemon.execute('getAgentConfiguration', { agentId: B, roomId: C }, B),

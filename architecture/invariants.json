@@ -238,7 +238,7 @@
       "apps/auth/src"
     ],
     "bootstrapTotal": 1899,
-    "unusedTotal": 224,
+    "unusedTotal": 239,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -2940,6 +2940,42 @@
           "release": "existing before the registry; weekly audit reviews",
           "count": "existing before the registry; weekly audit reviews"
         }
+      },
+      "corner_apps": {
+        "module": "Corner apps (retired)",
+        "reason": "Retired storage kept so older and rollback images can still read corners (SENTRY-22); no current code uses it.",
+        "columns": {
+          "corner_id": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "slug": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "author_agent_id": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "definition": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "revision": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "created_at": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "updated_at": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration."
+        }
+      },
+      "corner_app_installations": {
+        "module": "Corner apps (retired)",
+        "reason": "Retired storage kept so older and rollback images can still read corners (SENTRY-22); no current code uses it.",
+        "columns": {
+          "id": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "workspace_id": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "installed_by": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "developer_agent_id": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "manifest": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "connected_at": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration."
+        }
+      },
+      "corner_app_bindings": {
+        "module": "Corner apps (retired)",
+        "reason": "Retired storage kept so older and rollback images can still read corners (SENTRY-22); no current code uses it.",
+        "columns": {
+          "corner_id": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "installation_id": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "instance_id": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "bound_by": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
+          "bound_at": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration."
+        }
       }
     },
     "jsonb": {
@@ -3155,7 +3191,11 @@
       },
       "registry_manifest": {},
       "weight_tier_rules": {},
-      "by_ad": {}
+      "by_ad": {},
+      "definition": {
+        "command": "Retired corner app's command; only the unique index reads it, for older images."
+      },
+      "manifest": {}
     }
   }
 }

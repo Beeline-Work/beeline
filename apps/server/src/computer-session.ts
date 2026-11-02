@@ -8,6 +8,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
+import { subscribeCommandCompletion } from './command-completion.js';
 
 export type ComputerSessionRow = {
   id: string;
@@ -20,6 +21,8 @@ export type ComputerSessionRow = {
   relay_instance_id: string | null;
   handoff_count: number;
   view_secret: Buffer | null;
+  expires_at?:Date|null;
+  expiry_version?:string|null;
 };
 const handbackWaiters = new Map<string, Set<WebSocket>>();
 const MAX_VIEWER_BUFFERED_BYTES = 4 * 1024 * 1024;
@@ -212,7 +215,7 @@ export async function getComputerSession(database: SqlDatabase, id: string): Pro
   if (!/^[A-Za-z0-9_-]{43}$/.test(id)) return undefined;
   return (await database.query<ComputerSessionRow>(
     `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,status,
-       relay_instance_id,handoff_count,view_secret
+       relay_instance_id,handoff_count,view_secret,expires_at,expires_at::text expiry_version
      FROM computer_sessions WHERE id=$1`, [id],
   )).rows[0];
 }
@@ -243,7 +246,8 @@ export async function endComputerSession(
   const changed = await database.transaction(async (db) => {
     const update = await db.query(
       `UPDATE computer_sessions SET status='ended',ended_at=now()
-       WHERE id=$1 AND status='live' AND (NOT $2::boolean OR expires_at<=now())`, [row.id, expiredOnly],
+       WHERE id=$1 AND status='live' AND (NOT $2::boolean OR (expires_at<=now()
+         AND ($3::timestamptz IS NULL OR expires_at=$3)))`, [row.id, expiredOnly,expiredOnly?row.expiry_version??null:null],
     );
     if (!update.rowCount) return false;
     await db.query(
@@ -268,47 +272,56 @@ function closeComputerChannels(id: string): void {
   squireChannels.delete(id);
 }
 
-/**
- * A stale upstream lease prompts a liveness check, never a blind ending.
- * Squire 1.1.33 keeps its URL alive while the operate session lives, even if
- * a helper's renewal request is delayed. Gone URLs reconcile session reaps
- * after restart; transport failures leave the card live for the next sweep.
- */
+/** The committed lease is the view's authority bound. Expiry is a terminal
+ * transition, never permission to repeatedly probe an upstream status page. */
 export async function expireComputerSessions(database: SqlDatabase, live: LiveHub | undefined): Promise<number> {
   const local = [...new Set([...bodyChannels.keys(), ...squireChannels.keys(), ...handbackWaiters.keys()])];
+  if(local.length){
+    const current=await database.query<{id:string;status:string}>('SELECT id,status FROM computer_sessions WHERE id=ANY($1::text[])',[local]);
+    const active=new Set(current.rows.filter(row=>row.status==='live').map(row=>row.id));
+    for(const id of local)if(!active.has(id))closeComputerChannels(id);
+  }
   const rows = (await database.query<ComputerSessionRow>(
-    `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,status,relay_instance_id,handoff_count,view_secret
-     FROM computer_sessions WHERE expires_at<=now() AND (status='live' OR id=ANY($1::text[]))`, [local],
+    `SELECT id,room_id,message_id,agent_id,source_session_id,upstream_url,status,relay_instance_id,handoff_count,view_secret,expires_at,expires_at::text expiry_version
+     FROM computer_sessions WHERE expires_at<=now() AND status='live' ORDER BY expires_at,id LIMIT 100`,
   )).rows;
   for (const row of rows) {
-    if (row.status === 'ended') { closeComputerChannels(row.id); continue; }
-    if (row.upstream_url === 'body:') continue;
-    const upstream = await fetch(row.upstream_url, { redirect: 'error', signal: AbortSignal.timeout(5_000) })
-      .catch(() => undefined);
-    void upstream?.body?.cancel().catch(() => {});
-    if (upstream?.status !== 404 && upstream?.status !== 410) continue;
-    // A helper may have renewed the lease after this sweep selected the row.
+    // Both exact captured expiry and current due state are checked under the
+    // update lock. A newer successful renewal wins even after selection.
     await endComputerSession(database, live, row, true);
   }
   return rows.length;
 }
 
-const COMPUTER_EXPIRY_SWEEP_MS = 15_000;
-
-/** Sweeps once now, then on an interval. The returned function stops it. */
-export function startComputerExpirySweep(database: SqlDatabase, live: LiveHub, intervalMs = COMPUTER_EXPIRY_SWEEP_MS): () => void {
-  let running = false;
-  const sweep = () => {
-    if (running) return;
-    running = true;
-    void expireComputerSessions(database, live)
-      .catch((error: unknown) => console.warn('[computer-share] expiry sweep failed', error instanceof Error ? error.message : error))
-      .finally(() => { running = false; });
+/** Existing startup adapter, now one actual deadline. The legacy interval
+ * argument is accepted for source compatibility and never admits a scan. */
+export function startComputerExpirySweep(database: SqlDatabase, live: LiveHub, _legacyIntervalMs?:number): () => void {
+  let closed=false,running=false,dirty=false,timer:ReturnType<typeof setTimeout>|undefined;
+  const arm=(due:number)=>{
+    if(closed)return;
+    timer=setTimeout(()=>{
+      timer=undefined;if(Date.now()<due)arm(due);else void drain();
+    },Math.min(2_147_483_647,Math.max(0,due-Date.now())));timer.unref?.();
   };
-  sweep();
-  const timer = setInterval(sweep, intervalMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
+  const drain=async()=>{
+    dirty=true;if(closed||running)return;running=true;
+    try{
+      do{
+        dirty=false;clearTimeout(timer);timer=undefined;
+        await expireComputerSessions(database,live);if(closed)return;
+        const next=(await database.query<{delay_ms:number}>(`SELECT EXTRACT(epoch FROM (expires_at-clock_timestamp()))::double precision*1000 delay_ms FROM computer_sessions
+          WHERE status='live' AND expires_at IS NOT NULL ORDER BY expires_at LIMIT 1`)).rows[0]?.delay_ms;
+        if(next!==undefined&&!closed){
+          if(!Number.isFinite(Number(next)))throw new Error('Invalid computer expiry');
+          arm(Date.now()+Math.max(0,Math.ceil(Number(next))));
+        }
+      }while(dirty&&!closed);
+    }catch{console.warn('[computer-share] expiry unavailable; awaiting committed change or recovery');}
+    finally{running=false;if(dirty&&!closed)void drain();}
+  };
+  const stopSource=subscribeCommandCompletion({principal:'computer',operation:'expiry',commandId:'pending'},()=>{void drain();});
+  const stopRecovery=database.onRecovery?.(()=>{void drain();});void drain();
+  return()=>{closed=true;clearTimeout(timer);stopSource();stopRecovery?.();};
 }
 
 /** One authoritative read when a live viewer's socket reconnects. */
@@ -351,9 +364,7 @@ export const VIEWER_LAYOUT_SCRIPT = `function viewerLayout(state,viewWidth,viewH
 function viewerZoomAt(state,zoom,x,y){const next=Math.min(4,Math.max(state.minZoom??1,zoom)),ratio=next/state.zoom;
   return {...state,zoom:next,left:x-(x-state.left)*ratio,top:y-(y-state.top)*ratio};}`;
 
-function serveComputerRetry(request: IncomingMessage, response: ServerResponse): void {
-  const retry = Math.min(10, Math.max(0, Number(new URL(request.url ?? '/', 'http://beeline.local').searchParams.get('retry')) || 0));
-  const delay = Math.min(2_000, 300 * 2 ** retry);
+function serveComputerRetry(_request: IncomingMessage, response: ServerResponse): void {
   response.writeHead(200, {
     'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
     'content-security-policy': "default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; base-uri 'none'",
@@ -362,9 +373,9 @@ function serveComputerRetry(request: IncomingMessage, response: ServerResponse):
   response.end(`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>
     body{margin:0;display:grid;place-items:center;height:100vh;background:#1b1320;color:#f6edf4;font:15px system-ui,sans-serif}
     button{border:1px solid #ffffff44;border-radius:12px;background:#261a2a;color:inherit;padding:10px 14px}
-    </style><div>${retry < 10 ? 'Connecting to browser…' : '<button id="retry">Try again</button>'}</div><script>
-    const next=new URL(location.href);next.searchParams.set('retry','${retry < 10 ? retry + 1 : 0}');
-    ${retry < 10 ? `setTimeout(()=>location.replace(next.href),${delay});` : "document.getElementById('retry').onclick=()=>location.replace(next.href);"}
+    </style><div><button id="retry">Try again</button></div><script>
+    const next=new URL(location.href);next.searchParams.delete('retry');
+    document.getElementById('retry').onclick=event=>{if(event.isTrusted)location.replace(next.href);};
     </script>`);
 }
 
@@ -620,7 +631,7 @@ export function computerViewerHtml(id: string): string {
       try{const response=await fetch('/s/${id}/status'+location.search,{cache:'no-store'});const status=await response.json();
         if(status.status==='ended'){showEnded();return;}
         if(status.status!=='live'){showLost();return;}
-        setTimeout(()=>{if(!leaving)connect();},300);
+        if(!leaving)connect();
       }catch{showLost();}};
   }
   connect();

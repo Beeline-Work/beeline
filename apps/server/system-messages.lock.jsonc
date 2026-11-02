@@ -1,3 +1,4 @@
+// Connected-app report refusal update approved by lunchboxfortwo; Claude relayed lunchboxfortwo's yes in message 068e1d99cd0a96b277aac8b64e5a8a507d30c6a9acd9a938acd06ec3783ed5b1. Only the RoomsMcpAgentTools.inTurn wrapper entry refreshed.
 // Retired app-opening producer and its wrapper occurrence removed; approved by lunchboxfortwo, brief revision 1, message c24ca338b827384dceae12642bed7fbb26a64f05bd5e087cdb614cab3241c2a6. Remaining System wording is unchanged.
 // Human-message hold citation display approved by lunchboxfortwo, brief revision 4, message 654aedd0aa3ca9be7b56e51f0d31c3d22ae344ca0932279e330780a8044cf707. Hold line shows the cited person and excerpt; only its producer and transitive wrappers updated.
 // Wording fingerprints follow the words of a message. A helper that only returns those words is not a separate message. Approved by lunchboxfortwo, message 62412157a3b99d31600ddac5c4b7eb219502d55408fb3c66251675df18b5e702. Displayed wording is unchanged.
@@ -8983,13 +8984,14 @@
     "occurrences": 1
   },
   {
-    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.inTurn:wrapper:16ba8f9d5eb3572e",
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.inTurn:wrapper:90ab095e7a1b7267",
     "file": "apps/server/src/rooms-mcp-agent.ts",
     "kind": "wrapper",
     "template": "this.end(member, turn, reported)",
     "literals": [
+      "\", \"",
       "\"hex\"",
-      "\"no order is waiting for your report at this address; list_mentions names the places that ordered you\"",
+      "\"none\"",
       "$local()",
       "'2s'",
       "'90 seconds'",
@@ -9001,11 +9003,17 @@
       ".command",
       ".db",
       ".id",
+      ".join",
+      ".join()",
+      ".map",
+      ".map()",
       ".min",
       ".min()",
       ".parent_id",
+      ".room_id",
       ".root_command_id",
       ".root_source_message_id",
+      ".rowCount",
       ".rows",
       ".toString",
       ".toString()",
@@ -9020,8 +9028,11 @@
       "NullKeyword",
       "TrueKeyword",
       "[\"mcp:\",\"\"]",
+      "[\"no order is waiting for your report; order addresses: \",\"; use a corner address to report to its commander\"]",
       "binary:+",
+      "binary:=",
       "binary:??",
+      "binary:||",
       "conditional:?:",
       "end:expression",
       "prefix:!",

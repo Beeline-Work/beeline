@@ -4,7 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { PostgresDatabase, type SqlDatabase } from './database.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
-import { OwnedModelCredentials } from './owned-model-credential.js';
+import { OwnedModelCredentials, OwnedModelUnknownGeneration } from './owned-model-credential.js';
 import { MODEL, MODEL_AGENT, MODEL_KEY, MODEL_ROOM, seedOwnedModelFixture } from './owned-model.test-support.js';
 import { ROUTER_AUTHORITY_LOCK, ROUTER_PROJECTION_SCHEMA } from './router-projection-schema.js';
 import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
@@ -261,5 +261,44 @@ describe.skipIf(!url)('real PostgreSQL owned model primitive contention', () => 
       releaseRetire.resolve(); releaseHandoff.resolve();
       await Promise.allSettled([retirement, handoff].filter((work): work is NonNullable<typeof work> => work !== undefined)); await f.close();
     }
+  }, 20_000);
+
+  it('serializes a generation writer behind old reservation COMMIT, then rolls its new credential composition back on UNKNOWN', async () => {
+    const f = await fixture(), reserved = deferred<void>(), release = deferred<void>(), pid = deferred<number>(); let early: unknown;
+    let first: ReturnType<OwnedModelAttempts['reserve']> | undefined, next: Promise<unknown> | undefined;
+    try {
+      const owner = new OwnedModelAttempts(f.left, f.credentials);
+      first = owner.reserve(f.actor, ONE, payload(), async tx => { const value = await reserve(tx); reserved.resolve(); await release.promise; return value; });
+      void first.catch(error => { early = error; reserved.resolve(); }); await reserved.promise; if (early) throw early;
+      next = f.right.transaction(async tx => {
+        pid.resolve(Number((await tx.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0]!.pid));
+        await tx.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,turn_owner_connection_id=NULL,turn_owner_epoch=NULL WHERE id='synthetic-command'`);
+        await tx.query(`UPDATE agent_commands SET state='claimed',generation_id='next-generation',claimed_at=clock_timestamp(),
+          turn_owner_connection_id='synthetic-connection',turn_owner_epoch=1 WHERE id='synthetic-command'`);
+        return f.credentials.issueInTransaction(tx, { agentId: MODEL_AGENT, commandId: 'synthetic-command', generationId: 'next-generation',
+          source: { connectionId: 'synthetic-connection', epoch: 1 } });
+      });
+      const rejected = expect(next).rejects.toBeInstanceOf(OwnedModelUnknownGeneration);
+      await blocked(f.admin, await pid.promise); release.resolve(); expect((await first).permit).toBeDefined(); await rejected;
+      expect((await f.left.query('SELECT generation_id,state FROM agent_commands')).rows).toEqual([{ generation_id: 'synthetic-generation', state: 'claimed' }]);
+      expect((await f.left.query(`SELECT 1 FROM agent_command_generation_owners WHERE generation_id='next-generation'`)).rowCount).toBe(0);
+      expect((await f.left.query('SELECT * FROM owned_model_credentials')).rowCount).toBe(1);
+      expect((await f.left.query('SELECT state FROM owned_model_attempts')).rows).toEqual([{ state: 'unknown' }]);
+    } finally { release.resolve(); await Promise.allSettled([first, next].filter((work): work is NonNullable<typeof work> => work !== undefined)); await f.close(); }
+  }, 20_000);
+
+  it('refuses an old actor reservation promptly behind an uncommitted generation writer, before its quota hook can run', async () => {
+    const f = await fixture(), held = deferred<void>(), release = deferred<void>(); let early: unknown, writer: Promise<unknown> | undefined;
+    try {
+      writer = f.right.transaction(async tx => {
+        await tx.query(`UPDATE agent_commands SET state='pending',generation_id=NULL,turn_owner_connection_id=NULL,turn_owner_epoch=NULL WHERE id='synthetic-command'`);
+        held.resolve(); await release.promise;
+      });
+      void writer.catch(error => { early = error; held.resolve(); }); await held.promise; if (early) throw early;
+      const quota = vi.fn(reserve);
+      await expect(new OwnedModelAttempts(f.left, f.credentials).reserve(f.actor, ONE, payload(), quota)).rejects.toMatchObject({ code: '55P03' });
+      expect(quota).not.toHaveBeenCalled(); expect((await f.left.query('SELECT * FROM owned_model_attempts')).rowCount).toBe(0);
+      release.resolve(); await writer;
+    } finally { release.resolve(); await Promise.allSettled(writer ? [writer] : []); await f.close(); }
   }, 20_000);
 });

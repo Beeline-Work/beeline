@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
-import { OwnedModelCredentials, OwnedModelRefusal, type AuthenticatedOwnedModel, type OwnedModelBinding } from './owned-model-credential.js';
+import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, type AuthenticatedOwnedModel, type OwnedModelBinding } from './owned-model-credential.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
 import { assertCurrentTurnOwner } from './turn-ownership.js';
 
@@ -142,12 +142,17 @@ export class OwnedModelAttempts {
     const semantic = createHash('sha256').update('beeline:owned-model:request:v1\0').update(canonical.body).digest('hex');
     const admitted = await this.database.transaction(async database => {
       await accountingLocks(database, owned.ownerId);
+      // Serializes reservation COMMIT with a new claim generation. Otherwise
+      // its UNKNOWN could appear just after a new credential was issued.
+      await database.query('SELECT id FROM agent_commands WHERE id=$1 FOR SHARE NOWAIT', [owned.commandId]);
       await this.credentials.assertCurrent(database, actor);
       const old = (await database.query<Row>('SELECT * FROM owned_model_attempts WHERE credential_id=$1 AND model_request_id=$2 FOR UPDATE', [owned.id, id])).rows[0];
       if (old) {
         if (old.request_digest !== semantic) throw new OwnedModelIdentityConflict();
         return { row: old };
       }
+      if ((await database.query(`SELECT 1 FROM owned_model_attempts WHERE command_id=$1 AND generation_id<>$2 AND state='unknown' LIMIT 1`,
+        [owned.commandId, owned.generationId])).rowCount) throw new OwnedModelUnknownGeneration();
       if ((await database.query(`SELECT 1 FROM owned_model_attempts WHERE command_id=$1 AND generation_id=$2 AND request_digest=$3 AND state='unknown'`,
         [owned.commandId, owned.generationId, semantic])).rowCount) throw new OwnedModelUnknownPayload();
       const prepared = await reserve(database, owned);
@@ -190,6 +195,8 @@ export class OwnedModelAttempts {
         const row = (await database.query<Row>('SELECT * FROM owned_model_attempts WHERE credential_id=$1 AND model_request_id=$2 FOR SHARE NOWAIT',
           [owned.id, pending.requestId])).rows[0];
         if (!row || row.state !== 'unknown' || row.evidence || row.payload_digest !== pending.digest) throw new OwnedModelRefusal();
+        if ((await database.query(`SELECT 1 FROM owned_model_attempts WHERE command_id=$1 AND generation_id<>$2 AND state='unknown' LIMIT 1`,
+          [owned.commandId, owned.generationId])).rowCount) throw new OwnedModelUnknownGeneration();
         const began = performance.now(), current = await this.credentials.assertCurrent(database, pending.actor);
         // Subtract the entire DB round trip rather than assuming host/DB clocks
         // agree or allowing a lease to expire between the query and handoff.

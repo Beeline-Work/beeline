@@ -73,6 +73,10 @@ export type OwnedModelKeyring = Readonly<{
 export class OwnedModelRefusal extends CommandRefusalError {
   constructor() { super('Owned model authority is unavailable', 403); }
 }
+export class OwnedModelUnknownGeneration extends CommandRefusalError {
+  readonly state = 'unknown';
+  constructor() { super('This command has a prior model outcome UNKNOWN; do not start another generation.', 409); }
+}
 const scalar = (value: unknown, max = 256): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function fixedEqual(a: Buffer, b: Buffer): boolean { return a.length === b.length && timingSafeEqual(a, b); }
@@ -152,6 +156,10 @@ export class OwnedModelCredentials {
   }): Promise<Readonly<{ v: 1; token: string; expiresAt: number }>> {
     if (![input.agentId, input.commandId, input.generationId, input.source?.connectionId].every(value => scalar(value)) ||
         !Number.isSafeInteger(input.source.epoch) || input.source.epoch < 1) throw new OwnedModelRefusal();
+    // The actual claim already owns this row. The explicit read fence also
+    // makes direct composition safe against an old in-flight reservation.
+    // NOWAIT refuses existing inverse lock owners without a retry timer.
+    await database.query('SELECT id FROM agent_commands WHERE id=$1 AND agent_id=$2 FOR SHARE NOWAIT', [input.commandId, input.agentId]);
     const [model, maxTurnMs] = this.limits();
     const current = (await database.query<CurrentRow>(CURRENT, [input.commandId, input.agentId, input.generationId, model, maxTurnMs])).rows[0];
     if (!current || current.connection_id !== input.source.connectionId || Number(current.connection_epoch) !== input.source.epoch ||
@@ -159,6 +167,8 @@ export class OwnedModelCredentials {
     let row = (await database.query<CredentialRow>('SELECT * FROM owned_model_credentials WHERE command_id=$1 AND generation_id=$2',
       [input.commandId, input.generationId])).rows[0];
     if (!row) {
+      if ((await database.query(`SELECT 1 FROM owned_model_attempts WHERE command_id=$1 AND generation_id<>$2 AND state='unknown' LIMIT 1`,
+        [input.commandId, input.generationId])).rowCount) throw new OwnedModelUnknownGeneration();
       await registerOwnedEffectFence(database, { id: current.command_id, agent_id: current.agent_id, generation_id: current.generation_id,
         turn_owner_connection_id: current.connection_id, turn_owner_epoch: current.connection_epoch });
       const candidate: CredentialRow = { id: randomBytes(16).toString('hex'), key_version: this.keys.currentVersion,

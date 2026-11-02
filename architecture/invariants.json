@@ -237,8 +237,8 @@
       "apps/server/src",
       "apps/auth/src"
     ],
-    "bootstrapTotal": 1816,
-    "unusedTotal": 193,
+    "bootstrapTotal": 1812,
+    "unusedTotal": 191,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -1045,7 +1045,6 @@
         "columns": {
           "identity_id": "existing before the registry; weekly audit reviews",
           "replies": "existing before the registry; weekly audit reviews",
-          "reached_milestone": "existing before the registry; weekly audit reviews",
           "answered_milestone": "existing before the registry; weekly audit reviews",
           "checked_milestone": "existing before the registry; weekly audit reviews",
           "closed": "existing before the registry; weekly audit reviews",
@@ -1664,10 +1663,8 @@
           "owner_id": "existing before the registry; weekly audit reviews",
           "source_message_id": "existing before the registry; weekly audit reviews",
           "recipients": "existing before the registry; weekly audit reviews",
-          "text_hash": "existing before the registry; weekly audit reviews",
           "text": "existing before the registry; weekly audit reviews",
-          "created_at": "existing before the registry; weekly audit reviews",
-          "recipient_count": "existing before the registry; weekly audit reviews"
+          "created_at": "existing before the registry; weekly audit reviews"
         }
       },
       "pending_mention_notices": {
@@ -2624,7 +2621,6 @@
           "id": "existing before the registry; weekly audit reviews",
           "identity_id": "existing before the registry; weekly audit reviews",
           "workspace_id": "existing before the registry; weekly audit reviews",
-          "workspace_name": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews"
         }
       },

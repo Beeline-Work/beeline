@@ -6561,16 +6561,13 @@ export class DaemonService {
     );
     return this.writeResult();
   }
+  /** Retired plan checklist: older helpers may still post one; only a missing objective is kept. */
   private async cornerPlan(input: Input<'postCornerPlan'>, agentId: string) {
     await this.access(input.cornerId, agentId);
-    const plan = { ...(input.objective ? { objective: input.objective } : {}), items: input.items };
-    await this.database.transaction(async db => {
+    // The retired plan checklist is not stored; only a missing objective is filled.
+    if (input.objective) await this.database.transaction(async db => {
       await lockCornerLifecycle(db, input.cornerId);
-      await db.query(
-        `INSERT INTO corner_facts(corner_id,plan) VALUES($1,$2::jsonb) ON CONFLICT(corner_id) DO UPDATE SET plan=EXCLUDED.plan,updated_at=now()`,
-        [input.cornerId, JSON.stringify(plan)],
-      );
-      if (input.objective) await writeCornerObjective(db, input.cornerId, input.objective, true);
+      await writeCornerObjective(db, input.cornerId, input.objective!, true);
     });
     return this.writeResult();
   }

@@ -40,55 +40,10 @@ beforeEach(async () => {
   );
 });
 
-const room = (id: string) =>
-  database
-    .query<{ reviewer_agent_id: string | null; reviewer_fallback_ids: string[]; reviewer_class: string | null }>(
-      `SELECT reviewer_agent_id,reviewer_fallback_ids,reviewer_class FROM rooms WHERE id=$1`,
-      [id],
-    )
-    .then((r) => r.rows[0]);
-
 describe('retireAgentClasses', () => {
-  it("turns a Room's reviewer class into the matching agents, ordered by name", async () => {
-    await database.query(`UPDATE rooms SET reviewer_class='heavy' WHERE id=$1`, [ROOM]);
-    const result = await retireAgentClasses(database);
-    expect(await room(ROOM)).toEqual({
-      reviewer_agent_id: OPUS_ADA,
-      reviewer_fallback_ids: [OPUS_ZED],
-      reviewer_class: null,
-    });
-    expect(result.convertedRooms).toBe(1);
-  });
-
-  it('clears a reviewer class matching nobody and names the Room', async () => {
-    await database.query(`UPDATE rooms SET reviewer_class='god' WHERE id=$1`, [EMPTY_ROOM]);
-    const result = await retireAgentClasses(database);
-    expect(await room(EMPTY_ROOM)).toEqual({
-      reviewer_agent_id: null,
-      reviewer_fallback_ids: [],
-      reviewer_class: null,
-    });
-    expect(result.clearedRooms).toEqual([{ id: EMPTY_ROOM, name: 'empty' }]);
-  });
-
-  it('keeps a fixed reviewer and only drops a stray class', async () => {
-    await database.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_class='heavy' WHERE id=$1`, [
-      FIXED_ROOM,
-      LIGHT,
-    ]);
-    await retireAgentClasses(database);
-    expect(await room(FIXED_ROOM)).toEqual({
-      reviewer_agent_id: LIGHT,
-      reviewer_fallback_ids: [],
-      reviewer_class: null,
-    });
-  });
-
-  it('matches custom tags, then deletes stored custom tags and weight-tier rules', async () => {
-    await database.query(`UPDATE rooms SET reviewer_class='night-shift' WHERE id=$1`, [ROOM]);
+  it('deletes stored custom tags and weight-tier rules', async () => {
     await database.query(`UPDATE workspaces SET weight_tier_rules='[{"pattern":"opus*","tier":"god"}]'`);
     await retireAgentClasses(database);
-    expect((await room(ROOM))!.reviewer_agent_id).toBe(OPUS_ZED);
     const tags = await database.query(`SELECT 1 FROM agents WHERE custom_tags<>'[]'::jsonb`);
     const rules = await database.query(`SELECT 1 FROM workspaces WHERE weight_tier_rules IS NOT NULL`);
     expect(tags.rows).toHaveLength(0);
@@ -119,6 +74,6 @@ describe('retireAgentClasses', () => {
     expect(cards.rows[0]!.card.roleAgents).toEqual({ worker: [OPUS_ADA, OPUS_ZED], checker: [OPUS_ADA, OPUS_ZED] });
     for (const row of cards.rows) expect(row.card.roleBindings).toEqual({ worker: OPUS_ZED });
     // A second release finds nothing left to convert.
-    expect(await retireAgentClasses(database)).toEqual({ convertedRooms: 0, clearedRooms: [], runs: 0 });
+    expect(await retireAgentClasses(database)).toEqual({ runs: 0 });
   });
 });

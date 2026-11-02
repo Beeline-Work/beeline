@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { resolveCornerBriefApproval } from './corner-brief.js';
 import { CommandRefusalError } from './command-refusal.js';
-import { systemLine, restateSystemLine } from './system-line.js';
+import { systemLine, restateSystemLine, ensureSystemIdentity } from './system-line.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { CornerHoldInput, CornerMergeHold } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { lockCornerLifecycle } from './corner-lifecycle.js';
@@ -20,6 +21,23 @@ export async function activeCornerHolds(
       [cornerId],
     )
   ).rows;
+}
+
+/**
+ * An archived corner has no merge left to hold, so archival releases its
+ * holds in the same transaction. Without corner ids it repairs every archived
+ * corner that still has one.
+ */
+export async function releaseArchivedCornerHolds(db: SqlDatabase, cornerIds?: readonly string[]): Promise<void> {
+  if (cornerIds?.length === 0) return;
+  await ensureSystemIdentity(db);
+  await db.query(
+    `UPDATE corner_merge_holds hold SET released_at=now(),released_by=$2
+     FROM rooms corner
+     WHERE corner.id=hold.corner_id AND corner.archived_at IS NOT NULL AND hold.released_at IS NULL
+       AND ($1::uuid[] IS NULL OR hold.corner_id=ANY($1::uuid[]))`,
+    [cornerIds ?? null, SYSTEM_IDENTITY_ID],
+  );
 }
 
 /** Called in the caller's transaction, including corner creation. */

@@ -3,7 +3,8 @@ import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { validateCornerWorkflow } from '@beeline/api-contract/daemon';
-import { migrate, type QueryResult, type SqlDatabase } from './database.js';
+import { migrate, migrateData, type QueryResult, type SqlDatabase } from './database.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { describedWorkflow, PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -11,7 +12,6 @@ import { GitHubOperations } from './github-operations.js';
 import { LiveHub } from './live.js';
 import { backfillArchivedCornerCleanup } from './corner-cleanup-backfill.js';
 import { enqueueCornerBranchDeletion } from './corner-branch-cleanup.js';
-import { enqueueCornerPullRequestClosure } from './corner-close.js';
 import { systemLine } from './system-line.js';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { addressedToPersonSql } from './corner-owed.js';
@@ -2530,8 +2530,8 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived).toBe(true);
     expect(await currentState(cornerId)).toBe('closed');
     expect((await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
-    expect((await db.query(`SELECT released_at FROM corner_merge_holds WHERE id=$1`, [hold.holdId])).rows[0]!.released_at).toBeNull();
-    console.log(`R1 Demonstrated: ${path} close closes the PR and archives the held corner.`);
+    expect((await db.query(`SELECT released_at FROM corner_merge_holds WHERE id=$1`, [hold.holdId])).rows[0]!.released_at).not.toBeNull();
+    console.log(`R1 Demonstrated: ${path} close closes the PR, archives the held corner and releases its hold.`);
   });
 
   it.each(['agent', 'phone'] as const)('R1 %s close still archives when GitHub fails', async path => {
@@ -3584,6 +3584,27 @@ describe('the gate stays shut (AC-8)', () => {
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
   });
 
+  it('HOLD-ARCHIVE: closing or merging a corner releases its holds, and migration repairs older ones', async () => {
+    const active = async (cornerId: string) => Number((await db.query<{ n: string }>(
+      `SELECT count(*) n FROM corner_merge_holds WHERE corner_id=$1 AND released_at IS NULL`, [cornerId])).rows[0]!.n);
+    const closed = await approved();
+    await phone.execute('setCornerHold', { cornerId: closed }, H);
+    await phone.execute('requestCornerClose', { roomId: closed }, H);
+    expect(await active(closed)).toBe(0);
+    const merged = await approved();
+    await phone.execute('setCornerHold', { cornerId: merged }, H);
+    await mergedWebhook(merged, 7, SHA);
+    expect(await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [merged])).toMatchObject({ rowCount: 1 });
+    expect(await active(merged)).toBe(0);
+    const stale = await approved();
+    await phone.execute('setCornerHold', { cornerId: stale }, H);
+    await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [stale]);
+    await migrateData(db);
+    expect(await active(stale)).toBe(0);
+    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE corner_id=$1`, [stale])).rows)
+      .toEqual([{ released_by: SYSTEM_IDENTITY_ID }]);
+  });
+
   it('R4: holds survive more than 200 messages and deletion, without chat-derived releases', async () => {
     const cornerId = await approved();
     const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
@@ -4625,38 +4646,15 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
       .toMatchObject({ finished_at: expect.anything(), last_error: null });
   });
 
-  it('CLEANUP-GIT-1: retries the phone archive PR close after an outage without reopening work', async () => {
-    const cornerId = await inReview();
-    githubApp.closePullRequest.mockRejectedValueOnce(new Error('GitHub unavailable'))
-      .mockRejectedValueOnce(new Error('still unavailable'));
-    await new PhoneService(db, 'http://test', github).execute('requestCornerClose', { roomId: cornerId }, H);
-    expect((await db.query(`SELECT finished_at FROM corner_pr_closures WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: null });
-    await github.retryBranchDeletions();
-    expect((await db.query(`SELECT attempts,last_error,finished_at FROM corner_pr_closures WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ attempts: 1, last_error: 'still unavailable', finished_at: null });
-    await github.retryBranchDeletions();
-    expect(githubApp.closePullRequest).toHaveBeenCalledTimes(2);
-    await db.query(`UPDATE corner_pr_closures SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
-    expect(githubApp.closePullRequest).toHaveBeenCalledTimes(3);
-    expect((await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
-    expect(await currentState(cornerId)).toBe('closed');
-    expect((await db.query(`SELECT finished_at FROM corner_pr_closures WHERE corner_id=$1`, [cornerId])).rows[0]!.finished_at).not.toBeNull();
-    console.log('CLEANUP-GIT-1 Demonstrated: phone close archives during outage; durable retry closes the PR without reopening the corner.');
-  });
-
   it('CLEANUP-GIT-1: backfills historical archives once and keeps live corners out', async () => {
     const archived = await inReview();
     const live = await recordedCorner();
     await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [archived]);
     await backfillArchivedCornerCleanup(db);
     await backfillArchivedCornerCleanup(db);
-    expect((await db.query(`SELECT corner_id FROM corner_pr_closures WHERE corner_id=$1`, [archived])).rowCount).toBe(1);
     expect((await db.query(`SELECT corner_id FROM corner_branch_deletions WHERE corner_id IN ($1,$2)`, [archived, live])).rows)
       .toEqual([{ corner_id: archived }]);
     await enqueueCornerBranchDeletion(db);
-    await enqueueCornerPullRequestClosure(db);
     expect((await db.query(`SELECT corner_id FROM corner_branch_deletions WHERE corner_id=$1`, [archived])).rowCount).toBe(1);
   });
 

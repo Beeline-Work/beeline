@@ -2322,15 +2322,14 @@ ALTER TABLE push_devices ALTER COLUMN registered_at SET NOT NULL;
 CREATE INDEX IF NOT EXISTS push_devices_identity_idx ON push_devices(identity_id);
 
 -- One row per iOS device: when it was last sent a silent shade clear
--- (PushDeliveryLoop.sendReadClears). cleared_through and cleared_through_room
--- are no longer read or written; they stay for rolling-update compatibility.
+-- (PushDeliveryLoop.sendReadClears).
 CREATE TABLE IF NOT EXISTS push_read_clears (
   device_token text PRIMARY KEY REFERENCES push_devices(token) ON DELETE CASCADE,
-  cleared_through timestamptz NOT NULL,
-  cleared_through_room text NOT NULL DEFAULT '',
   sent_at timestamptz NOT NULL DEFAULT now()
 );
-ALTER TABLE push_read_clears ALTER COLUMN cleared_through DROP NOT NULL;
+-- Retired: neither read nor written, and empty in production on 2026-11-02.
+ALTER TABLE push_read_clears DROP COLUMN IF EXISTS cleared_through;
+ALTER TABLE push_read_clears DROP COLUMN IF EXISTS cleared_through_room;
 -- No longer read or written; it stays for rolling-update compatibility.
 ALTER TABLE room_read_marks ADD COLUMN IF NOT EXISTS read_at timestamptz;
 CREATE INDEX IF NOT EXISTS room_read_marks_identity_read_idx

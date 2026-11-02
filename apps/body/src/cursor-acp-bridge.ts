@@ -10,10 +10,9 @@
  * streaming mode, translating stream-json events into `session/update`
  * notifications so `acp.ts` sees real `agent_message_chunk` text.
  */
+import { agentBehavior, CURSOR_ACP_BRIDGE_LABEL } from './agent-command.js';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { existsSync } from 'node:fs';
 import { chmod, lstat, mkdir, rename, unlink, writeFile } from 'node:fs/promises';
-import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
 import { basename, dirname, resolve as resolvePath } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +20,7 @@ import { randomUUID } from 'node:crypto';
 import { enumerateCursorModels, type CursorModelCatalog } from './cursor-models.js';
 
 /** Hidden CLI flag so a bundled `beeline` process can be the ACP child. */
-export const CURSOR_ACP_BRIDGE_FLAG = '--cursor-acp-bridge';
+export { CURSOR_ACP_BRIDGE_FLAG } from './agent-command.js';
 
 /**
  * Stable harness identity for classification. Spawn argv is `node` plus this
@@ -29,7 +28,7 @@ export const CURSOR_ACP_BRIDGE_FLAG = '--cursor-acp-bridge';
  * that match on the spawn command would otherwise classify every cursor
  * session as `node`.
  */
-export const CURSOR_ACP_BRIDGE_LABEL = 'cursor-acp-bridge';
+export { CURSOR_ACP_BRIDGE_LABEL } from './agent-command.js';
 
 /**
  * cursor-agent's non-interactive allow-all switch (`--force` / `--yolo`).
@@ -100,8 +99,7 @@ type BridgeSession = {
 };
 
 export function harnessIdentityLabel(agent: { kind?: string; command?: string }): string {
-  if (agent.kind === 'cursor') return CURSOR_ACP_BRIDGE_LABEL;
-  return agent.command ?? '';
+  return agentBehavior(agent.kind).identityLabel ?? agent.command ?? '';
 }
 
 /**
@@ -120,24 +118,7 @@ export function sessionNewMcpServers<T extends { name: string }>(
   return [...servers, ...grantedRouteServers.filter((server) => !names.has(server.name))];
 }
 
-export function cursorAcpBridgeLaunch(): { command: string; args: string[] } {
-  const meta = import.meta.url;
-  if (meta === 'beeline:bundle' || meta.startsWith('beeline:')) {
-    const entry = process.argv[1];
-    if (!entry) {
-      throw new Error('Cursor ACP bridge cannot resolve the Beeline CLI entry');
-    }
-    return { command: process.execPath, args: [entry, CURSOR_ACP_BRIDGE_FLAG] };
-  }
-  const js = fileURLToPath(new URL('./cursor-acp-bridge.js', meta));
-  const ts = fileURLToPath(new URL('./cursor-acp-bridge.ts', meta));
-  if (existsSync(js)) return { command: process.execPath, args: [js] };
-  if (existsSync(ts)) {
-    const tsx = createRequire(meta).resolve('tsx');
-    return { command: process.execPath, args: ['--import', tsx, ts] };
-  }
-  throw new Error('Cursor ACP bridge entry not found next to the Beeline helper');
-}
+export { cursorAcpBridgeLaunch } from './agent-command.js';
 
 /**
  * Argv for one non-interactive cursor-agent turn. The prompt is the last

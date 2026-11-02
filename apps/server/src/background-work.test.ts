@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BackgroundWork } from './background-work.js';
+import { BackgroundWork, startBackgroundWork, startConnectionWork } from './background-work.js';
 
 describe('R-BACKGROUND-WASTE', () => {
   it('keeps repairs on their deadline during a minute of mixed notifications', async () => {
@@ -55,5 +55,59 @@ describe('R-BACKGROUND-WASTE', () => {
     expect(await work.run(true)).toBe(0);
     expect(await work.run(false)).toBe(60_000);
     expect(calls).toBe(2);
+  });
+});
+
+describe('owned timer chains', () => {
+  it('keeps connection cadence and cancels the next tick when its owner closes', async () => {
+    vi.useFakeTimers();
+    try {
+      const run = vi.fn();
+      const stop = startConnectionWork(() => { run(); if (run.mock.calls.length === 2) stop(); }, 1000);
+      await vi.advanceTimersByTimeAsync(999);
+      expect(run).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(2001);
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('runs startup work immediately and uses the next queue deadline', async () => {
+    vi.useFakeTimers();
+    try {
+      const work = new BackgroundWork();
+      const fast = vi.fn(async () => {}), slow = vi.fn(async () => {});
+      work.add('fast', 1000, fast);
+      work.add('slow', 5000, slow);
+      const stop = startBackgroundWork(work);
+      expect(fast).toHaveBeenCalledOnce();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(fast).toHaveBeenCalledTimes(6);
+      expect(slow).toHaveBeenCalledTimes(2);
+      await stop();
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(fast).toHaveBeenCalledTimes(6);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('drains an active job on close without scheduling another tick', async () => {
+    vi.useFakeTimers();
+    try {
+      let finish!: () => void;
+      const work = new BackgroundWork();
+      const run = vi.fn(() => new Promise<void>(resolve => { finish = resolve; }));
+      work.add('slow', 1000, run);
+      const stop = startBackgroundWork(work);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(run).toHaveBeenCalledOnce();
+      let stopped = false;
+      const closing = stop().then(() => { stopped = true; });
+      await Promise.resolve();
+      expect(stopped).toBe(false);
+      finish();
+      await closing;
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { vi.useRealTimers(); }
   });
 });

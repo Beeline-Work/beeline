@@ -151,6 +151,8 @@
         "scripts/render-card-buttons.mjs",
         "scripts/card-button-gallery.tsx",
         "scripts/card-buttons-native-proof.tsx",
+        // The Room deck recovery evidence builder selects this standalone renderer by path.
+        "scripts/room-deck-unavailable-proof.tsx",
         // evidence/trusty-squire-connect/README.md selects this native entry and Metro adapter by path.
         "scripts/trusty-squire-native-proof.tsx",
         "scripts/proof-shims/*.{ts,tsx,cjs}",
@@ -171,6 +173,8 @@
         "scripts/member-sheets-browser-proof.tsx",
         // ConnectionStatus.browser.test.tsx bundles this disconnected-state entry by path.
         "scripts/connection-status-browser-proof.tsx",
+        // build-room-deck-unavailable-proof.mts bundles this browser entry by path through esbuild.
+        "scripts/room-deck-unavailable-proof.tsx",
         // label-sweep-proof.browser.test.ts bundles this browser entry by path through esbuild.
         "scripts/label-sweep-components-proof.tsx",
         "scripts/ui-repair-audit/prepare.mjs",
@@ -264,6 +268,8 @@
         "scripts/render-header-alignment-proof.mjs",
         "scripts/header-alignment-proof/{native,web}.tsx",
         "scripts/room-list-proof.tsx",
+        // The room-deck unavailable evidence builder bundles this entry by path.
+        "scripts/room-deck-unavailable-proof.tsx",
         "scripts/room-list-corner-longpress-proof.tsx",
         "scripts/room-list-gestures-proof.tsx",
         "scripts/room-list-blank-proof.tsx",

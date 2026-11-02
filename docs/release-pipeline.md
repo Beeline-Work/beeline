@@ -126,7 +126,10 @@ installable when processing finishes, with no release rerun required.
 
 Installed helpers use the verified bundles published earlier by the daemon
 promotion step to `https://usebeeline.app/dl/manifest.json`, independently of
-npm. The final release notification wakes connected helpers; their first socket
+npm. The final release notification verifies that the live Pages manifest matches the
+release version and source commit, then wakes connected helpers even if another
+component or release bookkeeping failed. A no-op release sends no notice.
+Notification failure never changes the authoritative release outcome; their first socket
 registration also checks this channel. Downloads and activation follow the
 [helper update channel](cli-bundle-channel.md), so npm processing does not delay
 fleet updates.

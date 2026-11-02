@@ -723,6 +723,7 @@ export async function notifyRelease({
   sourceSha,
   repository,
   secret,
+  manifestUrl = 'https://beeline-work.github.io/beeline/dl/manifest.json',
   timeoutMs = RELEASE_NOTIFY_TIMEOUT_MS,
   fetchImpl = fetch,
 }) {
@@ -730,6 +731,14 @@ export async function notifyRelease({
   if (!secret) return { state: 'skipped', detail: 'notification secret is not configured' };
   const signal = AbortSignal.timeout(timeoutMs);
   try {
+    // Pages publication is independent of npm and the overall release record.
+    // This endpoint advertises only helpers, so never announce an unserved identity.
+    const published = await fetchImpl(manifestUrl, { signal, cache: 'no-store' });
+    if (!published.ok) return { state: 'warning', detail: `helper verification returned HTTP ${published.status}` };
+    const manifest = await published.json();
+    if (manifest.version !== version || manifest.sourceCommit !== sourceSha) {
+      return { state: 'skipped', detail: 'Pages helper does not match this release identity' };
+    }
     const response = await fetchImpl(RELEASE_NOTIFY_ENDPOINT, {
       method: 'POST',
       headers: { authorization: `Bearer ${secret}`, 'content-type': 'application/json' },
@@ -825,6 +834,7 @@ async function main(argv) {
     const result = await notifyRelease({
       ...identityFromOptions(args),
       repository: args.repository,
+      manifestUrl: args['manifest-url'],
       secret: process.env.BEELINE_RELEASE_NOTIFY_SECRET,
     });
     if (args.output) writeJson(args.output, result);

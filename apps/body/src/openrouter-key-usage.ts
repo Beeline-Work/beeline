@@ -8,6 +8,7 @@
  * only the numbers are published. Reads happen after turns, at most once a
  * minute per key, never on an idle timer.
  */
+import { agentBehavior } from './agent-command.js';
 import { createHash } from 'node:crypto';
 import { openRouterModelId } from './openrouter-routing.js';
 import type { AgentUsage, UsageSpend } from '@beeline/api-contract/daemon';
@@ -47,7 +48,7 @@ export function agentOpenRouterKey(
   model: string | undefined,
   env: Record<string, string | undefined>,
 ): string | undefined {
-  if (agentKind !== 'pi' && agentKind !== 'goose' && agentKind !== 'opencode') return undefined;
+  if (!agentBehavior(agentKind).providerKeyStore) return undefined;
   // Free agents spend Beeline's proxy, whose figures the server already counts.
   if (env.BEELINE_FREE_AGENT_ID || env.BEELINE_FREE_AGENT_MODEL_TOKEN) return undefined;
   const key = env.OPENROUTER_API_KEY?.trim();

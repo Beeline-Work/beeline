@@ -1,3 +1,5 @@
+import { startConnectionWork } from './background-work.js';
+import { notifyAgentConnection } from './postgres-live.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { recoverAdapterReviewsOnHelperChange } from './helper-review-recovery.js';
 import { CommanderWakeDeadlines } from './commander-wakes.js';
@@ -12,7 +14,6 @@ import { noteFirstSilence } from './turn-silence-notice.js';
 import { lockAgentMachine } from './machine-offline.js';
 import { freeAgentReachableSql } from './free-agents.js';
 import { systemLine } from './system-line.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 import { renudgeStrandedPendingCommands } from './agent-command.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
@@ -93,7 +94,7 @@ export class ConnectionPresence {
   #observeWorker: Promise<void> | undefined;
   readonly #release: () => void;
   readonly #releaseResync: () => void;
-  #leaseTimer: ReturnType<typeof setInterval> | undefined;
+  #leaseTimer: (() => void) | undefined;
   #attention: CornerAttentionDeadlines;
   #commanderWakes: CommanderWakeDeadlines;
   #stopped = false;
@@ -169,8 +170,7 @@ export class ConnectionPresence {
     if (this.#leaseTimer || this.#stopped) return;
     const tick = () => void this.renewLease().catch(this.report);
     tick();
-    this.#leaseTimer = setInterval(tick, this.#leaseRenewMs);
-    this.#leaseTimer.unref?.();
+    this.#leaseTimer = startConnectionWork(tick, this.#leaseRenewMs);
   }
 
   async renewLease(): Promise<void> {
@@ -281,7 +281,7 @@ export class ConnectionPresence {
 
   async stop(): Promise<void> {
     this.#stopped = true;
-    clearInterval(this.#leaseTimer);
+    this.#leaseTimer?.();
     this.#attention.stop();
     this.#commanderWakes.stop();
     this.#leaseTimer = undefined;
@@ -685,10 +685,7 @@ export async function claimAgentConnection(
       );
     return Number(claimed.rows[0]?.epoch ?? 0);
   });
-  await database.query(`SELECT pg_notify($1, $2)`, [
-    POSTGRES_LIVE_CHANNEL,
-    JSON.stringify({ table: 'agent_connection', operation: 'UPDATE', roomId: '', agentId, epoch }),
-  ]);
+  await notifyAgentConnection(database, agentId, epoch);
   live.publish({ type: 'agent-connection', roomId: '', agentId, epoch });
   await renudgeStrandedPendingCommands(database,agentId);
   await broadcastAgentPresence(database, live, agentId);

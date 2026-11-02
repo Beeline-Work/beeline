@@ -50,3 +50,38 @@ export class BackgroundWork {
     return Math.max(0, Math.min(...[...this.jobs.values()].map(job => job.pending ? 0 : job.nextAt - now)));
   }
 }
+
+/** A timeout chain tied to one live owner. Closing that owner cancels its next tick.
+ * Arm before calling work so a close inside the callback also clears the chain. */
+export function startConnectionWork(run: () => void, intervalMs: number): () => void {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout>;
+  const arm = () => {
+    timer = setTimeout(() => {
+      if (stopped) return;
+      arm();
+      run();
+    }, intervalMs);
+    timer.unref?.();
+  };
+  arm();
+  return () => { stopped = true; clearTimeout(timer); };
+}
+
+/** Drive instance-local jobs from their queue's next deadline, including startup.
+ * Instances must retain their own memory flushes and local channel cleanup. */
+export function startBackgroundWork(work: BackgroundWork): () => Promise<void> {
+  let stopped = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let running: Promise<void>;
+  const tick = () => {
+    running = work.run(false).then((delay) => {
+      if (!stopped) {
+        timer = setTimeout(tick, delay);
+        timer.unref?.();
+      }
+    });
+  };
+  tick();
+  return async () => { stopped = true; clearTimeout(timer); await running; };
+}

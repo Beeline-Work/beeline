@@ -3,7 +3,7 @@
     {
       "id": "work.command-creation",
       "module": "Work authority",
-      "invariant": "Agent commands are created only by createAgentCommand; only a command authorizes a turn.",
+      "invariant": "Agent commands are created only by agent-command.ts creation functions; only a command authorizes a turn.",
       "pattern": "INSERT\\s+INTO\\s+agent_commands\\b",
       "flags": "i",
       "scope": [
@@ -12,8 +12,8 @@
       "owners": [
         "apps/server/src/agent-command.ts"
       ],
-      "total": 1,
-      "fix": "Call createAgentCommand(db, {...}) from apps/server/src/agent-command.ts instead of inserting the row; it owns depth, dedupe and wake routing."
+      "total": 0,
+      "fix": "Call createAgentCommand(db, {...}) or createClaimedMcpAgentCommand for an explicit connected-app call in apps/server/src/agent-command.ts instead of inserting the row; it owns depth, dedupe and wake routing."
     },
     {
       "id": "corner.state-writes",
@@ -74,20 +74,20 @@
       "owners": [
         "apps/server/src/postgres-live.ts"
       ],
-      "total": 15,
+      "total": 0,
       "fix": "Publish through a named notifier in apps/server/src/postgres-live.ts (add one beside notifyConnectorAssignment) and call it, so LiveNotification and its decoder cover the event."
     },
     {
       "id": "timers.server-interval",
       "module": "Background work and timers",
-      "invariant": "Server background work runs on the leader's work queue, not on free-running intervals.",
+      "invariant": "Server background work runs on owned work queues or connection timeout chains, not on free-running intervals.",
       "pattern": "\\bsetInterval\\s*\\(",
       "scope": [
         "apps/server/src"
       ],
       "owners": [],
-      "total": 7,
-      "fix": "Use one of three shapes: a global job via the leader's work.add in apps/server/src/background.ts; a timeout chain owned by one connection and cleared in its close handler; or a due-time wake (agent_schedules/work_schedules). Do not add a setInterval."
+      "total": 0,
+      "fix": "Use leader work.add for shared jobs; startBackgroundWork in apps/server/src/background-work.ts for instance-local memory flushes/channel cleanup; startConnectionWork there for a connection-owned timeout chain cancelled on close; or a due-time wake (agent_schedules/work_schedules). Do not add a setInterval."
     },
     {
       "id": "access.membership-writes",
@@ -101,7 +101,7 @@
       "owners": [
         "apps/server/src/membership-join.ts"
       ],
-      "total": 40,
+      "total": 0,
       "fix": "Change membership through a named helper in apps/server/src/membership-join.ts (add one there if needed) and call it."
     },
     {
@@ -114,7 +114,7 @@
         "packages/api-contract/src"
       ],
       "owners": [],
-      "total": 3,
+      "total": 0,
       "fix": "Send the server a capability or setting, not the harness name, and keep the per-harness value in a Record<AgentKind, ...> table beside AGENT_KINDS in apps/body/src/agent-command.ts."
     },
     {
@@ -128,7 +128,7 @@
       "owners": [
         "apps/body/src/agent-command.ts"
       ],
-      "total": 85,
+      "total": 0,
       "fix": "Add the behaviour as a field of a Record<AgentKind, ...> table beside AGENT_KINDS in apps/body/src/agent-command.ts and read that field here instead of comparing the harness name."
     },
     {
@@ -141,7 +141,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 62,
+      "total": 60,
       "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
     },
     {
@@ -154,7 +154,7 @@
         "apps/body/src"
       ],
       "owners": [],
-      "total": 56,
+      "total": 55,
       "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
     },
     {
@@ -167,7 +167,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 13,
+      "total": 11,
       "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
     },
     {
@@ -204,7 +204,7 @@
         "apps/body/src"
       ],
       "owners": [],
-      "total": 30,
+      "total": 29,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -216,7 +216,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 21,
+      "total": 19,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -237,8 +237,8 @@
       "apps/server/src",
       "apps/auth/src"
     ],
-    "bootstrapTotal": 1816,
-    "unusedTotal": 193,
+    "bootstrapTotal": 1812,
+    "unusedTotal": 191,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -1045,7 +1045,6 @@
         "columns": {
           "identity_id": "existing before the registry; weekly audit reviews",
           "replies": "existing before the registry; weekly audit reviews",
-          "reached_milestone": "existing before the registry; weekly audit reviews",
           "answered_milestone": "existing before the registry; weekly audit reviews",
           "checked_milestone": "existing before the registry; weekly audit reviews",
           "closed": "existing before the registry; weekly audit reviews",
@@ -1664,10 +1663,8 @@
           "owner_id": "existing before the registry; weekly audit reviews",
           "source_message_id": "existing before the registry; weekly audit reviews",
           "recipients": "existing before the registry; weekly audit reviews",
-          "text_hash": "existing before the registry; weekly audit reviews",
           "text": "existing before the registry; weekly audit reviews",
-          "created_at": "existing before the registry; weekly audit reviews",
-          "recipient_count": "existing before the registry; weekly audit reviews"
+          "created_at": "existing before the registry; weekly audit reviews"
         }
       },
       "pending_mention_notices": {
@@ -2624,7 +2621,6 @@
           "id": "existing before the registry; weekly audit reviews",
           "identity_id": "existing before the registry; weekly audit reviews",
           "workspace_id": "existing before the registry; weekly audit reviews",
-          "workspace_name": "existing before the registry; weekly audit reviews",
           "created_at": "existing before the registry; weekly audit reviews"
         }
       },

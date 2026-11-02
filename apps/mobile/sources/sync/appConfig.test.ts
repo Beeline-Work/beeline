@@ -6,7 +6,7 @@ vi.mock('expo-constants', () => ({
   default: {
     get expoConfig() {
       reads.n += 1;
-      return { extra: { app: { buzzyMonolithUrl: 'https://server.usebeeline.app/' } } };
+      return { extra: { app: { buzzyMonolithUrl: 'https://server.usebeeline.app/', postHogKey: 'manifest-key', releaseVersion: 'v1.2.3', releaseSha: 'manifest-sha' } } };
     },
   },
 }));
@@ -15,7 +15,6 @@ describe('loadAppConfig', () => {
   beforeEach(() => {
     reads.n = 0;
     delete process.env.EXPO_PUBLIC_BUZZY_MONOLITH_URL;
-    delete process.env.EXPO_PUBLIC_POSTHOG_KEY;
     vi.resetModules();
   });
 
@@ -31,4 +30,9 @@ describe('loadAppConfig', () => {
     for (let call = 0; call < 13; call += 1) getBuzzRuntimeConfig();
     expect(reads.n).toBe(1);
   });
+});
+
+it('uses the manifest provider key and release version supplied by app.config', async () => {
+  const { loadAppConfig } = await import('@/sync/appConfig');
+  expect(loadAppConfig()).toMatchObject({ postHogKey: 'manifest-key', releaseVersion: 'v1.2.3' });
 });

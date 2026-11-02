@@ -1,4 +1,4 @@
-import { cornerReviewerSql } from './corner-reviewer.js';
+import { writeSurfaceEventSubscriptions } from './membership-join.js';
 import { SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 
@@ -96,26 +96,7 @@ export async function setRoomEventSubscriptions(
   identityId: string,
   kinds: readonly string[],
 ): Promise<string[]> {
-  const result = await database.query<{ event_subscriptions: string[] }>(
-    `WITH surface AS (
-      SELECT room.id,room.parent_id,CASE WHEN ${cornerReviewerSql('room')}=$2
-        AND NOT $3::jsonb @> '["check-passed"]'::jsonb
-        THEN $3::jsonb||'["check-passed"]'::jsonb ELSE $3::jsonb END event_subscriptions
-      FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
-      JOIN memberships member ON member.room_id=COALESCE(room.parent_id,room.id)
-        AND member.identity_id=$2 AND member.removed_at IS NULL WHERE room.id=$1
-    ), room_update AS (
-      UPDATE memberships member SET event_subscriptions=surface.event_subscriptions FROM surface
-      WHERE surface.parent_id IS NULL AND member.room_id=surface.id AND member.identity_id=$2
-      RETURNING member.event_subscriptions
-    ), corner_update AS (
-      INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions)
-      SELECT id,$2,event_subscriptions FROM surface WHERE parent_id IS NOT NULL
-      ON CONFLICT(corner_id,identity_id) DO UPDATE SET event_subscriptions=EXCLUDED.event_subscriptions
-      RETURNING event_subscriptions
-    ) SELECT * FROM room_update UNION ALL SELECT * FROM corner_update`,
-    [roomId, identityId, JSON.stringify(kinds)],
-  );
+  const result = await writeSurfaceEventSubscriptions<{ event_subscriptions: string[] }>(database, [roomId, identityId, JSON.stringify(kinds)]);
   if (!result.rowCount) throw new Error('daemon room access denied');
   return result.rows[0]!.event_subscriptions;
 }

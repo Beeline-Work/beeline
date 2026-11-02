@@ -840,6 +840,14 @@ jobs:
         run: npx vitest run --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 --poolOptions.forks.singleFork --isolate --exclude sources/config/nativeFingerprint.test.ts
       - name: Verify Android release shrinking mods
         run: node --test --test-concurrency=1 scripts/android-shrinking.test.mjs
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prove Android cached update integrity and retry
+        env:
+          JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+        run: node --test --test-concurrency=1 scripts/android-ota-integrity.test.mjs
       # TYPECHECK already runs the same isolated mobile package command.
 
   # This is the one gate whose evidence exists nowhere else: a Metro export

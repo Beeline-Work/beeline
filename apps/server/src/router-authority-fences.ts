@@ -20,10 +20,17 @@ export async function currentAuthorityFence(db:SqlDatabase,viewer:string,scope:s
     allowed=Boolean((await db.query(`SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
       AND identity_id=$2 AND removed_at IS NULL`,[workspace,viewer])).rowCount);
   }else if(domain===`room:${scope}`){
-    allowed=Boolean((await db.query(`SELECT 1 FROM rooms room JOIN memberships member
-      ON member.room_id=COALESCE(room.parent_id,room.id) AND member.identity_id=$2 AND member.removed_at IS NULL
-      JOIN memberships workspace ON workspace.workspace_id=room.workspace_id AND workspace.room_id IS NULL
-      AND workspace.identity_id=$2 AND workspace.removed_at IS NULL WHERE room.id=$1`,[scope,viewer])).rowCount);
+    const room=(await db.query<{parent_id:string|null;workspace_allowed:boolean;member_allowed:boolean}>(
+      `SELECT room.parent_id,EXISTS(SELECT 1 FROM memberships workspace WHERE workspace.workspace_id=room.workspace_id
+        AND workspace.room_id IS NULL AND workspace.identity_id=$2 AND workspace.removed_at IS NULL) workspace_allowed,
+       EXISTS(SELECT 1 FROM memberships member WHERE member.room_id=COALESCE(room.parent_id,room.id)
+        AND member.identity_id=$2 AND member.removed_at IS NULL) member_allowed
+       FROM rooms room WHERE room.id=$1`,[scope,viewer])).rows[0];
+    allowed=Boolean(room?.workspace_allowed&&room.member_allowed);
+    // The effective parent/Workspace domain owns an inherited denial. Only
+    // retire this Room's older chain, or a later parent regrant would remain
+    // blocked forever at an unchanged child epoch.
+    if(room&&(room.parent_id!==null||!room.workspace_allowed))mode='advance';
   }else if(domain===`object:${scope}`){
     try{await authorizedMediaMetadata(db,scope,viewer);allowed=true;}
     catch(error){if(!(error instanceof PhoneOperationError)||error.status!==404)throw error;allowed=false;}

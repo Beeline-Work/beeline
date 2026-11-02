@@ -76,7 +76,10 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
             const plan = routerSourcePlan(causes,viewer);
             const facts: RouterFact[] = [];
             for (const family of negotiated) {
-              if (!plan.families.has(family)) continue;
+              const affected=plan.families.has(family);
+              // Workspace group names follow DB audience and the closed
+              // registry. This is not a report of what a phone caches.
+              if(!affected&&family==='room-head')continue;
               const transportRooms = family === 'room-head' ? (await db.query<{id:string}>(
                 `SELECT id FROM rooms WHERE workspace_id=$1 AND id=ANY($2::uuid[])`,[workspace,[...sources.rooms()]] )).rows.map(r=>r.id) : [];
               const scopes = family === 'room-head' ? [...new Set([...transportRooms.filter(room => plan.allRooms || plan.rooms.has(room)),...plan.removedRooms])] : [workspace];
@@ -84,7 +87,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
                 const input = (family==='room-head' ? {family,workspaceId:workspace,roomId:scope} : {family,workspaceId:workspace}) satisfies RouterSnapshotInput;
                 let authority,ticket:RouterBuildTicket|undefined;
                 try {
-                  if(policy?.sharedBuilds){
+                  if(affected&&policy?.sharedBuilds){
                     ticket=await readRouterBuildTicket(db,input,viewer,policy.sharedBuilds.basis);
                     if(ticket.cut.stream!==to.stream||ticket.cut.epoch!==to.epoch||ticket.cut.through!==to.through)
                       throw new RouterProjectionUnavailable('dependency');
@@ -98,6 +101,12 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
                     payload:{kind:'authority',...denied,allowed:false}});
                   continue;
                 }
+                if(!affected){
+                  const group=routerAtomicGroup(input,viewer),domain=`reader:${viewer}:workspace:${workspace}:visibility`;
+                  if(!facts.some(fact=>fact.atomicGroup===group&&fact.payload.kind==='authority-fence'))
+                    facts.push({atomicGroup:group,authority,payload:{kind:'authority-fence',scope:workspace,authorityScope:domain,mode:'advance'}});
+                  continue;
+                }
                 const value = ticket&&policy?.sharedBuilds
                   ?(await policy.sharedBuilds.coordinator.build(ticket,(tx,args,reader)=>sources.phone.buildRouterValue(tx,args,reader))).value
                   :await sources.phone.buildRouterValue(db,input,viewer);
@@ -106,11 +115,11 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
                   payload:{kind:'scope-replace',family,scope,value}} as RouterFact);
               }
             }
-            const frames = encodeRouterBatch(from,to,facts);
             return async () => {
               await ready;
               if (stopped) return;
-              await fenceRouterBatch(database,workspace,viewer,facts,() => {
+              await fenceRouterBatch(database,workspace,viewer,facts,safeFacts => {
+                const frames=encodeRouterBatch(from,to,safeFacts);
                 if (!stopped) for (const frame of frames) send(JSON.stringify(frame));
                 return undefined;
               });

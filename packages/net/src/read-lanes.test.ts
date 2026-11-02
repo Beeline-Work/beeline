@@ -20,6 +20,19 @@ function setup(execute: () => Promise<LaneSnapshot> = async () => snapshot()) {
 }
 
 describe('local read lanes (P2)', () => {
+  it('reuses committed coverage when the initial LIVE observer immediately blurs before the opening promise unwinds',async()=>{
+    let reads=0,release=()=>{},blurred!:()=>void;
+    const done=new Promise<void>(resolve=>{blurred=resolve;});
+    const lanes=setup(async()=>{reads++;return snapshot();});
+    let first=true;
+    lanes.subscribe(request,()=>{
+      if(first&&lanes.peek(request).state==='LIVE'){first=false;release();blurred();}
+    });
+    release=lanes.demand(request,{},permit);await done;
+    expect(lanes.peek(request)).toMatchObject({state:'INACTIVE_CACHED',value:{count:1}});
+    lanes.demand(request,{},permit);await drain();
+    expect(lanes.peek(request)).toMatchObject({state:'LIVE',value:{count:1}});expect(reads).toBe(1);
+  });
   it('coalesces two owners into one read; a second LIVE owner consumes no read', async () => {
     let reads = 0;
     const lanes = setup(async () => { reads++; return snapshot(); });

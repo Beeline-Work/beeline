@@ -68,12 +68,6 @@ export async function deniedRouterAuthorityScope(db: SqlDatabase, args: RouterSn
   }
   return {scope:input.workspaceId,authorityScope:`reader:${viewer}:workspace:${input.workspaceId}`};
 }
-async function currentCertificateScopes(db:SqlDatabase,expected:RouterAuthorityCertificate):Promise<RouterAuthorityCertificate>{
-  const rows=await db.query<{scope:string;epoch:string}>(`SELECT scope,epoch::text FROM router_authority WHERE scope=ANY($1::text[]) ORDER BY scope`,
-    [expected.scopes.map(s=>s.authorityScope)]);
-  if(rows.rows.length!==expected.scopes.length)throw new RouterProjectionUnavailable('authority');
-  return routerAuthority(rows.rows.map(row=>({authorityScope:row.scope,epoch:row.epoch})));
-}
 export async function readRouterCut(db: SqlDatabase, workspace: string): Promise<RouterCut> {
   const stream = `workspace:${workspace}`;
   const row = (await db.query<{ epoch: string; sequence: string }>(
@@ -189,24 +183,109 @@ export class RouterProjectionDrain {
   }
 }
 
-/** One final current-authority fence covers every part in a logical batch. */
+const ROOM_SCOPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function groupInput(group:string,workspace:string,viewer:string):ResolvedRouterSnapshotInput|undefined {
+  if(group===`room-list:${workspace}:${viewer}`)return {family:'room-list',workspaceId:workspace};
+  if(group===`needs-you:${workspace}:${viewer}`)return {family:'needs-you',workspaceId:workspace};
+  const prefix='room-head:',suffix=`:${viewer}`;
+  if(group.startsWith(prefix)&&group.endsWith(suffix)){
+    const room=group.slice(prefix.length,-suffix.length);
+    if(ROOM_SCOPE.test(room))return {family:'room-head',workspaceId:workspace,roomId:room};
+  }
+  return undefined;
+}
+function validGroupCertificate(authority:RouterAuthorityCertificate,readerScope:string,input:ResolvedRouterSnapshotInput):boolean {
+  try{
+    if(routerAuthority(authority.scopes).digest!==authority.digest||authority.scopes.some(scope=>!/^\d+$/.test(scope.epoch)))return false;
+    const domains=authority.scopes.map(scope=>scope.authorityScope);
+    if(!domains.includes(readerScope))return false;
+    if(!input.roomId)return domains.length===2&&domains.includes(`${readerScope}:visibility`);
+    return domains.length>=2&&domains.length<=3&&domains.includes(`room:${input.roomId}`)&&
+      domains.every(domain=>domain===readerScope||domain.startsWith('room:')&&ROOM_SCOPE.test(domain.slice(5)));
+  }catch{return false;}
+}
+function validProjectedMember(fact:RouterFact,input:ResolvedRouterSnapshotInput,workspace:string,viewer:string,readerScope:string):boolean {
+  const payload=fact.payload,scope=input.roomId??workspace;
+  if(payload.kind==='authority')return fact.authority.scopes.some(item=>item.authorityScope===payload.authorityScope)&&
+    (payload.scope===workspace&&payload.authorityScope===readerScope||ROOM_SCOPE.test(payload.scope)&&payload.authorityScope===`room:${payload.scope}`);
+  if(payload.kind==='authority-fence')return !input.roomId&&payload.mode==='advance'&&payload.scope===workspace&&
+    payload.authorityScope===`${readerScope}:visibility`;
+  return payload.kind==='scope-replace'&&payload.scope===scope&&
+    routerAtomicGroup({family:payload.family,workspaceId:workspace,...(payload.family==='room-head'?{roomId:scope}:{})} as RouterSnapshotInput,viewer)===fact.atomicGroup;
+}
+
+/** One short final fence covers all permitted groups and current content-free
+ * controls. A stale group cannot discard another group's authorized data.
+ * No per-socket/held-group inventory or delivery rewind is maintained here. */
 export async function fenceRouterBatch(database: SqlDatabase, workspace: string, viewer: string,
-  facts: readonly RouterFact[], enqueue: () => undefined): Promise<void> {
+  facts: readonly RouterFact[], enqueue: (safeFacts:readonly RouterFact[]) => undefined): Promise<void> {
+  const groups=new Map<string,RouterFact[]>();
+  for(const fact of facts){
+    if(!groups.has(fact.atomicGroup))groups.set(fact.atomicGroup,[]);
+    groups.get(fact.atomicGroup)!.push(fact);
+  }
+  if(groups.size>256||facts.length>512)throw new RouterProjectionUnavailable('budget');
   await database.transaction(async db => {
     await db.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
     await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
-    for (const fact of facts) {
-      const input: ResolvedRouterSnapshotInput = {family: fact.payload.kind === 'authority' ? 'room-list' : fact.payload.family,
-        workspaceId:workspace,
-        ...(fact.authority.scopes.some(s => s.authorityScope === `room:${fact.payload.scope}`) ? {roomId:fact.payload.scope} : {})};
-      const current = fact.payload.kind === 'authority' ? await currentCertificateScopes(db,fact.authority) : await readRouterAuthority(db,input,viewer);
-      if(fact.payload.kind==='authority') {
-        const target=fact.payload.authorityScope;
-        if(!fact.authority.scopes.some(s=>s.authorityScope===target))throw new RouterProjectionUnavailable('authority');
+    const inputs=new Map([...groups.keys()].map(group=>[group,groupInput(group,workspace,viewer)]));
+    const roomIds=[...new Set([...inputs.values()].flatMap(input=>input?.roomId?[input.roomId]:[]))];
+    const access=(await db.query<{workspace_allowed:boolean;rooms:{id:string;workspace_id:string;parent_id:string|null;allowed:boolean}[]}>(
+      `SELECT EXISTS(SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+         AND identity_id=$2 AND removed_at IS NULL) workspace_allowed,
+       COALESCE((SELECT jsonb_agg(jsonb_build_object('id',room.id,'workspace_id',room.workspace_id,'parent_id',room.parent_id,'allowed',
+         EXISTS(SELECT 1 FROM memberships member WHERE member.room_id=COALESCE(room.parent_id,room.id)
+           AND member.identity_id=$2 AND member.removed_at IS NULL)) ORDER BY room.id)
+         FROM rooms room WHERE room.id=ANY($3::uuid[])),'[]'::jsonb) rooms`,[workspace,viewer,roomIds])).rows[0];
+    if(!access)throw new RouterProjectionUnavailable('authority');
+    const rooms=new Map(access.rooms.map(room=>[room.id,room]));
+    const readerScope=`reader:${viewer}:workspace:${workspace}`;
+    const domains=new Set([readerScope,`${readerScope}:visibility`]);
+    for(const id of roomIds){domains.add(`room:${id}`);const parent=rooms.get(id)?.parent_id;if(parent)domains.add(`room:${parent}`);}
+    if(domains.size>512)throw new RouterProjectionUnavailable('budget');
+    const rows=await db.query<{scope:string;epoch:string}>(`SELECT scope,epoch::text FROM router_authority WHERE scope=ANY($1::text[])`,[[...domains]]);
+    const epochs=new Map(rows.rows.filter(row=>/^\d+$/.test(row.epoch)).map(row=>[row.scope,row.epoch]));
+    const certificate=(scopes:readonly string[]):RouterAuthorityCertificate|undefined=>scopes.every(scope=>epochs.has(scope))
+      ?routerAuthority(scopes.map(authorityScope=>({authorityScope,epoch:epochs.get(authorityScope)!}))):undefined;
+    const readerCertificate=certificate([readerScope]);
+    if(!readerCertificate)throw new RouterProjectionUnavailable('authority');
+    const safe:RouterFact[]=[];
+    for(const [group,members]of groups){
+      const input=inputs.get(group);
+      const scope=input?.roomId??workspace;
+      const current=input?certificate([readerScope,...(input.roomId
+        ?[`room:${input.roomId}`,...(rooms.get(input.roomId)?.parent_id?[`room:${rooms.get(input.roomId)!.parent_id}`]:[])]
+        :[`${readerScope}:visibility`])]):undefined;
+      const unavailable=(reason:'authority'|'dependency'='authority')=>safe.push({atomicGroup:group,authority:current??readerCertificate,
+        payload:{kind:'group-unavailable',scope,reason}});
+      if(!input||!current){unavailable();continue;}
+      if(input.roomId&&rooms.has(input.roomId)&&rooms.get(input.roomId)!.workspace_id!==workspace){unavailable('dependency');continue;}
+      const allowed=access.workspace_allowed&&(!input.roomId||rooms.get(input.roomId)?.allowed===true);
+      if(!allowed){
+        const parent=rooms.get(input.roomId!)?.parent_id;
+        if(access.workspace_allowed&&parent){
+          // A reparent retires the old child chain. Its new parent decides
+          // current access; a later parent regrant need not change child epoch.
+          safe.push({atomicGroup:group,authority:current,payload:{kind:'authority-fence',scope:input.roomId!,authorityScope:`room:${input.roomId}`,mode:'advance'}});
+        }
+        const deniedScope=!access.workspace_allowed?workspace:parent??input.roomId!;
+        const domain=!access.workspace_allowed?readerScope:`room:${deniedScope}`;
+        if(!current.scopes.some(item=>item.authorityScope===domain)){unavailable();continue;}
+        safe.push({atomicGroup:group,authority:current,payload:{kind:'authority-fence',scope:deniedScope,authorityScope:domain,mode:'deny'}});
+        continue;
       }
-      if (current.digest !== fact.authority.digest)
-        throw new RouterProjectionUnavailable('authority');
+      const expected=members[0]!.authority;
+      const coherent=members.every(fact=>validGroupCertificate(fact.authority,readerScope,input)&&fact.authority.digest===expected.digest&&
+        validProjectedMember(fact,input,workspace,viewer,readerScope));
+      if(!coherent){unavailable();continue;}
+      if(expected.digest===current.digest&&members.every(fact=>fact.payload.kind==='scope-replace'||fact.payload.kind==='authority-fence')){safe.push(...members);continue;}
+      const changed=current.scopes.filter(now=>expected.scopes.some(prior=>prior.authorityScope===now.authorityScope&&prior.epoch!==now.epoch));
+      if(!changed.length){unavailable();continue;}
+      for(const target of changed){
+        const logical=target.authorityScope.startsWith('room:')?target.authorityScope.slice(5):workspace;
+        safe.push({atomicGroup:group,authority:current,payload:{kind:'authority-fence',scope:logical,authorityScope:target.authorityScope,mode:'advance'}});
+      }
     }
-    enqueue();
+    enqueue(safe);
   });
 }

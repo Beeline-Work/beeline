@@ -9,7 +9,9 @@ export type LaneState = 'ABSENT' | 'OPENING' | 'LIVE' | 'PARKED' | 'INACTIVE_CAC
 export type LaneView = Readonly<{ state: LaneState; value: unknown | null; error: string | null; cut: LaneCut | null }>;
 export type LaneFact = Readonly<{ atomicGroup: string; authority: LaneAuthority; payload:
   | { kind: 'scope-replace'; family: LaneFamily; scope: string; value: unknown }
-  | { kind: 'authority'; scope: string; authorityScope?: string; allowed: boolean } }>;
+  | { kind: 'authority'; scope: string; authorityScope?: string; allowed: boolean }
+  | {kind:'authority-fence';scope:string;authorityScope:string;mode:'deny'|'advance'}
+  | {kind:'group-unavailable';scope:string;reason:'authority'|'dependency'} }>;
 export type LaneBatch = Readonly<{ from: LaneCut; to: LaneCut; facts: readonly LaneFact[] }>;
 export type LaneIdentity = Readonly<{ origin: string; principal: string; sessionEpoch: number }>;
 export type LanePermit = Readonly<{ isCurrent(): boolean }>;
@@ -28,6 +30,8 @@ type Entry = {
   snapshot?: LaneSnapshot; flight?: Promise<void>; revision: number; connection: number;
   /** Content-free continuity retained while an authority floor hides data. */
   baseline?:Omit<LaneSnapshot,'value'>;
+  /** Verified control classification, never a painted/persisted data cut. */
+  classified?:LaneCut;
   covered:boolean;committing:number;
   pending: LaneBatch[]; pendingBytes: number; future: LaneBatch[]; futureBytes: number; listeners: Set<() => void>;
 };
@@ -110,7 +114,7 @@ export class ReadLanes {
     this.families.clear();
     for (const entry of this.entries.values()) {
       entry.revision += 1; entry.flight = undefined; entry.pending = []; entry.pendingBytes = 0; entry.future = []; entry.futureBytes = 0;
-      entry.snapshot = undefined;entry.baseline=undefined;
+      entry.snapshot = undefined;entry.baseline=undefined;entry.classified=undefined;
       entry.covered=false;
       this.publish(entry, { ...absent(), state: 'PARKED', error: 'Connection interrupted; Retry.' });
     }
@@ -137,7 +141,10 @@ export class ReadLanes {
       if (entry.owners.get(token) !== owner) return;
       owner.active = false; entry.owners.delete(token);
       if (!liveOwner(entry)) {
-        const reusable=continuouslyFed(entry.request.family)&&entry.view.state==='LIVE'&&entry.covered&&!entry.flight&&!entry.committing&&!entry.pending.length&&!entry.future.length;
+        // LIVE+covered is published only after a successful coherent commit.
+        // The opening promise may still be unwinding after that notification;
+        // its tail cannot invalidate this coverage when no facts are queued.
+        const reusable=continuouslyFed(entry.request.family)&&entry.view.state==='LIVE'&&entry.covered&&!entry.committing&&!entry.pending.length&&!entry.future.length;
         if(!reusable)entry.covered=false;
         // A pending reply can no longer paint or restore authority.
         entry.revision += 1; entry.flight = undefined;
@@ -170,9 +177,12 @@ export class ReadLanes {
     const session = this.session;
     const work = this.serial.then(async () => {
       if (session !== this.session) return;
-      const revocations = batch.facts.filter(fact => fact.payload.kind === 'authority' && !fact.payload.allowed);
-      for (const fact of revocations) {
-        if (fact.payload.kind !== 'authority') continue;
+      for (const fact of batch.facts) {
+        if(fact.payload.kind==='group-unavailable'){
+          await this.unavailableGroup(batch.to.stream,fact.atomicGroup);continue;
+        }
+        if(fact.payload.kind!=='authority-fence'&&(fact.payload.kind!=='authority'||fact.payload.allowed))continue;
+        const mode=fact.payload.kind==='authority-fence'?fact.payload.mode:'deny';
         const logicalScope = fact.payload.scope;
         // Wire removal separates logical resource scope from the exact
         // denied permission domain. Never infer denial from another domain
@@ -181,10 +191,12 @@ export class ReadLanes {
         const streamWorkspace = batch.to.stream.startsWith('workspace:') ? batch.to.stream.slice('workspace:'.length) : undefined;
         const roomFits = targetDomain === `room:${logicalScope}` && !!streamWorkspace &&
           fact.authority.scopes.some(scope => scope.authorityScope === `reader:${this.identity.principal}:workspace:${streamWorkspace}`);
-        const domainFits = roomFits || targetDomain === `reader:${this.identity.principal}:workspace:${logicalScope}` &&
-          batch.to.stream === `workspace:${logicalScope}`;
+        const domainFits = roomFits || batch.to.stream === `workspace:${logicalScope}`&&
+          (targetDomain === `reader:${this.identity.principal}:workspace:${logicalScope}`||
+            mode==='advance'&&targetDomain===`reader:${this.identity.principal}:workspace:${logicalScope}:visibility`);
         const target = domainFits ? fact.authority.scopes.find(scope => scope.authorityScope === targetDomain) : undefined;
-        if (!target) {
+        if (!target||!/^\d+$/.test(target.epoch)) {
+          if(fact.payload.kind==='authority-fence'){await this.unavailableGroup(batch.to.stream,fact.atomicGroup);continue;}
           for (const entry of this.entries.values()) if (entry.request.roomId === logicalScope ||
               entry.request.workspaceId === logicalScope || entry.snapshot?.cut.stream === `workspace:${logicalScope}`) {
             entry.revision += 1; entry.snapshot = undefined; entry.flight = undefined;
@@ -192,34 +204,62 @@ export class ReadLanes {
           }
           continue;
         }
-        await this.revoke(target.authorityScope, target.epoch);
-
+        const affected=[...this.entries.values()].filter(entry=>{
+          const held=entry.snapshot??entry.baseline;
+          if(!held||held.atomicGroup!==fact.atomicGroup||!sameStream(held.cut,batch.to))return false;
+          if(entry.request.family==='room-head'&&!fact.authority.scopes.some(scope=>scope.authorityScope===`room:${entry.request.roomId}`))return false;
+          // An older control cannot erase a subsequently authorized chain.
+          return !held.authority.scopes.some(prior=>fact.authority.scopes.some(now=>now.authorityScope===prior.authorityScope&&
+            /^\d+$/.test(prior.epoch)&&/^\d+$/.test(now.epoch)&&BigInt(prior.epoch)>BigInt(now.epoch)));
+        });
+        if(mode==='advance')await this.advance(target.authorityScope,target.epoch);
+        else{
+          await this.revoke(target.authorityScope,target.epoch);
+          // A new parent may not exist in an older cached chain. This group's
+          // explicit current denial still hides that older payload/flight.
+          for(const entry of affected)if(entry.view.state!=='REVOKED')this.retire(entry);
+          if(affected.length)await this.storage?.remove(this.groupStorageKey(fact.atomicGroup));
+        }
+        for(const entry of affected){
+          const held=entry.snapshot??entry.baseline;if(!held)continue;
+          const progress=entry.classified??held.cut;
+          if(sameStream(progress,batch.from)&&batch.from.through<=progress.through&&batch.to.through>progress.through)
+            entry.classified=batch.to;
+        }
       }
       const installs: { entry: Entry; snapshot: LaneSnapshot }[] = [];
       for (const entry of this.entries.values()) {
-        if (entry.view.state === 'REVOKED' || entry.view.state === 'PARKED') continue;
+        if (entry.view.state === 'PARKED') continue;
         if (entry.flight) {
           if (entry.request.workspaceId ? batch.to.stream !== `workspace:${entry.request.workspaceId}` :
             !batch.facts.some(fact => fact.payload.kind === 'scope-replace' && fact.payload.family === entry.request.family && fact.payload.scope === scopeOf(entry.request))) continue;
-          const size = bytes(batch);
+          const group=(entry.snapshot??entry.baseline)?.atomicGroup;
+          const related=new Set(batch.facts.filter(fact=>fact.payload.kind==='scope-replace'&&
+            fact.payload.family===entry.request.family&&fact.payload.scope===scopeOf(entry.request)).map(fact=>fact.atomicGroup));
+          if(group)related.add(group);
+          const queued={...batch,facts:batch.facts.filter(fact=>fact.payload.kind!=='scope-replace'||related.has(fact.atomicGroup))};
+          const size = bytes(queued);
           const primaryBytes = entry.pending[0] ? bytes(entry.pending[0]) : 0;
           if (size > 1024 * 1024 || entry.pending.length >= 17 ||
               entry.pending.length > 0 && entry.pendingBytes - primaryBytes + size > 256 * 1024)
             this.park(entry, 'Projection queue overflow; Retry.');
-          else { entry.pending.push(batch); entry.pendingBytes += size; }
+          else { entry.pending.push(queued); entry.pendingBytes += size; }
           continue;
         }
         const held = entry.snapshot??entry.baseline;
         if (!held || held.cut.stream !== batch.to.stream) continue;
         if (!sameStream(held.cut, batch.to)) { this.park(entry, 'Projection version changed; Retry.'); continue; }
         if (batch.to.through <= held.cut.through) continue;
-        if (batch.from.through > held.cut.through) {
+        const progress=entry.classified??held.cut;
+        if (batch.from.through > progress.through) {
+          const queued={...batch,facts:batch.facts.filter(fact=>fact.atomicGroup===held.atomicGroup)};
+          if(!queued.facts.length)continue;
           const duplicate = entry.future.find(held => held.from.through === batch.from.through && held.to.through === batch.to.through);
-          if (duplicate && JSON.stringify(duplicate) !== JSON.stringify(batch)) this.park(entry, 'Conflicting projection; Retry.');
+          if (duplicate && JSON.stringify(duplicate) !== JSON.stringify(queued)) this.park(entry, 'Conflicting projection; Retry.');
           else if (!duplicate) {
-            const size = bytes(batch);
+            const size = bytes(queued);
             if (entry.future.length >= 16 || entry.futureBytes + size > 256 * 1024) this.park(entry, 'Projection gap; Retry.');
-            else { entry.future.push(batch); entry.futureBytes += size; }
+            else { entry.future.push(queued); entry.futureBytes += size; }
           }
           continue;
         }
@@ -239,12 +279,16 @@ export class ReadLanes {
       await this.installGroups(installs, session);
       const ready = new Map<string, LaneBatch>();
       for (const entry of this.entries.values()) {
-        const cut = entry.snapshot?.cut??entry.baseline?.cut;
-        if (!cut || entry.view.state === 'PARKED' || entry.view.state === 'REVOKED') continue;
+        const cut = entry.classified??entry.snapshot?.cut??entry.baseline?.cut;
+        if (!cut || entry.view.state === 'PARKED') continue;
         entry.future = entry.future.filter(future => {
           if (future.from.through > cut.through) return true;
           entry.futureBytes -= bytes(future);
-          if (future.to.through > cut.through) ready.set(JSON.stringify([future.from, future.to]), future);
+          if (future.to.through > cut.through){
+            const key=JSON.stringify([future.from,future.to]),previous=ready.get(key);
+            const facts=new Map([...(previous?.facts??[]),...future.facts].map(fact=>[JSON.stringify(fact),fact]));
+            ready.set(key,{...future,facts:[...facts.values()]});
+          }
           return false;
         });
       }
@@ -257,6 +301,42 @@ export class ReadLanes {
   unavailable(stream: string, family: LaneFamily, reason = 'Projection unavailable; Retry.'): void {
     for (const entry of this.entries.values()) if (entry.request.family === family &&
       (entry.snapshot?.cut.stream ?? `workspace:${entry.request.workspaceId}`) === stream) this.park(entry, reason);
+  }
+  async unavailableGroup(stream:string,group:string):Promise<void>{
+    const changed:Entry[]=[];
+    for(const entry of this.entries.values()){
+      const held=entry.snapshot??entry.baseline;
+      const canonical=entry.request.family==='room-head'?`room-head:${entry.request.roomId}:${this.identity.principal}`:
+        `${entry.request.family==='room-list'?'room-list':'needs-you'}:${entry.request.workspaceId}:${this.identity.principal}`;
+      if(held?held.atomicGroup!==group||held.cut.stream!==stream:
+        canonical!==group||(entry.request.workspaceId?stream!==`workspace:${entry.request.workspaceId}`:!stream.startsWith('workspace:')))continue;
+      entry.revision++;entry.flight=undefined;entry.snapshot=undefined;entry.baseline=undefined;entry.classified=undefined;entry.covered=false;
+      entry.pending=[];entry.pendingBytes=0;entry.future=[];entry.futureBytes=0;
+      entry.view=Object.freeze({...absent(),state:'PARKED',error:'Projection unavailable; Retry.'});changed.push(entry);
+    }
+    for(const entry of changed)this.notify(entry);
+    if(changed.length)await this.storage?.remove(this.groupStorageKey(group));
+  }
+  private groupStorageKey(group:string):string{return JSON.stringify([this.identity.origin,this.identity.principal,group]);}
+  private retire(entry:Entry):void{
+    const held=entry.snapshot??entry.baseline;
+    const future=this.futureAfterFence(entry,held?.atomicGroup??'');
+    if(entry.snapshot){const {value:_value,...baseline}=entry.snapshot;entry.baseline=baseline;}
+    entry.revision++;entry.flight=undefined;entry.snapshot=undefined;entry.covered=false;
+    entry.pending=[];entry.pendingBytes=0;entry.future=future?.batches??[];entry.futureBytes=future?.bytes??0;
+    this.publish(entry,{...absent(),state:'REVOKED',error:'Access removed.'});
+  }
+  private futureAfterFence(entry:Entry,group:string):{batches:LaneBatch[];bytes:number}|undefined{
+    const kept=new Map<string,LaneBatch>();let total=0;
+    for(const batch of [...entry.pending,...entry.future]){
+      const facts=batch.facts.filter(fact=>fact.atomicGroup===group);
+      if(!facts.length||facts.some(fact=>fact.payload.kind==='scope-replace'&&!this.authorized(fact.authority)))continue;
+      const safe={...batch,facts},key=JSON.stringify([batch.from,batch.to]),prior=kept.get(key);
+      if(prior){if(JSON.stringify(prior)!==JSON.stringify(safe))return;continue;}
+      const size=bytes(safe);if(kept.size>=16||total+size>256*1024)return;
+      kept.set(key,safe);total+=size;
+    }
+    return {batches:[...kept.values()],bytes:total};
   }
 
   /** Retire only strictly older certificates. Keep no hidden content, make no
@@ -272,12 +352,14 @@ export class ReadLanes {
       const snapshot=entry.snapshot??entry.baseline;
       const installed=snapshot?.authority.scopes.find(authority=>authority.authorityScope===scope);
       if(!installed||/^\d+$/.test(installed.epoch)&&BigInt(installed.epoch)>=BigInt(epoch))continue;
+      const future=this.futureAfterFence(entry,snapshot!.atomicGroup);
       entry.revision++;entry.flight=undefined;
       entry.covered=false;
-      entry.pending=[];entry.pendingBytes=0;entry.future=[];entry.futureBytes=0;
+      entry.pending=[];entry.pendingBytes=0;entry.future=future?.batches??[];entry.futureBytes=future?.bytes??0;
       if(entry.snapshot){const {value:_value,...baseline}=entry.snapshot;entry.baseline=baseline;}
       entry.snapshot=undefined;
-      entry.view=Object.freeze({state:liveOwner(entry)?'OPENING':'INACTIVE_CACHED',value:null,error:null,cut:snapshot!.cut});
+      entry.view=Object.freeze({state:future?(liveOwner(entry)?'OPENING':'INACTIVE_CACHED'):'PARKED',value:null,
+        error:future?null:'Projection queue overflow; Retry.',cut:snapshot!.cut});
       changed.push(entry);
       removals.push(entry.key);
     }
@@ -311,9 +393,11 @@ export class ReadLanes {
       if (!snapshot?.authority.scopes.some(authority => authority.authorityScope === scope) &&
           !(roomId && entry.request.family === 'room-head' && entry.request.roomId === roomId) &&
           !(workspaceId && (entry.request.workspaceId === workspaceId || entry.snapshot?.cut.stream === `workspace:${workspaceId}`))) continue;
-      entry.revision += 1; entry.snapshot = undefined; entry.baseline=undefined;entry.flight = undefined;
+      const future=this.futureAfterFence(entry,snapshot?.atomicGroup??'');
+      if(entry.snapshot){const {value:_value,...baseline}=entry.snapshot;entry.baseline=baseline;}
+      entry.revision += 1; entry.snapshot = undefined;entry.flight = undefined;
       entry.covered=false;
-      entry.pending=[];entry.pendingBytes=0;entry.future=[];entry.futureBytes=0;
+      entry.pending=[];entry.pendingBytes=0;entry.future=future?.batches??[];entry.futureBytes=future?.bytes??0;
       entry.view=Object.freeze({ ...absent(), state: 'REVOKED', error: 'Access removed.' });changed.push(entry);
       removals.push(entry.key);
     }
@@ -349,6 +433,7 @@ export class ReadLanes {
     const execute = this.executor;
     if (!execute || !liveOwner(entry) || entry.flight) return;
     const revision = ++entry.revision; const session = this.session; const generation = this.generation;
+    entry.classified=undefined;
     entry.covered=false;
     entry.connection = generation;
     this.publish(entry, { state: 'OPENING', value: entry.view.value, error: null, cut: entry.view.cut });
@@ -409,7 +494,7 @@ export class ReadLanes {
       }
       // Commit the complete group before notifying a single UI observer.
       for (const { entry, snapshot } of items) {
-        entry.snapshot = snapshot;entry.baseline=undefined;entry.covered=true;
+        entry.snapshot = snapshot;entry.baseline=undefined;entry.classified=undefined;entry.covered=true;
         entry.view = { state: liveOwner(entry) ? 'LIVE' : 'INACTIVE_CACHED', value: snapshot.value, cut: snapshot.cut, error: null };
       }
       for (const { entry } of items) this.notify(entry);
@@ -418,6 +503,7 @@ export class ReadLanes {
   }
   private park(entry: Entry, error: string): void {
     entry.covered=false;
+    entry.classified=undefined;
     entry.revision += 1; entry.flight = undefined; entry.pending = []; entry.pendingBytes = 0; entry.future = []; entry.futureBytes = 0;
     this.publish(entry, { ...entry.view, state: 'PARKED', error });
   }

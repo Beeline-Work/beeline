@@ -41,6 +41,15 @@ export type RouterFact = { [K in RouterFamily]: {
 } }[RouterFamily] | {
   readonly atomicGroup: string; readonly authority: RouterAuthorityCertificate;
   readonly payload: { readonly kind: 'authority'; readonly scope: string; readonly authorityScope: string; readonly allowed: false };
+} | {
+  readonly atomicGroup:string;readonly authority:RouterAuthorityCertificate;
+  /** Current-at-enqueue control, independent of the batch's data cut.
+   * Classifies this group's interval without advancing its data coverage. */
+  readonly payload:{readonly kind:'authority-fence';readonly scope:string;readonly authorityScope:string;readonly mode:'deny'|'advance'};
+} | {
+  readonly atomicGroup:string;readonly authority:RouterAuthorityCertificate;
+  /** Unknown group authority never grants content or classifies coverage. */
+  readonly payload:{readonly kind:'group-unavailable';readonly scope:string;readonly reason:'authority'|'dependency'};
 };
 export type RouterPushFrame = {
   readonly kind: 'push-part'; readonly batchId: string; readonly from: RouterCut; readonly to: RouterCut;

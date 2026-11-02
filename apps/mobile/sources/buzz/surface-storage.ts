@@ -278,10 +278,16 @@ export function routerLaneStorage(origin: string, principal: string) {
         if (record?.scope === scope && BigInt(record.epoch) < BigInt(next)) remove(key);
       }
     }),
-    remove: async (_key: string): Promise<void> => {
-      // A consistency group may contain several datum keys. Metadata scrubs
-      // remove the affected whole envelope, never one member's data/coverage.
-    },
+    remove: async (key: string): Promise<void> => transaction(() => {
+      // Only the canonical consistency-group key can erase an envelope.
+      // Legacy datum-key removals deliberately miss: removing one member must
+      // never erase a different atomic group's data/coverage.
+      let address: unknown;
+      try { address = JSON.parse(key); } catch { return; }
+      if (!Array.isArray(address) || address.length !== 3 || address[0] !== canonicalOrigin ||
+          address[1] !== principal || typeof address[2] !== 'string' || !address[2]) return;
+      remove(groupKey(key));
+    }),
     subscribeFences: (listener: (scope: string, epoch: string) => void): (() => void) => {
       const receive = (key: string, value: string) => {
         try {

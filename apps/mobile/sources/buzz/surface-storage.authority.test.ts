@@ -47,6 +47,15 @@ function event(key: string, newValue: string | null) {
 beforeEach(() => { vi.resetModules(); fixture.disk.clear(); fixture.native.clear(); fixture.events.clear(); fixture.tails.clear(); fixture.request.mockClear(); });
 afterEach(() => vi.unstubAllGlobals());
 describe('durable authority floors distinct from denials', () => {
+  it('removes exactly the named atomic group under the Reader lock; datum/foreign keys cannot erase neighbors', async () => {
+    const { routerLaneStorage } = await load(true); const store = routerLaneStorage(origin, principal);
+    const first = JSON.stringify([origin, principal, 'first']), second = JSON.stringify([origin, principal, 'second']);
+    await store.write(first, envelope(room, '1')); await store.write(second, envelope(room, '1'));
+    await store.remove(JSON.stringify([origin, principal, 'room-head', 'first']));
+    await store.remove(JSON.stringify([origin, 'other', 'first'])); expect(webGroups()).toHaveLength(2);
+    await store.remove(first); expect(webGroups()).toHaveLength(1);
+    expect(decodeURIComponent(webGroups()[0]!)).toContain(second); expect(fixture.request).toHaveBeenCalledTimes(5);
+  });
   it('floor equality remains authorized; strictly older groups and later stale writes are rejected', async () => {
     const { routerLaneStorage } = await load(); const store = routerLaneStorage(origin, principal);
     await store.write('old', envelope(room, '1')); await store.write('equal', envelope(room, '2'));

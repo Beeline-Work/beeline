@@ -36,7 +36,7 @@ export async function setCornerReviewer(
   if (!reviewer) throw new CommandRefusalError('reviewer must be an agent member of the parent Room', 409);
   await assertIndependentCornerReviewer(db, cornerId, reviewer.id, checkAuthors);
   const changed = await db.query(
-    `UPDATE corner_facts SET reviewer_agent_id=$2,updated_at=now()
+    `UPDATE corner_facts SET reviewer_agent_id=$2
      WHERE corner_id=$1 AND reviewer_agent_id IS DISTINCT FROM $2 RETURNING corner_id`, [cornerId, reviewer.id],
   );
   if (!changed.rowCount) return;

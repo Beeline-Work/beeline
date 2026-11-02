@@ -2387,7 +2387,7 @@ export class DaemonService {
         },
       };
       await db.query(
-        `UPDATE corner_facts SET lifecycle=$2::jsonb,updated_at=now()
+        `UPDATE corner_facts SET lifecycle=$2::jsonb
          WHERE corner_id=$1`,
         [cornerId, JSON.stringify(lifecycle)],
       );
@@ -6524,8 +6524,7 @@ export class DaemonService {
            WHEN EXCLUDED.lifecycle->>'lifecycle'='working' AND corner_facts.lifecycle ? 'pr'
              THEN corner_facts.lifecycle-'branch'
            ELSE (corner_facts.lifecycle-'branch') || EXCLUDED.lifecycle
-         END,
-         updated_at=now()`,
+         END`,
       [input.cornerId, JSON.stringify(lifecycle)],
     );
     return this.writeResult();

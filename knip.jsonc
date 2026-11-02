@@ -265,6 +265,8 @@
         "scripts/room-list-corner-longpress-proof.tsx",
         "scripts/room-list-gestures-proof.tsx",
         "scripts/room-list-blank-proof.tsx",
+        // The room-deck unavailable runbook bundles this browser entry by path.
+        "scripts/room-deck-unavailable-proof.tsx",
         "scripts/notification-landing-proof.tsx",
         "scripts/cross-tab-signout-proof.ts",
         "scripts/cross-tab-storage-proof.tsx",

@@ -100,11 +100,11 @@ it('lets any member agent set and change the reviewer without a brief edit', asy
   expect((await db.query(`SELECT reviewer_agent_id FROM rooms WHERE id=$1`, [R])).rows[0]).toEqual({ reviewer_agent_id: REVIEWER_A });
 });
 
-it('retains the Room reviewer and fallbacks when the corner override is unset', async () => {
-  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: REVIEWER_A, reviewerFallbackIds: [REVIEWER_B] }, H);
+it('retains the Room reviewer when the corner override is unset', async () => {
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: REVIEWER_A }, H);
   expect(await isCornerReviewer(db, C, REVIEWER_A)).toBe(true);
-  expect(await isCornerReviewer(db, C, REVIEWER_B)).toBe(true);
-  await approve(REVIEWER_B);
+  expect(await isCornerReviewer(db, C, REVIEWER_B)).toBe(false);
+  await approve(REVIEWER_A);
   expect((await gate()).approved).toBe(true);
 });
 
@@ -122,11 +122,6 @@ it('rechecks authors at PASS time after a reviewer contributes commits', async (
   authors.push(REVIEWER_B);
   await expect(approve(REVIEWER_B)).rejects.toThrow('commit author cannot review');
   expect((await gate()).approved).toBe(false);
-});
-
-it('refuses self approval even through a Room fallback', async () => {
-  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: REVIEWER_A, reviewerFallbackIds: [OWNER_AGENT] }, H);
-  await expect(approve(OWNER_AGENT)).rejects.toThrow('implementer cannot review');
 });
 
 it('fails closed on incomplete authors or a changed live head', async () => {

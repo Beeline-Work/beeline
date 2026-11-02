@@ -300,7 +300,6 @@ type MemberGrantRow = {
 };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Agents a Room may list after its reviewer, tried in order (`agent-health.ts`). */
-const REVIEWER_FALLBACKS_MAX = 15;
 
 /** Where the next archived page starts: the last row's exact closure time and id. */
 export type ArchivedCornerCursor = { readonly micros: string; readonly id: string };
@@ -386,7 +385,6 @@ interface RoomRow {
   repository_resolution: 'repository' | 'none' | 'unverified';
   github_installation_id: string | null;
   reviewer_agent_id: string | null;
-  reviewer_fallback_ids: string[] | null;
   created_at: Date;
   updated_at: Date;
   leave_deletes_room?: boolean;
@@ -681,9 +679,6 @@ function roomHeader(row: RoomHeaderRow, publicOrigin: string) {
     ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
     visibility: row.visibility,
     ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
-    ...(row.reviewer_agent_id && row.reviewer_fallback_ids?.length
-      ? { reviewerFallbackIds: row.reviewer_fallback_ids }
-      : {}),
     archived: Boolean(row.archived_at),
     createdAt: unix(row.created_at),
     updatedAt: unix(row.updated_at),
@@ -6777,27 +6772,12 @@ export class PhoneService {
     if (existing.parent_id) {
       if (
         input.visibility !== undefined ||
-        input.reviewerAgentId !== undefined ||
-        input.reviewerFallbackIds !== undefined
+        input.reviewerAgentId !== undefined
       ) {
         throw new Error('room lifecycle cannot target a corner');
       }
       await this.renameCorner(input.roomId, input.name, viewerId);
       return;
-    }
-    const fallbackIds = Array.isArray(input.reviewerFallbackIds)
-      ? input.reviewerFallbackIds.filter(id => id !== '')
-      : input.reviewerFallbackIds;
-    if (
-      fallbackIds !== undefined &&
-      (!Array.isArray(fallbackIds) ||
-        fallbackIds.length > REVIEWER_FALLBACKS_MAX ||
-        !fallbackIds.every((id) => typeof id === 'string' && /^[0-9a-f]{64}$/.test(id)) ||
-        new Set(fallbackIds).size !== fallbackIds.length)
-    ) {
-      throw new Error(
-        `reviewer fallbacks must be at most ${REVIEWER_FALLBACKS_MAX} distinct agent ids`,
-      );
     }
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
@@ -6812,18 +6792,7 @@ export class PhoneService {
           reviewer_agent_id: string | null;
         }>('SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE', [input.roomId])
       ).rows[0];
-      const nextReviewer =
-        reviewerAgentId !== undefined ? reviewerAgentId : (current?.reviewer_agent_id ?? null);
-      // Fallbacks only exist behind a reviewer; clearing the reviewer clears them.
-      const nextFallbacks = !nextReviewer
-        ? []
-        : fallbackIds !== undefined
-          ? fallbackIds.filter((id) => id !== nextReviewer)
-          : undefined;
-      const required = [
-        ...(reviewerAgentId ? [reviewerAgentId] : []),
-        ...(fallbackIds !== undefined ? (nextFallbacks ?? []) : []),
-      ];
+      const required = reviewerAgentId ? [reviewerAgentId] : [];
       if (required.length) {
         const reviewers = await database.query<{ identity_id: string }>(
           `SELECT membership.identity_id
@@ -6841,7 +6810,6 @@ export class PhoneService {
         `UPDATE rooms
          SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),
              reviewer_agent_id=CASE WHEN $4::boolean THEN $5 ELSE reviewer_agent_id END,
-             reviewer_fallback_ids=CASE WHEN $6::boolean THEN $7::text[] ELSE reviewer_fallback_ids END,
              updated_at=now()
          WHERE id=$1`,
         [
@@ -6850,8 +6818,6 @@ export class PhoneService {
           input.visibility ?? null,
           reviewerAgentId !== undefined,
           reviewerAgentId ?? null,
-          nextFallbacks !== undefined,
-          nextFallbacks ?? [],
         ],
       );
       if (reviewerAgentId !== undefined && reviewerAgentId !== current?.reviewer_agent_id) {

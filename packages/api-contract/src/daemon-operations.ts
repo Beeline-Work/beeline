@@ -824,7 +824,7 @@ export type AgentMemberMetadata = {
     readonly credits?: number;
     readonly tokens?: { readonly remaining: number; readonly resetsAt: number };
   };
-  readonly reviewer?: 'primary' | 'fallback';
+  readonly reviewer?: 'primary';
   readonly owner?: { readonly id: string; readonly handle: string | null; readonly name: string };
   readonly machine?: string | null;
   readonly online?: boolean;

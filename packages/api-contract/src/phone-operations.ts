@@ -664,12 +664,6 @@ export type UpdateRoomInput = RoomInput & {
   readonly visibility?: 'public' | 'invite-only';
   /** Agent member assigned to review every repository corner in this Room; null clears. */
   readonly reviewerAgentId?: string | null;
-  /**
-   * Agent members tried in order after `reviewerAgentId` when it is unhealthy
-   * or its review turn fails; `[]` clears. Cleared whenever `reviewerAgentId`
-   * is cleared.
-   */
-  readonly reviewerFallbackIds?: readonly string[];
 };
 export type ResolveDirectMessageInput = WorkspaceInput & { readonly participantId: string };
 export type DirectMessageResult = IdResult & { readonly created: boolean };

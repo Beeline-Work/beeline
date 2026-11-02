@@ -1,4 +1,4 @@
-import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
+import { cornerReviewerSql } from './corner-reviewer.js';
 import { createHash } from 'node:crypto';
 import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
@@ -146,7 +146,7 @@ function heldCommandSql(command: string): string {
 
 /** A running turn, or a command still waiting for one, retains the review role recorded by its dispatch. */
 export function cornerWorkSql(ignoreCommander = false): string {
-  const reviewerAgent = `ANY(array_remove(ARRAY[${cornerReviewerSql('c')}]||${cornerReviewerFallbacksSql('c')},NULL))`;
+  const reviewerAgent = `ANY(array_remove(ARRAY[${cornerReviewerSql('c')}],NULL))`;
   const checkPassed = (source: string) =>
     `${source}.system_event->>'kind'='check-passed'
       AND ${source}.system_event->'object'->>'headSha'=f.lifecycle->'pr'->>'headSha'`;

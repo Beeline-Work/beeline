@@ -1,5 +1,5 @@
 import { cornerImplementerSql } from './corner-worker.js';
-import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
+import { cornerReviewerSql } from './corner-reviewer.js';
 import { commanderReportAddress } from './commander.js';
 import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
@@ -105,7 +105,7 @@ export async function isZeroCheckCommander(db: SqlDatabase, cornerId: string, ac
      JOIN rooms parent ON parent.id=corner.parent_id
      JOIN corner_facts fact ON fact.corner_id=corner.id
      WHERE corner.id=$1 AND corner.archived_at IS NULL
-       AND ${cornerReviewerSql()} IS NULL AND cardinality(${cornerReviewerFallbacksSql()})=0
+       AND ${cornerReviewerSql()} IS NULL
        AND $2 IS DISTINCT FROM ${cornerImplementerSql('fact', 'corner')}
        AND fact.lifecycle->>'checks'='passing'
        AND fact.lifecycle->'checksSummary'->>'total'='0'

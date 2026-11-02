@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import {
   firstHealthyAgent,
-  isConfiguredReviewer,
   isCornerReviewer,
   nextHealthyAgent,
   roomAgentHealth,
@@ -183,38 +182,6 @@ describe('nextHealthyAgent', () => {
   });
 });
 
-describe('isConfiguredReviewer', () => {
-  it('matches the reviewer and rejects anyone else', async () => {
-    await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [PARENT, AGENT_ONE]);
-    expect(await isConfiguredReviewer(database, PARENT, AGENT_ONE)).toBe(true);
-    expect(await isConfiguredReviewer(database, PARENT, AGENT_TWO)).toBe(false);
-  });
-
-  it('matches a fallback reviewer that is a current member of the Room', async () => {
-    await database.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=$3 WHERE id=$1`, [
-      PARENT,
-      AGENT_ONE,
-      [AGENT_TWO],
-    ]);
-    expect(await isConfiguredReviewer(database, PARENT, AGENT_TWO)).toBe(true);
-    expect(await isConfiguredReviewer(database, PARENT, AGENT_THREE)).toBe(false);
-    await database.query(
-      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-      [PARENT, AGENT_TWO],
-    );
-    expect(await isConfiguredReviewer(database, PARENT, AGENT_TWO)).toBe(false);
-  });
-
-  it('ignores fallbacks left behind without a reviewer', async () => {
-    await database.query(`UPDATE rooms SET reviewer_fallback_ids=$2 WHERE id=$1`, [PARENT, [AGENT_TWO]]);
-    expect(await isConfiguredReviewer(database, PARENT, AGENT_TWO)).toBe(false);
-  });
-
-  it('is false with no reviewer configured at all', async () => {
-    expect(await isConfiguredReviewer(database, PARENT, AGENT_ONE)).toBe(false);
-  });
-});
-
 describe('isCornerReviewer', () => {
   beforeEach(async () => {
     await database.query(
@@ -234,17 +201,12 @@ describe('isCornerReviewer', () => {
     expect(await isCornerReviewer(database, CORNER, AGENT_ONE)).toBe(false);
   });
 
-  it('accepts a fallback reviewer only while it is a current parent member', async () => {
+  it('refuses a stored fallback reviewer', async () => {
     await database.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=$3 WHERE id=$1`, [
       PARENT,
       AGENT_ONE,
       [AGENT_TWO],
     ]);
-    expect(await isCornerReviewer(database, CORNER, AGENT_TWO)).toBe(true);
-    await database.query(
-      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-      [PARENT, AGENT_TWO],
-    );
     expect(await isCornerReviewer(database, CORNER, AGENT_TWO)).toBe(false);
   });
 });

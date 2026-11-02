@@ -1,7 +1,7 @@
 /** Columns projected from source tables into a parent's corner row. */
 export const CORNER_ROW_ROOM_COLUMNS = [
   'parent_id', 'name', 'about', 'avatar', 'visibility', 'reviewer_agent_id',
-  'reviewer_fallback_ids', 'archived_at', 'created_at', 'updated_at',
+  'archived_at', 'created_at', 'updated_at',
 ] as const;
 export const cornerRoomColumnsSql = `c.id,c.workspace_id,${CORNER_ROW_ROOM_COLUMNS.map(
   (column) => `c.${column}`,

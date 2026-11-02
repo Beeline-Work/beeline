@@ -1,5 +1,6 @@
 import { cornerObjectiveSql } from './corner-objective.js';
 import { failConnectingOffers } from './connector-offer-completion.js';
+import { cornerRunStateSql } from './corner-run.js';
 import * as approvalSources from './approval-card-source.js';
 import * as serverSentry from './sentry.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
@@ -10129,7 +10130,6 @@ describe('monolith integration', () => {
         JSON.stringify({ requestId: 'opener-failed', agentId: AGENT, silenceKind: 'allowance-spent' }),
       ]);
       await database.query(`UPDATE messages SET card=jsonb_set(card,'{toState}',to_jsonb($2::text)) WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId, state]);
-      await database.query(`UPDATE corner_facts SET workflow_state=$2 WHERE corner_id=$1`, [cornerId, state]);
       if (health === 'offline')
         await database.query(`DELETE FROM live_outputs WHERE agent_id=$1`, [worker]);
       if (health === 'removed')
@@ -10160,7 +10160,7 @@ describe('monolith integration', () => {
       expect(wakes).toEqual(shouldWake ? [worker] : []);
       expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%revised the corner brief%'`, [cornerId])).rows).toHaveLength(1);
       expect((await database.query<{ worker_agent_id: string; workflow_state: string }>(
-        `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,fact.workflow_state FROM corner_facts fact
+        `SELECT ${cornerImplementerSql('fact', 'corner')} worker_agent_id,${cornerRunStateSql('fact.corner_id')} workflow_state FROM corner_facts fact
          JOIN rooms corner ON corner.id=fact.corner_id WHERE fact.corner_id=$1`, [cornerId],
       )).rows[0]).toEqual({ worker_agent_id: worker, workflow_state: state === 'ask_human' && shouldWake ? 'implement' : state });
     },
@@ -10221,7 +10221,7 @@ describe('monolith integration', () => {
     expect(commands.rows.filter((row) => row.agent_id === reviewerId)).toEqual([]);
     expect(
       (await database.query<{ workflow_state: string }>(
-        `SELECT workflow_state FROM corner_facts WHERE corner_id=$1`, [cornerId],
+        `SELECT ${cornerRunStateSql('$1::uuid')} workflow_state`, [cornerId],
       )).rows[0]?.workflow_state,
     ).toBe('implement');
     expect(

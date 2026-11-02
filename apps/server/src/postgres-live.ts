@@ -105,10 +105,12 @@ BEGIN
         'needsYouCandidate', COALESCE(NEW.presentation,OLD.presentation) IN ('card','system')
           OR (COALESCE(NEW.presentation,OLD.presentation)='message' AND
             ${askSql('COALESCE(NEW.text,OLD.text)')}),
-        -- The newest chat message is a column of the parent's corner row.
-        'cornerParentId', CASE WHEN (NEW.presentation IN ('message','system')
+        -- The newest chat message is a column of the parent's corner row, and
+        -- a corner's newest handoff card is its run state.
+        'cornerParentId', CASE WHEN ((NEW.presentation IN ('message','system')
             OR OLD.presentation IN ('message','system'))
-            AND ${rowChangedSql(CORNER_ROW_MESSAGE_COLUMNS)}
+            AND ${rowChangedSql(CORNER_ROW_MESSAGE_COLUMNS)})
+            OR (TG_OP = 'INSERT' AND NEW.card_type = 'corner-workflow-handoff')
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.room_id, OLD.room_id)) END
       );
     WHEN 'room_read_marks' THEN

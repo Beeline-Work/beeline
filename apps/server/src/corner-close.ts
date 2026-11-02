@@ -1,4 +1,5 @@
 import { enqueueCornerBranchDeletion } from './corner-branch-cleanup.js';
+import { cornerRunStateSql } from './corner-run.js';
 import type { SqlDatabase } from './database.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
@@ -96,7 +97,7 @@ export async function closeCornerPullRequestBestEffort(
     `SELECT 1 FROM corner_facts WHERE corner_id=$1
        AND lifecycle->'pr'->>'number' IS NOT NULL
        AND lifecycle->'pr'->>'mergedAt' IS NULL
-       AND workflow_state IS DISTINCT FROM 'landed'`,
+       AND ${cornerRunStateSql('$1::uuid')} IS DISTINCT FROM 'landed'`,
     [cornerId],
   );
   if (!pending.rowCount) return;

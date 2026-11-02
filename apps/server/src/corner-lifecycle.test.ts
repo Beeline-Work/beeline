@@ -37,6 +37,7 @@ import {
 } from './agent-command.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { cornerImplementerSql, cornerOwnerSql } from './corner-worker.js';
+import { cornerRunStateSql } from './corner-run.js';
 import { getWorkflowRun, liveWorkflowRun, saveWorkflow, startWorkflow, workflowRunLockKey } from './workflow-runs.js';
 
 /** Records every SQL statement issued, in order — matches workflow-runs.test.ts's own. */
@@ -1128,12 +1129,10 @@ async function reasons(cornerId: string, agentId: string): Promise<string[]> {
   ).rows.map((row) => row.reason);
 }
 
+/** The run state the phone badge reads: the newest handoff card (`corner-run.ts`). */
 async function projected(cornerId: string): Promise<string | null> {
   return (
-    await db.query<{ workflow_state: string | null }>(
-      `SELECT workflow_state FROM corner_facts WHERE corner_id=$1`,
-      [cornerId],
-    )
+    await db.query<{ workflow_state: string | null }>(`SELECT ${cornerRunStateSql('$1::uuid')} workflow_state`, [cornerId])
   ).rows[0]!.workflow_state;
 }
 
@@ -1251,7 +1250,7 @@ it.each(['passing', 'unknown', 'unreachable'])('Reproduction F1-2: ask_human rev
   const cornerId = await approved();
   await db.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [R, A]);
   await db.query(`UPDATE messages SET card=jsonb_set(card,'{toState}','"ask_human"') WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId]);
-  await db.query(`UPDATE corner_facts SET workflow_state='ask_human',lifecycle=jsonb_set(lifecycle,'{checks}',$2::jsonb) WHERE corner_id=$1`, [cornerId, JSON.stringify(checks === 'unknown' ? 'unknown' : 'passing')]);
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}',$2::jsonb) WHERE corner_id=$1`, [cornerId, JSON.stringify(checks === 'unknown' ? 'unknown' : 'passing')]);
   if (checks === 'unreachable') await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
   const result = await revise(cornerId);
   const state = await currentState(cornerId);
@@ -1376,7 +1375,6 @@ describe('a brief revision wakes only the implementer and keeps the yes', () => 
     }
     if (state === 'ask_human') {
       await db.query(`UPDATE messages SET card=jsonb_set(card,'{toState}',to_jsonb($2::text)) WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type='corner-workflow-handoff' ORDER BY (card->>'seq')::int DESC LIMIT 1)`, [cornerId, state]);
-      await db.query(`UPDATE corner_facts SET workflow_state=$2 WHERE corner_id=$1`, [cornerId, state]);
     }
     expect(await currentState(cornerId)).toBe(state);
     await implementerOnline();
@@ -1569,6 +1567,18 @@ describe('advanceCorner rejects an event the current state does not allow (AC-1)
     } finally {
       info.mockRestore();
     }
+  });
+});
+
+describe('RUN-FROM-CARDS: the run state is the newest handoff card, never a corner_facts copy', () => {
+  it('the badge input moves with cards while corner_facts keeps no state', async () => {
+    const cornerId = await inReview();
+    expect(await projected(cornerId)).toBe('review');
+    expect((await db.query(`SELECT workflow_state,workflow_outcome FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toEqual({ workflow_state: null, workflow_outcome: null });
+    const visible = (await phone.readCorners(R, H))!.corners.find(row => row.corner.id === cornerId);
+    expect(visible).toBeDefined();
+    console.log('RUN-FROM-CARDS Demonstrated: run state review came from the newest card; corner_facts workflow columns stayed NULL.');
   });
 });
 
@@ -2662,7 +2672,6 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await db.query(`UPDATE messages SET card=card||'{"toState":"ask_human","outcome":"changes_requested"}'::jsonb
       WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type=$2 ORDER BY (card->>'seq')::int DESC LIMIT 1)`,
       [cornerId, CORNER_LIFECYCLE_CARD_TYPE]);
-    await db.query(`UPDATE corner_facts SET workflow_state='ask_human',workflow_outcome='changes_requested' WHERE corner_id=$1`, [cornerId]);
     const event = {
       action: 'closed', installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' },
       pull_request: { number: 7, html_url: 'https://github.com/owner/widgets/pull/7', title: 'Widget', merged: false,
@@ -3816,7 +3825,6 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
       cornerId,
       CORNER_LIFECYCLE_CARD_TYPE,
     ]);
-    await db.query(`UPDATE corner_facts SET workflow_state=NULL,workflow_outcome=NULL WHERE corner_id=$1`, [cornerId]);
     expect(await backfillCornerLifecycleRuns(db)).toBe(1);
     expect(await projected(cornerId)).toBe('review');
     expect(await cards(cornerId)).toEqual([expect.objectContaining({ toState: 'review', seq: 0, backfilledFrom: 'lifecycle' })]);
@@ -3832,24 +3840,12 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
     expect(await currentState(cornerId)).toBe('landed');
   });
 
-  it('repairs a non-null projection from the authoritative newest card on boot', async () => {
-    const cornerId = await inReview();
-    await db.query(`UPDATE corner_facts SET workflow_state='implement',workflow_outcome=NULL WHERE corner_id=$1`, [cornerId]);
-    const history = await cards(cornerId);
-    expect(await backfillCornerLifecycleRuns(db)).toBe(1);
-    expect(await projected(cornerId)).toBe('review');
-    expect((await db.query(`SELECT workflow_outcome FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.workflow_outcome).toBe('passing');
-    expect(await cards(cornerId)).toEqual(history);
-    expect(await backfillCornerLifecycleRuns(db)).toBe(0);
-  });
-
   it('a corner with no run at all is given one on its next event', async () => {
     const cornerId = await open('owner/widgets');
     await db.query(`DELETE FROM messages WHERE room_id=$1 AND card_type=$2`, [
       cornerId,
       CORNER_LIFECYCLE_CARD_TYPE,
     ]);
-    await db.query(`UPDATE corner_facts SET workflow_state=NULL WHERE corner_id=$1`, [cornerId]);
     await pushToCorner(cornerId, SHA);
     expect(await currentState(cornerId)).toBe('checks');
   });

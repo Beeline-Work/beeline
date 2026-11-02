@@ -1,6 +1,7 @@
 import { cornerObjectiveSql } from './corner-objective.js';
 import { NotificationWork } from './notification-work.js';
 import { cornerOwnerSql } from './corner-worker.js';
+import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import type { RepositorySignals } from './repository-onboarding.js';
@@ -1080,7 +1081,7 @@ export class GitHubOperations {
         `SELECT r.parent_id,parent.workspace_id,f.lifecycle,
                 COALESCE(${cornerOwnerSql('r.id')},r.created_by,parent.created_by) author_id,r.name corner_name,
                 r.archived_at IS NOT NULL archived,
-                (f.workflow_state='review' AND f.workflow_outcome IS DISTINCT FROM 'no_reviewer') review_woken,
+                (${cornerRunStateSql('r.id')}='review' AND ${cornerRunOutcomeSql('r.id')} IS DISTINCT FROM 'no_reviewer') review_woken,
                 ${cornerReviewerSql('r')} configured_reviewer_id,
                 reviewer_identity.id reviewer_identity_id,
                 parent_member.identity_id parent_reviewer_id,
@@ -1170,8 +1171,8 @@ export class GitHubOperations {
       { name: 'Pull request checks', status: 'pending', headSha: pr.headSha }, this.database,
       { quiet: true, snapshot: { rollup, pr, fetchStartedAt, token: target.token } });
       corner.review_woken = (await this.database.query<{ review_woken: boolean }>(
-        `SELECT workflow_state='review' AND workflow_outcome IS DISTINCT FROM 'no_reviewer' review_woken
-         FROM corner_facts WHERE corner_id=$1`, [input.cornerId],
+        `SELECT ${cornerRunStateSql('$1::uuid')}='review' AND ${cornerRunOutcomeSql('$1::uuid')} IS DISTINCT FROM 'no_reviewer' review_woken`,
+        [input.cornerId],
       )).rows[0]?.review_woken ?? false;
     }
     corner.archived = (await this.database.query<{ archived: boolean }>(
@@ -1488,7 +1489,7 @@ export class GitHubOperations {
            AND repository.active AND lower(repository.full_name)=lower(regexp_replace(regexp_replace(
              COALESCE(parent.repository_remote,parent.repository_key,''),
              '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-         WHERE corner.id=$1 AND fact.workflow_state IS DISTINCT FROM 'landed'`,
+         WHERE corner.id=$1 AND ${cornerRunStateSql('corner.id')} IS DISTINCT FROM 'landed'`,
         [cornerId],
       )
     ).rows[0];
@@ -1528,7 +1529,7 @@ export class GitHubOperations {
                ELSE '{}'::jsonb END,
            updated_at=now()
          FROM rooms corner WHERE fact.corner_id=$1 AND corner.id=fact.corner_id
-           AND fact.workflow_state IS DISTINCT FROM 'landed'
+           AND ${cornerRunStateSql('fact.corner_id')} IS DISTINCT FROM 'landed'
            AND (fact.lifecycle->'pr'->>'number')::int=$2
          RETURNING corner.archived_at IS NOT NULL archived`,
         [cornerId, number],

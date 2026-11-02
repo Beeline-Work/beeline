@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { cornerRunStateSql } from './corner-run.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -542,7 +543,7 @@ describe('corner message attribution', () => {
     await result(review!, 'The reproduction is missing. Fix that and push.');
     expect(await commands(A, C)).toEqual([]);
     expect((await db.query<{ workflow_state: string }>(
-      `SELECT workflow_state FROM corner_facts WHERE corner_id=$1`, [C],
+      `SELECT ${cornerRunStateSql('$1::uuid')} workflow_state`, [C],
     )).rows[0]?.workflow_state).toBe('review');
   });
 
@@ -786,7 +787,7 @@ describe('corner message attribution', () => {
     await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toEqual([]);
     expect((await db.query<{ workflow_state: string }>(
-      `SELECT workflow_state FROM corner_facts WHERE corner_id=$1`, [C],
+      `SELECT ${cornerRunStateSql('corner_id')} workflow_state FROM corner_facts WHERE corner_id=$1`, [C],
     )).rows[0]).toEqual({ workflow_state: 'review' });
   });
 

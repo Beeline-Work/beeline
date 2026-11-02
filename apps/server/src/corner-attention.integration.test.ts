@@ -6,7 +6,7 @@ import { cornerOwedSchemaSql } from './corner-owed.js';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, recordCornerRun } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
@@ -572,7 +572,10 @@ it('Reproduction IDLE-1: incidental orders cannot redirect an idle alert from it
 });
 it.each(['archived', 'closed', 'landed'])('Reproduction IDLE-1: %s corners never alert', async (kind) => {
   if (kind === 'archived') await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [C]);
-  else await db.query(`UPDATE corner_facts SET workflow_state=$2,lifecycle=jsonb_build_object('lifecycle',$2::text) WHERE corner_id=$1`, [C, kind]);
+  else {
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('lifecycle',$2::text) WHERE corner_id=$1`, [C, kind]);
+    await recordCornerRun(db, C, kind);
+  }
   await refreshCornerAttention(db, C);
   expect(await commanderFlags()).toHaveLength(0);
 });

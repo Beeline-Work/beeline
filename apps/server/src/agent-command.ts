@@ -1,6 +1,7 @@
 import { cornerObjectiveSql } from './corner-objective.js';
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
 import { cornerOwnerSql } from './corner-worker.js';
+import { cornerRunStateSql } from './corner-run.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import { voiceDateContext } from './voice-reply.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
@@ -2504,7 +2505,7 @@ export async function reconcileConfiguredCornerReviewers(
        ORDER BY message.created_at DESC,message.id DESC LIMIT 1
      ) source ON true
      WHERE corner.archived_at IS NULL
-       AND fact.workflow_state IS DISTINCT FROM 'ask_human'
+       AND ${cornerRunStateSql('fact.corner_id')} IS DISTINCT FROM 'ask_human'
        AND fact.lifecycle->>'checks'='passing'
        AND fact.lifecycle->'pr'->>'number' IS NOT NULL
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL

@@ -1,6 +1,7 @@
 import { cornerObjectiveSql, readCornerObjective, writeCornerObjective } from './corner-objective.js';
 import { owedMentions, clearOwedMention, mentionReplyKey, mentionReplyId } from './owed-mentions.js';
 import { cornerOwnerSql } from './corner-worker.js';
+import { cornerRunStateSql } from './corner-run.js';
 import { YouTubeUploadRefusal } from './composio-apps.js';
 import { missingReviewAttachments } from './review-evidence.js';
 import { consumeStarterVideoPost, restoreStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
@@ -6477,7 +6478,7 @@ export class DaemonService {
       if (input.cornerId === input.roomId) throw new Error('a corner cannot watch itself');
       await this.reach(input.cornerId, agentId, db);
       const corner = await db.query<Output<'watchCorner'>['snapshot'] & { archived: boolean; landed: boolean }>(
-        `SELECT c.id,c.name,f.workflow_state "workflowState",
+        `SELECT c.id,c.name,${cornerRunStateSql('c.id')} "workflowState",
            (f.lifecycle->'pr'->>'number')::int "pullRequestNumber",
            f.lifecycle->'pr'->>'url' "pullRequestUrl",f.lifecycle->'pr'->>'headSha' "headSha",
            f.lifecycle->>'checks' checks,f.lifecycle->'pr'->>'mergeCommitSha' "mergeCommitSha",

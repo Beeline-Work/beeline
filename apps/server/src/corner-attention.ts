@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
@@ -173,7 +174,7 @@ type Row = CornerStateRow & {
   review_queued: boolean;
 };
 function attentionSql() {
-  return `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.workflow_state,f.workflow_outcome,
+  return `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,${cornerRunStateSql('c.id')} workflow_state,${cornerRunOutcomeSql('c.id')} workflow_outcome,
     f.locked,activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,

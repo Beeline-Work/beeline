@@ -1,4 +1,6 @@
 import { randomUUID } from 'node:crypto';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { ensureSystemIdentity } from './system-line.js';
 import { readFile } from 'node:fs/promises';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -215,5 +217,24 @@ export async function assignCornerWorker(db: SqlDatabase, cornerId: string, agen
        root_source_message_id,agent_depth,state,completed_at)
      VALUES($1,$2,$3,$1,'input','human_tag',$1,$1,0,'complete',now())`,
     [id, cornerId, agentId],
+  );
+}
+
+/**
+ * Records a corner run state as its newest handoff card, the way
+ * `corner-lifecycle.ts` writes one; the card is the run state (`corner-run.ts`).
+ */
+export async function recordCornerRun(
+  db: SqlDatabase, cornerId: string, toState: string, outcome?: string,
+): Promise<void> {
+  await ensureSystemIdentity(db);
+  await db.query(
+    `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+     SELECT $1,corner.id,$5,'handed off','card','corner-workflow-handoff',
+       jsonb_build_object('runId',corner.id::text,'toState',$3::text,'outcome',$4::text,
+         'seq',COALESCE((SELECT max((card->>'seq')::int) FROM messages
+           WHERE room_id=corner.id AND card_type='corner-workflow-handoff'),0)+1)
+     FROM rooms corner WHERE corner.id=$2`,
+    [`run-${randomUUID()}`, cornerId, toState, outcome ?? null, SYSTEM_IDENTITY_ID],
   );
 }

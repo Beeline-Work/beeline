@@ -247,7 +247,7 @@ function assertComponent(component) {
 function matchesRule(path, rule) { return rule.exact === path || (rule.prefix && path.startsWith(rule.prefix)); }
 
 export function selectReleaseComponents(paths, { selection = 'auto', storeTrack = 'none' } = {}) {
-  if (!['none', 'internal', 'beta', 'production'].includes(storeTrack)) fail(`invalid store track: ${storeTrack}`);
+  if (!['none', 'production', 'beta'].includes(storeTrack)) fail(`invalid store track: ${storeTrack}`);
   const explicit = selection !== 'auto' && selection !== '';
   // RELEASE POLICY: OTA is the default delivery and never publishes to a
   // store by itself. Store publishing happens only on an explicit

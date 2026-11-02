@@ -41,8 +41,9 @@
     "production": {
       "android": {
         "serviceAccountKeyPath": "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON",
-        "track": "internal",
-        "releaseStatus": "draft"
+        "track": "production",
+        "releaseStatus": "completed",
+        "changesNotSentForReview": false
       },
       "ios": {
         "appleTeamId": "89KT3SWYAF",
@@ -57,9 +58,9 @@
     "beta": {
       "extends": "production",
       "android": {
-        "serviceAccountKeyPath": "$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON",
         "track": "beta",
-        "releaseStatus": "draft"
+        "releaseStatus": "completed",
+        "changesNotSentForReview": false
       }
     }
   }

@@ -189,7 +189,7 @@ export async function ingestSubscriptionWebhook(db: SqlDatabase, id: string, raw
       return record('refused', 401, 'Invalid token or signature');
     const current = await tx.query(
       `SELECT 1 FROM rooms room
-       JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL
+       JOIN room_access member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL
        JOIN identities agent ON agent.id=member.identity_id AND agent.kind='agent' AND NOT agent.hidden_from_roster
        JOIN agents actor ON actor.agent_id=agent.id
        JOIN memberships agent_owner ON agent_owner.workspace_id=room.workspace_id AND agent_owner.room_id IS NULL

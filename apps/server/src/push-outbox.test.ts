@@ -351,7 +351,7 @@ it('preserves the old selector delivery set and retires only rows it would never
       ON CONFLICT DO NOTHING`);
     await db.query(`INSERT INTO push_outbox(message_id,device_token,expires_at)
       SELECT m.id,device.token,m.created_at+interval '1 hour' FROM messages m
-      JOIN effective_memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL AND member.identity_id<>m.author_id
+      JOIN room_access member ON member.room_id=m.room_id AND member.removed_at IS NULL AND member.identity_id<>m.author_id
       JOIN push_devices device ON device.identity_id=member.identity_id ON CONFLICT DO NOTHING`);
     await db.query(`INSERT INTO push_delivery_claims(message_id,device_token,status,next_retry_at)
       VALUES('retry','proof-device','retryable',now()+interval '5 minutes')`);

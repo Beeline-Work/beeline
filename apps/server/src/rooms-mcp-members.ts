@@ -1,3 +1,4 @@
+import { mentionRouting } from './owed-mentions.js';
 import { queueMcpMentionEvents, deliverMcpEvents } from './rooms-mcp-events.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { lookup } from 'node:dns/promises';
@@ -301,6 +302,10 @@ export async function recordMcpMemberWebhook(
   return { callId: id, memberId, roomId, messageId };
 }
 
+function routingInstruction(row: {member_id: string; room_id: string; message_id: string}): string {
+  return `Room ID ${row.room_id}; message ID ${row.message_id}; member ID ${row.member_id}; answer in this Room with replyTo ${row.message_id}.`;
+}
+
 /**
  * Best-effort delivery. Each pending delivery is claimed atomically immediately
  * before its own HTTP request, never as a batch, so a slow batch cannot outlive
@@ -339,7 +344,7 @@ export async function deliverMcpMemberWebhooks(
          CASE WHEN member.callback_url IS NOT NULL THEN member.callback_secret END callback_secret,
          message.author_id,author.handle author_handle,author.name author_name,author.kind author_kind,mention.seq::text cursor,(
            room.id IS NOT NULL AND room.archived_at IS NULL
-           AND EXISTS (SELECT 1 FROM effective_memberships room_member
+           AND EXISTS (SELECT 1 FROM room_access room_member
              WHERE room_member.room_id=claimed.room_id AND room_member.identity_id=claimed.member_id
                AND room_member.removed_at IS NULL)
            AND EXISTS (SELECT 1 FROM memberships workspace_member
@@ -370,11 +375,11 @@ export async function deliverMcpMemberWebhooks(
       const response = await transport(row.callback_url, {
         headers: { 'content-type': 'application/json',
           ...(row.callback_secret ? { authorization: `Bearer ${openSecrets<string>(webhookKey(), row.callback_secret)}` } : {}) },
-        body: JSON.stringify({ memberId: row.member_id, roomId: row.room_id, messageId: row.message_id,
+        body: JSON.stringify({ ...mentionRouting(row.member_id, row.room_id, row.message_id),
           author: row.author_id ? { id: row.author_id, handle: row.author_handle, name: row.author_name } : null,
           text: row.body, cursor: row.cursor, instruction: row.author_kind === 'agent' && row.author_handle
-            ? `${MCP_TAG_INSTRUCTION} Start your reply with @${row.author_handle} to wake the asking agent.`
-            : MCP_TAG_INSTRUCTION }),
+            ? `${routingInstruction(row)} ${MCP_TAG_INSTRUCTION} Start your reply with @${row.author_handle} to wake the asking agent.`
+            : `${routingInstruction(row)} ${MCP_TAG_INSTRUCTION}` }),
       });
       accepted = response.ok;
     } catch { accepted = false; }
@@ -592,7 +597,7 @@ export async function mcpProvenance(db: SqlDatabase, memberId: string, roomId: s
 export async function routeMcpMemberPost(
   db: SqlDatabase, memberId: string, roomId: string, messageId: string,
   provenance: typeof mcpProvenance = mcpProvenance,
-): Promise<{ woken: string[]; routing: 'done' | 'retrying' }> {
+): Promise<{ woken: string[]; notWoken: { handle: string; reason: string }[]; routing: 'done' | 'retrying' }> {
   await db.query(
     `INSERT INTO rooms_mcp_pending_routes(message_id,room_id,member_id) VALUES($1,$2,$3)
      ON CONFLICT(message_id) DO NOTHING`,
@@ -610,14 +615,14 @@ export async function routeMcpMemberPost(
     const delivery = await routeAgentResult(db, parent, messageId,
       { roomId, agentId: memberId, initialAgentDepth: incoming === null || incoming ? 1 : undefined });
     await db.query('DELETE FROM rooms_mcp_pending_routes WHERE message_id=$1', [messageId]);
-    return { woken: delivery.woken, routing: 'done' };
+    return { ...delivery, routing: 'done' };
   } catch (error) {
     console.error('[rooms-mcp] wake routing failed; maintenance retries it', error);
     await db.query(
       'UPDATE rooms_mcp_pending_routes SET attempts=attempts+1,last_error=$2 WHERE message_id=$1',
       [messageId, String(error instanceof Error ? error.message : error).slice(0, 500)],
     ).catch(() => undefined);
-    return { woken: [], routing: 'retrying' };
+    return { woken: [], notWoken: [], routing: 'retrying' };
   }
 }
 

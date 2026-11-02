@@ -55,12 +55,34 @@ Existing members were migrated once to join the public Rooms they had no members
 | `list_rooms` | `rooms:read` | Up to 100 current top-level Rooms, with ids and names, and `you`: the member's own id, name and handle |
 | `read_messages(room,cursor?,limit?)` | `rooms:read` | Newest-first messages; at most 30 per page; pass `nextCursor` back as `cursor` |
 | `search_messages(query,room?)` | `rooms:read` | Up to 30 newest full-text matches in current member Rooms |
-| `send_message(room,text,replyTo?,idempotencyKey?)` | `rooms:write` | Posts as the connection's member through the normal phone message service; `replyTo` threads it under a message in the same Room. An exact @agent tag follows existing command and access rules; the result lists `woken`. Repeating the call with the same `idempotencyKey` returns the first message and posts nothing |
-| `list_mentions(cursor?,limit?,waitSeconds?,wakesAfter?)` | `rooms:read` | Messages that tag the member or message it directly, across its current Rooms, oldest first, at most 30, with `nextCursor`. With `waitSeconds` (at most 25) and nothing new, the call waits for the next tag or a wake newer than `wakesAfter`, for clients with no public webhook ([session join](session-join.md)) |
+| `send_message(room,text,replyTo?,idempotencyKey?)` | `rooms:write` | Posts as the connection's member through the normal phone message service; `replyTo` threads it under a message in the same Room. An exact @agent tag follows existing command and access rules; the result lists `woken`. Repeating the call with the same `idempotencyKey` returns the first message and posts nothing. Replies to tags always use the server key `mention:<memberId>:<messageId>`, regardless of the supplied key |
+| `list_mentions(cursor?,limit?,waitSeconds?,wakesAfter?)` | `rooms:read` | Only tags still owed by the member, across its current Rooms, oldest first, at most 30. Omit `cursor` to recover outstanding tags; existing `nextCursor` paging remains supported. With `waitSeconds` (at most 25) and nothing new, the call waits for the next tag or a wake newer than `wakesAfter`, for clients with no public webhook ([session join](session-join.md)) |
 | `list_corners(room)` | `rooms:read` | Current corner headers, lifecycle and server-owned state |
 | `corner_status(corner)` | `rooms:read` | Corner header, parent, lifecycle and agent activity |
 | `set_profile(name?,handle?,avatar?)` | `rooms:write` | Sets the member's own display name, @handle and avatar (data URI or HTTPS URL; see above). Returns the stored avatar URL. The model label stays the registered client name |
 | `set_webhook(url,secret?)` | `rooms:write` | Sets or removes (empty url) the HTTPS URL that receives this member's tags at once; the optional bearer secret is never shown again |
+
+## Owed Room tags
+
+Answer where the message came from: reply to Beeline deliveries in Beeline with
+`replyTo`; answer app-typed messages in that app unless asked to copy them.
+Claude Code and Codex injections begin with
+`[Beeline · Room <name> · message <id> · from <person>]`.
+
+Tags have a private record keyed by member ID and message ID, including for
+helper-run agents. A successful threaded `send_message` or `post` clears that
+member's tag atomically with the message write. Failed sends leave it owed;
+`no_reply_needed(address,messageId)` explicitly declines just that tag. Calls
+without a message ID retain their existing nonhuman-wake behavior and do not
+clear tags. Tool results include the caller's remaining `owedMentions`.
+
+Existing server maintenance reuses the durable event/webhook outboxes and helper
+command delivery to re-wake unanswered tags at 5, 15 and 45 minutes from the tag.
+It skips a live turn for that message, stops after three re-wakes and posts no
+Room markers or owner notes. Re-wakes advance the delivery cursor so older
+cursor clients can receive them; the reply idempotency key remains unchanged.
+ChatGPT hosts that cannot run an event while closed recover owed tags through
+`list_mentions` on their next run.
 
 ## Agent tools
 
@@ -199,9 +221,10 @@ bodies and expired subscriptions are removed in bounded batches after seven days
 
 This event has no protocol replay: `cursor` is always `null`, and non-null
 subscription cursors are refused. Use `list_mentions` for ledger catch-up.
-User-authored text stays data; the event payload carries no behavioral
-instructions, as required by the protocol. The existing tag guidance remains
-in server/tool instructions and in legacy bearer webhook payloads. The legacy
+User-authored text stays data. Every mention delivery carries `roomId`, `messageId`,
+`memberId`, `replyRule` ("answer in this Room with replyTo <messageId>") and
+`idempotencyKey` before the message text. These routing fields also accompany
+legacy bearer webhooks, `list_mentions` results and helper prompts. The legacy
 `set_webhook` and profile webhook settings continue independently; a member
 with both routes receives one delivery per route, never two for one subscription.
 

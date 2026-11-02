@@ -1,7 +1,6 @@
 import type { ObjectService } from './object-service.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { voiceContextText, type VoiceContextRow } from './voice-context.js';
-import { prepareCornerCompatibility } from './corner-person-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { VoiceBudgetStore } from './voice-budget.js';
 import { AgentVoiceService } from './agent-voice.js';
@@ -500,22 +499,21 @@ export class VoiceService {
     }
     if (!text.trim()) return;
     await this.db.transaction(async database => {
-      const physical = await prepareCornerCompatibility(database, roomId, agentId);
       const messageId = options?.replyId
         ? createHash('sha256').update(`voice-reply:${roomId}:${agentId}:${options.replyId}`).digest('hex')
         : randomBytes(32).toString('hex');
-      const inserted = await physical.query(`INSERT INTO messages(id,room_id,author_id,text,agent_model)
-        SELECT $1,$2,$3,$4,$5 FROM memberships m JOIN rooms r ON r.id=m.room_id
-        WHERE m.room_id=$2 AND m.identity_id=$3 AND m.removed_at IS NULL AND r.archived_at IS NULL
+      const inserted = await database.query(`INSERT INTO messages(id,room_id,author_id,text,agent_model)
+        SELECT $1,$2,$3,$4,$5 FROM rooms r JOIN memberships m ON m.room_id=COALESCE(r.parent_id,r.id)
+        WHERE r.id=$2 AND m.identity_id=$3 AND m.removed_at IS NULL AND r.archived_at IS NULL FOR SHARE OF m
         ON CONFLICT(id) DO NOTHING RETURNING id`,
         [messageId, roomId, agentId, text, VOICE_MODEL]);
       if (!inserted.rowCount || options?.routeMentions === false || !text.includes('@')) return;
-      const parent = options?.sourceId ? (await physical.query<CommandRow>(
+      const parent = options?.sourceId ? (await database.query<CommandRow>(
         `SELECT command.* FROM voice_orders voice JOIN agent_commands command
           ON command.source_message_id=voice.source_message_id AND command.agent_id=voice.agent_id
          WHERE voice.source_message_id=$1 AND voice.agent_id=$2 AND command.room_id=$3
          ORDER BY command.created_at DESC LIMIT 1`, [options.sourceId, agentId, roomId])).rows[0] : undefined;
-      await routeAgentResult(physical, parent, messageId, { roomId, agentId });
+      await routeAgentResult(database, parent, messageId, { roomId, agentId });
     });
   }
 

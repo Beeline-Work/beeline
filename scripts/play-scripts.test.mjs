@@ -38,15 +38,15 @@ test('play-publish.sh: edit → upload bundle → tracks.update → commit, note
   fs.writeFileSync(aab, 'not really a bundle');
   const changelogs = path.join(dir, 'changelogs');
   fs.mkdirSync(changelogs);
-  fs.writeFileSync(path.join(changelogs, 'default.txt'), 'Beta notes.\n');
+  fs.writeFileSync(path.join(changelogs, 'default.txt'), 'Release notes.\n');
 
   const { calls, stdout } = run('play-publish.sh', {
     AAB_PATH: aab,
     MAPPING_PATH: aab,
     MAPPING_ARCHIVE_DIR: dir,
-    TRACK: 'internal',
+    TRACK: 'production',
     RELEASE_NAME: '0.2.18',
-    RELEASE_STATUS: 'draft',
+    RELEASE_STATUS: 'completed',
     CHANGELOG_DIR: changelogs,
     PLAY_DRY_RUN_VERSION_CODE: '28',
   });
@@ -61,24 +61,25 @@ test('play-publish.sh: edit → upload bundle → tracks.update → commit, note
     calls[2],
     `POST ${UPLOAD}/edits/dry-run-edit/bundles?uploadType=media -H Content-Type: application/octet-stream --data-binary @${aab}`,
   );
-  const [, trackBody] = calls[4].match(/^PUT .*\/tracks\/internal -H Content-Type: application\/json --data (.*)$/s);
+  const [, trackBody] = calls[4].match(/^PUT .*\/tracks\/production -H Content-Type: application\/json --data (.*)$/s);
   assert.deepEqual(JSON.parse(trackBody), {
-    track: 'internal',
+    track: 'production',
     releases: [
       {
         name: '0.2.18',
-        status: 'draft',
+        status: 'completed',
         versionCodes: ['28'],
-        releaseNotes: [{ language: 'en-US', text: 'Beta notes.' }],
+        releaseNotes: [{ language: 'en-US', text: 'Release notes.' }],
       },
     ],
   });
   assert.equal(
     calls[5],
-    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true&changesInReviewBehavior=ERROR_IF_IN_REVIEW -H Content-Length: 0`,
+    `POST ${API}/edits/dry-run-edit:commit?changesInReviewBehavior=ERROR_IF_IN_REVIEW -H Content-Length: 0`,
   );
+  assert.match(stdout, /Build sent for review/);
   assert.match(stdout, /release notes from: .*default\.txt/);
-  assert.match(stdout, /versionCode 28 is on the internal track as draft/);
+  assert.match(stdout, /versionCode 28 is on the production track as completed/);
   assert.match(stdout, new RegExp(`Play Console: https://play.google.com/console/u/0/developers/-/app-list\\?search=${PACKAGE}`));
   assert.doesNotMatch(calls.join('\n'), /Authorization/);
 });
@@ -91,7 +92,7 @@ test('play-publish.sh prefers the per-versionCode changelog and refuses a missin
   fs.mkdirSync(changelogs);
   fs.writeFileSync(path.join(changelogs, 'default.txt'), 'default');
   fs.writeFileSync(path.join(changelogs, '31.txt'), 'exact notes for 31');
-  const env = { AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: dir, TRACK: 'beta', RELEASE_NAME: '0.2.19', RELEASE_STATUS: 'completed', CHANGELOG_DIR: changelogs };
+  const env = { AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: dir, TRACK: 'production', RELEASE_NAME: '0.2.19', RELEASE_STATUS: 'completed', CHANGELOG_DIR: changelogs };
 
   const { calls } = run('play-publish.sh', { ...env, PLAY_DRY_RUN_VERSION_CODE: '31' });
   assert.match(calls[4], /"text": "exact notes for 31"/);
@@ -108,10 +109,77 @@ test('mapping is mandatory before any Play call', (t) => {
   fs.writeFileSync(aab, 'bundle');
   for (const mapping of ['', path.join(dir, 'missing.txt')]) {
     const result = run('play-publish.sh', { AAB_PATH: aab, MAPPING_PATH: mapping,
-      TRACK: 'internal', RELEASE_NAME: 'test', RELEASE_STATUS: 'draft' }, { expectStatus: 1 });
+      TRACK: 'production', RELEASE_NAME: 'test', RELEASE_STATUS: 'completed' }, { expectStatus: 1 });
     assert.equal(result.calls.length, 0);
     assert.match(result.stderr, /MAPPING_PATH|mapping missing/);
   }
+});
+
+test('Play upload defaults to completed production; beta requires an explicit choice', (t) => {
+  const dir = tempDir(t);
+  const aab = path.join(dir, 'app.aab');
+  fs.writeFileSync(aab, 'bundle');
+  const env = { AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: dir, RELEASE_NAME: 'test' };
+  for (const track of [undefined, 'beta']) {
+    const { calls } = run('play-publish.sh', { ...env, ...(track ? { TRACK: track } : {}) });
+    assert.match(calls[4], new RegExp(`/tracks/${track ?? 'production'} `));
+    const body = JSON.parse(calls[4].split(' --data ')[1]);
+    assert.equal(body.track, track ?? 'production');
+    assert.equal(body.releases[0].status, 'completed');
+    assert.equal(body.releases[0].userFraction, undefined);
+    assert.match(calls[5], /:commit\?changesInReviewBehavior=ERROR_IF_IN_REVIEW /);
+    assert.doesNotMatch(calls[5], /changesNotSentForReview/);
+  }
+  for (const invalid of [{ TRACK: 'internal' }, { RELEASE_STATUS: 'draft' }]) {
+    const { calls, stderr } = run('play-publish.sh', { ...env, ...invalid }, { expectStatus: 1 });
+    assert.deepEqual(calls, []);
+    assert.match(stderr, /Android releases require/);
+  }
+});
+
+test('build review submission preserves the listing lock and never falls back to an unsent commit', (t) => {
+  const dir = tempDir(t);
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  const log = path.join(dir, 'calls');
+  fs.writeFileSync(path.join(bin, 'curl'), `#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$PLAY_TEST_LOG"
+printf '{}\\n%s' "$PLAY_TEST_STATUS"
+`);
+  fs.chmodSync(path.join(bin, 'curl'), 0o755);
+  const mock = path.join(dir, 'fetch.mjs');
+  fs.writeFileSync(mock, `globalThis.fetch = async (url) => ({
+    ok: true, status: 200, text: async () => JSON.stringify(
+      url.endsWith('/listings') ? { listings: [{ language: 'en-US', title: process.env.PLAY_TEST_TITLE }] }
+        : url.endsWith('/edit-1') ? { id: 'edit-1' } : {}
+    ),
+  });`);
+  const baseline = path.join(dir, 'listing.json');
+  const env = { PATH: `${bin}:${process.env.PATH}`, NODE_OPTIONS: `--import=${mock}`,
+    PACKAGE_NAME: PACKAGE, ACCESS_TOKEN: 'test-token', PLAY_EDIT_ID: 'edit-1',
+    PLAY_LISTING_BASELINE: baseline, PLAY_TEST_TITLE: 'Beeline', PLAY_TEST_LOG: log, PLAY_TEST_STATUS: '200' };
+  const snapshot = spawnSync('node', [path.join(REPO, 'scripts/play-listing-lock.mjs'), 'snapshot', baseline], { env, encoding: 'utf8' });
+  assert.equal(snapshot.status, 0, snapshot.stderr);
+  const commit = (extra = {}) => {
+    fs.writeFileSync(log, '');
+    const result = spawnSync('bash', [path.join(REPO, 'scripts/play-commit-build.sh')], { env: { ...env, ...extra }, encoding: 'utf8' });
+    return { ...result, calls: fs.readFileSync(log, 'utf8').trim().split('\n').filter(Boolean) };
+  };
+  const passed = commit();
+  assert.equal(passed.status, 0, passed.stderr);
+  assert.match(passed.stdout, /listing lock passed[\s\S]*Build sent for review/);
+  assert.equal(passed.calls.length, 1);
+  assert.match(passed.calls[0], /:commit\?changesInReviewBehavior=ERROR_IF_IN_REVIEW/);
+  assert.doesNotMatch(passed.calls[0], /changesNotSentForReview/);
+  const changed = commit({ PLAY_TEST_TITLE: 'Changed listing' });
+  assert.equal(changed.status, 1);
+  assert.match(changed.stderr, /Listing lock stopped before commit; changed items: en-US\/title/);
+  assert.deepEqual(changed.calls, []);
+  const refused = commit({ PLAY_TEST_STATUS: '400' });
+  assert.equal(refused.status, 1);
+  assert.equal(refused.calls.length, 1);
+  assert.doesNotMatch(refused.calls.join('\n'), /changesNotSentForReview/);
+  assert.doesNotMatch(refused.stdout, /Build sent for review|Play build edit committed/);
 });
 
 test('play-publish-listing.sh: one edit carrying text, cleared+uploaded images, validate, commit', (t) => {
@@ -146,7 +214,7 @@ test('play-publish-listing.sh: one edit carrying text, cleared+uploaded images, 
     `DELETE ${listings}/phoneScreenshots`,
     `POST ${uploads}/phoneScreenshots?uploadType=media -H Content-Type: image/png --data-binary @${locale}/images/phoneScreenshots/01-room.png`,
     `POST ${uploads}/phoneScreenshots?uploadType=media -H Content-Type: image/png --data-binary @${locale}/images/phoneScreenshots/02-corner.png`,
-    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
+    `POST ${API}/edits/dry-run-edit:commit?changesInReviewBehavior=ERROR_IF_IN_REVIEW -H Content-Length: 0`,
   ]);
 });
 
@@ -215,7 +283,7 @@ function assertFullUpload(calls, locale) {
     `DELETE ${listings}/phoneScreenshots`,
     ...fs.readdirSync(shotDir).sort().map((name) =>
       `POST ${uploads}/phoneScreenshots?uploadType=media -H Content-Type: image/png --data-binary @${path.join(shotDir, name)}`),
-    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
+    `POST ${API}/edits/dry-run-edit:commit?changesInReviewBehavior=ERROR_IF_IN_REVIEW -H Content-Length: 0`,
   ]);
 }
 
@@ -326,7 +394,7 @@ test('PLAY_LISTING_CHECK_ONLY reports a difference and does not upload', (t) => 
 
 test('play-publish.sh still uploads the bundle when the listing is skipped', (t) => {
   const workflow = fs.readFileSync(path.join(REPO, '.github/workflows/unified-release.yml'), 'utf8');
-  const step = workflow.slice(workflow.indexOf('name: Upload Android to the selected Play track'));
+  const step = workflow.slice(workflow.indexOf('name: Publish Android to Play'));
   const publishAt = step.indexOf('bash scripts/play-publish.sh');
   const listingAt = step.indexOf('bash scripts/play-publish-listing.sh');
   assert.ok(publishAt > 0 && listingAt > publishAt);
@@ -342,7 +410,7 @@ test('play-publish.sh still uploads the bundle when the listing is skipped', (t)
     AAB_PATH: aab,
     MAPPING_PATH: aab,
     MAPPING_ARCHIVE_DIR: dir,
-    TRACK: 'internal',
+    TRACK: 'production',
     RELEASE_NAME: '1.0.0',
     RELEASE_STATUS: 'completed',
     CHANGELOG_DIR: changelogs,
@@ -456,35 +524,6 @@ test('the committed listing publishes through the dry run', () => {
   assert.match(calls[1], /"title": "Beeline"/);
 });
 
-test('play-promote-track.sh: reads the source track and writes its newest release to the target', () => {
-  const { calls, stdout } = run('play-promote-track.sh', {
-    FROM_TRACK: 'internal',
-    TO_TRACK: 'beta',
-    RELEASE_STATUS: 'draft',
-    PLAY_DRY_RUN_VERSION_CODE: '28',
-  });
-  assert.equal(calls[0], `POST ${API}/edits -H Content-Type: application/json -d {}`);
-  assert.equal(calls[1], `GET ${API}/edits/dry-run-edit/tracks/internal`);
-  const [, body] = calls[2].match(/^PUT .*\/tracks\/beta -H Content-Type: application\/json -d (.*)$/s);
-  assert.deepEqual(JSON.parse(body), {
-    track: 'beta',
-    releases: [
-      {
-        name: 'dry-run-release',
-        versionCodes: ['28'],
-        status: 'draft',
-        releaseNotes: [{ language: 'en-US', text: 'dry-run notes' }],
-      },
-    ],
-  });
-  assert.equal(
-    calls[3],
-    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
-  );
-  assert.equal(calls.length, 4);
-  assert.match(stdout, /Ready to publish/);
-});
-
 test('without PLAY_DRY_RUN every script demands ACCESS_TOKEN before calling anything', () => {
   for (const script of ['play-publish.sh', 'play-publish-listing.sh', 'play-promote-track.sh']) {
     const result = spawnSync('bash', [path.join(REPO, 'scripts', script)], {
@@ -495,6 +534,20 @@ test('without PLAY_DRY_RUN every script demands ACCESS_TOKEN before calling anyt
     assert.equal(result.status, 1, script);
     assert.match(result.stderr, /ACCESS_TOKEN env var is required/, script);
   }
+});
+
+test('explicit beta recovery promotes to completed production and sends for review', () => {
+  const { calls, stdout } = run('play-promote-track.sh', { FROM_TRACK: 'beta', PLAY_DRY_RUN_VERSION_CODE: '142' });
+  assert.equal(calls[1], `GET ${API}/edits/dry-run-edit/tracks/beta`);
+  const body = JSON.parse(calls[2].split(' -d ')[1]);
+  assert.equal(body.track, 'production');
+  assert.deepEqual(body.releases[0].versionCodes, ['142']);
+  assert.equal(body.releases[0].status, 'completed');
+  assert.match(stdout, /listing lock passed[\s\S]*Build sent for review/);
+  assert.match(calls[3], /:commit\?changesInReviewBehavior=ERROR_IF_IN_REVIEW/);
+  assert.doesNotMatch(calls.join('\n'), /changesNotSentForReview/);
+  const refused = run('play-promote-track.sh', { FROM_TRACK: 'beta', RELEASE_STATUS: 'draft' }, { expectStatus: 1 });
+  assert.deepEqual(refused.calls, []);
 });
 
 // api() retry tests: stub curl with a fake on PATH that serves a scripted
@@ -527,7 +580,7 @@ fi
   fs.chmodSync(path.join(bin, 'curl'), 0o755);
   const result = spawnSync(
     'bash',
-    ['-c', `source ${path.join(REPO, 'scripts', 'play-api.sh')}; api "$@"`, 'api', 'GET', `${API}/edits/1/tracks/internal`],
+    ['-c', `source ${path.join(REPO, 'scripts', 'play-api.sh')}; api "$@"`, 'api', 'GET', `${API}/edits/1/tracks/production`],
     {
       encoding: 'utf8',
       env: {
@@ -643,7 +696,7 @@ test('Reproduction STORE-RERUN: a shipped Play release is not uploaded again whe
   fs.writeFileSync(aab, 'bundle');
   const env = {
     PATH: `${play.bin}:${process.env.PATH}`, PACKAGE_NAME: PACKAGE, ACCESS_TOKEN: 'test-token',
-    AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: path.join(dir, 'mappings'), TRACK: 'internal',
+    AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: path.join(dir, 'mappings'), TRACK: 'production',
     RELEASE_NAME: '0.2.30 (v0.1.123@abcdef123456)', RELEASE_STATUS: 'completed', PLAY_LISTING_BASELINE: '',
     PUBLISH_LISTING: 'true', CHANGELOG_DIR: path.join(dir, 'none'),
   };
@@ -659,7 +712,7 @@ test('Reproduction STORE-RERUN: a shipped Play release is not uploaded again whe
 
   // Attempt 1 uploads and commits; an unrelated job then fails the run.
   const first = publish();
-  assert.match(first.stdout, /versionCode 40 is on the internal track/);
+  assert.match(first.stdout, /versionCode 40 is on the production track/);
   assert.equal(play.read().uploads, 1);
 
   // The rerun finds the release by name, uploads nothing and reports the code.
@@ -682,7 +735,7 @@ test('an upload whose edit never committed is uploaded again on rerun (nothing s
   const output = path.join(dir, 'output');
   const env = {
     PATH: `${play.bin}:${process.env.PATH}`, PACKAGE_NAME: PACKAGE, ACCESS_TOKEN: 'test-token', GITHUB_OUTPUT: output,
-    AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: path.join(dir, 'mappings'), TRACK: 'internal',
+    AAB_PATH: aab, MAPPING_PATH: aab, MAPPING_ARCHIVE_DIR: path.join(dir, 'mappings'), TRACK: 'production',
     RELEASE_NAME: '0.2.30 (v0.1.123@abcdef123456)', RELEASE_STATUS: 'completed', PUBLISH_LISTING: 'true',
     PLAY_DEFER_COMMIT: '1', CHANGELOG_DIR: path.join(dir, 'none'),
   };

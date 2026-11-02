@@ -89,7 +89,7 @@ export function runHook(dir: string, input: HookInput, now = Date.now()): string
   if (!joined || !takesMail(agent, event)) return '';
   const waiting = takeInbox(dir, joined.key);
   // Say who it is on Beeline once, at session start.
-  const text = waiting || (ev === 'start' ? `Beeline: you are @${joined.handle ?? joined.name} in your owner's Beeline Rooms. Tags arrive in this conversation.` : '');
+  const text = waiting;
   if (!text) return '';
   return formatFor(agent, event, text);
 }

@@ -3,6 +3,7 @@ import { Pool } from 'pg';
 import { expect, it } from 'vitest';
 import { migrate, PostgresDatabase } from './database.js';
 import { migrateCornerPersonState } from './corner-person-state.js';
+import { removeCornerMemberships } from './migrations/corner-memberships.js';
 
 const postgresUrl = process.env.BEELINE_INVITE_TEST_POSTGRES_URL;
 if (postgresUrl && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(postgresUrl).hostname))
@@ -24,6 +25,7 @@ it.skipIf(!postgresUrl)(
     });
     try {
       await migrate(db, { deferData: true });
+      await db.query(`DROP TRIGGER IF EXISTS guard_corner_membership ON memberships`);
       const workspace = randomUUID(),
         room = randomUUID(),
         unrelated = randomUUID();
@@ -66,12 +68,14 @@ it.skipIf(!postgresUrl)(
       const retryStarted = performance.now();
       expect(await migrateCornerPersonState(db)).toBe(0);
       const retryElapsed = performance.now() - retryStarted;
+      expect(await removeCornerMemberships(db)).toBe(51_650);
+      expect(await removeCornerMemberships(db)).toBe(0);
       expect(
         (
           await db.query(`SELECT count(*)::int count FROM memberships member JOIN rooms corner
       ON corner.id=member.room_id WHERE corner.parent_id IS NOT NULL`)
         ).rows[0]!.count,
-      ).toBe(51_650);
+      ).toBe(0);
       expect(
         (await db.query('SELECT count(*)::int count FROM corner_person_state')).rows[0]!.count,
       ).toBe(1033);
@@ -83,7 +87,7 @@ it.skipIf(!postgresUrl)(
         ).rows[0]!.count,
       ).toBe(1033);
       console.log(
-        `Migration proof: 333000 messages, 1033 corners, 51650 retained legacy memberships: ${elapsed.toFixed(0)} ms; retry ${retryElapsed.toFixed(0)} ms; 1033 sparse state rows`,
+        `Migration proof: 333000 messages, 1033 corners, 51650 removed legacy memberships: ${elapsed.toFixed(0)} ms; retry ${retryElapsed.toFixed(0)} ms; 1033 sparse state rows`,
       );
       expect(elapsed).toBeLessThan(30_000);
     } finally {

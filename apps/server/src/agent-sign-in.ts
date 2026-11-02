@@ -381,7 +381,7 @@ export async function completeAgentSignInCard(
   const row = (
     await database.query<{ card: StoredCard; owner_id: string; member: boolean }>(
       `SELECT message.card,agent.owner_id,
-         EXISTS(SELECT 1 FROM effective_memberships m WHERE m.room_id=message.room_id
+         EXISTS(SELECT 1 FROM room_access m WHERE m.room_id=message.room_id
            AND m.identity_id=$3 AND m.removed_at IS NULL) member
        FROM messages message
        JOIN agents agent ON agent.agent_id=message.card->>'agentId'

@@ -118,7 +118,7 @@ export function cornerFactsSql(viewerExpr: string): {
     LEFT JOIN LATERAL (SELECT status,created_at FROM agent_turns WHERE room_id=c.id
       ORDER BY created_at DESC LIMIT 1) turn ON true
     ${cornerOwedLookupSql('c', viewerExpr)}`,
-    member: `EXISTS (SELECT 1 FROM effective_memberships corner_member WHERE corner_member.room_id=c.id
+    member: `EXISTS (SELECT 1 FROM memberships corner_member WHERE corner_member.room_id=COALESCE(c.parent_id,c.id)
       AND corner_member.identity_id=${viewerExpr} AND corner_member.removed_at IS NULL)`,
   };
 }

@@ -13,7 +13,7 @@ it('resolves only membership read relations while preserving writes, literals an
   await database.transaction(db => db.query(
     `WITH allowed AS (SELECT 1 FROM memberships member WHERE member.identity_id=$1)
      INSERT INTO messages(id,text) SELECT 'proof','FROM memberships' FROM allowed`, values));
-  expect(calls[0]!.sql).toContain('FROM effective_memberships member');
+  expect(calls[0]!.sql).toContain('FROM room_access member');
   expect(calls[0]!.sql).toContain("'FROM memberships'");
   expect(calls[0]!.values).toBe(values);
   expect(new CornerAccessStatement('DELETE FROM memberships WHERE identity_id=$1').sql)

@@ -124,6 +124,9 @@ function shims(mobile: string): Record<string, string> {
     'react-native-reanimated': `import React from 'react';
     import { Animated } from 'react-native';
     const identity = value => value;
+    export const useEvent = handler => handler;
+    export const useAnimatedRef = () => React.useRef(null);
+    export const measure = ref => { const rect = ref.current?.getBoundingClientRect(); return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height, pageX: rect.x, pageY: rect.y } : null; };
     export const Easing = new Proxy({}, { get: () => (...args) => (typeof args[0] === 'function' ? args[0] : identity) });
     const entering = new Proxy({}, { get: () => () => entering });
     export const FadeInDown = entering;

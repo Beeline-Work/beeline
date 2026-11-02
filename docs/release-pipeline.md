@@ -10,15 +10,20 @@
   requires the emulator device proof.
 - **Store publishing is explicit and consent-gated.** `store_track` stays
   `none` unless the project owner explicitly dispatches with a track
-  (`internal`, `beta`, or `production`). A runtime-pin change does not change
+  (`production`, or `beta` only by the owner's explicit choice). Every release
+  that builds a new Android binary publishes it
+  to Play production as `completed` and sends the build for review automatically,
+  including explicit native recovery selection with `store_track=none`; an
+  explicit `store_track=beta` sends that release to Play beta instead. A
+  runtime-pin change does not change
   this: the release still finishes, the OTA goes to every runtime live in the
   stores today, and the new runtime waits for a store release the owner
   chooses. Planning prints a notice; it never fails and never adds a store leg.
 - **iOS production includes App Review.** After Apple confirms the exact uploaded
   build is VALID, `store_track=production` attaches it to the matching App Store
   version, sets release notes from the committed store metadata, and submits it
-  for review with automatic release after approval. `internal` and `beta` stop
-  at TestFlight. Apple API or submission-state errors fail the native job;
+  for review with automatic release after approval. Apple API or
+  submission-state errors fail the native job;
   successful evidence includes the review submission ID. See the
   [store runbook](../apps/mobile/docs/store-submission.md) for retry constraints.
 - **The device proof is opt-in.** Request the existing rig's Play-reviewer OTA launch check with `inputs: { run_release_proof: true }`; default `false` adds no device wait.
@@ -115,8 +120,12 @@ independently. `selection=all` is a recovery-only, deliberate full-release
 override. A
 non-`none` store track always selects `mobile-native`. Automatic selection with
 `store_track=none` never builds native binaries, even when native inputs changed.
-Explicit recovery selection (`all` or `mobile-native`) can still build binaries
-without submitting them to a store.
+Explicit recovery selection (`all` or `mobile-native`) also publishes every new
+Android binary to Play production by default; only explicit `store_track=beta`
+chooses Play beta. iOS store uploads require an explicit store track and only
+`production` submits for App Review. Android listing text/images remain locked unless the
+owner explicitly commands a listing publish. The pre-commit gate stops on any
+listing change; a passing build edit commits without `changesNotSentForReview`.
 
 On pull requests, NATIVE FINGERPRINT also compares the committed runtime pins
 against the PR base with `scripts/pr-store-build.mjs`. A changed pin adds a

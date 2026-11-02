@@ -24,7 +24,7 @@ import { cornerImplementerSql } from './corner-worker.js';
 import { currentCornerBrief, assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cancelCornerAgentCommands, retryCornerPullRequestClosures } from './corner-close.js';
 import { captureServerError } from './sentry.js';
-import { retryOnDeadlock } from './migration-retry.js';
+import { retryMigrationStep, retryOnDeadlock } from './migration-retry.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import {
@@ -1093,9 +1093,9 @@ export class GitHubOperations {
          JOIN rooms parent ON parent.id=r.parent_id
          LEFT JOIN identities reviewer_identity ON reviewer_identity.id=${cornerReviewerSql('r')}
            AND reviewer_identity.kind='agent'
-         LEFT JOIN effective_memberships parent_member ON parent_member.room_id=parent.id
+         LEFT JOIN room_access parent_member ON parent_member.room_id=parent.id
            AND parent_member.identity_id=${cornerReviewerSql('r')} AND parent_member.removed_at IS NULL
-         LEFT JOIN effective_memberships corner_member ON corner_member.room_id=r.id
+         LEFT JOIN room_access corner_member ON corner_member.room_id=r.id
            AND corner_member.identity_id=${cornerReviewerSql('r')} AND corner_member.removed_at IS NULL
          WHERE r.id=$1`,
         [input.cornerId],
@@ -2305,7 +2305,7 @@ export class GitHubOperations {
          ORDER BY corner.created_at,corner.id LIMIT 1
        ) destination ON true
        LEFT JOIN LATERAL(
-         SELECT membership.identity_id FROM effective_memberships membership
+         SELECT membership.identity_id FROM room_access membership
          WHERE membership.room_id=room.id AND membership.removed_at IS NULL
          ORDER BY membership.joined_at LIMIT 1
        )author ON true
@@ -2992,9 +2992,9 @@ export class GitHubOperations {
             [target.corner_id, currentRow.updated_at, currentRow.merge_attempt_head]);
         });
         // A supplied transaction belongs to its caller: only the owner can
-        // roll back and replay the complete unit after a deadlock.
+        // roll back and replay the complete unit after lock contention.
         if (database !== this.database) await refresh();
-        else await retryOnDeadlock(async () => { await refresh(); }, {
+        else await retryMigrationStep('GitHub check refresh', async () => { await refresh(); }, {
           attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50),
         });
         if (noteInserted) this.onRoomChanged?.(target.corner_id);

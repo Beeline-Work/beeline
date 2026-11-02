@@ -155,7 +155,7 @@ describe('the review identity', () => {
     await auth.exchangeReviewIdentity();
     const fixture = await database.query<{ room: string; member: string }>(
       `SELECT r.workspace_id room,m.workspace_id member FROM rooms r
-       JOIN effective_memberships m ON m.room_id=r.id AND m.identity_id=$1
+       JOIN room_access m ON m.room_id=r.id AND m.identity_id=$1
        WHERE r.id IN ($2,$3) ORDER BY r.id`,
       [REVIEW_IDENTITY_ID, REVIEW_PROOF_ROOM_ID, REVIEW_PROOF_CORNER_ID],
     );
@@ -219,7 +219,7 @@ describe('the review identity', () => {
       });
     });
     const members = await database.query<{ identity_id: string }>(
-      `SELECT identity_id FROM effective_memberships
+      `SELECT identity_id FROM room_access
        WHERE room_id IN ($1,$2) AND removed_at IS NULL`,
       [REVIEW_PROOF_ROOM_ID, REVIEW_PROOF_CORNER_ID],
     );

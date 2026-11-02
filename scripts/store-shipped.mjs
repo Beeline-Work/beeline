@@ -30,12 +30,13 @@ export function playReleaseName(appVersion, marker) {
   return `${appVersion} (${marker})`;
 }
 
-/** This release's Play release on any track, from an edits.tracks.list body. */
-export function findPlayRelease(tracks, marker) {
+/** This release's completed release on its selected track (production by default). */
+export function findPlayRelease(tracks, marker, targetTrack = 'production') {
   for (const track of tracks?.tracks ?? []) {
+    if (track.track !== targetTrack) continue;
     for (const release of track.releases ?? []) {
       const match = /^(\S+) \((.+)\)$/.exec(release.name ?? '');
-      if (match?.[2] !== marker || !release.versionCodes?.length) continue;
+      if (release.status !== 'completed' || match?.[2] !== marker || !release.versionCodes?.length) continue;
       return { track: track.track, appVersion: match[1], versionCode: String(Math.max(...release.versionCodes.map(Number))) };
     }
   }
@@ -160,7 +161,7 @@ async function main() {
   const appId = JSON.parse(readFileSync(new URL('../apps/mobile/eas.json', import.meta.url), 'utf8')).submit.production.ios.ascAppId;
   if (command === 'find') {
     const play = args.includes('--android')
-      ? findPlayRelease(await readPlayTracks({ packageName: 'app.usebeeline', accessToken: process.env.ACCESS_TOKEN }), marker)
+      ? findPlayRelease(await readPlayTracks({ packageName: 'app.usebeeline', accessToken: process.env.ACCESS_TOKEN }), marker, option(args, 'play-track') || 'production')
       : null;
     const ios = args.includes('--ios') ? await findIosRelease({ api: appStoreClient(), appId, marker }) : null;
     const lines = shippedOutputs({ play, ios });
@@ -188,7 +189,7 @@ async function main() {
     console.log(`Reusing iOS ${found.appVersion} (${found.buildNumber}), build ${evidence.appStore.buildId}`);
     return;
   }
-  throw new Error('Usage: store-shipped.mjs find|ios-evidence|ios-file-name --marker <version>@<sha12> [--android] [--ios] [--outputs file] [--output file]');
+  throw new Error('Usage: store-shipped.mjs find|ios-evidence|ios-file-name --marker <version>@<sha12> [--android] [--play-track production|beta] [--ios] [--outputs file] [--output file]');
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

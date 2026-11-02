@@ -561,7 +561,7 @@ test('R-release-timeout: routine native input changes carry binaries while recov
     for (const selection of ['all', 'mobile-native']) {
       assert.ok(select({ selection, storeTrack: 'none' }).includes('mobile-native'));
     }
-    for (const storeTrack of ['internal', 'beta', 'production']) {
+    for (const storeTrack of ['production', 'beta']) {
       assert.ok(select({ storeTrack }).includes('mobile-native'));
     }
     // A pin change is not a store consent: it neither fails nor adds a store leg.
@@ -600,7 +600,7 @@ test('R-release-timeout: workflow completes promotion and refuses unrequested na
     const condition = workflow.jobs[`mobile_native_${platform}`].if;
     // Evaluate the actual workflow expression with a stale native retry flag,
     // so a planner regression cannot silently start a routine store build.
-    for (const storeTrack of ['', 'none', 'internal', 'beta', 'production']) {
+    for (const storeTrack of ['', 'none', 'production', 'beta']) {
       for (const selection of ['', 'auto', 'all', 'mobile-native']) {
         const expression = condition
           .replaceAll('needs.initialize.outputs.run_mobile_native', "'true'")
@@ -670,10 +670,12 @@ esac
 
 test('store choice explicitly selects a native mobile binary', () => {
   assert.deepEqual(
-    selectReleaseComponents([], { storeTrack: 'internal' }),
+    selectReleaseComponents([], { storeTrack: 'production' }),
     ['mobile-native'],
   );
-  assert.throws(() => selectReleaseComponents([], { storeTrack: 'nightly' }), /invalid store track/);
+  for (const storeTrack of ['internal', 'nightly']) {
+    assert.throws(() => selectReleaseComponents([], { storeTrack }), /invalid store track/);
+  }
   assert.ok(!selectReleaseComponents(['.github/workflows/unified-release.yml']).includes('mobile-native'));
 });
 
@@ -688,7 +690,7 @@ test('runtime pin change reads the published and release trees', () => {
     next: { android: '24', ios: '24' },
   });
   const selected = selectReleaseComponents([], {
-    selection: 'mobile-native', storeTrack: 'internal', runtimePin: pins,
+    selection: 'mobile-native', storeTrack: 'production', runtimePin: pins,
   });
   const state = initializeRelease({
     version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(),
@@ -722,7 +724,7 @@ test('PIN-STORE-NONE: a runtime-pin change with store_track none plans an OTA re
   // Explicit selections without mobile-native no longer fail either.
   assert.deepEqual(selectReleaseComponents([], { selection: 'mobile-ota', storeTrack: 'none', runtimePin: changed }), ['mobile-ota']);
   // Store publishing stays explicit consent: only --store-track adds it.
-  assert.deepEqual(selectReleaseComponents([], { storeTrack: 'internal', runtimePin: changed }), ['mobile-native']);
+  assert.deepEqual(selectReleaseComponents([], { storeTrack: 'production', runtimePin: changed }), ['mobile-native']);
 });
 
 test('PIN-STORE-NONE: the plan CLI returns a plan, a notice and no store leg for a pin change', () => {
@@ -786,7 +788,7 @@ test('per-platform pins select only the changed platform native release', () => 
     assert.deepEqual(pins.changedPlatforms, [changed]);
     assert.deepEqual(selectReleaseComponents([], { runtimePin: pins }), []);
     const selectedComponents = selectReleaseComponents([], {
-      storeTrack: 'internal', runtimePin: pins,
+      storeTrack: 'production', runtimePin: pins,
     });
     const state = initializeRelease({
       version: 'v0.0.9', sourceSha: NEW_SHA, previous: deliveredPrevious(),
@@ -1659,12 +1661,8 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     );
     assert.doesNotMatch(androidBuild.run, /npx/);
     assert.match(androidBuild.run, /test -s "\$RUNNER_TEMP\/beeline\.aab"/);
-    for (const step of androidSteps.filter((step) =>
-      ['Authenticate to Google Play', 'Upload Android to the selected Play track'].includes(step.name)
-    )) {
-      assert.match(step.if, /store_track != 'none'/);
-    }
-    const playUpload = androidSteps.find((step) => step.name === 'Upload Android to the selected Play track');
+    assert.equal(androidSteps.find((step) => step.name === 'Authenticate to Google Play').if, undefined);
+    const playUpload = androidSteps.find((step) => step.name === 'Publish Android to Play');
     assert.equal(playUpload.env.PACKAGE_NAME, 'app.usebeeline');
 
     const iosCredentials = ios.steps.find((step) => step.name === 'Require iOS release credentials');

@@ -16,7 +16,7 @@ const CORNER_ID = '33333333-3333-4333-8333-333333333333';
 function memberDatabase(): SqlDatabase {
   return {
     async query<Row>(sql: string): Promise<QueryResult<Row>> {
-      if (sql.includes('FROM effective_memberships')) {
+      if (sql.includes('FROM room_access')) {
         return { rows: [{}] as Row[], rowCount: 1 };
       }
       return { rows: [], rowCount: 0 };

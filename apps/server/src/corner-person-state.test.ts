@@ -15,6 +15,7 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
   try {
     // Expand only, to seed the shape written by the preceding server image.
     await migrate(db, { deferData: true });
+    await db.query(`DROP TRIGGER IF EXISTS guard_corner_membership ON memberships`);
     const workspace = randomUUID(),
       room = randomUUID(),
       corner = randomUUID();
@@ -83,16 +84,11 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
     ]);
     expect((await db.query('SELECT * FROM corner_owed')).rows).toEqual(owed);
     expect((await db.query('SELECT * FROM room_read_marks')).rows).toEqual(readMarks);
-    // The old image still authorizes existing members against the physical roster during rollout.
-    expect((await db.query('SELECT * FROM memberships WHERE room_id=$1', [corner])).rowCount).toBe(2);
-    expect((await db.query(
-      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-      [corner, person],
-    )).rowCount).toBe(1);
-    await db.query(`UPDATE memberships SET event_subscriptions='["schedule-ran"]' WHERE room_id=$1 AND identity_id=$2`, [corner, agent]);
-    expect((await db.query('SELECT event_subscriptions FROM corner_person_state WHERE corner_id=$1 AND identity_id=$2', [corner, agent])).rows[0]!.event_subscriptions).toEqual(['schedule-ran']);
+    // The release removes stored rosters after preserving sparse preferences.
+    await migrate(db);
+    expect((await db.query('SELECT * FROM memberships WHERE room_id=$1', [corner])).rowCount).toBe(0);
     await setRoomEventSubscriptions(db, corner, agent, ['joined']);
-    expect((await db.query('SELECT event_subscriptions FROM memberships WHERE room_id=$1 AND identity_id=$2', [corner, agent])).rows[0]!.event_subscriptions).toEqual(['joined']);
+    expect((await db.query('SELECT event_subscriptions FROM corner_person_state WHERE corner_id=$1 AND identity_id=$2', [corner, agent])).rows[0]!.event_subscriptions).toEqual(['joined']);
     const phone = new PhoneService(db, 'https://server.example');
     const daemon = new DaemonService(db, new LiveHub());
     expect((await phone.readRoom(corner, agent))?.viewer.pushMuted).toBe(true);
@@ -149,7 +145,7 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
       kinds: [],
     });
     await setRoomEventSubscriptions(db, corner, agent, ['schedule-ran']);
-    // Exercise all three frozen statements through their public service paths.
+    // All message writers authorize against the parent without materializing a roster.
     const retainedMessage = 'd'.repeat(64);
     await phone.execute('sendRoomMessage', { roomId: corner, messageId: retainedMessage, text: 'Keep this message' }, person);
     await phone.execute('sendRoomMessage', { roomId: corner, messageId: 'e'.repeat(64), text: 'Delete this message' }, person);
@@ -157,7 +153,7 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
     // This agent has parent membership but no legacy corner row before acting.
     const voice = { db } as VoiceService;
     await VoiceService.prototype.recordAnswer.call(voice, corner, outsider, 'Allowed voice answer');
-    expect((await db.query('SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL', [corner, outsider])).rowCount).toBe(1);
+    expect((await db.query('SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL', [corner, outsider])).rowCount).toBe(0);
     await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1', [room]);
     expect((await db.query('SELECT 1 FROM memberships WHERE room_id=$1 AND removed_at IS NULL', [corner])).rowCount).toBe(0);
     await expect(phone.execute('sendRoomMessage', { roomId: corner, text: 'Denied after removal' }, person)).rejects.toThrow();

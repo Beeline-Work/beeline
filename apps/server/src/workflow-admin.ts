@@ -115,7 +115,7 @@ export async function activeWorkflowRunIds(
     `SELECT message.id run_id
     FROM messages message JOIN rooms surface ON surface.id=message.room_id
     JOIN rooms requested ON requested.id=$1 AND requested.workspace_id=surface.workspace_id
-    JOIN effective_memberships readable ON readable.room_id=surface.id AND readable.identity_id=$3 AND readable.removed_at IS NULL
+    JOIN room_access readable ON readable.room_id=surface.id AND readable.identity_id=$3 AND readable.removed_at IS NULL
     WHERE (surface.id=COALESCE(requested.parent_id,requested.id)
       OR surface.parent_id=COALESCE(requested.parent_id,requested.id))
       AND message.card_type='workflow-handoff' AND message.card->>'workflowSlug'=$2

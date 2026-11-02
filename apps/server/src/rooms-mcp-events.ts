@@ -10,10 +10,11 @@ const MENTION_EVENT = {
   name: 'mention', description: 'A Room message tags this connected Beeline member, or messages it directly.',
   delivery: ['webhook'], inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   payloadSchema: { type: 'object', properties: {
-    roomId: { type: 'string' }, messageId: { type: 'string' }, text: { type: 'string' },
+    roomId: { type: 'string' }, messageId: { type: 'string' }, memberId: { type: 'string' },
+    replyRule: { type: 'string' }, idempotencyKey: { type: 'string' }, text: { type: 'string' },
     author: { type: 'object', properties: { id: { type: 'string' }, handle: { type: ['string', 'null'] },
       name: { type: ['string', 'null'] } }, required: ['id', 'handle', 'name'], additionalProperties: false },
-  }, required: ['roomId', 'messageId', 'text', 'author'], additionalProperties: false },
+  }, required: ['roomId', 'messageId', 'memberId', 'replyRule', 'idempotencyKey', 'text', 'author'], additionalProperties: false },
 };
 /** Same wording list_mentions returns on a pending wake, so a webhook and a poll agree. */
 export const MCP_ORDER_WAKE_HINT = 'Do the work, then call report with this address.';
@@ -139,18 +140,22 @@ export class RoomsMcpEvents {
 }
 
 /** Called inside the existing mention write transaction, so retries cannot enqueue a tag twice. */
-export async function queueMcpMentionEvents(db: SqlDatabase, member: string, room: string, message: string): Promise<void> {
+export async function queueMcpMentionEvents(db: SqlDatabase, member: string, room: string, message: string, rewake = 0): Promise<void> {
   const queued = await db.query(`INSERT INTO rooms_mcp_event_deliveries(subscription_id,message_id,room_id,event_id,body)
-    SELECT s.id,m.id,m.room_id,'evt_'||s.id||'_'||m.id,
-      jsonb_build_object('eventId','evt_'||s.id||'_'||m.id,'name','mention','timestamp',m.created_at,
-        'data',jsonb_build_object('roomId',m.room_id,'messageId',m.id,'text',left(m.text,16000),
-          'author',jsonb_build_object('id',m.author_id,'handle',i.handle,'name',i.name)), 'cursor',NULL)::text
+    SELECT s.id,m.id,m.room_id,'evt_'||s.id||'_'||m.id||'_'||$4::text,
+      json_build_object('eventId','evt_'||s.id||'_'||m.id||'_'||$4::text,'name','mention','timestamp',m.created_at,
+        'data',json_build_object('roomId',m.room_id,'messageId',m.id,'memberId',s.member_id,'replyRule','answer in this Room with replyTo '||m.id,
+          'idempotencyKey','mention:'||s.member_id||':'||m.id,'text',left(m.text,16000),
+          'author',json_build_object('id',m.author_id,'handle',i.handle,'name',i.name)), 'cursor',NULL)::text
     FROM rooms_mcp_event_subscriptions s
     JOIN rooms_mcp_connections c ON c.client_id=s.client_id AND c.identity_id=s.owner_id AND c.revoked_at IS NULL
     JOIN messages m ON m.id=$3 AND m.room_id=$2 AND m.deleted_at IS NULL
     JOIN identities i ON i.id=m.author_id
     WHERE s.member_id=$1 AND s.expires_at>now() AND s.event_name='mention'
-    ON CONFLICT(subscription_id,message_id) WHERE message_id IS NOT NULL DO NOTHING RETURNING subscription_id`, [member, room, message]);
+    ON CONFLICT(subscription_id,message_id) WHERE message_id IS NOT NULL DO UPDATE SET event_id=EXCLUDED.event_id,body=EXCLUDED.body,
+      delivered_at=NULL,claimed_at=NULL,attempts=0,next_attempt_at=now()
+      WHERE $4::integer>0
+    RETURNING subscription_id`, [member, room, message, rewake]);
   if (queued.rowCount) await db.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL,
     JSON.stringify({ table: MCP_WEBHOOK_TABLE, operation: 'INSERT', roomId: room })]);
 }
@@ -225,7 +230,7 @@ export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, li
            OR (d.command_id IS NOT NULL AND command.id IS NOT NULL AND command.action IN ('input','resume')
              AND command.reason<>'mcp_call'
              AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))))
-         AND EXISTS(SELECT 1 FROM effective_memberships rm WHERE rm.room_id=d.room_id AND rm.identity_id=s.member_id AND rm.removed_at IS NULL)
+         AND EXISTS(SELECT 1 FROM room_access rm WHERE rm.room_id=d.room_id AND rm.identity_id=s.member_id AND rm.removed_at IS NULL)
          AND EXISTS(SELECT 1 FROM memberships wm WHERE wm.workspace_id=r.workspace_id AND wm.room_id IS NULL AND wm.identity_id=s.member_id AND wm.removed_at IS NULL)) deliverable
       FROM claimed d JOIN rooms_mcp_event_subscriptions s ON s.id=d.subscription_id
       LEFT JOIN rooms_mcp_connections c ON c.client_id=s.client_id AND c.identity_id=s.owner_id

@@ -196,6 +196,7 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
   const operations: string[] = [];
   const server = createServer(async (request, response) => {
     try {
+      if (request.url === '/v1/daemon/owed-mentions') return void response.writeHead(200).end(JSON.stringify({ owedMentions: [] }));
       operations.push(request.url!);
       expect(request.url).toBe('/v1/daemon/operations/dispatchRoomWorkflow');
       expect(request.headers.authorization).toBe('Bearer fixture-token');

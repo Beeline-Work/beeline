@@ -90,6 +90,10 @@ vi.mock('expo-file-system/legacy', () => ({
 vi.mock('react-native-view-shot', () => ({ captureRef: async () => '', releaseCapture() {} }));
 vi.mock('expo-sharing', () => ({}));
 vi.mock('expo-web-browser', () => ({}));
+vi.mock('react-native-gesture-handler/ReanimatedSwipeable', async () => ({
+  default: (await import('react-native-gesture-handler')).Swipeable,
+}));
+
 vi.mock('react-native-gesture-handler', async () => {
   const { View } = await import('react-native');
   return { GestureDetector: View, GestureHandlerRootView: View, Swipeable: View, RectButton: View };

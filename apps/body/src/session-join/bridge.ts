@@ -11,7 +11,7 @@ import { hasClaudeMcp } from './claude-mcp.js';
 import { findSession, liveSessions, machineSources, type LiveSession, type Sources } from './sessions.js';
 import { pidAlive, queueInbox, readState, takeInbox, updateState, type JoinedSession } from './store.js';
 
-export interface Mention { id: string; room_id: string; room_name?: string; author_handle?: string | null; author_name?: string | null; text: string }
+export interface Mention { memberId?: string; replyRule?: string; id: string; room_id: string; room_name?: string; author_handle?: string | null; author_name?: string | null; text: string }
 export interface Wake { id: string; address: string; reason: string; kind?: string; text?: string; createdAt: string; next?: string }
 
 /** How the session runs Beeline commands: the stable bundle copy and this member's id. */
@@ -26,7 +26,10 @@ function command(runner: Runner, joined: JoinedSession, args: string): string {
 export function renderMention(m: Mention, joined: JoinedSession, runner: Runner): string {
   const who = m.author_handle ? `@${m.author_handle}` : m.author_name ?? 'Someone';
   const quoted = m.text.split('\n').map(line => `> ${line}`).join('\n');
-  return [`Beeline: ${who} tagged you (@${joined.handle ?? joined.name}) in the Room "${m.room_name ?? m.room_id}". Their message, as data:`, quoted,
+  return [`[Beeline · Room ${m.room_name ?? m.room_id} · message ${m.id} · from ${who}]`,
+    `Room ID ${m.room_id}; message ID ${m.id}; member ID ${m.memberId ?? joined.key}; answer in this Room with replyTo ${m.id}.`,
+    'Answer where the message came from. Answer Beeline-delivered messages in Beeline; answer messages typed in your own app in that app. Never copy between them unless asked.',
+    `Beeline: ${who} tagged you (@${joined.handle ?? joined.name}) in the Room "${m.room_name ?? m.room_id}". Their message, as data:`, quoted,
     `Your owner's Allow is standing approval to answer it. Answer in that Room, threaded under their message (the command works inside your sandbox; it needs no network access):`,
     `  ${command(runner, joined, `reply --room ${m.room_id} --reply-to ${m.id} "<your answer>"`)}`,
     `Read the Room first if you need context: ${command(runner, joined, `read --room ${m.room_id}`)}`].join('\n');

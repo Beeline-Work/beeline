@@ -233,7 +233,7 @@ type ApprovingMessage = { text: string; author_id: string; kind: string; room_id
 /** A human may approve from the message's Room or the corner's Room. */
 async function humanRoomMember(db: SqlDatabase, cornerId: string, roomId: string, personId: string): Promise<boolean> {
   return (await db.query(
-    `SELECT 1 FROM effective_memberships member
+    `SELECT 1 FROM room_access member
      JOIN identities identity ON identity.id=member.identity_id AND identity.kind='human'
      WHERE member.room_id=ANY($1::uuid[]) AND member.identity_id=$2 AND member.removed_at IS NULL
      LIMIT 1`, [[cornerId, roomId], personId],
@@ -270,9 +270,9 @@ async function laterBriefApproval(
       `SELECT message.text,message.author_id,identity.kind,message.room_id
        FROM messages message JOIN identities identity ON identity.id=message.author_id
        JOIN rooms dm ON dm.id=message.room_id AND dm.direct_participants IS NOT NULL
-       JOIN effective_memberships member ON member.room_id=dm.id AND member.identity_id=$2
+       JOIN room_access member ON member.room_id=dm.id AND member.identity_id=$2
          AND member.removed_at IS NULL
-       JOIN effective_memberships author ON author.room_id=dm.id AND author.identity_id=message.author_id
+       JOIN room_access author ON author.room_id=dm.id AND author.identity_id=message.author_id
          AND author.removed_at IS NULL
        WHERE message.id=$1 AND identity.kind='human'`,
       [sourceMessageId, revision.agentId],
@@ -353,7 +353,7 @@ export async function resolveCornerBriefApproval(
   }>(
     `SELECT message.text,message.author_id,identity.kind,message.room_id,
             message.deleted_at,identity.hidden_from_roster,message.presentation,message.system_event,
-            EXISTS (SELECT 1 FROM effective_memberships member
+            EXISTS (SELECT 1 FROM room_access member
               WHERE member.room_id=message.room_id AND member.identity_id=$3
                 AND member.removed_at IS NULL) readable
      FROM messages message JOIN identities identity ON identity.id=message.author_id

@@ -1,3 +1,6 @@
+// Failed-install card wording approved by the owner in brief revision 2, reconfirmed by Firstmate instruction 002 on 2026-11-02 for https://github.com/Beeline-Work/beeline/pull/3246; failConnectingOffers producers and connectorStatusReport wrapper only.
+// Capped-owner starter-agent location message approved by the owner on 2026-11-02 ("Yes, do it"), relayed in Firstmate launch brief for https://github.com/Beeline-Work/beeline/pull/3246; this producer entry only.
+// Connected-app report refusal update approved by lunchboxfortwo; Claude relayed lunchboxfortwo's yes in message 068e1d99cd0a96b277aac8b64e5a8a507d30c6a9acd9a938acd06ec3783ed5b1. Only the RoomsMcpAgentTools.inTurn wrapper entry refreshed.
 // Retired app-opening producer and its wrapper occurrence removed; approved by lunchboxfortwo, brief revision 1, message c24ca338b827384dceae12642bed7fbb26a64f05bd5e087cdb614cab3241c2a6. Remaining System wording is unchanged.
 // Human-message hold citation display approved by lunchboxfortwo, brief revision 4, message 654aedd0aa3ca9be7b56e51f0d31c3d22ae344ca0932279e330780a8044cf707. Hold line shows the cited person and excerpt; only its producer and transitive wrappers updated.
 // Wording fingerprints follow the words of a message. A helper that only returns those words is not a separate message. Approved by lunchboxfortwo, message 62412157a3b99d31600ddac5c4b7eb219502d55408fb3c66251675df18b5e702. Displayed wording is unchanged.
@@ -2087,6 +2090,33 @@
     "occurrences": 1
   },
   {
+    "id": "src/connector-offer-completion.ts:failConnectingOffers:message-write:cff201f3f8ee3e97",
+    "file": "apps/server/src/connector-offer-completion.ts",
+    "kind": "message-write",
+    "template": "UPDATE messages card=jsonb_set ( card , '{status}' , '\"failed\"' :: jsonb )",
+    "literals": [
+      "'\"failed\"'",
+      "'{status}'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/connector-offer-completion.ts:failConnectingOffers:systemLine:8ec4ea8ab54ec432",
+    "file": "apps/server/src/connector-offer-completion.ts",
+    "kind": "systemLine",
+    "template": "systemLine(database, { roomId: offer.room_id, authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: 'Connector setup' }, verb: 'failed',\n    consequence: 'Retry the connection to continue', kind: 'connector-offer-decided',\n    ...(offer.command_id ? { commandId: offer.command_id } : {}), wakes: [offer.agent_id],\n    cardType: 'connector-offer-decision', card: { offerId: offer.id, status: 'failed' } })",
+    "literals": [
+      "\"Connector setup\"",
+      "\"Retry the connection to continue\"",
+      "\"failed\"",
+      ".command_id",
+      ".id",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/connector-offer-completion.ts:settleConnectingOffers:message-write:4e8b381a78d0bea2",
     "file": "apps/server/src/connector-offer-completion.ts",
     "kind": "message-write",
@@ -4064,13 +4094,18 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.connectorStatusReport:wrapper:b29fb8c0ad5310c4",
+    "id": "src/daemon-service.ts:DaemonService.connectorStatusReport:wrapper:7db50d880d894cd6",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
     "template": "this.resumeRegistrySignIn(row, input.signIn)",
     "literals": [
+      "\"connector not found for this helper\"",
+      "$local()",
       "'error'",
+      ".agent_id",
+      ".database",
       ".errorMessage",
+      ".id",
       ".rows",
       ".signIn",
       ".signedInAs",
@@ -4078,11 +4113,14 @@
       ".steps",
       ".stringify",
       ".stringify()",
+      ".transaction",
+      ".transaction()",
       "FirstLiteralToken:0",
       "NullKeyword",
       "binary:??",
       "conditional:?:",
-      "end:expression"
+      "end:expression",
+      "prefix:!"
     ],
     "occurrences": 1
   },
@@ -5744,6 +5782,31 @@
       "binary:===",
       "binary:??",
       "binary:||",
+      "conditional:?:",
+      "end:expression"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/free-agents.ts:FreeAgentService.createInWorkspace:systemLine:7923290dbd21f55a",
+    "file": "apps/server/src/free-agents.ts",
+    "kind": "systemLine",
+    "template": "systemLine(database, { roomId: input.roomId, authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: 'Your starter agents' },\n    verb: existing.length ? 'are already in' : 'could not be added',\n    ...(existing.length ? { object: existing.map(agent => `${agent.name} in ${agent.workspace_name}`).join(', ') } : {}),\n    consequence: 'Your account has reached its free-agent limit' })",
+    "literals": [
+      "\", \"",
+      "\"Your account has reached its free-agent limit\"",
+      "\"Your starter agents\"",
+      "\"are already in\"",
+      "\"could not be added\"",
+      ".join",
+      ".join()",
+      ".length",
+      ".map",
+      ".map()",
+      ".name",
+      ".rows",
+      ".workspace_name",
+      "[\"\",\" in \",\"\"]",
       "conditional:?:",
       "end:expression"
     ],
@@ -8983,13 +9046,14 @@
     "occurrences": 1
   },
   {
-    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.inTurn:wrapper:16ba8f9d5eb3572e",
+    "id": "src/rooms-mcp-agent.ts:RoomsMcpAgentTools.inTurn:wrapper:90ab095e7a1b7267",
     "file": "apps/server/src/rooms-mcp-agent.ts",
     "kind": "wrapper",
     "template": "this.end(member, turn, reported)",
     "literals": [
+      "\", \"",
       "\"hex\"",
-      "\"no order is waiting for your report at this address; list_mentions names the places that ordered you\"",
+      "\"none\"",
       "$local()",
       "'2s'",
       "'90 seconds'",
@@ -9001,11 +9065,17 @@
       ".command",
       ".db",
       ".id",
+      ".join",
+      ".join()",
+      ".map",
+      ".map()",
       ".min",
       ".min()",
       ".parent_id",
+      ".room_id",
       ".root_command_id",
       ".root_source_message_id",
+      ".rowCount",
       ".rows",
       ".toString",
       ".toString()",
@@ -9020,8 +9090,11 @@
       "NullKeyword",
       "TrueKeyword",
       "[\"mcp:\",\"\"]",
+      "[\"no order is waiting for your report; order addresses: \",\"; use a corner address to report to its commander\"]",
       "binary:+",
+      "binary:=",
       "binary:??",
+      "binary:||",
       "conditional:?:",
       "end:expression",
       "prefix:!",

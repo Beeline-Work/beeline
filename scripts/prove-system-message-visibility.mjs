@@ -38,8 +38,8 @@ try {
   for (const identity of [human, commander, worker]) {
     await db.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-      ($1,NULL,$2,'owner'),($1,$3,$2,'member'),($1,$4,$2,'member')`,
-      [workspace, identity, room, corner],
+      ($1,NULL,$2,'owner'),($1,$3,$2,'member')`,
+      [workspace, identity, room],
     );
   }
   await db.query(

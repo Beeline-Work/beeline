@@ -41,6 +41,7 @@ ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS callback_secret text;
 -- Until the member names itself, read results repeat the setup rules, because
 -- many hosts never show the model the server instructions.
 ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS profile_set boolean NOT NULL DEFAULT false;
+ALTER TABLE rooms_mcp_members ADD COLUMN IF NOT EXISTS last_bridge_poll_at timestamptz;
 -- Each tag or direct message addressed to an AI-client member, in order: the
 -- list_mentions catch-up read and send_message's wake provenance.
 CREATE TABLE IF NOT EXISTS rooms_mcp_mentions (
@@ -52,6 +53,36 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_mentions (
   UNIQUE (member_id, message_id)
 );
 CREATE INDEX IF NOT EXISTS rooms_mcp_mentions_member_room ON rooms_mcp_mentions(member_id, room_id, seq);
+-- Upgrade the old delivery ledger once: successful historical answers already
+-- settled their tags and must not start reminding people after deployment.
+DO $$ BEGIN
+  IF NOT EXISTS(SELECT 1 FROM information_schema.columns
+      WHERE table_schema=current_schema() AND table_name='rooms_mcp_mentions' AND column_name='cleared_at') THEN
+    ALTER TABLE rooms_mcp_mentions ADD COLUMN cleared_at timestamptz;
+    UPDATE rooms_mcp_mentions mention SET cleared_at=now()
+      WHERE EXISTS(SELECT 1 FROM messages reply WHERE reply.author_id=mention.member_id
+        AND reply.room_id=mention.room_id AND reply.reply_to_message_id=mention.message_id
+        AND reply.presentation='message');
+  END IF;
+END $$;
+ALTER TABLE rooms_mcp_mentions ADD COLUMN IF NOT EXISTS rewakes integer NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS rooms_mcp_mentions_owed ON rooms_mcp_mentions(created_at)
+  WHERE cleared_at IS NULL AND rewakes<3;
+-- A reply settles its own author's tag only after the message write succeeds,
+-- in the same transaction, regardless of which posting surface was used.
+CREATE OR REPLACE FUNCTION clear_replied_room_mention() RETURNS trigger AS $$
+BEGIN
+  UPDATE rooms_mcp_mentions SET cleared_at=now()
+    WHERE member_id=NEW.author_id AND room_id=NEW.room_id
+      AND message_id=NEW.reply_to_message_id AND cleared_at IS NULL;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS clear_replied_room_mention ON messages;
+CREATE TRIGGER clear_replied_room_mention AFTER INSERT ON messages
+  FOR EACH ROW WHEN (NEW.reply_to_message_id IS NOT NULL AND NEW.presentation='message')
+  EXECUTE FUNCTION clear_replied_room_mention();
+
 -- A member's post whose agent wakes have not been routed yet. send_message
 -- deletes it once routing commits; maintenance retries any that failed.
 CREATE TABLE IF NOT EXISTS rooms_mcp_pending_routes (

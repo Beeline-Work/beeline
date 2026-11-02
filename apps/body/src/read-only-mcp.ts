@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
@@ -715,6 +716,8 @@ function daemonRetryDelay(attempt: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, DAEMON_NETWORK_RETRY_BASE_MS * 2 ** attempt));
 }
 
+const toolOwedStorage = new AsyncLocalStorage<{ owedMentions?: unknown[] }>();
+
 async function daemonExecute(name: string, input: JsonObject): Promise<JsonObject> {
   const baseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
   const body = JSON.stringify({
@@ -734,6 +737,7 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
           authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}`,
           'content-type': 'application/json',
           'x-beeline-helper-version': process.env.BEELINE_HELPER_VERSION || 'v0.0.0',
+          ...(toolOwedStorage.getStore() ? { 'x-beeline-tool-result': '1' } : {}),
         },
         body,
       });
@@ -747,7 +751,13 @@ async function daemonExecute(name: string, input: JsonObject): Promise<JsonObjec
         }
         throw new Error(`daemon operation ${name} failed (${response.status}: ${code})`);
       }
-      return (await response.json()) as JsonObject;
+      const result = await response.json() as JsonObject | null;
+      const toolContext = toolOwedStorage.getStore();
+      if (toolContext) {
+        toolContext.owedMentions = Array.isArray(result?._beelineOwedMentions) ? result._beelineOwedMentions : undefined;
+        if (result && typeof result === 'object' && '_beelineToolResult' in result) return result._beelineToolResult as JsonObject;
+      }
+      return result as JsonObject;
     } catch (error) {
       if (!isDaemonNetworkFailure(error)) throw error;
       if (!safeToRepeat) {
@@ -3570,8 +3580,8 @@ async function executeAgentOperation(
     case 'no_reply_needed': {
       await activeCommandContext();
       const { commandReason } = await readTurnContextFile();
-      if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake. Call post({text: <your reply>}), then end the turn.');
-      await daemonExecute('markAgentTurnSilent', {});
+      if (!args.messageId && !nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake. Call post({text: <your reply>}), then end the turn.');
+      await daemonExecute('markAgentTurnSilent', { ...(args.messageId ? { messageId: args.messageId } : {}) });
       // The helper drains in-flight activity and drafts before its terminal receipt.
       // Completing here revokes authority while those writes are still running.
       const path = requiredEnv('BEELINE_TURN_CONTEXT_FILE');
@@ -3795,7 +3805,7 @@ async function executeAgentOperation(
       if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
         throw new Error('text must contain 1 to 16000 characters');
       return JSON.stringify(
-        await daemonExecute('postCornerMessage', { cornerId, text: args.text }),
+        await daemonExecute('postCornerMessage', { cornerId, text: args.text, ...(args.replyTo ? { replyTo: args.replyTo } : {}) }),
       );
     }
     case 'write_scratch_file':
@@ -4066,6 +4076,36 @@ function failure(id: JsonRpcRequest['id'], code: number, message: string): void 
   send({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 }
 
+/** Keep concurrent calls isolated; footer metadata rides on their existing operation responses. */
+export async function withToolOwedContext(work: () => Promise<string>) {
+  return toolOwedStorage.run({}, async () => {
+    let output: string;
+    let isError = false;
+    try { output = await work(); }
+    catch (error) {
+      isError = true;
+      output = error instanceof Error ? error.message : String(error);
+      // Validation may refuse before dispatch. Read fresh authenticated context
+      // without adding an operation to the command/operation log.
+      if (!toolOwedStorage.getStore()?.owedMentions) {
+        try {
+          const response = await fetch(new URL('/v1/daemon/owed-mentions', requiredEnv('BEELINE_DAEMON_BASE_URL')), {
+            signal: AbortSignal.timeout(5_000),
+            headers: { authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}` },
+          });
+          if (response.ok) {
+            const context = await response.json() as { owedMentions?: unknown[] };
+            if (Array.isArray(context.owedMentions)) toolOwedStorage.getStore()!.owedMentions = context.owedMentions;
+          }
+        } catch { /* Optional context must never mask the original refusal. */ }
+      }
+    }
+    const owedMentions = toolOwedStorage.getStore()?.owedMentions;
+    return { ...(isError ? { isError: true } : {}), content: [{ type: 'text' as const, text: output },
+      ...(owedMentions ? [{ type: 'text' as const, text: JSON.stringify({ owedMentions }) }] : [])] };
+  });
+}
+
 async function handleLine(line: string): Promise<void> {
   let request: JsonRpcRequest;
   try {
@@ -4105,25 +4145,24 @@ async function handleLine(line: string): Promise<void> {
       // every harness that reads the spec, and reaches the model - when it
       // reaches it at all - as "the call failed", with the sentence explaining
       // why buried in a transport frame (C90).
-      let output: string;
-      try {
+      const work = async () => {
         if (process.env.BEELINE_TURN_CONTEXT_FILE && (await readTurnContextFile()).terminalReason)
           throw new Error('turn has ended; further tool calls are refused');
         const definition = TOOLS.find(tool => tool.name === params.name);
         if (!definition) throw new Error(`unknown or unavailable tool: ${params.name}`);
         if (params.arguments !== undefined && (!params.arguments || typeof params.arguments !== 'object' || Array.isArray(params.arguments))) throw new Error('tool arguments must be an object');
         validateToolInput(definition, asObject(params.arguments));
-        output = agentSurface
-          ? await callAgentTool(params.name, asObject(params.arguments), toolCallId(params, request.id))
-          : await callTool(params.name, asObject(params.arguments));
-      } catch (error) {
-        success(request.id, {
-          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
-          isError: true,
-        });
-        return;
+        return agentSurface
+          ? callAgentTool(params.name as string, asObject(params.arguments), toolCallId(params, request.id))
+          : callTool(params.name as string, asObject(params.arguments));
+      };
+      let result: Awaited<ReturnType<typeof withToolOwedContext>>;
+      if (agentSurface) result = await withToolOwedContext(work);
+      else {
+        try { result = { content: [{ type: 'text', text: await work() }] }; }
+        catch (error) { result = { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] }; }
       }
-      success(request.id, { content: [{ type: 'text', text: output }] });
+      success(request.id, result);
       return;
     }
     failure(request.id, -32601, `method not found: ${request.method ?? ''}`);

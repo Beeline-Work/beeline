@@ -159,7 +159,8 @@ CREATE OR REPLACE FUNCTION show_dispatched_agent_work() RETURNS trigger AS $$
 BEGIN
   IF NEW.state='pending' AND NEW.action IN ('input','resume')
      AND NEW.wake_after IS NULL AND NEW.startup_wake_after IS NULL AND NEW.reason<>'computer_activity' THEN
-    IF NOT EXISTS(SELECT 1 FROM agent_commands running
+    IF NOT EXISTS(SELECT 1 FROM rooms_mcp_members app WHERE app.member_id=NEW.agent_id)
+      AND NOT EXISTS(SELECT 1 FROM agent_commands running
         JOIN agent_turns turn ON turn.room_id=running.room_id AND turn.agent_id=running.agent_id
           AND turn.request_id=running.turn_request_id AND turn.status='working'
           AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'
@@ -758,6 +759,12 @@ export async function createAgentCommand(
           (SELECT paused_until FROM agent_startup_backoff WHERE agent_id=$3 AND paused_until>now() AND NOT $16::boolean))
         ON CONFLICT DO NOTHING
         RETURNING *
+     ), owed AS (
+       INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id)
+       SELECT agent_id,room_id,source_message_id FROM inserted
+       WHERE source_message_id IS NOT NULL AND private_payload IS NULL AND NOT avatar_job
+         AND reason IN ('human_tag','direct_message','agent_tag')
+       ON CONFLICT(member_id,message_id) DO NOTHING
      ),
      ${wake.cte}
      SELECT inserted.* FROM inserted
@@ -787,6 +794,29 @@ export async function createAgentCommand(
       AND agent_id=$4 AND action=$5) LIMIT 1`,
     [id, input.roomId, input.sourceMessageId, input.agentId, input.action ?? 'input'],
   )).rows[0];
+  // Replace unhandled updates about the same decision under the recipient's
+  // queue lock. A replayed id and a live claimed report retain their authority.
+  const reportStatus = privatePayload?.kind === 'report'
+    ? /^(done|blocked|needs-decision|failed):/.exec(privatePayload.text)?.[1] : undefined;
+  if (result.rows[0] && input.reason === 'report' && reportStatus) {
+    await db.query(`WITH superseded AS (
+      UPDATE agent_commands earlier SET state='cancelled',
+      cancellation_reason='superseded_report',completed_at=now(),lease_expires_at=NULL
+      WHERE earlier.room_id=$1 AND earlier.agent_id=$2 AND earlier.id<>$3
+        AND EXISTS(SELECT 1 FROM rooms_mcp_members app WHERE app.member_id=$2)
+        AND EXISTS(SELECT 1 FROM rooms origin WHERE origin.id::text=$5 AND origin.parent_id IS NOT NULL)
+        AND earlier.reason='report' AND earlier.private_payload->>'kind'='report'
+        AND (earlier.state='pending' OR (earlier.state='claimed' AND earlier.lease_expires_at<=now()))
+        AND earlier.private_payload->>'authorId'=$4
+        AND COALESCE(earlier.private_payload->>'originCornerId',earlier.private_payload->>'fromRoomId')=$5
+        AND substring(earlier.private_payload->>'text' from '^(done|blocked|needs-decision|failed):')=$6
+      RETURNING earlier.room_id,earlier.agent_id,earlier.turn_request_id,earlier.generation_id
+    ) UPDATE agent_turns turn SET status='cancelled',failure_reason='Report superseded by a newer update',created_at=now()
+      FROM superseded old WHERE turn.room_id=old.room_id AND turn.agent_id=old.agent_id
+        AND turn.request_id=old.turn_request_id AND turn.generation_id=old.generation_id AND turn.status='working'`,
+    [input.roomId,input.agentId,id,privatePayload!.authorId,
+      privatePayload!.originCornerId ?? privatePayload!.fromRoomId,reportStatus]);
+  }
   if (command && input.reason === 'corner_brief_revision') {
     await db.query(`UPDATE agent_commands SET wake_context=jsonb_build_object('briefRevision',
       COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$2),0))
@@ -1371,6 +1401,17 @@ export async function routeAgentResult(
         if (mention.mcpCallbackUrl) {
           await recordMcpMemberWebhook(db, mention.id, mention.mcpCallbackUrl, roomId, sourceId, source.text);
           woken.push(mention.handle);
+        } else {
+          const live = (await db.query(`SELECT 1 FROM rooms_mcp_members member
+            JOIN rooms_mcp_connections connection ON connection.client_id=member.client_id
+              AND connection.identity_id=member.owner_id AND connection.revoked_at IS NULL
+            WHERE member.member_id=$1 AND (member.last_bridge_poll_at>now()-interval '60 seconds'
+              OR EXISTS(SELECT 1 FROM rooms_mcp_event_subscriptions subscription
+                JOIN rooms_mcp_event_deliveries delivery ON delivery.subscription_id=subscription.id AND delivery.message_id=$2
+                WHERE subscription.member_id=member.member_id AND subscription.expires_at>now()))`,
+          [mention.id, sourceId])).rowCount;
+          if (live) woken.push(mention.handle);
+          else notWoken.push({ handle: mention.handle, reason: 'no live wake route; sees it on next list_mentions' });
         }
       }
       continue;

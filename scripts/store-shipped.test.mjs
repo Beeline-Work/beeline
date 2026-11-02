@@ -21,17 +21,23 @@ test('the release marker is the release version and the 12-char commit', () => {
   assert.throws(() => releaseMarker('0.1.123', SHA), /invalid release marker/);
 });
 
-test('a Play release named for this release is found on any track; older names are not', () => {
-  const tracks = { tracks: [
-    { track: 'production', releases: [{ name: '0.2.29', versionCodes: ['38'] }] },
-    { track: 'internal', releases: [
-      { name: '0.2.30 (v0.1.122@0123456789ab)', versionCodes: ['39'] },
-      { name: playReleaseName('0.2.30', MARKER), versionCodes: ['40'] },
-    ] },
-  ] };
-  assert.deepEqual(findPlayRelease(tracks, MARKER), { track: 'internal', appVersion: '0.2.30', versionCode: '40' });
+test('only a completed production release counts as shipped', () => {
+  const release = { name: playReleaseName('0.2.30', MARKER), versionCodes: ['40'], status: 'completed' };
+  const tracks = { tracks: [{ track: 'production', releases: [
+    { name: '0.2.29', versionCodes: ['38'], status: 'completed' },
+    { ...release, name: '0.2.30 (v0.1.122@0123456789ab)' },
+    release,
+  ] }] };
+  assert.deepEqual(findPlayRelease(tracks, MARKER), { track: 'production', appVersion: '0.2.30', versionCode: '40' });
   assert.equal(findPlayRelease(tracks, 'v0.1.124@abcdef123456'), null);
   assert.equal(findPlayRelease({}, MARKER), null);
+  for (const status of ['draft', 'inProgress', 'halted', undefined]) {
+    assert.equal(findPlayRelease({ tracks: [{ track: 'production', releases: [{ ...release, status }] }] }, MARKER), null);
+  }
+  assert.equal(findPlayRelease({ tracks: [{ track: 'retired-testing', releases: [release] }] }, MARKER), null);
+  const beta = { tracks: [{ track: 'beta', releases: [release] }] };
+  assert.equal(findPlayRelease(beta, MARKER), null);
+  assert.deepEqual(findPlayRelease(beta, MARKER, 'beta'), { track: 'beta', appVersion: '0.2.30', versionCode: '40' });
 });
 
 test('reading Play tracks always deletes the throwaway edit', async () => {

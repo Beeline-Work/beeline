@@ -1,11 +1,15 @@
 # Store submission
 
-Operator runbook for the Google Play private beta and TestFlight. Store uploads
-are the `store_track` input of the one release workflow
-(`.github/workflows/unified-release.yml`), so a store binary always comes from a
-released SHA. For iOS, `production` submits for App Review with automatic release after approval;
-`beta` and `internal` only upload to TestFlight. For Android: the AAB lands as a *draft* release on the track you named, and the
-final press stays in Play Console.
+Operator runbook for Google Play production and the App Store. Store publishing
+uses `store_track=production` (or `beta` only by an explicit owner choice) in
+`.github/workflows/unified-release.yml`.
+Routine OTA releases keep `store_track=none` and do not build native binaries.
+Every release that builds a new Android binary, including explicit native
+recovery selection, publishes it to **production** with **completed** status
+(full rollout after approval) and sends it for review automatically. Only an
+explicit `store_track=beta` sends an Android build to Play beta instead; beta
+also uses completed status and automatic review submission. iOS
+`store_track=production` submits for App Review with automatic release after approval.
 
 The Google Play developer account is Moon Rice Limited. Keep that account, its
 service account key and the App Store Connect API key outside this repository.
@@ -27,9 +31,9 @@ service account key and the App Store Connect API key outside this repository.
 2. **Play Console invite for that service account** — Play Console → Users and
    permissions → Invite new users → the service account's email address, with
    app-level permissions on Beeline (`app.usebeeline`):
-   *Release to testing tracks* (the release's store leg) and *Manage store
-   presence* (its listing sync). Promoting to production later also needs
-   *Release to production*.
+   *Release to production* (the default native release), *Release to testing
+   tracks* (explicit beta releases), and *Manage store presence* (the explicitly
+   authorized listing sync).
 
    The Google Play Android Developer API must be enabled on the service
    account's Cloud project.
@@ -116,38 +120,50 @@ npm run test:play
 PLAY_DRY_RUN=1 PACKAGE_NAME=app.usebeeline METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US \
   bash scripts/play-publish-listing.sh
 
-# Release AND upload to the stores: one button, one release SHA.
-# The captain cuts the release; store_track adds the store leg to it.
-gh workflow run unified-release.yml -f store_track=internal
-gh workflow run unified-release.yml -f store_track=beta
-
-# Move an already-uploaded release between Play tracks (operator-run script;
-# the release leg only ever writes a draft to the track it was given).
-# play-token.mjs prints `access_token=<token>` on stdout when GITHUB_OUTPUT is unset.
-export GOOGLE_PLAY_SERVICE_ACCOUNT_JSON="$(cat service-account.json)"
-ACCESS_TOKEN="$(node scripts/play-token.mjs | sed 's/^access_token=//')" \
-PACKAGE_NAME=app.usebeeline FROM_TRACK=internal TO_TRACK=beta RELEASE_STATUS=draft \
-  bash scripts/play-promote-track.sh
+# Production store publishing is requested through the audited dispatch_release
+# tool under an owner/admin release command, with store_track=production.
+# Keep the normal no-input release for OTA delivery.
 ```
+
+## Recovering an already uploaded build
+
+Merging this fix cannot change an existing Play upload. For the reported
+versionCode **142**, firstmate must inspect its current release and publishing
+state. The historical upload log already records it on production as completed
+with
+automatic review submission, before the later build-review regression. Verify
+that current state rather than assuming promotion is needed. If it is no longer
+on production with completed status, reuse that uploaded bundle in a production
+release and start a full rollout. If it is already a completed production
+release but is saved without review submission,
+send **only that build** for review in Publishing overview. Preserve pending
+listing edits unless the owner explicitly commands their publication. Do not
+re-upload versionCode 142: Play version codes cannot be reused for a new upload.
+Availability follows Google's review and any Console managed-publishing hold;
+a successful upload alone does not make it downloadable. No Play state is
+changed by this code change.
 
 ## What the store leg does
 
-`store_track` (`none` by default, else `internal` | `beta` | `production`) adds
-two jobs to the release, both starting after `confirm_app` and both checking out
-the exact release SHA. Neither is a dependency of the delivery report, so a store
-failure fails only its own job: the OTA delivery report stays the authority on
-whether the release was delivered, and each job's step summary carries the Play
-Console / App Store Connect links.
+`store_track` accepts `none` (the OTA default), `production` (explicit
+store submission), or `beta` (explicit owner choice for that release).
+Production selects the native jobs for the affected
+platforms. Explicit recovery selection (`all` or `mobile-native`) also builds
+native binaries; every newly built Android binary publishes to production,
+even with `store_track=none`; only an explicit `store_track=beta` changes
+that destination. The iOS store upload requires an explicit store track; beta
+stops at TestFlight and production also submits for App Review. Native job
+failures fail the selected native component.
 
-**`store_android`** (Play *`store_track`* track): checks the app version
+**`mobile_native_android`** (Play production): checks the app version
 (`scripts/check-release-version.cjs`) and that the Play metadata is current, runs
-`eas build --profile production --platform android --non-interactive --wait
---json`, downloads the AAB, verifies package name, `versionName` and
+`eas build --local --profile production-ci --platform android --non-interactive`,
+produces the AAB locally, verifies package name, `versionName` and
 `versionCode` with bundletool against the package version and the EAS build
 record and rejects a debug signer, uploads the AAB as a run artifact, mints a
 short-lived Play access token from the service account, then runs
 `scripts/play-publish.sh` (create edit → upload bundle → `tracks.update` with
-`releaseStatus: draft`, notes from
+`track: production` by default (explicit beta override), `status: completed`, notes from
 `fastlane/metadata/android/en-US/changelogs/<versionCode>.txt` or `default.txt`
 → commit). Releases upload only the build to Play by default. Listing text and
 images are never uploaded unless the release is explicitly dispatched with
@@ -164,25 +180,22 @@ type. Failure to read or validate the edit/baseline also stops before commit.
 Repo-vs-live differences alone remain advisory; the gate compares the edit
 against its pre-upload state. Explicit owner listing consent unlocks this gate.
 
-Default build commits also use `changesNotSentForReview=true` and
-`changesInReviewBehavior=ERROR_IF_IN_REVIEW`: the build is uploaded, but an
-operator must send **only the build** for review in Play Console and leave
-listing changes saved for later. This conservative rule applies to every
-default build commit because the API does not expose pending console listing
-changes separately. If Play refuses this mode, the release fails with
-instructions rather than retrying a commit that could submit the listing.
-Google documents that a normal commit also sends console changes:
-[concurrency considerations](https://developers.google.com/android-publisher/concurrency-considerations)
-and [edits.commit parameters](https://developers.google.com/android-publisher/api-ref/rest/v3/edits/commit).
-Explicit `publish_listing=true` retains the prior commit behavior, including
-its automatic-review fallback when required by Play.
+After the listing gate passes, the build edit commits normally, without
+`changesNotSentForReview`, and is sent for review automatically. The commit
+uses `changesInReviewBehavior=ERROR_IF_IN_REVIEW` to preserve an existing review.
+A refused review submission fails the job; there is no fallback that saves an
+unsent build and reports success. Play production uses `completed` status and
+no `userFraction`, so approval enables full rollout rather than a staged rollout.
+See Google's [commit parameters](https://developers.google.com/android-publisher/api-ref/rest/v3/edits/commit)
+and [release status](https://developers.google.com/android-publisher/api-ref/rest/v3/edits.tracks#Status).
 
-When opted in, `scripts/play-publish-listing.sh` reads the live listing and
-skips unchanged text and image hashes. Changed listings clear and re-upload
-each image type in filename order, then commit. `publish_listing` permits
-uploading changes; it does not force re-uploading matching assets.
-The track release status remains *completed*; default commits still require the
-manual review step above before availability to testers or users.
+The build commit never uploads listing metadata. When explicitly authorized,
+`scripts/play-publish-listing.sh` separately reads the live listing and skips
+unchanged text and image hashes. Changed listings clear and re-upload each
+image type in filename order. `publish_listing` permits uploading changes;
+it does not force re-uploading matching assets. That listing operation retains
+the same `ERROR_IF_IN_REVIEW` commit as the build, so an explicitly authorized
+listing publish cannot cancel a build already in review.
 
 **`mobile_native_ios`** (TestFlight): decodes the `.p8` secret to a
 runner-temp file and points `EXPO_ASC_API_KEY_PATH` at it **before** the build
@@ -205,8 +218,8 @@ non-editable store versions (for example, `0.2.22` in
 reused. The resolved version is applied automatically in both temporary build
 checkouts: iOS `CFBundleShortVersionString` and Android `versionName` match,
 without a human package edit or another workflow input. The committed package
-version and runtime pins stay unchanged; beta/internal builds use the package
-version.
+version and runtime pins stay unchanged; explicit native recovery builds with
+`store_track=none` use the package version.
 
 After the verified upload, production uses `reviewSubmissions` to create or
 reuse an editable App Store version, attach the verified build, set What's New
@@ -229,10 +242,9 @@ TestFlight groups and external-tester review remain separate operations. A missi
 certificate fails the build with one printed command, because eas-cli 22.2.0
 never creates one non-interactively.
 
-`scripts/play-promote-track.sh` moves the newest release on one track onto
-another (it takes the highest `versionCode` with its name and notes, in one
-committed edit). A track's first roll-out starts Google's review,
-so that stays a deliberate operator step rather than part of a release.
+`scripts/play-promote-track.sh` remains available for explicitly commanded
+recovery from beta to production. It enforces completed status and the same
+listing lock and automatic review commit as a new build.
 
 Every Play script honours `PLAY_DRY_RUN=1`: it prints each API call (method,
 URL, curl arguments, never the bearer token) and answers with a canned body, so

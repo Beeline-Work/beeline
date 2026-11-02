@@ -17,8 +17,10 @@
 # - The default release is OTA-ONLY. The OTA goes to every runtime live in the
 #   stores today. A runtime-pin change never fails a release and never adds a
 #   store submission; the new runtime waits for a store release.
-# - Store publishing (store_track != none) happens ONLY on the operator's
-#   explicit dispatch choice.
+# - Native builds require an explicit store track or recovery selection.
+#   Every Android binary built publishes to
+#   Play production with a completed rollout and automatic review submission,
+#   unless the owner explicitly selects beta for that release.
 # - The emulator device proof (run_release_proof=true) is opt-in: it never runs
 #   by default. An OTA promoted without it is recorded as UNPROVEN in the
 #   release record.
@@ -50,14 +52,13 @@ on:
         default: auto
         required: true
       store_track:
-        description: Recovery only - routine releases keep none
+        description: Android binaries default to production; routine releases keep none for OTA; beta requires an explicit owner choice
         type: choice
         default: none
         options:
           - none
-          - internal
-          - beta
           - production
+          - beta
         required: true
       run_release_proof:
         description: Opt-in only - run the emulator device proof before OTA promotion; default off (OTA promotes without it, release recorded UNPROVEN)
@@ -223,8 +224,7 @@ jobs:
       - name: Mint a Play token to read this release's store builds
         id: play_read
         if: >-
-          steps.plan.outputs.run_mobile_native == 'true' && steps.plan.outputs.native_android == 'true' &&
-          inputs.store_track != '' && inputs.store_track != 'none'
+          steps.plan.outputs.run_mobile_native == 'true' && steps.plan.outputs.native_android == 'true'
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: node scripts/play-token.mjs
@@ -233,6 +233,7 @@ jobs:
         if: steps.plan.outputs.run_mobile_native == 'true'
         env:
           STORE_TRACK: ${{ inputs.store_track }}
+          PLAY_TRACK: ${{ inputs.store_track == 'beta' && 'beta' || 'production' }}
           RELEASE_VERSION: ${{ steps.identity.outputs.version }}
           RELEASE_SHA: ${{ steps.identity.outputs.release_sha }}
           NATIVE_ANDROID: ${{ steps.plan.outputs.native_android }}
@@ -245,11 +246,9 @@ jobs:
           set -euo pipefail
           marker="$RELEASE_VERSION@${RELEASE_SHA:0:12}"
           echo "release_marker=$marker" >> "$GITHUB_OUTPUT"
-          # Without a store track nothing is uploaded, so nothing can have shipped.
-          if [ -z "$STORE_TRACK" ] || [ "$STORE_TRACK" = none ]; then exit 0; fi
-          args=(find --marker "$marker" --outputs "$GITHUB_OUTPUT")
+          args=(find --marker "$marker" --play-track "$PLAY_TRACK" --outputs "$GITHUB_OUTPUT")
           if [ "$NATIVE_ANDROID" = true ]; then args+=(--android); fi
-          if [ "$NATIVE_IOS" = true ]; then args+=(--ios); fi
+          if [ "$NATIVE_IOS" = true ] && [ -n "$STORE_TRACK" ] && [ "$STORE_TRACK" != none ]; then args+=(--ios); fi
           node scripts/store-shipped.mjs "${args[@]}"
       - name: Resolve the shared native store version before building
         id: native_version
@@ -821,14 +820,13 @@ jobs:
           if-no-files-found: error
           retention-days: 1
       - name: Authenticate to Google Play
-        if: inputs.store_track != 'none'
         id: play-auth
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: node scripts/play-token.mjs
-      - name: Upload Android to the selected Play track
+      - name: Publish Android to Play
         id: play-upload
-        if: inputs.store_track != 'none' && steps.android_build.outcome == 'success'
+        if: steps.android_build.outcome == 'success'
         env:
           MAPPING_ARCHIVE_DIR: ${{ runner.temp }}/android-mappings
           MAPPING_PATH: ${{ runner.temp }}/mapping.txt
@@ -836,7 +834,7 @@ jobs:
           PUBLISH_LISTING: ${{ inputs.publish_listing && 'true' || 'false' }}
           PLAY_DEFER_COMMIT: '1'
           PLAY_LISTING_BASELINE: ${{ runner.temp }}/play-listing-before-build.json
-          TRACK: ${{ inputs.store_track }}
+          TRACK: ${{ inputs.store_track == 'beta' && 'beta' || 'production' }}
           # scripts/play-api.sh refuses to run without the Play package name (release
           # run 34800657127 failed here after the first local Android build; the line
           # was then lost in #1241's conflict resolution and run 34873052609 failed the
@@ -849,7 +847,7 @@ jobs:
           AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }} (${{ needs.initialize.outputs.release_marker }})" \
             RELEASE_STATUS=completed bash scripts/play-publish.sh
       - name: Enforce the Play listing lock before committing the build
-        if: inputs.store_track != 'none' && steps.play-upload.outputs.edit_id != ''
+        if: steps.play-upload.outputs.edit_id != ''
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           PACKAGE_NAME: app.usebeeline
@@ -858,7 +856,7 @@ jobs:
           PUBLISH_LISTING: ${{ inputs.publish_listing && 'true' || 'false' }}
         run: bash scripts/play-commit-build.sh
       - name: Publish the Play listing only when explicitly requested
-        if: inputs.store_track != 'none' && inputs.publish_listing
+        if: inputs.publish_listing
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           PACKAGE_NAME: app.usebeeline
@@ -866,7 +864,7 @@ jobs:
           LANGUAGE: en-US
         run: bash scripts/play-publish-listing.sh
       - name: Check the Play listing without uploading
-        if: ${{ inputs.store_track != 'none' && !inputs.publish_listing }}
+        if: ${{ !inputs.publish_listing }}
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           PACKAGE_NAME: app.usebeeline

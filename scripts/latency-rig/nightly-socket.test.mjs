@@ -114,17 +114,16 @@ test('real socket requests retain request/reply and SQL identity without logging
     await complete;
     clearTimeout(deadline);
     assert.equal(replies[0].id, 'request-secret-read');
-    // Receiving a frame does not mean the proxy's asynchronous log write has
-    // reached disk. Wait for both completion records before reading evidence.
-    const logDeadline = Date.now() + 5000;
+    // Receiving replies does not mean the proxy's asynchronous log stream flushed.
+    // Count only complete records while waiting for both request completions.
     let logged;
+    const logDeadline = Date.now() + 5000;
     for (;;) {
       logged = await readFile(proxyPath, 'utf8');
-      const completed = logged.trim().split('\n').filter(Boolean).flatMap(line => {
-        try { return [JSON.parse(line)]; } catch { return []; }
-      }).filter(span => span.type === 'phone-request' && span.phase === 'end');
+      const completed = logged.split('\n').slice(0, -1).map(JSON.parse)
+        .filter(span => span.type === 'phone-request' && span.phase === 'end');
       if (completed.length === 2) break;
-      assert.ok(Date.now() < logDeadline, 'Proxy did not flush both request completions');
+      assert.ok(Date.now() < logDeadline, 'Proxy did not persist both reply spans');
       await new Promise(resolve => setTimeout(resolve, 10));
     }
     const endMs = Date.now();

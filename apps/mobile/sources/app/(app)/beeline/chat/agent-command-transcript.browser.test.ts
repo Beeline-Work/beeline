@@ -156,7 +156,7 @@ async function main() {
   if (!target) throw Error('mention is not an actionable member reference');
   target.click();
   await new Promise(resolve => setTimeout(resolve, 50));
-  const replyButtons = [...document.querySelectorAll('[data-testid^="reply-"]')];
+  const replyButtons = [...[report, order].map(row => document.querySelector('[data-testid="reply-' + row.id + '"]')).filter(Boolean)];
   if (replyButtons.length !== 2) throw Error('missing Reply actions');
   for (const button of replyButtons) button.click();
   await new Promise(resolve => setTimeout(resolve, 100));
@@ -187,7 +187,7 @@ main().catch(error => document.getElementById('result').textContent = 'FAIL: ' +
         const builder = new Proxy({}, { get: () => () => builder });
         export const FadeOut = builder; export const FadeIn = builder; export const Layout = builder;
         export const FadeOutDown = builder; export const FadeInUp = builder; export const FadeOutUp = builder;
-        export const LinearTransition = builder; export const withSpring = identity;
+        export const LinearTransition = builder;
         export const interpolateColor = (_value, _input, output) => output[output.length - 1];`,
         'react-native-gesture-handler': `import React from 'react';
         export const Swipeable = props => React.createElement('div', props, props.children);

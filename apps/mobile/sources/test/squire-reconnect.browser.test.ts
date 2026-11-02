@@ -42,7 +42,7 @@ it.each(['obsidian', 'bone'])('Reproduction squire-spinner: card and Settings re
         '@/sync/storage': `const state={settings:{},localSettings:{}}; export const storage=Object.assign(select=>select(state),{getState:()=>state,subscribe:()=>()=>{}});`,
         '@/sync/persistence': 'export const loadLocalSettings=()=>({}); export const saveLocalSettings=()=>{}; export const loadSettings=()=>({settings:{},version:null});',
         'react-native-view-shot': "export const captureRef=async()=>''; export default {};",
-        'react-native-reanimated': `${base['react-native-reanimated']} const builder=new Proxy({},{get:()=>()=>builder}); export const FadeOut=builder; export const FadeIn=builder; export const Layout=builder; export const FadeOutDown=builder; export const FadeInUp=builder; export const FadeOutUp=builder; export const LinearTransition=builder; export const withSpring=value=>value; export const interpolateColor=(_value,_input,output)=>output[output.length-1];`,
+        'react-native-reanimated': `${base['react-native-reanimated']} const builder=new Proxy({},{get:()=>()=>builder}); export const FadeOut=builder; export const FadeIn=builder; export const Layout=builder; export const FadeOutDown=builder; export const FadeInUp=builder; export const FadeOutUp=builder; export const LinearTransition=builder; export const interpolateColor=(_value,_input,output)=>output[output.length-1];`,
         'expo-web-browser': 'export const openBrowserAsync=async()=>({});',
         '@/buzz/latency-route-hook': 'export const useLatencyRouteFrame=()=>{};',
         '@/components/AnimatedOverlay': 'export const AnimatedBlurBackdrop=()=>null;',

@@ -820,6 +820,12 @@ jobs:
         run: npx vitest run --maxWorkers=2 --minWorkers=2 --exclude sources/config/nativeFingerprint.test.ts
       - name: Verify Android release shrinking mods
         run: node --test scripts/android-shrinking.test.mjs
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Prove Android cached update integrity and retry
+        run: node --test scripts/android-ota-integrity.test.mjs
       - name: Typecheck the mobile app
         run: npm run mobile:typecheck
 

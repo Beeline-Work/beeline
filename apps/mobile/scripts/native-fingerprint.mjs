@@ -108,7 +108,8 @@ export async function computeNativeFingerprints(projectDir) {
       ignorePaths: [
         ...(config.ignorePaths ?? []),
         `plugins/${ignoredPlugin}.js`,
-        ...(platform === 'ios' ? ['node_modules/expo-navigation-bar/**', 'plugins/withAndroidBuildTooling.js', 'plugins/android-release.pro'] : []),
+        // This patch contains Android Kotlin only; iOS needs no new binary.
+        ...(platform === 'ios' ? ['node_modules/expo-navigation-bar/**', 'plugins/withAndroidBuildTooling.js', 'plugins/android-release.pro', 'patches/expo-updates+55.0.26.patch'] : []),
       ],
       // Rules loaded with fs.readFile are not discovered as JS imports.
       extraSources: platform === 'android' ? [{ type: 'file', filePath: 'plugins/android-release.pro', reasons: ['Android release shrinker rules'] }] : [],

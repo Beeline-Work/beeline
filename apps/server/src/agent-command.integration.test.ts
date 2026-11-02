@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, seedCornerOpening } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -586,6 +586,8 @@ it('carries accumulated history through a second offline return', async () => {
 });
 
 it('bootstrap identifies only pending member surfaces, including the corner parent', async () => {
+  // B opened the corner: its opening order owns the corner's kind and owner.
+  await seedCornerOpening(db, { cornerId: C, agentId: B });
   await send('@hoots Wake the Room');
   await send('@hoots Wake the corner', C);
   const bootstrap = await daemon.execute('getDaemonBootstrap', { agentId: A }, A);
@@ -884,6 +886,8 @@ it('a workflow wake for a run in the turn’s own Room still carries the run ins
 });
 
 it('lets the corner agent retitle its corner during its turn', async () => {
+  // B opened the corner: its opening order owns the corner's kind and owner.
+  await seedCornerOpening(db, { cornerId: C, agentId: B });
   await send('@hoots plan the launch', C);
   const [command] = await commands(A, C);
   await claim(command!);

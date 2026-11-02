@@ -1,5 +1,6 @@
 import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
 import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
+import { clearConnectedAppPlaceholders } from './migrations/connected-app-turns.js';
 import { AGENT_CORNER_HOLDS_SCHEMA } from './migrations/agent-corner-holds.js';
 import { MOBILE_MINIMUM_SCHEMA } from './mobile-minimum.js';
 import { STARTER_ONBOARDING_SCHEMA } from './starter-onboarding-run.js';
@@ -3626,6 +3627,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'archived-corner-wakes-v1', deleteArchivedCornerWakeSources));
   await dataStep('completed command turns', () =>
     workflowBackfillOnce(database, 'completed-command-turns-v1', closeCompletedCommandTurns));
+  await dataStep('connected app dispatch placeholders', () =>
+    workflowBackfillOnce(database, 'connected-app-placeholders-v1', clearConnectedAppPlaceholders));
   await dataStep('terminal push claims', () =>
     workflowBackfillOnce(database, 'terminal-push-claims-v1', compactPushClaims));
   if (searchDocuments)

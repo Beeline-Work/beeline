@@ -12,7 +12,12 @@ git -C "$checkout" fetch --quiet origin main
 git -C "$checkout" checkout --quiet --detach FETCH_HEAD
 env="$HOME/.config/beeline-log-walk.env"
 mkdir -p "$base/raw" "$base/state" "$(dirname "$env")" "$HOME/.config/systemd/user"
-printf 'LOG_WALK_RAW=%s\nLOG_WALK_STATE=%s\nLOG_WALK_OUT=%s\n' "$base/raw" "$base/state" "$out" > "$env"
+# systemd user units start with a minimal PATH; pin the real node and flyctl
+# binaries (not a per-shell fnm path, which disappears on reboot).
+node_dir="$(dirname "$(readlink -f "$(command -v node)")")"
+fly_dir="$(dirname "$(readlink -f "$(command -v flyctl)")")"
+printf 'PATH=%s:%s:/usr/local/bin:/usr/bin:/bin\nLOG_WALK_RAW=%s\nLOG_WALK_STATE=%s\nLOG_WALK_OUT=%s\n' \
+  "$node_dir" "$fly_dir" "$base/raw" "$base/state" "$out" > "$env"
 cp "$checkout"/scripts/log-walk/systemd/* "$HOME/.config/systemd/user/"
 systemctl --user daemon-reload
 for app in beeline-server beeline-free-agents beeline-voice-livekit; do

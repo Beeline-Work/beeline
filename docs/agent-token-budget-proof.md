@@ -102,13 +102,20 @@ back and compared byte for byte. The proof commands are:
 ```sh
 npm run build -w @beeline/body
 node scripts/prove-native-shell-cap.mjs
+node scripts/prove-native-shell-cap.mjs .scratch/shell-permission-baseline --permissions --unhooked
+node scripts/prove-native-shell-cap.mjs .scratch/shell-permission-hooked --permissions
 node scripts/prove-native-shell-cap.mjs .scratch/native-shell-failure --fail
 node scripts/prove-codex-shell-cap.mjs
 node scripts/prove-cursor-shell-cap.mjs
 ```
 
-Claude, Codex and Cursor capture output inside their native
+Claude and Cursor capture output inside their native
 `PreToolUse`/`preToolUse` hooks before native truncation can discard it.
+The hook rewrites input without setting a permission decision.
+SHELL-CAP-PERMISSION checks the installed Claude CLI with default permissions
+and no bypass flag: the same approval-required command stays blocked both
+without the hook and with it. The cap/recovery proofs explicitly opt into
+execution permission for their isolated recorded-provider commands.
 Claude must capture before execution: its successful-only `PostToolUse` event
 never runs for a failed Bash command. The installed-CLI regression uses a local
 recorded provider for both success and failure (exit status 7), and checks the
@@ -122,7 +129,9 @@ invocations remain separate processes; this adds no shell-state persistence.
 The archive lives with the session's existing temporary storage retention.
 Hooks are provisioned on POSIX hosts; Windows capture is not enabled.
 
-Codex receives only the generated hook through its adapter's session flags.
+Codex currently cannot apply the permission-neutral command rewrite (see the
+blocking result below). The earlier passing cap measurements used an explicit
+allow decision and are superseded. Codex receives only the generated hook through its adapter's session flags.
 Before creating or loading a session, the built ACP client verifies the script
 against its shipped content, lists that exact command and matcher, and records
 trust for its current hash. It never trusts repository or plugin hooks. The
@@ -163,3 +172,23 @@ cap after the existing owed-mention wrapper. Wake deadlines use the current
 `room_access` view and continue excluding infinite allowance pauses. Neither
 change adds fixed-context caching or native shell output capping. The exact
 head and current CI verdict belong to the completion report.
+
+### Approval-preserving repair: Codex blocked
+
+SHELL-CAP-PERMISSION reproduces the approval bypass on the previous PR head.
+The generated hook now emits only command modifications, with no permission
+or approval decision in Claude, Codex or Cursor output. Installed Claude
+default-permission runs refuse both the original and hooked command; isolated
+execution-enabled runs retain bounded output and byte-exact recovery on success
+and failure. Cursor recovery still passes.
+
+Codex capping is **blocked**, using the brief's explicit per-harness fallback.
+The installed Codex CLI (0.165.0) ignores updatedInput without an allow decision.
+Its [versioned parser](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/hooks/src/engine/output_parser.rs#L162-L170)
+only retains the rewrite when permissionDecision is Allow. The post-tool parser
+only supports feedback/additional context, without replacing shell output.
+The permission-neutral native replay receives (10,215 bytes) of native-truncated
+output with no recovery notice; prove-codex-shell-cap.mjs fails its recovery-path
+assertion. This supersedes the earlier Codex success claim. The shared hook
+remains permission-neutral; Codex retains native truncation until upstream
+supports a rewrite without an approval decision. No native proof is loosened.

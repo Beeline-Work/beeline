@@ -32,6 +32,7 @@ it.each(['claude', 'codex', 'cursor'])(
         child.stdin!.end(input);
       });
       const parsed = JSON.parse(result);
+      expect(parsed.hookSpecificOutput ?? {}).not.toHaveProperty('permissionDecision');
       const execution = await exec('bash', [
         '-c',
         (harness === 'cursor' ? parsed.updated_input : parsed.hookSpecificOutput.updatedInput).command,

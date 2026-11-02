@@ -49,7 +49,7 @@ process.stdin.on('end', () => {
     '\nexit "$(' + '/bin/cat ' + quote(status) + ')"';
   const updated = { ...event.tool_input, command };
   console.log(JSON.stringify(outputFormat === 'updated-input' ? { updated_input: updated } : {
-    hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', updatedInput: updated }
+    hookSpecificOutput: { hookEventName: 'PreToolUse', updatedInput: updated }
   }));
   return;
 });

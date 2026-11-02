@@ -17,6 +17,8 @@ await mkdir(out, { recursive: true });
 const home = await mkdtemp(join(tmpdir(), 'beeline-native-model-'));
 const hook = join(home, 'shell-hook.cjs');
 await writeFile(hook, NATIVE_SHELL_OUTPUT_SCRIPT);
+const permissionProof = process.argv.includes('--permissions');
+const unhooked = process.argv.includes('--unhooked');
 const exitCode = process.argv.includes('--fail') ? 7 : 0;
 const command = `${JSON.stringify(process.execPath)} -e 'process.stdout.write("HEAD\\n"+"x".repeat(400000)+"\\nTAIL\\n");process.exitCode=${exitCode}'`;
 let received, receivedError,
@@ -80,7 +82,7 @@ const server = createServer(async (req, res) => {
 await new Promise((done) => server.listen(0, '127.0.0.1', done));
 try {
   const settings = join(home, 'settings.json');
-  await writeFile(settings, JSON.stringify(nativeShellHookConfig(nativeShellHookCommand(hook, 'claude'))));
+  await writeFile(settings, JSON.stringify(unhooked ? {} : nativeShellHookConfig(nativeShellHookCommand(hook, 'claude'))));
   const child = spawn(
     'claude',
     [
@@ -89,7 +91,7 @@ try {
       'claude-sonnet-4-6',
       '--settings',
       settings,
-      '--dangerously-skip-permissions',
+      ...(permissionProof ? [] : ['--dangerously-skip-permissions']),
       '--no-session-persistence',
       'Run the provided command once.',
     ],
@@ -121,6 +123,14 @@ try {
   assert.equal(code, 0, logs);
   const text = typeof received === 'string' ? received : JSON.stringify(received);
   assert.ok(text, 'No native tool result reached the model');
+  if (permissionProof) {
+    assert.equal(receivedError, true, 'Approval-required Bash must remain blocked');
+    assert.match(text, /requires approval|can't be checked before it runs/);
+    assert.ok(!text.includes('HEAD'), 'Command must not execute');
+    const proof = { reproduction: 'SHELL-CAP-PERMISSION', harness: 'Claude Code', hooked: !unhooked, approvalRequired: true, executed: false, modelResult: text };
+    await writeFile(join(out, 'claude-permission.json'), JSON.stringify(proof, null, 2));
+    console.log(JSON.stringify(proof));
+  } else {
   assert.equal(receivedError, exitCode !== 0, 'Native failure status must reach the model');
   const path = /full output: (.*?)\. Read a bounded/.exec(text)?.[1];
   assert.ok(path, text.slice(0, 1000));
@@ -142,6 +152,7 @@ try {
   await writeFile(join(out, 'claude-model-result.txt'), text);
   await writeFile(join(out, 'claude.json'), JSON.stringify(proof, null, 2));
   console.log(JSON.stringify(proof));
+  }
 } finally {
   await new Promise((done) => server.close(done));
   await rm(home, { recursive: true, force: true });

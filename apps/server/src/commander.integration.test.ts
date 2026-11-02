@@ -232,7 +232,7 @@ it('a real GitHub merge webhook wakes Ruby once through the corner lifecycle', a
   const opened = await open();
   const branch = `feature/corner-${opened.cornerId.replaceAll('-', '').slice(0, 12)}`;
   await db.query(`UPDATE rooms SET repository_key='owner/widgets' WHERE id=$1`, [ROOM]);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [opened.cornerId, JSON.stringify({ lifecycle: 'in-review', checks: 'passing',
       pr: { number: 42, url: 'https://github.com/owner/widgets/pull/42', headSha: '9'.repeat(40), targetBranch: 'main' } })]);
   await db.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
@@ -259,7 +259,7 @@ it('a configured reviewer can record PASS from its DM without changing the revie
   Object.assign(daemon, { github });
   const opened = await open(), headSha = '9'.repeat(40);
   await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, RUBY]);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
     JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 42, headSha } })]);
   await advanceCorner(db, opened.cornerId, { kind: 'push', contents: { headSha } });
   await systemLine(db, { roomId: opened.cornerId, authorId: WORKER, subject: GITHUB_SUBJECT,
@@ -886,7 +886,7 @@ it('opening from a report resumes the original order instead of treating the rep
 it('a green head whose reviewer command cannot be queued reports the reason to its commander', async () => {
   const opened = await open();
   await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, RUBY]);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
     JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 42, headSha: '9'.repeat(40) } })]);
   await advanceCorner(db, opened.cornerId, { kind: 'push', contents: { headSha: '9'.repeat(40) } });
   await db.query(`CREATE FUNCTION refuse_review_command() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
@@ -1490,7 +1490,7 @@ it.each(['complete', 'failed'] as const)('Reproduction R1: delivered needs-decis
 async function cornerTurnWithPendingChecks() {
   const opened = await open();
   const lifecycle = { lifecycle: 'in-review', checks: 'pending', pr: { number: 2545, headSha: 'd'.repeat(40) } };
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId, JSON.stringify(lifecycle)]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId, JSON.stringify(lifecycle)]);
   const turn = await worker(opened.cornerId);
   await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'working' }, WORKER);
   await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
@@ -1920,7 +1920,7 @@ it.each(['done','no-reply'])('WAKE-STORM: auth-failed reviewer reports once and 
   const turn = await worker(opened.cornerId);
   await daemon.execute('postAgentTurnReceipt', {...authority(turn),status:'complete'}, WORKER);
   await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [ROOM,SOL]);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId,
     JSON.stringify({checks:'passing',pr:{number:42,headSha:'a'.repeat(40)}})]);
   await systemLine(db, {roomId:opened.cornerId,authorId:HUMAN,subject:{kind:'github',name:'GitHub'},
     verb:'passed checks',kind:'check-passed',object:{text:'checks',headSha:'a'.repeat(40)}});

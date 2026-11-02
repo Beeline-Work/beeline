@@ -167,7 +167,7 @@ describe('PhoneService.readRoom latency', () => {
       ]);
       await insertCornerFacts(database, { cornerId: CORNER, ownerAgentId: AGENT });
       await database.query(
-        `UPDATE corner_facts SET lifecycle='{"lifecycle":"working","checks":"unknown"}'::jsonb
+        `UPDATE corner_github_cache SET lifecycle='{"lifecycle":"working","checks":"unknown"}'::jsonb
          WHERE corner_id=$1`,
         [CORNER],
       );

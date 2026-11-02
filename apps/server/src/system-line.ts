@@ -496,7 +496,7 @@ export async function systemLine(
       ],
     );
     if (result.rowCount) {
-      const watched = watches.length ? (await db.query<{ name: string; merge_sha: string | null }>(`SELECT room.name,fact.lifecycle->'pr'->>'mergeCommitSha' merge_sha FROM rooms room LEFT JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`, [input.card?.cornerId ?? input.roomId])).rows[0] : undefined;
+      const watched = watches.length ? (await db.query<{ name: string; merge_sha: string | null }>(`SELECT room.name,fact.lifecycle->'pr'->>'mergeCommitSha' merge_sha FROM rooms room LEFT JOIN corner_github_cache fact ON fact.corner_id=room.id WHERE room.id=$1`, [input.card?.cornerId ?? input.roomId])).rows[0] : undefined;
       for (const watch of watches)
         await createAgentCommand(db, {
           roomId: watch.watcher_room_id,

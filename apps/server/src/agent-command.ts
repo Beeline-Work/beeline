@@ -1,3 +1,4 @@
+import { cornerLifecycleSql } from './corner-github-cache.js';
 import { subscribeConfiguredReviewers } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
@@ -339,13 +340,13 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     JOIN corner_facts fact ON fact.corner_id=COALESCE((command.review_context->>'cornerId')::uuid,command.room_id)
     LEFT JOIN messages source ON source.id=command.source_message_id
     WHERE (command.review_context IS NOT NULL AND (
-        command.review_context->>'headSha' IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha'
-        OR command.review_context->'pullRequest' IS DISTINCT FROM fact.lifecycle->'pr'->'number'
+        command.review_context->>'headSha' IS DISTINCT FROM ${cornerLifecycleSql('fact.corner_id')}->'pr'->>'headSha'
+        OR command.review_context->'pullRequest' IS DISTINCT FROM ${cornerLifecycleSql('fact.corner_id')}->'pr'->'number'
         OR (command.review_context->>'briefRevision')::int IS DISTINCT FROM
           COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=fact.corner_id),0)))
       OR (command.reason IN ('corner_check','corner_merge_conflict','corner_review_dispatch','subscribed_event')
         AND source.system_event->'object'->>'headSha' IS NOT NULL
-        AND source.system_event->'object'->>'headSha' IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha')
+        AND source.system_event->'object'->>'headSha' IS DISTINCT FROM ${cornerLifecycleSql('fact.corner_id')}->'pr'->>'headSha')
       OR (command.wake_context->>'briefRevision' IS NOT NULL
         AND (command.wake_context->>'briefRevision')::int <
           (SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=command.room_id)
@@ -429,7 +430,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
         'briefRevision',cancelled.review_context->'briefRevision'),'brief',cancelled.wake_context,
         'headSha',source.system_event->'object'->>'headSha',
         'runId',workflow.run_id,'attempt',workflow.attempt),
-      'current',jsonb_build_object('headSha',fact.lifecycle->'pr'->>'headSha',
+      'current',jsonb_build_object('headSha',${cornerLifecycleSql('fact.corner_id')}->'pr'->>'headSha',
         'briefRevision',(SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=fact.corner_id),
         'runId',workflow.latest_card->>'runId','attempt',workflow.latest_card->>'seq',
         'runStatus',workflow.start_card->>'runStatus')
@@ -617,7 +618,7 @@ export async function repairReviewerCornerMembership(
 /** Exact target comparison also applies to review reports routed to another place. */
 export async function supersededReview(db: SqlDatabase, command: CommandRow): Promise<boolean> {
   if (!command.review_context) return false;
-  return Boolean((await db.query(`SELECT 1 FROM corner_facts fact WHERE fact.corner_id=$1
+  return Boolean((await db.query(`SELECT 1 FROM corner_github_cache fact WHERE fact.corner_id=$1
     AND (fact.lifecycle->'pr'->>'headSha' IS DISTINCT FROM $2
       OR fact.lifecycle->'pr'->'number' IS DISTINCT FROM $3::jsonb)`,
     [command.review_context.cornerId ?? command.room_id, command.review_context.headSha,
@@ -722,7 +723,7 @@ export async function createAgentCommand(
          'pullRequest',fact.lifecycle->'pr'->'number','briefRevision',
          COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=fact.corner_id),0)) context
        FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
-       JOIN corner_facts fact ON fact.corner_id=corner.id
+       JOIN corner_github_cache fact ON fact.corner_id=corner.id
        WHERE corner.id=$1 AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
          AND ($3::boolean OR $2=${cornerReviewerSql()})`,
       [input.roomId, input.agentId, input.reason === 'corner_review_needed'],
@@ -738,7 +739,7 @@ export async function createAgentCommand(
         ? Number(reviewContext.pullRequest) : undefined;
     const current = recordedHead && recordedPull != null ? undefined : (await db.query<{ head: string | null; pull: number | null }>(
       `SELECT lifecycle->'pr'->>'headSha' head,(lifecycle->'pr'->>'number')::integer pull
-       FROM corner_facts WHERE corner_id=$1`,
+       FROM corner_github_cache WHERE corner_id=$1`,
       [input.roomId],
     )).rows[0];
     const headSha = recordedHead
@@ -1857,7 +1858,7 @@ export async function readAgentCommands(
  LEFT JOIN messages reply_parent ON reply_parent.id=m.reply_to_message_id
  LEFT JOIN identities reply_author ON reply_author.id=reply_parent.author_id
  LEFT JOIN rooms watched_corner ON watched_corner.id=m.room_id AND c.reason='watched_corner'
- LEFT JOIN corner_facts watched_fact ON watched_fact.corner_id=watched_corner.id
+ LEFT JOIN corner_github_cache watched_fact ON watched_fact.corner_id=watched_corner.id
  LEFT JOIN agent_commands resume_parent ON resume_parent.id=c.parent_command_id AND c.action='resume'
  LEFT JOIN messages resume_source ON resume_source.id=resume_parent.source_message_id
  LEFT JOIN room_choices choice ON choice.id::text=m.card->>'choiceId' AND choice.room_id=c.room_id
@@ -2104,7 +2105,7 @@ export async function queueCornerMergeConflict(
       `SELECT ${cornerImplementerSql('fact', 'corner')} owner_agent_id FROM corner_facts fact
        JOIN rooms corner ON corner.id=fact.corner_id
        WHERE fact.corner_id=$1 AND corner.archived_at IS NULL
-         AND fact.lifecycle->'pr'->>'mergeability'='dirty'`,
+         AND ${cornerLifecycleSql('fact.corner_id')}->'pr'->>'mergeability'='dirty'`,
       [cornerId],
     )
   ).rows[0]?.owner_agent_id;
@@ -2132,8 +2133,8 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
       AND recovery.agent_id=${cornerImplementerSql('fact', 'corner')}
       AND recovery.reason='corner_check'
       AND source.system_event->>'verb'='requested another check of'
-      AND source.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
-      AND extract(epoch FROM recovery.created_at)>=(fact.lifecycle->'checksSummary'->>'updatedAt')::double precision
+      AND source.system_event->'object'->>'headSha'=${cornerLifecycleSql('fact.corner_id')}->'pr'->>'headSha'
+      AND extract(epoch FROM recovery.created_at)>=(${cornerLifecycleSql('fact.corner_id')}->'checksSummary'->>'updatedAt')::double precision
   )`;
 
   // Delivery already gets its normal push and the 30-second renudge. A
@@ -2187,31 +2188,31 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
     lifecycle: unknown;
     check_stuck: boolean;
   }>(
-    `SELECT fact.corner_id,fact.lifecycle,${cornerImplementerSql('fact', 'corner')} implementer_id,
+    `SELECT fact.corner_id,gh.lifecycle,${cornerImplementerSql('fact', 'corner')} implementer_id,
             (SELECT command.id FROM agent_commands command
              WHERE command.room_id=fact.corner_id
                AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
                AND command.reason='corner_check' ORDER BY command.created_at DESC,command.id DESC LIMIT 1) last_command_id,
-            fact.lifecycle->'pr'->>'headSha' head_sha,
-            fact.lifecycle->'pr'->>'title' title,
-            fact.lifecycle->'pr'->>'number' number,
-            fact.lifecycle->'pr'->>'url' url,
+            gh.lifecycle->'pr'->>'headSha' head_sha,
+            gh.lifecycle->'pr'->>'title' title,
+            gh.lifecycle->'pr'->>'number' number,
+            gh.lifecycle->'pr'->>'url' url,
             stuck.held check_stuck
-     FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+     FROM (corner_facts fact JOIN corner_github_cache gh ON gh.corner_id=fact.corner_id) JOIN rooms corner ON corner.id=fact.corner_id
      CROSS JOIN LATERAL (
-       SELECT (fact.lifecycle->'checksSummary'->>'updatedAt')::double precision
+       SELECT (gh.lifecycle->'checksSummary'->>'updatedAt')::double precision
                 <= extract(epoch FROM now()-interval '${CORNER_CHECK_STUCK_AFTER}')
               AND EXISTS (
                 SELECT 1 FROM jsonb_array_elements(
-                  CASE WHEN jsonb_typeof(fact.lifecycle->'checksSummary'->'checks')='array'
-                       THEN fact.lifecycle->'checksSummary'->'checks' ELSE '[]'::jsonb END) running
+                  CASE WHEN jsonb_typeof(gh.lifecycle->'checksSummary'->'checks')='array'
+                       THEN gh.lifecycle->'checksSummary'->'checks' ELSE '[]'::jsonb END) running
                 WHERE running->>'status'='pending'
               ) held
      ) stuck
      WHERE corner.archived_at IS NULL AND ${cornerImplementerSql('fact', 'corner')} IS NOT NULL
-       AND fact.lifecycle->>'checks'='failing'
+       AND gh.lifecycle->>'checks'='failing'
        AND NOT EXISTS(SELECT 1 FROM rooms waiting_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting WHERE waiting_corner.id=fact.corner_id)
-       AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+       AND gh.lifecycle->'pr'->>'headSha' IS NOT NULL
        AND stuck.held
        AND NOT ${recoveredSnapshot}
        AND NOT EXISTS (
@@ -2226,9 +2227,9 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
       await lockCornerLifecycle(db, row.corner_id);
       const current = await db.query(`SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
         WHERE fact.corner_id=$1 AND corner.archived_at IS NULL
-          AND fact.lifecycle->'pr'->>'headSha'=$2 AND fact.lifecycle->>'checks'='failing'
+          AND ${cornerLifecycleSql('fact.corner_id')}->'pr'->>'headSha'=$2 AND ${cornerLifecycleSql('fact.corner_id')}->>'checks'='failing'
           AND ${cornerImplementerSql('fact', 'corner')}=$3
-          AND fact.lifecycle=$4::jsonb
+          AND ${cornerLifecycleSql('fact.corner_id')}=$4::jsonb
           AND NOT ${recoveredSnapshot}
           AND NOT EXISTS(SELECT 1 FROM rooms waiting_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting WHERE waiting_corner.id=fact.corner_id)
           AND (SELECT newest.id FROM agent_commands newest WHERE newest.room_id=$1
@@ -2322,21 +2323,21 @@ export async function reconcileCornerMergeBlockers(
     url: string;
   }>(
     `SELECT fact.corner_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id,
-            fact.lifecycle->>'checks' checks,
-            fact.lifecycle->'pr'->>'mergeability' mergeability,
-            fact.lifecycle->'pr'->>'headSha' head_sha,
-            (fact.lifecycle->'pr'->>'number')::integer number,
-            fact.lifecycle->'pr'->>'title' title,
-            fact.lifecycle->'pr'->>'url' url
-     FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+            gh.lifecycle->>'checks' checks,
+            gh.lifecycle->'pr'->>'mergeability' mergeability,
+            gh.lifecycle->'pr'->>'headSha' head_sha,
+            (gh.lifecycle->'pr'->>'number')::integer number,
+            gh.lifecycle->'pr'->>'title' title,
+            gh.lifecycle->'pr'->>'url' url
+     FROM (corner_facts fact JOIN corner_github_cache gh ON gh.corner_id=fact.corner_id) JOIN rooms corner ON corner.id=fact.corner_id
      WHERE corner.archived_at IS NULL AND ${cornerImplementerSql('fact', 'corner')} IS NOT NULL
        AND ($1::uuid IS NULL OR fact.corner_id=$1)
-       AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-       AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
-       AND (fact.lifecycle->>'checks'='failing'
-            OR fact.lifecycle->'pr'->>'mergeability'='dirty'
-            OR (fact.lifecycle->'pr'->>'mergeability'='draft'
-              AND fact.lifecycle->'draftReadyFailure'->>'headSha'=fact.lifecycle->'pr'->>'headSha'))`,
+       AND gh.lifecycle->'pr'->>'headSha' IS NOT NULL
+       AND gh.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
+       AND (gh.lifecycle->>'checks'='failing'
+            OR gh.lifecycle->'pr'->>'mergeability'='dirty'
+            OR (gh.lifecycle->'pr'->>'mergeability'='draft'
+              AND gh.lifecycle->'draftReadyFailure'->>'headSha'=gh.lifecycle->'pr'->>'headSha'))`,
     [cornerId ?? null],
   );
   let commands = 0;
@@ -2387,7 +2388,7 @@ export async function reconcileCornerMergeBlockers(
         }
       }
       if (row.mergeability === 'draft' && row.checks === 'passing') {
-        const current = await db.query(`SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+        const current = await db.query(`SELECT 1 FROM corner_github_cache fact JOIN rooms corner ON corner.id=fact.corner_id
           WHERE fact.corner_id=$1 AND corner.archived_at IS NULL
             AND fact.lifecycle->'pr'->>'headSha'=$2
             AND fact.lifecycle->'draftReadyFailure'->>'headSha'=$2
@@ -2456,15 +2457,15 @@ export async function reconcileConfiguredCornerReviewers(
     head_sha: string;
   }>(
     `SELECT corner.id corner_id,COALESCE(${cornerOwnerSql('corner.id')},corner.created_by) author_id,
-            fact.lifecycle->'pr'->>'headSha' head_sha
+            gh.lifecycle->'pr'->>'headSha' head_sha
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
-     JOIN corner_facts fact ON fact.corner_id=corner.id
+     JOIN (corner_facts fact JOIN corner_github_cache gh ON gh.corner_id=fact.corner_id) ON fact.corner_id=corner.id
      JOIN memberships reviewer ON reviewer.room_id=parent.id
        AND reviewer.identity_id=${cornerReviewerSql()} AND reviewer.removed_at IS NULL
-     WHERE corner.archived_at IS NULL AND fact.lifecycle->>'checks'='passing'
-       AND fact.lifecycle->'pr'->>'number' IS NOT NULL
-       AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+     WHERE corner.archived_at IS NULL AND gh.lifecycle->>'checks'='passing'
+       AND gh.lifecycle->'pr'->>'number' IS NOT NULL
+       AND gh.lifecycle->'pr'->>'headSha' IS NOT NULL
        AND COALESCE(${cornerOwnerSql('corner.id')},corner.created_by) IS NOT NULL
        AND ($1::uuid IS NULL OR parent.id=$1)
        AND NOT EXISTS (
@@ -2477,14 +2478,14 @@ export async function reconcileConfiguredCornerReviewers(
          SELECT 1 FROM corner_merge_approvals approval
          WHERE approval.corner_id=corner.id
            AND approval.approved_by=${cornerReviewerSql()}
-           AND approval.pull_request_number=(fact.lifecycle->'pr'->>'number')::integer
-           AND approval.head_sha=fact.lifecycle->'pr'->>'headSha'
+           AND approval.pull_request_number=(gh.lifecycle->'pr'->>'number')::integer
+           AND approval.head_sha=gh.lifecycle->'pr'->>'headSha'
        )
        AND NOT EXISTS (
          SELECT 1 FROM messages message WHERE message.room_id=corner.id
            AND message.system_event->>'kind'='check-passed'
            AND (message.system_event->'object'->>'headSha' IS NULL
-                OR message.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha')
+                OR message.system_event->'object'->>'headSha'=gh.lifecycle->'pr'->>'headSha')
        )`,
     [parentRoomId ?? null],
   );
@@ -2517,24 +2518,24 @@ export async function reconcileConfiguredCornerReviewers(
     head_sha: string | null;
   }>(
     `SELECT corner.id corner_id,${cornerReviewerSql()} reviewer_agent_id,source.id source_message_id,
-            fact.lifecycle->'pr'->>'headSha' head_sha
+            gh.lifecycle->'pr'->>'headSha' head_sha
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
-     JOIN corner_facts fact ON fact.corner_id=corner.id
+     JOIN (corner_facts fact JOIN corner_github_cache gh ON gh.corner_id=fact.corner_id) ON fact.corner_id=corner.id
      JOIN LATERAL (
        SELECT message.id
        FROM messages message
        WHERE message.room_id=corner.id
          AND message.system_event->>'kind'='check-passed'
          AND (message.system_event->'object'->>'headSha' IS NULL
-              OR message.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha')
+              OR message.system_event->'object'->>'headSha'=gh.lifecycle->'pr'->>'headSha')
        ORDER BY message.created_at DESC,message.id DESC LIMIT 1
      ) source ON true
      WHERE corner.archived_at IS NULL
        AND ${cornerRunStateSql('fact.corner_id')} IS DISTINCT FROM 'ask_human'
-       AND fact.lifecycle->>'checks'='passing'
-       AND fact.lifecycle->'pr'->>'number' IS NOT NULL
-       AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+       AND gh.lifecycle->>'checks'='passing'
+       AND gh.lifecycle->'pr'->>'number' IS NOT NULL
+       AND gh.lifecycle->'pr'->>'headSha' IS NOT NULL
        AND ($1::uuid IS NULL OR parent.id=$1)
        AND NOT EXISTS (
          SELECT 1 FROM agent_commands worker
@@ -2546,8 +2547,8 @@ export async function reconcileConfiguredCornerReviewers(
          SELECT 1 FROM corner_merge_approvals approval
          WHERE approval.corner_id=corner.id
            AND approval.approved_by=${cornerReviewerSql()}
-           AND approval.pull_request_number=(fact.lifecycle->'pr'->>'number')::integer
-           AND approval.head_sha=fact.lifecycle->'pr'->>'headSha'
+           AND approval.pull_request_number=(gh.lifecycle->'pr'->>'number')::integer
+           AND approval.head_sha=gh.lifecycle->'pr'->>'headSha'
        )
        AND NOT EXISTS (
          SELECT 1 FROM agent_commands command
@@ -2561,7 +2562,7 @@ export async function reconcileConfiguredCornerReviewers(
                  OR dispatch.author_id=${cornerImplementerSql('fact', 'corner')}))
              OR (command.reason='agent_tag' AND dispatch.author_id=${cornerImplementerSql('fact', 'corner')}))
            AND (dispatch.system_event->'object'->>'headSha' IS NULL
-                OR dispatch.system_event->'object'->>'headSha'=fact.lifecycle->'pr'->>'headSha')
+                OR dispatch.system_event->'object'->>'headSha'=gh.lifecycle->'pr'->>'headSha')
        )`,
     [parentRoomId ?? null],
   );

@@ -1,4 +1,5 @@
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
+import { cornerLifecycleSql } from './corner-github-cache.js';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { deleteCornerBranchBestEffort } from './corner-branch-cleanup.js';
 import { cornerKindSql, cornerCommissionerSql } from './corner-opening.js';
@@ -2951,7 +2952,7 @@ export class PhoneService {
              'parent',(SELECT (to_jsonb(parent) - 'github_installation_id') ||
                jsonb_build_object('github_installation_id',parent.github_installation_id::text)
                FROM rooms parent WHERE parent.id=authorized_room.parent_id),
-             'facts',(SELECT (to_jsonb(f)-'objective') || jsonb_build_object('objective',${cornerObjectiveSql('authorized_room')},'owner_agent_id',${cornerOwnerSql('f.corner_id')}) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
+             'facts',(SELECT (to_jsonb(f)-'objective') || jsonb_build_object('lifecycle',${cornerLifecycleSql('f.corner_id')},'objective',${cornerObjectiveSql('authorized_room')},'owner_agent_id',${cornerOwnerSql('f.corner_id')}) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
              'owed',(SELECT owed.owed FROM rooms c
                ${cornerOwedLookupSql('c', '$2')} WHERE c.id=authorized_room.id),
              'brief',(SELECT to_jsonb(brief) || jsonb_build_object('approver_name',approver.name,'author_handle',brief_author.handle)
@@ -3353,7 +3354,7 @@ export class PhoneService {
         COALESCE((SELECT jsonb_agg(to_jsonb(work)) FROM (
           SELECT max(f.lifecycle->'pr'->>'title') title,
             f.lifecycle->'pr'->>'url' url,max(f.lifecycle->'pr'->>'mergedAt') merged_at
-          FROM corner_facts f JOIN rooms r ON r.id=f.corner_id
+          FROM corner_github_cache f JOIN rooms r ON r.id=f.corner_id
           WHERE r.workspace_id=$2 AND ${cornerOwnerSql('r.id')}=$1
             AND NULLIF(f.lifecycle->'pr'->>'mergedAt','') IS NOT NULL
             AND NULLIF(f.lifecycle->'pr'->>'title','') IS NOT NULL

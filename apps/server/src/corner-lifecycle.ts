@@ -1,3 +1,4 @@
+import { cornerLifecycleSql } from './corner-github-cache.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { REVIEW_VERDICT_SQL, missingReviewAttachments } from './review-evidence.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
@@ -202,8 +203,39 @@ export async function lockCornerLifecycle(db: SqlDatabase, cornerId: string): Pr
 }
 
 /**
+ * Expand step for `corner_github_cache` (created in the server schema): copy the
+ * old column once, then mirror both ways while older replicas still read and
+ * write corner_facts.lifecycle. The IS DISTINCT FROM guards end the recursion.
+ * The mirror is removed together with the corner_facts.lifecycle column.
+ */
+export const CORNER_GITHUB_CACHE_MIRROR_SQL = `
+INSERT INTO corner_github_cache(corner_id,lifecycle)
+  SELECT corner_id,lifecycle FROM corner_facts ON CONFLICT(corner_id) DO NOTHING;
+CREATE OR REPLACE FUNCTION corner_facts_lifecycle_mirror() RETURNS trigger LANGUAGE plpgsql AS $mirror$
+BEGIN
+  INSERT INTO corner_github_cache(corner_id,lifecycle) VALUES(NEW.corner_id,NEW.lifecycle)
+  ON CONFLICT(corner_id) DO UPDATE SET lifecycle=EXCLUDED.lifecycle
+    WHERE corner_github_cache.lifecycle IS DISTINCT FROM EXCLUDED.lifecycle;
+  RETURN NULL;
+END $mirror$;
+DROP TRIGGER IF EXISTS corner_facts_lifecycle_mirror ON corner_facts;
+CREATE TRIGGER corner_facts_lifecycle_mirror AFTER INSERT OR UPDATE OF lifecycle ON corner_facts
+  FOR EACH ROW EXECUTE FUNCTION corner_facts_lifecycle_mirror();
+CREATE OR REPLACE FUNCTION corner_github_cache_mirror() RETURNS trigger LANGUAGE plpgsql AS $mirror$
+BEGIN
+  UPDATE corner_facts SET lifecycle=NEW.lifecycle
+    WHERE corner_id=NEW.corner_id AND lifecycle IS DISTINCT FROM NEW.lifecycle;
+  RETURN NULL;
+END $mirror$;
+DROP TRIGGER IF EXISTS corner_github_cache_mirror ON corner_github_cache;
+CREATE TRIGGER corner_github_cache_mirror AFTER INSERT OR UPDATE OF lifecycle ON corner_github_cache
+  FOR EACH ROW EXECUTE FUNCTION corner_github_cache_mirror();
+`;
+
+/**
  * The corner's own row: created once with the corner, then changed only by
- * this module (its lock and its reviewer) and by GitHub's display cache.
+ * this module (its lock and its reviewer). Its GitHub display cache row starts
+ * with it and is then written only from GitHub (`corner_github_cache`).
  */
 export async function createCornerFacts(db: SqlDatabase, cornerId: string): Promise<void> {
   await db.query(
@@ -211,6 +243,7 @@ export async function createCornerFacts(db: SqlDatabase, cornerId: string): Prom
      VALUES($1,'{"lifecycle":"working","checks":"unknown"}') ON CONFLICT(corner_id) DO NOTHING`,
     [cornerId],
   );
+  await db.query(`INSERT INTO corner_github_cache(corner_id) VALUES($1) ON CONFLICT(corner_id) DO NOTHING`, [cornerId]);
 }
 
 /** A person's lock: merges then keep the corner open (`corner lock`). */
@@ -269,7 +302,7 @@ async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow 
     await db.query<CornerRow>(
       `SELECT corner.parent_id,parent.workspace_id,
               ${cornerImplementerSql('fact', 'corner')} worker_agent_id,
-              fact.lifecycle,fact.locked,
+              ${cornerLifecycleSql('fact.corner_id')},fact.locked,
               corner.archived_at IS NOT NULL archived,
               ${cornerReviewerSql()} configured_reviewer_id,
               configured.kind configured_reviewer_kind,
@@ -493,7 +526,7 @@ async function checksVerdictDispatched(
   const dispatched = await db.query(
     `SELECT 1 FROM agent_commands command
      JOIN messages source ON source.id=command.source_message_id
-     JOIN corner_facts fact ON fact.corner_id=command.room_id
+     JOIN corner_github_cache fact ON fact.corner_id=command.room_id
      WHERE command.room_id=$1 AND command.reason=$2
        AND source.system_event->>'kind'=$3
        AND (source.system_event->'object'->>'headSha' IS NULL
@@ -820,8 +853,8 @@ async function ensureReviewDispatch(
        AND command.agent_id=${cornerReviewerSql()}
        AND command.agent_id IS DISTINCT FROM $3
        AND command.state IN ('pending','claimed')
-       AND ((command.review_context->>'headSha'=(SELECT lifecycle->'pr'->>'headSha' FROM corner_facts WHERE corner_id=$1)
-           AND command.review_context->'pullRequest'=(SELECT lifecycle->'pr'->'number' FROM corner_facts WHERE corner_id=$1)
+       AND ((command.review_context->>'headSha'=(SELECT lifecycle->'pr'->>'headSha' FROM corner_github_cache WHERE corner_id=$1)
+           AND command.review_context->'pullRequest'=(SELECT lifecycle->'pr'->'number' FROM corner_github_cache WHERE corner_id=$1)
            AND (command.review_context->>'briefRevision')::int=COALESCE((SELECT max(revision) FROM corner_brief_revisions WHERE corner_id=$1),0))
          OR (command.review_context IS NULL AND command.created_at>=(
            SELECT created_at FROM messages WHERE room_id=$1 AND card_type=$2
@@ -974,7 +1007,7 @@ export async function blockingReview(
             WHERE room_id=$1 AND card_type=$3 AND card->>'runId'=$1::text AND created_at<=command.created_at
             ORDER BY (card->>'seq')::int DESC LIMIT 1))=$2
          AND (command.review_context IS NULL OR command.review_context->'pullRequest'=(
-           SELECT lifecycle->'pr'->'number' FROM corner_facts WHERE corner_id=$1))
+           SELECT lifecycle->'pr'->'number' FROM corner_github_cache WHERE corner_id=$1))
          AND (command.report_outcome IN ('failed','blocked') OR repair_verdict.delivered OR NOT EXISTS (
            SELECT 1 FROM messages card WHERE card.room_id=$1 AND card.card_type=$3
              AND card.card->>'runId'=$1::text AND card.card->>'fromState'='review'
@@ -1003,7 +1036,7 @@ async function queueReviewerCommand(
        THEN jsonb_build_object('cornerId',corner_id,'headSha',lifecycle->'pr'->>'headSha',
        'pullRequest',lifecycle->'pr'->'number','briefRevision',$2::int,
        'checks',${reviewChecksSql},'reviewerConfiguration',(${reviewerConfigurationSql('$3')})) ELSE NULL END context
-     FROM corner_facts WHERE corner_id=$1`, [input.roomId, brief?.revision ?? 0, input.agentId],
+     FROM corner_github_cache WHERE corner_id=$1`, [input.roomId, brief?.revision ?? 0, input.agentId],
   )).rows[0]?.context;
   const headSha = typeof context?.headSha === 'string' ? context.headSha : undefined;
   const rawPull = context?.pullRequest;

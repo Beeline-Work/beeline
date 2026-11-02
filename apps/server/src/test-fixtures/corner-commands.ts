@@ -58,4 +58,10 @@ export async function seedCornerFactsRow(
      VALUES($1,COALESCE($2::jsonb,'{"lifecycle":"unknown","checks":"unknown"}'::jsonb),$3,$4)`,
     [cornerId, lifecycle, locked, reviewerAgentId],
   );
+  await db.query(
+    `INSERT INTO corner_github_cache(corner_id,lifecycle)
+     VALUES($1,COALESCE($2::jsonb,'{"lifecycle":"unknown","checks":"unknown"}'::jsonb))
+     ON CONFLICT(corner_id) DO UPDATE SET lifecycle=EXCLUDED.lifecycle`,
+    [cornerId, lifecycle],
+  );
 }

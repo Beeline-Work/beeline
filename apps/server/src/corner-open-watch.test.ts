@@ -96,7 +96,7 @@ async function merge(cornerId: string) {
   const number = 100 + pr;
   const url = `https://github.com/owner/widgets/pull/${number}`;
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       cornerId,
       JSON.stringify({

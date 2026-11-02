@@ -1,3 +1,4 @@
+import { cornerLifecycleSql } from './corner-github-cache.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import { commanderReportAddress } from './commander.js';
@@ -64,7 +65,7 @@ export async function recordPersonMergeYes(
     const target = (await db.query<{ number: number | null; head_sha: string | null }>(
       `SELECT (fact.lifecycle->'pr'->>'number')::int number,
               fact.lifecycle->'pr'->>'headSha' head_sha
-       FROM corner_facts fact WHERE fact.corner_id=$1`,
+       FROM corner_github_cache fact WHERE fact.corner_id=$1`,
       [cornerId],
     )).rows[0];
     if (!target?.number || !target.head_sha) throw new Error('corner has no pull request to merge');
@@ -107,9 +108,9 @@ export async function isZeroCheckCommander(db: SqlDatabase, cornerId: string, ac
      WHERE corner.id=$1 AND corner.archived_at IS NULL
        AND ${cornerReviewerSql()} IS NULL
        AND $2 IS DISTINCT FROM ${cornerImplementerSql('fact', 'corner')}
-       AND fact.lifecycle->>'checks'='passing'
-       AND fact.lifecycle->'checksSummary'->>'total'='0'
-       AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+       AND ${cornerLifecycleSql('fact.corner_id')}->>'checks'='passing'
+       AND ${cornerLifecycleSql('fact.corner_id')}->'checksSummary'->>'total'='0'
+       AND ${cornerLifecycleSql('fact.corner_id')}->'pr'->>'headSha' IS NOT NULL
        AND EXISTS (SELECT 1 FROM room_access reachable WHERE reachable.room_id IN (corner.id,parent.id)
          AND reachable.identity_id=$2 AND reachable.removed_at IS NULL)`, [cornerId, actorId]);
   if (!eligible.rowCount) return false;

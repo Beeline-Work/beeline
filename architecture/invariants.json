@@ -28,8 +28,26 @@
         "apps/server/src/corner-lifecycle.ts",
         "apps/server/src/corner-close.ts"
       ],
-      "total": 17,
+      "total": 0,
       "fix": "Change corner state through the corner module: advanceCorner/lockCornerLifecycle in apps/server/src/corner-lifecycle.ts, or closeCornerState in apps/server/src/corner-close.ts. If the module lacks the write you need, add a named function there and call it."
+    },
+    {
+      "id": "corner.github-cache-writes",
+      "module": "Corner state machine",
+      "invariant": "GitHub's corner display cache (corner_github_cache) is written only from GitHub, helper remote-state reports and the corner module's seed and close.",
+      "pattern": "(?:INSERT\\s+INTO|UPDATE|DELETE\\s+FROM)\\s+corner_github_cache\\b",
+      "flags": "i",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/github-operations.ts",
+        "apps/server/src/corner-github-cache.ts",
+        "apps/server/src/corner-lifecycle.ts",
+        "apps/server/src/corner-close.ts"
+      ],
+      "total": 0,
+      "fix": "Write the cache through apps/server/src/corner-github-cache.ts (writeCornerGithubCache, recordHelperRemoteState) or GitHubOperations in apps/server/src/github-operations.ts; read it with cornerLifecycleSql."
     },
     {
       "id": "corner.archive",
@@ -684,6 +702,15 @@
           "lifecycle": "existing before the registry; weekly audit reviews",
           "locked": "existing before the registry; weekly audit reviews",
           "reviewer_agent_id": "existing before the registry; weekly audit reviews"
+        }
+      },
+      "corner_github_cache": {
+        "module": "Corner state machine",
+        "reason": "GitHub's last reported PR, checks and mergeability for a corner; a disposable display cache GitHub can refill, never corner state",
+        "columns": {
+          "corner_id": "the corner the cache describes; one row per corner",
+          "lifecycle": "the PR, checks summary and merge-queue facts last read from GitHub or the helper",
+          "updated_at": "when GitHub or the helper last changed the cached facts"
         }
       },
       "corner_follows": {

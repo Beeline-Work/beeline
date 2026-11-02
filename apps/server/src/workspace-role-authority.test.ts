@@ -70,7 +70,7 @@ describe('permissions: agent owner, Workspace admin, or anyone in the Room', () 
     );
     corner = (await phone.execute('createHumanCorner', { roomId: ROOM, title: 'role-check' }, WS_OWNER)).id;
     await database.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr}',$2::jsonb) WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr}',$2::jsonb) WHERE corner_id=$1`,
       [corner, JSON.stringify({ number: 1, headSha: '1'.repeat(40) })],
     );
     dms.clear();

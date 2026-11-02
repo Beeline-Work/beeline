@@ -3,12 +3,30 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./phone-inputs": {
+      "types": "./dist/phone-inputs.d.ts",
+      "import": "./dist/phone-inputs.js",
+      "default": "./dist/phone-inputs.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --minWorkers=1 --maxWorkers=2"
   },
-  "dependencies": { "@beeline/api-contract": "*" },
-  "devDependencies": { "typescript": "^5.6.3", "vitest": "^2.1.4" }
+  "dependencies": {
+    "@beeline/api-contract": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts"
 }

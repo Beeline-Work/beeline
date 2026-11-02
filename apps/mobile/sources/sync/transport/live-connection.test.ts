@@ -1783,6 +1783,39 @@ describe('LiveConnection', () => {
 describe('phone socket request/reply', () => {
   beforeEach(() => { appStateListeners.clear(); AppState.currentState = 'active'; vi.useFakeTimers(); });
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+  it('M1: observes declared inputs locally without changing the legacy frame or starting background work', async () => {
+    const sockets = stubSockets(), { connection, changeIdentity } = createConnection();
+    await connection.register([], () => {}); sockets[0]!.open();
+    const result = connection.request('countNeedsYou', { workspaceId: 'private-workspace' });
+    const frame = sockets[0]!.sent.find(value => JSON.parse(value).t === 'req')!;
+    expect(frame).toBe(JSON.stringify({ t: 'req', id: 'phone-1', op: 'countNeedsYou', args: { workspaceId: 'private-workspace' } }));
+    expect(connection.routeDiagnostics()).toEqual([{ route: 'phone.countNeedsYou', verdict: 'legacy-valid' }]);
+    expect(JSON.stringify(connection.routeDiagnostics())).not.toContain('private-workspace');
+    expect(connection.diagnostics()).not.toHaveProperty('routes');
+    sockets[0]!.emit({ t: 'res', id: 'phone-1', ok: true, result: { count: 2 } });
+    expect(await result).toEqual({ count: 2 });
+    const before = sockets[0]!.sent.slice();
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]!.sent).toEqual(before);
+    changeIdentity();
+    expect(connection.routeDiagnostics()).toEqual([]);
+    connection.dispose();
+  });
+
+  it('M1: a shadow codec mismatch cannot block or rewrite a legacy request', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
+    await connection.register([], () => {}); sockets[0]!.open();
+    const result = connection.request('countNeedsYou', { workspaceId: 7 } as never);
+    const frame = sockets[0]!.sent.map(value => JSON.parse(value)).find(value => value.t === 'req');
+    expect(frame.args).toEqual({ workspaceId: 7 });
+    expect(connection.routeDiagnostics()).toEqual([{ route: 'phone.countNeedsYou', verdict: 'legacy-invalid' }]);
+    sockets[0]!.emit({ t: 'res', id: frame.id, ok: true, result: { count: 0 } });
+    expect(await result).toEqual({ count: 0 });
+    connection.dispose();
+    expect(connection.routeDiagnostics()).toEqual([]);
+  });
+
   it('waits for open and matches reversed replies once, without live fanout', async () => {
     const sockets = stubSockets(), { connection } = createConnection(), listener = vi.fn();
     await connection.register([], listener);

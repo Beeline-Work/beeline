@@ -203,7 +203,8 @@
     "uuid": "^11.1.0",
     "vitest": "^3.2.4",
     "zod": "^4.0.0",
-    "zustand": "^5.0.6"
+    "zustand": "^5.0.6",
+    "@beeline/net": "file:../../packages/net"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

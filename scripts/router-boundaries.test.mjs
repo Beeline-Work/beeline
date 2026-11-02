@@ -89,3 +89,8 @@ test('core cannot hide a transport in an imported test-named module', () => {
     assert.ok(scanRouterTree(root).errors.some(x => x.includes('transport-free')));
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('the narrow public phone observer is allowed but owner factories remain private', () => {
+  assert.deepEqual(inspectSource('apps/mobile/sources/example.ts', 'import { observePhoneInput } from \"@beeline/net/phone-inputs\";').errors, []);
+  assert.ok(inspectSource('packages/net/src/phone-inputs.ts', 'export { AdmissionOwner } from \"./private/admission.js\";').errors.length);
+});

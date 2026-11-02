@@ -172,7 +172,8 @@ async function adapterProcess(
     | 'auth'
     | 'init-auth'
     | 'crash'
-    | 'server-error',
+    | 'server-error'
+    | 'hooks-unsupported',
 ) {
   const command = join(root, 'codex-acp');
   const trace = join(root, 'requests.jsonl');
@@ -184,6 +185,7 @@ require('node:readline').createInterface({input:process.stdin}).on('line', line 
  const r = JSON.parse(line); fs.appendFileSync(${JSON.stringify(trace)}, line+'\\n');
  if (r.id === undefined) return;
  if (${JSON.stringify(mode)} === 'init-auth' && r.method === 'initialize') { process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,error:{code:-32000,message:'Authentication required'}})+'\\n'); return; }
+ if (${JSON.stringify(mode)} === 'hooks-unsupported' && r.method.startsWith('_codex/hooks/')) { process.stdout.write(JSON.stringify({jsonrpc:'2.0',id:r.id,error:{code:-32601,message:'Method not found'}})+'\\n'); return; }
  let result;
  if (r.method === 'initialize') result = {protocolVersion:${mode === 'protocol' ? 99 : 1},agentCapabilities:${mode === 'capabilities' ? 'null' : '{promptCapabilities:{image:true}}'}};
  else if (r.method === 'session/new') {
@@ -235,6 +237,17 @@ it.each(['pass', 'reject', 'protocol', 'capabilities'] as const)(
     }
   },
 );
+
+it('accepts a Codex candidate without the removed native shell hook support', async () => {
+  const { root } = await fixture();
+  const { command, trace } = await adapterProcess(root, 'hooks-unsupported');
+  await expect(checkAdapterSession({ command, agentKind: 'codex',
+    env: { PATH: process.env.PATH!, HOME: root }, timeoutMs: 2000,
+  })).resolves.toMatchObject({ sessionStart: 'created' });
+  const requests = (await readFile(trace, 'utf8')).trim().split('\n').map(line => JSON.parse(line));
+  expect(requests.some(request => request.method.startsWith('_codex/hooks/'))).toBe(false);
+  expect(requests.some(request => request.method === 'session/new')).toBe(true);
+});
 
 it('serializes independent helper processes into a single install and promotion', async () => {
   const { root, env } = await fixture();
@@ -308,6 +321,11 @@ it.each(['codex', 'claude', 'pi'] as const)(
       const command = activeAdapterCommand(kind, env)!;
       expect(command).not.toBe(working);
       expect(await readFile(command, 'utf8')).toContain('probe-session');
+      if (kind === 'codex') {
+        const requests = (await readFile(join(dirname(command), 'requests.jsonl'), 'utf8'))
+          .trim().split('\n').map(line => JSON.parse(line));
+        expect(requests.some(request => request.method.startsWith('_codex/hooks/'))).toBe(false);
+      }
       expect(capture).toHaveBeenCalledTimes(1);
     } finally {
       capture.mockRestore();

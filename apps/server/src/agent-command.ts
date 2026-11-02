@@ -3,6 +3,7 @@ import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer
 import { voiceDateContext } from './voice-reply.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { recordMcpMention, recordMcpMemberWebhook } from './rooms-mcp-members.js';
+import { mcpCommandWakeSql } from './rooms-mcp-events.js';
 import { CORNER_CHECKS_BLOCKED_AFTER, cornerReportWaiting } from './corner-state.js';
 import { lockCommanderWakes, refreshWakeDigests } from './commander-wakes.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
@@ -738,19 +739,29 @@ export async function createAgentCommand(
     (input.action === undefined || input.action === 'input' || input.action === 'resume');
   // Capture known offline presence at dispatch. An absent connection record
   // stays unknown and uses the overdue-claim fallback during recovery.
+  // A live Rooms MCP subscription is told in this same statement. Machine
+  // agents have no subscription, so the delivery insert matches nothing and
+  // adds no round trip. list_mentions remains the catch-up read.
+  const wake = mcpCommandWakeSql(17);
   const result = await db.query<CommandRow>(
-    `INSERT INTO agent_commands
- (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth,avatar_job,private_payload,wake_after,created_offline,startup_wake_after)
- VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,
-   CASE WHEN $14::boolean THEN COALESCE((SELECT min(wake_after) FROM agent_commands
-     WHERE room_id=$2 AND agent_id=$3 AND state='pending' AND wake_after>now()),
-     now()+$15::integer*interval '1 minute') END,
-   (SELECT connection.released_at IS NOT NULL OR NOT EXISTS(
-     SELECT 1 FROM live_server_instances server WHERE server.instance_id=connection.instance_id
-       AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')
-    FROM agent_connections connection WHERE connection.agent_id=$3),
-   (SELECT paused_until FROM agent_startup_backoff WHERE agent_id=$3 AND paused_until>now() AND NOT $16::boolean))
- ON CONFLICT DO NOTHING RETURNING *`,
+    `WITH inserted AS (
+       INSERT INTO agent_commands
+        (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth,avatar_job,private_payload,wake_after,created_offline,startup_wake_after)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,
+          CASE WHEN $14::boolean THEN COALESCE((SELECT min(wake_after) FROM agent_commands
+            WHERE room_id=$2 AND agent_id=$3 AND state='pending' AND wake_after>now()),
+            now()+$15::integer*interval '1 minute') END,
+          (SELECT connection.released_at IS NOT NULL OR NOT EXISTS(
+            SELECT 1 FROM live_server_instances server WHERE server.instance_id=connection.instance_id
+              AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')
+           FROM agent_connections connection WHERE connection.agent_id=$3),
+          (SELECT paused_until FROM agent_startup_backoff WHERE agent_id=$3 AND paused_until>now() AND NOT $16::boolean))
+        ON CONFLICT DO NOTHING
+        RETURNING *
+     ),
+     ${wake.cte}
+     SELECT inserted.* FROM inserted
+     ${wake.join}`,
     [
       id,
       input.roomId,
@@ -768,6 +779,7 @@ export async function createAgentCommand(
       delayed,
       minutes,
       member.rows[0]!.human_input || ![undefined, 'input', 'resume'].includes(input.action),
+      ...wake.params,
     ],
   );
   const command = result.rows[0] ?? (await db.query<CommandRow>(

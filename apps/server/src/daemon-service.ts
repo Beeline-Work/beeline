@@ -15,6 +15,7 @@ import { assertIndependentCornerReviewer, setCornerReviewer, cornerReviewerSql, 
 import { cleanVoiceReply } from './voice-reply.js';
 import { agentPostText } from './agent-post-text.js';
 import { sendOperatorSystemDm, readOperatorSystemDm } from './operator-system-dm.js';
+import { approveArchitectureRelax } from './architecture-approvals.js';
 import { approvalCardSource } from './approval-card-source.js';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import { ExpectedRefusalError } from './command-refusal.js';
@@ -627,6 +628,7 @@ export class DaemonService {
       'notifyFeedbackFixed',
       'sendOperatorSystemDm',
       'readOperatorSystemDm',
+      'approveArchitectureRelax',
     ]);
     if (
       !this.commandTransaction &&
@@ -2267,6 +2269,9 @@ export class DaemonService {
       case 'sendOperatorSystemDm':
         return (await sendOperatorSystemDm(this.database, this.feedback.config, this.authorizedCommand,
           authenticatedAgentId, input as Input<'sendOperatorSystemDm'>)) as Output<Name>;
+      case 'approveArchitectureRelax':
+        return (await approveArchitectureRelax(this.database, this.authorizedCommand,
+          authenticatedAgentId, input as Input<'approveArchitectureRelax'>)) as Output<Name>;
       case 'readOperatorSystemDm':
         return (await readOperatorSystemDm(this.database, this.feedback.config, this.authorizedCommand,
           authenticatedAgentId, (input as Input<'readOperatorSystemDm'>).sendId)) as Output<Name>;
@@ -9519,6 +9524,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   notifyFeedbackFixed: true,
   sendOperatorSystemDm: true,
   readOperatorSystemDm: true,
+  approveArchitectureRelax: true,
 };
 export const DAEMON_OPERATION_NAMES = new Set(
   Object.keys(DAEMON_OPERATION_ROUTES) as (keyof DaemonOperationMap)[],

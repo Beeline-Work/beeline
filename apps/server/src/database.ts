@@ -11,6 +11,7 @@ import { backfillMcpMemberRoomsAndAvatars, backfillMcpMembers } from './rooms-mc
 import { seedPreregisteredMcpClients } from './rooms-mcp-preregistered.js';
 import { backfillCornerHoldMessages } from './corner-holds.js';
 import { OPERATOR_SYSTEM_DM_SCHEMA } from './operator-system-dm.js';
+import { ARCHITECTURE_APPROVALS_SCHEMA } from './architecture-approvals.js';
 import { OPERATOR_FINANCES_SCHEMA } from './operator-finances.js';
 import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
 import { LEGACY_STORAGE_SCHEMA } from './migrations/legacy-storage.js';
@@ -3327,6 +3328,7 @@ export async function migrate(
   await ddlScript('provider webhooks', PROVIDER_WEBHOOKS_SCHEMA);
   await ddlScript('sentry wakes', SENTRY_WAKE_SCHEMA);
   await ddlScript('operator System DMs', OPERATOR_SYSTEM_DM_SCHEMA);
+  await ddlScript('architecture relax approvals', ARCHITECTURE_APPROVALS_SCHEMA);
   await ddlScript('operator finances snapshots', OPERATOR_FINANCES_SCHEMA);
   await retryMigrationStep('operator model cost history index', () => createIndexConcurrently(
     database, 'free_agent_events_model_cost_at',

@@ -5,6 +5,7 @@ import { phoneSocketRequests } from './phone-socket.js';
 import { PHONE_SOCKET_MAX_FRAME_BYTES } from '@beeline/api-contract/phone';
 import { parseMobileMinimum } from '@beeline/api-contract/mobile-minimum';
 import { readMobileMinimums, writeMobileMinimum } from './mobile-minimum.js';
+import { readArchitectureApproval } from './architecture-approvals.js';
 import { parseSiteDownloadTap, recordSiteDownloadTap } from './site-download-taps.js';
 import { VaultSaveRelay } from './vault-save-relay.js';
 import { vaultSaveHttp } from './vault-save-http.js';
@@ -2037,6 +2038,14 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   }
   if (method === 'GET' && url.pathname === '/v1/releases/daemon-readiness') {
     json(response, 200, await options.daemon.releaseReadiness());
+    return;
+  }
+  if (method === 'GET' && url.pathname === '/v1/public/architecture-approvals') {
+    try {
+      publicJson(response, 200, await readArchitectureApproval(options.database, url.searchParams));
+    } catch {
+      publicJson(response, 503, {});
+    }
     return;
   }
   if (method === 'GET' && url.pathname === '/v1/public/mobile-minimum') {

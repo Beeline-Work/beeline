@@ -752,6 +752,11 @@ export type DaemonOperationMap = {
     AgentRoomInput & TurnOutputAuthority & { requestId: string; recipients: string | readonly string[]; text: string },
     { sendId: string; recipients: number; delivered: number; failed: number; pending: number }
   >;
+  /** The owner's yes on one exact PR head that relaxes architecture/invariants.json; read by CI. */
+  approveArchitectureRelax: Operation<
+    AgentRoomInput & TurnOutputAuthority & { requestId: string; repository: string; pullRequest: number; headSha: string },
+    { approved: true; repository: string; pullRequest: number; headSha: string }
+  >;
   readOperatorSystemDm: Operation<
     AgentRoomInput & TurnOutputAuthority & { requestId: string; sendId: string },
     { sendId: string; recipients: number; delivered: number; failed: number; pending: number }

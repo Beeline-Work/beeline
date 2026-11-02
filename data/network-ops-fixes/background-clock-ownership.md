@@ -86,7 +86,7 @@ source17+PostgreSQL3 and readiness19+PostgreSQL3/traversal1 pass. The root stage
 scalar reader proof6 still uses one SELECT; its full Tray integration is not yet
 in this published slice.
 
-Failed durable retirement, active remote-cache loss propagation, final enqueue
+Production retirement wiring, active remote-cache loss propagation, final enqueue
 checks, complete catalog/
 source CPU/WAL/wire costs and cohort rollout remain OPEN. No production schema
 is installed or selected by these private proofs.
@@ -101,7 +101,13 @@ never retry retirement or recover the runner. Real PostgreSQL12 includes the
 actual runner and two application pools observing loss and real resync recovery;
 actual-schema runner9 and existing leader11 cover stop/rollback and no retries.
 
-A failed durable write is explicitly exposed as retirementFailed. This does not
-claim successful remote propagation; safely ending the retained advisory backend
-and notifying active remote caches on this failure remain activation gates. No
-new timer, lease, listener or general retry policy was added.
+A failed durable write is explicitly exposed as retirementFailed. The private
+runner can ask the existing aggregate leader to park its exact backend after
+active work drains. This grants no replacement attempt, rejects a stale backend
+identity and discards earlier queued wakes. Leader11 proves zero timers/retries
+through an idle day. PostgreSQL13 includes an actual failed release write and a
+waiting advisory-lock acquisition proving physical ownership ended; the other
+pool refuses the old receipt while released_at remains unconfirmed. Production
+composition must supply this private callback; it remains unselected. Active
+remote-cache notifications remain an activation gate. No new timer, lease,
+listener or general retry policy was added.

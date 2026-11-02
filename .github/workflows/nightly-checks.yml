@@ -1,3 +1,8 @@
+# Runs every Checks suite on main at 03:00 Eastern, reruns failed jobs once and
+# classifies each job as failed (twice), flaky (passed on the rerun) or passing.
+# The result is an artifact and one open `nightly-checks` issue per failed or
+# flaky job (closed when the job next passes first time), which the daily fix
+# loop reads with the release-failure issues.
 name: Nightly Checks
 on:
   workflow_dispatch:
@@ -6,6 +11,7 @@ on:
 permissions:
   contents: read
   actions: write
+  issues: write
 concurrency:
   group: nightly-checks
   cancel-in-progress: false

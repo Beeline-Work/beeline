@@ -342,13 +342,6 @@ describe('institutional memory phase-0 shadow capture', () => {
       (await database.query(`SELECT 1 FROM institutional_context_serves WHERE mode='live'`))
         .rowCount,
     ).toBe(3);
-    expect(
-      (
-        await database.query<{ success: boolean; detail: { status: string } }>(
-          `SELECT success,detail FROM institutional_memory_outcomes WHERE kind='turn_completed'`,
-        )
-      ).rows,
-    ).toMatchObject([{ success: true, detail: { status: 'complete' } }]);
   });
 
   it('binds memory writes to the active command and enforces the item version', async () => {

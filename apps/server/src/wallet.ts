@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 /**
  * Wallet connector — the server authority over Coinbase CDP Server Wallets.
  *
@@ -239,10 +240,10 @@ export async function grantWalletDelegation(
   await systemLine(database, {
     roomId,
     authorId: SYSTEM_IDENTITY_ID,
-    subject: { kind: 'system', name: 'Wallet' },
-    verb: 'granted',
-    object: { text: 'agents permission to sign' },
-    consequence: 'until revoked',
+    subject: { kind: 'system', name: systemMessage("wallet.wallet") },
+    verb: systemMessage("wallet.granted"),
+    object: { text: systemMessage("wallet.agents-permission-to-sign") },
+    consequence: systemMessage("wallet.until-revoked"),
     presentation: 'card',
     cardType: 'wallet-delegation',
     card: { standing: true },
@@ -529,7 +530,7 @@ async function agentName(database: SqlDatabase, agentId: string): Promise<string
       [agentId],
     )
   ).rows[0];
-  return row?.handle ? `@${row.handle}` : (row?.name ?? null);
+  return row?.handle ? systemMessage("wallet.agent-mention", row.handle) : (row?.name ?? null);
 }
 
 type RecordedTx = {
@@ -1264,10 +1265,10 @@ export async function agentSignTypedData(
   await systemLine(database, {
     roomId,
     authorId: SYSTEM_IDENTITY_ID,
-    subject: { kind: 'system', name: 'Wallet' },
-    verb: 'signed',
-    object: { text: 'EIP-712 typed data' },
-    consequence: (await agentName(database, agentId)) ?? 'An agent',
+    subject: { kind: 'system', name: systemMessage("wallet.wallet") },
+    verb: systemMessage("wallet.signed"),
+    object: { text: systemMessage("wallet.eip-712-typed-data") },
+    consequence: (await agentName(database, agentId)) ?? systemMessage("wallet.an-agent"),
     presentation: 'card',
     cardType: 'wallet-signature',
     card: {

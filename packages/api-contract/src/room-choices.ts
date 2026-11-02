@@ -1,3 +1,4 @@
+import { systemMessage } from './system-message-catalog.js';
 /**
  * Choice cards: one family for a lettered question and a Room poll.
  *
@@ -67,7 +68,7 @@ export function isChoiceTtlSeconds(value: unknown): value is ChoiceTtlSeconds {
 }
 
 function flattenLine(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
+  return value.replace(/\s+/g, systemMessage("room-choices.space")).trim();
 }
 
 function refuse(message: string): never {
@@ -204,12 +205,12 @@ export function choiceClosedFooter(
   votedCount: number,
   electorateCount: number,
 ): string {
-  if (tally.outcome === 'no-votes') return 'closed · no votes';
+  if (tally.outcome === 'no-votes') return systemMessage("room-choices.closed-no-votes");
   if (tally.outcome === 'tie') {
     const tied = Object.values(tally.votesByOption).filter((votes) => votes === tally.leadingVotes);
-    return `tied · ${tied.join(' and ')}`;
+    return systemMessage("room-choices.tied", tied.join(systemMessage("room-choices.and")));
   }
-  return `closed · ${votedCount} of ${electorateCount} voted`;
+  return systemMessage("room-choices.closed-of-voted", votedCount, electorateCount);
 }
 
 export function formatChoiceClock(unixSeconds: number): string {

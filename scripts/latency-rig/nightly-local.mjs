@@ -3,44 +3,76 @@
 import { readFile, writeFile, rename, mkdir, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { readHistory, appendVerdict, lockState, compareDrift, easternDate } from './nightly-history.mjs';
-import { compareNightly, mergedPrs } from './nightly-compare.mjs';
+import { readHistory, appendVerdict, lockState, compareDrift, referenceNight, referenceNights, caseKey, easternDate } from './nightly-history.mjs';
+import { compareNightly, mergedPrs, summarizeLoad, contention } from './nightly-compare.mjs';
 
-export function assessNight({ current, baseline, commits = [], head, rerun, rerunAttempted = false, night, hostLoad = [], history = [], runId, firstBaseline }) {
-  const evaluate = (report) => {
-    const result = compareNightly(report, baseline);
-    result.drift = compareDrift(report, history, { night, runId, firstBaseline });
-    result.failures.push(...result.drift.failures);
-    result.pass = result.failures.length === 0;
-    if (report && report.commit !== head) {
-      result.pass = false;
-      result.failures.push('Captured commit differs from the requested main head');
-    }
+export function assessNight({ current, baseline, commits = [], head, rerun, rerunAttempted = false, night, hostLoad = [], firstHostLoad = hostLoad, history = [], runId, firstBaseline }) {
+  const references = referenceNights(history, { night, runId });
+  const original = history.find((entry) => entry.night === references[0]?.night && entry.runId !== runId && referenceNight(entry))?.report;
+  const fixed = [firstBaseline, original, baseline].find((report) => compareNightly(report).capture.pass);
+  const evaluate = (report, observations) => {
+    const result = compareNightly(report);
+    if (report && report.commit !== head) result.capture.failures.push('Captured commit differs from the requested main head');
+    result.capture.pass = result.capture.failures.length === 0;
+    result.load = summarizeLoad(observations);
+    result.contended = contention(result.load);
+    const status = !result.capture.pass ? 'invalid' : result.contended === true ? 'contended' : result.contended === null ? 'missing-load' : undefined;
+    result.regression = status ? { pass: null, status, rows: [], failures: [] } : compareDrift(report, history, { night, runId, firstBaseline: fixed });
+    result.drift = result.regression;
+    result.failures = [result.capture, result.budget, result.contract, result.regression].flatMap((item) => item.failures);
+    if (status && status !== 'invalid') result.failures.push(`Regression not assessed: ${status}`);
+    result.pass = result.capture.pass && result.budget.pass && result.contract.pass && result.regression.pass === true;
     return result;
   };
-  const first = evaluate(current);
-  const chosen = !first.pass && rerunAttempted ? rerun : current;
-  const verdict = !first.pass && rerunAttempted ? evaluate(rerun) : first;
-  let prs = [];
-  if (baseline?.commit) {
-    try { prs = mergedPrs(commits, baseline.commit, head); }
-    catch { verdict.pass = false; verdict.failures.push('PR range since last passing run unavailable'); }
+  const first = evaluate(current, firstHostLoad);
+  const chosen = rerunAttempted ? rerun : current;
+  const verdict = rerunAttempted ? evaluate(rerun, hostLoad) : first;
+  const regressionFor = (entry) => entry.regression ?? compareDrift(entry.report, history, { night: entry.night, runId: entry.runId, firstBaseline: fixed });
+  const lastClean = references.findLast((entry) => regressionFor(entry).pass === true)?.report ?? (compareNightly(baseline).capture.pass ? baseline : undefined);
+  let prs = [], rangeError;
+  if (lastClean?.commit) {
+    try { prs = mergedPrs(commits, lastClean.commit, head); }
+    catch { rangeError = 'PR range since last non-regressed valid run unavailable'; }
   }
+  if (rangeError) { verdict.pass = false; verdict.failures.push(rangeError); }
+  const previous = references.at(-1);
+  const previousFlags = new Set(previous ? regressionFor(previous).rows.filter((row) => row.flags?.length).map((row) => row.key) : []);
+  const repeated = verdict.regression.rows.filter((row) => row.flags.length && previousFlags.has(row.key));
+  const contractCases = verdict.contract.rows.filter((row) => !row.pass).map((row) => row.key);
+  const keys = new Set([...contractCases, ...repeated.map((row) => row.key)]);
+  const comparisons = keys.size ? compareDrift(chosen, history, { night, runId, firstBaseline: fixed }).rows : [];
   const needsRerun = !verdict.pass && !rerunAttempted;
   const shouldAlert = !verdict.pass && rerunAttempted;
+  const fixOrder = keys.size && !needsRerun ? {
+    night, head, reasons: [...(contractCases.length ? ['request-contract'] : []), ...(repeated.length ? ['consecutive-regression'] : [])],
+    cases: [...keys].map((key) => {
+      const row = chosen.rows.find((row) => caseKey(row) === key);
+      const drift = comparisons.find((row) => row.key === key);
+      return { key, p95Ms: row.p95Ms ?? null, firstP95Ms: drift?.firstP95Ms ?? null, medianP95Ms: drift?.medianP95Ms ?? null,
+        slowestPhase: row.slowestPhase ?? null };
+    }),
+    range: { base: lastClean?.commit ?? null, head, prs, available: !!lastClean?.commit && !rangeError },
+  } : undefined;
   const text = [
     `Nightly squire emulator rig ${night}: ${verdict.pass ? 'passed' : needsRerun ? 'rerun required' : 'failed or skipped'}`,
+    `Capture: ${verdict.capture.pass ? 'valid' : 'invalid'}; budget: ${verdict.budget.pass ? 'pass' : 'fail'}; contract: ${verdict.contract.pass ? 'pass' : 'fail'}; regression: ${verdict.regression.status === 'measured' ? verdict.regression.pass ? 'pass' : 'fail' : verdict.regression.status}`,
     ...verdict.failures,
-    ...verdict.drift.rows.map((row) => `${row.key}: drift p95=${row.p95Ms} ms; first=${row.firstP95Ms ?? 'unavailable'} ms; recent median=${row.medianP95Ms ?? 'unavailable'} ms (${row.passingNights}/7 prior passing nights)`),
+    ...verdict.regression.rows.map((row) => `${row.key}: drift p95=${row.p95Ms} ms; first=${row.firstP95Ms ?? 'unavailable'} ms; recent median=${row.medianP95Ms ?? 'unavailable'} ms (${row.validNights}/7 prior valid uncontended nights)`),
     ...(Array.isArray(chosen?.rows) && chosen.rows.some((row) => row?.variant?.startsWith('push-')) && chosen.pushMeasurement ? [
       `Push measurement: ${chosen.pushMeasurement.measured}; native-response phase ${chosen.pushMeasurement.nativeResponsePhase}. Unmeasured: ${chosen.pushMeasurement.excluded}.`,
     ] : []),
-    baseline?.commit ? `PRs since last pass (${baseline.commit}): ${prs.length ? prs.map((n) => `#${n}`).join(', ') : 'none identified'}` : 'No passing baseline yet; PR regression range unavailable',
+    lastClean?.commit ? `PRs since last non-regressed valid run (${lastClean.commit}): ${prs.length ? prs.map((n) => `#${n}`).join(', ') : 'none identified'}` : 'No valid reference yet; PR regression range unavailable',
     `Measured main: ${head}`,
-    `Host load recorded: ${Array.isArray(hostLoad) ? hostLoad.length : 1} observation(s); see attached report`,
+    `Host load: mean=${verdict.load.mean ?? 'missing'}, max=${verdict.load.max ?? 'missing'}, cpus=${verdict.load.cpus ?? 'missing'}; contended=${verdict.contended ?? 'unknown'}`,
   ].join('\n');
-  return { ...verdict, night, head, prs, needsRerun, shouldAlert, hostLoad,
+  return { ...verdict, night, head, prs, needsRerun, shouldAlert, hostLoad, fixOrder,
     firstAttempt: first, text, measuredReport: chosen, passingReport: verdict.pass ? chosen : undefined };
+}
+
+async function writeFixOrder(output, verdict) {
+  const path = `${dirname(output)}/fix-order.json`;
+  if (verdict.fixOrder) await writeFile(path, JSON.stringify(verdict.fixOrder, null, 2) + '\n');
+  else await rm(path, { force: true });
 }
 
 async function main() {
@@ -72,6 +104,7 @@ async function main() {
       // Invocation identity is immutable: retries reproduce the recorded verdict, not new measurements.
       await mkdir(dirname(output), { recursive: true });
       await writeFile(output, JSON.stringify(previous, null, 2) + '\n');
+      await writeFixOrder(output, history.findLast((entry) => entry.runId === runId && entry.final) ?? previous);
       console.log(previous.text);
       if (!previous.pass) process.exitCode = previous.needsRerun ? 2 : 1;
       return;
@@ -86,11 +119,14 @@ async function main() {
       }
     };
     const baseline = await load(baselinePath, 'Passing baseline');
-    const firstBaseline = await load(`${stateDir}/first-pass.json`, 'First passing baseline') ?? history.find((entry) => entry.final && entry.pass)?.report ?? baseline;
+    const candidates = [await load(`${stateDir}/first-valid.json`, 'First valid baseline'),
+      await load(`${stateDir}/first-pass.json`, 'First passing baseline'), history.find(referenceNight)?.report, baseline];
+    const firstBaseline = candidates.find((report) => compareNightly(report).capture.pass);
     const current = await load(option('--current'), 'New report');
     const rerun = await load(option('--rerun'), 'Rerun report');
     const commits = await load(option('--commits'), 'Commit range');
     const hostLoad = await load(option('--load'), 'Host load') ?? [];
+    const firstHostLoad = await load(option('--first-load'), 'First host load') ?? hostLoad;
     const priorRun = history.find((entry) => entry.runId === runId);
     const night = priorRun?.night ?? option('--night') ?? easternDate(option('--started-at') ?? new Date());
     if (priorRun && (priorRun.head !== head || (option('--night') && option('--night') !== night)))
@@ -98,7 +134,7 @@ async function main() {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(night) || !Number.isFinite(Date.parse(`${night}T12:00:00Z`)) ||
         new Date(`${night}T12:00:00Z`).toISOString().slice(0, 10) !== night)
       throw new Error('Require an Eastern YYYY-MM-DD night');
-    const result = assessNight({ current, baseline, rerun, commits, hostLoad, head,
+    const result = assessNight({ current, baseline, rerun, commits, hostLoad, firstHostLoad, head,
       history, runId, firstBaseline, night, rerunAttempted: args.includes('--rerun') });
     if (errors.length) {
       result.pass = false;
@@ -109,15 +145,19 @@ async function main() {
       result.text = result.text.replace(/: passed\n/, ': failed or skipped\n') + `\n${errors.join('\n')}`;
     }
     Object.assign(result, { runId, attempt, final: !result.needsRerun, recordedAt: new Date().toISOString(), report: result.measuredReport });
-    // Capture the original baseline before last-pass advances, including migration from older rigs.
-    const original = firstBaseline ?? result.passingReport;
+    // Preserve the first reference across migration; new references need valid idle captures.
+    const eligible = referenceNight(result);
+    const original = firstBaseline ?? (eligible ? result.report : undefined);
     if (original) {
-      try { await writeFile(`${stateDir}/first-pass.json`, JSON.stringify(original, null, 2) + '\n', { flag: 'wx', mode: 0o600 }); }
-      catch (error) { if (error.code !== 'EEXIST') throw error; }
+      for (const name of ['first-valid.json', 'first-pass.json']) {
+        try { await writeFile(`${stateDir}/${name}`, JSON.stringify(original, null, 2) + '\n', { flag: 'wx', mode: 0o600 }); }
+        catch (error) { if (error.code !== 'EEXIST') throw error; }
+      }
     }
     await appendVerdict(historyPath, result);
     await mkdir(dirname(output), { recursive: true });
     await writeFile(output, JSON.stringify(result, null, 2) + '\n');
+    await writeFixOrder(output, result);
     if (result.pass) {
       await mkdir(dirname(baselinePath), { recursive: true });
       const temp = `${baselinePath}.${process.pid}.tmp`;

@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { NotificationWork } from './notification-work.js';
 import { CommandRefusalError } from './command-refusal.js';
@@ -43,7 +44,6 @@ import {
   reconcileCornerMergeBlockers,
   routeSystemCommand,
 } from './agent-command.js';
-import { recordInstitutionalCornerOutcome } from './institutional-memory-shadow.js';
 import { reviewerList, roomAgentHealth } from './agent-health.js';
 import { fireRepositorySubscriptions } from './agent-subscriptions.js';
 
@@ -1833,7 +1833,7 @@ export class GitHubOperations {
         );
         if (!claimed.rowCount) continue;
         if (pr) {
-          await this.processWebhook('pull_request', {
+          await this.processWebhook(systemMessage("github-operations.pull-request"), {
             action: 'opened', installation: { id: Number(candidate.installation_id) },
             repository: { full_name: candidate.repository },
             pull_request: {
@@ -1844,7 +1844,7 @@ export class GitHubOperations {
             },
           });
         }
-        await this.processWebhook('check_run', {
+        await this.processWebhook(systemMessage("github-operations.check-run"), {
           action: 'in_progress', installation: { id: Number(candidate.installation_id) },
           repository: { full_name: candidate.repository },
           check_run: {
@@ -1958,9 +1958,9 @@ export class GitHubOperations {
             roomId: row.corner_id,
             authorId: row.author_id,
             subject: GITHUB_SUBJECT,
-            verb: 'found merge conflicts in',
+            verb: systemMessage("github-operations.found-merge-conflicts-in"),
             object: {
-              text: row.title ?? `pull request #${row.number}`,
+              text: row.title ?? systemMessage("github-operations.pull-request-2", row.number),
               url: row.url,
               headSha: pr.headSha,
             },
@@ -2264,7 +2264,7 @@ export class GitHubOperations {
     const repository = repositoryName(body);
     if (!repository) return;
 
-    const actor = text(record(body.sender)?.login) || 'github';
+    const actor = text(record(body.sender)?.login) || systemMessage("github-operations.github");
     const action = text(body.action);
     if (action !== 'opened' && action !== 'closed') return;
     const subject = record(body[event === 'issues' ? 'issue' : 'pull_request']);
@@ -2272,7 +2272,7 @@ export class GitHubOperations {
     const url = githubUrl(subject?.html_url);
     if (!title || !url) return;
     const merged = event === 'pull_request' && action === 'closed' && subject?.merged === true;
-    const cardAction = merged ? 'merged' : action;
+    const cardAction = merged ? systemMessage("github-operations.merged") : action;
     const branch = event === 'pull_request' ? text(record(subject?.head)?.ref) : undefined;
     const headRepository = event === 'pull_request'
       ? text(record(record(subject?.head)?.repo)?.full_name)
@@ -2428,7 +2428,7 @@ export class GitHubOperations {
       if (event === 'pull_request') {
         const pullRequest = record(body.pull_request);
         const title =
-          text(pullRequest?.title) ?? `Pull request #${integer(pullRequest?.number) ?? ''}`;
+          text(pullRequest?.title) ?? systemMessage("github-operations.pull-request-3", integer(pullRequest?.number) ?? '');
         const url = text(pullRequest?.html_url);
         const merged = body.action === 'closed' && pullRequest?.merged === true;
         const number = integer(pullRequest?.number);
@@ -2552,7 +2552,7 @@ export class GitHubOperations {
             target.author_id,
             {
               subject: actor(text(record(pullRequest?.user)?.login) ?? actorLogin),
-              verb: 'opened a pull request',
+              verb: systemMessage("github-operations.opened-a-pull-request"),
               object: { text: title, url },
             },
             `github:pull-request:opened:${url}`,
@@ -2601,12 +2601,12 @@ export class GitHubOperations {
           target.author_id,
           {
             subject: actor(text(record(body.pusher)?.name) ?? actorLogin),
-            verb: 'pushed',
+            verb: systemMessage("github-operations.pushed"),
             object: {
-              text: `${commits ? `${commits} commit${commits === 1 ? '' : 's'} to ` : ''}${branch}`,
+              text: `${commits ? systemMessage("github-operations.commit-to", commits, commits === 1 ? '' : systemMessage("github-operations.s")) : ''}${branch}`,
               ...(compare ? { url: compare } : {}),
             },
-            ...(head ? { consequence: `at ${head.slice(0, 12)}` } : {}),
+            ...(head ? { consequence: systemMessage("github-operations.at", head.slice(0, 12)) } : {}),
           },
           `github:push:${text(body.after) ?? hash(JSON.stringify(body))}`,
           database,
@@ -2910,11 +2910,11 @@ export class GitHubOperations {
           if (becamePassing && check.status === 'pending')
             nameThePass = true;
           const label = nameThePass
-            ? 'passed'
+            ? systemMessage("github-operations.passed")
             : check.status === 'pending'
-              ? 'started'
+              ? systemMessage("github-operations.started")
               : String(check.conclusion ?? '').toUpperCase() === 'CANCELLED'
-                ? 'cancelled'
+                ? systemMessage("github-operations.cancelled")
                 : check.status;
           if (nameThePass) {
             const passedNames = summary.checks.filter(item => item.status === 'passed').map(item => item.name);
@@ -2940,7 +2940,7 @@ export class GitHubOperations {
             target.author_id,
             {
               subject: GITHUB_SUBJECT,
-              verb: becameFailing ? 'found failing checks on' : `${label} a check`,
+              verb: becameFailing ? systemMessage("github-operations.found-failing-checks-on") : systemMessage("github-operations.a-check", label),
               // A check that is still running is not yet a fact to react to.
               ...(becamePassing
                 ? { kind: 'check-passed' as const }
@@ -2951,7 +2951,7 @@ export class GitHubOperations {
                 ? {
                     text:
                       current.pr?.title ??
-                      (current.pr?.number ? `pull request #${current.pr.number}` : 'the pull request'),
+                      (current.pr?.number ? systemMessage("github-operations.pull-request-2", current.pr.number) : systemMessage("github-operations.the-pull-request")),
                     ...(current.pr?.url ? { url: current.pr.url } : {}),
                     ...(check.headSha ? { headSha: check.headSha } : {}),
                   }
@@ -2961,7 +2961,7 @@ export class GitHubOperations {
                     ...(check.headSha ? { headSha: check.headSha } : {}),
                   },
               ...(becameFailing
-                ? { consequence: `failing ${failing.join(', ')}` }
+                ? { consequence: systemMessage("github-operations.failing", failing.join(systemMessage("github-operations.list-separator"))) }
                 : check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'
                   ? { consequence: check.conclusion }
                   : {}),
@@ -3045,16 +3045,6 @@ export class GitHubOperations {
        updated_at=now() WHERE corner_id=$1`,
       [cornerId, JSON.stringify(lifecycle)],
     );
-    // The outcome ledger records the TRANSITION, not the state: a corner that
-    // was already green and is re-read green did not reach green again, and a
-    // second row would move the measured cohort's clock for nothing.
-    if (patch.checks === 'passing' && previous.checks !== 'passing') {
-      await recordInstitutionalCornerOutcome(database, {
-        cornerId,
-        kind: 'ci_green',
-        detail: { checks: 'passing' },
-      });
-    }
   }
 
   private async systemNote(
@@ -3198,7 +3188,7 @@ export class GitHubOperations {
         subject: pullRequest.mergedBy
           ? { kind: 'github', name: pullRequest.mergedBy }
           : GITHUB_SUBJECT,
-        verb: 'merged',
+        verb: systemMessage("github-operations.merged"),
         kind: 'merged',
         object: { text: pullRequest.title, url: pullRequest.url },
       };
@@ -3209,15 +3199,6 @@ export class GitHubOperations {
         ...merged,
         cardType: 'github-corner-note',
         card: { source: 'github', dedupe: mergeKey },
-      });
-      await recordInstitutionalCornerOutcome(database, {
-        cornerId: target.corner_id,
-        kind: 'merged',
-        detail: {
-          repository: pullRequest.repository,
-          ...(pullRequest.number !== undefined ? { pullRequestNumber: pullRequest.number } : {}),
-          ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
-        },
       });
       if (!locked) await enqueueCornerBranchDeletion(database, target.corner_id);
       await advanceCorner(database, target.corner_id, {

@@ -290,10 +290,12 @@ comparison. Two JS animation callbacks after applying a response are not proof
 that its newest text is visible; those timings must not be presented as the
 native arrival-case verdict.
 
-`nightly-compare.mjs` compares each case with its last passing p95, rejecting
-strictly greater than 20% regression, over-budget samples, missing coverage,
-and skipped captures. `mergedPrs` requires a complete first-parent commit range
-from the measured head through the passing baseline, excluding that baseline.
+`nightly-compare.mjs` reports capture validity, strict per-case budgets and
+request contracts independently. `nightly-history.mjs` compares valid,
+uncontended captures against a fixed first-valid p95 (>10% fails) and the
+rolling median of the last seven valid uncontended nights (>20% fails).
+`mergedPrs` requires a complete first-parent commit range from the measured
+head through the last non-regressed valid night, excluding that reference.
 The `--nightly` analyzer subset requires the four arrival cases, the existing
 warm Room-open route, and send-text. Cold opens remain outside this nightly
 gate. Every case requires 20 samples in the nightly comparison.
@@ -328,9 +330,12 @@ case prints a summary line with n, p50, p95, target and PASS/FAIL.
 
 Exit zero means complete calibrated coverage, 20 samples per case, valid request
 contracts, route p95 strictly below 450 ms and tap p95 strictly below 150 ms,
-and no case more than 20% slower than the last passing baseline. A failed/skipped
-first attempt gets exactly one retry. Any final failure exits nonzero, preserves
-the baseline and sets `shouldAlert` in the verdict when comparison succeeds.
+and no regression against the fixed or rolling references. The verdict has
+independent `capture`, `budget`, `contract` and `regression` results; overall
+`pass` still requires all four to pass. A failed/skipped first attempt gets
+exactly one retry. Any final failure exits nonzero and sets `shouldAlert` in
+the verdict when comparison succeeds. Valid uncontended final nights advance
+references even when budgets or request contracts fail.
 The scheduled agent must also report setup/command errors that prevent a verdict;
 it posts one final PASS/FAIL result in the corner every night. The command does
 not install a schedule or send messages. Fetch and detach latest `origin/main`
@@ -408,6 +413,11 @@ Each case has 20 samples. Cold opening is recorded separately and never gates
 this subset. Host load and free memory are sampled every ten seconds into
 `capture/host-load.json`, including failed captures. Typical nightly work is a
 release build plus 200 samples; it does not run every application route.
+The verdict summarizes the one-minute load observations as `load: {mean, max,
+cpus}`. A capture is `contended` when mean load exceeds half the host CPU count
+(above 10 on 20 CPUs); exactly half is uncontended. Invalid or contended
+captures receive no regression verdict and cannot become references or chart
+points. Missing load evidence is reported as `missing-load` and is also excluded.
 
 From the detached main checkout, with `rig_state` set to the private state path:
 
@@ -425,22 +435,89 @@ node scripts/latency-rig/nightly-local.mjs \
 The agent inspects `nightly.json` even when a command exits nonzero. Exit 2 and
 `needsRerun` mean run `local-attempt.sh` **once more**, into `attempt-2`, then call
 the comparison with the original arguments plus `--rerun attempt-2/report.json`
-and that attempt's host-load path. Do not mix samples between attempts or drop
+and that attempt's `--load` path; keep the original load path as `--first-load`.
+Do not mix samples between attempts or drop
 outliers. A passing rerun resolves load noise; a failed/missing rerun sets
-`shouldAlert`. A passing report atomically replaces `last-pass.json`; failures
-and skips preserve it. Malformed data, stale commits and an incomplete PR range
-fail closed. The comparator takes report, baseline and commit-range files; it
-needs no GitHub API.
+`shouldAlert`. For compatibility, a passing report still atomically replaces
+`last-pass.json`; failures and skips preserve that file. Regression references instead advance
+from the final valid uncontended journal entries, regardless of overall pass.
+Malformed data, stale commits and an incomplete PR range are reported as failures.
+The comparator takes report, baseline and commit-range files; it needs no GitHub API.
 
 After every final verdict, Jellybean posts **one** result to the standing
 corner, attaching the report and host-load evidence. A failure includes `text`
 when `shouldAlert` is true. It names all PRs in the complete first-parent range
-since the last passing run, excluding that run.
-With no passing baseline, say that the range is unavailable rather than invent
-PRs. Persist `{night, messageId}` to `last-alert.json` only after the post receipt;
+since the last non-regressed valid uncontended run, excluding that run.
+With no such reference, say that the range is unavailable rather than invent PRs.
+When a request contract fails, or the same case has a regression flag on two
+consecutive valid uncontended nights, the final verdict writes **one**
+`fix-order.json` in the run output. Invalid/contended nights do not count toward
+or break that sequence. The order combines all affected cases, their p95 versus
+both references, the slowest trace phase when recorded (otherwise null), and
+the first-parent PR range. A contract failure needs no two-night confirmation.
+The verdict turn files this artifact as **one fix order in the latency-rig corner**;
+replay reuses the same order rather than filing another. This rig's report does
+not currently aggregate trace-phase durations, so its slowest phase is unavailable.
+Persist `{night, messageId}` to `last-alert.json` only after the post receipt;
 check that record before any retry so one failed night produces one alert.
 A skipped setup also gets one rerun and then one failure alert.
 Stop only the emulator and fixture processes owned by this wake.
+
+### Host runner (optional)
+
+The host runner is built but **not installed**. Switch only if any of the next
+three scheduled nights (November 2–4, 2026) fails for a non-app reason. It fetches
+and detaches exact main in `<state-dir>/checkout`, installs root/mobile dependencies
+only when their lockfile hashes change, leases one emulator, bind-tests unused
+ports, and runs the same `nightly-run.sh`. It reports a held capture, verdict or
+emulator lane as blocked (exit 2), leaving the holder alone. Stale `host.lock` or
+`nightly.lock` directories require verifying that no writer remains before removal.
+
+Before enabling it, replace agent capture schedule `390f36c4-454d-475a-a789-0d3561bcdc92`
+with a short verdict-reading turn after the host run. That turn reads
+`host-run.json` and its `nightlyJson` path even on failure, posts the verdict and
+evidence using the existing contract above, and files `fix-order.json` for failures.
+**The host timer and agent capture must never run the same night.** Keep this
+03:00 Eastern capture outside the 02:00 release and 04:00/04:15 jobs; allow up to
+four hours before reading the result. The reader reports setup failures when
+`nightlyJson` is null. Switching schedules is an operator action, not installation
+performed by this script.
+
+On the host, prepare `%h/.config/beeline-latency-rig.env` with absolute values
+(systemd EnvironmentFile does not expand `$HOME` or other variables):
+
+```ini
+PATH=/absolute/node/bin:/absolute/beeline/bin:/absolute/android-sdk/platform-tools:/usr/local/bin:/usr/bin:/bin
+LATENCY_RIG_STATE=/absolute/private/latency-rig-speedy
+LATENCY_RIG_RUNNER=/absolute/repository/scripts/latency-rig/nightly-host.sh
+ANDROID_HOME=/absolute/android-sdk
+BEELINE_ANDROID_EMULATOR_BINARY=/absolute/android-sdk/emulator/emulator
+BEELINE_ANDROID_BASE_AVD_HOME=/absolute/avd-metadata-containing-se_api35
+BEELINE_ANDROID_LEASE_ROOT=/absolute/private/latency-rig-speedy/emulator-leases
+BEELINE_ANDROID_INSTANCE_ROOT=/absolute/private/latency-rig-speedy/emulator-instances
+```
+
+Include the host JDK/toolchain environment and optional prepared
+`GRADLE_RO_DEP_CACHE` described above. Use the existing persistent rig state to
+retain baseline history. Requires the local-run prerequisites plus `git`, `npm`,
+`beeline`, `adb`, `ss`, `flock`, `setsid` and `pkill`. Install only after the
+schedule switch:
+
+```sh
+mkdir -p "$HOME/.config/systemd/user"
+cp scripts/latency-rig/systemd/beeline-latency-rig.{service,timer} "$HOME/.config/systemd/user/"
+systemctl --user daemon-reload
+systemctl --user enable --now beeline-latency-rig.timer
+```
+
+The timer uses `Persistent=false`, so missed nights are not replayed. The service
+caps its process tree at 31 GiB and four hours. The runner saves the measured SHA,
+exit status and verdict path in `host-run.json`, and the command log/PID/status
+in `host-nightly.{log,pid,exit}`. Its EXIT trap cleans only its owned emulator and
+nightly process session, including local server/proxy descendants. For a manual
+host invocation within the same memory allowance, use
+`bash scripts/latency-rig/nightly-host.sh <state-dir>`; `LATENCY_HOST_NIGHTLY_RUN`
+is a script-path override for isolated stub tests.
 
 ### Schedule prompt
 
@@ -456,11 +533,11 @@ the standing corner rather than creating a duplicate. Its execution contract is:
 > Bind-test an unused local port pair. Run nightly-run.sh and monitor it in the
 > same turn until exit, retaining its log and exit status. It compares reports,
 > full commit range and recorded host load, retries a failure/skip exactly once,
-> and advances the baseline only on pass. Publish every final verdict through
-> the approved Insights connection as documented below. Post one PASS/FAIL
+> and advances references on valid uncontended nights regardless of budget.
+> Publish every final verdict through the approved Insights connection as documented below. Post one PASS/FAIL
 > result with case n/p50/p95 and evidence here in the standing corner, naming
-> PRs since the last pass when available; save the post receipt. Report skipped
-> setup too. Never use a GitHub runner, webhook or new token. Preserve all
+> PRs since the last non-regressed valid night when available; save the post receipt.
+> Report skipped setup too. Never use a GitHub runner, webhook or new token. Preserve all
 > samples and clean up only this
 > wake's emulator/server. Keep the corner open.
 
@@ -484,20 +561,24 @@ Journal writes are flushed before advancing the baseline. The next invocation
 repairs `last-pass.json` from the latest journaled final pass if a process stopped
 between those writes. Malformed history fails closed rather than discarding it.
 
-`first-pass.json` never advances. On migration it preserves the existing
-`last-pass.json` as the earliest available passing baseline; older passing nights
-cannot be reconstructed. With no pass yet, the first actual pass establishes it.
-Failures and skips never establish or replace a baseline.
+`first-valid.json` never advances. On migration it preserves an existing
+`first-pass.json` (or the earliest available passing journal/report) as the fixed
+reference. With no legacy reference, the first final valid uncontended capture
+establishes it, even if over budget. `first-pass.json` remains an immutable
+compatibility alias when newly created; an existing file is never overwritten.
+Invalid, contended, current, future and provisional nights do not become rolling
+references. Established legacy passing references without load metadata are
+retained; new nights require recorded uncontended load.
 
-In addition to the unchanged strict budgets and last-pass 20% check, every case
-compares p95 with the original passing baseline and the median of up to seven
-prior passing Eastern nights. Cases match by kind, name and variant. Current,
-future, provisional and failing nights are excluded; multiple passes on one date
-count as one recent night (the last passing final verdict for that date). More
-than 10% slowdown against either reference fails and follows the existing single
-rerun/alert policy. Exactly 10% passes this drift check. Available history is used
-from the first prior pass; each verdict prints the count out of seven and says
-`unavailable` when a reference does not exist. No missing measurement is zero.
+The strict budgets are unchanged. Every eligible case compares p95 against the
+fixed first-valid reference (strictly >10% slowdown fails) and the median of up
+to seven prior valid uncontended Eastern nights (strictly >20% fails). The fixed
+reference catches cumulative creep such as 5% per night. Cases match by kind,
+name and variant; multiple eligible finals on one date count as one rolling
+night (the last eligible verdict on that date). Budget, contract and regression
+failures do not prevent a valid uncontended final night from becoming a rolling
+reference. Each verdict prints the count out of seven and says `unavailable`
+when a reference does not exist. No missing measurement is zero.
 
 ### Publishing measured Loops trends
 
@@ -506,9 +587,12 @@ no renderer change is needed. `nightly-insights.mjs` adds one chart per measured
 case with `case:<kind>/<name>/<variant>:p50` and `:p95` series (ms), keeping the
 existing `actions`, `actions_max`, `pages`, `pages_max`, fixes and unrelated loops.
 It replaces a point on the same Eastern date instead of duplicating it. Complete,
-calibrated, current-head measurements are charted even when timing/request/drift
-checks fail. Skipped/incomplete/stale/uncalibrated captures add no points. The
-latency note and dated log describe the final result and capture limits.
+calibrated, uncontended current-head measurements are charted even when
+budget/request/regression checks fail. The entire capture must be valid: one
+undersampled or unusable case suppresses all points. Skipped, partial, stale,
+uncalibrated, invalid, contended or missing-load captures add no points; the
+night's verdict is still recorded as missing/contended in the existing note/log.
+The latency note and dated log describe the final result and capture limits.
 
 After **every final verdict**, the scheduled agent publishes through the owner's
 approved first-party `github / beeline-insights-loop` connection. Credentials stay

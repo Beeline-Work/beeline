@@ -37,6 +37,26 @@
   independently. It checks Android; the fast static native-import gate covers
   both platforms. An OTA promoted without the optional proof is recorded UNPROVEN.
 
+## Production origin checks
+
+Production native release jobs and OTA exports pin `EXPO_PUBLIC_BUZZY_MONOLITH_URL`
+to `https://server.usebeeline.app`. Native release builds use a fresh Metro temp
+cache; each OTA platform's first export clears Metro's cache. A rig's inlined
+URL must never survive into a production artifact.
+
+Before uploading an Android AAB, `scripts/assert-mobile-release-origin.mjs`
+checks both its native `assets/app.config` and the Hermes `loadAppConfig`
+override. A native production URL alone is insufficient: an inlined
+`EXPO_PUBLIC_*` value overrides it at runtime. The check fails closed if it
+cannot verify the embedded function. It adds no app runtime behavior.
+
+Locally built store binaries also need a build-number/runtime identity in
+`apps/mobile/store/native-runtime-builds.json` or the release record. EAS's
+cloud-build inventory does not contain local builds. Publication is still
+verified against Play/App Store Connect; adding an identity does not admit an
+unpublished runtime. The next release rereads live store state before choosing
+OTA targets.
+
 ## Routine release
 
 Firstmate calls the first-party `dispatch_release` agent tool with `{}`, without
@@ -416,6 +436,13 @@ including cancellations before initialization. It uses trusted default-branch
 code on a hosted runner to file a GitHub issue labeled `release-failure`. A marker
 keyed by run ID and serialized delivery prevent duplicates across redelivery,
 reruns and closed issues. It never downloads or executes triggering artifacts.
+Failure issues record the failed job names. A successful preflight comments with
+its run link and closes earlier preflight issues. A successful unified release
+closes earlier unified-release issues only when every recorded failed job
+succeeded in that run; skipped jobs are not recovery. Older issues without job
+records require every component job to succeed, with none skipped. Issues created
+at or after the recovering run started stay open, and OTA success never closes a
+preflight issue. Recovery comments and closures are idempotent on redelivery.
 The existing saved `feedback-triage-steps` procedure's pull step includes all open
 issues with that label, without an age cutoff, alongside feedback and Sentry.
 This is the GitHub issue intake path, not a new server endpoint.

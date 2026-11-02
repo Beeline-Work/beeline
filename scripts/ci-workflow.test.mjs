@@ -5,6 +5,36 @@ import { parse } from 'yaml';
 
 const jobs = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).jobs;
 
+test('release recovery uses trusted hosted code with job reads and success delivery', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/release-failure.yml', import.meta.url), 'utf8'));
+  assert.deepEqual(workflow.on.workflow_run.workflows, ['Unified production release', 'Release preflight']);
+  assert.match(workflow.jobs.triage.if, /"success"/);
+  assert.equal(workflow.jobs.triage['runs-on'], 'ubuntu-latest');
+  assert.equal(workflow.permissions.actions, 'read');
+  assert.equal(workflow.permissions.issues, 'write');
+  const steps = workflow.jobs.triage.steps;
+  assert.equal(steps[0].with.ref, '${{ github.event.repository.default_branch }}');
+  assert.match(steps[1].with.script, /recoverFailures/);
+  assert.doesNotMatch(JSON.stringify(steps), /download-artifact/);
+});
+
+test('adapter failure intake keeps the check failing and uses trusted code and exact installed versions', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/acp-adapters.yml', import.meta.url), 'utf8'));
+  const job = workflow.jobs.adapters;
+  assert.equal(job.permissions.issues, 'write');
+  assert.equal(job.steps[0].with.ref, '${{ github.event.repository.default_branch }}');
+  const check = job.steps.find(step => step.id === 'adapter_check');
+  assert.equal(check.shell, 'bash'); // Explicit bash enables pipefail, preserving the check's exit code through tee.
+  assert.match(check.run, /node scripts\/check-acp-adapters.mjs \| tee/);
+  assert.equal(check['continue-on-error'], undefined);
+  const intake = job.steps.at(-1);
+  assert.equal(intake.if, "failure() && steps.adapter_check.outcome == 'failure'");
+  assert.equal(intake.uses, 'actions/github-script@v7');
+  assert.match(intake.with.script, /reportAdapterFailures/);
+  assert.ok(job.steps.some(step => /npm list -g --depth=0 --json/.test(step.run)));
+  assert.ok(Object.values(jobs).some(job => job.steps?.some(step => step.run === 'node --test scripts/acp-adapter-issue.test.mjs')));
+});
+
 test('Android binary releases publish to production, completed, and send the build for review', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
   assert.deepEqual(workflow.on.workflow_dispatch.inputs.store_track.options, ['none', 'production', 'beta']);

@@ -15,10 +15,15 @@ concurrency:
 jobs:
   adapters:
     name: Latest ACP session-start check
+    permissions:
+      contents: read
+      issues: write
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -26,6 +31,19 @@ jobs:
       - name: Build the production session-start check
         run: npx turbo run build --filter=@beeline/body...
       - name: Install harness programs in the disposable runner
-        run: npm install -g @openai/codex@latest @anthropic-ai/claude-code@latest @earendil-works/pi-coding-agent@latest
+        run: |
+          npm install -g @openai/codex@latest @anthropic-ai/claude-code@latest @earendil-works/pi-coding-agent@latest
+          npm list -g --depth=0 --json > "$RUNNER_TEMP/acp-programs.json"
       - name: Check latest adapters without the runtime release-age delay
-        run: node scripts/check-acp-adapters.mjs
+        id: adapter_check
+        shell: bash
+        run: node scripts/check-acp-adapters.mjs | tee "$RUNNER_TEMP/acp-adapter-results.json"
+      - name: Send adapter failures to the fix loop
+        if: failure() && steps.adapter_check.outcome == 'failure'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { readFileSync } = require('node:fs');
+            const report = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/acp-adapter-results.json`, 'utf8'));
+            const programs = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/acp-programs.json`, 'utf8'));
+            await require('./scripts/acp-adapter-issue.cjs').reportAdapterFailures({github, context, report, programs});

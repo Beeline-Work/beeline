@@ -1,11 +1,19 @@
+# Runs every Checks suite on main at 03:00 Eastern, reruns failed jobs once and
+# classifies each job as failed (twice), flaky (passed on the rerun) or passing.
+# The result is an artifact and one open `nightly-checks` issue per failed or
+# flaky job (closed when the job next passes first time), which the daily fix
+# loop reads with the release-failure issues.
 name: Nightly Checks
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 7,8 * * *'
+    # Separate triggers identify the harmless DST twin even when it is delayed.
+    - cron: '7 7 * * *'
+    - cron: '7 8 * * *'
 permissions:
   contents: read
   actions: write
+  issues: write
 concurrency:
   group: nightly-checks
   cancel-in-progress: false
@@ -25,6 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: node scripts/nightly-checks.mjs
       - name: Publish nightly result
         if: always()

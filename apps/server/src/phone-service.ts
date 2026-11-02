@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { prepareMentionReplyInput, isMentionReplyInput } from './owed-mentions.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
@@ -254,7 +255,7 @@ import {
 } from './wallet.js';
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
-import { cancelCornerAgentCommands, closeCornerPullRequestBestEffort, closeCornerState } from './corner-close.js';
+import { closeCornerPullRequestBestEffort, closeCornerState } from './corner-close.js';
 import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -374,7 +375,6 @@ interface RoomRow {
   created_by: string | null;
   name: string;
   about: string | null;
-  avatar: string | null;
   visibility: 'public' | 'invite-only';
   archived_at: Date | null;
   direct_participants: string[] | null;
@@ -678,7 +678,6 @@ function roomHeader(row: RoomHeaderRow, publicOrigin: string) {
     ...(row.parent_id ? { parentId: row.parent_id } : {}),
     name: row.name,
     ...(row.about ? { about: row.about } : {}),
-    ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
     visibility: row.visibility,
     ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
     ...(row.reviewer_agent_id && row.reviewer_fallback_ids?.length
@@ -776,7 +775,7 @@ function projectedMessage(
     text: row.deleted_at
       ? row.system_event
         ? formatSystemLine(row.system_event)
-        : 'Message deleted'
+        : systemMessage("phone-service.message-deleted")
       : row.text,
     createdAt: unix(row.created_at),
     createdAtMs: row.created_at.getTime(),
@@ -1554,7 +1553,7 @@ export class PhoneService {
     }>(
       `WITH deleted AS (
          DELETE FROM workspace_deletion_notices WHERE identity_id=$1
-         RETURNING workspace_id,workspace_name
+         RETURNING workspace_id
        ), visible AS (
        SELECT w.id, w.name, w.avatar, w.visibility, m.role, w.updated_at, summary.room_count, summary.attention
        FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
@@ -1580,8 +1579,9 @@ export class PhoneService {
        SELECT visible.*,viewer.id viewer_id,viewer.kind viewer_kind,
          viewer.name viewer_name,viewer.handle viewer_handle,
          viewer.avatar viewer_avatar,viewer.face_id viewer_face_id,
-         (SELECT jsonb_agg(jsonb_build_object('workspaceId',workspace_id,
-            'workspaceName',workspace_name)) FROM deleted) deleted_notices
+         (SELECT jsonb_agg(jsonb_build_object('workspaceId',deleted.workspace_id,
+            'workspaceName',deletion.workspace_name))
+          FROM deleted JOIN workspace_deletions deletion USING(workspace_id)) deleted_notices
        FROM identities viewer LEFT JOIN visible ON true
        WHERE viewer.id=$1
        ORDER BY visible.updated_at DESC NULLS LAST,visible.id`,
@@ -1626,7 +1626,7 @@ export class PhoneService {
         id: row.id,name: row.name,
         ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
         visibility: row.visibility,role: row.role,updatedAt: unix(row.updated_at),
-        ...(row.about ? { about: row.about } : {}),createdAt: unix(row.created_at),
+        createdAt: unix(row.created_at),
       },
       ...(managedRooms ? { managerSettings: {
         visibility: row.visibility,allowFixSweep: row.allow_fix_sweep,rooms: managedRooms,
@@ -2793,17 +2793,6 @@ export class PhoneService {
   }
 
   private async roomRows(roomId: string, viewerId: string): Promise<RoomReadRow | undefined> {
-    const eligible = `m.id IN (
-      (SELECT raw.id FROM legacy_room_events raw WHERE raw.room_id=$1 AND raw.kind=9
-         AND raw.raw_page_candidate=true
-       ORDER BY raw.created_at DESC,raw.id ASC LIMIT 180)
-      UNION
-      (SELECT conversation.id FROM legacy_room_events conversation
-       WHERE conversation.room_id=$1 AND conversation.conversation_candidate=true
-       ORDER BY conversation.created_at DESC,conversation.id ASC LIMIT 30)
-      UNION
-      (SELECT plan.id FROM legacy_room_events plan WHERE plan.room_id=$1 AND plan.kind=30078)
-    )`;
     const row = (
       await this.database.query<RoomReadRow>(
         `WITH authorized_room AS (
@@ -2884,9 +2873,6 @@ export class PhoneService {
            JOIN identities i ON i.id=m.author_id
            WHERE (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
              AND ${visibleMessageSql('m')}
-             AND (NOT EXISTS(
-               SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1
-             ) OR ${eligible})
            ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
          ), activity_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
@@ -2903,9 +2889,6 @@ export class PhoneService {
            JOIN active_turn_rows turn ON turn.agent_id=m.author_id
              AND date_trunc('second',m.created_at)>=date_trunc('second',turn.created_at)
            WHERE m.presentation='activity' AND m.durable_fact IS NULL
-             AND (NOT EXISTS(
-               SELECT 1 FROM legacy_room_events any_legacy WHERE any_legacy.room_id=$1
-             ) OR ${eligible})
            ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
          ), corner_tool_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
@@ -2929,12 +2912,6 @@ export class PhoneService {
            JOIN messages m ON m.room_id=room.parent_id
            JOIN identities i ON i.id=m.author_id
            WHERE room.parent_id IS NOT NULL AND m.created_at<=room.created_at
-             AND (NOT EXISTS(SELECT 1 FROM legacy_room_events all_legacy
-               WHERE all_legacy.room_id=room.parent_id)
-               OR m.id IN(SELECT page.id FROM legacy_room_events page
-                 WHERE page.room_id=room.parent_id AND page.kind=9
-                   AND page.raw_page_candidate=true AND page.created_at<=room.created_at
-                 ORDER BY page.created_at DESC,page.id ASC LIMIT 40))
            ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}
          )
          SELECT
@@ -3923,7 +3900,6 @@ export class PhoneService {
          ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,soul=EXCLUDED.soul,
            selected_model=EXCLUDED.selected_model,selected_effort=EXCLUDED.selected_effort,
            model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
-           schedule_ids='[]'::jsonb,
            yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
            access_policy='{"type":"everyone"}'::jsonb,machine_id=EXCLUDED.machine_id,
            machine_name=EXCLUDED.machine_name,updated_at=now()`,
@@ -5734,7 +5710,7 @@ export class PhoneService {
         // mention in a corner may rely on the same daemon's lifecycle fact
         // in a top-level Room, so the presence lookup intentionally has no
         // room filter.
-        `SELECT identity.id agent_id,COALESCE(NULLIF(identity.name,''),'The agent') agent_name,
+        `SELECT identity.id agent_id,COALESCE(NULLIF(identity.name,''),$4::text) agent_name,
                 identity.handle agent_handle,
                 a.access_policy,a.owner_id,owner.handle owner_handle,
                 EXISTS(SELECT 1 FROM rooms room WHERE room.id=$2 AND room.parent_id IS NOT NULL) corner,
@@ -5754,7 +5730,7 @@ export class PhoneService {
          LEFT JOIN identities owner ON owner.id=a.owner_id
          WHERE identity.id=ANY($1::text[]) AND identity.kind='agent'
            AND NOT EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=identity.id)`,
-        [[...agentIds], roomId, AGENT_REACHABLE_HORIZON_MS],
+        [[...agentIds], roomId, AGENT_REACHABLE_HORIZON_MS, systemMessage("system-line.agent-name")],
       );
       const bucket = accessNoticeBucket(Date.now());
       for (const agent of agents.rows) {
@@ -5880,7 +5856,7 @@ export class PhoneService {
         // deleted outright: there is nobody left to answer, but the writer
         // already retracted the words, so the Room owes no explanation.
         `SELECT d.room_id,d.agent_id,d.sender_id,d.source_message_id,d.reason,
-                COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
+                COALESCE(NULLIF(agent.name,''),$3::text) agent_name,
                 agent.handle agent_handle,
                 a.access_policy,a.owner_id,owner.handle owner_handle,
                 EXISTS(SELECT 1 FROM rooms room
@@ -5903,7 +5879,7 @@ export class PhoneService {
          JOIN messages source ON source.id=d.source_message_id AND source.deleted_at IS NULL
          WHERE d.notified_at IS NULL AND d.due_at <= $1
            AND NOT EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=d.agent_id)`,
-        [new Date(now), AGENT_REACHABLE_HORIZON_MS],
+        [new Date(now), AGENT_REACHABLE_HORIZON_MS, systemMessage("system-line.agent-name")],
       );
       if (!due.rows.length) return 0;
       const bucket = accessNoticeBucket(now);
@@ -6001,8 +5977,8 @@ export class PhoneService {
       return agent.corner
         ? {
             reason: 'not-a-member',
-            verb: 'could not be reached',
-            consequence: 'not a member of this corner',
+            verb: systemMessage("phone-service.could-not-be-reached"),
+            consequence: systemMessage("phone-service.not-a-member-of-this-corner"),
           }
         : undefined;
     }
@@ -6029,17 +6005,17 @@ export class PhoneService {
     if (!permitted) {
       return {
         reason: 'refused',
-        verb: 'did not answer',
+        verb: systemMessage("phone-service.did-not-answer"),
         ...(object ? { object } : {}),
-        consequence: `only ${personMention(agent.owner_handle) ?? 'the owner'} may address ${agentMention}. Ask the user for permission to access the agent in the members page`,
+        consequence: systemMessage("phone-service.only-may-address-ask-the-user-for-permission-to-access-the-agent", personMention(agent.owner_handle) ?? systemMessage("phone-service.the-owner"), agentMention),
       };
     }
     if (agent.reachable) return undefined;
     return {
       reason: 'unreachable',
-      verb: 'did not answer',
+      verb: systemMessage("phone-service.did-not-answer"),
       ...(object ? { object } : {}),
-      consequence: 'its helper is offline',
+      consequence: systemMessage("phone-service.its-helper-is-offline"),
     };
   }
   /**
@@ -6211,9 +6187,9 @@ export class PhoneService {
         roomId: input.roomId,
         authorId: viewerId,
         subject: identitySubject({ id: stopper.pubkey, kind: stopper.kind, name: stopper.name }),
-        verb: 'stopped',
+        verb: systemMessage("phone-service.stopped"),
         object: { text: agent.name, id: agent.pubkey },
-        consequence: `turn cancelled${dropped ? ` · ${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` : ''}`,
+        consequence: systemMessage("phone-service.turn-cancelled", dropped ? systemMessage("phone-service.queued-dropped", dropped, dropped === 1 ? systemMessage("phone-service.order") : systemMessage("phone-service.orders")) : ''),
         kind: 'turn-cancelled',
         wakes: [input.agentId],
         requestId: input.requestId,
@@ -6310,7 +6286,7 @@ export class PhoneService {
         }
         await database.query(`UPDATE connector_offers SET status='denied',accepted_by=$2,accepted_at=now() WHERE id::text=$1`, [card.offerId, viewerId]);
         await systemLine(database, { roomId: input.roomId, subject: identitySubject({ id: viewerId, kind: 'human', name: decider.name }),
-          verb: 'declined', object: card.connectorName, kind: 'connector-offer-decided', wakes: [offer.agent_id],
+          verb: systemMessage("phone-service.declined"), object: card.connectorName, kind: 'connector-offer-decided', wakes: [offer.agent_id],
           ...(offer.command_id ? { commandId: offer.command_id } : {}), cardType: 'connector-offer-decision', card: { offerId: card.offerId, status: 'denied' } });
       } else throw new Error('approval kind cannot be decided here');
       await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`, [input.messageId,
@@ -6384,20 +6360,20 @@ export class PhoneService {
         [input.permissionId, status, input.roomId],
       );
       if (!updated.rowCount) throw new Error('permission not found');
-      const tool = typeof card?.tool === 'string' ? card.tool : 'edit files';
+      const tool = typeof card?.tool === 'string' ? card.tool : systemMessage("phone-service.edit-files");
       await systemLine(database, {
         id,
         roomId: input.roomId,
         authorId: viewerId,
         subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),
-        verb: input.decision === 'allow' ? 'allowed' : 'denied',
+        verb: input.decision === 'allow' ? systemMessage("phone-service.allowed") : systemMessage("phone-service.denied"),
         object: {
-          text: `${systemIdentityMention({
+          text: systemMessage("phone-service.to", systemIdentityMention({
             id: agent.pubkey,
             kind: agent.kind,
             name: agent.name,
             handle: agent.handle ?? null,
-          })} to ${tool}`,
+          }), tool),
           id: agent.pubkey,
         },
         presentation: 'card',
@@ -6726,7 +6702,7 @@ export class PhoneService {
       await systemLine(database, {
         roomId: input.roomId,
         subject: identitySubject({ id: viewerId, kind: 'human', name: parent.viewer_name }),
-        verb: 'opened a corner',
+        verb: systemMessage("phone-service.opened-a-corner"),
         object: { text: title, id },
         presentation: 'card',
         cardType: 'daemon-fact',
@@ -6901,7 +6877,7 @@ export class PhoneService {
         await systemLine(database, {
           roomId: input.roomId,
           subject: identitySubject({ id: actor.pubkey, kind: actor.kind, name: actor.name }),
-          verb: 'changed room visibility to',
+          verb: systemMessage("phone-service.changed-room-visibility-to"),
           object: input.visibility,
           cardType: 'room-visibility',
           card: { visibility: input.visibility },
@@ -6965,7 +6941,7 @@ export class PhoneService {
       await systemLine(database, {
         roomId,
         subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),
-        verb: 'left',
+        verb: systemMessage("phone-service.left"),
         cardType: 'member-left',
         card: { identityId: viewerId },
       });
@@ -7047,7 +7023,7 @@ export class PhoneService {
       await systemLine(database, {
         roomId: input.roomId,
         subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
-        verb: 'removed',
+        verb: systemMessage("phone-service.removed"),
         object: { text: removed.name, id: removed.pubkey },
         cardType: 'member-removed',
         card: { identityId: input.memberId },
@@ -7628,7 +7604,7 @@ export class PhoneService {
         authorId: viewerId,
         subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),
         verb:
-          decision === 'always' ? 'approved' : decision === 'once' ? 'approved once' : 'declined',
+          decision === 'always' ? systemMessage("phone-service.approved") : decision === 'once' ? systemMessage("phone-service.approved-once") : systemMessage("phone-service.declined"),
         // A resume kind: it answers a turn already paused on the ask, and must
         // never start a second one (`RESUME_KINDS`).
         kind: 'grant-decided',
@@ -7638,7 +7614,7 @@ export class PhoneService {
             [input.grantId],
           )
         ).rows[0]?.command_id,
-        object: `${grant.kind} ${grant.target}`,
+        object: systemMessage("phone-service.grant-target", grant.kind, grant.target),
         wakes: [grant.agent_id],
         cardType: 'grant-decision',
         card: { grantId: input.grantId, status },
@@ -8166,11 +8142,11 @@ export class PhoneService {
         await systemLine(database, {
           roomId: room.room_id,
           subject: { kind: 'person', id: viewerId, name: agent.viewer_name },
-          verb: input.enabled ? 'turned yolo on for' : 'turned yolo off for',
+          verb: input.enabled ? systemMessage("phone-service.turned-yolo-on-for") : systemMessage("phone-service.turned-yolo-off-for"),
           object: { text: agent.agent_name, id: input.agentId },
           consequence: input.enabled
-            ? 'grant requests are now approved automatically'
-            : 'grant requests now ask before running',
+            ? systemMessage("phone-service.grant-requests-are-now-approved-automatically")
+            : systemMessage("phone-service.grant-requests-now-ask-before-running"),
           cardType: 'agent-yolo',
           card: { agentId: input.agentId, enabled: input.enabled },
         });
@@ -8390,17 +8366,9 @@ export class PhoneService {
          ORDER BY id FOR KEY SHARE`,
         [gone],
       );
-      // Serialize lifecycle changes, then take command locks before the room
-      // archival write, matching closeCornerState and the merge webhook.
-      for (const corner of closingCorners.rows) {
-        await lockCornerLifecycle(database, corner.id);
-        await cancelCornerAgentCommands(database, corner.id);
-      }
-      await database.query(
-        `UPDATE rooms SET archived_at=now(),updated_at=now()
-         WHERE id=ANY($1::uuid[])`,
-        [closingCorners.rows.map((corner) => corner.id)],
-      );
+      // Each corner closes exactly as a human close does: its workflow run,
+      // wake sources and corner state end with the archival.
+      for (const corner of closingCorners.rows) await closeCornerState(database, corner.id);
       await database.query(
         `UPDATE corner_facts SET close_requested=true,owner_agent_id=NULL,
            lifecycle=lifecycle||$2::jsonb,updated_at=now()
@@ -8515,18 +8483,20 @@ export class PhoneService {
          WHERE id IN (SELECT id FROM tombstoned WHERE rank>1)`,
         [gone, DELETED_ACCOUNT_IDENTITY_ID],
       );
-      // Corner records, workflow transfers and installed apps are shared
+      // Corner records and installed apps are shared
       // history: they keep the tombstone as author, like messages do.
       for (const [table, column] of [
         ['messages', 'deleted_by'],
+        // Retained only for rolling-deployment and rollback compatibility.
+        ['corner_apps', 'author_agent_id'],
+        ['corner_app_installations', 'installed_by'],
+        ['corner_app_installations', 'developer_agent_id'],
+        ['corner_app_bindings', 'bound_by'],
         ['corner_brief_revisions', 'author_id'],
         ['corner_validation_stages', 'actor_id'],
         ['corner_merge_holds', 'actor_id'],
         ['corner_merge_holds', 'released_by'],
         ['corner_merge_holds', 'set_by_agent_id'],
-        ['workflow_owner_transfers', 'actor_id'],
-        ['workflow_owner_transfers', 'previous_owner_id'],
-        ['workflow_owner_transfers', 'new_owner_id'],
       ])
         await database.query(`UPDATE ${table} SET ${column}=$2 WHERE ${column}=ANY($1)`, [
           gone,
@@ -8581,7 +8551,6 @@ export class PhoneService {
       await database.query(`DELETE FROM schedule_receipts WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_mandates WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM permission_authority WHERE principal_id=ANY($1)`, [gone]);
-      await database.query(`DELETE FROM mission_authority WHERE principal_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM corner_merge_approvals WHERE approved_by=ANY($1)`, [gone]);
       await database.query(`DELETE FROM invites WHERE created_by=ANY($1)`, [gone]);
       await database.query(
@@ -10017,10 +9986,10 @@ export class PhoneService {
           const source = await systemLine(database, {
             roomId: card.room_id,
             authorId: viewerId,
-            subject: { kind: 'person', id: viewerId, name: 'A member' },
-            verb: 'connected',
+            subject: { kind: 'person', id: viewerId, name: systemMessage("phone-service.a-member") },
+            verb: systemMessage("phone-service.connected"),
             object: card.card.name,
-            consequence: 'The request can continue.',
+            consequence: systemMessage("phone-service.the-request-can-continue"),
           });
           const parent = card.card.commandId
             ? (
@@ -10534,7 +10503,7 @@ export class PhoneService {
     query: WorkspaceMemberListQuery = {},
   ): Promise<(WorkspaceMemberListView & {
     workspaceRow: {
-      id: string; name: string; about: string | null; avatar: string | null;
+      id: string; name: string; avatar: string | null;
       visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
       role: 'owner' | 'admin' | 'member' | 'spectator';
     };
@@ -10549,7 +10518,7 @@ export class PhoneService {
     const kind = query.kind === 'human' || query.kind === 'agent' ? query.kind : undefined;
     const result = await this.database.query<{
       workspace_row: {
-        id: string; name: string; about: string | null; avatar: string | null;
+        id: string; name: string; avatar: string | null;
         visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
         role: 'owner' | 'admin' | 'member' | 'spectator';
       };
@@ -10562,7 +10531,7 @@ export class PhoneService {
       people_total: string;
       agent_total: string;
     }>(`WITH visible_workspace AS (
-        SELECT w.id,w.name,w.about,w.avatar,w.visibility,w.allow_fix_sweep,w.created_at,w.updated_at,wm.role
+        SELECT w.id,w.name,w.avatar,w.visibility,w.allow_fix_sweep,w.created_at,w.updated_at,wm.role
         FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
         WHERE w.id=$1 AND wm.identity_id=$7 AND wm.removed_at IS NULL
       ), viewer_row AS (
@@ -10971,7 +10940,7 @@ export class PhoneService {
  */
 function personMention(handle: string | null | undefined): string | undefined {
   const trimmed = handle?.trim().replace(/^@/, '');
-  return trimmed ? `@${trimmed}` : undefined;
+  return trimmed ? systemMessage("phone-service.person-mention", trimmed) : undefined;
 }
 
 /** Grant decisions retain the owner-or-Workspace-manager authority axis. */

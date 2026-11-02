@@ -54,7 +54,10 @@ valid dependency/build cache hits and parallel tar processes waiting on disk.
 That profile used only 6.17 CPUs in its busiest five-second sample, showing
 why CPU quotas alone cannot control disk waits or whole-host load. The five-job
 profile and serialized cache operations address that measured bottleneck;
-concurrent-PR acceptance remains a separate measurement.
+concurrent-PR acceptance remains a separate measurement. Judge CI by its
+cgroup CPU/memory and Linux job wall time, not whole-host load from agents,
+Gradle or emulators. The host-load safety backstop is 25; the resource budget
+remains ten CPUs and 60 GiB.
 
 See [`infra/ci/README.md`](../infra/ci/README.md) for activation, measurement and
 abort instructions. The new budget is installed, but concurrent PR validation remains pending;

@@ -45,8 +45,9 @@ path. Record its `memory.current`, `memory.peak`, `memory.events`, `cpu.stat`
 and `cpu.max`, and each listener's resource counters. Record a host idle
 baseline separately because Beeline agents contribute to whole-host load.
 
-Abort the validation runs immediately when the one-minute host load exceeds
-15: cancel only the three recorded run IDs using `gh-axi run cancel RUN_ID`.
+Use host load only as a safety backstop: Beeline agents, Gradle and emulators
+contribute independently of CI. Abort validation immediately when one-minute
+host load exceeds 25: cancel only the three recorded run IDs using `gh-axi run cancel RUN_ID`.
 Keep sampling until their work drains. Do not stop or restart Beeline agents
 or the shared no-mistakes daemon. If the pool does not drain after cancellation,
 report the condition to firstmate for intervention.
@@ -60,8 +61,9 @@ passing timing result. Report maximum sampled whole-host one-minute load,
 minimum available memory, peak pool memory and OOM/throttling deltas.
 
 Accept only three overlapping successful PR runs each at or below 15 minutes,
-maximum sampled host load at or below 10, bounded memory and no OOM kills.
-A ten-CPU quota alone proves neither the load nor the wall-time target.
+with CI pool usage inside ten CPUs and 60 GiB and no OOM kills. Report host
+load as context; it is not the CI CPU budget. A ten-CPU quota alone does not
+prove the wall-time target.
 Confirm required check names against the base workflow and verify main's
 required checks remain green. Record actual after measurements in the PR;
 leave unmeasured claims explicitly pending.

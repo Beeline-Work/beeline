@@ -20,8 +20,11 @@ export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId:
      ORDER BY created_at DESC,id DESC FOR UPDATE`,
     [cornerId],
   );
+  // Only a claimed command has a helper turn to stop. A pending one never started;
+  // cancelling it below is enough, and a stop for it would stay pending forever.
   const assignments = new Map<string, CommandRow>();
   for (const command of active.rows) {
+    if (command.state !== 'claimed') continue;
     const key = `${command.agent_id}:${command.turn_request_id}`;
     if (!assignments.has(key)) assignments.set(key, command);
   }
@@ -63,6 +66,23 @@ export async function cancelArchivedCornerAssignments(database: SqlDatabase): Pr
        AND corner.parent_id IS NOT NULL AND corner.archived_at IS NOT NULL
        AND turn.status='working'`,
   );
+}
+
+/**
+ * Release migration: stops created for corners that are long closed. Close used to
+ * create a stop for commands that never started; no helper polls an archived
+ * corner for them, so they stayed pending. A recent stop may still reach a helper
+ * finishing its turn, so only day-old ones are settled.
+ */
+export async function cancelStaleClosedCornerStops(database: SqlDatabase): Promise<number> {
+  const cancelled = await database.query(
+    `UPDATE agent_commands command SET state='cancelled',completed_at=now()
+     FROM rooms corner WHERE corner.id=command.room_id
+       AND corner.parent_id IS NOT NULL AND corner.archived_at IS NOT NULL
+       AND command.action='stop' AND command.state='pending'
+       AND command.created_at<now()-interval '1 day'`,
+  );
+  return cancelled.rowCount;
 }
 
 /** GitHub failure must never prevent a person or agent from closing a corner. */

@@ -19,7 +19,7 @@ export interface FreeAgentMachines {
   /** The Machine already created for this agent, if any. */
   find(agentId: string): Promise<{ id: string; state: string } | undefined>;
   /** Start a stopped Machine or resume a suspended one. */
-  start(id: string): Promise<void>;
+  start(id: string, image?: string): Promise<void>;
   suspend(id: string): Promise<void>;
   stop(id: string): Promise<void>;
   destroy(id: string): Promise<void>;
@@ -33,7 +33,7 @@ export class FlyApiError extends Error {
   constructor(
     readonly status: number,
     readonly body: string,
-    operation: string,
+    readonly operation: string,
   ) {
     super(`Fly ${operation} failed: HTTP ${status} ${body.slice(0, 300)}`);
     this.name = 'FlyApiError';
@@ -81,7 +81,24 @@ export class FlyMachines implements FreeAgentMachines {
     return machines.find((machine) => machine.state !== 'destroyed');
   }
 
-  async start(id: string): Promise<void> {
+  async start(id: string, image?: string): Promise<void> {
+    if (image) {
+      const machine = await this.#request<{ state: string; version: string; config: Record<string, unknown> & { image: string } }>(
+        'get', `/${id}`, 'GET');
+      const sameImage = machine.config.image === image ||
+        (image.includes('@sha256:') && machine.config.image.split('@')[1] === image.split('@')[1]);
+      if (!sameImage) {
+        if (machine.state === 'started' || machine.state === 'suspended') {
+          await this.stop(id);
+          await this.waitFor(id, 'stopped', 30);
+        }
+        await this.#request('update image', `/${id}`, 'POST', {
+          current_version: machine.version,
+          skip_launch: true,
+          config: { ...machine.config, image },
+        });
+      }
+    }
     // Fly can report suspended before its snapshot transition accepts a start.
     // Retry that short transition here, rather than leaving a live connection
     // to suppress the next wake until its heartbeat expires.

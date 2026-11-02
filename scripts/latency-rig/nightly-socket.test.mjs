@@ -115,9 +115,10 @@ test('real socket requests retain request/reply and SQL identity without logging
     clearTimeout(deadline);
     assert.equal(replies[0].id, 'request-secret-read');
     // Receiving replies does not mean the proxy's asynchronous log stream flushed.
+    // Count only complete records while waiting for both request completions.
     let logged;
     const logDeadline = Date.now() + 5000;
-    while (true) {
+    for (;;) {
       logged = await readFile(proxyPath, 'utf8');
       const completed = logged.split('\n').slice(0, -1).map(JSON.parse)
         .filter(span => span.type === 'phone-request' && span.phase === 'end');

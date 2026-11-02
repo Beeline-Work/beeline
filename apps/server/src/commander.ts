@@ -372,8 +372,8 @@ export async function reportToCommander(
     : route;
   // Closed work has no outstanding request. Do not move its stale reports to
   // an ancestor Room merely because that Room still exists.
-  if (origin && (await db.query(`SELECT 1 FROM rooms corner LEFT JOIN corner_facts fact ON fact.corner_id=corner.id
-    WHERE corner.id=$1 AND (corner.archived_at IS NOT NULL OR fact.lifecycle->>'lifecycle' IN ('closed','landed'))`, [origin])).rowCount)
+  if (origin && (await db.query(`SELECT 1 FROM rooms corner
+    WHERE corner.id=$1 AND corner.archived_at IS NOT NULL`, [origin])).rowCount)
     return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true, skipped: true };
   // A standing failure can be observed by many dispatch attempts. Its wake
   // identity belongs to the corner and failure, not the failed attempt.
@@ -691,9 +691,8 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
          LEFT JOIN corner_facts fact ON fact.corner_id=room.id
          JOIN rooms ancestor ON ancestor.id=COALESCE(fact.opened_from_corner_id,room.parent_id)
          WHERE NOT ancestor.id=ANY(child.path)
-       ) SELECT ancestry.id FROM ancestry LEFT JOIN corner_facts fact ON fact.corner_id=ancestry.id
+       ) SELECT ancestry.id FROM ancestry
        WHERE ancestry.archived_at IS NULL
-         AND COALESCE(fact.lifecycle->>'lifecycle','') NOT IN ('closed','landed')
        ORDER BY hop LIMIT 1`, [returnRoom],
     )).rows[0];
     returnRoom = live?.id;

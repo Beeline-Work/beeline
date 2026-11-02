@@ -2,6 +2,7 @@ import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import { buildRouterSnapshot } from './router-projections.js';
 import { CommandScopedDatabase } from './command-scoped-database.js';
 import type { RouterSnapshotInput, RouterValues, RouterFamily } from '@beeline/api-contract/router-protocol';
+import { cornerObjectiveSql } from './corner-objective.js';
 import { prepareMentionReplyInput, isMentionReplyInput } from './owed-mentions.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
@@ -2994,7 +2995,7 @@ export class PhoneService {
              'parent',(SELECT (to_jsonb(parent) - 'github_installation_id') ||
                jsonb_build_object('github_installation_id',parent.github_installation_id::text)
                FROM rooms parent WHERE parent.id=authorized_room.parent_id),
-             'facts',(SELECT to_jsonb(f) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
+             'facts',(SELECT (to_jsonb(f)-'objective') || jsonb_build_object('objective',${cornerObjectiveSql('authorized_room')}) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
              'owed',(SELECT owed.owed FROM rooms c
                ${cornerOwedLookupSql('c', '$2')} WHERE c.id=authorized_room.id),
              'brief',(SELECT to_jsonb(brief) || jsonb_build_object('approver_name',approver.name,'author_handle',brief_author.handle)
@@ -3242,7 +3243,7 @@ export class PhoneService {
     const limit = `LIMIT ${(archived ? ARCHIVED_CORNER_PAGE : OPEN_CORNER_PAGE) + 1}`;
     const facts = cornerFactsSql('$2');
     return `
-      SELECT ${cornerRoomColumnsSql},${facts.columns},f.objective,lm.id latest_id,lm.text latest_text,lm.author_id latest_author_id,
+      SELECT ${cornerRoomColumnsSql},${facts.columns},${cornerObjectiveSql('c')} objective,lm.id latest_id,lm.text latest_text,lm.author_id latest_author_id,
         initiator.id initiator_id,initiator.name initiator_name,
         initiator.handle initiator_handle,initiator.avatar initiator_avatar,
         initiator.face_id initiator_face,
@@ -6740,8 +6741,8 @@ export class PhoneService {
         return false;
       }
       await database.query(
-        `INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind,lifecycle,title_generated)
-         VALUES($1,$2,'','human','{"lifecycle":"working","checks":"unknown"}',$3)`,
+        `INSERT INTO corner_facts(corner_id,commissioned_by,kind,lifecycle,title_generated)
+         VALUES($1,$2,'human','{"lifecycle":"working","checks":"unknown"}',$3)`,
         [id, viewerId, input.titleGenerated === true],
       );
       await advanceCorner(database, id, {
@@ -8012,14 +8013,20 @@ export class PhoneService {
         connectorId: squireMachineAddress(offer.machine_id) };
     }
     const paired = await this.database.transaction(async (database) => {
+      await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
+        [`connector-offer:${offer.room_id}:${connectorType}`]);
+      if (offer.status === 'failed' && (await database.query(`SELECT 1 FROM connector_offers
+        WHERE room_id=$1 AND connector_type=$2 AND id::text<>$3 AND status IN ('pending','connecting')`,
+        [offer.room_id, connectorType, input.offerId])).rowCount)
+        throw new Error('connector offer conflict: use the newer connection card');
       const updated = await database.query<{ accepted_at: Date }>(
         `UPDATE connector_offers SET status='connecting',accepted_by=$2,
-             accepted_at=COALESCE(accepted_at,now())
-         WHERE id::text=$1 AND status='pending' RETURNING accepted_at`,
+             accepted_at=now()
+         WHERE id::text=$1 AND status IN ('pending','failed') RETURNING accepted_at`,
         [input.offerId, viewerId],
       );
       const acceptedAt = updated.rows[0]?.accepted_at ?? offer.accepted_at;
-      if (!acceptedAt || (offer.status !== 'pending' && offer.status !== 'connecting'))
+      if (!acceptedAt || (offer.status !== 'pending' && offer.status !== 'connecting' && offer.status !== 'failed'))
         throw new Error('connector offer conflict: already accepted');
       const pairing = await this.armConnectorPairing(database, {
         workspaceId: offer.workspace_id,
@@ -8130,7 +8137,7 @@ export class PhoneService {
         [input.roomId, input.offerId],
       )
     ).rows[0];
-    if (!card || !['pending', 'connecting'].includes(card.card.status)) return;
+    if (!card || !['pending', 'connecting', 'failed'].includes(card.card.status)) return;
     const connecting: ConnectorOfferCardView = {
       ...card.card,
       status: 'connecting',

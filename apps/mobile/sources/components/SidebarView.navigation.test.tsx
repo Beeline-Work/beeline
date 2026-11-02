@@ -422,6 +422,27 @@ describe('desktop Workspace navigation', () => {
   });
 
 
+  it.each(['Retry', 'committed workspace update', 'shared covering read'])('restores Room rows after outage recovery through %s', async recovery => {
+    workspaces.mockRejectedValueOnce(new Error('isolated outage'));
+    await act(async () => { for (const listener of [...workspaceLive.listeners]) listener(); });
+    await settle();
+    const failed = tree.root.findAll((node: any) => node.props.action === 'Retry' && node.props.title === 'Could not load workspaces.');
+    expect(failed.length).toBeGreaterThan(0);
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-room-a' })).toHaveLength(0);
+    const reads = workspaces.mock.calls.length;
+    await act(async () => {
+      if (recovery === 'Retry') failed[0]!.props.onPress();
+      else if (recovery === 'shared covering read') {
+        for (const listener of surfaceListeners.get('/workspaces:') ?? []) listener();
+      }
+      else for (const listener of [...workspaceLive.listeners]) listener();
+    });
+    await settle();
+    expect(workspaces).toHaveBeenCalledTimes(reads + (recovery === 'shared covering read' ? 0 : 1));
+    expect(tree.root.findAll((node: any) => node.props.title === 'Could not load workspaces.')).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-room-a' }).length).toBeGreaterThan(0);
+  });
+
   it('removes the deleted workspace from the permanent rail while a Room is open', async () => {
     route.pathname = '/beeline/chat/room-a';
     workspaceLive.deleted = true;

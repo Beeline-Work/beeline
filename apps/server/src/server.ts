@@ -150,6 +150,7 @@ export interface ServerOptions {
   routerProjections?: RouterProjectionPolicy;
   /** Enable only after the media authority schema/fence cohort is proved. */
   mediaMetadataV1?:boolean;
+  operationOutcomes?: import('./operation-outcomes.js').OperationOutcomes;
   replay?: DurableLiveReplay;
   roomsMcp?: RoomsMcp;
   sentryWakeSecret?: string;
@@ -569,7 +570,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
-  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, readLimits, options.phone.execute);
+  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, readLimits, options.phone.execute, requestErrorStatus);
   const server = createServer((request, response) => {
     if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
       void serveRunnableArtifact(request, response, gameOrigin, options.objectService).catch(() => {
@@ -2441,13 +2442,6 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
            WHERE delivery.delivery_id IN (
              SELECT delivery_id FROM github_webhook_deliveries
              WHERE received_at<now()-interval '30 days'
-             ORDER BY received_at,delivery_id LIMIT 1024 FOR UPDATE SKIP LOCKED)`,
-        );
-        await options.database.query(
-          `UPDATE github_webhook_deliveries delivery SET payload=NULL,event_type=NULL,processed_at=NULL
-           WHERE delivery.delivery_id IN (
-             SELECT delivery_id FROM github_webhook_deliveries
-             WHERE payload IS NOT NULL
              ORDER BY received_at,delivery_id LIMIT 1024 FOR UPDATE SKIP LOCKED)`,
         );
       } catch (error) {

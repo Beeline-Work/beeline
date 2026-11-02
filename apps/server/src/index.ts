@@ -1,3 +1,4 @@
+import { failConnectingOffers } from './connector-offer-completion.js';
 import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { NextDayCheckin } from './next-day-checkin.js';
 import { RoomsMcp } from './rooms-mcp.js';
@@ -34,6 +35,7 @@ import {
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { PendingAttachmentCleanupLoop } from './pending-attachment-cleanup.js';
 import { BackgroundWork } from './background-work.js';
+import { OperationOutcomes, startOperationOutcomeFlush } from './operation-outcomes.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
@@ -401,8 +403,10 @@ async function main() {
   phone.setStarterOnboarding(starterOnboarding);
   daemon.setStarterOnboarding(starterOnboarding);
   const backgroundJobs = new BackgroundJobRunner();
+  const operationOutcomes = new OperationOutcomes();
   const sentryWakeAgentId = sentryWakeAgentFromEnv();
   const server = createBeelineServer({
+    operationOutcomes,
     replay: new DurableLiveReplay(database, live),
     roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth), phone, live, daemon, objectService, undefined, () => liveListener.projectionHealth().connected),
     sentryWakeAgentId,
@@ -539,6 +543,7 @@ async function main() {
     }
     await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
     await backgroundJobs.run('pending-attachment-cleanup', () => pendingAttachmentCleanup.runOnce(now));
+    await backgroundJobs.run('connector-offer-expiry', () => jobsDatabase.transaction(db => failConnectingOffers(db, { expired: true })));
     await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
     await backgroundJobs.run('corner-checks-blocked', () =>
       noteBlockedCornerChecks(jobsDatabase));
@@ -588,6 +593,7 @@ async function main() {
     await connectionPresence.start();
   }, port, host);
   void leader.run();
+  const stopOperationOutcomes = startOperationOutcomeFlush(jobsDatabase, operationOutcomes, backgroundJobs);
   const stopComputerExpiry = startComputerExpirySweep(database, live);
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
@@ -599,6 +605,7 @@ async function main() {
     await connectionPresence.stop();
     await liveListener.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await stopOperationOutcomes();
     await mountedAuth.close();
     await Promise.all([github?.stopCheckRefreshes(), githubJobs?.stopCheckRefreshes()]);
     await Promise.all([

@@ -416,7 +416,7 @@ describe('agent reply completion latency', () => {
     expect(event.trace.startedAt!).toBeLessThanOrEqual(event.trace.databaseAt);
     expect(event.trace.databaseAt).toBeLessThanOrEqual(event.trace.emittedAt);
   });
-  it('stamps the turn’s real cost and work on the rows that measure it', async () => {
+  it('stamps the turn’s real work on its own row', async () => {
     const request = `measure-${randomUUID()}`;
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@agent measure')`,
@@ -453,19 +453,7 @@ describe('agent reply completion latency', () => {
       },
       AGENT,
     );
-    // The serve the turn answered now carries the harness's own numbers, and
-    // 30,000 of 60,000 real prompt bytes are the 4,000-byte institutional block.
-    expect(
-      (
-        await database.query(
-          `SELECT actual_input_tokens,prompt_bytes FROM institutional_context_serves
-           WHERE room_id=$1 AND request_id=$2`,
-          [ROOM, request],
-        )
-      ).rows[0],
-    ).toEqual({ actual_input_tokens: 30_000, prompt_bytes: 60_000 });
-    // Tool calls live on the turn, which is where the unserved cohort is read
-    // from too, and the outcome carries the elapsed time and the sample.
+    // The receipt's real cost and work live on the turn itself.
     expect(
       (
         await database.query(
@@ -474,13 +462,5 @@ describe('agent reply completion latency', () => {
         )
       ).rows[0],
     ).toEqual({ tool_calls: 7, input_tokens: 45_000, output_tokens: 800 });
-    expect(
-      (
-        await database.query(
-          `SELECT detail FROM institutional_memory_outcomes WHERE room_id=$1 AND request_id=$2`,
-          [ROOM, request],
-        )
-      ).rows[0],
-    ).toMatchObject({ detail: { status: 'complete', toolCalls: 7 } });
   }, 10_000);
 });

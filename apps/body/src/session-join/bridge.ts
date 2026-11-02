@@ -83,16 +83,30 @@ export async function deliver(dir: string, joined: JoinedSession, session: LiveS
   }
 }
 
+/**
+ * Minutes after a wake was first handed to the session at which a wake still waiting is handed over again. A session
+ * that crashed, compacted or lost an order would otherwise never see it again: the bridge hands each wake over once,
+ * and the server re-wakes owed tags (5, 15 and 45 minutes) but not orders.
+ */
+export const WAKE_REDELIVERY_MINUTES = [5, 15, 45] as const;
+
 /** One long poll: new tags and wakes become inbox text; the cursor moves only after the text is saved. */
-export async function pollOnce(dir: string, key: string, runner: Runner, waitSeconds = 25): Promise<number> {
+export async function pollOnce(dir: string, key: string, runner: Runner, waitSeconds = 25, now = Date.now()): Promise<number> {
   const joined = readState(dir).sessions.find(s => s.key === key);
   if (!joined) return 0;
   const token = await accessToken(dir, key);
   // Wakes already handed over do not end the wait; a newer one does.
   const page = await callTool(joined, token, 'list_mentions', { cursor: joined.cursor, waitSeconds,
     ...(joined.wakesSeenAt ? { wakesAfter: joined.wakesSeenAt } : {}) }) as { mentions: Mention[]; nextCursor: string; wakes: Wake[] };
+  const history = joined.wakeDeliveries ?? {};
   const fresh = page.wakes.filter(w => !joined.deliveredWakes.includes(w.id));
-  const parts = [...page.mentions.map(m => renderMention(m, joined, runner)), ...fresh.map(w => renderWake(w, joined, runner))];
+  const again = page.wakes.filter(w => {
+    const seen = joined.deliveredWakes.includes(w.id) ? history[w.id] : undefined;
+    const minutes = seen ? WAKE_REDELIVERY_MINUTES[seen.redeliveries] : undefined;
+    return seen !== undefined && minutes !== undefined && now - Date.parse(seen.firstAt) >= minutes * 60_000;
+  });
+  const parts = [...page.mentions.map(m => renderMention(m, joined, runner)), ...fresh.map(w => renderWake(w, joined, runner)),
+    ...again.map(w => `Beeline: this is still waiting for you; handle it now.\n${renderWake(w, joined, runner)}`)];
   await updateState(dir, state => {
     const current = state.sessions.find(s => s.key === key);
     if (!current) return;
@@ -100,6 +114,12 @@ export async function pollOnce(dir: string, key: string, runner: Runner, waitSec
     current.cursor = page.nextCursor;
     // Remember only wakes still waiting, so the list stays as short as Beeline's.
     current.deliveredWakes = page.wakes.map(w => w.id);
+    // Keep the delivery history of wakes still waiting only, so it stays as short as Beeline's list.
+    const at = new Date(now).toISOString();
+    current.wakeDeliveries = Object.fromEntries(page.wakes.map(w => {
+      const seen = current.wakeDeliveries?.[w.id];
+      return [w.id, seen ? { ...seen, redeliveries: seen.redeliveries + (again.some(a => a.id === w.id) ? 1 : 0) } : { firstAt: at, redeliveries: 0 }];
+    }));
     const newest = page.wakes.map(w => w.createdAt).sort().at(-1);
     if (newest && (!current.wakesSeenAt || newest > current.wakesSeenAt)) current.wakesSeenAt = newest;
   });

@@ -3572,8 +3572,6 @@ async function executeAgentOperation(
     }
     case 'report':
       return JSON.stringify(await daemonExecute('report', { status: args.status as import('@beeline/api-contract/daemon').AgentReportStatus, text: args.text as string, ask: args.ask as string | undefined, to: args.to as string | undefined }));
-    case 'read':
-      return JSON.stringify(await daemonExecute('read', { address: args.address as string, limit: args.limit as number | undefined }));
     case 'inspect_corner': {
       if (typeof args.cornerId !== 'string' || !args.cornerId)
         throw new Error('cornerId is required');
@@ -3833,8 +3831,6 @@ async function executeAgentOperation(
       });
       return args.name === undefined ? 'updated the corner reviewer' : `renamed the corner to ${String(result.name)}`;
     }
-    case 'create_schedule':
-      return createSchedule(args);
     case 'create_subscription': {
       const source = stringArg(args, 'source');
       const event = stringArg(args, 'event');
@@ -3855,24 +3851,12 @@ async function executeAgentOperation(
         ? `Subscription ${String(result.id)} created for ${source} ${event}. The connected helper is registering its webhook; it runs your action once registration completes.`
         : `Subscription ${String(result.id)} created for ${source} ${event}. It runs your action when the event arrives.`;
     }
-    case 'list_subscriptions':
-      return JSON.stringify(await daemonExecute('listAgentSubscriptions', { roomId: agentScheduleRoomId() }));
-    case 'list_subscription_events': {
-      const result = await daemonExecute('listServiceSubscriptionEvents', { roomId: agentScheduleRoomId() });
-      return JSON.stringify(result);
-    }
     case 'delete_subscription': {
       const subscriptionId = stringArg(args, 'subscriptionId');
       if (!subscriptionId) throw new Error('subscriptionId is required');
       await daemonExecute('deleteAgentSubscription', { roomId: agentScheduleRoomId(), subscriptionId });
       return `Subscription ${subscriptionId} stopped.`;
     }
-    case 'subscribe_events':
-      return subscribeEvents(args);
-    case 'set_wake_delivery':
-      return setWakeDelivery(args);
-    case 'get_wake_delivery':
-      return JSON.stringify(await daemonExecute('getWakeDelivery', { roomId: agentScheduleRoomId() }));
     case 'watch': {
       const deps = agentScheduleDepsFromEnv();
       const result = await deps.execute('watchCorner', {
@@ -3891,26 +3875,11 @@ async function executeAgentOperation(
               : 'Watch removed';
       return `${headline}\n${JSON.stringify(result.snapshot, null, 2)}`;
     }
-    case 'list_event_subscriptions':
-      return listEventSubscriptions();
-    case 'emit_event':
-      return emitEvent(args);
-    case 'list_schedules':
-      return listSchedules();
-    case 'update_schedule':
-      return updateSchedule(args);
-    case 'delete_schedule':
-      return deleteSchedule(args);
     case 'request_grant':
       return requestGrant(args);
-    case 'request_shared_asset_isolation':
-      return requestSharedAssetIsolation(args);
     case 'list_grants':
       return listGrants();
-    case 'store_secret':
-      return storeSecret(args);
     case 'connectors_status':
-    case 'workbench_status':
       return workbenchStatus();
     case 'create_link_spend_request': {
       const context = await activeCommandContext();
@@ -3973,23 +3942,6 @@ async function executeAgentOperation(
       if (!query) throw new Error('query is required');
       return JSON.stringify(await daemonExecute('findConnectors', { roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'), query }));
     }
-    case 'connect_app': {
-      const app = stringArg(args, 'app')?.trim();
-      const reason = stringArg(args, 'reason')?.trim();
-      if (!app || !reason) throw new Error('app and reason are required');
-      const continuation = normalizeAppContinuation(args.continuation);
-      const context = await activeCommandContext();
-      return JSON.stringify(
-        await daemonExecute('connectApp', {
-          ...context,
-          app,
-          reason,
-          ...(continuation ? { continuation } : {}),
-          ...(args.reconnect === true ? { reconnect: true } : {}),
-          ...(args.noApi === true ? { noApi: true } : {}),
-        }),
-      );
-    }
     case 'list_app_tools': {
       const appId = stringArg(args, 'appId');
       if (!appId) throw new Error('appId is required');
@@ -4011,8 +3963,6 @@ async function executeAgentOperation(
         appId, tool, arguments: args.arguments,
       }));
     }
-    case 'offer_connector':
-      return offerConnector(args);
     case 'post_starter_video_preview':
       return JSON.stringify(await daemonExecute('postStarterVideoPreview', { ...await activeCommandContext(), videoObjectId: args.videoObjectId, frameObjectId: args.frameObjectId, title: args.title, description: args.description, visibility: args.visibility }));
     case 'post_starter_welcome':
@@ -4024,10 +3974,6 @@ async function executeAgentOperation(
       return JSON.stringify(await daemonExecute('postRepositoryOnboarding', {
         ...await activeCommandContext(), kind: name === 'post_repository_card' ? 'repository' : 'starters',
       }));
-    case 'ask_choice':
-      return askChoice(args);
-    case 'open_poll':
-      return openPoll(args);
     case 'run_granted_command':
       return runGrantedCommand(args);
     default:

@@ -1,5 +1,10 @@
 {
-  "about": "Every place the phone app opens a network connection, or names a host, besides the main live socket. scripts/check-phone-network-channels.mjs fails CI on any call site or host not listed here, and on any entry that is new or larger than on the base branch. The socket migration shrinks this list to the exceptions and links.",
+  "about": "Every place the phone app opens a network connection, or names a host, besides the main live socket. scripts/check-phone-network-channels.mjs fails CI on any call site or host not listed here, and on any entry that is new or larger than on the base branch. The socket migration shrinks this list to the exceptions and links. packageRoots lists the shared-package sources the phone bundles; every file reachable from a phone import there is scanned too, and that coverage may only grow.",
+  "packageRoots": [
+    "packages/api-contract/src",
+    "packages/buzz-client/src",
+    "packages/nostr/src"
+  ],
   "entries": [
     {
       "file": "apps/mobile/sources/sync/transport/live-connection.ts",
@@ -378,6 +383,125 @@
       "count": 1,
       "fate": "link",
       "why": "Repository link shown in the app."
+    },
+    {
+      "file": "packages/api-contract/src/phone-guards.ts",
+      "kind": "origin:github.com",
+      "count": 1,
+      "fate": "link",
+      "why": "Accepts only https://github.com/ links in tray item payloads; the phone opens them in the browser and never fetches them."
+    },
+    {
+      "file": "packages/api-contract/src/wallet.ts",
+      "kind": "origin:basescan.org",
+      "count": 1,
+      "fate": "link",
+      "why": "Block explorer link base for a wallet transaction; the phone opens it in the browser and never fetches it."
+    },
+    {
+      "file": "packages/api-contract/src/wallet.ts",
+      "kind": "origin:arbiscan.io",
+      "count": 1,
+      "fate": "link",
+      "why": "Block explorer link base for a wallet transaction; the phone opens it in the browser and never fetches it."
+    },
+    {
+      "file": "packages/api-contract/src/wallet.ts",
+      "kind": "origin:optimistic.etherscan.io",
+      "count": 1,
+      "fate": "link",
+      "why": "Block explorer link base for a wallet transaction; the phone opens it in the browser and never fetches it."
+    },
+    {
+      "file": "packages/api-contract/src/wallet.ts",
+      "kind": "origin:polygonscan.com",
+      "count": 1,
+      "fate": "link",
+      "why": "Block explorer link base for a wallet transaction; the phone opens it in the browser and never fetches it."
+    },
+    {
+      "file": "packages/api-contract/src/wallet.ts",
+      "kind": "origin:explorer.zora.energy",
+      "count": 1,
+      "fate": "link",
+      "why": "Block explorer link base for a wallet transaction; the phone opens it in the browser and never fetches it."
+    },
+    {
+      "file": "packages/api-contract/src/wallet.ts",
+      "kind": "origin:bscscan.com",
+      "count": 1,
+      "fate": "link",
+      "why": "Block explorer link base for a wallet transaction; the phone opens it in the browser and never fetches it."
+    },
+    {
+      "file": "packages/api-contract/src/wallet.ts",
+      "kind": "origin:snowtrace.io",
+      "count": 1,
+      "fate": "link",
+      "why": "Block explorer link base for a wallet transaction; the phone opens it in the browser and never fetches it."
+    },
+    {
+      "file": "packages/api-contract/src/wallet.ts",
+      "kind": "origin:etherscan.io",
+      "count": 1,
+      "fate": "link",
+      "why": "Block explorer link base for a wallet transaction; the phone opens it in the browser and never fetches it."
+    },
+    {
+      "file": "packages/api-contract/src/x-attribution.ts",
+      "kind": "global-object",
+      "count": 1,
+      "fate": "exception",
+      "why": "X ads attribution pixel in shared code the phone bundles; loads the third-party script only in a browser, never on auth or callback pages."
+    },
+    {
+      "file": "packages/api-contract/src/x-attribution.ts",
+      "kind": "origin:static.ads-twitter.com",
+      "count": 1,
+      "fate": "exception",
+      "why": "X ads attribution pixel in shared code the phone bundles; loads the third-party script only in a browser, never on auth or callback pages."
+    },
+    {
+      "file": "packages/buzz-client/src/auth-json.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "Onboarding identity binding and recovery (/auth/oidc/*, /auth/identity) through @beeline/buzz-client; runs before an authenticated socket exists."
+    },
+    {
+      "file": "packages/buzz-client/src/http.ts",
+      "kind": "fetch",
+      "count": 2,
+      "fate": "moves-to-socket",
+      "why": "Legacy Buzz relay HTTP query client bundled through the @beeline/buzz-client index; phone reads move to the main live socket."
+    },
+    {
+      "file": "packages/buzz-client/src/nip05.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "exception",
+      "why": "NIP-05 verification fetches /.well-known/nostr.json from the person's own third-party domain; the server socket cannot stand in for that host."
+    },
+    {
+      "file": "packages/buzz-client/src/nip05.ts",
+      "kind": "fetch-impl",
+      "count": 1,
+      "fate": "exception",
+      "why": "NIP-05 verification fetches /.well-known/nostr.json from the person's own third-party domain; the server socket cannot stand in for that host."
+    },
+    {
+      "file": "packages/buzz-client/src/room-view.ts",
+      "kind": "fetch",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "RoomViewClient HTTP reads bundled through the @beeline/buzz-client index; phone Room reads move to the main live socket."
+    },
+    {
+      "file": "packages/buzz-client/src/room-view.ts",
+      "kind": "fetch-impl",
+      "count": 1,
+      "fate": "moves-to-socket",
+      "why": "RoomViewClient HTTP reads bundled through the @beeline/buzz-client index; phone Room reads move to the main live socket."
     }
   ]
 }

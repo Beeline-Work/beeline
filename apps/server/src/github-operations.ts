@@ -1,3 +1,4 @@
+import { cornerObjectiveSql } from './corner-objective.js';
 import { NotificationWork } from './notification-work.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
@@ -42,7 +43,6 @@ import {
   reconcileCornerMergeBlockers,
   routeSystemCommand,
 } from './agent-command.js';
-import { recordInstitutionalCornerOutcome } from './institutional-memory-shadow.js';
 import { reviewerList, roomAgentHealth } from './agent-health.js';
 import { fireRepositorySubscriptions } from './agent-subscriptions.js';
 
@@ -1430,7 +1430,7 @@ export class GitHubOperations {
         `SELECT (fact.lifecycle->'pr'->>'number')::int number,fact.feature_branch,
            repository.repository_id,repository.installation_id,repository.full_name,
            corner.id corner_id,parent.id parent_id,corner.name corner_name,
-           COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,fact.objective summary
+           COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -1980,7 +1980,7 @@ export class GitHubOperations {
     const rows = (await this.database.query<CornerWebhookTarget & {
       repository: string; number: number; head_sha: string; combined_sha: string | null;
     }>(`SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
-      COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,fact.objective summary,
+      COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary,
       repository.repository_id,repository.installation_id,repository.full_name repository,
       (fact.lifecycle->'pr'->>'number')::int number,
       fact.lifecycle->'mergeQueue'->>'headSha' head_sha,
@@ -2037,7 +2037,7 @@ export class GitHubOperations {
       try {
         const target = (await this.database.query<CornerWebhookTarget & { repository: string; branch: string }>(
           `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
-             COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,fact.objective summary,
+             COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary,
              github.repository_id,github.installation_id,github.full_name repository,fact.feature_branch branch
            FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
            JOIN corner_facts fact ON fact.corner_id=corner.id
@@ -2121,7 +2121,7 @@ export class GitHubOperations {
     >(
       `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
               COALESCE(fact.owner_agent_id,corner.created_by,parent.created_by) author_id,
-              fact.objective summary,github.repository_id,github.installation_id,
+              ${cornerObjectiveSql('corner')} summary,github.repository_id,github.installation_id,
               github.full_name repository,fact.feature_branch branch,
               (fact.lifecycle->'pr'->>'number')::integer number,
               fact.lifecycle->'pr'->>'title' title,
@@ -2359,7 +2359,7 @@ export class GitHubOperations {
     }>(
       `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
          COALESCE(fact.owner_agent_id,first_agent.author_id,corner.created_by,parent.created_by) author_id,
-         fact.objective summary,
+         ${cornerObjectiveSql('corner')} summary,
          fact.feature_branch, fact.lifecycle->>'branch' lifecycle_branch,
          fact.lifecycle->'pr' IS NOT NULL has_pr,
          fact.lifecycle->'pr'->>'number' pr_number,
@@ -3044,16 +3044,6 @@ export class GitHubOperations {
        updated_at=now() WHERE corner_id=$1`,
       [cornerId, JSON.stringify(lifecycle)],
     );
-    // The outcome ledger records the TRANSITION, not the state: a corner that
-    // was already green and is re-read green did not reach green again, and a
-    // second row would move the measured cohort's clock for nothing.
-    if (patch.checks === 'passing' && previous.checks !== 'passing') {
-      await recordInstitutionalCornerOutcome(database, {
-        cornerId,
-        kind: 'ci_green',
-        detail: { checks: 'passing' },
-      });
-    }
   }
 
   private async systemNote(
@@ -3208,15 +3198,6 @@ export class GitHubOperations {
         ...merged,
         cardType: 'github-corner-note',
         card: { source: 'github', dedupe: mergeKey },
-      });
-      await recordInstitutionalCornerOutcome(database, {
-        cornerId: target.corner_id,
-        kind: 'merged',
-        detail: {
-          repository: pullRequest.repository,
-          ...(pullRequest.number !== undefined ? { pullRequestNumber: pullRequest.number } : {}),
-          ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
-        },
       });
       if (!locked) await enqueueCornerBranchDeletion(database, target.corner_id);
       await advanceCorner(database, target.corner_id, {

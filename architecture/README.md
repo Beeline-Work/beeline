@@ -22,6 +22,14 @@ each with its owner module and a one-line reason it cannot be derived:
 - Today's storage carries the reason `existing before the registry; weekly
   audit reviews`, counted by `bootstrapTotal`; a new entry needs its own reason.
 
+For a column scheduled for deletion, replace its reason string with an object:
+`{ "reason": "The existing reason.", "drop": "release 1.2.3" }`. A table can
+carry `drop` beside its existing `reason` and `columns`. Use a non-empty PR URL
+or release note reference. These columns (or every column of a marked table)
+do not count toward `unusedTotal`; lower that total if needed. The reason and
+`bootstrapTotal` accounting still apply, and the entries must match the schema
+until the migration drops them. Remove the entries when they are dropped.
+
 Registering a new table, column or key is not gated. Fix a failure by
 registering with a reason, or by deriving the value instead of storing it.
 
@@ -33,14 +41,14 @@ each app so a module cannot grow a second path for the same job.
 
 | Change | Review |
 | --- | --- |
-| Lower a `total`, add a rule, reword `invariant`/`fix`/`module`, register storage, lower `bootstrapTotal`/`unusedTotal` | None. Merge it. |
+| Lower a `total`, add a rule, reword `invariant`/`fix`/`module`, register storage or mark it for deletion, lower `bootstrapTotal`/`unusedTotal` | None. Merge it. |
 | Remove a rule whose pattern matches nothing any more | None. |
-| Raise a `total`, `bootstrapTotal` or `unusedTotal`, remove a live rule, change `pattern`/`flags`/`scope`/`owners`/`distinct` or the storage `scope`, or change the guard scripts | The owner's yes on the exact PR head. |
+| Raise a `total`, `bootstrapTotal` or `unusedTotal`, remove a live rule, change `pattern`/`flags`/`scope`/`owners`/`distinct` or the storage `scope`, or change the guard scripts | Check stays red; owner merges by hand. |
 
-A relaxing PR fails the check until the PR has an approving GitHub review from
-the repository owner (`lunchboxfortwo`) on its exact head commit. CI reads the
-PR's reviews with the workflow's `GITHUB_TOKEN`; after the owner approves,
-re-run the TYPECHECK job. A new commit needs a new approval.
+A relaxing PR always fails the architecture check. It stays red, so no
+auto-merge path can merge it. The repository owner (`lunchboxfortwo`) merges
+it by hand with an admin override when desired. GitHub review approval does
+not make the check pass.
 
 CI runs the base commit's copy of the guard, so a PR cannot weaken the check
 that judges it.

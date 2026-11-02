@@ -133,6 +133,8 @@ describe('Postgres live fanout', () => {
     await eventually(() => received.some(event => event.type === 'invalidate' && event.reason === 'postgres:rooms' && event.closeRequested === true));
     await database.query(`UPDATE corner_facts SET locked=locked WHERE corner_id=$1`, [corner]);
     await eventually(() => received.some(event => event.type === 'invalidate' && event.reason === 'postgres:corner_facts' && event.closeRequested === true));
+    await database.query(`UPDATE corner_github_cache SET lifecycle=lifecycle WHERE corner_id=$1`, [corner]);
+    await eventually(() => received.some(event => event.type === 'invalidate' && event.reason === 'postgres:corner_github_cache' && event.closeRequested === true));
   });
 
   it('re-arms Sentry batching on every server without publishing a Room message', async () => {
@@ -958,7 +960,7 @@ describe('Postgres live fanout', () => {
     );
     await eventually(() => nudges().length === 2);
     await database.query(
-      `UPDATE corner_facts SET lifecycle='{"lifecycle":"pr-open","checks":"pending"}'::jsonb
+      `UPDATE corner_github_cache SET lifecycle='{"lifecycle":"pr-open","checks":"pending"}'::jsonb
        WHERE corner_id=$1`,
       [corner],
     );

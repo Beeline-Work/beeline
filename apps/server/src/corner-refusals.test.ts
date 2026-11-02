@@ -68,7 +68,7 @@ it.each([
   ['STALE_HEAD', `pull request head is ${head}; review the current head before approving`],
 ] as const)('Reproduction SENTRY-C: %s returns unchanged code and excludes Sentry', async (code, detail) => {
   await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [parent, code === 'NOT_CONFIGURED_REVIEWER' ? null : agent]);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify(code === 'NO_PULL_REQUEST' ? {} : { pr: { number: 7, headSha: head } })]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify(code === 'NO_PULL_REQUEST' ? {} : { pr: { number: 7, headSha: head } })]);
   const error = await refusal('approveCornerMerge', `${code}: ${detail}`);
   expect(error).toBeInstanceOf(CornerVerdictRejectedError);
   expect(error.code).toBe(code);
@@ -136,7 +136,7 @@ it('Reproduction SENTRY-R: start workflow with missing starter returns aggregate
 });
 
 it('R1 / SENTRY-B: close_corner still archives when GitHub is not configured', async () => {
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify({ pr: { number: 7, headSha: head } })]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify({ pr: { number: 7, headSha: head } })]);
   vi.mocked(captureException).mockClear();
   const response = await fetch(`${origin}/v1/daemon/operations/archiveCorner`, {
     method: 'POST', headers: { authorization: 'Bearer bdt_refusal_fixture_123456789', 'content-type': 'application/json' },

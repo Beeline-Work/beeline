@@ -1,4 +1,6 @@
+import { withdrawMergeApprovalsBy } from './corner-merge-approval.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
+import { cornerLifecycleSql } from './corner-github-cache.js';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { deleteCornerBranchBestEffort } from './corner-branch-cleanup.js';
 import { cornerKindSql, cornerCommissionerSql } from './corner-opening.js';
@@ -40,7 +42,7 @@ import {
 } from './agent-sign-in.js';
 import { settleWorkflowGate, startWorkflow } from './workflow-runs.js';
 import { humanRoomAdmin, humanRoomMember } from './workflow-admin.js';
-import { releaseArchivedCornerHolds, setCornerHold } from './corner-holds.js';
+import { releaseArchivedCornerHolds, setCornerHold, collapseTombstonedCornerHolds } from './corner-holds.js';
 import {
   createAgentCommand,
   dropQueuedOrdersForStop,
@@ -166,7 +168,7 @@ import type { CommittedMessageLiveRow, LiveEvent, LiveHub } from './live.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from './permission-cards.js';
-import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
+import { advanceCorner, createCornerFacts, lockCornerLifecycle, setCornerLockedFact, clearCornerReviewers } from './corner-lifecycle.js';
 import {
   chatCornerCounts,
   cornerFactsSql,
@@ -275,7 +277,7 @@ import {
 } from './wallet.js';
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
-import { closeCornerPullRequestBestEffort, closeCornerState } from './corner-close.js';
+import { closeCornerPullRequestBestEffort, closeCornerState, markOwnedCornersAbandoned } from './corner-close.js';
 import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -2951,7 +2953,7 @@ export class PhoneService {
              'parent',(SELECT (to_jsonb(parent) - 'github_installation_id') ||
                jsonb_build_object('github_installation_id',parent.github_installation_id::text)
                FROM rooms parent WHERE parent.id=authorized_room.parent_id),
-             'facts',(SELECT (to_jsonb(f)-'objective') || jsonb_build_object('objective',${cornerObjectiveSql('authorized_room')},'owner_agent_id',${cornerOwnerSql('f.corner_id')}) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
+             'facts',(SELECT (to_jsonb(f)-'objective') || jsonb_build_object('lifecycle',${cornerLifecycleSql('f.corner_id')},'objective',${cornerObjectiveSql('authorized_room')},'owner_agent_id',${cornerOwnerSql('f.corner_id')}) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
              'owed',(SELECT owed.owed FROM rooms c
                ${cornerOwedLookupSql('c', '$2')} WHERE c.id=authorized_room.id),
              'brief',(SELECT to_jsonb(brief) || jsonb_build_object('approver_name',approver.name,'author_handle',brief_author.handle)
@@ -3353,7 +3355,7 @@ export class PhoneService {
         COALESCE((SELECT jsonb_agg(to_jsonb(work)) FROM (
           SELECT max(f.lifecycle->'pr'->>'title') title,
             f.lifecycle->'pr'->>'url' url,max(f.lifecycle->'pr'->>'mergedAt') merged_at
-          FROM corner_facts f JOIN rooms r ON r.id=f.corner_id
+          FROM corner_github_cache f JOIN rooms r ON r.id=f.corner_id
           WHERE r.workspace_id=$2 AND ${cornerOwnerSql('r.id')}=$1
             AND NULLIF(f.lifecycle->'pr'->>'mergedAt','') IS NOT NULL
             AND NULLIF(f.lifecycle->'pr'->>'title','') IS NOT NULL
@@ -6241,10 +6243,7 @@ export class PhoneService {
     const archived = await this.database.transaction(async database => {
       await authorize(database);
       if (locked !== undefined) {
-        await database.query(
-          `UPDATE corner_facts SET locked=$2 WHERE corner_id=$1`,
-          [roomId, locked],
-        );
+        await setCornerLockedFact(database, roomId, locked);
       } else {
         return (await closeCornerState(database, roomId)).archived;
       }
@@ -6665,11 +6664,7 @@ export class PhoneService {
         if (!replay.rowCount) throw new Error('corner id is already in use');
         return false;
       }
-      await database.query(
-        `INSERT INTO corner_facts(corner_id,lifecycle)
-         VALUES($1,'{"lifecycle":"working","checks":"unknown"}')`,
-        [id],
-      );
+      await createCornerFacts(database, id);
       await advanceCorner(database, id, {
         kind: 'open',
         workspaceId: parent.workspace_id,
@@ -8259,18 +8254,7 @@ export class PhoneService {
       // Each corner closes exactly as a human close does: its workflow run,
       // wake sources and corner state end with the archival.
       for (const corner of closingCorners.rows) await closeCornerState(database, corner.id);
-      await database.query(
-        `UPDATE corner_facts SET lifecycle=lifecycle||$2::jsonb
-         WHERE ${cornerOwnerSql('corner_facts.corner_id')}=ANY($1)`,
-        [
-          gone,
-          JSON.stringify({
-            lifecycle: 'done',
-            outcome: 'abandoned',
-            reason: `${account.name} deleted their account`,
-          }),
-        ],
-      );
+      await markOwnedCornersAbandoned(database, gone, `${account.name} deleted their account`);
       await database.query(
         `DELETE FROM agent_schedules WHERE agent_id=ANY($1) OR creator_id=ANY($1)`,
         [gone],
@@ -8305,17 +8289,7 @@ export class PhoneService {
       // now share the tombstone, only the hardest to release stays. Any member
       // may release an agent's hold, while a person's hold needs standing above
       // its own, so person holds outrank agent holds before standing does.
-      await database.query(
-        `WITH tombstoned AS (
-           SELECT id,row_number() OVER (PARTITION BY corner_id ORDER BY set_by_agent_id IS NOT NULL,
-             CASE standing WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,set_at,id) rank
-           FROM corner_merge_holds
-           WHERE released_at IS NULL
-             AND (coalesce(set_by_agent_id,actor_id)=ANY($1) OR coalesce(set_by_agent_id,actor_id)=$2))
-         UPDATE corner_merge_holds SET released_at=now(),released_by=$2
-         WHERE id IN (SELECT id FROM tombstoned WHERE rank>1)`,
-        [gone, DELETED_ACCOUNT_IDENTITY_ID],
-      );
+      await collapseTombstonedCornerHolds(database, gone, DELETED_ACCOUNT_IDENTITY_ID);
       // Corner records and installed apps are shared
       // history: they keep the tombstone as author, like messages do.
       for (const [table, column] of [
@@ -8335,9 +8309,10 @@ export class PhoneService {
             gone,
             DELETED_ACCOUNT_IDENTITY_ID,
           ]);
-      // Optional attributions simply lose the deleted id.
+      // Optional attributions simply lose the deleted id; a corner's own
+      // reviewer changes only through the corner module.
+      await clearCornerReviewers(database, gone);
       for (const [table, column] of [
-        ['corner_facts', 'reviewer_agent_id'],
         ['rooms', 'reviewer_agent_id'],
         ['connector_offers', 'accepted_by'],
         ['agent_schedules', 'owner_id'],
@@ -8388,7 +8363,7 @@ export class PhoneService {
       await database.query(`DELETE FROM schedule_receipts WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_mandates WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM permission_authority WHERE principal_id=ANY($1)`, [gone]);
-      await database.query(`DELETE FROM corner_merge_approvals WHERE approved_by=ANY($1)`, [gone]);
+      await withdrawMergeApprovalsBy(database, gone);
       await database.query(`DELETE FROM invites WHERE created_by=ANY($1)`, [gone]);
       await database.query(
         `DELETE FROM agent_pairing_codes WHERE created_by=ANY($1) OR claimed_by=ANY($1)`,

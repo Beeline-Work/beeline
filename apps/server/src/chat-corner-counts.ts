@@ -107,7 +107,7 @@ export function cornerFactsSql(viewerExpr: string): {
   member: string;
 } {
   return {
-    columns: `f.locked,f.lifecycle,${cornerRunStateSql('f.corner_id')} workflow_state,${cornerRunOutcomeSql('f.corner_id')} workflow_outcome,
+    columns: `f.locked,gh.lifecycle,${cornerRunStateSql('f.corner_id')} workflow_state,${cornerRunOutcomeSql('f.corner_id')} workflow_outcome,
       activity.worker_active,activity.reviewer_active,
       ${cornerLastTurnEndSql('c')} last_turn_ended_at,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
@@ -118,6 +118,7 @@ export function cornerFactsSql(viewerExpr: string): {
       ${followsCornerSql('c', viewerExpr)} follows_viewer,
       owed.owed_viewer,owed.attention`,
     joins: `LEFT JOIN corner_facts f ON f.corner_id=c.id
+    LEFT JOIN corner_github_cache gh ON gh.corner_id=c.id
     ${cornerWorkSql()}
     ${cornerBlockerSql()}
     LEFT JOIN LATERAL (SELECT * FROM messages message WHERE message.room_id=c.id
@@ -157,7 +158,7 @@ export function cornerWorkSql(ignoreCommander = false): string {
   const reviewerAgent = `ANY(array_remove(ARRAY[${cornerReviewerSql('c')}],NULL))`;
   const checkPassed = (source: string) =>
     `${source}.system_event->>'kind'='check-passed'
-      AND ${source}.system_event->'object'->>'headSha'=f.lifecycle->'pr'->>'headSha'`;
+      AND ${source}.system_event->'object'->>'headSha'=gh.lifecycle->'pr'->>'headSha'`;
   const reviewerTurn = `(t.agent_id=${reviewerAgent}
     OR EXISTS(SELECT 1 FROM agent_commands dispatched
       LEFT JOIN messages source ON source.id=dispatched.source_message_id

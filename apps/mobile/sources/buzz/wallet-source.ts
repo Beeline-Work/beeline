@@ -54,7 +54,7 @@ export class MonolithWalletSource implements WalletSource {
     amount: string;
     to: string;
   }): Promise<WalletSendOutcome> {
-    return monolithPhoneOperation('sendFromWallet', input);
+    return monolithPhoneOperation('sendFromWallet', { ...input, completionV1: true });
   }
 
   async grantDelegation(input: { workspaceId: string }): Promise<{ expiresAt: number | null }> {

@@ -3461,6 +3461,7 @@ async function executeAgentOperation(
     case 'wallet_pay':
       return JSON.stringify(
         await daemonExecute('walletPay', {
+          completionV1: true,
           agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
           roomId: agentScheduleRoomId(),
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
@@ -3472,6 +3473,7 @@ async function executeAgentOperation(
     case 'wallet_swap':
       return JSON.stringify(
         await daemonExecute('walletSwap', {
+          completionV1: true,
           agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
           roomId: agentScheduleRoomId(),
           ...(typeof args.chain === 'string' ? { chain: args.chain } : {}),
@@ -3484,6 +3486,7 @@ async function executeAgentOperation(
       const approve = args.approve as JsonObject | undefined;
       return JSON.stringify(
         await daemonExecute('walletContractCall', {
+          completionV1: true,
           agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
           roomId: agentScheduleRoomId(),
           chain: String(args.chain ?? ''),

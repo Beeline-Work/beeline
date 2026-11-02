@@ -71,6 +71,26 @@ export type CdpCredentials = {
   walletSecret?: string;
 };
 
+/** A broadcast may have happened. Its identity must never be silently resubmitted. */
+export class WalletTransactionPending extends Error {
+  constructor(
+    readonly txId?: string,
+    readonly approval?: { asset: string; amount: string; spender: string },
+  ) {
+    super(approval
+      ? `${txId ? 'Approval confirmation is pending.' : 'Approval submission is UNKNOWN.'} The dependent transaction was not submitted. Do not repeat this intent.`
+      : 'Transaction submission is UNKNOWN. Do not resubmit this intent; check the original transaction.');
+    this.name = 'WalletTransactionPending';
+  }
+}
+
+/** Only a definitive provider refusal can be classified as failed after dispatch. */
+class BroadcastRefused extends Error {}
+
+function transactionHash(value: unknown): value is string {
+  return typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
+}
+
 // ---------------------------------------------------------------------------
 // CdpWalletSource interface
 // ---------------------------------------------------------------------------
@@ -97,7 +117,7 @@ export interface CdpWalletSource {
   /** Convert `fromAsset` to `toAsset` in-wallet on one chain (same account, no transfer). */
   swap(
     address: string,
-    input: { chain: WalletChainId; fromAsset: string; toAsset: string; amount: string },
+    input: { chain: WalletChainId; fromAsset: string; toAsset: string; amount: string; completionV1?: true },
   ): Promise<{ txId: string; toAmount: string; status: 'confirmed' | 'pending' }>;
   /** Sign an EIP-712 message without broadcasting or selecting a network. */
   signTypedData(address: string, input: WalletTypedData): Promise<{ signature: string }>;
@@ -315,6 +335,7 @@ export class CdpWalletClient implements CdpWalletSource {
     method: string,
     path: string,
     body?: Record<string, unknown>,
+    broadcast = false,
   ): Promise<T> {
     const fullPath = `${API_BASE}${path}`;
     const jwt = cdpJwt(this.credentials, method, fullPath);
@@ -322,20 +343,38 @@ export class CdpWalletClient implements CdpWalletSource {
       throw new Error('CDP wallet secret not configured: COINBASE_CDP_WALLET_SECRET is required for user operations');
     }
     const walletJwt = walletAuthJwt(this.walletKey, method, fullPath, body);
-    const response = await externalFetch(`https://${CDP_HOST}${fullPath}`, {
-      method,
-      headers: {
-        authorization: `Bearer ${jwt}`,
-        'x-wallet-auth': walletJwt,
-        'content-type': 'application/json',
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
-    if (!response.ok) {
-      const text = await response.text();
-      throw new Error(`CDP ${method} ${fullPath} failed (${response.status}): ${text.slice(0, 300)}`);
+    // Preflight/auth failures happen before admission and remain ordinary failures.
+    const request = async (): Promise<T> => {
+      const response = await externalFetch(`https://${CDP_HOST}${fullPath}`, {
+        method,
+        headers: {
+          authorization: `Bearer ${jwt}`,
+          'x-wallet-auth': walletJwt,
+          'content-type': 'application/json',
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+      if (!response.ok) {
+        if (broadcast) {
+          // No body fields are needed to classify a refused/uncertain send.
+          // Release the response rather than leaving an unread provider stream.
+          void response.body?.cancel().catch(() => undefined);
+          // Timeouts, throttling, conflicts and server failures do not prove nonexecution.
+          if ([400, 401, 403, 404, 405, 415, 422].includes(response.status))
+            throw new BroadcastRefused(`CDP refused transaction (${response.status})`);
+          throw new WalletTransactionPending();
+        }
+        const text = await response.text();
+        throw new Error(`CDP ${method} ${fullPath} failed (${response.status}): ${text.slice(0, 300)}`);
+      }
+      return (await response.json()) as T;
+    };
+    if (!broadcast) return request();
+    try { return await request(); }
+    catch (error) {
+      if (error instanceof BroadcastRefused || error instanceof WalletTransactionPending) throw error;
+      throw new WalletTransactionPending();
     }
-    return (await response.json()) as T;
   }
 
   // -----------------------------------------------------------------------
@@ -475,6 +514,7 @@ export class CdpWalletClient implements CdpWalletSource {
         asset.token
           ? { to: asset.token, data: erc20TransferData(input.to, amount) }
           : { to: input.to, value: amount },
+        input.completionV1 === true,
       ),
     };
   }
@@ -486,18 +526,28 @@ export class CdpWalletClient implements CdpWalletSource {
     if (call.approve) {
       const asset = evmAsset(call.chain, call.approve.asset);
       if (!asset.token) throw new Error('approve needs a token, not the native asset');
-      const approval = await this.sendEvmTransaction(address, call.chain, {
-        to: asset.token,
-        data: erc20ApproveData(call.contract, parseUnits(call.approve.amount, asset.decimals)),
-      });
-      await waitForReceipt(call.chain, approval);
+      let approval: string;
+      try {
+        approval = await this.sendEvmTransaction(address, call.chain, {
+          to: asset.token,
+          data: erc20ApproveData(call.contract, parseUnits(call.approve.amount, asset.decimals)),
+        }, call.completionV1 === true);
+      } catch (error) {
+        if (error instanceof WalletTransactionPending)
+          throw new WalletTransactionPending(error.txId, { ...call.approve, spender: call.contract });
+        throw error;
+      }
+      if (call.completionV1) {
+        if (!(await inspectReceipt(call.chain, approval)))
+          throw new WalletTransactionPending(approval, { ...call.approve, spender: call.contract });
+      } else await waitForLegacyReceipt(call.chain, approval);
     }
     return {
       txId: await this.sendEvmTransaction(address, call.chain, {
         to: call.contract,
         data: call.data,
         ...(value ? { value } : {}),
-      }),
+      }, call.completionV1 === true),
     };
   }
 
@@ -511,6 +561,7 @@ export class CdpWalletClient implements CdpWalletSource {
     address: string,
     network: WalletChainId,
     tx: { to: string; value?: bigint; data?: string; gas?: bigint },
+    completionV1 = false,
   ): Promise<string> {
     if (!this.walletKey) throw new Error('Wallet secret required for sends');
     const chain = EVM_CHAINS[network];
@@ -519,7 +570,9 @@ export class CdpWalletClient implements CdpWalletSource {
         'POST',
         `/evm/accounts/${address}/send/transaction`,
         { network, transaction: serializeEip1559({ chainId: chain.chainId, ...tx }) },
+        completionV1,
       );
+      if (completionV1 && !transactionHash(result?.transactionHash)) throw new WalletTransactionPending();
       return result.transactionHash;
     }
     const call = {
@@ -550,7 +603,14 @@ export class CdpWalletClient implements CdpWalletSource {
         }),
       },
     );
-    return String(await rpc(network, 'eth_sendRawTransaction', [signed.signedTransaction]));
+    if (!completionV1) return String(await rpc(network, 'eth_sendRawTransaction', [signed.signedTransaction]));
+    // The signer has not broadcast. Once this one call is admitted, any missing
+    // response is uncertain; the generic RPC adapter cannot prove nonexecution.
+    try {
+      const hash = await rpc(network, 'eth_sendRawTransaction', [signed.signedTransaction]);
+      if (!transactionHash(hash)) throw new WalletTransactionPending();
+      return hash;
+    } catch { throw new WalletTransactionPending(); }
   }
 
   /**
@@ -561,7 +621,7 @@ export class CdpWalletClient implements CdpWalletSource {
    */
   async swap(
     address: string,
-    input: { chain: WalletChainId; fromAsset: string; toAsset: string; amount: string },
+    input: { chain: WalletChainId; fromAsset: string; toAsset: string; amount: string; completionV1?: true },
   ): Promise<{ txId: string; toAmount: string; status: 'confirmed' | 'pending' }> {
     const chain = EVM_CHAINS[input.chain];
     if (!chain.cdpSwap) throw new Error(`swap unsupported on ${input.chain}`);
@@ -578,23 +638,42 @@ export class CdpWalletClient implements CdpWalletSource {
       permit2?: { eip712?: WalletTypedData } | null;
       transaction?: { to: string; data: string; value?: string; gas?: string };
     };
-    const quote = async (): Promise<SwapQuote> =>
-      this.devRequest<SwapQuote>('POST', '/evm/swaps', {
+    const quote = async (): Promise<SwapQuote> => {
+      const result = await this.devRequest<SwapQuote>('POST', '/evm/swaps', {
         network: input.chain,
         fromToken: from.token ?? NATIVE_TOKEN,
         toToken: to.token ?? NATIVE_TOKEN,
         fromAmount: fromAmount.toString(),
         taker: address,
       });
+      if (input.completionV1) {
+        const spender = result?.issues?.allowance?.spender;
+        if (spender !== undefined && !isEvmAddress(spender))
+          throw new Error('CDP swap quote returned an invalid approval spender');
+        if (result?.transaction && !isEvmAddress(result.transaction.to))
+          throw new Error('CDP swap quote returned an invalid transaction recipient');
+      }
+      return result;
+    };
     let swap = await quote();
     if (swap.liquidityAvailable === false) throw new Error(`no swap liquidity on ${input.chain}`);
     const spender = swap.issues?.allowance?.spender;
     if (spender && from.token) {
-      const approval = await this.sendEvmTransaction(address, input.chain, {
-        to: from.token,
-        data: erc20ApproveData(spender, fromAmount),
-      });
-      await waitForReceipt(input.chain, approval);
+      let approval: string;
+      try {
+        approval = await this.sendEvmTransaction(address, input.chain, {
+          to: from.token,
+          data: erc20ApproveData(spender, fromAmount),
+        }, input.completionV1 === true);
+      } catch (error) {
+        if (error instanceof WalletTransactionPending)
+          throw new WalletTransactionPending(error.txId, { asset: from.symbol, amount: input.amount, spender });
+        throw error;
+      }
+      if (input.completionV1) {
+        if (!(await inspectReceipt(input.chain, approval)))
+          throw new WalletTransactionPending(approval, { asset: from.symbol, amount: input.amount, spender });
+      } else await waitForLegacyReceipt(input.chain, approval);
       swap = await quote();
     }
     if (!swap.transaction) throw new Error('CDP swap quote returned no transaction');
@@ -603,16 +682,23 @@ export class CdpWalletClient implements CdpWalletSource {
       const { signature } = await this.signTypedData(address, swap.permit2.eip712);
       data = appendPermit2Signature(data, signature);
     }
+    // Parse the output before admitting a new financial effect. A malformed
+    // quote must not turn a completed broadcast into a later parsing failure.
+    const toAmount = input.completionV1
+      ? formatUnits(BigInt(swap.toAmount ?? '0'), to.decimals)
+      : undefined;
     const txId = await this.sendEvmTransaction(address, input.chain, {
       to: swap.transaction.to,
       data,
       ...(swap.transaction.value ? { value: BigInt(swap.transaction.value) } : {}),
       ...(swap.transaction.gas ? { gas: BigInt(swap.transaction.gas) } : {}),
-    });
-    const confirmed = await waitForReceipt(input.chain, txId, true);
+    }, input.completionV1 === true);
+    const confirmed = input.completionV1
+      ? await inspectReceipt(input.chain, txId)
+      : await waitForLegacyReceipt(input.chain, txId, true);
     return {
       txId,
-      toAmount: formatUnits(BigInt(swap.toAmount ?? '0'), to.decimals),
+      toAmount: toAmount ?? formatUnits(BigInt(swap.toAmount ?? '0'), to.decimals),
       status: confirmed ? 'confirmed' : 'pending',
     };
   }
@@ -638,8 +724,16 @@ export class CdpWalletClient implements CdpWalletSource {
   }
 }
 
-/** Wait (up to a minute) for a transaction to be mined successfully. */
-async function waitForReceipt(chain: WalletChainId, txHash: string, allowPending = false): Promise<boolean> {
+/** One admitted observation. A pending response schedules no further source read. */
+async function inspectReceipt(chain: WalletChainId, txHash: string): Promise<boolean> {
+  const receipt = await rpc(chain, 'eth_getTransactionReceipt', [txHash], AbortSignal.timeout(20_000))
+    .catch(() => null) as { status?: string } | null;
+  if (receipt?.status === '0x0') throw new Error(`transaction ${txHash} reverted`);
+  return receipt?.status === '0x1';
+}
+
+/** Compatibility adapter for old JS/Body. Its repeated observations remain migration debt. */
+async function waitForLegacyReceipt(chain: WalletChainId, txHash: string, allowPending = false): Promise<boolean> {
   const deadline = Date.now() + 60_000;
   for (let attempt = 0; attempt < 30 && Date.now() < deadline; attempt += 1) {
     const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));

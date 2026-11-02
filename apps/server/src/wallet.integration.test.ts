@@ -1,6 +1,6 @@
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { createHash, createHmac, generateKeyPairSync } from 'node:crypto';
-import { CdpWalletClient } from './cdp-client.js';
+import { CdpWalletClient, WalletTransactionPending } from './cdp-client.js';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
@@ -780,6 +780,85 @@ describe('wallet over the fake CDP seam', () => {
     expect(rows[0]!.text).toContain('confirmation pending');
     expect(rows[0]!.text).not.toContain('100 ETH');
     expect((await database.query(`SELECT id FROM wallet_transactions WHERE tx_id=$1`, [hash])).rows).toHaveLength(0);
+  });
+
+  it('completionV1 phone and agent sends preserve UNKNOWN without a success ledger or automatic resend', async () => {
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'base', 'usdc', 500);
+    const source = vi.spyOn(walletSource(), 'sendTransaction').mockImplementation(async (_address, input) => {
+      expect(input.completionV1).toBe(true);
+      throw new WalletTransactionPending();
+    });
+    const input = { completionV1: true, chain: 'base', asset: 'usdc', amount: '2', to: `0x${'7'.repeat(40)}` };
+    expect(await phoneOperation('sendFromWallet', { ...input, workspaceId: WORKSPACE })).toEqual({
+      outcome: 'pending', reason: expect.stringContaining('UNKNOWN'),
+    });
+    expect((await daemonOperation('walletPay', { ...input, agentId: HELPER })).body).toEqual({
+      outcome: 'pending', reason: expect.stringContaining('UNKNOWN'),
+    });
+    expect(source).toHaveBeenCalledTimes(2); // Two explicit independent actions; neither is redispatched.
+    const pending = (await notices()).filter(row => row.card.status === 'pending');
+    expect(pending).toHaveLength(2);
+    expect(pending.every(row => !row.card.txUrl && row.card.reason?.includes('UNKNOWN'))).toBe(true);
+    expect(pending.every(row => row.direct_participants.includes(HUMAN))).toBe(true);
+    expect((await database.query(`SELECT id FROM wallet_transactions WHERE identity_id=$1 AND direction='out'`, [HUMAN])).rows).toHaveLength(0);
+  });
+
+  it.each([false, true])('an unconfirmed approval stays owner/chain/hash-bound and never submits its dependent call (provider first=%s)', async providerFirst => {
+    const wallet = await createdWallet();
+    await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+    fundChain(wallet.address, 'base', 'usdc', 500);
+    const hash = `0x${'c'.repeat(64)}`;
+    const contract = `0x${'7'.repeat(40)}`;
+    const client = new CdpWalletClient({ keyId: 'approval-fixture',
+      keySecret: generateKeyPairSync('ed25519').privateKey.export({ type: 'pkcs8', format: 'pem' }).toString(),
+      walletSecret: generateKeyPairSync('ec', { namedCurve: 'prime256v1' }).privateKey
+        .export({ type: 'pkcs8', format: 'pem' }).toString(),
+    });
+    const originalFetch = globalThis.fetch;
+    let submissions = 0;
+    let receipts = 0;
+    vi.stubGlobal('fetch', async (url: RequestInfo | URL, options?: RequestInit) => {
+      if (String(url).startsWith(origin)) return originalFetch(url, options);
+      if (String(url).endsWith('/send/transaction')) {
+        submissions += 1;
+        return Response.json({ transactionHash: hash });
+      }
+      const rows = JSON.parse(String(options?.body)) as { id: number; method: string }[];
+      return Response.json(rows.map(({ id, method }) => {
+        if (method === 'eth_getTransactionReceipt') { receipts += 1; return { id, result: null }; }
+        expect(method).toBe('eth_getTransactionByHash');
+        return { id, result: { from: wallet.address, to: contract, value: '0x0', input: '0x' } };
+      }));
+    });
+    const source = vi.spyOn(walletSource(), 'contractCall').mockImplementation((address, input) => client.contractCall(address, input));
+    const data = { address: wallet.address, transaction_hash: hash, network: 'base-mainnet' };
+    if (providerFirst)
+      expect((await deliverWalletEvent('wallet.transaction.confirmed', data, 'provider-first-approval')).status).toBe(200);
+    const response = await daemonOperation('walletContractCall', {
+      completionV1: true, agentId: HELPER, chain: 'base', contract, data: '0x12345678',
+      approve: { asset: 'usdc', amount: '2' },
+    });
+    expect(response.body).toMatchObject({ outcome: 'pending', txUrl: walletExplorerTxUrl('base', hash),
+      reason: expect.stringContaining('dependent transaction was not submitted') });
+    expect(source).toHaveBeenCalledWith(wallet.address, expect.objectContaining({ completionV1: true }));
+    expect({ submissions, receipts }).toEqual({ submissions: 1, receipts: 1 });
+    const readApproval = async () => (await notices()).find(row => row.card.txUrl === walletExplorerTxUrl('base', hash))!;
+    expect((await readApproval()).card).toMatchObject({ operation: 'approval',
+      status: providerFirst ? 'confirmed' : 'pending', amountText: '2 USDC', agentId: HELPER });
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', { ...data, address: `0x${'9'.repeat(40)}` }, 'wrong-owner')).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', { ...data, network: 'arbitrum-mainnet' }, 'wrong-chain')).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', { ...data, transaction_hash: `0x${'d'.repeat(64)}` }, 'wrong-hash')).status).toBe(200);
+    expect((await readApproval()).card.status).toBe(providerFirst ? 'confirmed' : 'pending');
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', data, 'approval-confirmed')).status).toBe(200);
+    expect((await deliverWalletEvent('wallet.transaction.confirmed', data, 'approval-confirmed-repeat')).status).toBe(200);
+    const settled = await readApproval();
+    expect(settled.card).toMatchObject({ operation: 'approval', status: 'confirmed', agentId: HELPER });
+    expect(settled.text).toContain('dependent transaction was not submitted');
+    expect(settled.text).toContain('new explicit action');
+    expect({ submissions, receipts }).toEqual({ submissions: 1, receipts: 1 });
+    expect((await database.query(`SELECT id FROM wallet_transactions WHERE identity_id=$1 AND direction='out'`, [HUMAN])).rows).toHaveLength(0);
   });
 
   it('failed phone sends, agent sends and swaps, delegation and venue refusals all reach @System', async () => {

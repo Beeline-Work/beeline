@@ -6,7 +6,7 @@ import { createServer as createSocketServer } from 'node:net';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { deliver, pollOnce, renderMention, serveOutboxes, toolViaOutbox } from './bridge.js';
+import { WAKE_REDELIVERY_MINUTES, deliver, pollOnce, renderMention, serveOutboxes, toolViaOutbox } from './bridge.js';
 import { runSessionCommand } from './command.js';
 import { readState, stateDir, takeInbox, updateState } from './store.js';
 
@@ -14,6 +14,7 @@ const scratch = () => mkdtempSync(join(process.env.HOME ?? '/var/tmp', 'sj-'));
 let server: Server, origin = '';
 const calls: { name: string; args: Record<string, unknown> }[] = [];
 let mentions: object[] = [];
+let wakes: object[] = [];
 let allowed = false;
 let cancelled = false;
 
@@ -33,7 +34,7 @@ beforeAll(async () => {
     if (request.url === '/mcp' && request.headers.authorization === 'Bearer access') {
       const { name, arguments: args } = input.params;
       calls.push({ name, args });
-      const data = name === 'list_mentions' ? { mentions, nextCursor: String(mentions.length), wakes: [] }
+      const data = name === 'list_mentions' ? { mentions, nextCursor: String(mentions.length), wakes }
         : name === 'list_rooms' ? { rooms: [{ id: 'r1', name: 'general' }], you: { id: 'm', name: 'repo-hermes', handle: 'repohermes' } }
         : name === 'send_message' ? { messageId: 'f'.repeat(64), woken: [] } : { updated: true };
       return json(200, { jsonrpc: '2.0', id: input.id, result: { content: [{ type: 'text', text: JSON.stringify({ data }) }] } });
@@ -184,6 +185,38 @@ describe('a tag reaches the joined session', () => {
     expect(await waiting).toEqual({ ok: true, data: { messageId: 'f'.repeat(64), woken: [] } });
     expect(readFileSync(join(cwd, '.beeline', '.gitignore'), 'utf8')).toBe('*\n');
     expect(readdirSync(join(cwd, '.beeline', 'outbox'))).toEqual([]);
+  });
+
+  // Reproduction (SESSION-JOIN-STRANDED-1): the bridge handed each wake over once and then suppressed it while it
+  // stayed pending, and orders get no server re-wake, so an order a session lost was never shown again.
+  it('SESSION-JOIN-STRANDED-1 hands a still-waiting order over again at 5, 15 and 45 minutes, then stops', async () => {
+    const home = scratch();
+    const dir = stateDir({ HOME: home, XDG_STATE_HOME: home });
+    await updateState(dir, state => { state.sessions = [{ key: 'pi:/w', agent: 'pi', cwd: '/w', name: 'p', server: origin, clientId: 'c',
+      refreshToken: 'r', accessToken: 'access', accessExpiresAt: Date.now() + 3_600_000, cursor: '0', deliveredWakes: [], joinedAt: '' }]; });
+    const tags = mentions;
+    mentions = [];
+    wakes = [{ id: 'w1', address: 'r1', reason: 'order', kind: 'order', text: 'Ship the fix', createdAt: '2026-11-02T00:00:00.000Z', next: 'Do the work, then call report with this address.' }];
+    const runner = { node: '/n', bundle: '/b' };
+    const t0 = Date.parse('2026-11-02T01:00:00.000Z');
+    const at = (minutes: number) => pollOnce(dir, 'pi:/w', runner, 0, t0 + minutes * 60_000);
+    try {
+      expect(await at(0)).toBe(1);
+      expect(takeInbox(dir, 'pi:/w')).toContain('> Ship the fix');
+      expect(await at(1)).toBe(0);
+      for (const minutes of WAKE_REDELIVERY_MINUTES) {
+        expect(await at(minutes)).toBe(1);
+        const text = takeInbox(dir, 'pi:/w');
+        expect(text).toContain('this is still waiting for you');
+        expect(text).toContain('> Ship the fix');
+        expect(await at(minutes + 0.5)).toBe(0);
+      }
+      expect(await at(600)).toBe(0);
+      // A handled wake leaves the list, and its history with it.
+      wakes = [];
+      await at(601);
+      expect(readState(dir).sessions[0]!.wakeDeliveries).toEqual({});
+    } finally { wakes = []; mentions = tags; }
   });
 
   it('C3 prefixes helper-injected Room messages with the Beeline header', () => {

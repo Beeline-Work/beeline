@@ -62,6 +62,15 @@ afterEach(async () => {
 });
 
 describe('per-room harness state isolation', () => {
+  it('does not provision the blocked Codex shell cap or its trust flags', async () => {
+    const root = await scratch('codex-shell-home-');
+    const operatorHome = await scratch('codex-shell-operator-');
+    const env = await prepareRoomAgentHome({ root, operatorHome, agentKind: 'codex', failClosed: true });
+    expect(env.CODEX_CONFIG).toBeUndefined();
+    expect(env.BEELINE_CODEX_SHELL_HOOK_COMMAND).toBeUndefined();
+    expect(existsSync(resolve(root, 'codex', 'beeline-shell-output.cjs'))).toBe(false);
+  });
+
   it('installs the Cursor shell hook in its isolated user config', async () => {
     const root = await scratch('cursor-shell-home-');
     const operatorHome = await scratch('cursor-shell-operator-');

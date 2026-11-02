@@ -1,5 +1,3 @@
-import { NATIVE_SHELL_OUTPUT_SCRIPT } from './native-shell-output.js';
-import { join } from 'node:path';
 import { CodexPromptDelivery } from './codex-prompt-delivery.js';
 import { readUsageWindow, type AgentUsage, type UsageWindow } from '@beeline/api-contract/daemon';
 /**
@@ -1237,25 +1235,6 @@ export class AcpClient extends EventEmitter {
     return this.supportsImagePrompts;
   }
 
-  private async trustNativeShellHook(cwd: string): Promise<void> {
-    const command = this.agentEnv.BEELINE_CODEX_SHELL_HOOK_COMMAND;
-    if (!command || !/(^|[/\\])codex-acp(\.[a-z]+)?$/i.test(this.agentLabel)) return;
-    const script = join(this.agentEnv.CODEX_HOME!, 'beeline-shell-output.cjs');
-    if (readFileSync(script, 'utf8') !== NATIVE_SHELL_OUTPUT_SCRIPT)
-      throw new Error('The generated native shell hook changed; prepare the isolated home again.');
-    const listing = await this.request('_codex/hooks/list', { cwd }) as { hooks?: Array<{
-      command: string; eventName: string; source: string; matcher: string;
-      key: string; currentHash: string;
-    }> };
-    // Trust only our generated session flag, never repository or plugin hooks.
-    const hooks = listing.hooks?.filter(hook => hook.command === command &&
-      hook.eventName === 'preToolUse' && hook.source === 'sessionFlags' && hook.matcher === '^Bash$');
-    if (hooks?.length !== 1) throw new Error('Codex did not expose the generated native shell hook. Update the Codex ACP adapter.');
-    const result = await this.request('_codex/hooks/trust', { cwd,
-      hooks: hooks.map(({ key, currentHash }) => ({ key, currentHash })) }) as { trusted?: boolean };
-    if (!result.trusted) throw new Error('Codex did not accept the generated native shell hook.');
-  }
-
   async sessionNew(opts: {
     cwd: string;
     mcpServers?: McpServerWire[];
@@ -1265,7 +1244,6 @@ export class AcpClient extends EventEmitter {
     /** Bounded startup probes use a shorter fail-fast deadline. */
     timeoutMs?: number;
   }): Promise<{ sessionId: string; raw: unknown }> {
-    await this.trustNativeShellHook(opts.cwd);
     const params: Record<string, unknown> = {
       cwd: opts.cwd,
       mcpServers: this.mcpLaunchFiles.prepare(opts.mcpServers ?? [], this.agentEnv.HOME).map((s) => ({
@@ -1326,7 +1304,6 @@ export class AcpClient extends EventEmitter {
     mcpServers?: McpServerWire[];
     mode?: SessionMode;
   }): Promise<{ sessionId: string; raw: unknown }> {
-    await this.trustNativeShellHook(opts.cwd);
     if (!this.supportsSessionLoading) {
       throw new Error('ACP agent does not advertise session/load');
     }

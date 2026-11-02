@@ -129,19 +129,15 @@ invocations remain separate processes; this adds no shell-state persistence.
 The archive lives with the session's existing temporary storage retention.
 Hooks are provisioned on POSIX hosts; Windows capture is not enabled.
 
-Codex currently cannot apply the permission-neutral command rewrite (see the
-blocking result below). The earlier passing cap measurements used an explicit
-allow decision and are superseded. Codex receives only the generated hook through its adapter's session flags.
-Before creating or loading a session, the built ACP client verifies the script
-against its shipped content, lists that exact command and matcher, and records
-trust for its current hash. It never trusts repository or plugin hooks. The
-Codex native proof exercises this production trust path without a global trust
-bypass. Cursor's proof uses the generated isolated user configuration from
+Codex shell capture is not provisioned in production. Its experimental native
+proof remains available and intentionally fails the recovery-path assertion;
+see the blocked evidence below. Cursor's proof uses the generated isolated user configuration from
 `prepareRoomAgentHome`.
 
 The native results received by the model were Claude (2,196 bytes on success;
-2,208 bytes on failure), Codex
-(2,301 bytes), and Cursor (2,228 bytes), all with complete recovery. Exact byte
+2,208 bytes on failure) and Cursor (2,228 bytes), with complete recovery.
+The historical Codex result (2,301 bytes) required an allow decision and does
+not describe the shipping behavior. Exact byte
 counts include each harness's native framing and can vary with temporary paths.
 The latest native CLIs already have their own truncation: the historical claim
 that every native result reaches the model in full is not true on these
@@ -189,6 +185,17 @@ only retains the rewrite when permissionDecision is Allow. The post-tool parser
 only supports feedback/additional context, without replacing shell output.
 The permission-neutral native replay receives (10,215 bytes) of native-truncated
 output with no recovery notice; prove-codex-shell-cap.mjs fails its recovery-path
-assertion. This supersedes the earlier Codex success claim. The shared hook
-remains permission-neutral; Codex retains native truncation until upstream
+assertion. This supersedes the earlier Codex success claim. The Codex launch flags, script provisioning and ACP hook trust path have been
+removed. The experimental proof alone installs and trusts its temporary hook.
+Codex retains native truncation until upstream
 supports a rewrite without an approval decision. No native proof is loosened.
+
+The installed version's [PreToolUse schema](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/hooks/schema/generated/pre-tool-use.command.output.schema.json)
+exposes updatedInput, but its parser rejects it without permissionDecision Allow
+(lines 441–450). The [PostToolUse schema](https://github.com/openai/codex/blob/rust-v0.165.0/codex-rs/hooks/schema/generated/post-tool-use.command.output.schema.json)
+contains updatedMCPToolOutput; the same version's parser explicitly rejects
+that field as unsupported (lines 431–435), and offers no shell-result replacement.
+Thus neither route provides permission-neutral shell capture in this installed
+version. The experimental proof keeps its strict recovery assertion and remains
+documented blocked. The home regression verifies that Codex receives neither
+a Beeline hook config, a hook script nor hook-trust launch flags.

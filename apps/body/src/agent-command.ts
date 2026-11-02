@@ -83,7 +83,6 @@ export function cursorAcpBridgeLaunch(): { command: string; args: string[] } {
 
 export const AGENT_BEHAVIORS: Readonly<Record<AgentKind, AgentBehavior>> = {
   codex: {
-    nativeShellHook: { config: 'launch-config', output: 'hook-specific' },
     label: 'Codex', cliSignIn: 'codex', roomTomlDefaults: true, codexCacheBindings: true, fastMode: true,
     quotaCredential: { homeEnv: 'CODEX_HOME', directory: '.codex', file: 'auth.json' },
     importedMcp: { format: 'toml', source: '.codex/config.toml', homeEnv: 'CODEX_HOME', file: 'config.toml' },

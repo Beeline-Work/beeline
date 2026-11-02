@@ -1,4 +1,4 @@
-/** SHELL-CAP: installed Codex against a local recorded Responses provider. */
+/** SHELL-CAP: blocked experimental Codex hook; expected to fail without permission-neutral rewrite support. */
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { AcpClient } from '../apps/body/dist/acp.js';
@@ -123,11 +123,19 @@ try {
       DEFAULT_AUTH_REQUEST: JSON.stringify({ methodId: 'api-key' }),
       MODEL_PROVIDER: 'proof',
       CODEX_CONFIG: JSON.stringify(config),
-      BEELINE_CODEX_SHELL_HOOK_COMMAND: nativeShellHookCommand(hook, 'codex'),
     },
   });
   try {
     await client.start();
+    // Experimental hook only: production does not provision or trust this hook.
+    const command = nativeShellHookCommand(hook, 'codex');
+    const listing = await client.request('_codex/hooks/list', { cwd: home });
+    const hooks = listing.hooks.filter(item => item.command === command &&
+      item.eventName === 'preToolUse' && item.source === 'sessionFlags' && item.matcher === '^Bash$');
+    assert.equal(hooks.length, 1, 'Experimental hook must be exposed');
+    const trust = await client.request('_codex/hooks/trust', { cwd: home,
+      hooks: hooks.map(({key, currentHash}) => ({key, currentHash})) });
+    assert.equal(trust.trusted, true, 'Experimental generated hook must be trusted');
     const { sessionId } = await client.sessionNew({ cwd: home, mode: 'edit' });
     await client.sessionPrompt(sessionId, 'Run the supplied shell command once.', 45000);
   } finally {
@@ -144,7 +152,7 @@ try {
   const proof = {
     reproduction: 'SHELL-CAP',
     harness: 'Codex',
-    provider: 'local recorded model; installed Codex through the built ACP client and scoped hook trust',
+    provider: 'local recorded model; experimental Codex hook through the built ACP client; not provisioned in production',
     originalBytes: Buffer.byteLength(original),
     modelBytes: Buffer.byteLength(text),
     capBytes: NATIVE_SHELL_OUTPUT_CAP,

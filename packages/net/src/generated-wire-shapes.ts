@@ -347,7 +347,7 @@ export const wireShapes: readonly WireShape[] = [
   shape({"kind":"literal","value":"wallet"}),
   shape({"kind":"literal","value":"tailscale"}),
   shape({"kind":"object","properties":{"machineId":{"node":1,"optional":false},"name":{"node":1,"optional":false}}}),
-  shape({"kind":"union","choices":[181,183,4,8]}),
+  shape({"kind":"union","choices":[303,181,183,4,8]}),
   shape({"kind":"union","choices":[6,347,348,349]}),
   shape({"kind":"literal","value":"reconnect"}),
   shape({"kind":"literal","value":"switch"}),

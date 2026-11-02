@@ -49,12 +49,15 @@ path. Record its `memory.current`, `memory.peak`, `memory.events`, `cpu.stat`
 and `cpu.max`, and each listener's resource counters. Record a host idle
 baseline separately because Beeline agents contribute to whole-host load.
 
-Use host load only as a safety backstop: Beeline agents, Gradle and emulators
-contribute independently of CI. Abort validation immediately when one-minute
-host load exceeds 25: cancel only the three recorded run IDs using `gh-axi run cancel RUN_ID`.
-Keep sampling until their work drains. Do not stop or restart Beeline agents
-or the shared no-mistakes daemon. If the pool does not drain after cancellation,
-report the condition to firstmate for intervention.
+Record host load as context: Beeline agents, Gradle and emulators contribute
+independently of CI, so host load alone does not trigger cancellation. Abort
+validation if CI exceeds its ten-CPU/60-GiB pool budget, sustained memory
+pressure or an OOM appears, or the `beeline-helper` user-service watchdog fires.
+Capture `memory.pressure`, available host memory, OOM counters and the helper
+service result/restart count alongside pool usage. Cancel only the recorded
+run IDs using `gh-axi run cancel RUN_ID` and keep sampling until work drains.
+Do not stop or restart Beeline agents or the shared no-mistakes daemon. If the
+pool does not drain after cancellation, report the condition to firstmate.
 
 For each run, retain its URL, PR head, creation time, Linux job start/finish
 and runner names using `gh-axi api repos/Beeline-Work/beeline/actions/runs/RUN_ID/jobs?per_page=100`.

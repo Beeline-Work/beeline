@@ -64,8 +64,9 @@ concurrent-PR acceptance remains a separate measurement. Judge CI by its
 cgroup CPU/memory and Linux job wall time, not whole-host load from agents,
 Gradle or emulators. Hosted detection/selection queues previously held server
 shards for more than fifteen minutes, so the credential-free control path now
-has a reserved local listener. The host-load safety backstop is 25; the resource budget
-remains ten CPUs and 60 GiB.
+has a reserved local listener. Host load is recorded as context; abort on CI
+pool budget violations, memory pressure/OOM or a helper watchdog event. The
+resource budget remains ten CPUs and 60 GiB.
 
 See [`infra/ci/README.md`](../infra/ci/README.md) for activation, measurement and
 abort instructions. The new budget is installed, but concurrent PR validation remains pending;

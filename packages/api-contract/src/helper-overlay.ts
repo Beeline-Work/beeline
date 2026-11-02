@@ -1,6 +1,5 @@
 /** Ephemeral helper overlays are independent of durable reads and commands.
  * No client cache inventory or read-pass metadata enters this protocol. */
-export const HELPER_OVERLAY_VERSION = 1;
 export const HELPER_OVERLAY_MAX_BYTES = 256 * 1024;
 export const HELPER_OVERLAY_MAX_FRAME_BYTES = 256 * 1024;
 export interface HelperOverlayIdentity {

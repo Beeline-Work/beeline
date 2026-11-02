@@ -1,8 +1,8 @@
 import { Button } from './Button';
 import { CloseButton } from './CloseGlyph';
-import { InlineRow } from './IndexRow';
+import { ContentTarget, InlineRow } from './IndexRow';
 import React from 'react';
-import { AppState, BackHandler, Platform, Pressable, Text, View } from 'react-native';
+import { AppState, BackHandler, Platform, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import * as Clipboard from 'expo-clipboard';
 import { StyleSheet } from 'react-native-unistyles';
@@ -210,11 +210,11 @@ export function ComputerSessionCard({ session, messageId, roomId, isDesktop, age
   return (
     <View style={styles.card} testID={`computer-session-card-${session.status}`}>
       {session.status === 'live' && access ? (
-        <Pressable onPress={() => void open()} accessibilityRole="button" accessibilityLabel={`Open ${session.title} browser`}>
+        <ContentTarget onPress={() => void open()} accessibilityRole="button" accessibilityLabel={`Open ${session.title} browser`}>
       <View style={styles.preview} pointerEvents="none">{visible && !fullViewer ? <ComputerStream session={{ ...session, access }} preview captureRef={captureRef} /> : null}</View>
       <View style={styles.caption}><Text numberOfLines={1} style={styles.title}>{session.title}</Text>
         <Text style={styles.kind}>Live browser</Text></View>
-    </Pressable>
+    </ContentTarget>
       ) : (
         <View style={styles.caption}><Text numberOfLines={1} style={styles.title}>{session.title}</Text>
       <Text style={styles.kind}>{session.status === 'ended' ? 'Session ended' : 'Live browser'}</Text></View>

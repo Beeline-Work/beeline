@@ -1,5 +1,5 @@
 import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
-import { InlineRow } from './IndexRow';
+import { ContentTarget, InlineRow } from './IndexRow';
 import { Button } from '@/components/buzz/Button';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
@@ -147,7 +147,7 @@ export const ArtifactCard = React.memo(function ArtifactCard({
       onOpenFull={openFull}
       testID={isPhotoGroup ? 'artifact-photo-group' : `artifact-${format}-${activeAttachment.name}`}
     >
-      <Pressable
+      <ContentTarget
         accessibilityLabel={`Open ${title} full screen`}
         accessibilityRole="button"
         onPress={openFull}
@@ -224,7 +224,7 @@ export const ArtifactCard = React.memo(function ArtifactCard({
             format={format === 'pdf' ? 'pdf' : format === 'svg' ? 'svg' : 'html'}
           />
         )}
-      </Pressable>
+      </ContentTarget>
     </ArtifactCardShell>
   );
 });

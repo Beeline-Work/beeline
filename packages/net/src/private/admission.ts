@@ -140,6 +140,7 @@ export class AdmissionOwner {
     const keys = new Set<string>();
     for (const request of requests) {
       if (!Object.hasOwn(policies, request.route)) return this.deny('unknown route');
+      routes[request.route].params.parse(request.input);
       const key = this.key(request);
       if (keys.has(key)) return this.deny('duplicate key');
       keys.add(key);

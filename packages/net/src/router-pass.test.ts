@@ -77,6 +77,14 @@ describe('local admission shadow core (P1)', () => {
     expect(prepared.isCurrent()).toBe(false); // cannot flush under a new session
   });
 
+  it('checks the real input codec before minting and preserves JSON optional-field semantics', () => {
+    const owner = new AdmissionOwner(identity);
+    expect(() => owner.focus(1, 'Room', [{ ...room, input: { roomId: 42 } } as never])).toThrow('contract mismatch');
+    const withOptional = { ...send, input: { ...send.input, attachments: undefined } };
+    const prepared = owner.tap('SendMessage', withOptional, pass => owner.spend(withOptional, pass));
+    expect(JSON.parse(prepared.wire.input)).toEqual(send.input);
+  });
+
   it('requires prepared command identity before admitting a send', () => {
     const owner = new AdmissionOwner(identity);
     expect(() => owner.tap('SendMessage', { ...send, input: { roomId: 'room-a', text: 'Hello' } }, () => {}))
@@ -122,6 +130,6 @@ describe('canonical local keys', () => {
     const cycle: unknown[] = []; cycle.push(cycle);
     for (const input of [cycle, NaN, Infinity, undefined, new Date(), new Array(2), { get a() { return 1; } }])
       expect(() => canonical(input)).toThrow();
-    expect(() => canonical('x'.repeat(65536))).toThrow('too large');
+    expect(() => canonical('x'.repeat(65536))).toThrow('byte limit');
   });
 });

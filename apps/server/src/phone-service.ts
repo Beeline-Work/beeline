@@ -1554,7 +1554,7 @@ export class PhoneService {
     }>(
       `WITH deleted AS (
          DELETE FROM workspace_deletion_notices WHERE identity_id=$1
-         RETURNING workspace_id,workspace_name
+         RETURNING workspace_id
        ), visible AS (
        SELECT w.id, w.name, w.avatar, w.visibility, m.role, w.updated_at, summary.room_count, summary.attention
        FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
@@ -1580,8 +1580,9 @@ export class PhoneService {
        SELECT visible.*,viewer.id viewer_id,viewer.kind viewer_kind,
          viewer.name viewer_name,viewer.handle viewer_handle,
          viewer.avatar viewer_avatar,viewer.face_id viewer_face_id,
-         (SELECT jsonb_agg(jsonb_build_object('workspaceId',workspace_id,
-            'workspaceName',workspace_name)) FROM deleted) deleted_notices
+         (SELECT jsonb_agg(jsonb_build_object('workspaceId',deleted.workspace_id,
+            'workspaceName',deletion.workspace_name))
+          FROM deleted JOIN workspace_deletions deletion USING(workspace_id)) deleted_notices
        FROM identities viewer LEFT JOIN visible ON true
        WHERE viewer.id=$1
        ORDER BY visible.updated_at DESC NULLS LAST,visible.id`,

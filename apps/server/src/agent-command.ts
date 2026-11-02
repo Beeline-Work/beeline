@@ -791,6 +791,9 @@ export async function createAgentCommand(
     await recordMcpMemberWebhook(db, input.agentId, appCallbackUrl, input.roomId, id,
         `${privatePayload?.kind === 'order' ? 'Order' : 'Wake'} (${input.reason}): ${privatePayload?.text ?? sourceText ?? ''}`.trim());
   }
+  if (command && input.sourceMessageId && !privatePayload && !input.avatarJob &&
+      ['human_tag','direct_message','agent_tag'].includes(input.reason))
+    await recordMcpMention(db, input.agentId, input.roomId, input.sourceMessageId);
   return command;
   });
 }

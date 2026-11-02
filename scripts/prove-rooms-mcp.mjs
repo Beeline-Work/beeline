@@ -274,8 +274,18 @@ try {
   const dm = (await options.phone.execute('resolveDirectMessage', { workspaceId: workspace, participantId: member }, person)).id;
   for (const [wakeRoom, text] of [[room, `@${wakeHandle} reply pong please`], [dm, 'reply pong please']]) {
     const wake = await options.phone.execute('sendRoomMessage', { roomId: wakeRoom, text }, person);
-    const reply = await client.callTool({ name: 'send_message', arguments: { room: wakeRoom, text: 'pong' } });
+    const pending = await client.callTool({ name: 'list_mentions', arguments: {} });
+    const pendingResult = JSON.parse(pending.content[0].text);
+    assert.ok(pendingResult.data.mentions.some(mention => mention.messageId === wake.messageId));
+    assert.ok(pendingResult.owedMentions.some(mention => mention.messageId === wake.messageId));
+    const reply = await client.callTool({ name: 'send_message', arguments: { room: wakeRoom, text: 'pong', replyTo: wake.messageId, idempotencyKey: 'first-client-key' } });
     assert.notEqual(reply.isError, true);
+    const replied = JSON.parse(reply.content[0].text);
+    assert.ok(!replied.owedMentions.some(mention => mention.messageId === wake.messageId));
+    const retry = await client.callTool({ name: 'send_message', arguments: { room: wakeRoom, text: 'retry pong', replyTo: wake.messageId, idempotencyKey: 'different-client-key' } });
+    assert.equal(JSON.parse(retry.content[0].text).data.messageId, replied.data.messageId);
+    assert.equal((await db.query('SELECT 1 FROM messages WHERE author_id=$1 AND reply_to_message_id=$2', [member, wake.messageId])).rowCount, 1);
+    transcript('OWED-TAG C5/C6/C7/C8 PASS: HTTP tool lists the owed tag; threaded send clears it; retry with a different client key returns the same single Room post.');
     let posts = 0;
     assert.equal(await deliverMcpMemberWebhooks(db, async () => { posts++; return new Response('', { status: 200 }); }), 1);
     assert.equal(posts, 1);

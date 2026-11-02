@@ -1,3 +1,4 @@
+import { owedMentions, clearOwedMention, mentionReplyKey, mentionReplyId } from './owed-mentions.js';
 import { YouTubeUploadRefusal } from './composio-apps.js';
 import { missingReviewAttachments } from './review-evidence.js';
 import { consumeStarterVideoPost, restoreStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
@@ -1284,6 +1285,8 @@ export class DaemonService {
           input as Input<'getWorkspaceRoster'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'getOwedMentions':
+        return { owedMentions: await owedMentions(this.database, authenticatedAgentId) } as Output<Name>;
       case 'getRoomInbox':
       case 'getRoomConversation':
       case 'getCornerCloseRequests':
@@ -1580,10 +1583,13 @@ export class DaemonService {
         )) as Output<Name>;
       case 'markAgentTurnSilent':
       case 'postRoomMessage': {
+        const declinedMessage = name === 'markAgentTurnSilent' ? (input as Input<'markAgentTurnSilent'>).messageId : undefined;
         if (name === 'markAgentTurnSilent') {
           const command = this.authorizedCommand;
           if (!command) throw new CommandRefusalError('silence requires an active turn', 409);
-          if (!['report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
+          if (declinedMessage && !await mentionReplyKey(this.database, authenticatedAgentId, command.room_id, declinedMessage))
+            throw new CommandRefusalError('messageId must be a tagged message in this Room', 400);
+          if (!declinedMessage && !['report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
             'corner_review_dispatch', 'corner_merge_conflict', 'computer_activity',
             'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
             'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed',
@@ -1595,6 +1601,7 @@ export class DaemonService {
             await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
               WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
               [command.room_id, authenticatedAgentId, command.turn_request_id]);
+            if (declinedMessage) await clearOwedMention(this.database, authenticatedAgentId, command.room_id, declinedMessage);
             return this.writeResult() as Output<Name>;
           }
           // Drain promised files through the same ordinary reply path before
@@ -1611,6 +1618,7 @@ export class DaemonService {
           await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
             WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
             [command.room_id, authenticatedAgentId, command.turn_request_id]);
+          if (declinedMessage) await clearOwedMention(this.database, authenticatedAgentId, command.room_id, declinedMessage);
           return this.writeResult() as Output<Name>;
         }
         return output as Output<Name>;
@@ -4361,7 +4369,8 @@ export class DaemonService {
     }
     if (!await checkinOutputAllowed(this.database, input.roomId, agentId, input.requestId, input))
       throw new ExpectedRefusalError('This one-time check-in is no longer due. Do not post another check-in message.');
-    const messageId = id();
+    const mentionKey = await mentionReplyKey(this.database, agentId, input.roomId, input.replyToMessageId);
+    const messageId = mentionKey ? mentionReplyId(mentionKey) : id();
     const parent = input.replyToMessageId
       ? (
           await this.database.query<{
@@ -4480,6 +4489,7 @@ export class DaemonService {
                  reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
                ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3))
+               ON CONFLICT(id) DO UPDATE SET id=messages.id
                RETURNING *
              ), completed AS (
                UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
@@ -4505,6 +4515,7 @@ export class DaemonService {
                reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
              ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                (SELECT selected_model FROM agents WHERE agent_id=$3))
+             ON CONFLICT(id) DO UPDATE SET id=messages.id
              RETURNING *
            )
            SELECT inserted.*,author.kind author_kind,author.name author_name,
@@ -4601,6 +4612,7 @@ export class DaemonService {
                  writable.agent_depth,attachment_payload.attachments,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload,recovery_barrier
+             ON CONFLICT(id) DO UPDATE SET id=messages.id
              RETURNING *
            ), completed AS (
              UPDATE agent_commands command SET
@@ -9073,6 +9085,15 @@ export class DaemonService {
     );
     await refuseTagPastCommander(this.database, input.cornerId, agentId, text,
       command.room_id === input.cornerId.toLowerCase() ? command : undefined);
+    let root: string | null = null;
+    if (input.replyTo !== undefined) {
+      if (!/^[0-9a-f]{64}$/.test(input.replyTo)) throw new CommandRefusalError('Invalid replyTo', 400);
+      const parent = (await this.database.query<{root: string}>(
+        'SELECT COALESCE(root_message_id,id) root FROM messages WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL', [input.replyTo, input.cornerId])).rows[0];
+      if (!parent) throw new CommandRefusalError('reply parent is not in this Room', 400);
+      root = parent.root;
+    }
+    const key = await mentionReplyKey(this.database, agentId, input.cornerId, input.replyTo);
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
         `WITH pending AS (
@@ -9081,15 +9102,16 @@ export class DaemonService {
              AND room_id=$2
            RETURNING url,name,mime_type,size,created_at,id
          )
-         INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event,attachments)
+         INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event,attachments,reply_to_message_id,root_message_id)
          SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3),
            CASE WHEN room.id=$5::uuid THEN $6 ELSE NULL END,
            jsonb_build_object('turnGenerationId',$7::text),
            COALESCE((SELECT jsonb_agg(jsonb_build_object('url',url,'name',name,'mimeType',mime_type,'size',size)
-             ORDER BY created_at,id) FROM pending),'[]'::jsonb)
+             ORDER BY created_at,id) FROM pending),'[]'::jsonb),$8,$9
          FROM rooms room WHERE room.id=$2 AND room.archived_at IS NULL
+         ON CONFLICT(id) DO UPDATE SET id=messages.id
          RETURNING id,created_at`,
-        [id(), input.cornerId, agentId, text, input.roomId, input.requestId, input.generationId],
+        [key ? mentionReplyId(key) : id(), input.cornerId, agentId, text, input.roomId, input.requestId, input.generationId, input.replyTo ?? null, root],
       )
     ).rows[0];
     if (!saved) throw new CommandRefusalError('post refused: address is archived', 409);
@@ -9309,6 +9331,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   assignWorkflowRole: true,
   getDaemonBootstrap: true,
   getWorkspaceRoster: true,
+  getOwedMentions: true,
   getRoomInbox: true,
   getRoomConversation: true,
   getRoomMessage: true,

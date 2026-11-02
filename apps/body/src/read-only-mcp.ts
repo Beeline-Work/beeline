@@ -3570,8 +3570,8 @@ async function executeAgentOperation(
     case 'no_reply_needed': {
       await activeCommandContext();
       const { commandReason } = await readTurnContextFile();
-      if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake. Call post({text: <your reply>}), then end the turn.');
-      await daemonExecute('markAgentTurnSilent', {});
+      if (!args.messageId && !nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake. Call post({text: <your reply>}), then end the turn.');
+      await daemonExecute('markAgentTurnSilent', { ...(args.messageId ? { messageId: args.messageId } : {}) });
       // The helper drains in-flight activity and drafts before its terminal receipt.
       // Completing here revokes authority while those writes are still running.
       const path = requiredEnv('BEELINE_TURN_CONTEXT_FILE');
@@ -3795,7 +3795,7 @@ async function executeAgentOperation(
       if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
         throw new Error('text must contain 1 to 16000 characters');
       return JSON.stringify(
-        await daemonExecute('postCornerMessage', { cornerId, text: args.text }),
+        await daemonExecute('postCornerMessage', { cornerId, text: args.text, ...(args.replyTo ? { replyTo: args.replyTo } : {}) }),
       );
     }
     case 'write_scratch_file':
@@ -4066,6 +4066,12 @@ function failure(id: JsonRpcRequest['id'], code: number, message: string): void 
   send({ jsonrpc: '2.0', id: id ?? null, error: { code, message } });
 }
 
+/** Fetch private obligations at the tool boundary, after any successful write. */
+export async function toolOwedContext() {
+  const result = await daemonExecute('getOwedMentions', {});
+  return { type: 'text' as const, text: JSON.stringify({ owedMentions: result.owedMentions ?? [] }) };
+}
+
 async function handleLine(line: string): Promise<void> {
   let request: JsonRpcRequest;
   try {
@@ -4118,12 +4124,13 @@ async function handleLine(line: string): Promise<void> {
           : await callTool(params.name, asObject(params.arguments));
       } catch (error) {
         success(request.id, {
-          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
+          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) },
+            ...(agentSurface ? [await toolOwedContext()] : [])],
           isError: true,
         });
         return;
       }
-      success(request.id, { content: [{ type: 'text', text: output }] });
+      success(request.id, { content: [{ type: 'text', text: output }, ...(agentSurface ? [await toolOwedContext()] : [])] });
       return;
     }
     failure(request.id, -32601, `method not found: ${request.method ?? ''}`);

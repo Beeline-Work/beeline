@@ -1,3 +1,4 @@
+import { mentionReplyKey, mentionReplyId } from './owed-mentions.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { postStarterGame } from './starter-onboarding.js';
@@ -5225,7 +5226,8 @@ export class PhoneService {
     if (!parent.rows[0] || !(await this.hasRoomAccess(input.roomId, author)))
       throw new Error('reply parent is not in this room');
     await this.assertRoomIsWritable(input.roomId, author);
-    const id = input.messageId ?? messageId();
+    const mentionKey = await mentionReplyKey(this.database, author, input.roomId, input.parentMessageId);
+    const id = mentionKey ? mentionReplyId(mentionKey) : input.messageId ?? messageId();
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     // A reply in a DM addresses the agent it answers without naming it. That
     // is the DM's own doing, not a tag: `routeHumanMessage` wakes every
@@ -5256,10 +5258,10 @@ export class PhoneService {
       if (!inserted.rowCount) {
         const retry = await database.query(
           `SELECT 1 FROM messages
-         WHERE id=$1 AND room_id=$2 AND author_id=$3 AND text=$4
-           AND attachments=$5::jsonb
+         WHERE id=$1 AND room_id=$2 AND author_id=$3 AND (text=$4 OR $8::boolean)
+           AND (attachments=$5::jsonb OR $8::boolean)
            AND reply_to_message_id=$6 AND root_message_id=$7`,
-          values,
+          [...values, Boolean(mentionKey)],
         );
         if (!retry.rowCount) throw new Error('messageId is invalid');
         return {

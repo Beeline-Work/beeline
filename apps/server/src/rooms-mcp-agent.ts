@@ -1,3 +1,4 @@
+import { clearOwedMention } from './owed-mentions.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { REPOSITORY_SUBSCRIPTION_EVENTS } from '@beeline/api-contract/daemon';
@@ -175,7 +176,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
     address: address(), inputs: { type: 'object', additionalProperties: { type: 'string', maxLength: 256 } },
   }, ['address']),
   tool('post', 'Post a public message at an address, as an agent does. Tags wake the named members; no assignment or report is owed. replyTo does not wake anyone; start with the asker\'s exact @handle.', {
-    address: address(), text: { type: 'string', minLength: 1, maxLength: 16000 },
+    address: address(), text: { type: 'string', minLength: 1, maxLength: 16000 }, replyTo: { type: 'string', pattern: '^[0-9a-f]{64}$' },
   }, ['address', 'text']),
   tool('post_artifact', 'Post a file at an address: html as text, or other content as base64 bytes. The file is validated like an agent\'s artifact. Code work goes in a corner with another agent as implementer: use feature/corner- plus the first 12 hex characters of its id with hyphens removed; push existing commits there in the same repository with your own GitHub access, or post the patch in that corner, not the Room, with base commit and test commands for the implementer to apply and push with the Beeline GitHub App; your owner\'s connection approval covers sharing the patch.', {
     address: address(), title: { type: 'string', minLength: 1, maxLength: 200 }, mime: { type: 'string' },
@@ -202,7 +203,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('react_to_message', 'React to a message with a supported emoji.', {
     address: address(), messageId: { type: 'string' }, emoji: { type: 'string', enum: [...MESSAGE_REACTION_EMOJIS] },
   }, ['address', 'messageId', 'emoji']),
-  tool('no_reply_needed', 'Mark the wakes waiting for you at an address handled without posting. Orders stay until you report.', { address: address() }, ['address']),
+  tool('no_reply_needed', 'Explicitly decline one tagged message by messageId without posting. Without messageId, mark non-order private wakes at an address handled; tags stay owed. Failed sends never decline tags.', { address: address(), messageId: { type: 'string', pattern: '^[0-9a-f]{64}$' } }, ['address']),
 ];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -395,7 +396,7 @@ export class RoomsMcpAgentTools {
       case 'send_operator_system_dm': return turn((_, context) => exec('sendOperatorSystemDm', { ...context, agentId: member, recipients: args.recipients, text: args.text }));
       case 'read_operator_system_dm': return turn((_, context) => exec('readOperatorSystemDm', { ...context, agentId: member, sendId: args.sendId }));
       case 'dispatch_release': return turn((_, context) => exec('dispatchRoomWorkflow', { ...context, inputs: args.inputs }));
-      case 'post': return turn((_, context) => exec('postCornerMessage', { ...context, cornerId: addressArg(args.address), text: args.text }));
+      case 'post': return turn((_, context) => exec('postCornerMessage', { ...context, cornerId: addressArg(args.address), text: args.text, replyTo: args.replyTo }));
       case 'post_artifact': return this.postArtifact(member, args, exec);
       case 'connect': return turn((_, context) => {
         if (args.mode === 'status') return exec('readAgentWorkbench', { roomId: context.roomId });
@@ -412,6 +413,10 @@ export class RoomsMcpAgentTools {
       case 'no_reply_needed': {
         const roomId = addressArg(args.address);
         await this.place(member, roomId);
+        if (args.messageId !== undefined) {
+          if (typeof args.messageId !== 'string' || !/^[0-9a-f]{64}$/.test(args.messageId)) throw new McpToolError('Invalid messageId');
+          return { cleared: await clearOwedMention(this.db, member, roomId, args.messageId) };
+        }
         const cleared = await this.db.query(
           `UPDATE agent_commands SET state='complete',completed_at=now()
            WHERE room_id=$1 AND agent_id=$2 AND state='pending' AND action IN ('input','resume')

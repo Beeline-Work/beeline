@@ -27,11 +27,11 @@ and did not fence subsequent commands.
 
 - `npx vitest run --root apps/server src/composio-apps.test.ts`: bare discovery
   omits schemas and stays within the byte budget (24,000); a query returns schemas.
-- `node scripts/prove-token-output.mjs`: the built MCP facade preserves the
+- `npm run prove:token-output`: the built MCP facade preserves the
   beginning and end and saves a recoverable original (400,049 bytes); the
   textual response stays within the cap (32,768 bytes). Images and audio
   retain their native representation and are excluded from the text budget.
-- `node --import tsx scripts/prove-token-workflow.mjs`: built HTTP start returns
+- `npm run prove:token-workflow`: built HTTP start returns
   an input error (400) containing all missing/invalid roles and allowed agents.
 - `npx vitest run --root apps/server src/free-agent-model-proxy.test.ts`:
   TOKEN-PAUSE shows real usage, suppresses delivery and claim, and permits them

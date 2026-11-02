@@ -26,6 +26,7 @@ if [[ "$verdict" == 2 ]]; then
     --night "$night" --run-id "$run_id" \
     --current "$run_dir/attempt-1/report.json" --rerun "$run_dir/attempt-2/report.json" \
     --baseline "$rig_state/last-pass.json" --commits "$run_dir/commits.json" --head "$head_sha" \
+    --first-load "$run_dir/attempt-1/capture/host-load.json" \
     --load "$run_dir/attempt-2/capture/host-load.json" --out "$run_dir/nightly.json" || verdict=$?
 fi
 echo "Nightly result: $run_dir/nightly.json"

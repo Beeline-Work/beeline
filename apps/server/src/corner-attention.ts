@@ -1,5 +1,4 @@
 import { cornerWaitingReportSql, humanReportCornerSql } from './corner-waiting-report.js';
-import { cornerOwedItemsSql } from './corner-owed.js';
 import { createHash } from 'node:crypto';
 import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -100,7 +99,7 @@ BEGIN
       UPDATE corner_attention_spans SET last_turn_ended_at=CASE
         WHEN EXISTS(SELECT 1 FROM rooms report_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('report_corner')}) waiting WHERE report_corner.id=corner)
           OR EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=corner AND released_at IS NULL)
-          OR EXISTS(SELECT 1 FROM (${cornerOwedItemsSql('corner')}) owed JOIN messages report ON report.id=owed.message_id
+          OR EXISTS(SELECT 1 FROM corner_owed owed JOIN messages report ON report.id=owed.message_id
             WHERE owed.corner_id=corner AND owed.blocking AND report.card->>'reportToId' IS NOT NULL
               AND (owed.expires_at IS NULL OR owed.expires_at>now())) THEN NULL
         ELSE clock_timestamp() END WHERE corner_id=corner;
@@ -166,6 +165,8 @@ DROP TRIGGER IF EXISTS corner_state_hold ON corner_merge_holds;
 CREATE TRIGGER corner_state_hold AFTER INSERT OR UPDATE OR DELETE ON corner_merge_holds
  FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
 DROP TRIGGER IF EXISTS corner_state_owed ON corner_owed;
+CREATE TRIGGER corner_state_owed AFTER INSERT OR UPDATE OR DELETE ON corner_owed
+ FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
 DROP TRIGGER IF EXISTS corner_state_schedule ON agent_schedules;
 CREATE TRIGGER corner_state_schedule AFTER INSERT OR UPDATE OR DELETE ON agent_schedules
  FOR EACH ROW EXECUTE FUNCTION corner_state_changed();

@@ -1,4 +1,3 @@
-import { CORNER_OWED_LIVE_SCHEMA } from './corner-owed-live.js';
 import { Client } from 'pg';
 import { cornerOwnerSql } from './corner-worker.js';
 import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
@@ -17,7 +16,7 @@ import {
 
 export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
 const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
-  'corner_follows', 'corner_merge_holds',
+  'corner_owed', 'corner_follows', 'corner_merge_holds',
 ]);
 const PARENT_ONLY_SQL = [...PARENT_ONLY_TABLES].map((table) => `'${table}'`).join(',');
 
@@ -301,7 +300,7 @@ BEGIN
         'cornerParentId', (SELECT parent_id FROM rooms WHERE id=COALESCE(NEW.corner_id,OLD.corner_id))
       );
     WHEN ${PARENT_ONLY_SQL} THEN
-      -- Equal payloads collapse repeated corner hints into one transaction notification.
+      -- Equal payloads collapse an owed refresh into one transaction notification.
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', 'UPDATE',
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
@@ -424,9 +423,6 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-${CORNER_OWED_LIVE_SCHEMA}
-DROP TRIGGER IF EXISTS beeline_notify_live_corner_owed ON corner_owed;
-
 -- Memory jobs no longer exist as work, so their rows no longer wake anyone.
 DROP TRIGGER IF EXISTS beeline_notify_live_institutional_memory_jobs ON institutional_memory_jobs;
 
@@ -497,7 +493,6 @@ interface LiveNotificationPayload {
   ownerOnly?: boolean;
   workspaceId?: string;
   sourceRoomId?: string;
-  owedChanged?: boolean;
   needsYouCandidate?: boolean;
   turnId?: string;
   kind?: string;
@@ -558,7 +553,6 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.identityId === 'string' ? { identityId: parsed.identityId } : {}),
       ...(parsed.ownerOnly === true ? { ownerOnly: true } : {}),
       ...(typeof parsed.workspaceId === 'string' ? { workspaceId: parsed.workspaceId } : {}),
-      ...(parsed.owedChanged === true ? { owedChanged: true } : {}),
       ...(typeof parsed.sourceRoomId === 'string' ? { sourceRoomId: parsed.sourceRoomId } : {}),
       ...(typeof parsed.needsYouCandidate === 'boolean'
         ? { needsYouCandidate: parsed.needsYouCandidate } : {}),
@@ -708,7 +702,6 @@ export class PostgresLiveListener {
     const payload = decodePayload(raw);
     if (!payload) return;
     if (payload.journalStreams?.length) this.live.journalChanged(payload.journalStreams);
-    if (payload.owedChanged) this.owedWake?.('owed');
     if (payload.table === 'sentry_wake_state') {
       this.owedWake?.('sentry');
       return;
@@ -1001,6 +994,8 @@ export class PostgresLiveListener {
       if (payload.cornerParentId)
         this.live.publish({ type: 'invalidate', roomId: payload.cornerParentId,
           reason: 'corner-status' });
+      // A new owed item may expire before the leader's next cycle.
+      if (payload.table === 'corner_owed') this.owedWake?.('owed');
       return;
     }
     if (payload.table === 'github_installations' || payload.table === 'github_repositories') {

@@ -2135,13 +2135,7 @@ it.each([
       scenario === 'authority revoked' ? /access|member|authority/i :
       scenario === 'revision changed' ? /revision changed/ : failure.message);
     expect(events).toHaveLength(0);
-    if (scenario === 'authority revoked') {
-      // The committed revocation itself journals an owed refresh for the corner;
-      // the failed revision and its commands still roll back completely.
-      const { journal: _after, ...rest } = await snapshot();
-      const { journal: _before, ...was } = before;
-      expect(rest).toEqual(was);
-    } else if (scenario !== 'revision changed') expect(await snapshot()).toEqual(before);
+    if (scenario !== 'revision changed') expect(await snapshot()).toEqual(before);
   }
   expect(attempts).toBe(expectedAttempts);
 });

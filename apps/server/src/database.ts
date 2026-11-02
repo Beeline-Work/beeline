@@ -65,7 +65,7 @@ import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
 import { cancelArchivedCornerAssignments, cancelStaleClosedCornerStops } from './corner-close.js';
-import { cornerOwedSchemaSql } from './corner-owed.js';
+import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
 import { logLockHolders, retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
@@ -3589,22 +3589,6 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY corner_human_reports_worker ON messages(author_id,created_at DESC,id DESC)
      WHERE card->>'reportToId' IS NOT NULL`,
   ));
-  await retryMigrationStep('corner return dependency index', () => createIndexConcurrently(
-    database, 'messages_owed_return_room_idx',
-    `CREATE INDEX CONCURRENTLY messages_owed_return_room_idx ON messages(room_id)
-     WHERE deleted_at IS NULL AND (card->>'sourceRoomId' IS NOT NULL OR
-       (presentation='message' AND text ~ '^(blocked|needs-decision|failed):[[:space:]]*[^[:space:]]'))`,
-  ));
-  await retryMigrationStep('corner grant card dependency index', () => createIndexConcurrently(
-    database, 'messages_owed_grants_idx',
-    `CREATE INDEX CONCURRENTLY messages_owed_grants_idx ON messages USING gin ((card->'grants') jsonb_path_ops)
-     WHERE card_type='grant-request'`,
-  ));
-  await retryMigrationStep('corner permission card index', () => createIndexConcurrently(
-    database, 'messages_permission_id_idx',
-    `CREATE INDEX CONCURRENTLY messages_permission_id_idx ON messages((card->>'permissionId'))
-     WHERE card_type='permission'`,
-  ));
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
@@ -3663,6 +3647,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'terminal-push-claims-v1', compactPushClaims));
   if (searchDocuments)
     console.log(`backfillMessageSearchDocuments: filled ${searchDocuments} message row(s)`);
+  await dataStep('corner owed backfill', () => backfillCornerOwed(database));
   await dataStep('continuous corner names', () =>
     workflowBackfillOnce(database, 'corner-names-continuous-v1', hyphenateCornerNames));
   await dataStep('corner follows backfill', () =>
@@ -4134,6 +4119,29 @@ export async function backfillPerItemEventSubscriptions(database: SqlDatabase): 
      WHERE id IN (SELECT id FROM memberships WHERE event_subscriptions ?| $1::text[] ORDER BY id LIMIT $2)`,
     [PER_ITEM_EVENT_KINDS],
   );
+}
+
+/**
+ * Older corners predate an explicit owner fact. The creating agent is authoritative
+ * when present; imported/legacy corners fall back to their first agent-authored post.
+ */
+/**
+ * Fill `corner_owed` from messages until the release that adds it is marked
+ * current (schema 17), so corners already owing someone keep reading so.
+ * Its triggers keep it current after that; a rerun before the marker only
+ * re-adds rows that are still owed.
+ */
+export async function backfillCornerOwed(database: SqlDatabase): Promise<void> {
+  const marked = await database.query<{ marked: boolean }>(
+    `SELECT to_regclass('beeline_schema_state') IS NOT NULL marked`,
+  );
+  if (marked.rows[0]?.marked) {
+    const current = await database.query<{ version: number }>(
+      `SELECT version FROM beeline_schema_state`,
+    );
+    if ((current.rows[0]?.version ?? 0) >= 26) return;
+  }
+  await database.query(cornerOwedBackfillSql());
 }
 
 export async function measureDatabase(database: SqlDatabase): Promise<{

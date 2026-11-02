@@ -1,4 +1,3 @@
-import { cornerOwedItemsSql } from './corner-owed.js';
 import type { SqlDatabase } from './database.js';
 import {
   askingMessageSql,
@@ -69,10 +68,10 @@ export class DeadlineExpiry {
        FROM (SELECT * FROM questions UNION SELECT * FROM approvals) due
        UNION
        SELECT jsonb_build_object(
-         'table','corner_state','operation','UPDATE',
+         'table','corner_owed','operation','UPDATE',
          'roomId',owed.corner_id,'cornerParentId',room.parent_id)
-       FROM rooms room CROSS JOIN LATERAL (${cornerOwedItemsSql('room.id', '$1::timestamptz')}) owed
-       WHERE owed.expires_at<=$2 AND room.parent_id IS NOT NULL AND room.archived_at IS NULL
+       FROM corner_owed owed JOIN rooms room ON room.id=owed.corner_id
+       WHERE owed.expires_at>$1 AND owed.expires_at<=$2 AND room.parent_id IS NOT NULL
        ) SELECT count(pg_notify($5,payload::text)) FROM notices`,
       [window[0], window[1], since, through, POSTGRES_LIVE_CHANNEL],
     );
@@ -89,9 +88,7 @@ export class DeadlineExpiry {
            to_timestamp((SELECT min(${cardExpiresAtSql()}) FROM messages
             WHERE ${EXPIRING_CARD_TYPES} AND deleted_at IS NULL
               AND ${cardExpiresAtSql()}>$2)/1000.0),
-           (SELECT min(owed.expires_at) FROM rooms room
-            CROSS JOIN LATERAL (${cornerOwedItemsSql('room.id')}) owed
-            WHERE room.parent_id IS NOT NULL AND room.archived_at IS NULL)
+           (SELECT min(expires_at) FROM corner_owed WHERE expires_at>now())
          )-now())*1000)::float8 ms`,
       [new Date(through), through],
     );

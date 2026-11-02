@@ -252,7 +252,7 @@ describe('native fingerprint gate', () => {
       eas.submit = { beta: { android: { track: 'beta', releaseStatus: 'completed' } } };
       writeFileSync(easFile, JSON.stringify(eas));
       const submitOnly = await runGate(fixture);
-      expect(submitOnly.status).toBe(0);
+      expect(submitOnly.status, submitOnly.stderr).toBe(0);
       expect(submitOnly.stderr).toBe('');
 
       // The retired capability-stripper had iOS mods only. Adding it back must

@@ -2243,7 +2243,7 @@ it('CALL-ERROR-1: a database access outage retains the caller; confirmed denial 
     service.access.mockRejectedValueOnce(Object.assign(new Error('network interrupted'), { code: 'ECONNRESET' }));
     await (runtime as any).heartbeat();
     expect(leave).not.toHaveBeenCalled(); expect(runtime.isClosed).toBe(false);
-    expect(service.access).toHaveBeenCalledTimes(2);
+    expect(service.access).toHaveBeenCalledTimes(1);
     await runtime.utterance('human', 'Ruby hello');
     expect(service.recordAnswer).toHaveBeenCalledOnce();
     service.access.mockRejectedValueOnce(new Error('voice call access denied'));
@@ -2274,7 +2274,7 @@ it('CALL-ERROR-1: cleanup continues after a failing meter and disconnect', async
   expect(audioClose).toHaveBeenCalledOnce(); expect(service.runtimeClosed).toHaveBeenCalledOnce();
 });
 
-it('CALL-ERROR-1: exhausted lease retries retain valid ownership, then expiry closes only the worker', async () => {
+it('CALL-ERROR-1: one failed lease attempt retains valid ownership, then expiry closes only the worker', async () => {
   const { service } = conversationService(1);
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   await vi.waitFor(() => expect((runtime as any).touching).toBe(false));
@@ -3329,4 +3329,26 @@ it('inactivity deadlines read only at warning, tone and end, then park until rea
     await vi.advanceTimersByTimeAsync(45_000);
     expect(service.callWorkState).toHaveBeenCalledTimes(4);
   } finally { await runtime.close(); now.mockRestore(); vi.useRealTimers(); }
+});
+
+
+it('voice access failure stays parked until an independent resumed action', async () => {
+  const { service } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  await vi.waitFor(() => expect((runtime as any).touching).toBe(false));
+  vi.useFakeTimers();
+  service.access.mockClear();
+  service.access.mockRejectedValue(Object.assign(new Error('Synthetic unavailable'), { code: 'ECONNRESET' }));
+  try {
+    await (runtime as any).heartbeat();
+    // Lease ownership is measured separately; this proof counts access reads.
+    clearInterval((runtime as any).leaseRenewal);
+    clearTimeout((runtime as any).leaseExpiry);
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
+    expect(service.access).toHaveBeenCalledOnce();
+    service.access.mockResolvedValue(undefined);
+    state.room.remoteParticipants.set('human', { identity: 'human', trackPublications: new Map() });
+    await runtime.resume('human');
+    expect(service.access).toHaveBeenCalledTimes(2);
+  } finally { vi.useRealTimers(); await runtime.close(); }
 });

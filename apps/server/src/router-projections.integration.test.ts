@@ -126,8 +126,8 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
       expect(lanes.peek(request).value).not.toBeNull();
       await database.query(`UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2 AND room_id IS NULL`,[WORKSPACE,VIEWER]);
       live.journalChanged([`workspace:${WORKSPACE}`]);await complete;
-      const removal=frames.filter(f=>f.kind==='push-part').flatMap(f=>f.facts).find(f=>f.payload.kind==='authority');
-      expect(removal.payload).toEqual({kind:'authority',scope:WORKSPACE,authorityScope:`reader:${VIEWER}:workspace:${WORKSPACE}`,allowed:false});
+      const removal=frames.filter(f=>f.kind==='push-part').flatMap(f=>f.facts).find(f=>f.payload.kind==='authority-fence');
+      expect(removal.payload).toEqual({kind:'authority-fence',scope:WORKSPACE,authorityScope:`reader:${VIEWER}:workspace:${WORKSPACE}`,mode:'deny'});
       expect(removal.authority.scopes.find((s:any)=>s.authorityScope===`room:${ROOM}`).epoch)
         .toBe(initial.scopes.find(s=>s.authorityScope===`room:${ROOM}`)!.epoch);
       expect(removal.authority.scopes.some((s:any)=>s.authorityScope===removal.payload.authorityScope)).toBe(true);

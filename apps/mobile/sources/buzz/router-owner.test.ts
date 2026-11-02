@@ -31,6 +31,43 @@ const settle = async () => { for (let i = 0; i < 35; i++) await Promise.resolve(
 beforeEach(() => { fixture.authorityReady = true; fixture.state = 'active'; resetClientState(); vi.clearAllMocks(); });
 
 describe('real mobile router owner', () => {
+  it('applies classified group controls only after a complete commit, keeps the allowed Room, and restores a fresh aggregate without reading', async () => {
+    const room={family:'room-head' as const,roomId:'11111111-1111-4111-8111-111111111111',workspaceId:'w'};
+    const visibility='reader:ada:workspace:w:visibility';
+    const cert=(scopes: {authorityScope:string;epoch:string}[])=>({scopes,digest:hash(scopes)});
+    const countAuthority=cert([...scopes,{authorityScope:visibility,epoch:'1'}]);
+    const roomAuthority=cert([...scopes,{authorityScope:`room:${room.roomId}`,epoch:'1'}]);
+    const roomValue={room:{id:room.roomId},messages:[]};
+    const roomSnapshot={...snapshot(),family:'room-head',scope:room.roomId,value:roomValue,
+      authority:roomAuthority,atomicGroup:`room-head:${room.roomId}:ada`} as unknown as RouterSnapshot<'room-head'>;
+    const execute=vi.fn(async(input:RouterSnapshotInput)=>input.family==='room-head'?roomSnapshot:
+      {...snapshot(),authority:countAuthority,atomicGroup:'needs-you:w:ada'});
+    routerOwnerNavigation({routes:[{key:'room',name:'beeline/chat/[channelId]',params:{channelId:room.roomId,communityId:'w'}}]});
+    const head=acquireRouterLane(room,()=>true,()=>{}),badge=acquireRouterLane(request,()=>true,()=>{});
+    await routerOwnerNegotiated({generation:1,families:['room-head','needs-you-count'],execute});await settle();
+    expect(head.current().state).toBe('LIVE');expect(badge.current().value).toEqual({count:1});
+    const current=cert([...scopes,{authorityScope:visibility,epoch:'2'}]);
+    const facts=[{atomicGroup:roomSnapshot.atomicGroup,authority:roomAuthority,
+      payload:{kind:'scope-replace',family:'room-head',scope:room.roomId,value:roomValue}},
+      {atomicGroup:'needs-you:w:ada',authority:current,payload:{kind:'authority-fence',scope:'w',authorityScope:visibility,mode:'advance'}}];
+    const frame={batchId:'classified',from:snapshot().cut,to:snapshot(2).cut,partCount:1,contentDigest:hash(facts)};
+    routerOwnerReceive({...frame,kind:'push-part',partIndex:0,facts});await settle();
+    expect(badge.current().value).toEqual({count:1});
+    routerOwnerReceive({...frame,kind:'push-commit'});await settle();
+    expect(head.current()).toMatchObject({state:'LIVE',value:roomValue,cut:{through:2}});
+    expect(badge.current()).toMatchObject({value:null,cut:{through:1}});
+    expect(fixture.storage.floor).toHaveBeenCalledWith(visibility,'2');
+    const replacement=[{atomicGroup:'needs-you:w:ada',authority:current,payload:{kind:'scope-replace',family:'needs-you-count',scope:'w',value:{count:0}}}];
+    const next={batchId:'fresh',from:snapshot(2).cut,to:snapshot(3).cut,partCount:1,contentDigest:hash(replacement)};
+    routerOwnerReceive({...next,kind:'push-commit'});routerOwnerReceive({...next,kind:'push-part',partIndex:0,facts:replacement});await settle();
+    expect(badge.current()).toMatchObject({state:'LIVE',value:{count:0},cut:{through:3}});
+    const unknown=[{atomicGroup:'needs-you:w:ada',authority:current,payload:{kind:'group-unavailable',scope:'w',reason:'authority'}}];
+    const unavailable={batchId:'unknown',from:snapshot(3).cut,to:snapshot(4).cut,partCount:1,contentDigest:hash(unknown)};
+    routerOwnerReceive({...unavailable,kind:'push-part',partIndex:0,facts:unknown});routerOwnerReceive({...unavailable,kind:'push-commit'});await settle();
+    expect(badge.current()).toMatchObject({state:'PARKED',value:null,cut:null});expect(head.current().state).toBe('LIVE');
+    expect(fixture.storage.remove).toHaveBeenCalledWith(JSON.stringify(['https://example.test','ada','needs-you:w:ada']));
+    expect(execute).toHaveBeenCalledTimes(2);head.release();badge.release();
+  });
   it('requests no projected families without durable authority storage', () => {
     fixture.authorityReady = false;
     expect(routerOwnerCapabilities()).toEqual({ families: [], authorityFencesV1: false });

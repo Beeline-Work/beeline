@@ -77,7 +77,10 @@ async function initialize(): Promise<void> {
     usageDemand = new UsageDemandOwner(admission, () => navigation.current() ?? null, setUsageCellProfile);
     mediaDemand = new MediaDemandOwner(admission, () => navigation.current() ?? null, invalidateMediaCacheDemand, activeMediaObjectIds);
     const storage = routerLaneStorage(reader.origin, reader.principal);
-    lanes = new ReadLanes(reader, validValue, { ...storage, fence: async (scope, epoch) => {
+    lanes = new ReadLanes(reader, validValue, { ...storage, floor: async (scope, epoch) => {
+      advanceMediaAuthority(scope, epoch);
+      await storage.floor(scope, epoch);
+    }, fence: async (scope, epoch) => {
       // ReadLanes calls this only after committed-batch and permission-domain validation.
       receiveMediaAuthorityRemoval(scope, epoch);
       await storage.fence(scope, epoch);
@@ -93,7 +96,7 @@ async function initialize(): Promise<void> {
 const assembly = new RouterBatchAssembly(hash, batch => {
   const facts = batch.facts.filter(fact => {
     if (validCertificate({ authority: fact.authority } as LaneSnapshot)) return true;
-    if (fact.payload.kind === 'scope-replace') lanes?.unavailable(batch.to.stream, fact.payload.family);
+    void lanes?.unavailableGroup(batch.to.stream, fact.atomicGroup);
     return false;
   });
   void lanes?.accept({ ...batch, facts });
@@ -277,6 +280,9 @@ function fact(value: unknown): boolean {
   if (!record(value) || typeof value.atomicGroup !== 'string' || value.atomicGroup.length > 512 || !certificate(value.authority) || !record(value.payload)) return false;
   const payload = value.payload;
   if (typeof payload.scope !== 'string' || payload.scope.length > 256) return false;
+  if (payload.kind === 'group-unavailable') return payload.reason === 'authority' || payload.reason === 'dependency';
+  if (payload.kind === 'authority-fence') return typeof payload.authorityScope === 'string' && payload.authorityScope.length <= 256 &&
+    (payload.mode === 'deny' || payload.mode === 'advance');
   return payload.kind === 'authority' ? payload.allowed === false : payload.kind === 'scope-replace' &&
     typeof payload.family === 'string' && families.includes(payload.family) && Object.hasOwn(payload, 'value');
 }

@@ -137,18 +137,11 @@ it('redeems an invite with historical corners without scanning unrelated message
       expect(
         (await db.query(`SELECT count(*)::int count FROM corner_person_state`)).rows[0]?.count,
       ).toBe(0);
-      expect(
-        (
-          await phone.canReadRooms(
-            [
-              '00000000-0000-0000-0000-000000000000',
-              (await db.query(`SELECT id FROM rooms WHERE parent_id=$1 LIMIT 1`, [room])).rows[0]!
-                .id,
-            ],
-            joiner,
-          )
-        ).size,
-      ).toBe(1);
+      const archivedCorner = (await db.query(`SELECT id FROM rooms WHERE parent_id=$1 LIMIT 1`, [room])).rows[0]!.id;
+      expect((await phone.canReadRooms(
+        ['00000000-0000-0000-0000-000000000000', archivedCorner], joiner,
+      )).size).toBe(0);
+      expect(await phone.canReadRoom(archivedCorner, joiner)).toBe(true);
       expect((await phone.execute('redeemInvite', { token: invite.token }, joiner)).joined).toBe(
         false,
       );

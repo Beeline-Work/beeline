@@ -8,7 +8,7 @@ beforeAll(async () => {
   await db.exec(`CREATE TABLE rooms(id text,parent_id text);
     CREATE TABLE messages(id text,card_type text);
     CREATE TABLE memberships(room_id text,identity_id text,removed_at timestamp);
-    CREATE TABLE effective_memberships(room_id text,identity_id text,removed_at timestamp);
+    CREATE TABLE room_access(room_id text,identity_id text,removed_at timestamp);
     CREATE TABLE identities(id text,kind text,name text);
     CREATE TABLE corner_owed(corner_id text,message_id text,person_id text,created_at timestamp,blocking boolean,expires_at timestamp);
     CREATE TABLE corner_report_blockers(corner_id text,message_id text,report_id text,person_id text,created_at timestamp,commander_id text,return_room_id text);
@@ -84,7 +84,7 @@ it('R1: an agent-commander report retains selection when a human blocker is also
 it('R1: holds and messageless reports resolve selection IDs to real source message targets', async () => {
   await db.exec(`DELETE FROM corner_owed; DELETE FROM messages;
     INSERT INTO identities VALUES('person','human','Lunchbox');
-    INSERT INTO effective_memberships VALUES('corner','person',NULL);
+    INSERT INTO room_access VALUES('corner','person',NULL);
     INSERT INTO corner_merge_holds VALUES('corner','hold','person','2026-01-01',NULL);
     INSERT INTO corner_report_blockers VALUES('corner',NULL,'report','person','2026-01-02','person','other');`);
   const query = async (newest = false) => (await db.query<{

@@ -131,7 +131,7 @@ async function legacySubscriptions(db: SqlDatabase, roomId: string, agentId?: st
        member.joined_at,surface.parent_id,surface.name room_name,${cornerReviewerSql('surface')} reviewer_agent_id
      FROM rooms surface
      JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
-     JOIN effective_memberships member ON member.room_id=surface.id AND member.removed_at IS NULL
+     JOIN room_access member ON member.room_id=surface.id AND member.removed_at IS NULL
      JOIN identities agent ON agent.id=member.identity_id AND agent.kind='agent'
      CROSS JOIN LATERAL jsonb_array_elements_text(member.event_subscriptions) kind(event)
      WHERE (surface.id=$1 OR ($2::text IS NULL AND surface.parent_id=$1))
@@ -194,7 +194,7 @@ async function createAgentSubscriptionInDb(
     throw new Error('channelName must be a channel name without #');
   const room = await db.query<{ workspace_id: string }>(
     `SELECT room.workspace_id FROM rooms room
-     JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL
+     JOIN room_access member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL
      JOIN identities agent ON agent.id=$2 AND agent.kind='agent'
      WHERE room.id=$1 AND room.archived_at IS NULL`, [input.roomId, agentId],
   );
@@ -274,7 +274,7 @@ export async function listAgentSubscriptions(db: SqlDatabase, roomId: string, ag
   const rows = await db.query<Row>(
     `SELECT subscription.*,hook.status provider_status FROM agent_subscriptions subscription
      LEFT JOIN provider_webhooks hook ON hook.id::text=subscription.trigger_id
-     JOIN effective_memberships member ON member.room_id=subscription.room_id AND member.identity_id=$2 AND member.removed_at IS NULL
+     JOIN room_access member ON member.room_id=subscription.room_id AND member.identity_id=$2 AND member.removed_at IS NULL
      WHERE subscription.room_id=$1 AND subscription.agent_id=$2
      ORDER BY subscription.created_at,subscription.id`, [roomId, agentId],
   );
@@ -298,7 +298,7 @@ export async function deleteAgentSubscription(db: SqlDatabase, roomId: string, a
     return;
   }
   const deleted = await db.query<{ trigger_id: string | null }>(
-    `DELETE FROM agent_subscriptions subscription USING effective_memberships member
+    `DELETE FROM agent_subscriptions subscription USING room_access member
      WHERE subscription.id=$1 AND subscription.room_id=$2 AND subscription.agent_id=$3
        AND member.room_id=subscription.room_id AND member.identity_id=$3 AND member.removed_at IS NULL
      RETURNING subscription.trigger_id`,
@@ -314,7 +314,7 @@ export async function listRoomSubscriptions(db: SqlDatabase, roomId: string) {
      FROM agent_subscriptions subscription
      LEFT JOIN provider_webhooks hook ON hook.id::text=subscription.trigger_id
      JOIN rooms surface ON surface.id=subscription.room_id AND surface.archived_at IS NULL
-     JOIN effective_memberships member ON member.room_id=subscription.room_id
+     JOIN room_access member ON member.room_id=subscription.room_id
        AND member.identity_id=subscription.agent_id AND member.removed_at IS NULL
      WHERE surface.id=$1 OR surface.parent_id=$1
      ORDER BY subscription.created_at,subscription.id`, [roomId],
@@ -330,7 +330,7 @@ export async function deleteRoomSubscription(db: SqlDatabase, roomId: string, id
       `WITH surface AS (
          SELECT room.id,room.parent_id,member.event_subscriptions
          FROM rooms room JOIN rooms parent ON parent.id=COALESCE(room.parent_id,room.id)
-         JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$3
+         JOIN room_access member ON member.room_id=room.id AND member.identity_id=$3
            AND member.removed_at IS NULL
          WHERE room.id=$2 AND (room.id=$1 OR room.parent_id=$1)
            AND member.event_subscriptions ? $4
@@ -366,7 +366,7 @@ export async function listServiceSubscriptionEvents(db: SqlDatabase, roomId: str
   includeSlack = true) {
   const rows = includeSlack ? await db.query(
     `SELECT 1 FROM rooms room
-     JOIN effective_memberships agent ON agent.room_id=room.id AND agent.identity_id=$2 AND agent.removed_at IS NULL
+     JOIN room_access agent ON agent.room_id=room.id AND agent.identity_id=$2 AND agent.removed_at IS NULL
      JOIN workspace_apps app ON app.workspace_id=room.workspace_id AND app.app_key='slack'
        AND app.transport='composio' AND app.state='active' AND app.composio_account_id IS NOT NULL
      JOIN memberships owner ON owner.workspace_id=room.workspace_id AND owner.room_id IS NULL
@@ -398,7 +398,7 @@ export async function fireServiceSubscriptions(db: SqlDatabase, body: Record<str
   const rows = await db.query<Row>(
     `SELECT subscription.* FROM agent_subscriptions subscription
      JOIN rooms room ON room.id=subscription.room_id AND room.archived_at IS NULL
-     JOIN effective_memberships agent ON agent.room_id=room.id AND agent.identity_id=subscription.agent_id
+     JOIN room_access agent ON agent.room_id=room.id AND agent.identity_id=subscription.agent_id
        AND agent.removed_at IS NULL
      JOIN workspace_apps app ON app.id=subscription.service_app_id AND app.workspace_id=room.workspace_id
        AND app.state='active' AND app.transport='composio' AND app.app_key='slack'
@@ -461,7 +461,7 @@ export async function fireRepositorySubscriptions(
   const rows = await db.query<Row>(
     `SELECT subscription.* FROM agent_subscriptions subscription
      JOIN rooms room ON room.id=subscription.room_id AND room.archived_at IS NULL
-     JOIN effective_memberships agent ON agent.room_id=room.id AND agent.identity_id=subscription.agent_id AND agent.removed_at IS NULL
+     JOIN room_access agent ON agent.room_id=room.id AND agent.identity_id=subscription.agent_id AND agent.removed_at IS NULL
      JOIN github_repositories repo ON lower(repo.full_name)=subscription.repository
        AND repo.installation_id=$1 AND repo.active
      JOIN github_installations installation ON installation.installation_id=repo.installation_id AND installation.status='active'

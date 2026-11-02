@@ -367,6 +367,15 @@ const CORNER_REACH_OPERATIONS = new Set<string>([
   'mergeCorner',
   'approveCornerMerge',
 ]);
+/** Closed corners still deliver stop commands and expose cleanup/history facts. */
+const CORNER_CLEANUP_OPERATIONS = new Set<string>([
+  'closeCornerPullRequest',
+  'getAgentCommands',
+  'claimAgentCommand',
+  'acknowledgeAgentCommand',
+  'getCornerCloseRequests',
+  'getRoomInbox',
+]);
 export { CORNER_WAKE_TIMEOUT_MS } from './corner-wake.js';
 
 /**
@@ -503,14 +512,15 @@ export class DaemonService {
             return this.reviewSourceAccess(scopedRoom, authenticatedAgentId).then(() => ({
               cornerReviewer: false, isCorner: false, privateCommand: false, voiceAgentName: null,
             })).catch((sourceError: unknown) => {
-              if (sourceError instanceof AccessDeniedError && name === 'getRoomConversation')
+              if (sourceError instanceof AccessDeniedError)
                 return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
                   cornerReviewer: false, isCorner: true, privateCommand: false, voiceAgentName: null,
                 }));
               throw sourceError;
             });
           // Reachable corner operations also admit a parent Room member.
-          if (error instanceof AccessDeniedError && CORNER_REACH_OPERATIONS.has(name))
+          if (error instanceof AccessDeniedError &&
+              (CORNER_REACH_OPERATIONS.has(name) || CORNER_CLEANUP_OPERATIONS.has(name)))
             return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
               cornerReviewer: false,
               isCorner: true,
@@ -3127,7 +3137,7 @@ export class DaemonService {
       [agentId],
     );
     const rooms = await this.database.query<{ room_id: string; parent_id: string | null; workspace_id: string; archived: boolean; landed_head_sha: string | null; repository_revision: string }>(
-      `SELECT m.room_id, r.parent_id, r.workspace_id, r.archived_at IS NOT NULL archived,
+      `SELECT r.id room_id, r.parent_id, r.workspace_id, r.archived_at IS NOT NULL archived,
               CASE WHEN r.archived_at IS NOT NULL AND f.lifecycle->>'outcome'='landed'
                 AND f.lifecycle->'pr'->>'mergedAt' IS NOT NULL
                 THEN f.lifecycle->'pr'->>'headSha' END landed_head_sha,
@@ -3136,12 +3146,13 @@ export class DaemonService {
                 COALESCE(r.repository_updated_at::text,''),
                 COALESCE(i.status,''),COALESCE(i.updated_at::text,''),
                 COALESCE(g.active::text,''),COALESCE(g.updated_at::text,'')) repository_revision
-       FROM memberships m
-       JOIN rooms r ON r.id=m.room_id
+       FROM rooms r
+       JOIN memberships m ON m.room_id=COALESCE(r.parent_id,r.id)
        LEFT JOIN corner_facts f ON f.corner_id=r.id
        LEFT JOIN github_installations i ON i.installation_id=r.github_installation_id
        LEFT JOIN github_repositories g ON r.repository_key='github:' || g.repository_id::text
-       WHERE m.identity_id=$1 AND (m.removed_at IS NULL OR r.archived_at IS NOT NULL)`,
+       WHERE m.identity_id=$1 AND (m.removed_at IS NULL OR
+         (r.parent_id IS NULL AND r.archived_at IS NOT NULL))`,
       [agentId],
     );
     const pending = await this.database.query<{ room_id: string; parent_id: string | null; owner_agent_id: string | null }>(
@@ -3230,6 +3241,9 @@ export class DaemonService {
         ? (input as unknown as { cornerId: string }).cornerId
         : input.roomId;
     await this.access(roomId, agentId).catch((error: unknown) => {
+      if (error instanceof AccessDeniedError &&
+          (name === 'getRoomInbox' || name === 'getCornerCloseRequests'))
+        return this.reach(roomId, agentId);
       if (error instanceof AccessDeniedError && name === 'getRoomConversation')
         return this.reviewSourceAccess(roomId, agentId).catch((sourceError: unknown) => {
           if (sourceError instanceof AccessDeniedError) return this.reach(roomId, agentId);
@@ -3434,8 +3448,13 @@ export class DaemonService {
     let borrowedSource = false;
     await this.access(input.roomId, agentId).catch(async (error: unknown) => {
       if (!(error instanceof AccessDeniedError)) throw error;
-      await this.reviewSourceAccess(input.roomId, agentId);
-      borrowedSource = true;
+      try {
+        await this.reviewSourceAccess(input.roomId, agentId);
+        borrowedSource = true;
+      } catch (sourceError) {
+        if (!(sourceError instanceof AccessDeniedError)) throw sourceError;
+        await this.reach(input.roomId, agentId);
+      }
     });
     if (!input.messageId || input.messageId.length > 128) throw new Error('invalid message id');
     const offset = input.offset ?? 0;
@@ -3451,8 +3470,9 @@ export class DaemonService {
               substring(command.private_payload->>'text' FROM $3::integer + 1 FOR 4000) body,
               char_length(command.private_payload->>'text') total,
               command.private_payload->'attachments' attachments,
-              EXISTS(SELECT 1 FROM effective_memberships member
-                     WHERE member.room_id=CASE WHEN command.agent_id=$2 THEN command.room_id
+              EXISTS(SELECT 1 FROM rooms handoff_room
+                     JOIN memberships member ON member.room_id=COALESCE(handoff_room.parent_id,handoff_room.id)
+                     WHERE handoff_room.id=CASE WHEN command.agent_id=$2 THEN command.room_id
                        ELSE NULLIF(command.private_payload->>'fromRoomId','')::uuid END
                        AND member.identity_id=$2
                        AND member.removed_at IS NULL) accessible
@@ -3804,8 +3824,8 @@ export class DaemonService {
   /**
    * The corners of this Room that this agent may carry.
    *
-   * A corner operates as a Room: the branch on GitHub is the shared artifact
-   * and MEMBERSHIP is the authority, so every member agent lists the corner
+   * The branch on GitHub is the shared artifact. Parent Room access is the
+   * authority, so every parent Room agent lists the corner
    * and can be addressed in it. `corner_facts.owner_agent_id` survives as the
    * historical "opened by" — it still names `createdBy` here, and the phone
    * still shows it — but it no longer decides who may work. Listing on the
@@ -3843,7 +3863,7 @@ export class DaemonService {
        WHERE (r.parent_id=$1 OR (EXISTS(SELECT 1 FROM rooms dm WHERE dm.id=$1 AND dm.direct_participants IS NOT NULL)
          AND EXISTS(SELECT 1 FROM memberships target WHERE target.room_id=r.parent_id AND target.identity_id=$2 AND target.removed_at IS NULL))) ${activeOnly ? 'AND r.archived_at IS NULL' : ''} AND ($3 OR EXISTS(
          SELECT 1 FROM memberships m
-         WHERE m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL))`,
+         WHERE m.room_id=COALESCE(r.parent_id,r.id) AND m.identity_id=$2 AND m.removed_at IS NULL))`,
       [roomId, agentId, reachable],
     );
     return {
@@ -6349,7 +6369,7 @@ export class DaemonService {
     if (to !== undefined) {
       const target = typeof to === 'string' ? to.replace(/^@/, '') : '';
       const recipient = (await database.query<{ id: string }>(
-        `SELECT identity.id FROM effective_memberships member JOIN identities identity ON identity.id=member.identity_id
+        `SELECT identity.id FROM room_access member JOIN identities identity ON identity.id=member.identity_id
          WHERE member.room_id=$1 AND member.removed_at IS NULL AND (identity.id=$2 OR identity.handle=$2)`,
         [command.room_id, target],
       )).rows[0];
@@ -9013,7 +9033,7 @@ export class DaemonService {
          AND command.review_context->>'headSha'=fact.lifecycle->'pr'->>'headSha'
          AND command.review_context->'pullRequest'=fact.lifecycle->'pr'->'number'
          AND command.review_context->>'briefRevision'=brief.revision::text
-       JOIN effective_memberships member ON member.room_id=corner.id
+       JOIN room_access member ON member.room_id=corner.id
          AND member.identity_id=$2 AND member.removed_at IS NULL
        WHERE source.id=$1 AND EXISTS(SELECT 1 FROM messages approval
          WHERE approval.id=brief.source_message_id AND approval.room_id=source.id
@@ -9078,7 +9098,7 @@ export class DaemonService {
        LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=member.workspace_id
          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
          AND workspace_member.removed_at IS NULL
-       WHERE member.room_id=$1 AND member.removed_at IS NULL
+       WHERE member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1) AND member.removed_at IS NULL
        ORDER BY identity.kind,identity.name`,
       [roomId],
     );

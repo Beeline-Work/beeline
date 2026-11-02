@@ -60,11 +60,11 @@ export async function notifyAgentConfigChange(
 ): Promise<void> {
   const rooms = await database.query<{ room_id: string }>(
     workspaceId
-      ? `SELECT membership.room_id FROM effective_memberships membership
+      ? `SELECT membership.room_id FROM room_access membership
          JOIN rooms room ON room.id=membership.room_id
          WHERE membership.identity_id=$1 AND membership.workspace_id=$2
            AND membership.removed_at IS NULL AND room.archived_at IS NULL`
-      : `SELECT membership.room_id FROM effective_memberships membership
+      : `SELECT membership.room_id FROM room_access membership
          JOIN rooms room ON room.id=membership.room_id
          WHERE membership.identity_id=$1
            AND membership.removed_at IS NULL AND room.archived_at IS NULL`,
@@ -876,7 +876,7 @@ export class PostgresLiveListener {
           body: Record<string, unknown>;
         }>(
           `SELECT membership.room_id,presence.body
-           FROM effective_memberships membership
+           FROM room_access membership
            JOIN LATERAL(
              SELECT body FROM live_outputs
              WHERE agent_id=$1 AND kind='presence'

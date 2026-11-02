@@ -25,5 +25,8 @@ it('ARCHIVE-FACT-1 bootstrap supplies inherited archived corner facts without di
     expect(result.rooms.map(r=>r.roomId)).toEqual([room]);
     expect(result.storageRooms?.some(r=>r.roomId===other)).toBe(false);
     expect((await db.query(`SELECT 1 FROM memberships WHERE room_id=$1`,[corner])).rows).toHaveLength(0);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [room,agent]);
+    const departed = await daemon.execute('getDaemonBootstrap',{agentId:agent},agent);
+    expect(departed.storageRooms?.some(r=>r.roomId===corner)).toBe(false);
   } finally { await db.close(); }
 },30_000);

@@ -1466,7 +1466,7 @@ describe('Postgres live fanout', () => {
     expect(publishA).toHaveBeenCalledTimes(roomIds.length);
     expect(publishB).toHaveBeenCalledTimes(roomIds.length);
     expect([...queryA.mock.calls, ...queryB.mock.calls].map(([sql]) => sql)).toContainEqual(
-      expect.stringContaining('memberships'),
+      expect.stringContaining('room_access'),
     );
     for (const roomId of roomIds) {
       expect(liveA.latestAgentPresence(agent, roomId)?.status).toBe('online');

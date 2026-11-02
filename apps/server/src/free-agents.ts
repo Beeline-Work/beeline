@@ -438,7 +438,7 @@ export async function addFreeAgentToWorkspace(
 async function wakeFreeAgentsForLeaves(database: SqlDatabase): Promise<number> {
   const leaves = await database.query<{ message_id: string; room_id: string; agent_id: string }>(
     `SELECT line.id message_id,subscriber.room_id,subscriber.identity_id agent_id
-     FROM effective_memberships subscriber
+     FROM room_access subscriber
      JOIN free_agents f ON f.agent_id=subscriber.identity_id AND f.state<>'failed' AND f.removed_at IS NULL
      CROSS JOIN LATERAL (
        SELECT m.id,m.card FROM messages m

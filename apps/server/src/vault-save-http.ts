@@ -93,7 +93,7 @@ export async function vaultSaveHttp(
     const row = (
       await dependencies.database.query<{ card: VaultSaveCard & { originCommandId: string } }>(
         `SELECT m.card FROM messages m JOIN agents a ON a.agent_id=m.card->>'agentId'
-       JOIN effective_memberships agent_member ON agent_member.identity_id=a.agent_id AND agent_member.room_id=m.room_id AND agent_member.removed_at IS NULL
+       JOIN room_access agent_member ON agent_member.identity_id=a.agent_id AND agent_member.room_id=m.room_id AND agent_member.removed_at IS NULL
        JOIN memberships owner ON owner.identity_id=a.owner_id AND owner.room_id IS NULL
          AND owner.workspace_id=(SELECT workspace_id FROM rooms WHERE id=m.room_id) AND owner.removed_at IS NULL
        WHERE m.id=$1 AND m.room_id=$2 AND m.card_type='vault-save' AND m.card->>'ownerId'=$3 AND a.owner_id=$3`,

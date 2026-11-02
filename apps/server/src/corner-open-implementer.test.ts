@@ -103,7 +103,7 @@ it('Reproduction O1-1: naming Beta assigns the work to Beta and keeps Alpha as a
   expect(
     (
       await db.query(
-        `SELECT identity_id,role FROM effective_memberships WHERE room_id=$1 AND identity_id=ANY($2) ORDER BY identity_id`,
+        `SELECT identity_id,role FROM room_access WHERE room_id=$1 AND identity_id=ANY($2) ORDER BY identity_id`,
         [cornerId, [A, B]],
       )
     ).rows,

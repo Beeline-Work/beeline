@@ -230,7 +230,7 @@ export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, li
            OR (d.command_id IS NOT NULL AND command.id IS NOT NULL AND command.action IN ('input','resume')
              AND command.reason<>'mcp_call'
              AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))))
-         AND EXISTS(SELECT 1 FROM effective_memberships rm WHERE rm.room_id=d.room_id AND rm.identity_id=s.member_id AND rm.removed_at IS NULL)
+         AND EXISTS(SELECT 1 FROM room_access rm WHERE rm.room_id=d.room_id AND rm.identity_id=s.member_id AND rm.removed_at IS NULL)
          AND EXISTS(SELECT 1 FROM memberships wm WHERE wm.workspace_id=r.workspace_id AND wm.room_id IS NULL AND wm.identity_id=s.member_id AND wm.removed_at IS NULL)) deliverable
       FROM claimed d JOIN rooms_mcp_event_subscriptions s ON s.id=d.subscription_id
       LEFT JOIN rooms_mcp_connections c ON c.client_id=s.client_id AND c.identity_id=s.owner_id

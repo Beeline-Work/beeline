@@ -5,7 +5,7 @@ import { type SqlDatabase } from './database.js';
 import { migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 
-// Copied unchanged from predecessor 574b24bd3 for the documented rollback command.
+// Retired predecessor writer: the post-cutover database must reject it.
 function inheritableEventSubscriptionsSql(subscribableKindsParam: number): string {
   return `(
     SELECT COALESCE(jsonb_agg(elem),'[]'::jsonb)
@@ -32,7 +32,7 @@ async function backfillInheritedCornerMemberships(database: SqlDatabase): Promis
   return result.rowCount;
 }
 
-it('restores predecessor corner access after an invite join and new corner, twice safely', async () => {
+it('rejects the retired predecessor backfill while parent-authorized corners stay readable', async () => {
   const db = await migratedDatabase();
   try {
     const workspace = randomUUID(),
@@ -56,8 +56,8 @@ it('restores predecessor corner access after an invite join and new corner, twic
       room,
     ]);
     await db.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,$3,$2,'owner'),($1,$4,$2,'owner')`,
-      [workspace, owner, room, corner],
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,$3,$2,'owner')`,
+      [workspace, owner, room],
     );
     const phone = new PhoneService(db, 'https://server.example');
     const invite = await phone.execute('createInvite', { workspaceId: workspace }, owner);
@@ -76,17 +76,13 @@ it('restores predecessor corner access after an invite join and new corner, twic
           [surface, identity],
         )
       ).rowCount;
-    expect(await oldAccess(owner, corner)).toBe(1);
-    expect(await oldAccess(joiner, corner)).toBe(0);
-    expect(await oldAccess(owner, later)).toBe(0);
-    expect((await phone.canReadRooms([corner, later], joiner)).size).toBe(2);
-    expect(await backfillInheritedCornerMemberships(db)).toBe(3);
     for (const person of [owner, joiner])
-      for (const surface of [corner, later]) expect(await oldAccess(person, surface)).toBe(1);
-    expect(await backfillInheritedCornerMemberships(db)).toBe(0);
-    console.log(
-      'Rollback proof: existing member retained access; 3 missing rows restored; retry inserted 0; both members access both corners',
-    );
+      for (const surface of [corner, later]) {
+        expect(await oldAccess(person, surface)).toBe(0);
+        expect(await phone.canReadRoom(surface, person)).toBe(true);
+      }
+    await expect(backfillInheritedCornerMemberships(db)).rejects.toThrow(/corner memberships/);
+    expect((await phone.canReadRooms([corner, later], joiner)).size).toBe(2);
   } finally {
     await db.close();
   }

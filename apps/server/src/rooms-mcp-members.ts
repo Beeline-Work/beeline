@@ -344,7 +344,7 @@ export async function deliverMcpMemberWebhooks(
          CASE WHEN member.callback_url IS NOT NULL THEN member.callback_secret END callback_secret,
          message.author_id,author.handle author_handle,author.name author_name,author.kind author_kind,mention.seq::text cursor,(
            room.id IS NOT NULL AND room.archived_at IS NULL
-           AND EXISTS (SELECT 1 FROM effective_memberships room_member
+           AND EXISTS (SELECT 1 FROM room_access room_member
              WHERE room_member.room_id=claimed.room_id AND room_member.identity_id=claimed.member_id
                AND room_member.removed_at IS NULL)
            AND EXISTS (SELECT 1 FROM memberships workspace_member

@@ -69,11 +69,11 @@ export class AgentVoiceService {
             soul: { instructions?: string } | null;
             chosen_voices: Context['chosen_voices'];
           }>(
-            `SELECT i.id,i.name,i.handle,a.soul,a.chosen_voices FROM effective_memberships m
+            `SELECT i.id,i.name,i.handle,a.soul,a.chosen_voices FROM room_access m
        JOIN identities i ON i.id=m.identity_id AND i.kind='agent' JOIN agents a ON a.agent_id=i.id
        JOIN rooms r ON r.id=m.room_id AND r.workspace_id=$2 AND r.archived_at IS NULL
        WHERE m.room_id=$1 AND m.removed_at IS NULL AND EXISTS (
-         SELECT 1 FROM effective_memberships vm WHERE vm.room_id=r.id AND vm.identity_id=$3 AND vm.removed_at IS NULL)`,
+         SELECT 1 FROM room_access vm WHERE vm.room_id=r.id AND vm.identity_id=$3 AND vm.removed_at IS NULL)`,
             [roomId, workspaceId, viewerId],
           )
         ).rows.map((a) => ({
@@ -128,7 +128,7 @@ export class AgentVoiceService {
         await db.query<{ chosen_voices: Context['chosen_voices'] }>(
           `SELECT other.chosen_voices FROM agents other
         WHERE other.agent_id<>$1 AND other.chosen_voices<>'{}'::jsonb AND EXISTS (
-          SELECT 1 FROM effective_memberships own JOIN effective_memberships peer ON peer.room_id=own.room_id
+          SELECT 1 FROM room_access own JOIN room_access peer ON peer.room_id=own.room_id
           JOIN rooms r ON r.id=own.room_id AND r.archived_at IS NULL
           WHERE own.identity_id=$1 AND peer.identity_id=other.agent_id
             AND own.removed_at IS NULL AND peer.removed_at IS NULL)`,

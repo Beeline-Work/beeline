@@ -196,7 +196,7 @@ export async function flushDueCommanderWakes(db: SqlDatabase): Promise<number> {
   const recipients = (
     await db.query<{ room_id: string; agent_id: string }>(
       `SELECT DISTINCT command.room_id,command.agent_id FROM agent_commands command
-     JOIN effective_memberships member ON member.room_id=command.room_id AND member.identity_id=command.agent_id
+     JOIN room_access member ON member.room_id=command.room_id AND member.identity_id=command.agent_id
        AND member.removed_at IS NULL
      JOIN rooms room ON room.id=command.room_id AND room.archived_at IS NULL
      WHERE command.state='pending' AND command.wake_after<=now() LIMIT 100`,
@@ -207,7 +207,7 @@ export async function flushDueCommanderWakes(db: SqlDatabase): Promise<number> {
     await db.transaction(async (tx) => {
       await lockWakeConsumer(tx, recipient.room_id, recipient.agent_id);
       const membership = await tx.query(
-        `SELECT 1 FROM effective_memberships member JOIN rooms room ON room.id=member.room_id
+        `SELECT 1 FROM room_access member JOIN rooms room ON room.id=member.room_id
        WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
          AND room.archived_at IS NULL`,
         [recipient.room_id, recipient.agent_id],
@@ -285,7 +285,7 @@ export class CommanderWakeDeadlines {
       await this.db.query<{ due: Date | null }>(
         `SELECT min(GREATEST(command.wake_after,command.startup_wake_after)) due FROM agent_commands command
          JOIN rooms room ON room.id=command.room_id AND room.archived_at IS NULL
-         JOIN effective_memberships member ON member.room_id=command.room_id AND member.identity_id=command.agent_id AND member.removed_at IS NULL
+         JOIN room_access member ON member.room_id=command.room_id AND member.identity_id=command.agent_id AND member.removed_at IS NULL
          WHERE command.room_id=$1 AND command.agent_id=$2 AND command.state='pending'`,
         [roomId, agentId],
       )

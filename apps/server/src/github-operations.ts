@@ -1093,9 +1093,9 @@ export class GitHubOperations {
          JOIN rooms parent ON parent.id=r.parent_id
          LEFT JOIN identities reviewer_identity ON reviewer_identity.id=${cornerReviewerSql('r')}
            AND reviewer_identity.kind='agent'
-         LEFT JOIN effective_memberships parent_member ON parent_member.room_id=parent.id
+         LEFT JOIN room_access parent_member ON parent_member.room_id=parent.id
            AND parent_member.identity_id=${cornerReviewerSql('r')} AND parent_member.removed_at IS NULL
-         LEFT JOIN effective_memberships corner_member ON corner_member.room_id=r.id
+         LEFT JOIN room_access corner_member ON corner_member.room_id=r.id
            AND corner_member.identity_id=${cornerReviewerSql('r')} AND corner_member.removed_at IS NULL
          WHERE r.id=$1`,
         [input.cornerId],
@@ -2305,7 +2305,7 @@ export class GitHubOperations {
          ORDER BY corner.created_at,corner.id LIMIT 1
        ) destination ON true
        LEFT JOIN LATERAL(
-         SELECT membership.identity_id FROM effective_memberships membership
+         SELECT membership.identity_id FROM room_access membership
          WHERE membership.room_id=room.id AND membership.removed_at IS NULL
          ORDER BY membership.joined_at LIMIT 1
        )author ON true

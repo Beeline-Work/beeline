@@ -1923,7 +1923,7 @@ it('transfers a corner objective to the opener only, without resetting the autho
   expect(
     (
       await db.query<{ event_subscriptions: string[] }>(
-        `SELECT event_subscriptions FROM effective_memberships WHERE room_id=$1 AND identity_id=$2`,
+        `SELECT event_subscriptions FROM room_access WHERE room_id=$1 AND identity_id=$2`,
         [opened.cornerId, B],
       )
     ).rows,

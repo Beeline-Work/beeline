@@ -125,7 +125,7 @@ export async function sendOrder(
     worker = target.worker;
     if (named) {
       const member = (await db.query<{ id: string }>(
-        `SELECT identity.id FROM effective_memberships member JOIN identities identity
+        `SELECT identity.id FROM room_access member JOIN identities identity
            ON identity.id=member.identity_id AND identity.kind='agent'
          WHERE member.room_id=$1 AND member.removed_at IS NULL
            AND (identity.id=$2 OR lower(identity.handle)=$3)`, [address, named, named.toLowerCase()],
@@ -140,7 +140,7 @@ export async function sendOrder(
     ).rows[0]?.direct;
     const agents = (
       await db.query<{ id: string; handle: string | null }>(
-        `SELECT identity.id,lower(identity.handle) handle FROM effective_memberships member JOIN identities identity
+        `SELECT identity.id,lower(identity.handle) handle FROM room_access member JOIN identities identity
          ON identity.id=member.identity_id AND identity.kind='agent'
        WHERE member.room_id=$1 AND member.removed_at IS NULL AND (identity.id<>$2 OR $3::boolean)`,
         [address, agentId, Boolean(named)],
@@ -205,7 +205,7 @@ export async function stopCommandedTurn(
   if (agent !== undefined && !named) throw new CommandRefusalError('stop agent must name one agent', 400);
   const target = await commandAddress(db, address, agentId);
   const candidates = (await db.query<{ id: string; handle: string | null; name: string }>(
-    `SELECT identity.id,identity.handle,identity.name FROM effective_memberships member JOIN identities identity
+    `SELECT identity.id,identity.handle,identity.name FROM room_access member JOIN identities identity
        ON identity.id=member.identity_id AND identity.kind='agent'
      WHERE member.room_id=$1 AND member.removed_at IS NULL AND identity.id<>$2`,
     [address, agentId])).rows;
@@ -449,7 +449,7 @@ export async function reportToCommander(
     // the effective view instead of relying on query rewriting.
     const wakeRoom = options.automatic && options.agentOnly && options.wakeInCorner && origin &&
       (await db.query(
-        'SELECT 1 FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL',
+        'SELECT 1 FROM room_access WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL',
         [origin, recipient],
       )).rowCount
       ? origin
@@ -543,7 +543,7 @@ export async function reportToCommander(
       await db.query(
       `INSERT INTO corner_report_blockers(corner_id,person_id,report_id,return_room_id,commander_id,message_id)
        SELECT $1,person.id,$2,$3,$6,$7 FROM identities person
-       LEFT JOIN effective_memberships member ON member.identity_id=person.id AND member.room_id=$1 AND member.removed_at IS NULL
+       LEFT JOIN room_access member ON member.identity_id=person.id AND member.room_id=$1 AND member.removed_at IS NULL
        CROSS JOIN (SELECT $4::text text,'message'::text presentation,$1::uuid room_id,$5::text author_id) item
        WHERE (person.id=$6 OR (member.identity_id IS NOT NULL AND person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}))
        AND EXISTS(SELECT 1 FROM corner_facts fact WHERE fact.corner_id=$1

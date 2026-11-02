@@ -147,7 +147,7 @@ export async function isConfiguredReviewer(
   if (room.reviewer_agent_id === agentId) return true;
   if (!reviewerList(room).includes(agentId)) return false;
   const member = await db.query(
-    `SELECT 1 FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+    `SELECT 1 FROM room_access WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
     [parentRoomId, agentId],
   );
   return member.rowCount > 0;
@@ -178,7 +178,7 @@ export async function isCornerReviewer(
   if (!row) return false;
   if (!(await isConfiguredReviewer(db, row.parent_room_id, agentId, row))) return false;
   const member = await db.query(
-    `SELECT 1 FROM effective_memberships reviewer
+    `SELECT 1 FROM room_access reviewer
      JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
      WHERE reviewer.room_id=$1 AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL`,
     [row.parent_room_id, agentId],

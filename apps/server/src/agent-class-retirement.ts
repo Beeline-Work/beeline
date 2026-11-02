@@ -89,7 +89,7 @@ async function roomAgentsWithClass(db: SqlDatabase, roomId: string, word: string
   const rows = await db.query<AgentFacts & { weight_tier_rules: unknown }>(
     `SELECT agent.agent_id,agent.selected_model,agent.harness,agent.custom_tags,
             workspace.weight_tier_rules
-     FROM effective_memberships member
+     FROM room_access member
      JOIN rooms room ON room.id=member.room_id
      JOIN workspaces workspace ON workspace.id=room.workspace_id
      JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'

@@ -32,7 +32,7 @@ export async function setCornerReviewer(
 ): Promise<void> {
   const reviewer = (await db.query<{ id: string; name: string }>(
     `SELECT identity.id,identity.name FROM rooms corner
-     JOIN effective_memberships member ON member.room_id=corner.parent_id AND member.removed_at IS NULL
+     JOIN room_access member ON member.room_id=corner.parent_id AND member.removed_at IS NULL
      JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
      WHERE corner.id=$1 AND identity.handle=$2`, [cornerId, handle],
   )).rows[0];

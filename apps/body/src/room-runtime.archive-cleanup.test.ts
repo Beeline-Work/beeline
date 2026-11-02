@@ -38,7 +38,7 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { DaemonApiClient } from './daemon-api-client.js';
+import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
 import { materializeCornerWorktree, RoomRuntimeCoordinator } from './room-runtime.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { declareCornerProofOutput } from './corner-proof-output.js';
@@ -117,6 +117,33 @@ describe('archived corner branch cleanup', () => {
       expect(execute).toHaveBeenCalledWith('getCornerRestoreState', { cornerId: 'proof-corner' });
       await expect(lstat(path)).rejects.toThrow();
     } finally { await coordinator.shutdown(); }
+  });
+
+  it.each([
+    new DaemonApiError('server unavailable', 503, true),
+    new DaemonApiError('overloaded', 429, true),
+    new DaemonApiError('timeout', 408, true),
+    new TypeError('fetch failed'),
+  ])('retries transient archive restore failures: %s', async (failure) => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-restore-retry-'));
+    roots.push(root);
+    const path = resolve(root, 'beeline/corners/transient-corner');
+    await mkdir(path, { recursive: true });
+    await writeFile(resolve(path, 'work.txt'), 'keep local work');
+    const execute = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue({ archived: false });
+    const coordinator = new RoomRuntimeCoordinator(runtimeAt(root), resolve(root, 'agent.json'),
+      { workspaceRoot: root } as never, { daemonApi: { execute } as unknown as DaemonApiClient });
+    const internal = coordinator as unknown as {
+      sweepArchivedCornerWorktrees(corners: ReadonlyMap<string, never>): Promise<void>;
+    };
+    const warnings = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await internal.sweepArchivedCornerWorktrees(new Map());
+      await internal.sweepArchivedCornerWorktrees(new Map());
+      expect(execute).toHaveBeenCalledTimes(2);
+      expect(warnings).toHaveBeenCalledTimes(1);
+      expect(await readFile(resolve(path, 'work.txt'), 'utf8')).toBe('keep local work');
+    } finally { warnings.mockRestore(); await coordinator.shutdown(); }
   });
 
   it('switches new shared activations off for two Rooms in the same Workspace', async () => {

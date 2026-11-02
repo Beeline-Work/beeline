@@ -592,8 +592,8 @@ describe('a helper joining a corner it did not open', () => {
         expect(warnings).toHaveBeenCalledTimes(1);
         await recovery.sweepArchivedCornerWorktrees(new Map());
         await assertFiles();
-        expect(execute).toHaveBeenCalledTimes(2);
-        expect(warnings).toHaveBeenCalledTimes(2);
+        expect(execute).toHaveBeenCalledTimes(1);
+        expect(warnings).toHaveBeenCalledTimes(1);
         await coordinator.shutdown();
         const restarted = new RoomRuntimeCoordinator(
           (coordinator as unknown as { runtime: AgentRuntimeRecord }).runtime,
@@ -605,8 +605,10 @@ describe('a helper joining a corner it did not open', () => {
           const sweep = () => (restarted as unknown as typeof recovery).sweepArchivedCornerWorktrees(new Map());
           await sweep();
           await assertFiles();
-          expect(execute).toHaveBeenCalledTimes(3);
-          expect(warnings).toHaveBeenCalledTimes(3);
+          expect(execute).toHaveBeenCalledTimes(1);
+          expect(warnings).toHaveBeenCalledTimes(1);
+          // Fresh active membership is the only authority to clear the refusal.
+          await (restarted as unknown as typeof recovery).retryPendingCornerReaps(new Set(['corner-removed']));
           execute.mockImplementation(async () => ({ archived: false }));
           await sweep();
           await assertFiles();

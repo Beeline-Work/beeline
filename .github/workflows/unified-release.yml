@@ -1279,9 +1279,10 @@ jobs:
         run: node scripts/mobile-store-minimum.mjs
       - name: Notify clients without changing the authoritative release outcome
         id: notification
-        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
+        if: "!cancelled() && needs.initialize.outputs.no_op != 'true'"
         continue-on-error: true
         env:
+          MANIFEST_URL: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
           RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
           RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
           BEELINE_RELEASE_NOTIFY_SECRET: ${{ secrets.BEELINE_RELEASE_NOTIFY_SECRET }}
@@ -1289,6 +1290,7 @@ jobs:
           node scripts/unified-release.mjs notify
           --version "$RELEASE_VERSION"
           --sha "$RELEASE_SHA"
+          --manifest-url "$MANIFEST_URL"
           --repository "$GITHUB_REPOSITORY"
           --output "$RUNNER_TEMP/release-notification.json"
       - name: Surface release outcome and duration

@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createServer as createHttpsServer, request as httpsRequest } from 'node:https';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import { connectMcp } from '../apps/server/dist/rooms-mcp-connections.js';
@@ -343,6 +344,40 @@ try {
   const sent = await client.callTool({ name: 'send_message', arguments: { room, text: '@demo-agent acknowledge the connector review' } }); assert.notEqual(sent.isError, true);
   const row = (await db.query(`SELECT m.id,m.author_id,c.id command_id FROM messages m JOIN agent_commands c ON c.source_message_id=m.id WHERE m.text=$1 AND m.room_id=$2`, ['@demo-agent acknowledge the connector review', room])).rows[0];
   assert.equal(row.author_id, member);
+  // Exercise the built helper over stdio against the authenticated local server.
+  const helperToken = 'proof-helper-' + randomBytes(16).toString('hex');
+  await db.query('INSERT INTO daemon_tokens(token_hash,agent_id) VALUES($1,$2)', [tokenHash(helperToken), agent]);
+  const helper = spawn(process.execPath, ['apps/body/dist/read-only-mcp.js'], {
+    env: { ...process.env, BEELINE_MCP_SURFACE: 'agent', BEELINE_NATIVE_IO_PROVEN: '1', BEELINE_TURN_CONTEXT_FILE: '',
+      BEELINE_DAEMON_BASE_URL: origin, BEELINE_DAEMON_TOKEN: helperToken, BEELINE_DAEMON_ROOM_ID: room },
+    stdio: ['pipe', 'pipe', 'pipe'],
+  });
+  const pending = new Map(); let nextId = 0; let helperErrors = '';
+  helper.stderr.on('data', chunk => { helperErrors += String(chunk); });
+  const lines = createInterface({ input: helper.stdout });
+  lines.on('line', line => { const value = JSON.parse(line); pending.get(value.id)?.(value.result); pending.delete(value.id); });
+  const helperCall = (name, args) => new Promise(resolve => {
+    const id = ++nextId; pending.set(id, resolve);
+    helper.stdin.write(JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }) + '\n');
+  });
+  try {
+    const read = await helperCall('read', { facet: 'addresses' });
+    assert.notEqual(read.isError, true);
+    assert.equal(JSON.parse(read.content.at(-1).text).owedMentions.some(mention => mention.messageId === row.id && mention.memberId === agent), true);
+    for (const [kind, result, refusal] of [
+      ['schema', await helperCall('post', { text: '' }), /invalid|required|empty|length/],
+      ['daemon', await helperCall('read', { facet: 'message', messageId: '0'.repeat(64) }), /daemon operation .* failed/],
+    ]) {
+      assert.equal(result.isError, true);
+      assert.match(result.content[0].text, refusal);
+      assert.equal(JSON.parse(result.content.at(-1).text).owedMentions.some(mention => mention.messageId === row.id && mention.memberId === agent), true);
+      transcript(`OWED-ERROR-${kind.toUpperCase()} PASS: built helper retains isError, refusal text and authenticated owed tag ${row.id}.`);
+    }
+  } finally {
+    helper.stdin.end();
+    const code = await new Promise(resolve => helper.on('close', resolve));
+    assert.equal(code, 0, helperErrors); lines.close();
+  }
   await claimAgentCommand(db, room, agent, row.command_id, 'connector-proof');
   await options.daemon.execute('postRoomMessage', { roomId: room, requestId: row.id, generationId: 'connector-proof', text: 'Connector review acknowledged.' }, agent);
   assert.match(JSON.stringify(await options.phone.readRoom(room, person)), /Connector review acknowledged/);

@@ -2811,6 +2811,14 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     });
     return;
   }
+  // Error footers need fresh private context even when schema validation never
+  // dispatched an operation. This authenticated read adds no operation log entry.
+  if (method === 'GET' && url.pathname === '/v1/daemon/owed-mentions') {
+    const agentId = await daemonIdentity(request, options);
+    if (!agentId) { await refuseDaemon(request, response, options); return; }
+    json(response, 200, { owedMentions: await owedMentions(options.database, agentId) });
+    return;
+  }
   match = url.pathname.match(/^\/v1\/daemon\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
   if (method === 'POST' && match) {
     const agentId = await daemonIdentity(request, options);

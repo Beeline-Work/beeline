@@ -4079,9 +4079,29 @@ function failure(id: JsonRpcRequest['id'], code: number, message: string): void 
 /** Keep concurrent calls isolated; footer metadata rides on their existing operation responses. */
 export async function withToolOwedContext(work: () => Promise<string>) {
   return toolOwedStorage.run({}, async () => {
-    const output = await work();
+    let output: string;
+    let isError = false;
+    try { output = await work(); }
+    catch (error) {
+      isError = true;
+      output = error instanceof Error ? error.message : String(error);
+      // Validation may refuse before dispatch. Read fresh authenticated context
+      // without adding an operation to the command/operation log.
+      if (!toolOwedStorage.getStore()?.owedMentions) {
+        try {
+          const response = await fetch(new URL('/v1/daemon/owed-mentions', requiredEnv('BEELINE_DAEMON_BASE_URL')), {
+            signal: AbortSignal.timeout(5_000),
+            headers: { authorization: `Bearer ${requiredEnv('BEELINE_DAEMON_TOKEN')}` },
+          });
+          if (response.ok) {
+            const context = await response.json() as { owedMentions?: unknown[] };
+            if (Array.isArray(context.owedMentions)) toolOwedStorage.getStore()!.owedMentions = context.owedMentions;
+          }
+        } catch { /* Optional context must never mask the original refusal. */ }
+      }
+    }
     const owedMentions = toolOwedStorage.getStore()?.owedMentions;
-    return { content: [{ type: 'text' as const, text: output },
+    return { ...(isError ? { isError: true } : {}), content: [{ type: 'text' as const, text: output },
       ...(owedMentions ? [{ type: 'text' as const, text: JSON.stringify({ owedMentions }) }] : [])] };
   });
 }
@@ -4125,23 +4145,22 @@ async function handleLine(line: string): Promise<void> {
       // every harness that reads the spec, and reaches the model - when it
       // reaches it at all - as "the call failed", with the sentence explaining
       // why buried in a transport frame (C90).
-      let result: Awaited<ReturnType<typeof withToolOwedContext>>;
-      try {
+      const work = async () => {
         if (process.env.BEELINE_TURN_CONTEXT_FILE && (await readTurnContextFile()).terminalReason)
           throw new Error('turn has ended; further tool calls are refused');
         const definition = TOOLS.find(tool => tool.name === params.name);
         if (!definition) throw new Error(`unknown or unavailable tool: ${params.name}`);
         if (params.arguments !== undefined && (!params.arguments || typeof params.arguments !== 'object' || Array.isArray(params.arguments))) throw new Error('tool arguments must be an object');
         validateToolInput(definition, asObject(params.arguments));
-        result = agentSurface
-          ? await withToolOwedContext(() => callAgentTool(params.name as string, asObject(params.arguments), toolCallId(params, request.id)))
-          : { content: [{ type: 'text', text: await callTool(params.name, asObject(params.arguments)) }] };
-      } catch (error) {
-        success(request.id, {
-          content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }],
-          isError: true,
-        });
-        return;
+        return agentSurface
+          ? callAgentTool(params.name as string, asObject(params.arguments), toolCallId(params, request.id))
+          : callTool(params.name as string, asObject(params.arguments));
+      };
+      let result: Awaited<ReturnType<typeof withToolOwedContext>>;
+      if (agentSurface) result = await withToolOwedContext(work);
+      else {
+        try { result = { content: [{ type: 'text', text: await work() }] }; }
+        catch (error) { result = { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] }; }
       }
       success(request.id, result);
       return;

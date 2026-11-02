@@ -122,6 +122,14 @@ describe('owed Room tags', () => {
     });
     let fault: ReturnType<typeof vi.spyOn> | undefined;
     try {
+      const owedResponse = await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/v1/daemon/owed-mentions`, {
+        headers: { authorization: `Bearer ${token}` },
+      });
+      expect(owedResponse.status).toBe(200);
+      expect((await owedResponse.json()).owedMentions.some((m: any) => m.messageId === message)).toBe(true);
+      expect(execute).not.toHaveBeenCalled();
+      const anonymous = await fetch(`http://127.0.0.1:${(server.address() as { port: number }).port}/v1/daemon/owed-mentions`);
+      expect(anonymous.ok).toBe(false);
       const response = await call(true);
       expect(response.status).toBe(200);
       const result = await response.json();

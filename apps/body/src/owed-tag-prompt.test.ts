@@ -29,6 +29,13 @@ describe('helper owed context', () => {
     vi.stubGlobal('fetch', async () => Response.json({ result: { isError: true, content: [{ text: 'Refused' }, { text: JSON.stringify({ owedMentions }) }] } }));
     await expect(callTool({ server: 'http://localhost' }, 'fixture', 'post', {})).rejects.toThrow('owedMentions');
   });
+  it.each(['network', 'http'] as const)('C7 an unavailable %s error-context read preserves the original refusal', async failure => {
+    vi.stubEnv('BEELINE_DAEMON_BASE_URL', 'http://localhost');
+    vi.stubEnv('BEELINE_DAEMON_TOKEN', 'local-test');
+    vi.stubGlobal('fetch', async () => { if (failure === 'http') return Response.json({ error: 'unavailable' }, { status: 503 }); throw new Error('context unavailable'); });
+    const result = await withToolOwedContext(async () => { throw new Error('original refusal'); });
+    expect(result).toEqual({ isError: true, content: [{ type: 'text', text: 'original refusal' }] });
+  });
   it('C7 helper MCP results carry owed tags from the existing operation without another request', async () => {
     vi.stubEnv('BEELINE_DAEMON_BASE_URL', 'http://localhost');
     vi.stubEnv('BEELINE_DAEMON_TOKEN', 'local-test');

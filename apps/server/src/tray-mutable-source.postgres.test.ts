@@ -46,7 +46,7 @@ async function rig(run:(reader:SqlDatabase,writer:SqlDatabase)=>Promise<void>){
 }
 const snapshot=(db:SqlDatabase)=>buildRouterSnapshot(db,input,a,async()=>({needs:{items:[{
   messageId:'grant-card',workspaceId:workspace,roomId:room,roomName:'Synthetic Room',text:'private approval',createdAt:1,
-}]},saved:{bookmarks:[]}}));
+}]},saved:{windowId:`saved1:${'a'.repeat(64)}`,rows:[]}}));
 
 describe.skipIf(!url)('real PostgreSQL Tray owner mutation and final enqueue',()=>{
   it('rejects old private content after another pool commits owner transfer',async()=>{

@@ -1,3 +1,4 @@
+import {TRAY_SAVED_WINDOW_SCHEMA} from './tray-saved-window.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import type { RouterSnapshot } from '@beeline/api-contract/router-protocol';
@@ -32,7 +33,7 @@ describe('uninstalled mutable Tray source',()=>{
   }
   beforeEach(async()=>{
     db=PgliteDatabase.fromSnapshot(base);
-    await db.query(TRAY_MUTABLE_SOURCE_SCHEMA);
+    await db.query(TRAY_MUTABLE_SOURCE_SCHEMA);await db.query(TRAY_SAVED_WINDOW_SCHEMA);
     await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES
       ($1,'human','Old owner','old'),($2,'human','New owner','new'),($3,'agent','Agent','agent'),($4,'human','Actor','actor')`,[a,b,agent,actor]);
     await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,a]);
@@ -155,7 +156,7 @@ describe('uninstalled mutable Tray source',()=>{
     const changed=await causes();expect(changed).toHaveLength(4);
     for(const event of changed)expect(event).toMatchObject({oldReaderId:a,newReaderId:b,oldMessageId:'old-question',newMessageId:'new-question'});
     expect(new Set(changed.map(cause=>cause.trayWorkspaceId))).toEqual(new Set([w1,w2]));expect(await epochs()).toEqual(authority);
-    expect((await read()).value.saved.bookmarks).toHaveLength(0);expect((await read(b,w2)).value.saved.bookmarks[0]?.messageId).toBe('new-question');
+    expect((await read()).value.saved.rows.map(row=>row.value)).toHaveLength(0);expect((await read(b,w2)).value.saved.rows.map(row=>row.value)[0]?.messageId).toBe('new-question');
   });
 
   it('captures ordinary message key moves for both held bookmark pointers without an authority bump',async()=>{
@@ -163,16 +164,16 @@ describe('uninstalled mutable Tray source',()=>{
     await db.query(`INSERT INTO message_bookmarks(identity_id,workspace_id,room_id,message_id,source_room_name,source_room_kind,message_created_at)
       VALUES($1,$3,$4,'before-key','Synthetic Room','room',now()),($2,$3,$4,'after-key','Synthetic Room','room',now())`,[a,b,w1,r1]);
     const beforeA=await read(),beforeB=await read(b);
-    expect(beforeA.value.saved.bookmarks[0]?.available).toBe(true);expect(beforeB.value.saved.bookmarks[0]?.available).toBe(false);
+    expect(beforeA.value.saved.rows.map(row=>row.value)[0]?.available).toBe(true);expect(beforeB.value.saved.rows.map(row=>row.value)[0]?.available).toBe(false);
     await resetCauses();await db.query(`UPDATE messages SET id='after-key' WHERE id='before-key'`);
     const changed=await causes();expect(changed.map(cause=>cause.trayReaderId)).toEqual([a,b]);
     for(const event of changed)expect(event).toMatchObject({table:'messages',operation:'UPDATE',oldMessageId:'before-key',newMessageId:'after-key',oldRoomId:r1,newRoomId:r1});
     expect(changed.every(cause=>readTrayMutableCause(cause))).toBe(true);
     const afterA=await read(),afterB=await read(b);
     expect(afterA.authority).toEqual(beforeA.authority);expect(afterB.authority).toEqual(beforeB.authority);
-    expect(afterA.value.saved.bookmarks[0]).toMatchObject({messageId:'before-key',available:false});
-    expect(afterA.value.saved.bookmarks[0]).not.toHaveProperty('text');
-    expect(afterB.value.saved.bookmarks[0]).toMatchObject({messageId:'after-key',available:true,text:'Synthetic content'});
+    expect(afterA.value.saved.rows.map(row=>row.value)[0]).toMatchObject({messageId:'before-key',available:false});
+    expect(afterA.value.saved.rows.map(row=>row.value)[0]).not.toHaveProperty('text');
+    expect(afterB.value.saved.rows.map(row=>row.value)[0]).toMatchObject({messageId:'after-key',available:true,text:'Synthetic content'});
   });
 
   it('ignores hidden-only, usage and ordinary content/seen changes in the added hooks',async()=>{

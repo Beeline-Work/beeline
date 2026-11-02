@@ -14,6 +14,7 @@ const FIRST='55555555-5555-4555-8555-555555555555',SECOND='66666666-6666-4666-86
 const current=POSTGRES_LIVE_SCHEMA.slice(0,POSTGRES_LIVE_SCHEMA.indexOf('-- Memory jobs'));
 async function fixture(db:SqlDatabase){
   await db.query(`CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid NOT NULL,parent_id uuid,direct_participants jsonb);
+    CREATE TABLE corner_github_cache(corner_id uuid PRIMARY KEY REFERENCES rooms(id),lifecycle jsonb NOT NULL DEFAULT '{}'::jsonb);
     CREATE TABLE agent_schedules(id uuid PRIMARY KEY,workspace_id uuid NOT NULL,room_id uuid NOT NULL,agent_id text NOT NULL,
       creator_id text,title text,max_runs integer,cadence jsonb,message text,next_run_at timestamptz,created_at timestamptz,
       workflow_slug text,run_count integer DEFAULT 0,workflow_run text);

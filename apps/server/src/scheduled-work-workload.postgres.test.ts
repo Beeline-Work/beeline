@@ -58,6 +58,7 @@ async function fixture(db:SqlDatabase,count:number){
       push_muted boolean NOT NULL DEFAULT false,event_subscriptions jsonb NOT NULL DEFAULT '[]');
     CREATE INDEX memberships_room_identity ON memberships(room_id,identity_id);CREATE INDEX memberships_identity ON memberships(identity_id,workspace_id);
     CREATE TABLE corner_facts(corner_id uuid PRIMARY KEY REFERENCES rooms(id),reviewer_agent_id text);
+    CREATE TABLE corner_github_cache(corner_id uuid PRIMARY KEY REFERENCES rooms(id),lifecycle jsonb NOT NULL DEFAULT '{}'::jsonb);
     CREATE TABLE messages(id text PRIMARY KEY,room_id uuid,author_id text);
     CREATE TABLE workspace_apps(id uuid PRIMARY KEY);
     CREATE TABLE provider_webhooks(id uuid PRIMARY KEY,status text,signing_secret text);

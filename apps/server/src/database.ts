@@ -240,7 +240,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 45;
+export const REQUIRED_SCHEMA_VERSION = 46;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3101,6 +3101,16 @@ CREATE TABLE IF NOT EXISTS wallet_balance_snapshots (
   amount text NOT NULL,
   updated_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (identity_id, chain, asset)
+);
+
+CREATE TABLE IF NOT EXISTS operation_outcomes_hourly (
+  hour timestamptz NOT NULL,
+  op text NOT NULL,
+  status int NOT NULL,
+  code text NOT NULL,
+  release text NOT NULL,
+  count bigint NOT NULL,
+  PRIMARY KEY (hour,op,status,code,release)
 );
 
 -- The Beeline feedback loop (apps/server/src/feedback.ts). An agent's

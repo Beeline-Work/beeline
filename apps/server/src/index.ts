@@ -37,6 +37,7 @@ import {
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { PendingAttachmentCleanupLoop } from './pending-attachment-cleanup.js';
 import { BackgroundWork } from './background-work.js';
+import { OperationOutcomes, startOperationOutcomeFlush } from './operation-outcomes.js';
 import { dashboardFinances } from './operator-finances.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
@@ -404,8 +405,10 @@ async function main() {
   phone.setStarterOnboarding(starterOnboarding);
   daemon.setStarterOnboarding(starterOnboarding);
   const backgroundJobs = new BackgroundJobRunner();
+  const operationOutcomes = new OperationOutcomes();
   const sentryWakeAgentId = sentryWakeAgentFromEnv();
   const server = createBeelineServer({
+    operationOutcomes,
     replay: new DurableLiveReplay(database, live),
     roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth), phone, live, daemon, objectService),
     sentryWakeAgentId,
@@ -612,6 +615,7 @@ async function main() {
     await connectionPresence.start();
   }, port, host);
   void leader.run();
+  const stopOperationOutcomes = startOperationOutcomeFlush(jobsDatabase, operationOutcomes, backgroundJobs);
   const stopComputerExpiry = startComputerExpirySweep(database, live);
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
@@ -623,6 +627,7 @@ async function main() {
     await connectionPresence.stop();
     await liveListener.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await stopOperationOutcomes();
     await mountedAuth.close();
     await Promise.all([github?.stopCheckRefreshes(), githubJobs?.stopCheckRefreshes()]);
     await Promise.all([

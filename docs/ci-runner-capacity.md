@@ -9,16 +9,17 @@ another run.
 ## Routing and CPU budget
 
 The budget files in `infra/ci/` replace the older 16-CPU pool policy below.
-Five listeners (`01` through `05`) run with two CPUs and an 8 GiB hard memory
-limit each. Registered listeners `06` through `10` stay stopped and disabled
+Five listeners are active: `01` has one CPU for control work and `02` through
+`05` have two CPUs each for tests. Every listener has an 8 GiB hard memory limit. Registered listeners `06` through `10` stay stopped and disabled
 as standby. The pool retains its ten-CPU quota and 60 GiB hard memory limit.
 Verify those effective limits and the five-listener count before activation.
 
 | Checks work | Pull requests | Merge groups / manual dispatch |
 | --- | --- | --- |
-| All four server shards, TYPECHECK, MOBILE SUITE | `self-hosted, Linux, X64, beeline-ci` | `ubuntu-latest` |
-| DEAD CODE, MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, NATIVE FINGERPRINT | `self-hosted, Linux, X64, beeline-ci` | `ubuntu-latest` |
-| Preparation, selection, verdicts, Body and remaining Linux gates | `ubuntu-latest` | `ubuntu-latest` |
+| All four server shards, TYPECHECK, MOBILE SUITE | `beeline-ci, beeline-ci-heavy` (02–05) | `ubuntu-latest` |
+| DEAD CODE, MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, NATIVE FINGERPRINT | `beeline-ci, beeline-ci-heavy` (02–05) | `ubuntu-latest` |
+| Detection, shared preparation/tests, selection, verdicts, README, app associations | `beeline-ci, beeline-ci-control` (01) | `ubuntu-latest` |
+| Privileged Body setup, PostgreSQL timing, Docker build/lint | `ubuntu-latest` | `ubuntu-latest` |
 
 The PostgreSQL claim-latency job stays hosted. Body's privileged tool setup
 stays hosted. Desktop and Mac helper acceptance retain their existing runners.
@@ -26,23 +27,28 @@ The main-push server coverage workflow stays hosted and runs the full suite;
 PR shards consume SELECT SERVER TESTS and fail closed to the full suite if
 selection is unavailable. No check contexts or integration batches change.
 
-Vitest commands use at most two workers, including hosted shared-package
-and Body jobs. Integration batches and timing-sensitive isolated tests retain
+Test listeners use at most two Vitest workers; the control listener uses one,
+including shared-package tests. Body stays hosted with at most two workers. Integration batches and timing-sensitive isolated tests retain
 one worker. Node test-file concurrency, Turbo task concurrency, libuv's thread pool
 and Metro export workers are also bounded. Existing lockfile-keyed dependency
 caches and exact-commit build caches are reused after shared preparation;
-cold workspace builds execute one task at a time on the producer. Squire
+cold workspace builds execute one task at a time on the control producer. Squire
 consumers require those prepared caches and fail promptly on a miss, so a
 failed shared job cannot trigger parallel cold installs/builds. Compiled outputs
-never fall back to another commit.
+never fall back to another commit. Cache version 2 includes explicit dist
+file globs, validates API exports and publishes the build snapshot immediately
+after compilation, before tests can change outputs.
 
 The service drop-in caps each active listener and its whole job process tree
-to two CPUs, with memory pressure at 6 GiB and a hard limit of 8 GiB. The slice
+to two CPUs, with memory pressure at 6 GiB and a hard limit of 8 GiB. Instance
+01 has an additional one-CPU override and only the control role; instances
+02–05 have the heavy role. Their maxima total nine CPUs under the ten-CPU cap. The slice
 caps the pool at ten CPUs, with pressure at 48 GiB and a hard limit of 60 GiB.
 Five active listeners admit at most five simultaneous jobs across all PRs;
 workflow matrix limits alone cannot enforce a host-wide bound.
 
-Prepared consumers prepend `.github/actions/ci-workspace/bin` to PATH. Its
+Every CI-only producer and consumer prepends `.github/actions/ci-workspace/bin`
+to PATH. Archive compression also uses one zstd worker. Its
 `tar` wrapper uses the existing `flock` utility and the shared CI user's home
 to serialize cache archive operations across all listeners. Only the cache
 action's `cache.tar`, `cache.tgz` and `cache.tzst` files take that lock; tool
@@ -56,7 +62,9 @@ why CPU quotas alone cannot control disk waits or whole-host load. The five-job
 profile and serialized cache operations address that measured bottleneck;
 concurrent-PR acceptance remains a separate measurement. Judge CI by its
 cgroup CPU/memory and Linux job wall time, not whole-host load from agents,
-Gradle or emulators. The host-load safety backstop is 25; the resource budget
+Gradle or emulators. Hosted detection/selection queues previously held server
+shards for more than fifteen minutes, so the credential-free control path now
+has a reserved local listener. The host-load safety backstop is 25; the resource budget
 remains ten CPUs and 60 GiB.
 
 See [`infra/ci/README.md`](../infra/ci/README.md) for activation, measurement and

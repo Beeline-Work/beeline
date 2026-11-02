@@ -5,9 +5,10 @@ credential-free `beeline-ci` user, mount namespace, runner labels and all
 release/production services. There is no new service or workflow gate.
 
 The pool has ten registered listeners, five active at a time and one job per
-active listener. Each service has `CPUQuota=200%` and `MemoryMax=8G`; the slice
+active listener. Test instances 02–05 have `CPUQuota=200%`; control instance 01
+has an additional `CPUQuota=100%` override. All have `MemoryMax=8G`; the slice
 has `CPUQuota=1000%` and `MemoryMax=60G`. Limits cover all children, including
-test subprocesses. Vitest uses two workers per job. The CI workspace action
+test subprocesses. Vitest uses two workers for tests and one for control work. The CI workspace action
 serializes cache tar operations using a shared file lock; no service is added.
 
 ## Activation order
@@ -16,19 +17,22 @@ serializes cache tar operations using a shared file lock; no service is added.
    rebase the CI branch on main. Do not restore the runners against the
    leaking integration suite.
 2. With the CI listeners still stopped, install `beeline-ci@.service.d/50-budget.conf`
-   and `beeline-ci.slice.d/50-budget.conf` beneath `/etc/systemd/system/`.
+   `beeline-ci.slice.d/50-budget.conf`, and the instance-specific
+   `beeline-ci@01.service.d/60-control-budget.conf` beneath `/etc/systemd/system/`.
    Run `systemctl daemon-reload`. Installation requires host-write authority;
    a worktree-only worker can prepare these files but cannot apply them.
 3. Verify `systemctl show beeline-ci.slice` reports a ten-CPU quota, 48 GiB
    MemoryHigh and 60 GiB MemoryMax. Verify every instance 01 through 10 has
-   a two-CPU quota, 6 GiB MemoryHigh, 8 GiB MemoryMax and the correct slice.
+   a two-CPU quota (one CPU for 01), 6 GiB MemoryHigh, 8 GiB MemoryMax and the correct slice.
    Existing resource drop-ins must not override these values. Verify the
    parent slice does not impose an unexpected tighter limit.
 4. Enable/start only `beeline-ci@01.service` through `beeline-ci@05.service`.
    Keep `06` through `10` stopped and disabled, retaining their registrations
    and labels as standby. Confirm all names remain `beeline-ci-squire-01`
    through `-10`, with the `beeline-ci` label. Verify exactly five are online;
-   never start the standby instances to compensate for queues.
+   never start the standby instances to compensate for queues. Instance 01
+   also has `beeline-ci-control`; 02–05 have `beeline-ci-heavy`. PR gates select
+   those roles explicitly so preparation cannot queue behind long suites.
 5. Run one monitored single-PR trial first. After a safe trial, firstmate
    lands the CI change; the three-PR proof uses the next real PRs carrying
    this routing and the leak fix. An older PR head still runs its own old workflow;

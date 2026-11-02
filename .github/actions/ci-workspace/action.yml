@@ -10,8 +10,8 @@ inputs:
 runs:
   using: composite
   steps:
-    # Only prepared Linux consumers use the shared CI home and file lock.
-    - if: inputs.prepared == 'true'
+    # Both the CI producer and its consumers serialize archive operations.
+    - if: startsWith(runner.name, 'beeline-ci-squire-')
       shell: bash
       run: echo "$GITHUB_ACTION_PATH/bin" >> "$GITHUB_PATH"
     - uses: actions/setup-node@v4
@@ -36,14 +36,14 @@ runs:
           exit 1
         fi
         npm ci --no-audit --no-fund
-    - uses: actions/cache@v4
+    - uses: actions/cache/restore@v4
       id: builds
       with:
         path: |
-          packages/*/dist
-          apps/*/dist
+          packages/*/dist/**
+          apps/*/dist/**
           .turbo
-        key: ci-build-v1-${{ runner.os }}-node22-${{ github.sha }}
+        key: ci-build-v2-${{ runner.os }}-node22-${{ github.sha }}
     - if: steps.builds.outputs.cache-hit != 'true'
       shell: bash
       env:
@@ -54,6 +54,33 @@ runs:
           exit 1
         fi
         npm run build -- --concurrency=1
+    - name: Verify compiled API exports
+      id: verify-builds
+      shell: bash
+      run: |
+        node --input-type=module <<'JS'
+        import { readFileSync, existsSync } from 'node:fs';
+        import { resolve } from 'node:path';
+        const directory = resolve('packages/api-contract');
+        const manifest = JSON.parse(readFileSync(resolve(directory, 'package.json'), 'utf8'));
+        function verify(value) {
+          if (typeof value === 'string' && value.startsWith('./dist/') && !value.includes('*')) {
+            if (!existsSync(resolve(directory, value))) throw new Error(`Missing compiled API export: ${value}`);
+          } else if (value && typeof value === 'object') {
+            for (const entry of Object.values(value)) verify(entry);
+          }
+        }
+        verify(manifest.exports);
+        JS
+    # Publish the verified snapshot before any tests can modify build outputs.
+    - uses: actions/cache/save@v4
+      if: steps.builds.outputs.cache-hit != 'true'
+      with:
+        path: |
+          packages/*/dist/**
+          apps/*/dist/**
+          .turbo
+        key: ${{ steps.builds.outputs.cache-primary-key }}
     - uses: actions/cache@v4
       if: inputs.mobile == 'true'
       id: mobile

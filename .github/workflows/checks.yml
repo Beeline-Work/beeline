@@ -90,18 +90,21 @@ concurrency:
   group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# Five active CI-only listeners share ten CPU threads, with two test workers
-# per job. Dispatch/merge-group jobs keep the same bound on hosted runners.
+# One control listener uses one CPU; four test listeners use two CPUs each.
+# The CI slice retains its ten-CPU hard cap across all PRs.
 env:
   CI_TEST_WORKERS: '2'
   UV_THREADPOOL_SIZE: '1'
   TURBO_CONCURRENCY: '1'
+  ZSTD_NBTHREADS: '1'
 
 jobs:
   changes:
     name: Detect changes
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group')
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     outputs:
       code: ${{ steps.decide.outputs.code }}
@@ -377,7 +380,7 @@ jobs:
     name: TYPECHECK
     if: ${{ !cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'typecheck') }}
     needs: shared-package-tests
-    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -454,7 +457,9 @@ jobs:
   shared-package-tests:
     name: SHARED PACKAGE TESTS
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'shared-package-tests'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -500,7 +505,7 @@ jobs:
     name: DEAD CODE
     if: ${{ !cancelled() && (((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.code == 'true') || inputs.suite == 'all' || inputs.suite == 'dead-code') }}
     needs: [changes, shared-package-tests]
-    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -619,7 +624,9 @@ jobs:
     name: SELECT SERVER TESTS
     needs: changes
     if: github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 10
     permissions:
       contents: read
@@ -682,7 +689,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4]
-    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -773,7 +780,9 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     steps:
       - name: Require every shard and the claim latency budget to pass
@@ -795,7 +804,9 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.serverIntegration == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     steps:
       - name: Require every shard to pass
@@ -814,7 +825,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -850,7 +861,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileExportReachability == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability'))
       )
-    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -884,7 +895,7 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.productionCorpusReplay == 'true'
-    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -939,7 +950,9 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.frameBudget == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     steps:
       - name: Take the verdict from the suite that ran it
@@ -972,7 +985,9 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.stateUpgrade == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     steps:
       - name: Take the verdict from the suite that ran it
@@ -1019,7 +1034,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && (needs.changes.outputs.nativeFingerprint == 'true' || needs.changes.outputs.mobileSuite == 'true')) ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -1057,7 +1072,9 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.readme == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'readme-parity'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -1079,11 +1096,15 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.appLinkAssociations == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'app-link-associations'))
       )
-    runs-on: ubuntu-latest
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    env:
+      CI_TEST_WORKERS: '1'
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
+        with:
+          prepared: ${{ github.event_name == 'pull_request' }}
       - name: Verify the committed app associations, Pages build, and bundle merge
         run: node --test --test-concurrency=1 scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/merge-beeline-bundles.test.mjs scripts/verify-beeline-install.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs scripts/verify-web-deployment.test.mjs scripts/web-asset-guard.test.mjs
       - name: Run the public website contract test

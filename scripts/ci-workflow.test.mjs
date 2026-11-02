@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, readdirSync, mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs';
+import { readFileSync, readdirSync, mkdtempSync, writeFileSync, existsSync, rmSync, mkdirSync } from 'node:fs';
 import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
@@ -127,25 +127,27 @@ test('excluding the fingerprint regression from the mobile suite always has isol
   assert.ok(selected(isolated, 'workflow_dispatch', 'native-fingerprint', false, false, false));
 });
 
-test('preparation, verdicts and the timing-sensitive PostgreSQL budget stay hosted', () => {
-  const critical = ['changes', 'shared-package-tests', 'server-test-selection', 'server-claim-latency', 'server-suite', 'server-integration', 'body-suite'];
-  for (const name of critical) {
+const heavyJobs = ['server-suite-shard', 'typecheck', 'mobile-suite', 'dead-code',
+  'mobile-export-reachability', 'production-corpus-replay', 'native-fingerprint'];
+const controlJobs = ['changes', 'shared-package-tests', 'server-test-selection',
+  'server-suite', 'server-integration', 'frame-budget', 'state-upgrade',
+  'readme-parity', 'app-link-associations'];
+const squireJobs = [...heavyJobs, ...controlJobs];
+const preparedConsumers = [...heavyJobs, 'app-link-associations'];
+
+test('privileged setup and isolated PostgreSQL stay hosted', () => {
+  for (const name of ['server-claim-latency', 'body-suite', 'auth-image', 'actionlint']) {
     assert.equal(jobs[name]['runs-on'], 'ubuntu-latest');
   }
-  for (const [name, job] of Object.entries(jobs)) {
-    if (job.uses) continue;
-    assert.ok(!JSON.stringify(job['runs-on']).includes('beeline-ci-shard'), name);
-  }
+  for (const name of controlJobs) assert.equal(jobs[name].env.CI_TEST_WORKERS, '1', name);
 });
-
-const squireJobs = ['server-suite-shard', 'typecheck', 'mobile-suite', 'dead-code',
-  'mobile-export-reachability', 'production-corpus-replay', 'native-fingerprint'];
 
 test('only credential-free PR Linux jobs use the bounded CI-only pool', () => {
   for (const name of squireJobs) {
     const routing = jobs[name]['runs-on'];
     assert.match(routing, /github.event_name == 'pull_request'/, name);
-    assert.match(routing, /fromJSON\('\["self-hosted","Linux","X64","beeline-ci"\]'\)/, name);
+    const labels = JSON.parse(routing.match(/fromJSON\('([^']+)'\)/)[1]);
+    assert.deepEqual(labels, ['self-hosted', 'Linux', 'X64', 'beeline-ci', `beeline-ci-${controlJobs.includes(name) ? 'control' : 'heavy'}`], name);
     assert.match(routing, /\|\| 'ubuntu-latest'/, name);
   }
   const mobile = jobs['mobile-suite'].steps.find((step) => step.name === 'Run the mobile vitest suite');
@@ -285,7 +287,7 @@ test('prepared consumers cannot fan out cold installs or builds after a preparat
       assert.ok(existsSync(marker), 'the producer must still prepare a cold cache');
       rmSync(marker);
     }
-    for (const name of squireJobs) {
+    for (const name of preparedConsumers) {
       const setup = jobs[name].steps.find(step => step.uses === './.github/actions/ci-workspace');
       assert.equal(setup.with.prepared, "${{ github.event_name == 'pull_request' }}", name);
     }
@@ -317,9 +319,36 @@ test('cache tar operations wait for the shared lock while tool probes remain fre
     assert.equal(await completed, 0);
     const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
     const install = action.runs.steps.find(step => step.run?.includes('$GITHUB_ACTION_PATH/bin'));
-    assert.equal(install.if, "inputs.prepared == 'true'");
+    assert.equal(install.if, "startsWith(runner.name, 'beeline-ci-squire-')");
   } finally {
     holder.stdin.end(); holder.kill(); listing?.kill();
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+
+test('compiled cache snapshots reject missing exports before publishing', () => {
+  const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
+  const check = action.runs.steps.find(step => step.id === 'verify-builds');
+  const restore = action.runs.steps.find(step => step.id === 'builds');
+  const save = action.runs.steps.find(step => step.uses === 'actions/cache/save@v4');
+  assert.equal(restore.uses, 'actions/cache/restore@v4');
+  assert.equal(save.with.path, restore.with.path);
+  assert.equal(save.with.key, '${{ steps.builds.outputs.cache-primary-key }}');
+  assert.ok(action.runs.steps.indexOf(save) > action.runs.steps.indexOf(check));
+  const directory = mkdtempSync(join(tmpdir(), 'ci-build-export-'));
+  try {
+    const pkg = join(directory, 'packages/api-contract');
+    mkdirSync(join(pkg, 'dist'), { recursive: true });
+    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ exports: { './mobile-minimum': {
+      import: './dist/mobile-minimum.js', types: './dist/mobile-minimum.d.ts',
+    } } }));
+    const missing = spawnSync('bash', ['-c', check.run], { cwd: directory, encoding: 'utf8' });
+    assert.notEqual(missing.status, 0);
+    assert.match(missing.stderr, /Missing compiled API export/);
+    writeFileSync(join(pkg, 'dist/mobile-minimum.js'), 'export {};');
+    writeFileSync(join(pkg, 'dist/mobile-minimum.d.ts'), 'export {};');
+    const complete = spawnSync('bash', ['-c', check.run], { cwd: directory, encoding: 'utf8' });
+    assert.equal(complete.status, 0, complete.stderr);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

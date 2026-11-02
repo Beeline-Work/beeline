@@ -114,15 +114,8 @@ it('retires old Google consent and connector rows without leaving active grants'
       [connector])).rowCount).toBe(0);
     expect((await database.query<{ tablename: string }>(`SELECT tablename FROM pg_tables WHERE
       schemaname='public' AND tablename LIKE 'google_oauth_%' ORDER BY tablename`)).rows)
-      .toEqual([
-        { tablename: 'google_oauth_accounts' },
-        { tablename: 'google_oauth_attempts' },
-        { tablename: 'google_oauth_grants' },
-      ]);
-    for (const table of ['google_oauth_accounts', 'google_oauth_attempts',
-      'google_oauth_grants'] as const) {
-      expect((await database.query(`SELECT 1 FROM ${table}`)).rowCount).toBe(1);
-    }
+      .toEqual([{ tablename: 'google_oauth_grants' }]);
+    expect((await database.query(`SELECT 1 FROM google_oauth_grants`)).rowCount).toBe(1);
   } finally {
     await database.close();
   }

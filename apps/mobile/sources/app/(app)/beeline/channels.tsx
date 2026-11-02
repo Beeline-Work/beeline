@@ -50,6 +50,8 @@ import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { Button } from '@/components/buzz/Button';
 import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
+import { RoomDeckUnavailableView } from '@/components/buzz/RoomDeckUnavailableView';
+import { reconnectNow } from '@/sync/transport/live-connection';
 import { InlineRow } from '@/components/buzz/IndexRow';
 import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
@@ -872,11 +874,18 @@ export default function BuzzChannels() {
   );
 
   if (landing.kind === 'error') {
+    if (error === connectionErrorTitle) {
+      return <RoomDeckUnavailableView
+        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
+        onReconnect={() => {
+          reconnectNow();
+          setRetryGeneration((value) => value + 1);
+        }}
+      />;
+    }
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        {error === connectionErrorTitle
-          ? <ConnectionStatus connectedFallback={<IndexRow title={`Could not load ${WORKSPACE_LABEL}s`} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />} />
-          : <IndexRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />}
+        <IndexRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />
       </View>
     );
   }

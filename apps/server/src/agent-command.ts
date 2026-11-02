@@ -109,6 +109,8 @@ CREATE TABLE IF NOT EXISTS agent_commands (
 );
 ALTER TABLE agent_commands ALTER COLUMN source_message_id DROP NOT NULL;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS private_payload jsonb;
+-- Retired: a production-only column that held only its '[]' default (2026-11-02).
+ALTER TABLE agent_commands DROP COLUMN IF EXISTS delegate_agent_ids;
 ALTER TABLE corner_watches ADD COLUMN IF NOT EXISTS incoming_command_id text REFERENCES agent_commands(id) ON DELETE SET NULL;
 CREATE INDEX IF NOT EXISTS corner_watches_incoming_command_idx ON corner_watches(incoming_command_id);
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS avatar_job boolean NOT NULL DEFAULT false;

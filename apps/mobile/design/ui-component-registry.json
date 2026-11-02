@@ -300,6 +300,7 @@
     "components/buzz/RoomCornerSummary.tsx": ["RoomCornerSummary"],
     "components/buzz/RoomDeckComposeMenu.tsx": ["ComposeGlyph", "RoomDeckComposeMenu"],
     "components/buzz/RoomDeckLoadingView.tsx": ["RoomDeckLoadingView"],
+    "components/buzz/RoomDeckUnavailableView.tsx": ["RoomDeckUnavailableView"],
     "components/buzz/RoomGlyph.tsx": ["RoomGlyph"],
     "components/buzz/RoomListSectionHeader.tsx": ["LABEL_LINE", "RoomListSectionHeader", "SectionAddButton", "SectionAddGlyph"],
     "components/buzz/RoomListToolbar.tsx": ["RoomListToolbar", "actions", "filters", "search"],

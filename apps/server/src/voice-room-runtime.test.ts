@@ -1951,7 +1951,7 @@ it.each(['quiet','pending','outside'])('call-wide-end-3: %s work uses one 60-sec
     state.room.remoteParticipants.set(human, { identity: human, trackPublications: new Map() });
     const retainedRoom = state.room;
     const phone = new PhoneService(db, 'http://proof');
-    const tick = timer.mock.calls.find(([callback, delay]) => delay === 1000 && String(callback).includes('checkInactivity'))![0] as () => Promise<void>;
+    const tick = () => (runtime as any).checkInactivity();
     timer.mockRestore();
     let source: string | undefined;
     if (scenario !== 'quiet') {
@@ -1991,7 +1991,7 @@ it('call-wide-end-3: completion between quiet checks restarts the full window', 
   const intervals=vi.spyOn(globalThis,'setInterval');
   const {service}=conversationService(1);
   const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
-  const tick=intervals.mock.calls.find(([callback,delay])=>delay===1000 && String(callback).includes('checkInactivity'))![0] as ()=>Promise<void>;
+  const tick = () => (runtime as any).checkInactivity();
   intervals.mockRestore();
   try {
     clock=60_000;
@@ -2010,7 +2010,7 @@ it('call-wide-end-3: stalled TTS without new playback cannot hold the call open'
   const held=new Promise<void>(resolve=>{release=resolve;});
   speech.synthesize.mockImplementation(async function*(){yield new Uint8Array(960).fill(5);await held;});
   const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
-  const tick=intervals.mock.calls.find(([callback,delay])=>delay===1000 && String(callback).includes('checkInactivity'))![0] as ()=>Promise<void>;
+  const tick = () => (runtime as any).checkInactivity();
   intervals.mockRestore();
   const reply=runtime.utterance('human','Ruby, explain this');
   try {
@@ -2025,7 +2025,7 @@ it('warns after 45 seconds and cancels the deadline on human speech or call work
   const intervals=vi.spyOn(globalThis,'setInterval');
   const {service}=conversationService(2);
   const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
-  const tick=intervals.mock.calls.find(([callback,delay])=>delay===1000 && String(callback).includes('checkInactivity'))![0] as ()=>Promise<void>;
+  const tick = () => (runtime as any).checkInactivity();
   intervals.mockRestore();
   const events=()=>state.room.localParticipant.publishData.mock.calls.map(([bytes]: any)=>JSON.parse(new TextDecoder().decode(bytes))).filter((event: any)=>event.type==='ending');
   state.room.localParticipant.publishData.mockClear();
@@ -2134,6 +2134,9 @@ it('broadcasts the shared countdown to every participant and ends the workspace 
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   try {
     const budget = { remainingMs: 120_000, resetAt: Date.now() + 86_400_000, timeZone: 'UTC' };
+    await (runtime as any).meter.flush();
+    expect(service.budget.record).not.toHaveBeenCalled();
+    (runtime as any).meter.audio(20);
     service.budget.record.mockResolvedValueOnce(budget);
     await (runtime as any).meter.flush();
     await vi.waitFor(() => {
@@ -2144,6 +2147,7 @@ it('broadcasts the shared countdown to every participant and ends the workspace 
       expect(JSON.parse(new TextDecoder().decode(warning![0]))).toEqual({ type: 'budget', budget });
     });
     service.budget.read.mockResolvedValue({ ...budget, remainingMs: 0 });
+    (runtime as any).meter.audio(20, Date.now() + 20);
     service.budget.record.mockResolvedValueOnce({ ...budget, remainingMs: 0 });
     await (runtime as any).meter.flush();
     await vi.waitFor(() => expect(service.endWorkspaceCalls).toHaveBeenCalledWith('human'));
@@ -3298,4 +3302,31 @@ it.each([9999, 10000])('SPEEDY-CONTACT-4: silent contact draft has a ten-second 
     expect(service.dispatch).toHaveBeenCalledOnce();
     expect(service.recordHuman).toHaveBeenCalledTimes(delay < 10000 ? 1 : 2);
   } finally { await runtime.close(); vi.useRealTimers(); }
+});
+
+
+it('inactivity deadlines read only at warning, tone and end, then park until real activity', async () => {
+  vi.useFakeTimers();
+  const start = Date.now();
+  const now = vi.spyOn(performance, 'now').mockImplementation(() => Date.now() - start);
+  const { service } = conversationService(2);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await vi.advanceTimersByTimeAsync(0);
+    service.callWorkState.mockClear();
+    await vi.advanceTimersByTimeAsync(44_999);
+    expect(service.callWorkState).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(service.callWorkState).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(service.callWorkState).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(service.callWorkState).toHaveBeenCalledTimes(3);
+    expect(service.endInactive).toHaveBeenCalledOnce();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(service.callWorkState).toHaveBeenCalledTimes(3);
+    (runtime as any).markCallActivity();
+    await vi.advanceTimersByTimeAsync(45_000);
+    expect(service.callWorkState).toHaveBeenCalledTimes(4);
+  } finally { await runtime.close(); now.mockRestore(); vi.useRealTimers(); }
 });

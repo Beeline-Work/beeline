@@ -33,7 +33,12 @@ class NativeArtifactByteStore implements ArtifactByteStore {
     if (!this.directory) throw new Error('File cache is unavailable.');
     await makeDirectoryAsync(this.directory, { intermediates: true });
     try {
-      const encoded = await readAsStringAsync(`${this.directory}index.json`, { encoding: EncodingType.UTF8 });
+      const indexUri = `${this.directory}index.json`;
+      const info = await getInfoAsync(indexUri);
+      if (!info.exists || info.isDirectory || !('size' in info) ||
+        !Number.isSafeInteger(info.size) || info.size < 0 || info.size > 1024 * 1024)
+        throw new Error('File cache index exceeds budget.');
+      const encoded = await readAsStringAsync(indexUri, { encoding: EncodingType.UTF8 });
       if (encoded.length > 1024 * 1024) throw new Error('File cache index exceeds budget.');
       const entries: unknown = JSON.parse(encoded);
       if (!Array.isArray(entries) || entries.length > 512) throw new Error('Invalid file cache index.');

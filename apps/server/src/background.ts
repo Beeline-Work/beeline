@@ -1130,10 +1130,11 @@ export class BackgroundJobRunner {
       health.lastErrorAt = this.now();
       health.consecutiveFailures++;
       // Operator deliveries stay pending when BEGIN/checkout fails. The next
-      // leader loop retries them; keep a continuing outage at error level.
+      // committed delivery or real recovery may resume them; keep a
+      // continuing outage at error level without creating a retry timer.
       if (name === 'operator-system-dms' && error instanceof DatabaseTransactionStartError &&
           health.consecutiveFailures === 1) {
-        console.warn(`[background] ${name} deferred until next loop`, error);
+        console.warn(`[background] ${name} deferred until committed delivery or recovery`, error);
         return { ok: false };
       }
       captureServerError(error, { background_job: name });

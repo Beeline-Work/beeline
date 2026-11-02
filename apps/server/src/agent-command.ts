@@ -294,10 +294,9 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     SELECT id FROM answered_reports
     UNION
     SELECT command.id FROM recovery_scope command WHERE command.reason='report' AND (
-      EXISTS (SELECT 1 FROM rooms origin LEFT JOIN corner_facts fact ON fact.corner_id=origin.id
+      EXISTS (SELECT 1 FROM rooms origin
         WHERE origin.id::text=COALESCE(command.private_payload->>'originCornerId',command.private_payload->>'fromRoomId')
-          AND origin.parent_id IS NOT NULL AND (origin.archived_at IS NOT NULL
-            OR fact.lifecycle->>'lifecycle' IN ('closed','landed')))
+          AND origin.parent_id IS NOT NULL AND origin.archived_at IS NOT NULL)
       OR (command.private_payload->>'authorId'='${SYSTEM_IDENTITY_ID}'
         AND command.private_payload->>'text' LIKE 'blocked: Corner % is idle. Resume it, set a hold, or close it.'
         AND EXISTS (SELECT 1 FROM corner_attention_spans span

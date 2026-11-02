@@ -1,5 +1,6 @@
 import { cornerObjectiveSql } from './corner-objective.js';
 import { cornerKindSql } from './corner-opening.js';
+import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
 import { cornerOwnerSql } from './corner-worker.js';
 import { cornerRunStateSql } from './corner-run.js';
@@ -532,7 +533,7 @@ export async function refuseVerdictedReviewerWake(
  * A green review wake still goes out: that report is often the pending gate. */
 function waitingReportSql(command: string): string {
   return `(${command}.action NOT IN ('input','resume') OR NOT EXISTS (
-    SELECT 1 FROM corner_report_blockers blocker WHERE blocker.corner_id=${command}.room_id
+    SELECT 1 FROM rooms waiting_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting WHERE waiting_corner.id=${command}.room_id
   ) OR ${command}.private_payload->>'kind' IN ('order','report')
     OR ${command}.reason='corner_review_dispatch'
     OR (${command}.reason='corner_check' AND EXISTS (
@@ -2177,7 +2178,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
      ) stuck
      WHERE corner.archived_at IS NULL AND ${cornerImplementerSql('fact', 'corner')} IS NOT NULL
        AND fact.lifecycle->>'checks'='failing'
-       AND NOT EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=fact.corner_id)
+       AND NOT EXISTS(SELECT 1 FROM rooms waiting_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting WHERE waiting_corner.id=fact.corner_id)
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
        AND stuck.held
        AND NOT ${recoveredSnapshot}
@@ -2197,7 +2198,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
           AND ${cornerImplementerSql('fact', 'corner')}=$3
           AND fact.lifecycle=$4::jsonb
           AND NOT ${recoveredSnapshot}
-          AND NOT EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=fact.corner_id)
+          AND NOT EXISTS(SELECT 1 FROM rooms waiting_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting WHERE waiting_corner.id=fact.corner_id)
           AND (SELECT newest.id FROM agent_commands newest WHERE newest.room_id=$1
             AND newest.agent_id=$3 AND newest.reason='corner_check'
             ORDER BY newest.created_at DESC,newest.id DESC LIMIT 1) IS NOT DISTINCT FROM $5

@@ -3579,6 +3579,16 @@ export async function migrate(
   ));
   await ddlScript('corner person state', CORNER_PERSON_STATE_SCHEMA);
   await ddlScript('corner membership guard', CORNER_MEMBERSHIPS_SCHEMA);
+  await retryMigrationStep('corner human report return index', () => createIndexConcurrently(
+    database, 'corner_human_reports_return',
+    `CREATE INDEX CONCURRENTLY corner_human_reports_return ON messages(room_id,created_at DESC,id DESC)
+     WHERE card->>'reportToId' IS NOT NULL`,
+  ));
+  await retryMigrationStep('corner human report worker index', () => createIndexConcurrently(
+    database, 'corner_human_reports_worker',
+    `CREATE INDEX CONCURRENTLY corner_human_reports_worker ON messages(author_id,created_at DESC,id DESC)
+     WHERE card->>'reportToId' IS NOT NULL`,
+  ));
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());

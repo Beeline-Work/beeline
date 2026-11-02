@@ -1,5 +1,6 @@
 import { cornerReviewerSql } from './corner-reviewer.js';
 import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
+import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { createHash } from 'node:crypto';
 import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
@@ -215,7 +216,7 @@ export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false):
       UNION ALL
       SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at,'question',
         CASE WHEN report.return_room_id=c.id AND report.message_id IS NOT NULL THEN 'message'
-          ELSE 'report' END FROM corner_report_blockers report
+          ELSE 'report' END FROM (${cornerWaitingReportSql('c')}) report
       JOIN identities recipient ON recipient.id=report.person_id
         AND (recipient.kind='human' OR report.person_id=report.commander_id)
       WHERE report.corner_id=c.id

@@ -18,6 +18,11 @@
       "types": "./dist/private/admission.d.ts",
       "import": "./dist/private/admission.js",
       "default": "./dist/private/admission.js"
+    },
+    "./helper-codecs": {
+      "types": "./dist/helper-codecs.d.ts",
+      "import": "./dist/helper-codecs.js",
+      "default": "./dist/helper-codecs.js"
     }
   },
   "scripts": {

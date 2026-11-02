@@ -899,10 +899,11 @@ export function createBeelineServer(options: ServerOptions): Server {
       };
       const releaseWorkspaces = options.live.subscribeAll((event) => {
         if (event.type === 'resource-change') {
+          if (event.usageOnly && routerProtocol.supportsUsage()) return;
           if (event.ownerId === principal.identityId)
             sendLive(JSON.stringify({ type: 'resource-change', roomId: '',
               resource: event.resource, ...(event.resourceId ? { resourceId: event.resourceId } : {}),
-              ...(event.version ? { version: event.version } : {}) }));
+              ...(event.version ? { version: event.version } : {}), ...(event.usageOnly ? { usageOnly: true } : {}) }));
           return;
         }
         if (event.type !== 'invalidate') return;
@@ -1088,6 +1089,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       const handlePhoneRequest = phoneSocketRequests(client, principal.identityId,
         async (name, args, ...rest) => {
           if (name === 'readRouterSnapshot') routerProtocol.requireSnapshot(args);
+          if (name === 'readAgentUsageCell') routerProtocol.requireUsage();
           return dispatchPhoneOperation(name, args, ...rest);
         }, sendLive, requestErrorStatus, principal.familyId,
         (name, args, result, enqueue) => routerProtocol.fenceReply(name, args, result, enqueue));
@@ -2631,7 +2633,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
 
   const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown,
     invokeLegacy?: () => Promise<unknown>, command?: import('@beeline/api-contract/router-command').RouterCommandIdentity) => {
-    if (['readRouterSnapshot','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
+    if (['readAgentUsageCell','readRouterSnapshot','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
       throw new PhoneOperationError(409, { error: 'router_socket_required' });
     const familyId = phoneFamilies.get(request);
     const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy, familyId, command);

@@ -1,3 +1,5 @@
+import { HELPER_USAGE_OPERATIONS, type HelperUsageOperation } from './helper-usage-channel.js';
+import { invalidateUsageAccountAttachment } from './helper-usage-publisher.js';
 import {
   isAgentCommand,
   type AgentCommand,
@@ -395,6 +397,17 @@ export class DaemonApiClient {
     if (typeof candidate.agentId === 'string' && candidate.agentId !== this.agentId) {
       throw new Error('daemon operation agentId does not match the runtime identity');
     }
+    if((HELPER_USAGE_OPERATIONS as readonly string[]).includes(String(name)) &&
+      (name!=='postAgentUsage'||candidate.usageSource!==undefined||this.channel.usageAccountSelected)){
+      if(name==='postAgentUsage'&&candidate.usageSource===undefined)throw new Error('Negotiated usage source required');
+      this.requestCount++;this.inFlight++;
+      try{
+        const result=await this.channel.usage.request(name as HelperUsageOperation,input as never);
+        if(name==='postAgentUsage'&&(input as {usage?:{spend?:unknown}}).usage?.spend){const scope=this.channel.usageAccountScope();
+          if(scope)invalidateUsageAccountAttachment(scope.origin,scope.ownerId,this.agentId);}
+        return result as Output<Name>;
+      }finally{this.inFlight--;}
+    }
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), REQUEST_DEADLINE_MS);
     deadline.unref?.();
@@ -459,6 +472,10 @@ export class DaemonApiClient {
       clearTimeout(deadline);
       if (admitted) this.inFlight -= 1;
       await release?.();
+    }
+    if(name==='postAgentUsage'&&(input as {usage?:{spend?:unknown}}).usage?.spend){
+      const scope=this.channel.usageAccountScope();
+      if(scope)invalidateUsageAccountAttachment(scope.origin,scope.ownerId,this.agentId);
     }
     return output;
   }

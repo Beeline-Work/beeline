@@ -1,3 +1,4 @@
+import { isUsageCellOnlyChange } from './agent-usage-cell';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { isWorkbenchCompanyIndex } from './workbench-company-validation';
 import { useCallback, useEffect } from 'react';
@@ -80,6 +81,7 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
   void sharedLiveConnection().register([], (event) => {
     if (!('monolithLive' in event)) return;
     const live = event.monolithLive;
+    if (isUsageCellOnlyChange(live)) return;
     if ((live.type === 'resource-change' &&
         ['workbench', 'install', 'agent'].includes(live.resource)) ||
         (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')) {

@@ -1,3 +1,4 @@
+import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import type { MediaMetadata, MediaLink } from '@beeline/api-contract/phone';
 import { parseRouterCommandIdentity, type RouterCommandIdentity, type RouterCommandReceipt } from '@beeline/api-contract/router-command';
 import type { RouterFamily, RouterSnapshotInput, RouterSnapshot, RouterPushFrame, RouterUnavailable, RouterAuthorityFence } from '@beeline/api-contract/router-protocol';
@@ -70,7 +71,7 @@ type Registration = {
 type RoomCursor = { epoch: string; base: number; seen: Set<number> };
 
 type RouterOwnerBridge = {
-  negotiated: (next: { generation: number; families: readonly RouterFamily[]; authorityFencesV1?: boolean; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>; executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>; execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> }) => Promise<void>;
+  negotiated: (next: { generation: number; families: readonly RouterFamily[]; usageCellV1?: boolean; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>; authorityFencesV1?: boolean; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>; executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>; execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> }) => Promise<void>;
   disconnected: () => void;
   receive: (frame: RouterPushFrame | RouterUnavailable | RouterAuthorityFence) => void;
 };
@@ -356,6 +357,8 @@ export class LiveConnection {
       void this.deps.router.negotiated({ generation: this.socketEpoch, families,
         authorityFencesV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.authorityFencesV1 === true,
         mediaMetadataV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.mediaMetadataV1 === true,
+        usageCellV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.usageCellV1 === true,
+        executeUsageCell: agentId => this.startRequest('readAgentUsageCell', { agentId }, {}) as Promise<AgentUsageCell>,
         executeMetadata: objectId => this.startRequest('readMediaMetadata', { objectId }, {}) as Promise<MediaMetadata>,
         executeLink: objectId => this.startRequest('readMediaLink', { objectId }, {}) as Promise<MediaLink>,
         executePlayback: objectId => this.startRequest('readMediaPlayback', { objectId }, {}) as Promise<MediaLink>,
@@ -369,7 +372,7 @@ export class LiveConnection {
       }).catch(() => { if (this.socket === socket) this.deps.router?.disconnected(); });
     }
     if (frame.type === 'router-capabilities') return true;
-    if (!['push-part', 'push-commit', 'router-unavailable', 'authority-fence'].includes(String(frame.kind))) return false;
+    if (!['push-part', 'push-commit', 'router-unavailable', 'authority-fence', 'usage-cell', 'usage-unavailable'].includes(String(frame.kind))) return false;
     if (this.routerState === 'ready') this.deps.router.receive(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence);
     else {
       const bytes = utf8ToBytes(JSON.stringify(value)).length;
@@ -673,7 +676,7 @@ export class LiveConnection {
         setConnectionState('connected');
         this.socketEpoch += 1;
         if (this.deps.router) next.send(JSON.stringify({ type: 'router-negotiate', protocol: 1,
-          families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true }));
+          families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true, usageCellV1: true }));
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
         this.sendSubscribe([...this.refcount.keys()]);
         this.sendWorkspaceSync();

@@ -141,3 +141,38 @@ if (process.argv.includes('--check')) {
   if (readFileSync(inputTarget, 'utf8') !== inputOutput) throw new Error('Phone input codecs are stale; run node scripts/generate-network-codecs.mjs');
 } else writeFileSync(inputTarget, inputOutput);
 console.log(`${Object.keys(inputOperations).length} phone inputs; ${inputNodes.length} projected schema nodes`);
+
+// The trusted owner validates only its closed policy routes. Derive that subset
+// from the policy declaration itself; do not ship the legacy observer's complete
+// phone registry inside the independent admission owner.
+const ownerSource = ts.createSourceFile('admission.ts', readFileSync(path.join(root,
+  'packages/net/src/private/admission.ts'), 'utf8'), ts.ScriptTarget.Latest, true);
+let policyObject;
+function findPolicies(node) {
+  if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'policies') {
+    const initializer = node.initializer;
+    policyObject = initializer && ts.isAsExpression(initializer) ? initializer.expression : initializer;
+  }
+  ts.forEachChild(node, findPolicies);
+}
+findPolicies(ownerSource);
+if (!policyObject || !ts.isObjectLiteralExpression(policyObject)) throw new Error('Owner policies must be a closed literal');
+const ownerRoutes = policyObject.properties.map(property => {
+  if (!ts.isPropertyAssignment(property) || !ts.isStringLiteral(property.name)) throw new Error('Owner route must be literal');
+  const route = property.name.text;
+  if (!route.startsWith('phone.') || !operations[route] || operations[route].input === 'file-bytes')
+    throw new Error(`Unsupported owner route ${route}`);
+  return route;
+});
+inputNodes.length = 0; inputIds.clear();
+const ownerOperations = Object.fromEntries(ownerRoutes.map(route => [route, selectInput(operations[route].input)]));
+const ownerOutput = '// Generated from trusted owner policies by scripts/generate-network-codecs.mjs.\n' +
+  'import type { WireShape } from \'../wire-codec.js\';\n' +
+  'const shape = (value: WireShape): WireShape => value;\n' +
+  'export const ownerInputShapes: readonly WireShape[] = [\n' + inputNodes.map(node => '  shape(' + JSON.stringify(node) + ')').join(',\n') + '\n];\n' +
+  'export const ownerInputs = ' + JSON.stringify(ownerOperations, null, 2) + ' as const;\n';
+const ownerTarget = path.join(root, 'packages/net/src/private/generated-owner-input-shapes.ts');
+if (process.argv.includes('--check')) {
+  if (readFileSync(ownerTarget, 'utf8') !== ownerOutput) throw new Error('Owner input codecs are stale; regenerate network codecs');
+} else writeFileSync(ownerTarget, ownerOutput);
+console.log(`${ownerRoutes.length} owner inputs; ${inputNodes.length} projected schema nodes`);

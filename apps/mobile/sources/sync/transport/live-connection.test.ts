@@ -254,7 +254,7 @@ describe('LiveConnection', () => {
     await connection.register([], () => {});
     sockets[0]!.open();
     expect(JSON.parse(sockets[0]!.sent[0]!)).toEqual({ type: 'router-negotiate', protocol: 1,
-      families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true });
+      families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true, usageCellV1: true });
     sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-list'] });
     const frame = { kind: 'push-commit', batchId: 'batch' };
     sockets[0]!.emit(frame);

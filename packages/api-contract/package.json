@@ -103,6 +103,11 @@
       "types": "./dist/helper-overlay.d.ts",
       "import": "./dist/helper-overlay.js",
       "default": "./dist/helper-overlay.js"
+    },
+    "./helper-usage": {
+      "types": "./dist/helper-usage.d.ts",
+      "import": "./dist/helper-usage.js",
+      "default": "./dist/helper-usage.js"
     }
   },
   "scripts": {

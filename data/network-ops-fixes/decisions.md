@@ -41,3 +41,9 @@ F19 now has a bounded helper-local latest value, fresh-baseline viewing barrier,
 ### D024 — CI observation follows explicit demand or completed work
 
 F22 staging removes observation cron from adapter/upstream/preflight audits. Live association inspection follows a successful production release or explicit dispatch. The existing nightly test and log-report calendar deliverables remain. Nightly dispatch returns immediately; a trusted default-branch completion handler reads the completed attempt once and may request the existing single bounded failed-test rerun. No release is dispatched by this work. Preflight runner/issue visibility loops and other completion waits remain open; this is not full F22 closure.
+
+### D025 — Usage source writes own a closed machine-socket path
+
+F20 staging publishes immutable owner/account revisions, attaches siblings, and streams independent canonical usage cells. Selected helper writes use only the existing AgentChannel, with current registration/owner fences and a monotone source counter. Unknown delivery parks until a real source or connection boundary; it never falls back to HTTP. The legacy helper HTTP cohort remains explicit, and BEELINE_USAGE_ACCOUNT_V1 remains disabled pending released-cohort evidence. Source and ownership facts drive cells; the server receives no profile/cache inventory. Canonical cells are capped at 32 KiB. Real PostgreSQL competing publication and final-owner-lock proofs supplement the unit/socket tests.
+
+The phone owner validates a generated projection of its actual closed policy routes instead of loading every legacy phone input schema. This preserves the existing 64 KiB/16 KiB-gzip bundle gates without relaxing structural validation. The complete legacy observer remains independent. Closed helper input codecs are importable only by the two existing machine-socket adapters; feature access stays scanner-rejected.

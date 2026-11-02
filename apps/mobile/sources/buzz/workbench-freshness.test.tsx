@@ -162,3 +162,28 @@ it('Reproduction NET-WASTE-1: mounted Settings releases Workbench on blur and re
   expect(state.reads.workbench.mock.calls.length).toBe(before + 1);
   await act(async () => renderer.unmount());
 });
+
+it('negotiated canonical usage cells do not refresh Workbench, wallet, history or connection detail', async () => {
+  const { installUsageCellConnection, suspendUsageCellConnection } = await import('./agent-usage-cell');
+  function Screen() {
+    useSharedWorkbench({ workspaceId: 'ws-spin', viewerId: 'owner' });
+    useSharedWallet('ws'); useSharedWalletHistory('ws');
+    useSharedConnectionDetail({ workspaceId: 'ws', viewerId: 'owner' }, 'key');
+    return null;
+  }
+  let renderer!: ReactTestRenderer;
+  await act(async () => { renderer = create(<Screen />); });
+  try {
+    const before = Object.fromEntries(Object.entries(state.reads).map(([name, read]) => [name, read.mock.calls.length]));
+    installUsageCellConnection({ generation: 1, usageCellV1: true, origin: 'https://relay.test', principal: 'owner',
+      executeRead: async () => { throw new Error('No active profile'); } });
+    await act(async () => {
+      for (const listener of state.live) listener({ monolithLive: { type: 'resource-change', resource: 'agent', resourceId: 'agent-a', usageOnly: true } });
+    });
+    for (const [name, read] of Object.entries(state.reads)) expect(read.mock.calls.length).toBe(before[name]);
+    await act(async () => {
+      for (const listener of state.live) listener({ monolithLive: { type: 'resource-change', resource: 'agent', resourceId: 'agent-a' } });
+    });
+    for (const [name, read] of Object.entries(state.reads)) expect(read.mock.calls.length).toBe(before[name]! + 1);
+  } finally { suspendUsageCellConnection(); await act(async () => renderer.unmount()); }
+});

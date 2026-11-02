@@ -1,0 +1,52 @@
+// Generated from trusted owner policies by scripts/generate-network-codecs.mjs.
+import type { WireShape } from '../wire-codec.js';
+const shape = (value: WireShape): WireShape => value;
+export const ownerInputShapes: readonly WireShape[] = [
+  shape({"kind":"object","properties":{"workspaceId":{"node":1,"optional":false}}}),
+  shape({"kind":"string"}),
+  shape({"kind":"object","properties":{"roomId":{"node":1,"optional":false}}}),
+  shape({"kind":"object","properties":{"workspaceId":{"node":1,"optional":false}}}),
+  shape({"kind":"union","choices":[5,11]}),
+  shape({"kind":"object","properties":{"family":{"node":6,"optional":false},"workspaceId":{"node":1,"optional":false},"roomId":{"node":10,"optional":true}}}),
+  shape({"kind":"union","choices":[7,8,9]}),
+  shape({"kind":"literal","value":"needs-you"}),
+  shape({"kind":"literal","value":"room-list"}),
+  shape({"kind":"literal","value":"needs-you-count"}),
+  shape({"kind":"undefined"}),
+  shape({"kind":"object","properties":{"family":{"node":12,"optional":false},"roomId":{"node":1,"optional":false},"workspaceId":{"node":13,"optional":true}}}),
+  shape({"kind":"literal","value":"room-head"}),
+  shape({"kind":"union","choices":[10,1]}),
+  shape({"kind":"object","properties":{"objectId":{"node":1,"optional":false}}}),
+  shape({"kind":"object","properties":{"agentId":{"node":1,"optional":false}}}),
+  shape({"kind":"object","properties":{"objectId":{"node":1,"optional":false}}}),
+  shape({"kind":"object","properties":{"objectId":{"node":1,"optional":false}}}),
+  shape({"kind":"intersection","choices":[19,20]}),
+  shape({"kind":"object","properties":{"roomId":{"node":1,"optional":false}}}),
+  shape({"kind":"object","properties":{"messageId":{"node":13,"optional":true},"text":{"node":1,"optional":false},"mentions":{"node":21,"optional":true},"attachments":{"node":23,"optional":true}}}),
+  shape({"kind":"union","choices":[10,22]}),
+  shape({"kind":"array","item":1}),
+  shape({"kind":"union","choices":[10,24]}),
+  shape({"kind":"array","item":25}),
+  shape({"kind":"object","properties":{"url":{"node":1,"optional":false},"expired":{"node":26,"optional":true},"previewUrl":{"node":13,"optional":true},"name":{"node":1,"optional":false},"mimeType":{"node":1,"optional":false},"size":{"node":29,"optional":false},"sha256":{"node":13,"optional":true},"thumbnailUrl":{"node":13,"optional":true},"width":{"node":30,"optional":true},"height":{"node":30,"optional":true},"kind":{"node":31,"optional":true},"title":{"node":13,"optional":true},"author":{"node":13,"optional":true}}}),
+  shape({"kind":"union","choices":[10,27,28]}),
+  shape({"kind":"literal","value":false}),
+  shape({"kind":"literal","value":true}),
+  shape({"kind":"number"}),
+  shape({"kind":"union","choices":[10,29]}),
+  shape({"kind":"union","choices":[10,32]}),
+  shape({"kind":"literal","value":"artifact"}),
+  shape({"kind":"intersection","choices":[19,20,34]}),
+  shape({"kind":"object","properties":{"parentMessageId":{"node":1,"optional":false}}})
+];
+export const ownerInputs = {
+  "phone.countNeedsYou": 0,
+  "phone.readRoom": 2,
+  "phone.readChats": 3,
+  "phone.readRouterSnapshot": 4,
+  "phone.readMediaMetadata": 14,
+  "phone.readAgentUsageCell": 15,
+  "phone.readMediaLink": 16,
+  "phone.readMediaPlayback": 17,
+  "phone.sendRoomMessage": 18,
+  "phone.sendRoomReply": 33
+} as const;

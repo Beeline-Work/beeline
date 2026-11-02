@@ -373,7 +373,7 @@ describe('server readiness', () => {
     });
   });
 
-  it.each(['readRouterSnapshot', 'readMediaMetadata', 'readMediaLink', 'readMediaPlayback'])(
+  it.each(['readAgentUsageCell', 'readRouterSnapshot', 'readMediaMetadata', 'readMediaLink', 'readMediaPlayback'])(
     'keeps negotiated %s on the sole phone socket', async operation => {
       const query = vi.fn(), transaction = vi.fn(), execute = vi.fn();
       const response = await get(`/v1/phone/operations/${operation}`, { query, transaction }, {

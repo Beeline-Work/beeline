@@ -1,5 +1,5 @@
 import type { RouteInput } from '../routes.js';
-import { observePhoneInput } from '../phone-inputs.js';
+import { validateOwnerInput } from './owner-inputs.js';
 import { canonical } from './canonical.js';
 
 // Initial shadow policies. These do NOT opt any wire family into router-v1.
@@ -10,6 +10,7 @@ const policies = {
   'phone.readChats': { mode: 'read', screen: 'AppShell' },
   'phone.readRouterSnapshot': { mode: 'read', screen: 'AppShell' as 'AppShell' | 'Room' },
   'phone.readMediaMetadata': { mode: 'read', screen: 'Room' },
+  'phone.readAgentUsageCell': { mode: 'read', screen: 'AgentProfile' },
   'phone.readMediaLink': { mode: 'read-action', action: 'OpenArtifactBrowser' },
   'phone.readMediaPlayback': { mode: 'read-action', action: 'RunArtifact' },
   'phone.sendRoomMessage': { mode: 'command', action: 'SendMessage' },
@@ -37,6 +38,7 @@ export type MediaAction = 'OpenArtifact' | 'CopyArtifact' | 'SaveArtifact' | 'Op
 type MediaOperation = 'phone.readMediaMetadata' | 'phone.readMediaLink' | 'phone.readMediaPlayback';
 type MediaResidency = { generation: number; roomId: string; lifetime: { active: boolean };
   seen: Set<string>; visible: Map<string, { active: boolean }> };
+type UsageResidency = { generation: number; agentId: string; lifetime: { active: boolean }; pass: Pass<'phone.readAgentUsageCell'> };
 
 /** Private trusted-owner machinery; no feature import, socket, clock or scheduler.
  * CREATED -> ACTIVE -> SPENT; blur/return/reset -> REVOKED. Never reactivated.
@@ -55,6 +57,9 @@ export class AdmissionOwner {
   private foreground = true;
   private mediaResidency?: MediaResidency;
   private lastMediaConnection = -1;
+  private usageResidency?: UsageResidency;
+  private lastUsageGeneration = -1;
+  private lastUsageConnection = -1;
   private readonly diagnostics: string[] = [];
 
   constructor(identity: Identity) { this.identity = Object.freeze({ ...identity }); }
@@ -70,16 +75,41 @@ export class AdmissionOwner {
     this.lastConnection = -1;
     this.mediaResidency = undefined;
     this.lastMediaConnection = -1;
+    this.usageResidency = undefined; this.lastUsageGeneration = -1; this.lastUsageConnection = -1;
   }
 
   background(): void { this.foreground = false; this.blur(); this.recoveryLifetime.active = false; }
   foregrounded(): void { this.foreground = true; } // No minting, read or reconnect.
   blur(): void {
     this.clearMediaFocus();
+    this.clearUsageFocus();
     for (const [owner, residency] of this.residencies) {
       residency.lifetime.active = false; this.retiredResidencies.set(owner, residency);
     }
     this.residencies.clear();
+  }
+  usageProfile(generation: number, agentId: string): Pass<'phone.readAgentUsageCell'> {
+    this.validateGeneration(generation);
+    if (!this.foreground) return this.deny('background');
+    const prior = this.usageResidency;
+    if (prior?.generation === generation && prior.agentId === agentId) return prior.pass;
+    if (generation <= this.lastUsageGeneration) return this.deny('stale usage profile');
+    const request = { route: 'phone.readAgentUsageCell' as const, input: { agentId } };
+    this.validateRequests([request]); this.clearUsageFocus();
+    const lifetime = { active: true }; const pass = this.mint(request, lifetime);
+    this.usageResidency = { generation, agentId, lifetime, pass }; this.lastUsageGeneration = generation;
+    return pass;
+  }
+  clearUsageFocus(): void { if (this.usageResidency) this.usageResidency.lifetime.active = false; }
+  usageRecovery(connection: number, generation: number, agentId: string): Pass<'phone.readAgentUsageCell'> {
+    this.validateGeneration(connection); this.validateGeneration(generation);
+    if (!this.foreground || connection <= this.lastUsageConnection || generation < this.lastUsageGeneration)
+      return this.deny('inactive usage recovery');
+    const request = { route: 'phone.readAgentUsageCell' as const, input: { agentId } };
+    this.validateRequests([request]); this.clearUsageFocus();
+    const lifetime = { active: true }; const pass = this.mint(request, lifetime);
+    this.usageResidency = { generation, agentId, lifetime, pass };
+    this.lastUsageGeneration = generation; this.lastUsageConnection = connection; return pass;
   }
 
   /** Only the committed navigation owner establishes this Room lifetime.
@@ -303,8 +333,7 @@ export class AdmissionOwner {
     const keys = new Set<string>();
     for (const request of requests) {
       if (!Object.hasOwn(policies, request.route)) return this.deny('unknown route');
-      if (observePhoneInput(request.route.slice('phone.'.length), request.input).verdict !== 'legacy-valid')
-        throw new Error('network codec: contract mismatch');
+      validateOwnerInput(request.route, request.input);
       const key = this.key(request);
       if (keys.has(key)) return this.deny('duplicate key');
       keys.add(key);
@@ -329,4 +358,5 @@ export { NavigationOwner } from './navigation-owner.js';
 export type { NavigationState, NavigationResidency } from './navigation-owner.js';
 export { CommandIntents } from './command-intents.js';
 export { MediaDemandOwner } from './media-demand-owner.js';
+export { UsageDemandOwner } from './usage-demand-owner.js';
 export type { CommandIntent, CommandIntentStorage, CommandPartition, CommandAttempt, AdmittedCommand, IntentOperation, IntentState } from './command-intents.js';

@@ -8,7 +8,7 @@ import { scanSource, NETWORK_LIBRARIES } from './phone-network-channels.mjs';
 export const INVENTORY = 'packages/net/migration-sites.json';
 const ROOTS = ['apps/server/src', 'apps/body/src', 'apps/api/src', 'apps/auth/src', 'apps/mobile/sources', 'apps/mobile/modules',
   'apps/mobile/index.ts', 'apps/mobile/src-tauri/src', 'packages'];
-const PUBLIC_ENTRIES = ['packages/net/src/index.ts', 'packages/net/src/phone-inputs.ts'];
+const PUBLIC_ENTRIES = ['packages/net/src/index.ts', 'packages/net/src/phone-inputs.ts', 'packages/net/src/helper-codecs.ts'];
 const SKIP = new Set(['node_modules', 'dist', 'build', '.git', 'target', 'Pods', '__tests__', 'fixtures']);
 const SOURCE = /\.(?:[cm]?[jt]sx?|swift|kt|java|m|mm|rs)$/;
 const TEST = /\.(?:test|spec|typecheck)\.[^.]+$|\.d\.ts$|\/test-support[^/]*\.[^.]+$/;
@@ -92,6 +92,7 @@ function imports(file, text) {
 const MOBILE = 'apps/mobile/sources/';
 const LIVE_BRIDGE = MOBILE + 'sync/transport/live-connection.ts';
 const OWNER_CALLERS = {
+  routerOwnerUsageProfile: ['app/(app)/beeline/agent-profile.tsx', 'app/(app)/beeline/chat/_chat-surface.tsx'],
   routerOwnerArtifactViewport: ['app/(app)/beeline/chat/_chat-surface.tsx'],
   routerOwnerArtifactAction: ['components/buzz/ArtifactCard.tsx', 'components/buzz/RunnableArtifact.tsx',
     'app/(app)/beeline/chat/RoomMessageVariants.tsx', 'buzz/picture-actions.ts', 'buzz/artifact-link.ts'],
@@ -202,6 +203,8 @@ export function inspectSource(file, text) {
         // A public barrel must never export private runtime factories, even indirectly.
         if (PUBLIC_ENTRIES.includes(file) && target?.includes('/private/'))
           errors.push(`${file}: public API exposes private owner machinery`);
+      } else if (target === '@beeline/net/helper-codecs' && ['apps/body/src/helper-usage-channel.ts', 'apps/server/src/daemon-live.ts'].includes(file)) {
+        // Closed usage codecs belong only to the existing machine socket adapters.
       } else if (target === '@beeline/net/owner' && ['apps/mobile/sources/buzz/router-owner.ts', 'apps/mobile/sources/buzz/command-owner.ts'].includes(file)) {
         // Exact trusted navigation and persisted-intent owners; no feature imports.
       } else if (target?.startsWith('@beeline/net/') && target !== '@beeline/net/phone-inputs' || target?.startsWith('packages/net/')) {

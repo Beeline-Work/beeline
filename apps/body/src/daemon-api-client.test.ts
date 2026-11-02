@@ -419,6 +419,8 @@ describe('DaemonApiClient', () => {
       {
         type: 'register',
         intakeHeartbeat: true,
+        overlayV1:true,
+        usageAccountV1:true,
         agentId: 'b'.repeat(64),
         token: `bdt_${'y'.repeat(43)}`,
         lifecycleId: expect.any(String),

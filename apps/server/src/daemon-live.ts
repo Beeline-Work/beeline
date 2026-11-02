@@ -1,5 +1,9 @@
+import { helperUsageCodecs } from '@beeline/net/helper-codecs';
+import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { HELPER_OVERLAY_MAX_FRAME_BYTES } from '@beeline/api-contract/helper-overlay';
+import { helperUsageEnabled } from './helper-usage.js';
 import { applyHelperOverlay, helperOverlayEnabled, subscribeHelperOverlayDemand } from './helper-overlay.js';
+import { changesDaemonInbox } from './daemon-inbox-cause.js';
 import { randomUUID } from 'node:crypto';
 import type { VaultSaveRelay } from './vault-save-relay.js';
 import { HELPER_UPDATE_CLOSE_CODE, HELPER_UPDATE_CLOSE_REASON } from '@beeline/api-contract/daemon';
@@ -125,6 +129,8 @@ export class DaemonAgentSession {
   #checkpointPending = false;
 
   readonly #overlayReleases=new Map<string,()=>void>();
+  usageOwnerId:string|undefined;
+  get usageAccountV1():boolean{return this.presence.usageAccountV1===true&&helperUsageEnabled()&&this.usageOwnerId!==undefined&&this.epoch!==undefined;}
   get overlayV1():boolean{return this.presence.overlayV1===true&&helperOverlayEnabled()&&this.epoch!==undefined;}
 
   constructor(
@@ -136,6 +142,7 @@ export class DaemonAgentSession {
       releaseVersion?: string;
       sourceSha?: string;
       overlayV1?: boolean;
+      usageAccountV1?:boolean;
     } = {},
   ) {
     const { live, database } = deps;
@@ -262,6 +269,8 @@ export class DaemonAgentSession {
       }
       this.epoch = epoch;
       this.deps.registry.settled(this);
+      if(this.presence.usageAccountV1&&helperUsageEnabled())this.usageOwnerId=(await this.deps.database.query<{owner_id:string|null}>(
+        'SELECT owner_id FROM agents WHERE agent_id=$1',[this.agentId])).rows[0]?.owner_id??undefined;
     } catch (error) {
       console.error('[presence] connection claim failed', error instanceof Error ? error.message : String(error));
     }
@@ -277,7 +286,7 @@ export class DaemonAgentSession {
   /** Queue one frame behind this agent's earlier frames. */
   frame(raw: Record<string, unknown>, frameBytes: number): void {
     if (this.#closed) return;
-    if(raw.type==='overlay-update'&&frameBytes>HELPER_OVERLAY_MAX_FRAME_BYTES){
+    if((raw.type==='overlay-update'||raw.type==='usage-operation')&&frameBytes>HELPER_OVERLAY_MAX_FRAME_BYTES){
       this.deps.errors.overload++;this.transport.drop(1009,'overlay frame capacity exceeded');this.close();return;
     }
     if (this.#tasks >= MAX_LIVE_SESSION_TASKS ||
@@ -339,6 +348,31 @@ export class DaemonAgentSession {
 
   async #process(item: Record<string, unknown>): Promise<void> {
     if (!this.transport.admit(item)) return;
+    if(item.type==='usage-operation'){
+      const names=['publishAgentUsageAccount','attachAgentUsageAccount','postAgentUsage'] as const;
+      if(!this.usageAccountV1||typeof item.requestId!=='string'||!item.requestId||item.requestId.length>128||
+        !names.includes(item.operation as typeof names[number]))return;
+      let input:Record<string,unknown>|undefined;
+      try{input=helperUsageCodecs(item.operation as typeof names[number]).params.parse(item.input) as unknown as Record<string,unknown>;}catch{
+        this.transport.send({type:'usage-result',requestId:item.requestId,error:'usage_operation_invalid'});return;
+      }
+      const sourceInput=item.operation==='postAgentUsage'?input?.usageSource:input;
+      const control=sourceInput&&typeof sourceInput==='object'?sourceInput as Record<string,unknown>:undefined;
+      const source=control?.source&&typeof control.source==='object'?control.source as Record<string,unknown>:undefined;
+      try{
+        if(!input||input.agentId!==this.agentId||source?.connectionId!==this.connectionId||source.epoch!==this.epoch||
+          (item.operation!=='attachAgentUsageAccount'&&control?.ownerId!==this.usageOwnerId))throw new Error('Usage registration source mismatch');
+        const operation=item.operation as typeof names[number];
+        const rawResult=await this.deps.daemon.execute(operation,input as unknown as DaemonOperationMap[typeof operation]['input'],this.agentId);
+        const result=helperUsageCodecs(operation).result.parse(rawResult);
+        const reply={type:'usage-result',requestId:item.requestId,result};
+        if(Buffer.byteLength(JSON.stringify(reply))>HELPER_OVERLAY_MAX_FRAME_BYTES)throw new Error('Usage reply capacity');
+        if(!this.#closed&&this.transport.isOpen())this.transport.send(reply);
+      }catch{
+        if(!this.#closed&&this.transport.isOpen())this.transport.send({type:'usage-result',requestId:item.requestId,error:'usage_operation_refused'});
+      }
+      return;
+    }
     if(item.type==='overlay-update'){
       if(!this.overlayV1||typeof item.requestId!=='string'||item.requestId.length>128||this.epoch===undefined)return;
       const result=await applyHelperOverlay(this.deps.database,this.agentId,{connectionId:this.connectionId,epoch:this.epoch},item.frame);
@@ -507,7 +541,7 @@ export class DaemonAgentSession {
           if (transport.isOpen()) transport.send({ type: 'corner-complete', roomId });
           return;
         }
-        void this.#projection(() => replay(trigger));
+        if (changesDaemonInbox(event)) void this.#projection(() => replay(trigger));
       }),
     );
     const lifecycleId =
@@ -523,7 +557,6 @@ export class DaemonAgentSession {
             : {}),
           ...(typeof item.sourceSha === 'string' ? { sourceSha: item.sourceSha } : {}),
           ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
-          ...(item.overlayV1===true?{overlayV1:true}:{}),
         });
       } catch (error) {
         console.error('[presence] startup announcement failed', error);
@@ -783,6 +816,8 @@ export function serveMachineSocket(
           ...(typeof item.releaseVersion === 'string' ? { releaseVersion: item.releaseVersion } : {}),
           ...(typeof item.sourceSha === 'string' ? { sourceSha: item.sourceSha } : {}),
           ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
+          ...(item.overlayV1===true?{overlayV1:true}:{}),
+          ...(item.usageAccountV1===true?{usageAccountV1:true}:{}),
         },
       );
       sessions.set(agentId, session);
@@ -798,7 +833,7 @@ export function serveMachineSocket(
         agentId,
         capabilities: { discoveryWake: true, pushIntake: true, intakeHeartbeat: item.intakeHeartbeat === true,
           ...(session.overlayV1?{overlayV1:true}:{}),
-        },
+          ...(session.usageAccountV1?{usageAccountV1:true,usageOwnerId:session.usageOwnerId,usageConnectionId:session.connectionId,usageConnectionEpoch:session.epoch}:{}) },
       });
     } catch (error) {
       deps.errors.internal++;

@@ -1,3 +1,4 @@
+import { HelperUsageChannel } from './helper-usage-channel.js';
 import { HelperOverlayChannel } from './helper-overlay-channel.js';
 import WebSocket from 'ws';
 import { helperVersion } from './helper-version.js';
@@ -26,7 +27,14 @@ export interface AgentChannelHandlers {
  * can drop or refuse one agent without touching the others.
  */
 export class AgentChannel {
+  readonly usage=new HelperUsageChannel(frame=>this.send(frame),()=>this.usageAccountScope()!==undefined);
   readonly overlay=new HelperOverlayChannel(frame=>this.send(frame),()=>this.isOpen());
+  #usageOwnerId:string|undefined;
+  #usageSource:{connectionId:string;epoch:number}|undefined;
+  usageAccountSelected=false;
+  usageAccountScope():{origin:string;ownerId:string;generation:number;source:{connectionId:string;epoch:number}}|undefined{
+    return this.#usageOwnerId&&this.#usageSource&&this.isOpen()?{origin:this.machine.origin,ownerId:this.#usageOwnerId,generation:this.reconnects,source:this.#usageSource}:undefined;
+  }
   #wanted = false;
   #registered = false;
   /** A register frame is in flight on the current socket. */
@@ -70,6 +78,8 @@ export class AgentChannel {
   stop(): void {
     if (!this.#wanted) return;
     this.#wanted = false;
+    this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
+    this.usage.suspend();
     this.overlay.suspend();
     this.#clearIntakeDeadline();
     if (this.#registered) this.send({ type: 'unregister' });
@@ -101,7 +111,7 @@ export class AgentChannel {
     this.#pending = true;
     this.#armIntakeDeadline();
     if (!this.machine.link.send(JSON.stringify({
-      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true,
+      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true, usageAccountV1:true,
     }))) this.#pending = false;
   }
 
@@ -111,6 +121,11 @@ export class AgentChannel {
       this.#pending = false;
       if (!this.#wanted || this.#registered) return;
       this.#registered = true;
+      const usageCapabilities=event.capabilities as {usageAccountV1?:unknown;usageOwnerId?:unknown;usageConnectionId?:unknown;usageConnectionEpoch?:unknown}|undefined;
+      this.usageAccountSelected=usageCapabilities?.usageAccountV1===true;
+      this.#usageOwnerId=this.usageAccountSelected&&typeof usageCapabilities?.usageOwnerId==='string'?usageCapabilities.usageOwnerId:undefined;
+      this.#usageSource=this.usageAccountSelected&&typeof usageCapabilities?.usageConnectionId==='string'&&Number.isSafeInteger(usageCapabilities.usageConnectionEpoch)&&Number(usageCapabilities.usageConnectionEpoch)>0
+        ?{connectionId:usageCapabilities.usageConnectionId,epoch:Number(usageCapabilities.usageConnectionEpoch)}:undefined;
       this.overlay.negotiate((event.capabilities as {overlayV1?:unknown}|undefined)?.overlayV1===true);
       this.#intakeHeartbeat = Boolean(
         (event.capabilities as { intakeHeartbeat?: unknown } | undefined)?.intakeHeartbeat === true,
@@ -157,12 +172,14 @@ export class AgentChannel {
       if(recovered && !this.#replacementSpent){this.#replacementSpent=true;this.register();}
       return;
     }
-    if(this.#registered&&this.overlay.receive(event))return;
+    if(this.#registered&&(this.overlay.receive(event)||this.usage.receive(event)))return;
     if (this.#registered) this.handlers.onMessage(event);
   }
 
   /** @internal The machine socket closed: every registration ended with it. */
   socketClosed(): void {
+    this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
+    this.usage.suspend();
     this.overlay.suspend();
     this.#clearIntakeDeadline();
     this.#pending = false;
@@ -200,6 +217,8 @@ export class AgentChannel {
   }
 
   #ended(): void {
+    this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
+    this.usage.suspend();
     this.overlay.suspend();
     this.#registered = false;
     this.#clearIntakeDeadline();
@@ -265,6 +284,8 @@ export class MachineLink {
       ...(options.random ? { random: options.random } : {}),
     });
   }
+
+  get origin():string{return new URL(this.options.baseUrl).origin;}
 
   setHelperIdentity(identity: { releaseVersion?: string; sourceSha?: string }): void {
     this.#identity = {

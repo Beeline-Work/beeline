@@ -1,5 +1,6 @@
 import { artifactObjectIdsFromVisibleRows, observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
-import { routerOwnerArtifactViewport } from '@/buzz/router-owner';
+import { routerOwnerArtifactViewport, routerOwnerUsageProfile } from '@/buzz/router-owner';
+import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { prepareRouterMessageGesture } from '@/buzz/command-message-gesture';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
@@ -1198,6 +1199,12 @@ export function BuzzChatSurface({
   }, [firstUnreadMessageId, isCorner]);
   const resolvedChannelName = roomSurface?.room.name ?? routeChannelTitle ?? null;
   const activeCommunityId = roomSurface?.room.workspaceId ?? routeCommunityId ?? null;
+  const usageProfileFocused = useSurfaceFocus();
+  const committedUsageProfileId = desktopExperience && profileKind === 'agent' && activeCommunityId ? profileAgentId : null;
+  useEffect(() => {
+    if (!usageProfileFocused) return;
+    routerOwnerUsageProfile(committedUsageProfileId);
+  }, [committedUsageProfileId, usageProfileFocused]);
   // The DM header, the repository-change guard, mentions and forwarding read
   // the app-level Room list, which stays live while this Room is open.
   const [chatListRelayUrl, setChatListRelayUrl] = useState<string | null>(null);

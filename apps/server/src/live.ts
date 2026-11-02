@@ -69,7 +69,7 @@ export type LiveTrace = {
 export type LiveEvent =
   /** Owner-scoped change to a settings projection. Never send ownerId to a phone. */
   | { type: 'resource-change'; roomId: ''; ownerId: string; agentId?: undefined;
-      resource: 'install' | 'workbench' | 'agent'; resourceId?: string; version?: string }
+      resource: 'install' | 'workbench' | 'agent'; resourceId?: string; version?: string;usageOnly?:true }
   /** `agentId` names the author when one agent's own write caused it; a fact the
    *  server itself publishes carries none. `corner-wake.ts` reads it. */
   | {

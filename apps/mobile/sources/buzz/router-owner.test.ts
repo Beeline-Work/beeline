@@ -1,3 +1,4 @@
+import { usageCellSnapshot } from './agent-usage-cell';
 import { mediaMetadataFor, mediaCertificateCurrent } from './media-cache-connection';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -16,7 +17,7 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
 vi.mock('./surface-storage', () => ({ routerLaneStorage: () => fixture.storage }));
 import { resetClientState } from '@/sync/client-reset';
 import { acquireRouterLane, routerOwnerNegotiated, routerOwnerNavigation, routerOwnerDisconnected,
-  routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport } from './router-owner';
+  routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport, routerOwnerUsageProfile } from './router-owner';
 const request = { family: 'needs-you-count' as const, workspaceId: 'w' };
 const hash = (value: unknown) => bytesToHex(sha256(utf8ToBytes(JSON.stringify(value))));
 const scopes = [{ authorityScope: 'reader:ada:workspace:w', epoch: '1' }];
@@ -167,4 +168,21 @@ describe('real mobile router owner', () => {
       { kind: 'router-unavailable', stream: 'workspace:w', families: null }]) expect(() => routerOwnerReceive(value)).not.toThrow();
     await settle(); expect(execute).toHaveBeenCalledTimes(1); lane.release();
   });
+});
+
+it('retains committed profile selection before initialization and owns one cell read per connection', async () => {
+  const cell = { v: 1 as const, agentId: 'agent', ownerId: 'ada', generation: 'a'.repeat(32), revision: 1, allowed: true as const, usage: null };
+  const executeUsageCell = vi.fn(async () => cell);
+  routerOwnerUsageProfile('agent');
+  routerOwnerNavigation({ routes: [{ key: 'profile', name: 'beeline/agent-profile', params: { agentId: 'agent' } }] });
+  await routerOwnerNegotiated({ generation: 1, families: [], usageCellV1: true, executeUsageCell, execute: async () => snapshot() });
+  await settle();
+  expect(executeUsageCell).toHaveBeenCalledTimes(1);
+  expect(usageCellSnapshot('agent').cell).toEqual(cell);
+  routerOwnerUsageProfile('agent'); await settle(); expect(executeUsageCell).toHaveBeenCalledTimes(1);
+  routerOwnerReceive({ kind: 'usage-cell', cell: { ...cell, revision: 2, allowed: false, usage: undefined } });
+  expect(usageCellSnapshot('agent').cell?.allowed).toBe(false);
+  routerOwnerDisconnected(); expect(usageCellSnapshot('agent').cell).toBeNull();
+  await routerOwnerNegotiated({ generation: 2, families: [], usageCellV1: true, executeUsageCell, execute: async () => snapshot() });
+  await settle(); expect(executeUsageCell).toHaveBeenCalledTimes(2);
 });

@@ -203,6 +203,7 @@ async function main() {
 
   run('npm', ['run', 'build', '-w', '@beeline/nostr']);
   run('npm', ['run', 'build', '-w', '@beeline/api-contract']);
+  run('npm', ['run', 'build', '-w', '@beeline/net']);
   run('npm', ['run', 'build', '-w', '@beeline/buzz-client']);
   run('npm', ['run', 'build', '-w', '@beeline/body']);
 

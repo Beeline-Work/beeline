@@ -55,5 +55,6 @@ export type RouterCapabilities = {
   /** Negotiated independently from projections. */
   readonly commandDedupV1: boolean;
   readonly mediaMetadataV1?: boolean;
+  readonly usageCellV1?: boolean;
   readonly authorityFencesV1?: boolean;
 };

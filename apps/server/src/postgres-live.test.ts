@@ -218,6 +218,48 @@ describe('Postgres live fanout', () => {
     expect(received).toContainEqual({ type: 'resource-change', roomId: '', ownerId: AUTHOR, resource: 'workbench' });
   });
 
+  it('labels only isolated usage writes so negotiated clients can suppress broad agent reads',async()=>{
+    const live=new LiveHub(),client=new PgliteListenClient(database);
+    const listener=new PostgresLiveListener(database,live,()=>client,1);listeners.push(listener);
+    const received:LiveEvent[]=[];live.subscribeAll(event=>received.push(event));void listener.run();
+    await eventually(()=>listener.projectionHealth().connected);
+    const agent='b'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')`,[agent]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,AUTHOR]);await settle(received);
+    await database.query(`UPDATE agents SET usage_snapshot=$2::jsonb,updated_at=now() WHERE agent_id=$1`,[agent,JSON.stringify({updatedAt:1,windows:[]})]);
+    await eventually(()=>received.some(event=>event.type==='resource-change'&&event.resourceId===agent));
+    expect(received).toContainEqual(expect.objectContaining({type:'resource-change',resource:'agent',resourceId:agent,usageOnly:true}));
+    await settle(received);
+    await database.query(`UPDATE agents SET selected_model='different-model',usage_snapshot=$2::jsonb,updated_at=now() WHERE agent_id=$1`,[agent,JSON.stringify({updatedAt:2,windows:[]})]);
+    await eventually(()=>received.some(event=>event.type==='resource-change'&&event.resourceId===agent));
+    expect(received.find(event=>event.type==='resource-change'&&event.resourceId===agent)).not.toHaveProperty('usageOnly');
+  });
+
+  it('publishes account usage only to matching owner-bound agents and ignores metadata-only writes',async()=>{
+    const live=new LiveHub(),client=new PgliteListenClient(database);
+    const listener=new PostgresLiveListener(database,live,()=>client,1);listeners.push(listener);
+    const received:LiveEvent[]=[];live.subscribeAll(event=>received.push(event));void listener.run();
+    await eventually(()=>listener.projectionHealth().connected);
+    const first='b'.repeat(64),second='c'.repeat(64),foreign='d'.repeat(64),otherOwner='e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','First'),($2,'agent','Second'),($3,'agent','Foreign'),($4,'human','Other')`,[first,second,foreign,otherOwner]);
+    const account=(await database.query<{id:string}>(`INSERT INTO usage_accounts(owner_id,provider,account_key,usage)
+      VALUES($1,'openai','synthetic-account','{"updatedAt":1,"windows":[]}'::jsonb) RETURNING id::text`,[AUTHOR])).rows[0]!.id;
+    await database.query(`INSERT INTO agents(agent_id,owner_id,usage_account_id) VALUES($1,$4,$5::bigint),($2,$4,$5::bigint),($3,$6,$5::bigint)`,[first,second,foreign,AUTHOR,account,otherOwner]);
+    await settle(received);
+    const before=client.payloads.filter(raw=>JSON.parse(raw).table==='usage_accounts').length;
+    await database.query(`UPDATE usage_accounts SET updated_at=now() WHERE id=$1::bigint`,[account]);await settle(received);
+    expect(client.payloads.filter(raw=>JSON.parse(raw).table==='usage_accounts')).toHaveLength(before);
+    await database.query(`UPDATE usage_accounts SET usage='{"updatedAt":2,"windows":[]}'::jsonb,updated_at=now() WHERE id=$1::bigint`,[account]);
+    await eventually(()=>received.filter(event=>event.type==='resource-change'&&event.usageOnly).length===2);
+    const changes=received.filter(event=>event.type==='resource-change');
+    expect(changes).toEqual([
+      {type:'resource-change',roomId:'',ownerId:AUTHOR,resource:'agent',resourceId:first,usageOnly:true},
+      {type:'resource-change',roomId:'',ownerId:AUTHOR,resource:'agent',resourceId:second,usageOnly:true},
+    ]);
+    const payload=client.payloads.map(raw=>JSON.parse(raw)).reverse().find(item=>item.table==='usage_accounts');
+    expect(payload).toMatchObject({ownerId:AUTHOR,accountId:account});expect(payload).not.toHaveProperty('usage');
+  });
+
   it('publishes machine broker reports and sign-in progress to the owner surfaces', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);

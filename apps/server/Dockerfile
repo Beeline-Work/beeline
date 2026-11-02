@@ -7,6 +7,7 @@ COPY apps/auth/package.json apps/auth/tsconfig.json ./apps/auth/
 COPY apps/body/package.json apps/body/tsconfig.json ./apps/body/
 COPY packages/nostr/package.json packages/nostr/tsconfig.json ./packages/nostr/
 COPY packages/api-contract/package.json packages/api-contract/tsconfig.json ./packages/api-contract/
+COPY packages/net/package.json packages/net/tsconfig.json ./packages/net/
 COPY packages/buzz-client/package.json packages/buzz-client/tsconfig.json ./packages/buzz-client/
 RUN npm ci --ignore-scripts
 
@@ -16,10 +17,12 @@ COPY apps/auth/src ./apps/auth/src
 COPY apps/body/src ./apps/body/src
 COPY packages/nostr/src ./packages/nostr/src
 COPY packages/api-contract/src ./packages/api-contract/src
+COPY packages/net/src ./packages/net/src
 COPY packages/buzz-client/src ./packages/buzz-client/src
 COPY scripts/clean-dist.mjs ./scripts/clean-dist.mjs
 RUN npm run build -w @beeline/nostr \
   && npm run build -w @beeline/api-contract \
+  && npm run build -w @beeline/net \
   && npm run build -w @beeline/buzz-client \
   && npm run build -w @beeline/body \
   && npm run build -w @beeline/auth \
@@ -38,6 +41,7 @@ COPY apps/auth/package.json ./apps/auth/package.json
 COPY apps/body/package.json ./apps/body/package.json
 COPY packages/nostr/package.json ./packages/nostr/package.json
 COPY packages/api-contract/package.json ./packages/api-contract/package.json
+COPY packages/net/package.json ./packages/net/package.json
 COPY packages/buzz-client/package.json ./packages/buzz-client/package.json
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=build /app/apps/server/dist ./apps/server/dist
@@ -46,6 +50,7 @@ COPY --from=build /app/apps/auth/dist ./apps/auth/dist
 COPY --from=build /app/apps/body/dist ./apps/body/dist
 COPY --from=build /app/packages/nostr/dist ./packages/nostr/dist
 COPY --from=build /app/packages/api-contract/dist ./packages/api-contract/dist
+COPY --from=build /app/packages/net/dist ./packages/net/dist
 COPY --from=build /app/packages/buzz-client/dist ./packages/buzz-client/dist
 # The release identity changes every build, so it comes after every cached
 # layer: a new version or SHA must not reinstall production dependencies.

@@ -1,3 +1,5 @@
+import { useAgentUsageCell } from '@/buzz/use-agent-usage-cell';
+import { isUsageCellOnlyChange } from '@/buzz/agent-usage-cell';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
@@ -252,6 +254,7 @@ export default function BuzzMembers({
     [identity?.publicKey, relayUrl, workspaceId],
   );
   const agentId = profileAgentId ?? localAgentId;
+  const usageCell = useAgentUsageCell(focused ? profileAgentId : null);
   const agentAddress = useMemo(
     () =>
       identity && relayUrl && workspaceId && agentId
@@ -379,6 +382,7 @@ export default function BuzzMembers({
       .register([], (event) => {
         if (cancelled || AppState.currentState === 'background' || AppState.currentState === 'inactive' || !('monolithLive' in event)) return;
         const live = event.monolithLive;
+        if (isUsageCellOnlyChange(live)) return;
         if (!(
           (live.type === 'resource-change' &&
             live.resource === 'agent' &&
@@ -1067,12 +1071,12 @@ export default function BuzzMembers({
         canEdit={ownsSelectedAgent}
         avatarDisabled={busy}
         onGenerateAvatar={requestSoulAvatar}
+        usageCell={usageCell}
         refreshUsage={async () => {
           const outcome = await monolithPhoneOperation('refreshAgentUsage', {
             workspaceId: selectedAgent!.workspaceId, agentId: profileAgentId,
           }, { timeoutMs: USAGE_REFRESH_CLIENT_TIMEOUT_MS });
-          // The read landed on the server; show its numbers now.
-          await readAgent(profileAgentId).catch(() => undefined);
+          // The canonical usage cell arrives on the existing source feed.
           return outcome;
         }}
         loadMoreWork={async (cursor) => {

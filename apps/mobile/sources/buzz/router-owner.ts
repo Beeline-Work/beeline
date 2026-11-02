@@ -1,4 +1,6 @@
-import { AdmissionOwner, ReadLanes, RouterBatchAssembly, NavigationOwner, MediaDemandOwner,
+import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
+import { installUsageCellConnection, suspendUsageCellConnection, receiveUsageCell, setUsageCellProfile } from './agent-usage-cell';
+import { AdmissionOwner, ReadLanes, RouterBatchAssembly, NavigationOwner, MediaDemandOwner, UsageDemandOwner,
   type MediaAction, type LaneFamily, type LaneRequest, type LaneSnapshot, type LaneView, type NavigationState, type AdmittedCommand } from '@beeline/net/owner';
 import { readChatListView, readRoomView } from '@beeline/api-contract/phone';
 import type { MediaMetadata, MediaLink, PhoneOperationMap } from '@beeline/api-contract/phone';
@@ -13,6 +15,7 @@ import { installMediaCacheConnection, installLegacyMediaCacheConnection, suspend
 
 export type RouterFamilyMode = 'pending' | 'legacy' | 'router';
 type Negotiation = { generation: number; families: readonly LaneFamily[];
+  usageCellV1?: boolean; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>;
   authorityFencesV1?: boolean; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>;
   executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>;
   execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> };
@@ -24,6 +27,10 @@ const slots = new Set<Slot>();
 const slotsByKey = new Map<string, Slot>();
 let admission: AdmissionOwner | undefined;
 let mediaDemand: MediaDemandOwner | undefined;
+let usageDemand: UsageDemandOwner | undefined;
+let readerOrigin: string | undefined;
+let committedUsageProfile: string | null = null;
+let usageProfilePending = false;
 let stopFences: (() => void) | undefined;
 let lanes: ReadLanes | undefined;
 let negotiation: Negotiation | undefined;
@@ -60,8 +67,9 @@ async function initialize(): Promise<void> {
   return initialized = Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([identity, origin]) => {
     if (epoch !== clientResetGeneration() || !identity) return;
     const reader = { origin: new URL(origin).origin, principal: identity.publicKey, sessionEpoch: epoch };
-    principal = reader.principal;
+    principal = reader.principal; readerOrigin = reader.origin;
     admission = new AdmissionOwner(reader);
+    usageDemand = new UsageDemandOwner(admission, () => navigation.current() ?? null, setUsageCellProfile);
     mediaDemand = new MediaDemandOwner(admission, () => navigation.current() ?? null, invalidateMediaCacheDemand, activeMediaObjectIds);
     const storage = routerLaneStorage(reader.origin, reader.principal);
     lanes = new ReadLanes(reader, validValue, { ...storage, fence: async (scope, epoch) => {
@@ -128,6 +136,8 @@ function focus(slot: Slot): void {
 }
 function reconcile(): void {
   mediaDemand?.navigationChanged();
+  usageDemand?.navigationChanged();
+  flushUsageProfile();
   for (const slot of [...slots]) {
     if (!slot.consumers.size && slot.generation !== navigation.current()?.generation) {
       release(slot); slots.delete(slot);
@@ -143,6 +153,13 @@ function reconcile(): void {
 navigation.subscribe(reconcile);
 
 /** Real committed navigator state. This does not run a request by itself. */
+function flushUsageProfile(): void {
+  if (!usageProfilePending || !usageDemand || !navigation.current()) return;
+  usageProfilePending = false; usageDemand.profile(committedUsageProfile);
+}
+export function routerOwnerUsageProfile(agentId: string | null): void {
+  committedUsageProfile = agentId; usageProfilePending = true; flushUsageProfile();
+}
 export function routerOwnerNavigation(state: NavigationState): void { navigation.observe(state); }
 /** Existing transcript viewport and synchronous artifact controls are the only callers. */
 export function routerOwnerArtifactViewport(roomId: string, objectIds: readonly string[]): void {
@@ -165,6 +182,15 @@ export async function routerOwnerNegotiated(next: Negotiation): Promise<void> {
   await initialize();
   if (version !== instance) return;
   negotiation = next; modeKnown = true; authorityUnavailable = false;
+  flushUsageProfile();
+  const usage = usageDemand;
+  if (usage && principal && readerOrigin) {
+    if (next.usageCellV1 && next.executeUsageCell) usage.connected(next.generation);
+    else usage.disconnected();
+    installUsageCellConnection({ generation: next.generation, usageCellV1: next.usageCellV1 === true && !!next.executeUsageCell,
+      origin: readerOrigin, principal, joinedRead: agentId => usage.satisfy(agentId),
+      executeRead: agentId => usage.dispatch(agentId, input => next.executeUsageCell!(input.agentId)) });
+  }
   const media = mediaDemand;
   if (next.mediaMetadataV1 && next.authorityFencesV1 && next.executeMetadata && media) {
     media.connected(next.generation);
@@ -218,6 +244,7 @@ export async function routerOwnerNegotiated(next: Negotiation): Promise<void> {
   reconcile();
 }
 export function routerOwnerDisconnected(): void {
+  usageDemand?.disconnected(); suspendUsageCellConnection();
   mediaDemand?.disconnected(); suspendMediaCacheConnection();
   instance += 1; negotiation = undefined; modeKnown = false; assembly.reset(); lanes?.disconnected(); notify();
 }
@@ -245,6 +272,8 @@ function fact(value: unknown): boolean {
  */
 export function routerOwnerReceive(value: unknown): void {
   if (!negotiation || !record(value)) return;
+  if (value.kind === 'usage-cell') { if (negotiation.usageCellV1) receiveUsageCell(value.cell); return; }
+  if (value.kind === 'usage-unavailable') { usageDemand?.disconnected(); suspendUsageCellConnection(); return; }
   const failAuthority = () => {
     authorityUnavailable = true; assembly.reset(); lanes?.disconnected();
     mediaDemand?.disconnected(); suspendMediaCacheConnection(); notify();
@@ -354,5 +383,6 @@ subscribeClientReset(() => {
   for (const slot of slots) { release(slot); slot.generation = undefined; }
   stopFences?.(); stopFences = undefined;
   mediaDemand?.disconnected(); mediaDemand = undefined;
+  usageDemand?.disconnected(); usageDemand = undefined; readerOrigin = undefined; committedUsageProfile = null; usageProfilePending = false;
   admission = undefined; lanes?.reset(); lanes = undefined; initialized = undefined; navigation.reset(); notify();
 });

@@ -1,3 +1,4 @@
+import { helperUsageEnabled, readAgentUsageCell } from './helper-usage.js';
 import { readMediaMetadata } from './phone-media.js';
 import { runnableOrigin } from './runnable-artifact.js';
 import { captureCommandCoverage } from './router-command-coverage.js';
@@ -80,6 +81,11 @@ export function createPhoneOperationDispatcher(
     invokeLegacy?: () => Promise<unknown>, familyId?: string): Promise<unknown> => {
     const phone = options.phone;
     switch (name) {
+      case 'readAgentUsageCell': {
+        if(!helperUsageEnabled())refuse(409,'usage_cell_unavailable');
+        const cell=await readAgentUsageCell(options.database,required(input,'agentId'),viewerId);
+        if(!cell.allowed)refuse(403,'usage_cell_authority');return cell;
+      }
       case 'readMediaMetadata': return readMediaMetadata(options.database,uuid(input,'objectId'),viewerId);
       case 'readMediaLink':
       case 'readMediaPlayback': {

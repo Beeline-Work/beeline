@@ -1,3 +1,4 @@
+import type { AgentUsageCell } from './helper-usage.js';
 import type { MediaMetadata, MediaLink } from './media-metadata.js';
 import type { RouterSnapshotInput, RouterSnapshot } from './router-protocol.js';
 import type { RepositoryOnboardingAction } from './repository-onboarding.js';
@@ -92,6 +93,7 @@ export type CornerMergeHold = {
 };
 
 export type PhoneOperationMap = PhoneRouteOperationMap & {
+  readAgentUsageCell: { input: { agentId: string }; output: AgentUsageCell };
   readRouterSnapshot: { input: RouterSnapshotInput; output: RouterSnapshot };
   readMediaMetadata: { input: { objectId: string }; output: MediaMetadata };
   readMediaLink: { input: { objectId: string }; output: MediaLink };
@@ -297,6 +299,7 @@ export type PhoneOperationMap = PhoneRouteOperationMap & {
 export const PHONE_READ_OPERATIONS = [
   ...PHONE_ROUTE_READ_OPERATIONS,
   'readRouterSnapshot',
+  'readAgentUsageCell',
   'readMediaMetadata',
   'readMediaLink',
   'readMediaPlayback',

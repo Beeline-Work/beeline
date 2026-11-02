@@ -1,3 +1,4 @@
+import { attachUsageAccount, helperUsageEnabled, publishUsageAccount } from './helper-usage.js';
 import { owedMentions, clearOwedMention, mentionReplyKey, mentionReplyId } from './owed-mentions.js';
 import { YouTubeUploadRefusal } from './composio-apps.js';
 import { missingReviewAttachments } from './review-evidence.js';
@@ -1792,9 +1793,20 @@ export class DaemonService {
         )) as Output<Name>;
       case 'getAgentUsage':
         return ((await agentUsage(this.database, authenticatedAgentId)) ?? null) as Output<Name>;
+      case 'publishAgentUsageAccount': {
+        if(!helperUsageEnabled())throw new Error('usage_account_unavailable');
+        const published=await publishUsageAccount(this.database,authenticatedAgentId,input as Input<'publishAgentUsageAccount'>);
+        return {...this.writeResult(),...published} as Output<Name>;
+      }
+      case 'attachAgentUsageAccount': {
+        if(!helperUsageEnabled())throw new Error('usage_account_unavailable');
+        await attachUsageAccount(this.database,authenticatedAgentId,input as Input<'attachAgentUsageAccount'>);
+        return this.writeResult() as Output<Name>;
+      }
       case 'postAgentUsage': {
-        const { usage } = input as Input<'postAgentUsage'>;
-        await saveAgentUsage(this.database, authenticatedAgentId, usage);
+        const { usage,usageSource } = input as Input<'postAgentUsage'>;
+        const accepted=await saveAgentUsage(this.database, authenticatedAgentId, usage,usageSource);
+        if(!accepted)return this.writeResult() as Output<Name>;
         const outcome = postedRefreshOutcome(usage);
         if (outcome) await notifyUsageRefreshResult(this.database, authenticatedAgentId, outcome);
         return this.writeResult() as Output<Name>;
@@ -9447,6 +9459,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getAgentAvatar: true,
   postAgentAvatar: true,
   postAgentUsage: true,
+  publishAgentUsageAccount:true,
+  attachAgentUsageAccount:true,
   getAgentUsage: true,
   answerUsageRefresh: true,
   postAgentCommands: true,

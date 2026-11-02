@@ -1,3 +1,5 @@
+import { acceptUsageWriteSource } from './helper-usage-source.js';
+import type { UsageWriteSource } from '@beeline/api-contract/helper-usage';
 import { randomUUID } from 'node:crypto';
 import {
   readAgentUsage,
@@ -23,10 +25,11 @@ import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
  */
 
 /** Usage inputs for an `agents` row, null unless `viewer` (a SQL expression) owns it. */
-export function agentUsageColumns(agent: string, viewer: string): string {
+export function agentUsageColumns(agent: string, viewer: string, bindSnapshotOwner=false): string {
   const owned = `${agent}.owner_id=${viewer}`;
   const today = `(now() AT TIME ZONE 'UTC')::date`;
-  return `CASE WHEN ${owned} THEN ${agent}.usage_snapshot END usage_snapshot,
+  const snapshotOwned=bindSnapshotOwner?`${owned} AND ${agent}.usage_owner_id=${agent}.owner_id`:owned;
+  return `CASE WHEN ${snapshotOwned} THEN ${agent}.usage_snapshot END usage_snapshot,
     CASE WHEN ${owned} THEN (SELECT ua.usage FROM usage_accounts ua
       WHERE ua.id=${agent}.usage_account_id AND ua.owner_id=${agent}.owner_id) END usage_account,
     CASE WHEN ${owned} THEN (SELECT array_agg(i.name ORDER BY lower(i.name),i.id)
@@ -135,7 +138,7 @@ function mergeWindows(previous: AgentUsage | undefined, usage: AgentUsage, recei
  * window set; a cached (stale) one replaces it only when it is not older than
  * what is stored. Either way the record says how the latest read went.
  */
-function applyAccountRead(previous: AgentUsage | undefined, usage: AgentUsage, receivedAt: number): AgentUsage {
+export function applyAccountRead(previous: AgentUsage | undefined, usage: AgentUsage, receivedAt: number): AgentUsage {
   const windows = usage.windows.map((w) => ({ ...w, updatedAt: Math.min(w.updatedAt, receivedAt) }));
   const readAt = shownAt({ ...usage, windows, updatedAt: Math.min(usage.updatedAt, receivedAt) });
   const replace = usage.read?.status === 'fresh' ||
@@ -153,7 +156,7 @@ function applyAccountRead(previous: AgentUsage | undefined, usage: AgentUsage, r
 }
 
 /** The plan part of a usage record, as an account stores it. */
-const accountRecord = (usage: AgentUsage | undefined): AgentUsage => ({
+export const accountRecord = (usage: AgentUsage | undefined): AgentUsage => ({
   updatedAt: usage?.updatedAt ?? 0,
   windows: usage?.windows ?? [],
   ...(usage?.plan ? { plan: usage.plan } : {}),
@@ -165,34 +168,37 @@ export async function saveAgentUsage(
   database: SqlDatabase,
   agentId: string,
   input: unknown,
-): Promise<void> {
+  source?:UsageWriteSource,
+): Promise<boolean> {
   const usage = readAgentUsage(input);
   if (!usage || usage.free) throw new Error('invalid agent usage');
   const receivedAt = Date.now() / 1000;
-  await database.transaction(async (db) => {
+  return database.transaction(async (db) => {
     const agent = (
       await db.query<{ owner_id: string | null; usage_snapshot: unknown; usage_account_id: string | null }>(
         `SELECT owner_id,usage_snapshot,usage_account_id::text FROM agents WHERE agent_id=$1 FOR UPDATE`,
         [agentId],
       )
     ).rows[0];
-    if (!agent) return;
+    if (!agent) return source?false:true;
+    if(source&&!await acceptUsageWriteSource(db,agentId,agent.owner_id,usage,source))return false;
     const previous = readAgentUsage(agent.usage_snapshot);
     const context = usage.context ?? previous?.context;
     const writeSnapshot = (snapshot: AgentUsage, accountId: string | null) =>
       db.query(
-        `UPDATE agents SET usage_snapshot=$2::jsonb,usage_account_id=$3::bigint,updated_at=now() WHERE agent_id=$1`,
+        `UPDATE agents SET usage_snapshot=$2::jsonb,usage_account_id=$3::bigint,updated_at=now() WHERE agent_id=$1
+           AND (usage_snapshot IS DISTINCT FROM $2::jsonb OR usage_account_id IS DISTINCT FROM $3::bigint)`,
         [agentId, JSON.stringify({ ...snapshot, ...(context ? { context } : {}) }), accountId],
       );
     if (usage.spend) {
       // OpenRouter reports the whole key at once, so the latest read replaces the last.
       await writeSnapshot({ updatedAt: receivedAt, windows: [], spend: usage.spend }, null);
-      return;
+      return true;
     }
     if (previous?.spend && !usage.windows.length && !usage.plan && !usage.credits && !usage.read && !usage.account) {
       // A context-only update keeps the key's spend and the time it was read.
       await writeSnapshot(previous, agent.usage_account_id);
-      return;
+      return true;
     }
     let account: { id: string; usage: unknown } | undefined;
     if (usage.account && agent.owner_id) {
@@ -223,12 +229,12 @@ export async function saveAgentUsage(
             const windows = mergeWindows(stored, usage, receivedAt);
             return { ...accountRecord(stored), updatedAt: oldest(windows) ?? stored?.updatedAt ?? receivedAt, windows };
           })();
-      await db.query(`UPDATE usage_accounts SET usage=$2::jsonb,updated_at=now() WHERE id=$1::bigint`, [
+      await db.query(`UPDATE usage_accounts SET usage=$2::jsonb,updated_at=now() WHERE id=$1::bigint AND usage IS DISTINCT FROM $2::jsonb`, [
         account.id,
         JSON.stringify(next),
       ]);
       await writeSnapshot(previous && !previous.spend ? accountRecord(previous) : { updatedAt: receivedAt, windows: [] }, account.id);
-      return;
+      return true;
     }
     const windows = mergeWindows(previous, usage, receivedAt);
     await writeSnapshot({
@@ -240,6 +246,7 @@ export async function saveAgentUsage(
       ...(usage.credits ? { credits: usage.credits } : previous?.credits ? { credits: previous.credits } : {}),
       ...(usage.read ? { read: usage.read } : previous?.read ? { read: previous.read } : {}),
     }, null);
+    return true;
   });
 }
 

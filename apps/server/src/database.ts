@@ -1,3 +1,4 @@
+import { HELPER_USAGE_SCHEMA } from './helper-usage.js';
 import { HELPER_OVERLAY_SCHEMA } from './helper-overlay.js';
 import { MCP_MEMBER_STREAM_SCHEMA } from './rooms-mcp-stream.js';
 import { MEDIA_AUTHORITY_SCHEMA } from './media-authority-schema.js';
@@ -247,7 +248,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 50;
+export const REQUIRED_SCHEMA_VERSION = 51;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3609,6 +3610,7 @@ export async function migrate(
   await ddlScript('command completion notifications', COMMAND_COMPLETION_SCHEMA);
   await ddlScript('MCP member stream', MCP_MEMBER_STREAM_SCHEMA);
   await ddlScript('Helper overlay demand', HELPER_OVERLAY_SCHEMA);
+  await ddlScript('Helper usage ownership', HELPER_USAGE_SCHEMA);
   await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);
   if (!options.deferData) await migrateData(database);
 }

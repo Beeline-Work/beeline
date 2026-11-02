@@ -20,6 +20,7 @@
   "dependencies": {
     "@beeline/api-contract": "*",
     "@beeline/auth": "*",
+    "@beeline/net": "*",
     "@livekit/rtc-node": "^1.1.0",
     "@modelcontextprotocol/sdk": "^1.32.2",
     "@sentry/node": "^10.76.2",

@@ -161,3 +161,20 @@ test('features cannot install a substitute media or usage executor', () => {
   assert.deepEqual(inspectSource('apps/mobile/sources/components/File.tsx',
     'import { mediaMetadataFor } from "@/buzz/media-cache-connection";').errors, []);
 });
+
+ test('usage admission belongs only to committed profile or desktop pane owners', () => {
+  const source = 'import { routerOwnerUsageProfile } from "@/buzz/router-owner";';
+  for (const path of ['app/(app)/beeline/agent-profile.tsx', 'app/(app)/beeline/chat/_chat-surface.tsx'])
+    assert.deepEqual(inspectSource('apps/mobile/sources/' + path, source).errors, []);
+  for (const path of ['buzz/use-agent-usage-cell.ts', 'components/buzz/AgentUsageSection.tsx', 'components/buzz/AgentProfileView.tsx'])
+    assert.ok(inspectSource('apps/mobile/sources/' + path, source).errors.length);
+});
+
+test('closed helper usage codecs are restricted to the existing machine adapters', () => {
+  const source = 'import { helperUsageCodecs } from "@beeline/net/helper-codecs";';
+  for (const file of ['apps/body/src/helper-usage-channel.ts', 'apps/server/src/daemon-live.ts'])
+    assert.deepEqual(inspectSource(file, source).errors, []);
+  for (const file of ['apps/body/src/feature.ts', 'apps/server/src/phone-operations.ts', 'apps/mobile/sources/buzz/feature.ts'])
+    assert.ok(inspectSource(file, source).errors.length);
+  assert.ok(inspectSource('packages/net/src/helper-codecs.ts', 'export { AdmissionOwner } from "./private/admission.js";').errors.length);
+});

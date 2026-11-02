@@ -1,3 +1,4 @@
+import { helperUsageBinding, postChangedAgentUsage } from './helper-usage-binding.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { subscriptionActionPrompt } from '@beeline/api-contract/daemon';
 import { addTurnTokenFigure, mergeHarnessTurnMetrics, type TurnTokenFigure } from './harness-turn-tokens.js';
@@ -918,7 +919,7 @@ export class MonolithRoomTurnLoop {
         ...(refused ? { refused } : {}),
       }))
       .then((usage) => usage
-        ? this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+        ? postChangedAgentUsage(this.options.api,this.agent.publicKey,usage)
         : undefined)
       .catch((error) => console.error('[agent-usage] OpenRouter key read failed', error));
   }
@@ -926,9 +927,10 @@ export class MonolithRoomTurnLoop {
   /** After a turn, refresh the owner's view of this agent's plan quota. */
   private publishHarnessQuota(): void {
     this.harnessQuota ??= new HarnessQuotaReader({
+      accountPublisher:helperUsageBinding(this.options.api),
       agentId: this.agent.publicKey,
       post: (usage) =>
-        this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage }),
+        postChangedAgentUsage(this.options.api,this.agent.publicKey,usage),
     });
     void this.harnessQuota.publish(
       quotaAxiProvider(this.options.config.agentKind, Boolean(this.openRouterKey)),
@@ -1474,7 +1476,7 @@ export class MonolithRoomTurnLoop {
           sandboxHome: homeOverlay.HOME,
         }),
       onUsage: (usage) => {
-        void this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+        void postChangedAgentUsage(this.options.api,this.agent.publicKey,usage)
           .catch(error => console.error('[agent-usage] publish failed', error));
       },
       onCommands: agentCommandCatalogPublisher({

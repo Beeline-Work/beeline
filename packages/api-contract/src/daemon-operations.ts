@@ -1,3 +1,4 @@
+import type { UsageAccountPublicationResult, UsageAccountReference, UsageWriteSource } from './helper-usage.js';
 import type { TurnReplay } from './turn-replay.js';
 import type { SquireApprovalDetails } from './approval-copy.js';
 import type { RepositoryOnboardingCard } from './repository-onboarding.js';
@@ -558,7 +559,9 @@ export type DaemonOperationMap = {
   postAgentToolMandate: Operation<PostAgentToolMandateInput, WriteResult>;
   getAgentAvatar: Operation<RoomInput, { readonly drawing: unknown; readonly soul: unknown }>;
   postAgentAvatar: Operation<RoomInput & { readonly drawing: unknown }, WriteResult>;
-  postAgentUsage: Operation<AgentInput & { readonly usage: AgentUsage }, WriteResult>;
+  postAgentUsage: Operation<AgentInput & { readonly usage: AgentUsage; readonly usageSource?:UsageWriteSource }, WriteResult>;
+  publishAgentUsageAccount: Operation<AgentInput & { readonly usage: AgentUsage; readonly revision: string; readonly ownerId: string; readonly source: { readonly connectionId: string; readonly epoch: number } }, WriteResult & UsageAccountPublicationResult>;
+  attachAgentUsageAccount: Operation<AgentInput & UsageAccountReference & { readonly source: { readonly connectionId: string; readonly epoch: number } }, WriteResult>;
   getAgentUsage: Operation<AgentInput, AgentUsage | null>;
   /** The helper's answer to one owner-requested usage refresh. */
   answerUsageRefresh: Operation<

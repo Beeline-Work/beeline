@@ -1,3 +1,5 @@
+vi.mock('@/buzz/router-owner', () => ({ routerOwnerUsageProfile: vi.fn() }));
+vi.mock('@/buzz/use-agent-usage-cell', () => ({ useAgentUsageCell: () => ({ mode: 'legacy', cell: null }) }));
 vi.mock('@/utils/responsive', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/responsive')>()), useIsDesktop: () => false }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
@@ -200,7 +202,8 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
+  return {
+    AccessibilityInfo: { announceForAccessibility: vi.fn() }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Share: { share },
     Platform: platform,
@@ -2219,4 +2222,30 @@ describe('Members workspace management', () => {
     expect(firstPage.flatMap((item) => row(item.identity.pubkey))).toHaveLength(firstPageRows);
     expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.count).toEqual(allPeople.length);
   });
+});
+
+it('negotiated usage-only changes skip a full profile read while actual agent configuration still refreshes', async () => {
+  const { installUsageCellConnection, suspendUsageCellConnection } = await import('@/buzz/agent-usage-cell');
+  const renderer = await render(); await openAgentProfile(renderer);
+  const before = roomView.agent.mock.calls.length;
+  installUsageCellConnection({ generation: 1, usageCellV1: true, origin: 'https://relay.test', principal: VIEWER,
+    executeRead: async () => { throw new Error('No private source adapter in this compatibility fixture'); } });
+  try {
+    await act(async () => { for (const listener of liveListeners) listener({ monolithLive: {
+      type: 'resource-change', roomId: '', resource: 'agent', resourceId: AGENT, usageOnly: true,
+    } }); });
+    expect(roomView.agent.mock.calls.length).toBe(before);
+    await agentChanged(); expect(roomView.agent.mock.calls.length).toBe(before + 1);
+  } finally { suspendUsageCellConnection(); }
+});
+
+it('the existing Refresh usage action does not follow its receipt with a full Agent read', async () => {
+  state.agent.usage = { updatedAt: 10, windows: [{ rateLimitType: 'five_hour', status: 'allowed', utilization: 0.14, updatedAt: 10 }] };
+  const renderer = await render(); await openAgentProfile(renderer);
+  const before = roomView.agent.mock.calls.length; phoneOperation.mockResolvedValueOnce({ status: 'fresh' });
+  const refresh = renderer.root.findAllByType('Button' as any).find((node: any) => node.props.accessibilityLabel === 'Refresh usage');
+  expect(refresh).toBeDefined();
+  await act(async () => { await refresh!.props.onPress(); });
+  expect(phoneOperation).toHaveBeenCalledWith('refreshAgentUsage', { workspaceId: WORKSPACE, agentId: AGENT }, expect.any(Object));
+  expect(roomView.agent.mock.calls.length).toBe(before);
 });

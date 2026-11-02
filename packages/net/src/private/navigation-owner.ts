@@ -1,8 +1,8 @@
-export type NavigationScreen = 'AppShell' | 'Room';
+export type NavigationScreen = 'AppShell' | 'Room' | 'AgentProfile';
 export type NavigationRoute = Readonly<{ key?: string; name: string; params?: Readonly<object>;
   state?: NavigationState }>;
 export type NavigationState = Readonly<{ index?: number; routes: readonly NavigationRoute[] }>;
-export type NavigationResidency = Readonly<{ generation: number; key: string; screen: NavigationScreen; roomId?: string; workspaceId?: string }>;
+export type NavigationResidency = Readonly<{ generation: number; key: string; screen: NavigationScreen; roomId?: string; workspaceId?: string; agentId?: string }>;
 
 /** Navigation generations live here, outside React effects and renders.
  * Joining a committed state is idempotent; only a changed focused route creates
@@ -46,15 +46,16 @@ export class NavigationOwner {
     const name = route?.name ?? '';
     const params = route?.params as Record<string, unknown> | undefined;
     const roomId = typeof params?.channelId === 'string' ? params.channelId : undefined;
+    const agentId = typeof params?.agentId === 'string' ? params.agentId : undefined;
     const workspaceId = typeof params?.communityId === 'string' ? params.communityId : typeof params?.workspaceId === 'string' ? params.workspaceId : undefined;
     const screen = name === 'beeline/channels' || name === 'beeline/tray' ||
       name.startsWith('beeline/settings/') || name === 'beeline/members' ? 'AppShell' :
-      name === 'beeline/chat/[channelId]' && roomId ? 'Room' : undefined;
-    const key = JSON.stringify([path, screen, roomId, workspaceId]);
+      name === 'beeline/chat/[channelId]' && roomId ? 'Room' : name === 'beeline/agent-profile' && agentId ? 'AgentProfile' : undefined;
+    const key = JSON.stringify([path, screen, roomId, workspaceId, agentId]);
     if (key === this.focusedKey) return;
     this.focusedKey = key;
     this.focused = screen ? Object.freeze({ generation: ++this.counter, key, screen,
-      ...(roomId ? { roomId: decodeURIComponent(roomId) } : {}), ...(workspaceId ? { workspaceId } : {}) }) : undefined;
+      ...(roomId ? { roomId: decodeURIComponent(roomId) } : {}), ...(workspaceId ? { workspaceId } : {}), ...(agentId ? { agentId } : {}) }) : undefined;
     this.notify();
   }
   private notify(): void { for (const listener of this.listeners) listener(); }

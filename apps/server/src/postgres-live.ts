@@ -214,10 +214,21 @@ BEGIN
     WHEN 'free_agent_usage' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', '', 'ownerId', COALESCE(NEW.owner_id,OLD.owner_id));
+    WHEN 'usage_accounts' THEN
+      IF TG_OP='UPDATE' AND NEW.usage IS NOT DISTINCT FROM OLD.usage
+        AND to_jsonb(NEW)->'revision' IS NOT DISTINCT FROM to_jsonb(OLD)->'revision' THEN RETURN NULL;END IF;
+      payload=jsonb_build_object('table',TG_TABLE_NAME,'operation',TG_OP,'roomId','',
+        'ownerId',COALESCE(NEW.owner_id,OLD.owner_id),'accountId',COALESCE(NEW.id,OLD.id)::text);
     WHEN 'agents' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', '', 'ownerId', COALESCE(NEW.owner_id,OLD.owner_id),
         'resourceId', COALESCE(NEW.agent_id,OLD.agent_id),
+        'usageOnly',CASE WHEN TG_OP='UPDATE' THEN
+          (to_jsonb(NEW)-ARRAY['usage_snapshot','usage_account_id','usage_owner_id','updated_at']) IS NOT DISTINCT FROM
+          (to_jsonb(OLD)-ARRAY['usage_snapshot','usage_account_id','usage_owner_id','updated_at'])
+          AND (to_jsonb(NEW)->'usage_snapshot' IS DISTINCT FROM to_jsonb(OLD)->'usage_snapshot'
+            OR to_jsonb(NEW)->'usage_account_id' IS DISTINCT FROM to_jsonb(OLD)->'usage_account_id'
+            OR to_jsonb(NEW)->'usage_owner_id' IS DISTINCT FROM to_jsonb(OLD)->'usage_owner_id') ELSE false END,
         'squireReportChanged', CASE WHEN TG_OP='UPDATE' THEN
           NEW.squire_report IS DISTINCT FROM OLD.squire_report ELSE false END,
         'squireWorkChanged', CASE WHEN TG_OP='UPDATE' THEN
@@ -448,7 +459,7 @@ BEGIN
     'needs_you_marks',
     'agent_grants', 'agent_schedules', 'agent_subscriptions', 'agent_commands',
     'github_installations', 'github_repositories',
-    'workspace_connectors', 'workspace_connections', 'wallet_bindings', 'agents', 'agent_avatars', 'free_agent_usage',
+    'workspace_connectors', 'workspace_connections', 'wallet_bindings', 'agents', 'usage_accounts', 'agent_avatars', 'free_agent_usage',
     'registry_mcp_oauth_attempts', 'push_devices',
     'workspace_join_notifications',
     'helper_release_notifications', 'workspaces', 'identities'
@@ -494,6 +505,8 @@ interface LiveNotificationPayload {
   roomId: string;
   ownerId?: string;
   resourceId?: string;
+  accountId?:string;
+  usageOnly?:true;
   version?: string;
   squireReportChanged?: boolean;
   squireWorkChanged?: boolean;
@@ -561,6 +574,8 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       roomId: parsed.roomId,
       ...(typeof parsed.ownerId === 'string' ? { ownerId: parsed.ownerId } : {}),
       ...(typeof parsed.resourceId === 'string' ? { resourceId: parsed.resourceId } : {}),
+      ...(typeof parsed.accountId==='string'&&/^[0-9]{1,20}$/.test(parsed.accountId)?{accountId:parsed.accountId}:{}),
+      ...(parsed.usageOnly===true?{usageOnly:true as const}:{}),
       ...(parsed.squireReportChanged === true ? { squireReportChanged: true } : {}),
       ...(parsed.squireWorkChanged === true ? { squireWorkChanged: true } : {}),
       ...(typeof parsed.squireAddress === 'string' ? { squireAddress: parsed.squireAddress } : {}),
@@ -774,6 +789,8 @@ export class PostgresLiveListener {
     const key = (payload.table === 'agent_config' || payload.table === 'connector_assignment') &&
         payload.agentId
       ? `${payload.table}:${payload.agentId}`
+      : payload.table==='usage_accounts'&&payload.ownerId&&payload.accountId
+        ? `usage-account:${payload.ownerId}:${payload.accountId}`
       : PARENT_ONLY_TABLES.has(payload.table) && payload.cornerParentId
         ? `corner-status:${payload.cornerParentId}`
       : (payload.table === 'github_installations' && payload.installationId) ||
@@ -899,6 +916,14 @@ export class PostgresLiveListener {
   private async rebroadcast(raw: string | undefined): Promise<void> {
     const payload = decodePayload(raw);
     if (!payload) return;
+    if(payload.table==='usage_accounts'){
+      if(!payload.ownerId||!payload.accountId)return;
+      const affected=await this.database.query<{agent_id:string}>(`SELECT agent_id FROM agents
+        WHERE owner_id=$1 AND usage_account_id=$2::bigint ORDER BY agent_id`,[payload.ownerId,payload.accountId]);
+      for(const agent of affected.rows)this.live.publish({type:'resource-change',roomId:'',ownerId:payload.ownerId,
+        resource:'agent',resourceId:agent.agent_id,usageOnly:true});
+      return;
+    }
     if (payload.ownerId && (payload.table === 'workspace_connectors' ||
       payload.table === 'workspace_connections' || payload.table === 'connector_discovery_cache' || payload.table === 'wallet_bindings' || payload.table === 'agents' ||
       payload.table === 'agent_avatars' || payload.table === 'avatar_job' || payload.table === 'free_agent_usage')) {
@@ -906,6 +931,7 @@ export class PostgresLiveListener {
         resource: payload.table === 'workspace_connectors' ? 'install'
           : payload.table === 'workspace_connections' || payload.table === 'connector_discovery_cache' || payload.table === 'wallet_bindings' ? 'workbench' : 'agent',
         ...(payload.resourceId ? { resourceId: payload.resourceId } : {}),
+        ...(payload.usageOnly?{usageOnly:true as const}:{}),
         ...(payload.version ? { version: payload.version } : {}) });
       if (payload.squireReportChanged)
         this.live.publish({ type: 'resource-change', roomId: '', ownerId: payload.ownerId,

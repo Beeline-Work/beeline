@@ -233,3 +233,19 @@ it.each([undefined, 'alpha'])('keeps caller assignment for implementer %s', asyn
     watch: { roomId: request.roomId, kinds: ['opened', 'merged'] },
   });
 });
+
+it('OPENER-OWNER: a corner its Room reviewer opens is owned by that reviewer', async () => {
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, A]);
+  try {
+    const draft = await input();
+    const { cornerId } = await daemon.execute('createCorner', {
+      ...draft, name: 'Reviewer-opened', hold: true, sourceMessageId: draft.brief.approval.sourceMessageId,
+    }, A);
+    expect((await db.query(`SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows)
+      .toEqual([{ owner_agent_id: null }]);
+    expect((await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`, [cornerId])).rows)
+      .toEqual([{ owner_agent_id: A }]);
+  } finally {
+    await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [ROOM]);
+  }
+});

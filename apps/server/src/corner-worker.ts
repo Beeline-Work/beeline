@@ -19,18 +19,21 @@ export function cornerImplementerSql(factAlias: string, cornerAlias: string): st
 }
 
 /**
- * A corner's owner: the agent of its opening order, else (for corners whose
- * commands are gone) the legacy `corner_facts.owner_agent_id`, else the first
- * agent a person tagged in a person-opened corner — never the corner's
- * reviewer. Nothing stores it for new corners; the legacy column is read until
- * it drops. `cornerId` is a SQL expression.
+ * A corner's owner: the agent of its opening order (even when that agent is
+ * also the Room's reviewer), else (for corners whose commands are gone) the
+ * legacy `corner_facts.owner_agent_id`, else the first agent a person tagged in
+ * a person-opened corner, never the reviewer. Nothing stores it for new
+ * corners; the legacy column is read until it drops. `cornerId` is a SQL
+ * expression.
  */
 export function cornerOwnerSql(cornerId: string): string {
-  const earliest = (reason: string) => `(SELECT opening.agent_id FROM agent_commands opening
+  // The opener owns its corner even when it is also the Room's reviewer, as
+  // createCorner always recorded; a person's tag never hands ownership to it.
+  const earliest = (reason: string, skipReviewer: boolean) => `(SELECT opening.agent_id FROM agent_commands opening
         WHERE opening.room_id=owner_corner.id AND opening.reason='${reason}'
-          AND opening.agent_id IS DISTINCT FROM owner_corner.reviewer_id
+          ${skipReviewer ? 'AND opening.agent_id IS DISTINCT FROM owner_corner.reviewer_id' : ''}
         ORDER BY opening.inbox_sequence LIMIT 1)`;
-  return `(SELECT COALESCE(${earliest('corner_objective')},owner_corner.legacy_owner_id,${earliest('human_tag')})
+  return `(SELECT COALESCE(${earliest('corner_objective', false)},owner_corner.legacy_owner_id,${earliest('human_tag', true)})
     FROM (SELECT owner_room.id,owner_fact.owner_agent_id legacy_owner_id,
         COALESCE(owner_fact.reviewer_agent_id,owner_parent.reviewer_agent_id) reviewer_id
       FROM rooms owner_room LEFT JOIN corner_facts owner_fact ON owner_fact.corner_id=owner_room.id

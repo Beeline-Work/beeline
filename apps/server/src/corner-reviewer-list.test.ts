@@ -3,7 +3,7 @@ import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { workflowRunLockKey } from './workflow-runs.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, assignCornerWorker } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -227,7 +227,7 @@ describe('check-passed dispatch with a reviewer list', () => {
   });
 
   it('excludes the current implementer after a handoff, while allowing the opener to review', async () => {
-    await db.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`, [C, REVIEWER_A]);
+    await assignCornerWorker(db, C, REVIEWER_A);
     await reportPresence(OWNER_AGENT, 'online');
     await setReviewers(REVIEWER_A, OWNER_AGENT);
     await greenCheck();

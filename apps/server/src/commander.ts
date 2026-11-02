@@ -534,7 +534,8 @@ export async function reportToCommander(
        COALESCE(review_context->'reportIds','[]'::jsonb)||jsonb_build_array($2::text)) WHERE id=$1`,
     [command.id,reportId]);
   if (!options.automatic && origin && (await db.query(
-    'SELECT 1 FROM corner_facts WHERE corner_id=$1 AND COALESCE(worker_agent_id,owner_agent_id)=$2', [origin,agentId])).rowCount) {
+    `SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+     WHERE fact.corner_id=$1 AND ${cornerImplementerSql('fact', 'corner')}=$2`, [origin,agentId])).rowCount) {
     if (/^(needs-decision|blocked):/.test(text)) {
       await db.query(`UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
         WHERE presentation='message' AND system_event IS NULL
@@ -546,8 +547,8 @@ export async function reportToCommander(
        LEFT JOIN room_access member ON member.identity_id=person.id AND member.room_id=$1 AND member.removed_at IS NULL
        CROSS JOIN (SELECT $4::text text,'message'::text presentation,$1::uuid room_id,$5::text author_id) item
        WHERE (person.id=$6 OR (member.identity_id IS NOT NULL AND person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}))
-       AND EXISTS(SELECT 1 FROM corner_facts fact WHERE fact.corner_id=$1
-         AND COALESCE(fact.worker_agent_id,fact.owner_agent_id)=$5)
+       AND EXISTS(SELECT 1 FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+         WHERE fact.corner_id=$1 AND ${cornerImplementerSql('fact', 'corner')}=$5)
        ON CONFLICT(corner_id,person_id) DO UPDATE SET report_id=EXCLUDED.report_id,
          return_room_id=EXCLUDED.return_room_id,created_at=EXCLUDED.created_at,
          commander_id=EXCLUDED.commander_id,message_id=EXCLUDED.message_id`,

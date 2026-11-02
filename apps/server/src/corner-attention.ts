@@ -10,6 +10,7 @@ import {
   type CornerStateRow,
 } from './chat-corner-counts.js';
 import { reportToCommander } from './commander.js';
+import { cornerImplementerSql } from './corner-worker.js';
 
 export const CORNER_ATTENTION_SCHEMA = `
 CREATE TABLE IF NOT EXISTS corner_attention_spans (
@@ -183,7 +184,7 @@ function attentionSql() {
         (command.state='claimed' AND command.lease_expires_at>now()))
       AND command.review_context->>'headSha'=f.lifecycle->'pr'->>'headSha'
       AND command.review_context->>'purpose' IS NULL
-      AND command.agent_id IS DISTINCT FROM f.worker_agent_id) review_queued,
+      AND command.agent_id IS DISTINCT FROM ${cornerImplementerSql('f', 'c')}) review_queued,
     ${cornerScheduledWaitSql('c')} scheduled_wait
     FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
     JOIN corner_attention_spans span ON span.corner_id=c.id

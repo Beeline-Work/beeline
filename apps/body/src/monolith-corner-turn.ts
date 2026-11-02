@@ -40,7 +40,7 @@ import {
   listenCornerEmulator,
   stopKeptCornerEmulator,
 } from './corner-emulator.js';
-import { IMPLEMENTER_RELEASED_REASON, type DaemonAttachment, type DaemonOperationMap } from '@beeline/api-contract/daemon';
+import { type DaemonAttachment, type DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
   openAcpConversation,
@@ -470,8 +470,6 @@ export interface MonolithCornerTurnOptions {
   /** Gives a writer its private copy; every other turn gets the Room's read-only checkout. */
   prepareCheckout?: (repositoryWork: boolean, implementerAgentId?: string, assigned?: boolean) =>
     Promise<{ path: string; gitCommonDir: string; writable: boolean }>;
-  /** Saves unpushed work and deletes this agent's copy; returns what it did. */
-  releaseCheckout?: () => Promise<string>;
   runtime: AgentRuntimeRecord;
   config: BodyConfig;
   api: DaemonApiClient;
@@ -889,32 +887,6 @@ export class MonolithCornerTurnLoop {
       (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId));
     if (client?.hasBackgroundTools && !cancelled && !stopBackground) void this.retainBackgroundClient(client);
     else if (client) await client.stop();
-  }
-
-  /**
-   * The owner made another agent this corner's implementer. Stop this
-   * agent's session and every retained background job, save unpushed work,
-   * delete its copy, and say which in the corner. No model turn runs.
-   */
-  private async releaseImplementer(requestId: string): Promise<void> {
-    const { api, cornerId } = this.options;
-    const retired = [...this.retiredClients.values()];
-    const jobs = retired.length + (this.client?.hasBackgroundTools ? 1 : 0);
-    await this.discardSession(false, true);
-    for (const client of retired) client.stop();
-    await Promise.all(retired.map(client => client.done));
-    const copy = this.options.releaseCheckout
-      ? await this.options.releaseCheckout()
-      : 'I had no copy of this corner\'s code.';
-    const stopped = jobs ? `I stopped my session and ${jobs} background job session${jobs === 1 ? '' : 's'}.` : 'I stopped my session.';
-    await api.execute('postRoomMessage', {
-      roomId: cornerId, requestId, presentation: 'message',
-      text: `Another agent is now this corner's implementer. ${stopped} ${copy}`,
-    });
-    await api.execute('postAgentTurnReceipt', {
-      agentId: this.agent.publicKey, roomId: cornerId, requestId,
-      status: 'complete', generationId: this.commandContext.generationId,
-    });
   }
 
   /** See `MonolithRoomTurnLoop.sessionIsCurrent`: retention never keeps a
@@ -2898,16 +2870,14 @@ export class MonolithCornerTurnLoop {
           await this.options.onCloseRequested();
           return true;
         },
-        run: (command) => command.reason === IMPLEMENTER_RELEASED_REASON
-          ? this.releaseImplementer(command.turnRequestId)
-          : this.prompt(
-            command.turnRequestId,
-            command.source.body,
-            command.source.attachments,
-            command.source.authorId,
-            command.reason === 'corner_check' ? [command.source.body] : undefined,
-            ['message', 'private'].includes(command.source.type) ? command.sourceMessageId : undefined,
-          ),
+        run: (command) => this.prompt(
+          command.turnRequestId,
+          command.source.body,
+          command.source.attachments,
+          command.source.authorId,
+          command.reason === 'corner_check' ? [command.source.body] : undefined,
+          ['message', 'private'].includes(command.source.type) ? command.sourceMessageId : undefined,
+        ),
       });
     try {
       await (supervisor

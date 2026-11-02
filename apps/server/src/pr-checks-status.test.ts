@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, assignCornerWorker } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -599,7 +599,7 @@ describe('PR-scoped check gate', () => {
     expect(await gate(AUTHOR)).toMatchObject({ approved: false, mergeAllowed: false });
 
     // Opening the corner is allowed when another agent implements the work.
-    await db.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`, [AUTHOR, REVIEWER]);
+    await assignCornerWorker(db, AUTHOR, REVIEWER);
     await expect(
       daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, A),
     ).resolves.toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });

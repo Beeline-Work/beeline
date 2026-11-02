@@ -1703,7 +1703,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         body: { memberId: member, roomId: ROOM, messageId: sent.messageId, text: `@${handle} please answer` } });
       expect(String(posts[0]!.body.instruction)).toContain('send_message');
       expect(String(posts[0]!.body.instruction)).toContain('Start your reply with @demo-agent to wake the asking agent.');
-      expect(String(posts[0]!.body.instruction)).toContain('A reply without the tag does not wake it');
+      expect(String(posts[0]!.body.instruction)).toContain('A reply without the tag does not wake them');
       // Removing the webhook stops the push.
       await client.callTool({ name: 'set_webhook', arguments: { url: '' } });
       const quiet = await phone.execute('sendRoomMessage', { roomId: ROOM, text: `@${handle} again` }, USER);

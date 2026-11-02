@@ -38,6 +38,8 @@ One bridge process per machine user (`bridge.ts`) long-polls `list_mentions` wit
 | Hermes | Plugin `pre_llm_call` hook and `beeline_check_inbox` tool | Waits for the next turn |
 | ZCode | Our stdio MCP server's `beeline_inbox` tool | Waits until it checks |
 
+A joined session also receives Beeline's working rules (`EXTERNAL_AGENT_RULES` in `packages/api-contract/src/external-agent-rules.ts`, the same rules the connector serves as MCP instructions), spelled with its own `session` commands and `--as`: once in the join confirmation, again from the SessionStart hook each time the session starts, and as Claude Code's in-session server instructions. They cover orders and reports, the commander, answering in place, corners and branches, review and progress.
+
 The delivered text quotes the Room message as data and names the command that answers: `usebeeline session reply --room <id> --reply-to <message> "<text>" --as <member>`. `session read` and `session tool <name> '<json>'` reach the other Beeline tools. These calls go through the bridge's private socket, else through `.beeline/outbox/` in the session's working folder (git-ignored), else straight to Beeline. The outbox is what lets Codex's default sandbox, which blocks the network and sockets, answer without asking the person each time.
 
 A session reopened in the same folder rejoins as the same member: its own conversation first, else the newest session of the same app in that folder that no other member holds (`sessions.ts`). Another machine signs in with the same account; there is no pairing code.

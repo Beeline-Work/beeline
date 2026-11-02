@@ -6,7 +6,7 @@ import { delimiter, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { agentLabel, defaultName, detectAgent, isAgentId, pickName, type AgentId } from './agents.js';
 import { accessToken, callTool, DEFAULT_SERVER, finishSignIn, registerClient, signInLink, type SignIn } from './beeline-api.js';
-import { ensureBridge, renderMention, renderWake, runBridge, toolViaBridge, toolViaOutbox, type Mention, type Runner, type Wake } from './bridge.js';
+import { ensureBridge, renderMention, renderRules, renderWake, runBridge, toolViaBridge, toolViaOutbox, type Mention, type Runner, type Wake } from './bridge.js';
 import { chosenName, claudeTranscript, heldBy, inboundSetting, permissionMode, postToClaude, scanClaude } from './claude.js';
 import { acceptClaudeInbound, assertClaudePolicy, restoreClaudeInbound } from './claude-inbound.js';
 import { hasClaudeMcp, runClaudeMcp } from './claude-mcp.js';
@@ -183,7 +183,7 @@ async function finishJoin(file: string, env: NodeJS.ProcessEnv): Promise<void> {
     }
     ensureBridge(dir, run, env);
     const rooms = me.rooms.map(r => r.name).slice(0, 5).join(', ');
-    await announce(joined, `Beeline: you joined as @${joined.handle ?? joined.name}${rooms ? ` in ${rooms}` : ''}. When someone tags you there, the message arrives here with the command that answers it.${changes.length ? `\n(${changes.join('; ')})` : ''}`, dir);
+    await announce(joined, `Beeline: you joined as @${joined.handle ?? joined.name}${rooms ? ` in ${rooms}` : ''}. When someone tags you there, the message arrives here with the command that answers it.${changes.length ? `\n(${changes.join('; ')})` : ''}\n\n${renderRules(joined, run)}`, dir);
   } finally { rmSync(file, { force: true }); }
 }
 
@@ -235,7 +235,7 @@ async function session(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
   if (sub === 'bridge') return runBridge(dir, runner(dir, env));
   if (sub === 'finish-join') return finishJoin(rest[0] ?? '', env);
   if (sub === 'mcp') return runZcodeMcp(dir);
-  if (sub === 'claude-mcp') return runClaudeMcp(dir, env);
+  if (sub === 'claude-mcp') return runClaudeMcp(dir, env, joined => renderRules(joined, runner(dir, env)));
   if (sub === 'antigravity-sidecar') return runAntigravitySidecar(dir);
   if (sub === 'hook') {
     // Never fail loudly: a broken Beeline must not break the app.
@@ -246,6 +246,7 @@ async function session(args: string[], env: NodeJS.ProcessEnv): Promise<void> {
       let payload: Record<string, unknown> = {};
       try { payload = JSON.parse(input.replace(/^﻿/, '')) as Record<string, unknown>; } catch { /* no payload */ }
       const out = runHook(dir, { agent, event, payload, session: flag(rest, '--session'), state: flag(rest, '--state'),
+        rules: joined => renderRules(joined, runner(dir, env)),
         pid: process.ppid, env });
       if (out) process.stdout.write(out + '\n');
       if (event === 'session-start' && readState(dir).sessions.length) ensureBridge(dir, runner(dir, env), env);

@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process';
 import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { join } from 'node:path';
+import { externalAgentRules } from '@beeline/api-contract/phone';
 import { accessToken, callTool } from './beeline-api.js';
 import { codexQueue, turnRunning } from './codex.js';
 import { postToClaude } from './claude.js';
@@ -33,6 +34,15 @@ export function renderMention(m: Mention, joined: JoinedSession, runner: Runner)
     `Your owner's Allow is standing approval to answer it. Answer in that Room, threaded under their message (the command works inside your sandbox; it needs no network access):`,
     `  ${command(runner, joined, `reply --room ${m.room_id} --reply-to ${m.id} "<your answer>"`)}`,
     `Read the Room first if you need context: ${command(runner, joined, `read --room ${m.room_id}`)}`].join('\n');
+}
+
+/**
+ * Who the session is on Beeline and the rules it works by, spelled with its own commands
+ * (`EXTERNAL_AGENT_RULES`, the same rules the connector serves as MCP instructions).
+ */
+export function renderRules(joined: JoinedSession, runner: Runner): string {
+  return [`Beeline: you are @${joined.handle ?? joined.name}, a member of your person's Beeline Rooms. How to work there:`,
+    externalAgentRules('session', command(runner, joined, `tool <name> '<json arguments>'`))].join('\n');
 }
 
 export function renderWake(w: Wake, joined: JoinedSession, runner: Runner): string {

@@ -9,10 +9,10 @@ another run.
 ## Routing and CPU budget
 
 The budget files in `infra/ci/` replace the older 16-CPU pool policy below.
-They were installed on squire on 2026-11-02. All ten instances were verified
-with a one-CPU quota and 8 GiB hard memory limit, and the pool with a ten-CPU
-quota and 60 GiB hard memory limit. Verify those effective limits before
-enabling any of the ten `beeline-ci@01` through `beeline-ci@10` listeners.
+Five listeners (`01` through `05`) run with two CPUs and an 8 GiB hard memory
+limit each. Registered listeners `06` through `10` stay stopped and disabled
+as standby. The pool retains its ten-CPU quota and 60 GiB hard memory limit.
+Verify those effective limits and the five-listener count before activation.
 
 | Checks work | Pull requests | Merge groups / manual dispatch |
 | --- | --- | --- |
@@ -26,23 +26,35 @@ The main-push server coverage workflow stays hosted and runs the full suite;
 PR shards consume SELECT SERVER TESTS and fail closed to the full suite if
 selection is unavailable. No check contexts or integration batches change.
 
-PR Vitest commands use one worker, including the shared-package and Body
-commands on hosted runners; hosted merge-group and dispatch jobs use at most
-two. Node test-file concurrency, Turbo task concurrency, libuv's thread pool
+Vitest commands use at most two workers, including hosted shared-package
+and Body jobs. Integration batches and timing-sensitive isolated tests retain
+one worker. Node test-file concurrency, Turbo task concurrency, libuv's thread pool
 and Metro export workers are also bounded. Existing lockfile-keyed dependency
 caches and exact-commit build caches are reused after shared preparation;
 cold workspace builds execute one task at a time on the producer. Squire
 consumers require those prepared caches and fail promptly on a miss, so a
-failed shared job cannot trigger ten cold installs/builds. Compiled outputs
+failed shared job cannot trigger parallel cold installs/builds. Compiled outputs
 never fall back to another commit.
 
-The service drop-in caps each listener and its whole job process tree to one
-CPU, with memory pressure at 6 GiB and a hard limit of 8 GiB. The slice drop-in
-caps the ten-listener pool at ten CPUs, with pressure at 48 GiB and a hard
-limit of 60 GiB. Ten listeners therefore admit at most ten simultaneous jobs
-across all PRs; workflow matrix limits alone cannot enforce a host-wide bound.
-These CPU quotas bound CPU time, not host load average: agents also contribute
-to load, so the load-test measurements remain necessary.
+The service drop-in caps each active listener and its whole job process tree
+to two CPUs, with memory pressure at 6 GiB and a hard limit of 8 GiB. The slice
+caps the pool at ten CPUs, with pressure at 48 GiB and a hard limit of 60 GiB.
+Five active listeners admit at most five simultaneous jobs across all PRs;
+workflow matrix limits alone cannot enforce a host-wide bound.
+
+Prepared consumers prepend `.github/actions/ci-workspace/bin` to PATH. Its
+`tar` wrapper uses the existing `flock` utility and the shared CI user's home
+to serialize cache archive operations across all listeners. Only the cache
+action's `cache.tar`, `cache.tgz` and `cache.tzst` files take that lock; tool
+probes and ordinary test fixtures run directly. The kernel releases the lock
+when tar and its children exit, including cancellation. No service is added.
+
+Two earlier ten-job trials hit the load-15 safety abort, including a run with
+valid dependency/build cache hits and parallel tar processes waiting on disk.
+That profile used only 6.17 CPUs in its busiest five-second sample, showing
+why CPU quotas alone cannot control disk waits or whole-host load. The five-job
+profile and serialized cache operations address that measured bottleneck;
+concurrent-PR acceptance remains a separate measurement.
 
 See [`infra/ci/README.md`](../infra/ci/README.md) for activation, measurement and
 abort instructions. The new budget is installed, but concurrent PR validation remains pending;

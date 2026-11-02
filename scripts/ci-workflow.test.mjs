@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, mkdtempSync, writeFileSync, existsSync, rmSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import { once } from 'node:events';
+import { setTimeout as delay } from 'node:timers/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -149,7 +151,7 @@ test('only credential-free PR Linux jobs use the bounded CI-only pool', () => {
   const mobile = jobs['mobile-suite'].steps.find((step) => step.name === 'Run the mobile vitest suite');
   assert.match(mobile.run, /--maxWorkers="\$CI_TEST_WORKERS" --minWorkers=1/);
   const workflow = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8'));
-  assert.equal(workflow.env.CI_TEST_WORKERS, "${{ github.event_name == 'pull_request' && '1' || '2' }}");
+  assert.equal(workflow.env.CI_TEST_WORKERS, '2');
   assert.equal(workflow.env.UV_THREADPOOL_SIZE, '1');
   assert.equal(workflow.env.TURBO_CONCURRENCY, '1');
   assert.match(JSON.stringify(jobs['mobile-export-reachability'].steps), /--max-workers 1/);
@@ -288,4 +290,36 @@ test('prepared consumers cannot fan out cold installs or builds after a preparat
       assert.equal(setup.with.prepared, "${{ github.event_name == 'pull_request' }}", name);
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+
+test('cache tar operations wait for the shared lock while tool probes remain free', { skip: process.platform !== 'linux' }, async () => {
+  const wrapper = new URL('../.github/actions/ci-workspace/bin/tar', import.meta.url);
+  assert.ok(existsSync(wrapper), 'the cache tar wrapper must be installed');
+  const directory = mkdtempSync(join(tmpdir(), 'ci-tar-lock-'));
+  const lock = join(directory, 'lock');
+  const archive = join(directory, 'cache.tar');
+  writeFileSync(join(directory, 'fixture'), 'cache fixture');
+  assert.equal(spawnSync('/usr/bin/tar', ['-cf', archive, '-C', directory, 'fixture']).status, 0);
+  const holder = spawn('/usr/bin/flock', [lock, 'sh', '-c', 'echo held; cat >/dev/null']);
+  let listing;
+  try {
+    await once(holder.stdout, 'data');
+    const env = { ...process.env, BEELINE_CI_TAR_LOCK: lock };
+    const probe = spawnSync(wrapper.pathname, ['--version'], { env, encoding: 'utf8', timeout: 2000 });
+    assert.equal(probe.status, 0, probe.stderr);
+    listing = spawn(wrapper.pathname, ['-tf', archive], { env });
+    let finished = false;
+    const completed = once(listing, 'exit').then(([code]) => { finished = true; return code; });
+    await delay(100);
+    assert.equal(finished, false, 'cache extraction must wait while another job holds the lock');
+    holder.stdin.end();
+    assert.equal(await completed, 0);
+    const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
+    const install = action.runs.steps.find(step => step.run?.includes('$GITHUB_ACTION_PATH/bin'));
+    assert.equal(install.if, "inputs.prepared == 'true'");
+  } finally {
+    holder.stdin.end(); holder.kill(); listing?.kill();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

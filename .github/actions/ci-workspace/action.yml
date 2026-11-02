@@ -10,6 +10,10 @@ inputs:
 runs:
   using: composite
   steps:
+    # Only prepared Linux consumers use the shared CI home and file lock.
+    - if: inputs.prepared == 'true'
+      shell: bash
+      run: echo "$GITHUB_ACTION_PATH/bin" >> "$GITHUB_PATH"
     - uses: actions/setup-node@v4
       with:
         node-version: 22

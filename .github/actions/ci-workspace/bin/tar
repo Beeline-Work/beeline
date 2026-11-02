@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+# Cache actions use these archive names. Lock only their tar operations;
+# tool probes and test fixtures must not queue behind cache extraction.
+for argument in "$@"; do
+  archive=${argument#--file=}
+  case "${archive##*/}" in
+    cache.tar|cache.tgz|cache.tzst)
+      exec /usr/bin/flock --no-fork \
+        "${BEELINE_CI_TAR_LOCK:-$HOME/.beeline-ci-cache-tar.lock}" \
+        /usr/bin/tar "$@"
+      ;;
+  esac
+done
+exec /usr/bin/tar "$@"

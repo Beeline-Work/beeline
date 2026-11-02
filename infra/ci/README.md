@@ -4,9 +4,11 @@ These drop-ins change resource accounting only. Preserve the existing
 credential-free `beeline-ci` user, mount namespace, runner labels and all
 release/production services. There is no new service or workflow gate.
 
-The pool has ten registered listeners, one job per listener. Each service has
-`CPUQuota=100%` and `MemoryMax=8G`; the slice has `CPUQuota=1000%` and
-`MemoryMax=60G`. Limits cover all children, including test subprocesses.
+The pool has ten registered listeners, five active at a time and one job per
+active listener. Each service has `CPUQuota=200%` and `MemoryMax=8G`; the slice
+has `CPUQuota=1000%` and `MemoryMax=60G`. Limits cover all children, including
+test subprocesses. Vitest uses two workers per job. The CI workspace action
+serializes cache tar operations using a shared file lock; no service is added.
 
 ## Activation order
 
@@ -19,14 +21,17 @@ The pool has ten registered listeners, one job per listener. Each service has
    a worktree-only worker can prepare these files but cannot apply them.
 3. Verify `systemctl show beeline-ci.slice` reports a ten-CPU quota, 48 GiB
    MemoryHigh and 60 GiB MemoryMax. Verify every instance 01 through 10 has
-   a one-CPU quota, 6 GiB MemoryHigh, 8 GiB MemoryMax and the correct slice.
+   a two-CPU quota, 6 GiB MemoryHigh, 8 GiB MemoryMax and the correct slice.
    Existing resource drop-ins must not override these values. Verify the
    parent slice does not impose an unexpected tighter limit.
-4. Enable/start only `beeline-ci@01.service` through `beeline-ci@10.service`.
-   Confirm their GitHub names remain `beeline-ci-squire-01` through `-10`,
-   with the `beeline-ci` label. Do not add more listeners to compensate for queues.
-5. Push the CI branch and use three actual PR Checks runs containing this
-   routing and the leak fix. An older PR head still runs its own old workflow;
+4. Enable/start only `beeline-ci@01.service` through `beeline-ci@05.service`.
+   Keep `06` through `10` stopped and disabled, retaining their registrations
+   and labels as standby. Confirm all names remain `beeline-ci-squire-01`
+   through `-10`, with the `beeline-ci` label. Verify exactly five are online;
+   never start the standby instances to compensate for queues.
+5. Run one monitored single-PR trial first. After a safe trial, firstmate
+   lands the CI change; the three-PR proof uses the next real PRs carrying
+   this routing and the leak fix. An older PR head still runs its own old workflow;
    rerunning it does not test the new routing. Coordinate those heads with
    their owners, without rewriting another worker's branch.
 

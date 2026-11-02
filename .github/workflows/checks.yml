@@ -90,10 +90,10 @@ concurrency:
   group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# One test worker per PR job: ten CI-only listeners share ten CPU threads.
-# Dispatch/merge-group jobs retain two workers on hosted runners.
+# Five active CI-only listeners share ten CPU threads, with two test workers
+# per job. Dispatch/merge-group jobs keep the same bound on hosted runners.
 env:
-  CI_TEST_WORKERS: ${{ github.event_name == 'pull_request' && '1' || '2' }}
+  CI_TEST_WORKERS: '2'
   UV_THREADPOOL_SIZE: '1'
   TURBO_CONCURRENCY: '1'
 

@@ -12,6 +12,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
+import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -33,19 +34,20 @@ const SNAPSHOT = await (async () => {
 })();
 
 class PgliteListenClient extends EventEmitter implements LivePgClient {
-  private release?: () => Promise<void>;
-  constructor(private readonly database: PgliteDatabase) {
-    super();
-  }
+  private readonly releases = new Map<string, () => Promise<void>>();
+  constructor(private readonly database: PgliteDatabase) { super(); }
   async connect(): Promise<void> {}
-  async query(): Promise<void> {
-    this.release = await this.database.client.listen(POSTGRES_LIVE_CHANNEL, (payload) =>
-      this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload }),
-    );
+  async query(sql: string): Promise<void> {
+    const channel = [POSTGRES_LIVE_CHANNEL, COMMAND_COMPLETION_CHANNEL]
+      .find(value => sql === `LISTEN ${value}`);
+    if (!channel) throw new Error(`unexpected query: ${sql}`);
+    if (this.releases.has(channel)) return;
+    this.releases.set(channel, await this.database.client.listen(channel, payload =>
+      this.emit('notification', { channel, payload })));
   }
   async end(): Promise<void> {
-    await this.release?.();
-    this.release = undefined;
+    await Promise.all([...this.releases.values()].map(release => release()));
+    this.releases.clear();
   }
 }
 
@@ -119,7 +121,7 @@ describe('@agent login: Claude sign-in at the call site', () => {
     const client = new PgliteListenClient(database);
     listener = new PostgresLiveListener(database, live, () => client, 1);
     void listener.run();
-    await vi.waitFor(() => expect(client.listenerCount('notification')).toBe(1));
+    await vi.waitFor(() => expect(listener.projectionHealth().connected).toBe(true));
     phone = new PhoneService(database, 'https://server.example', undefined, undefined, live);
     daemon = new DaemonService(database, live);
     // What a helper's live session receives (`daemon-live.ts` forwards only these).

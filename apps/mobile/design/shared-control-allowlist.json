@@ -108,15 +108,6 @@
     "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
   },
   {
-    "file": "components/buzz/ArtifactCard.tsx",
-    "line": 165,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "c138ceea09365ea0f5b5",
-    "control": "<Pressable accessibilityLabel={`Open ${title} full screen`} accessibilityRole=\"button\" onPress={openFull} style={styles.previewPress} testID={`artifact-preview-${activeAttachment.name}`} > {format === 'markdown' ? ( <ArtifactMarkdownPreview attachment={activeAttachment} /> ) : format === 'text' ? ( <View style={styles.preview}> <ArtifactText attachment={activeAttachment} crop testID=\"artifact-prev",
-    "reason": "Whole artifact preview target opens its reader; content navigation."
-  },
-  {
     "file": "components/buzz/Button.tsx",
     "line": 86,
     "rule": "6a",
@@ -142,15 +133,6 @@
     "id": "9e5247ace700a3a0996c",
     "control": "<Pressable accessibilityLabel={`Open ${sheetTitle}, ${hidden}`} accessibilityRole=\"button\" onPress={openReader} style={({ pressed }) => [styles.peek, pressed && styles.peekPressed]} testID=\"code-open\" > {body} <View style={styles.moreRow}> <ChevronGlyph color={styles.openVerb.color} direction=\"down\" size={CHEVRON_ROW_SIZE} /> <Text style={styles.openVerb}>open</Text> <Text style={styles.moreCount}",
     "reason": "Code preview disclosure opens the full machine-text reader."
-  },
-  {
-    "file": "components/buzz/ComputerSession.tsx",
-    "line": 146,
-    "rule": "6a",
-    "detail": "raw text target",
-    "id": "dae8b1f3e11f3d33bff6",
-    "control": "<Pressable onPress={() => void open()} accessibilityRole=\"button\" accessibilityLabel={`Open ${session.title} browser`}> <View style={styles.preview} pointerEvents=\"none\"><ComputerStream session={{ ...session, access }} preview captureRef={captureRef} /></View> <View style={styles.caption}><Text numberOfLines={1} style={styles.title}>{session.title}</Text> <Text style={styles.kind}>Live browser</Te",
-    "reason": "Browser-session preview opens the session; composite content target."
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",

@@ -231,9 +231,9 @@ describe('GitHub callback delivery into onboarding', () => {
     clearOnboardingNotice();
     markSignInInFlight(false);
     network.online = true;
-    network.fetch.mockImplementation(async () => {
+    network.fetch.mockImplementation(async (url: string) => {
       if (!network.online) throw new TypeError('Network request failed');
-      return new Response(null, { status: 200 });
+      return new Response(null, { status: url.endsWith('/completion') ? 202 : 200 });
     });
     vi.stubGlobal('fetch', network.fetch);
     linking.initialUrl = null;
@@ -448,31 +448,35 @@ describe('GitHub callback delivery into onboarding', () => {
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
 
-  it('finishes a cold completed callback after the server initially reports pending', async () => {
+  it('finishes a cold completed callback through one held completion request', async () => {
     await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
     linking.initialUrl = `beeline://beeline/github-callback?state=${STATE}&completed=1`;
     let completionReads = 0;
-    network.fetch.mockImplementation(async (input: RequestInfo | URL) => {
+    let finishCompletion!: (response: Response) => void;
+    const heldCompletion = new Promise<Response>(resolve => { finishCompletion = resolve; });
+    network.fetch.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
       if (!String(input).endsWith('/auth/github/completion')) {
         throw new Error(`Unexpected auth request: ${String(input)}`);
       }
       completionReads += 1;
-      if (completionReads <= 2) return new Response(null, { status: 202 });
-      const challenge = Object.fromEntries(new URL(callbackUrl()).searchParams);
-      return new Response(JSON.stringify({ ...challenge, ticket: RECOVERY_TOKEN }), {
-        status: 200,
-        headers: { 'content-type': 'application/json' },
-      });
+      expect(JSON.parse(String(init?.body))).toEqual({ recoveryToken: RECOVERY_TOKEN, waitMs: 120_000 });
+      return heldCompletion;
     });
 
-    const tree = await render();
+    await render();
+    expect(completionReads).toBe(1);
+    expect(monolith.exchangeGitHubTicket).not.toHaveBeenCalled();
+    const challenge = Object.fromEntries(new URL(callbackUrl()).searchParams);
+    finishCompletion(new Response(JSON.stringify({ ...challenge, ticket: RECOVERY_TOKEN }), {
+      status: 200, headers: { 'content-type': 'application/json' },
+    }));
 
     await act(async () => {
       await vi.waitFor(() =>
         expect(monolith.exchangeGitHubTicket).toHaveBeenCalledWith(RECOVERY_TOKEN),
       );
     });
-    expect(completionReads).toBe(3);
+    expect(completionReads).toBe(1);
     expect(browser.open).not.toHaveBeenCalled();
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
   });
@@ -502,6 +506,7 @@ describe('GitHub callback delivery into onboarding', () => {
   it('shows no connection with one Try again, and retries nothing until it is pressed', async () => {
     network.online = false;
     browser.open.mockImplementation(async (authorizationUrl: string) => {
+      if (!network.online) throw new TypeError('Network request failed');
       const state = new URL(authorizationUrl).searchParams.get('app_state')!;
       queueMicrotask(() => linking.listener?.({ url: callbackUrl(state) }));
       return { type: 'dismiss' };
@@ -521,8 +526,8 @@ describe('GitHub callback delivery into onboarding', () => {
         await signIn().props.onPress();
       });
 
-      // Offline, no browser opens: it could only show its own error page.
-      expect(browser.open).not.toHaveBeenCalled();
+      // The explicit press owns one browser attempt; there is no availability probe.
+      expect(browser.open).toHaveBeenCalledTimes(1);
       expect(noticeText(tree)).toContain('No connection');
       expect(noticeText(tree)).toContain("You're offline.");
       expect(signIn().props.label).toBe('Try again');
@@ -537,7 +542,7 @@ describe('GitHub callback delivery into onboarding', () => {
         await vi.advanceTimersByTimeAsync(5 * 60_000);
       });
       expect(network.fetch).toHaveBeenCalledTimes(requestsAfterPress);
-      expect(browser.open).not.toHaveBeenCalled();
+      expect(browser.open).toHaveBeenCalledTimes(1);
       expect(tree.root.findAll((node: any) => node.type === 'Button')).toHaveLength(2);
       expect(signIn().props.label).toBe('Try again');
       expect(signIn().props.loading).toBe(false);
@@ -547,7 +552,7 @@ describe('GitHub callback delivery into onboarding', () => {
       await act(async () => {
         await signIn().props.onPress();
       });
-      expect(browser.open).toHaveBeenCalledTimes(1);
+      expect(browser.open).toHaveBeenCalledTimes(2);
       expect(monolith.exchangeGitHubTicket).toHaveBeenCalledWith('t'.repeat(43));
       expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
     } finally {

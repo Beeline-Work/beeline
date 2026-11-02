@@ -775,12 +775,17 @@ describe('daemon live command push', () => {
     live.publish({ type: 'thought', roomId, agentId, turnId: 'turn', text: 'thought' });
     await new Promise((resolve) => setImmediate(resolve));
     expect(inboxCalls()).toBe(1);
+    // A broad table hint carries no message-owned context and cannot admit a read.
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
     const messageTrace = { id: 'trace-message', databaseAt: 50, emittedAt: 75 };
     const replayed = nextSocketMessage(socket, 'inbox');
     live.publish({
       type: 'invalidate',
       roomId,
       reason: 'postgres:messages',
+      messageId: 'actual-committed-message',
       trace: messageTrace,
     });
     await expect(replayed).resolves.toEqual(
@@ -914,7 +919,7 @@ describe('daemon live command push', () => {
     expect(inboxCalls()).toBe(1);
 
     const replayed = nextSocketMessage(daemonSocket, 'inbox');
-    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages' });
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages', messageId: 'actual-committed-message' });
     await replayed;
     expect(inboxCalls()).toBe(2);
   });

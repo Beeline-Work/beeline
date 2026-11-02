@@ -1,3 +1,4 @@
+import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { CommandRow } from './agent-command.js';
 import { CommandRefusalError } from './command-refusal.js';
@@ -11,6 +12,7 @@ const DELIVERY_WAKE={principal:'system-dm',operation:'deliver',commandId:'pendin
 // Immutable operator identity; handles may change or be reassigned.
 export const OPERATOR_OWNER_ID = '34cf4160723acd12d205dfbe292614bfec9489b78812d1cd9846c00346903334';
 export const OPERATOR_SYSTEM_DM_SCHEMA = `
+${committedCommandNotificationSchema()}
 CREATE TABLE IF NOT EXISTS operator_system_dm_sends (
  id uuid PRIMARY KEY, caller_id text NOT NULL, owner_id text NOT NULL,
  source_message_id text NOT NULL, recipients jsonb NOT NULL, text_hash text NOT NULL,
@@ -33,7 +35,7 @@ BEGIN
  IF NEW.state<>'pending' THEN RETURN NULL;END IF;
  IF TG_OP='UPDATE' AND ROW(NEW.send_id,NEW.recipient_id,NEW.workspace_id,NEW.state)
    IS NOT DISTINCT FROM ROW(OLD.send_id,OLD.recipient_id,OLD.workspace_id,OLD.state) THEN RETURN NULL;END IF;
- PERFORM pg_notify('beeline_command_completion','{"principal":"system-dm","operation":"deliver","commandId":"pending"}');
+ PERFORM beeline_notify_committed_command('{"principal":"system-dm","operation":"deliver","commandId":"pending"}');
  RETURN NULL;
 END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS beeline_operator_system_dm_pending ON operator_system_dm_deliveries;

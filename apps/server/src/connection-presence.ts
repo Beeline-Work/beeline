@@ -15,7 +15,7 @@ import { lockCornerLifecycle } from './corner-lifecycle.js';
 import { lockAgentMachine } from './machine-offline.js';
 import { freeAgentReachableSql } from './free-agents.js';
 import { systemLine } from './system-line.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
+import { notifyAgentConnection } from './postgres-live-notifications.js';
 import { renudgeStrandedPendingCommands } from './agent-command.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
@@ -781,10 +781,7 @@ export async function claimAgentConnection(
       );
     return Number(claimed.rows[0]?.epoch ?? 0);
   });
-  await database.query(`SELECT pg_notify($1, $2)`, [
-    POSTGRES_LIVE_CHANNEL,
-    JSON.stringify({ table: 'agent_connection', operation: 'UPDATE', roomId: '', agentId, epoch }),
-  ]);
+  await notifyAgentConnection(database,agentId,epoch);
   live.publish({ type: 'agent-connection', roomId: '', agentId, epoch });
   await renudgeStrandedPendingCommands(database,agentId);
   await broadcastAgentPresence(database, live, agentId);
@@ -818,8 +815,7 @@ export async function releaseAgentConnection(
     return Number(current.rows[0]!.epoch);
   });
   if (released !== undefined) {
-    await database.query(`SELECT pg_notify($1,$2)`, [POSTGRES_LIVE_CHANNEL,
-      JSON.stringify({ table: 'agent_connection', operation: 'UPDATE', roomId: '', agentId, epoch: released })]);
+    await notifyAgentConnection(database,agentId,released);
     live.publish({ type: 'agent-connection', roomId: '', agentId, epoch: released });
     await broadcastAgentPresence(database, live, agentId);
   }

@@ -1,5 +1,7 @@
+import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
 /** OAuth credentials are independent of phone and helper credentials. */
 export const ROOMS_MCP_SCHEMA = `
+${committedCommandNotificationSchema()}
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS source_client jsonb;
 CREATE TABLE IF NOT EXISTS rooms_mcp_clients (
   id text PRIMARY KEY, name text NOT NULL, redirects jsonb NOT NULL,
@@ -145,7 +147,7 @@ CREATE INDEX IF NOT EXISTS rooms_mcp_handoffs_expiry ON rooms_mcp_handoffs(expir
 CREATE OR REPLACE FUNCTION beeline_mcp_handoff_completion() RETURNS trigger AS $$
 BEGIN
  IF TG_OP='UPDATE' AND ROW(NEW.code,NEW.error,NEW.expires_at) IS NOT DISTINCT FROM ROW(OLD.code,OLD.error,OLD.expires_at) THEN RETURN NULL;END IF;
- PERFORM pg_notify('beeline_command_completion',json_build_object('principal','oauth','operation','mcp-handoff','commandId',NEW.state_hash)::text);
+ PERFORM beeline_notify_committed_command(json_build_object('principal','oauth','operation','mcp-handoff','commandId',NEW.state_hash)::text);
  RETURN NULL;
 END; $$ LANGUAGE plpgsql;
 DROP TRIGGER IF EXISTS beeline_mcp_handoff_completion ON rooms_mcp_handoffs;

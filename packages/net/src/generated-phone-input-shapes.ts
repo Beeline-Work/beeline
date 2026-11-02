@@ -119,7 +119,7 @@ export const phoneInputShapes: readonly WireShape[] = [
   shape({"kind":"object","properties":{"roomId":{"node":1,"optional":false},"messageId":{"node":1,"optional":false}}}),
   shape({"kind":"object","properties":{"id":{"node":1,"optional":false}}}),
   shape({"kind":"object","properties":{"workspaceId":{"node":1,"optional":false},"connectorType":{"node":117,"optional":false},"helperAgentId":{"node":1,"optional":false}}}),
-  shape({"kind":"union","choices":[5,118,119,120,121,46,47,48,49]}),
+  shape({"kind":"union","choices":[118,5,119,120,121,46,47,48,49]}),
   shape({"kind":"literal","value":"trusty-squire"}),
   shape({"kind":"literal","value":"wallet"}),
   shape({"kind":"literal","value":"tailscale"}),

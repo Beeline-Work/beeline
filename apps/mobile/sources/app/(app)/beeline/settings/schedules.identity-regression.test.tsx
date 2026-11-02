@@ -17,7 +17,7 @@ vi.mock('expo-router', () => ({ router, useLocalSearchParams: () => params.value
 vi.mock('react-native', async () => {
   const { createElement } = await import('react');
   const host = (name: string) => (props: any) => createElement(name, props, props.children);
-  return { Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style }, Pressable: host('Pressable'), TouchableOpacity: host('TouchableOpacity'), Text: host('Text'), ScrollView: host('ScrollView'), View: host('View') };
+  return { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style }, Pressable: host('Pressable'), TouchableOpacity: host('TouchableOpacity'), Text: host('Text'), ScrollView: host('ScrollView'), View: host('View') };
 });
 vi.mock('react-native-unistyles', () => ({ StyleSheet: { create: (fn: any) => fn({ buzz: { type: {}, space: {} } }), hairlineWidth: 1 } }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));
@@ -79,6 +79,8 @@ it.each(['fetched', 'cached'] as const)('MOBILE-D: renders %s scheduled work aft
   recordPerson(identityScope('http://local', 'viewer'),
     { pubkey: 'agent-1', kind: 'agent', name: 'Updated agent' }, Number.MAX_SAFE_INTEGER);
   params.value = { roomId: source, workspaceId: 'ws' };
+  let finishCovering: (() => void) | undefined;
+  let coveringFinished = false;
   if (source === 'cached') {
     const value = await operation('readScheduledWork');
     await mobileSurfaceCache.persist(
@@ -87,6 +89,12 @@ it.each(['fetched', 'cached'] as const)('MOBILE-D: renders %s scheduled work aft
       (candidate): candidate is ScheduledWorkResult => Boolean(candidate && typeof candidate === 'object' && 'schedules' in candidate),
     );
     operation.mockClear();
+    // Legacy disk data paints immediately, but the actual visible residency
+    // still owns one covering read. Hold it to prove this is cached painting,
+    // rather than silently replacing the cached regression with a fresh DTO.
+    operation.mockImplementationOnce(() => new Promise<typeof value>(resolve => {
+      finishCovering = () => { coveringFinished = true; resolve(value); };
+    }));
   }
   const tree = await render(<ScheduledWork />);
   try {
@@ -94,7 +102,17 @@ it.each(['fetched', 'cached'] as const)('MOBILE-D: renders %s scheduled work aft
       .toBe('Morning summary');
     expect(tree.root.findByProps({ testID: 'subscription-sub' }).props.title)
       .toBe('Triage new issues');
-    expect(operation.mock.calls.filter(([name]) => name === 'readScheduledWork'))
-      .toHaveLength(source === 'cached' ? 0 : 1);
-  } finally { await act(async () => tree.unmount()); }
+    if (source === 'cached') { expect(finishCovering).toEqual(expect.any(Function)); expect(coveringFinished).toBe(false); }
+    expect(operation.mock.calls.filter(([name]) => name === 'readScheduledWork')).toHaveLength(1);
+    await act(async () => {
+      recordPerson(identityScope('http://local', 'viewer'),
+        { pubkey: 'agent-1', kind: 'agent', name: 'Changed again' }, Number.MAX_SAFE_INTEGER);
+      tree.update(<ScheduledWork />);
+    });
+    expect(tree.root.findByProps({ testID: 'scheduled-work-daily' }).props.title).toBe('Morning summary');
+    expect(operation.mock.calls.filter(([name]) => name === 'readScheduledWork')).toHaveLength(1);
+  } finally {
+    if (finishCovering) await act(async () => finishCovering?.());
+    await act(async () => tree.unmount());
+  }
 });

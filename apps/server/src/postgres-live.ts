@@ -1,7 +1,8 @@
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import { X_SIGNUP_DELIVERY_TABLE } from './x-ads.js';
 import { SERVER_LEASE_EVIDENCE_TABLE } from './server-lease-deadlines.js';
-import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion, recoverCommandCompletions } from './command-completion.js';
+import { notifyCommandCompletion, recoverCommandCompletions } from './command-completion.js';
+import { COMMAND_COMPLETION_CHANNEL, POSTGRES_LIVE_CHANNEL } from './postgres-live-notifications.js';
 import { Client } from 'pg';
 import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
 import { USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './agent-usage.js';
@@ -17,7 +18,8 @@ import {
   rowChangedSql,
 } from './corner-row-projection.js';
 
-export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
+export { POSTGRES_LIVE_CHANNEL } from './postgres-live-notifications.js';
+
 const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
   'corner_owed', 'corner_follows', 'corner_merge_holds',
 ]);

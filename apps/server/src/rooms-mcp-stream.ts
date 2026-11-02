@@ -1,3 +1,4 @@
+import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
 import type { ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
@@ -11,11 +12,12 @@ export const memberStreamEnabled=()=>process.env.BEELINE_MCP_MEMBER_STREAM_V1===
 /** Compact causes share the existing commit-ordered journal and listener. No
  * personalized DTO or client cache inventory is recorded in the journal. */
 export const MCP_MEMBER_STREAM_SCHEMA = `
+${committedCommandNotificationSchema()}
 CREATE INDEX IF NOT EXISTS rooms_mcp_members_stream_member_idx ON rooms_mcp_members(member_id);
 CREATE OR REPLACE FUNCTION beeline_mcp_stream(member text, cause jsonb) RETURNS void AS $$
 BEGIN
  PERFORM beeline_journal('mcp:'||member,cause);
- PERFORM pg_notify('beeline_command_completion',json_build_object('principal','mcp','operation','stream','commandId',member)::text);
+ PERFORM beeline_notify_committed_command(json_build_object('principal','mcp','operation','stream','commandId',member)::text);
 END; $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION beeline_mcp_stream_source() RETURNS trigger AS $$
 DECLARE item jsonb; member text;

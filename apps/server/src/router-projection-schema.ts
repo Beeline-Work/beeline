@@ -1,9 +1,11 @@
+import { liveControlNotificationSchema } from './postgres-live-notifications.js';
 /** Schema is installed after POSTGRES_LIVE_SCHEMA. No read path creates rows.
  * Authority writers and final enqueue fences share one lock until scope-lock
  * concurrency has its own real PostgreSQL proof. This conservative lock never
  * covers DTO construction, providers, or socket backpressure waits. */
 export const ROUTER_AUTHORITY_LOCK = 'beeline:router-authority-v1';
 export const ROUTER_PROJECTION_SCHEMA = `
+${liveControlNotificationSchema()}
 CREATE TABLE IF NOT EXISTS router_authority (
   scope text PRIMARY KEY, epoch bigint NOT NULL DEFAULT 1
 );
@@ -12,7 +14,7 @@ BEGIN
   IF person IS NULL OR logical_scope IS NULL OR authority_scope IS NULL THEN RETURN; END IF;
   PERFORM beeline_journal('authority:'||person,jsonb_build_object('kind','authority-change',
     'scope',logical_scope,'authorityScope',authority_scope));
-  PERFORM pg_notify('beeline_live_v1',jsonb_build_object('table','router_authority','operation','UPDATE',
+  PERFORM beeline_notify_live_control(jsonb_build_object('table','router_authority','operation','UPDATE',
     'roomId','','journalStreams',jsonb_build_array('authority:'||person))::text);
 END;
 $$ LANGUAGE plpgsql;
@@ -128,6 +130,7 @@ FOR EACH ROW EXECUTE FUNCTION beeline_router_workspace_stream();
 /** Sources absent from the legacy Room journal still advance their canonical
  * Workspace stream. Payloads retain only dependency/deletion keys. */
 export const ROUTER_EXTRA_CAPTURE_SCHEMA = `
+${liveControlNotificationSchema()}
 CREATE OR REPLACE FUNCTION beeline_router_extra_capture() RETURNS trigger AS $$
 DECLARE item jsonb; affected text[] := ARRAY[]::text[]; target text; source_room text;
   person text; object_id text; streams text[] := ARRAY[]::text[];
@@ -165,7 +168,7 @@ BEGIN
       'recordId',COALESCE(to_jsonb(NEW)->>'id',to_jsonb(OLD)->>'id'))));
     streams:=array_append(streams,'workspace:'||target);
   END LOOP;
-  IF cardinality(streams)>0 THEN PERFORM pg_notify('beeline_live_v1',jsonb_build_object(
+  IF cardinality(streams)>0 THEN PERFORM beeline_notify_live_control(jsonb_build_object(
     'table','router_source','operation',TG_OP,'roomId','','journalStreams',streams)::text); END IF;
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;

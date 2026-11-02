@@ -91,7 +91,8 @@ BEGIN
     END IF;
     RETURN true;
   END IF;
-  INSERT INTO turn_owned_effect_fences VALUES(txid_current(),effect_agent,effect_connection,effect_epoch,effect_command,effect_generation);
+  INSERT INTO turn_owned_effect_fences(transaction_id,agent_id,connection_id,connection_epoch,command_id,generation_id)
+    VALUES(txid_current(),effect_agent,effect_connection,effect_epoch,effect_command,effect_generation);
   RETURN true;
 END; $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION beeline_commit_owned_effect() RETURNS trigger AS $$

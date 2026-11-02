@@ -32,7 +32,8 @@ it('CR1: failed workflow fetch leaves a clean objective and recovers on an event
           retry: !!panel()?.querySelector('[role="button"]'), alert: !!panel()?.querySelector('[role="alert"]'), reads: window.reads };
         document.querySelector('[data-testid="corner-objective-line-brief"]')?.click();
       }, 400);
-      setTimeout(() => { if (location.search) return; window.recover = true; window.listener({ monolithLive: { roomId: 'corner', type: 'invalidate' } }); }, 1200);
+      setTimeout(() => window.listener({ monolithLive: { roomId: 'corner', type: 'subscribed' } }), 500);
+      setTimeout(() => { if (location.search) return; window.recover = true; window.listener({ monolithLive: { roomId: 'corner', type: 'subscribed', resumed: false } }); }, 1200);
       setTimeout(() => {
         document.getElementById('result').textContent = JSON.stringify({ failed: window.failed,
           reads: window.reads, recovered: panel()?.textContent.includes('Review · Approve'), briefOpened: window.briefOpened });

@@ -1,3 +1,4 @@
+import { liveControlNotificationSchema } from './postgres-live-notifications.js';
 import { dashboardSiteDownloadTaps } from './site-download-taps.js';
 import { dashboardXSiteVisits } from './x-site-visits.js';
 import { createHash } from 'node:crypto';
@@ -43,9 +44,10 @@ export async function recordXSignup(
 
 export const X_SIGNUP_DELIVERY_TABLE = 'x_signup_delivery';
 export const X_SIGNUP_DELIVERY_SCHEMA = `
+${liveControlNotificationSchema()}
 CREATE OR REPLACE FUNCTION beeline_notify_x_signup_delivery() RETURNS trigger AS $$
 BEGIN
-  PERFORM pg_notify('beeline_live_v1',jsonb_build_object('table','${X_SIGNUP_DELIVERY_TABLE}',
+  PERFORM beeline_notify_live_control(jsonb_build_object('table','${X_SIGNUP_DELIVERY_TABLE}',
     'operation',TG_OP,'roomId','')::text);
   IF TG_OP='DELETE' THEN RETURN OLD; END IF;
   RETURN NEW;

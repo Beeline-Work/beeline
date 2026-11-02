@@ -9,6 +9,7 @@ import { MessageSearchTooBroadError, PhoneService } from './phone-service.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
 import { IdentityRateLimit, phoneReadLimits } from './phone-read-limit.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
+import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
 import { createBeelineServer } from './server.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
@@ -35,24 +36,20 @@ const DATABASE_SNAPSHOT = await (async () => {
 })();
 
 class PgliteListenClient extends EventEmitter implements LivePgClient {
-  private release?: () => Promise<void>;
-
-  constructor(private readonly database: PgliteDatabase) {
-    super();
-  }
-
+  private readonly releases = new Map<string, () => Promise<void>>();
+  constructor(private readonly database: PgliteDatabase) { super(); }
   async connect(): Promise<void> {}
-
   async query(sql: string): Promise<void> {
-    if (sql !== `LISTEN ${POSTGRES_LIVE_CHANNEL}`) throw new Error(`unexpected query: ${sql}`);
-    this.release = await this.database.client.listen(POSTGRES_LIVE_CHANNEL, (payload) =>
-      this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload }));
+    const channel = [POSTGRES_LIVE_CHANNEL, COMMAND_COMPLETION_CHANNEL]
+      .find(value => sql === `LISTEN ${value}`);
+    if (!channel) throw new Error(`unexpected query: ${sql}`);
+    if (this.releases.has(channel)) return;
+    this.releases.set(channel, await this.database.client.listen(channel, payload =>
+      this.emit('notification', { channel, payload })));
   }
-
   async end(): Promise<void> {
-    const release = this.release;
-    this.release = undefined;
-    await release?.();
+    await Promise.all([...this.releases.values()].map(release => release()));
+    this.releases.clear();
   }
 }
 
@@ -205,7 +202,7 @@ describe('phone history and outline reads', () => {
   });
 
   afterEach(async () => {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
+    if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     await listener.stop();
     await database.close();
     vi.restoreAllMocks();

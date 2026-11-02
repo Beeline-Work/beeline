@@ -15,7 +15,7 @@ vi.mock('react-native-mmkv', () => ({ MMKV: class {
 vi.mock('expo-crypto', () => ({ getRandomBytes: (length: number) => new Uint8Array(length).fill(fixture.random++) }));
 vi.mock('react-native', () => ({ AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } }));
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: async () => ({ publicKey: 'c'.repeat(64) }), getEffectiveRelayUrl: async () => 'https://command.test' }));
-vi.mock('./surface-storage', () => ({ routerLaneStorage: () => ({ write: async () => {}, fence: async () => {}, remove: async () => {}, subscribeFences: () => () => {} }) }));
+vi.mock('./surface-storage', () => ({ routerLaneStorage: () => ({ write: async () => {}, fence: async () => {}, remove: async () => {}, subscribeFences: () => () => {}, floor: async () => {}, subscribeFloors: () => () => {} }) }));
 import { activateCommandOwner, suspendCommandOwner } from './command-owner';
 import { prepareRouterMessageGesture } from './command-message-gesture';
 import { routerOwnerNavigation, routerOwnerNegotiated } from './router-owner';

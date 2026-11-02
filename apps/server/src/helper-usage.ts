@@ -1,3 +1,4 @@
+import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
 import { requireUsageSource } from './helper-usage-source.js';
 import { createHash } from 'node:crypto';
 import { readAgentUsage } from '@beeline/api-contract/daemon';
@@ -8,6 +9,7 @@ import { subscribeCommandCompletion } from './command-completion.js';
 
 export const helperUsageEnabled=()=>process.env.BEELINE_USAGE_ACCOUNT_V1==='1';
 export const HELPER_USAGE_SCHEMA=`
+${committedCommandNotificationSchema()}
 ALTER TABLE usage_accounts ADD COLUMN IF NOT EXISTS source_revision text;
 ALTER TABLE usage_accounts ADD COLUMN IF NOT EXISTS revision text;
 ALTER TABLE usage_accounts ADD COLUMN IF NOT EXISTS source_at double precision;
@@ -49,10 +51,10 @@ BEGIN
  ON CONFLICT(agent_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,revision=agent_usage_cells.revision+1,
    generation=CASE WHEN agent_usage_cells.owner_id<>EXCLUDED.owner_id THEN md5(random()::text||clock_timestamp()::text) ELSE agent_usage_cells.generation END;
  PERFORM beeline_journal('usage:'||owner,jsonb_build_object('agentId',agent));
- PERFORM pg_notify('beeline_command_completion',json_build_object('principal','usage','operation','owner','commandId',owner)::text);
+ PERFORM beeline_notify_committed_command(json_build_object('principal','usage','operation','owner','commandId',owner)::text);
  IF previous IS NOT NULL AND previous<>owner THEN
    PERFORM beeline_journal('usage:'||previous,jsonb_build_object('agentId',agent));
-   PERFORM pg_notify('beeline_command_completion',json_build_object('principal','usage','operation','owner','commandId',previous)::text);
+   PERFORM beeline_notify_committed_command(json_build_object('principal','usage','operation','owner','commandId',previous)::text);
  END IF;
 END; $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION beeline_usage_snapshot_owner() RETURNS trigger AS $$

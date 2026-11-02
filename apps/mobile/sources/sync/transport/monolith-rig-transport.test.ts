@@ -1,3 +1,4 @@
+vi.mock('@/buzz/router-owner', () => ({ routerOwnerCapabilities: async () => ({ families: [], authorityFencesV1: false }), routerOwnerNegotiated: async () => {}, routerOwnerDisconnected: () => {}, routerOwnerReceive: () => {} }));
 import { type RoomViewMessage } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -179,9 +180,12 @@ describe('monolith Room send path', () => {
       [{ '#h': [ROOM] }],
       (event) => received.push(event),
     );
-    expect(sockets).toHaveLength(1);
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]!.onopen?.();
-    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomStateProjections: true, roomIds: [ROOM] })]);
+    expect(sockets[0]!.sent.map(value => JSON.parse(value))).toEqual([
+      { type: 'router-negotiate', protocol: 1, families: [], authorityFencesV1: false, usageCellV1: true },
+      { type: 'subscribe', sidebarPreviews: true, roomStateProjections: true, roomIds: [ROOM] },
+    ]);
     sockets[0]!.onmessage?.({
       data: JSON.stringify({ type: 'subscribed', roomId: ROOM, epoch: 'epoch-1', cursor: 3 }),
     });
@@ -193,7 +197,7 @@ describe('monolith Room send path', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets).toHaveLength(2);
     sockets[1]!.onopen?.();
-    expect(JSON.parse(sockets[1]!.sent[0]!)).toEqual({
+    expect(sockets[1]!.sent.map(value => JSON.parse(value)).find(frame => frame.type === 'subscribe')).toEqual({
       type: 'subscribe',
       sidebarPreviews: true, roomStateProjections: true,
       roomIds: [ROOM],
@@ -246,7 +250,7 @@ describe('monolith Room send path', () => {
       () => {},
     );
 
-    expect(sockets).toHaveLength(1);
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
     stopFirst();
     stopSecond();
   });
@@ -286,7 +290,7 @@ describe('monolith Room send path', () => {
     expect(sockets).toHaveLength(0);
     sharedLiveConnection().reconnectNow();
     await vi.advanceTimersByTimeAsync(0);
-    expect(sockets).toHaveLength(1);
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]!.onopen?.();
     sockets[0]!.onclose?.();
     await vi.advanceTimersByTimeAsync(0);
@@ -334,6 +338,7 @@ describe('monolith Room send path', () => {
       [{ '#h': [ROOM] }],
       (event) => received.push(event as (typeof received)[number]),
     );
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]!.onopen?.();
     const trace = { id: 'trace-direct', startedAt: 10, databaseAt: 11, emittedAt: 12 };
     sockets[0]!.onmessage?.({
@@ -347,7 +352,10 @@ describe('monolith Room send path', () => {
 
     expect(received).toHaveLength(1);
     expect(received[0]!.acknowledgePaint).toEqual(expect.any(Function));
-    expect(sockets[0]!.sent).toEqual([JSON.stringify({ type: 'subscribe', sidebarPreviews: true, roomStateProjections: true, roomIds: [ROOM] })]);
+    expect(sockets[0]!.sent.map(value => JSON.parse(value))).toEqual([
+      { type: 'router-negotiate', protocol: 1, families: [], authorityFencesV1: false, usageCellV1: true },
+      { type: 'subscribe', sidebarPreviews: true, roomStateProjections: true, roomIds: [ROOM] },
+    ]);
     received[0]!.acknowledgePaint?.();
     expect(sockets[0]!.sent.at(-1)).toBe(JSON.stringify({ type: 'trace-paint', id: trace.id }));
 
@@ -387,6 +395,7 @@ describe('monolith Room send path', () => {
       [{ '#h': [ROOM] }],
       (event) => received.push(event as (typeof received)[number]),
     );
+    await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]!.onopen?.();
     sockets[0]!.onmessage?.({
       data: JSON.stringify({

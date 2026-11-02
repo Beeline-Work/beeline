@@ -9,6 +9,7 @@ import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { reserveServiceReviewWorkspaces, readServiceReviewPage } from './service-review.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
+import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
 import { createBeelineServer } from './server.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
@@ -32,14 +33,21 @@ const SNAPSHOT = await (async () => {
 })();
 
 class PgliteListenClient extends EventEmitter implements LivePgClient {
-  private release?: () => Promise<void>;
+  private readonly releases = new Map<string, () => Promise<void>>();
   constructor(private readonly database: PgliteDatabase) { super(); }
   async connect(): Promise<void> {}
-  async query(): Promise<void> {
-    this.release = await this.database.client.listen(POSTGRES_LIVE_CHANNEL, (payload) =>
-      this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload }));
+  async query(sql: string): Promise<void> {
+    const channel = [POSTGRES_LIVE_CHANNEL, COMMAND_COMPLETION_CHANNEL]
+      .find(value => sql === `LISTEN ${value}`);
+    if (!channel) throw new Error(`unexpected query: ${sql}`);
+    if (this.releases.has(channel)) return;
+    this.releases.set(channel, await this.database.client.listen(channel, payload =>
+      this.emit('notification', { channel, payload })));
   }
-  async end(): Promise<void> { await this.release?.(); }
+  async end(): Promise<void> {
+    await Promise.all([...this.releases.values()].map(release => release()));
+    this.releases.clear();
+  }
 }
 
 function frames(socket: WebSocket, type: string): Record<string, unknown>[] {
@@ -78,6 +86,7 @@ describe('live Workspace and identity changes across sessions', () => {
     listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database), 1);
     void listener.run();
     await until(() => listener.projectionHealth().connected);
+    expect(listener.projectionHealth().connected).toBe(true);
     server = createBeelineServer({
       database,
       auth: { authenticatePhone: async (raw: string) =>

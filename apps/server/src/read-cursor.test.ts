@@ -12,19 +12,25 @@ import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
+import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
 
 /** Real database notifications through the same listener used by each server. */
 class ListenClient extends EventEmitter implements LivePgClient {
-  private release?: () => Promise<void>;
+  private readonly releases = new Map<string, () => Promise<void>>();
   constructor(private readonly database: PgliteDatabase) { super(); }
   async connect(): Promise<void> {}
   async query(sql: string): Promise<void> {
-    if (sql !== `LISTEN ${POSTGRES_LIVE_CHANNEL}`) throw new Error(`unexpected query: ${sql}`);
-    this.release = await this.database.client.listen(POSTGRES_LIVE_CHANNEL, (payload) => {
-      this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload });
-    });
+    const channel = [POSTGRES_LIVE_CHANNEL, COMMAND_COMPLETION_CHANNEL]
+      .find(value => sql === `LISTEN ${value}`);
+    if (!channel) throw new Error(`unexpected query: ${sql}`);
+    if (this.releases.has(channel)) return;
+    this.releases.set(channel, await this.database.client.listen(channel, payload =>
+      this.emit('notification', { channel, payload })));
   }
-  async end(): Promise<void> { await this.release?.(); this.release = undefined; }
+  async end(): Promise<void> {
+    await Promise.all([...this.releases.values()].map(release => release()));
+    this.releases.clear();
+  }
 }
 
 /**

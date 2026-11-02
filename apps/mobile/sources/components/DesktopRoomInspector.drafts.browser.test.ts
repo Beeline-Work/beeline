@@ -1,3 +1,4 @@
+import { legacyRouterProofShims } from '../test-fixtures/router-proof';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
@@ -55,7 +56,7 @@ it('Demonstration draft-send-R1: browser composer retains and submits only appen
     `,
     );
     const shims = {
-      ...webProofShims(mobile),
+      ...webProofShims(mobile), ...legacyRouterProofShims(),
       'react-native-unistyles': webProofShims(mobile)['react-native-unistyles'].replace(
         'const theme = { buzz: beelineThemes.obsidian };',
         'const theme = { buzz: beelineThemes.obsidian, colors: { groupped: { background: "#14091a" }, divider: "#333", text: "#fff", textSecondary: "#aaa", textLink: "#b08a4a", surface: "#190e21" } };',
@@ -73,7 +74,7 @@ it('Demonstration draft-send-R1: browser composer retains and submits only appen
         export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26; export const COMPOSER_MAX_INPUT_HEIGHT = 115;
         export const ConversationComposer = props => <div><textarea value={props.value} onInput={event => props.onChangeText(event.currentTarget.value)} /><button id="send" onClick={() => props.onSend()}>Send</button></div>;`,
       'expo-router':
-        'export const router = { push: () => undefined }; export const useRouter = () => router;',
+        `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]); export const router = { push: () => undefined }; export const useRouter = () => router;`,
       'react-native-reanimated':
         webProofShims(mobile)['react-native-reanimated'] + 'export const FadeOutDown = FadeInDown;',
       '@/modal': 'export const Modal = { alert: () => undefined, confirm: async () => false };',

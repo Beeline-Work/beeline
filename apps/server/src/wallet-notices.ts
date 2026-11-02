@@ -68,7 +68,7 @@ export async function postWalletNotice(
     // Settlement may precede execution attribution, or arrive as a token event.
     // Neither order authorizes the dependent financial effect to resume.
     if (next.operation === 'approval' && next.status === 'confirmed')
-      next.reason = 'Approval confirmed. The dependent transaction was not submitted; a new explicit action is required.';
+      next.reason = systemMessage('wallet-notices.approval-confirmed-requires-new-action');
     const verb =
       next.status === 'failed' || next.status === 'refused'
         ? systemMessage("wallet-notices.could-not-complete")

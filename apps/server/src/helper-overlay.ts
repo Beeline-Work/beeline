@@ -1,3 +1,4 @@
+import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
 import {
   HELPER_OVERLAY_MAX_FRAME_BYTES, appendHelperOverlay, readHelperOverlayFrame, type HelperOverlayAck,
   type HelperOverlayDemand, type HelperOverlayFrame,
@@ -13,12 +14,13 @@ import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 /** Independent deployment gate. Never infer support from native/helper version. */
 export const helperOverlayEnabled=()=>process.env.BEELINE_HELPER_OVERLAY_V1==='1';
 export const HELPER_OVERLAY_SCHEMA=`
+${committedCommandNotificationSchema()}
 CREATE TABLE IF NOT EXISTS helper_overlay_demand(room_id uuid PRIMARY KEY,revision bigint NOT NULL DEFAULT 0);
 CREATE OR REPLACE FUNCTION beeline_helper_overlay_demand(room uuid) RETURNS void AS $$
 BEGIN
  INSERT INTO helper_overlay_demand(room_id,revision) VALUES(room,1)
  ON CONFLICT(room_id) DO UPDATE SET revision=helper_overlay_demand.revision+1;
- PERFORM pg_notify('beeline_command_completion',json_build_object('principal','overlay','operation','viewers','commandId',room)::text);
+ PERFORM beeline_notify_committed_command(json_build_object('principal','overlay','operation','viewers','commandId',room)::text);
 END; $$ LANGUAGE plpgsql;
 CREATE OR REPLACE FUNCTION beeline_helper_overlay_view_source() RETURNS trigger AS $$
 DECLARE item jsonb; room uuid;

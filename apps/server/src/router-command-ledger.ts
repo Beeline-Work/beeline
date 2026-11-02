@@ -1,8 +1,9 @@
+import { notifyCommittedCommand } from './postgres-live-notifications.js';
 import { createHash } from 'node:crypto';
 import type { RouterCommandReceipt, RouterCommandCoverage } from '@beeline/api-contract/router-command';
 import type { SqlDatabase } from './database.js';
 import { ExpectedRefusalError } from './command-refusal.js';
-import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion, subscribeCommandCompletion,
+import { notifyCommandCompletion, subscribeCommandCompletion,
   waitForCommittedChange, type CommandCompletionKey } from './command-completion.js';
 
 /** Full results expire, used identity/digest rows do not. No FK cascade may
@@ -91,7 +92,7 @@ export class RouterCommandLedger {
       completed_at=now(),result_expires_at=now()+interval '30 days'
       WHERE principal=$1 AND operation=$2 AND command_id=$3 AND digest=$4 AND state='pending'`,
       [key.principal, key.operation, key.commandId, digest, encoded, coverage ? JSON.stringify(coverage) : null]);
-    await db.query('SELECT pg_notify($1,$2)', [COMMAND_COMPLETION_CHANNEL, JSON.stringify(key)]);
+    await notifyCommittedCommand(db,key);
     return { v: 1, operation: key.operation, commandId: key.commandId, state: 'committed', result: result ?? null, ...(coverage ? { coverage } : {}) };
   }
   /** Uniqueness contention is PostgreSQL-owned, across both servers. Claim,
@@ -128,7 +129,7 @@ export class RouterCommandLedger {
         await tx.query(`UPDATE router_commands SET state='unknown'
           WHERE principal=$1 AND operation=$2 AND command_id=$3 AND digest=$4 AND state='pending'`,
           [key.principal, key.operation, key.commandId, digest]);
-        await tx.query('SELECT pg_notify($1,$2)', [COMMAND_COMPLETION_CHANNEL, JSON.stringify(key)]);
+        await notifyCommittedCommand(tx,key);
       });
       notifyCommandCompletion(key);
       throw error;

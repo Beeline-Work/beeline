@@ -1,3 +1,7 @@
+vi.mock('@/buzz/command-message-gesture', () => ({ prepareRouterMessageGesture: () => undefined }));
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+vi.mock('@/buzz/router-owner', () => ({ routerFamilyMode: () => 'legacy', routerLaneSnapshot: () => ({state:'ABSENT',value:null,error:null,cut:null}), acquireRouterLane: () => ({current:()=>({state:'ABSENT',value:null,error:null,cut:null}),release:()=>{},subscribe:()=>()=>{},refreshVisibility:()=>{}}), retryRouterLane: () => {}, routerOwnerArtifactAction: () => {}, routerOwnerArtifactViewport: () => {}, routerOwnerUsageProfile: () => {} }));
+vi.mock('@/buzz/use-artifact-recovery', () => ({ useArtifactRecoveryGeneration: () => 0 }));
 vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 import React from 'react';
 import { isRoomView } from '@beeline/buzz-client';

@@ -1,7 +1,8 @@
+import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
 /** A notification is only a wake hint. Every wake checks the durable row again.
  * The process's existing PostgreSQL listener calls notifyCommandCompletion;
  * reconnect calls recoverCommandCompletions after LISTEN has committed. */
-export const COMMAND_COMPLETION_CHANNEL = 'beeline_command_completion';
+export { COMMAND_COMPLETION_CHANNEL } from './postgres-live-notifications.js';
 export interface CommandCompletionKey { principal: string; operation: string; commandId: string }
 const listeners = new Map<string, Set<() => void>>();
 const keyOf = (key: CommandCompletionKey) => JSON.stringify([key.principal, key.operation, key.commandId]);
@@ -75,6 +76,7 @@ export async function waitForCommittedChange<T>(
 /** ID-only committed notifications reuse the existing server listener. These
  * contain no provider tokens, ceremony URL or personalized read payload. */
 export const COMMAND_COMPLETION_SCHEMA = `
+${committedCommandNotificationSchema()}
 CREATE OR REPLACE FUNCTION beeline_completion_changed() RETURNS trigger AS $$
 DECLARE item jsonb; previous jsonb; command_key jsonb;
 BEGIN
@@ -94,7 +96,7 @@ BEGIN
        IS NOT DISTINCT FROM (previous->'message_id',previous->'result') THEN RETURN NULL; END IF;
    command_key := jsonb_build_object('principal',item->>'member_id','operation','rooms-mcp-send','commandId',item->>'idempotency_key');
  END IF;
- IF command_key IS NOT NULL THEN PERFORM pg_notify('beeline_command_completion',command_key::text); END IF;
+ IF command_key IS NOT NULL THEN PERFORM beeline_notify_committed_command(command_key::text); END IF;
  RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;

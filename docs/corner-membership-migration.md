@@ -4,6 +4,8 @@ Corners have no stored membership rows, active or archived. Current parent Room 
 
 `room_access` is the read-only access projection used by generic surface readers. Its corner branch joins the current physical parent Room membership, overlays sparse preferences and excludes archived corners. It is not a second roster. The prior `effective_memberships` name remains only as a read-only alias for the preceding server image during deployment. Phone startup and sync never load archived access rows or subscribe to archived corners. Explicit archived transcript, paginated history, outlines, bookmarks and archived lists authorize through the parent Room; archived views return no live watch filters.
 
+The helper's separate `getDaemonBootstrap.storageRooms` cleanup facts retain archived corner IDs through current parent Room membership. These facts create no memberships and are absent from active Room discovery and phone startup. Parent departure removes inherited cleanup facts too (`ARCHIVE-FACT-1` in `daemon-storage-lifecycle.test.ts`).
+
 ## Normal release migration
 
 The schema creates `room_access`, removes both legacy preference synchronization triggers and installs `guard_corner_membership`. This guard rejects INSERTs and room-id changes targeting any corner. `migrateCornerPersonState` preserves non-default legacy preferences in batches of 250. `removeCornerMemberships` then deletes every physical corner membership in restartable batches of 250, including already-removed rows, for every identity. Repeating the release is safe. Rooms, corner facts, assignments, messages, owed items, attention, read marks, follows and history survive.

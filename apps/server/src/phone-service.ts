@@ -374,7 +374,6 @@ interface RoomRow {
   created_by: string | null;
   name: string;
   about: string | null;
-  avatar: string | null;
   visibility: 'public' | 'invite-only';
   archived_at: Date | null;
   direct_participants: string[] | null;
@@ -678,7 +677,6 @@ function roomHeader(row: RoomHeaderRow, publicOrigin: string) {
     ...(row.parent_id ? { parentId: row.parent_id } : {}),
     name: row.name,
     ...(row.about ? { about: row.about } : {}),
-    ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
     visibility: row.visibility,
     ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
     ...(row.reviewer_agent_id && row.reviewer_fallback_ids?.length
@@ -1627,7 +1625,7 @@ export class PhoneService {
         id: row.id,name: row.name,
         ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
         visibility: row.visibility,role: row.role,updatedAt: unix(row.updated_at),
-        ...(row.about ? { about: row.about } : {}),createdAt: unix(row.created_at),
+        createdAt: unix(row.created_at),
       },
       ...(managedRooms ? { managerSettings: {
         visibility: row.visibility,allowFixSweep: row.allow_fix_sweep,rooms: managedRooms,
@@ -10511,7 +10509,7 @@ export class PhoneService {
     query: WorkspaceMemberListQuery = {},
   ): Promise<(WorkspaceMemberListView & {
     workspaceRow: {
-      id: string; name: string; about: string | null; avatar: string | null;
+      id: string; name: string; avatar: string | null;
       visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
       role: 'owner' | 'admin' | 'member' | 'spectator';
     };
@@ -10526,7 +10524,7 @@ export class PhoneService {
     const kind = query.kind === 'human' || query.kind === 'agent' ? query.kind : undefined;
     const result = await this.database.query<{
       workspace_row: {
-        id: string; name: string; about: string | null; avatar: string | null;
+        id: string; name: string; avatar: string | null;
         visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
         role: 'owner' | 'admin' | 'member' | 'spectator';
       };
@@ -10539,7 +10537,7 @@ export class PhoneService {
       people_total: string;
       agent_total: string;
     }>(`WITH visible_workspace AS (
-        SELECT w.id,w.name,w.about,w.avatar,w.visibility,w.allow_fix_sweep,w.created_at,w.updated_at,wm.role
+        SELECT w.id,w.name,w.avatar,w.visibility,w.allow_fix_sweep,w.created_at,w.updated_at,wm.role
         FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
         WHERE w.id=$1 AND wm.identity_id=$7 AND wm.removed_at IS NULL
       ), viewer_row AS (

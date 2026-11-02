@@ -734,6 +734,7 @@ jobs:
           npm test -w @beeline/server -- src/router-command.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-projections.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/durable-live.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/rooms-mcp-stream.postgres.test.ts --maxWorkers=2 --minWorkers=1
       # This file subtracts the measured synthetic 206 ms timer wait before
       # checking claim query overhead. It runs with one worker on its own host.
       - name: Run the claim latency budget alone

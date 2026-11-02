@@ -18,6 +18,55 @@ const LIBRARIES = [...NETWORK_LIBRARIES, 'node:http', 'node:https', 'node:http2'
   'firebase-admin', 'web-push', 'livekit-server-sdk', '@livekit/rtc-node', 'aws4fetch',
   '@sentry/node', '@sentry/bun'];
 
+// This dispatcher configures the existing MCP fetch leaf; it cannot itself be
+// called or exported as another request path. Fail closed on any structural
+// change or escape. All actual fetches remain inventoried by the normal gate.
+function configuredMcpDispatcher(file, source) {
+  if (file !== 'apps/body/src/session-join/beeline-api.ts') return false;
+  const printer = ts.createPrinter({ removeComments: true });
+  const expected = ts.createSourceFile('expected.ts', `class MemberStreamAgent extends Agent {
+    override dispatch(options: Parameters<Agent['dispatch']>[0], handler: Parameters<Agent['dispatch']>[1]): ReturnType<Agent['dispatch']> {
+      return super.dispatch({ ...options, bodyTimeout: 0 }, handler);
+    }
+  }`, ts.ScriptTarget.Latest, true);
+  const normalize = (node, tree) => printer.printNode(ts.EmitHint.Unspecified, node, tree).replace(/\s+/g, '');
+  const classes = source.statements.filter(node => ts.isClassDeclaration(node) && node.name?.text === 'MemberStreamAgent');
+  if (classes.length !== 1 || normalize(classes[0], source) !== normalize(expected.statements[0], expected)) return false;
+  const bindings = source.statements.filter(node => ts.isImportDeclaration(node) && node.moduleSpecifier.text === 'undici');
+  if (bindings.length !== 1) return false;
+  const imported = bindings[0].importClause;
+  if (!imported || imported.name || !imported.namedBindings || !ts.isNamedImports(imported.namedBindings) ||
+      imported.namedBindings.elements.length !== 1 || imported.namedBindings.elements[0].name.text !== 'Agent' ||
+      imported.namedBindings.elements[0].propertyName) return false;
+  let valid = true, instances = 0, dispatchers = 0;
+  const inType = node => {
+    for (let parent = node.parent; parent; parent = parent.parent) if (ts.isTypeNode(parent)) return true;
+    return false;
+  };
+  function visit(node) {
+    if (ts.isIdentifier(node) && node.text === 'Agent' && !inType(node) &&
+        !ts.isImportSpecifier(node.parent)) valid = false;
+    if (ts.isIdentifier(node) && node.text === 'MemberStreamAgent') {
+      if (node === classes[0].name) { /* declaration */ }
+      else if (ts.isNewExpression(node.parent) && node.parent.expression === node && !node.parent.arguments?.length &&
+          ts.isVariableDeclaration(node.parent.parent) && node.parent.parent.name.getText(source) === 'memberStreamAgent') instances++;
+      else valid = false;
+    }
+    if (ts.isIdentifier(node) && node.text === 'memberStreamAgent') {
+      if (ts.isVariableDeclaration(node.parent) && node.parent.name === node) { /* sole constructor above */ }
+      else if (ts.isPropertyAssignment(node.parent) && node.parent.name.getText(source) === 'dispatcher' && node.parent.initializer === node) {
+        let parent = node.parent;
+        while (parent && !ts.isCallExpression(parent) && !ts.isFunctionDeclaration(parent)) parent = parent.parent;
+        if (!parent || !ts.isCallExpression(parent) || parent.expression.getText(source) !== 'fetch') valid = false;
+        else dispatchers++;
+      } else valid = false;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  return valid && instances === 1 && dispatchers === 1;
+}
+
 function imports(file, text) {
   const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
   const result = [];
@@ -40,10 +89,56 @@ function imports(file, text) {
   return result;
 }
 
+const MOBILE = 'apps/mobile/sources/';
+const LIVE_BRIDGE = MOBILE + 'sync/transport/live-connection.ts';
+const OWNER_CALLERS = {
+  routerOwnerArtifactViewport: ['app/(app)/beeline/chat/_chat-surface.tsx'],
+  routerOwnerArtifactAction: ['components/buzz/ArtifactCard.tsx', 'components/buzz/RunnableArtifact.tsx',
+    'app/(app)/beeline/chat/RoomMessageVariants.tsx', 'buzz/picture-actions.ts', 'buzz/artifact-link.ts'],
+  routerOwnerNavigation: ['buzz/use-router-navigation.ts'],
+  routerOwnerListPanel: ['components/SidebarNavigator.tsx'],
+  admitRouterPreparedMessage: ['buzz/command-message-gesture.ts'],
+  routerOwnerNegotiated: ['sync/transport/live-connection.ts'],
+  routerOwnerDisconnected: ['sync/transport/live-connection.ts'],
+  routerOwnerReceive: ['sync/transport/live-connection.ts'],
+  retryRouterLane: ['app/(app)/beeline/channels.tsx', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts'],
+  acquireRouterLane: ['app/(app)/beeline/chat/useRoomSurfaceSession.ts', 'buzz/router-chat-list.ts', 'buzz/needs-you-store.ts'],
+};
+const OWNER_READS = new Set(['routerFamilyMode', 'routerLaneSnapshot', 'subscribeRouterOwner']);
+function inspectOwnerAccess(file, source, errors) {
+  const allowed = name => OWNER_READS.has(name) || (Object.hasOwn(OWNER_CALLERS, name) && OWNER_CALLERS[name].some(caller => MOBILE + caller === file));
+  const ownerModule = specifier => {
+    if (!specifier || !ts.isStringLiteralLike(specifier)) return false;
+    const target = specifier.text.startsWith('.')
+      ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier.text)) : specifier.text;
+    return target.replace(/\.[cm]?[jt]sx?$/, '') === MOBILE + 'buzz/router-owner' || target === '@/buzz/router-owner';
+  };
+  const reject = name => errors.push(`${file}: router owner authority ${name} belongs to its declared UI or socket boundary`);
+  function visit(node) {
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && ownerModule(node.moduleSpecifier) &&
+        !node.isTypeOnly && !node.importClause?.isTypeOnly) {
+      const names = node.importClause?.namedBindings ?? node.exportClause;
+      // Re-exports and namespace/default imports could forward minting authority.
+      if (ts.isExportDeclaration(node) || node.importClause?.name || !names || !ts.isNamedImports(names)) reject('module forwarding');
+      else for (const item of names.elements) if (!item.isTypeOnly && !allowed((item.propertyName ?? item.name).text))
+        reject((item.propertyName ?? item.name).text);
+    }
+    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        ts.isIdentifier(node.expression) && node.expression.text === 'require') && ownerModule(node.arguments[0]) && file !== LIVE_BRIDGE)
+      reject('dynamic module');
+    const member = ts.isPropertyAccessExpression(node) ? node.name.text
+      : ts.isElementAccessExpression(node) && node.argumentExpression && ts.isStringLiteralLike(node.argumentExpression)
+        ? node.argumentExpression.text : undefined;
+    if (member && Object.hasOwn(OWNER_CALLERS, member) && !allowed(member)) reject(member);
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+
 export function inspectSource(file, text) {
   const errors = [];
   const inCore = file.startsWith('packages/net/src/');
-  const hits = scanSource(file, text, LIBRARIES).filter(hit => !hit.kind.startsWith('origin:'));
+  let hits = scanSource(file, text, LIBRARIES).filter(hit => !hit.kind.startsWith('origin:'));
   // Rust HTTP clients are native leaves too; imports remain explicit inventory.
   if (file.endsWith('.rs')) {
     for (const match of text.matchAll(/\b(?:reqwest|hyper|TcpStream|UdpSocket|tungstenite)\b/g))
@@ -51,6 +146,7 @@ export function inspectSource(file, text) {
   }
   if (/\.[cm]?[jt]sx?$/.test(file)) {
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    if (configuredMcpDispatcher(file, source)) hits = hits.filter(hit => hit.kind !== 'import:undici');
     const commandOwners = ['apps/mobile/sources/buzz/command-owner.ts', 'apps/mobile/sources/sync/transport/live-connection.ts'];
     function commandAccess(node) {
       const member = ts.isPropertyAccessExpression(node) ? node.name.text
@@ -61,6 +157,7 @@ export function inspectSource(file, text) {
       ts.forEachChild(node, commandAccess);
     }
     commandAccess(source);
+    inspectOwnerAccess(file, source, errors);
     for (const entry of imports(file, text)) {
       if (entry.dynamic && !entry.specifier) hits.push({ kind: 'computed-import', line: 1 });
       const target = entry.specifier?.startsWith('.')

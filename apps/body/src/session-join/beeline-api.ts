@@ -1,6 +1,7 @@
 // The joined session's own Beeline connection: OAuth with PKCE against Beeline's MCP sign-in, completed on any
 // device through Beeline's handoff page, then MCP tool calls as the session's member.
 import { createHash, randomBytes } from 'node:crypto';
+import { Agent } from 'undici';
 import { readState, withLock, writeState, type JoinedSession } from './store.js';
 
 export const DEFAULT_SERVER = 'https://server.usebeeline.app';
@@ -8,9 +9,24 @@ const opaque = () => randomBytes(32).toString('base64url');
 
 export interface Tokens { access_token: string; refresh_token: string; expires_in: number }
 
-async function postJson(url: string, body: unknown, headers: Record<string, string> = {}): Promise<{ status: number; value: Record<string, unknown> }> {
-  const response = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(body),
-    signal: AbortSignal.timeout(60_000) });
+// Fetch supplies its own five-minute body timeout even when an Agent default
+// is zero. Override that option only on the persistent stream dispatcher. The
+// Agent retains connect/header deadlines; the caller owns abort/token expiry.
+class MemberStreamAgent extends Agent {
+  override dispatch(options: Parameters<Agent['dispatch']>[0], handler: Parameters<Agent['dispatch']>[1]): ReturnType<Agent['dispatch']> {
+    return super.dispatch({ ...options, bodyTimeout: 0 }, handler);
+  }
+}
+const memberStreamAgent = new MemberStreamAgent();
+
+/** The existing authenticated MCP/OAuth transport leaf owns all requests,
+ * including the persistent member stream; callers cannot create a second owner. */
+async function request(url: string, body: unknown, headers: Record<string,string>, stream?: AbortSignal, cancellation?:AbortSignal): Promise<Response> {
+  return fetch(url,{method:stream?'GET':'POST',headers:{'content-type':'application/json',...headers},
+    ...(stream?{dispatcher:memberStreamAgent}:{body:JSON.stringify(body)}),signal:stream ?? cancellation ?? AbortSignal.timeout(60_000)});
+}
+async function postJson(url: string, body: unknown, headers: Record<string, string> = {}, signal?:AbortSignal): Promise<{ status: number; value: Record<string, unknown> }> {
+  const response = await request(url,body,headers,undefined,signal?AbortSignal.any([signal,AbortSignal.timeout(60_000)]):undefined);
   const text = await response.text();
   let value: Record<string, unknown> = {};
   try { value = JSON.parse(text) as Record<string, unknown>; } catch { /* not JSON */ }
@@ -100,4 +116,51 @@ export async function callTool(session: Pick<JoinedSession, 'server'>, token: st
   if (!result || result.isError) throw new Error(result?.content?.map(item => item.text ?? '').join('\n') || 'Beeline refused the call');
   const parsed = JSON.parse(text) as { data: Record<string, unknown>; owedMentions?: unknown[] };
   return parsed.owedMentions === undefined ? parsed.data : { ...parsed.data, owedMentions: parsed.owedMentions };
+}
+
+/** One negotiated check per admitted stream connection, at the existing
+ * authenticated adapter. An old server cannot silently select a poll loop. */
+export async function requireMemberStream(session:Pick<JoinedSession,'server'>,token:string,signal?:AbortSignal):Promise<void>{
+  const {status,value}=await postJson(`${session.server}/mcp`,{jsonrpc:'2.0',id:1,method:'server/discover',params:{}},
+    {authorization:`Bearer ${token}`,'mcp-protocol-version':'2026-07-28',accept:'application/json'},signal);
+  const result=value.result as {capabilities?:{memberStreamV1?:unknown}}|undefined;
+  if(status!==200||result?.capabilities?.memberStreamV1!==true)
+    throw new Error('Beeline member stream unavailable: this server must support memberStreamV1 for automatic joined-session delivery; explicit session read/tool remains available');
+}
+
+/** One outbound authenticated member stream. A server without this extension
+ * leaves autonomous delivery parked; it never falls back to an empty poll. */
+export async function* memberStream(session: Pick<JoinedSession,'server'|'cursor'|'streamCursor'>, token: string,
+  signal: AbortSignal, opened:()=>void=()=>{}): AsyncGenerator<unknown> {
+  await requireMemberStream(session,token,signal);
+  if(signal.aborted)return;
+  const url=new URL('/mcp/member-stream',session.server);
+  url.searchParams.set('mentions',session.cursor);
+  if(session.streamCursor) url.searchParams.set('cursor',JSON.stringify(session.streamCursor));
+  const controller=new AbortController(),abort=()=>controller.abort();
+  signal.addEventListener('abort',abort,{once:true});if(signal.aborted)abort();
+  const handshake=setTimeout(abort,60_000);handshake.unref?.();
+  let cancel:(()=>Promise<void>)|undefined;
+  try{
+    const response=await request(url.toString(),undefined,{authorization:`Bearer ${token}`,accept:'application/x-ndjson'},controller.signal);
+    clearTimeout(handshake);
+    if(!response.ok || !response.body || !response.headers.get('content-type')?.startsWith('application/x-ndjson'))
+      throw new Error(`Beeline member stream unavailable (HTTP ${response.status})`);
+    opened();
+    const reader=response.body.getReader(),decoder=new TextDecoder();let buffered='';
+    cancel=()=>reader.cancel();
+    while(!signal.aborted){
+      const next=await reader.read();if(next.done)break;
+      buffered+=decoder.decode(next.value,{stream:true});
+      if(Buffer.byteLength(buffered)>2*256*1024)throw new Error('Beeline stream frame exceeds capacity');
+      let end:number;
+      while((end=buffered.indexOf('\n'))>=0){
+        const line=buffered.slice(0,end);buffered=buffered.slice(end+1);
+        if(!line)continue;if(Buffer.byteLength(line)>256*1024)throw new Error('Beeline stream frame exceeds capacity');
+        yield JSON.parse(line) as unknown;
+      }
+    }
+    if(buffered.trim())throw new Error('Beeline stream ended inside a delivery');
+  } finally {clearTimeout(handshake);signal.removeEventListener('abort',abort);await cancel?.().catch(()=>undefined);}
+
 }

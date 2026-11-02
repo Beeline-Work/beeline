@@ -660,15 +660,16 @@ function briefDraft(value: unknown): Args | undefined {
  * scheduled wakes addressed to this member that it has not handled yet.
  */
 export async function pendingMcpWakes(db: SqlDatabase, member: string) {
-  return (await db.query<{ id: string; room_id: string; reason: string; kind: string | null; text: string | null; created_at: Date }>(
+  return (await db.query<{ id: string; room_id: string; reason: string; kind: string | null; text: string | null; created_at: Date; hiccup_attempts: number }>(
     `SELECT command.id,command.room_id,command.reason,command.private_payload->>'kind' kind,
-       left(COALESCE(command.private_payload->>'text',source.text),16000) text,command.created_at
+       left(COALESCE(command.private_payload->>'text',source.text),16000) text,command.created_at,command.hiccup_attempts
      FROM agent_commands command LEFT JOIN messages source ON source.id=command.source_message_id
      WHERE command.agent_id=$1 AND command.action IN ('input','resume') AND command.reason<>'mcp_call'
+       AND EXISTS(SELECT 1 FROM rooms active WHERE active.id=command.room_id AND active.archived_at IS NULL)
        AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
        AND EXISTS(SELECT 1 FROM room_access member WHERE member.room_id=command.room_id
          AND member.identity_id=$1 AND member.removed_at IS NULL)
      ORDER BY command.created_at,command.id LIMIT 30`, [member])).rows
-    .map(row => ({ id: row.id, address: row.room_id, reason: row.reason, ...(row.kind ? { kind: row.kind } : {}),
+    .map(row => ({ id: row.id, deliveryVersion: row.hiccup_attempts, address: row.room_id, reason: row.reason, ...(row.kind ? { kind: row.kind } : {}),
       ...(row.text ? { text: row.text } : {}), createdAt: row.created_at, next: mcpWakeHint(row.kind) }));
 }

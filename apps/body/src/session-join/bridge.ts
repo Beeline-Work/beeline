@@ -1,18 +1,20 @@
 // The machine's one session bridge: for every joined session it waits on Beeline for tags and wakes, and hands each
 // to the session's app by the fastest way the app has. It needs no public address: it only calls out to Beeline.
 import { spawn } from 'node:child_process';
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, watch } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import { join } from 'node:path';
-import { accessToken, callTool } from './beeline-api.js';
+import { accessToken, callTool, memberStream } from './beeline-api.js';
+import { memberStreamFrame } from './stream-frame.js';
+import { createHash } from 'node:crypto';
 import { codexQueue, turnRunning } from './codex.js';
 import { postToClaude } from './claude.js';
 import { hasClaudeMcp } from './claude-mcp.js';
 import { findSession, liveSessions, machineSources, type LiveSession, type Sources } from './sessions.js';
-import { pidAlive, queueInbox, readState, takeInbox, updateState, type JoinedSession } from './store.js';
+import { pidAlive, queueInbox, queueInboxOnce, readState, takeInbox, updateState, type JoinedSession } from './store.js';
 
 export interface Mention { memberId?: string; replyRule?: string; id: string; room_id: string; room_name?: string; author_handle?: string | null; author_name?: string | null; text: string }
-export interface Wake { id: string; address: string; reason: string; kind?: string; text?: string; createdAt: string; next?: string }
+export interface Wake { id: string; deliveryVersion?: number; address: string; reason: string; kind?: string; text?: string; createdAt: string; next?: string }
 
 /** How the session runs Beeline commands: the stable bundle copy and this member's id. */
 export interface Runner { node: string; bundle: string }
@@ -104,6 +106,30 @@ export async function pollOnce(dir: string, key: string, runner: Runner, waitSec
   return parts.length;
 }
 
+/** Persistence precedes cursor advancement. The same delivery after a lost
+ * checkpoint or process crash joins its durable inbox identity. */
+export async function acceptMemberDelivery(dir:string,key:string,runner:Runner,raw:unknown):Promise<number>{
+  const frame=memberStreamFrame(raw); if(frame.type==='ended')return 0;
+  return updateState(dir,state=>{
+    const joined=state.sessions.find(session=>session.key===key); if(!joined)return 0;
+    let queued=0;
+    if(frame.type==='delivery'){
+      const wakeKey=(wake:Wake)=>wake.deliveryVersion===undefined?wake.id:`${wake.id}:${wake.deliveryVersion}`;
+      const parts=[...frame.mentions.map(mention=>renderMention(mention,joined,runner)),
+        ...frame.wakes.filter(wake=>!joined.deliveredWakes.includes(wakeKey(wake))&&
+          !(wake.deliveryVersion===0&&joined.deliveredWakes.includes(wake.id))).map(wake=>renderWake(wake,joined,runner))];
+      if(parts.length&&queueInboxOnce(dir,key,frame.deliveryId,parts.join('\n\n')))queued=parts.length;
+      joined.deliveredWakes=[...new Set([...joined.deliveredWakes,...frame.wakes.map(wakeKey)])];
+    }else{
+      const old=joined.streamCursor;
+      if(old?.epoch===frame.cursor.epoch&&old.through>frame.cursor.through)throw new Error('Beeline stream cursor moved backwards');
+      joined.streamCursor=frame.cursor;
+    }
+    if(BigInt(frame.mentionCursor)>BigInt(joined.cursor))joined.cursor=frame.mentionCursor;
+    return queued;
+  });
+}
+
 function log(dir: string, line: string): void {
   try { writeFileSync(join(dir, 'bridge.log'), `${new Date().toISOString()} ${line}\n`, { flag: 'a', mode: 0o600 }); } catch { /* best effort */ }
 }
@@ -178,8 +204,9 @@ export async function serveOutboxes(dir: string): Promise<number> {
         // The folder names the member: a request can only act as the session joined from this folder.
         answer = { ok: true, data: await callTool(joined, await accessToken(dir, joined.key), request.name, request.args ?? {}) };
       } catch (error) { answer = { ok: false, error: error instanceof Error ? error.message : String(error) }; }
+      const result=path.replace(/\.request\.json$/,'.result.json');
+      writeFileSync(result+'.tmp',JSON.stringify(answer),{mode:0o600});renameSync(result+'.tmp',result);
       rmSync(taking, { force: true });
-      writeFileSync(path.replace(/\.request\.json$/, '.result.json'), JSON.stringify(answer));
       served++;
     }
   }
@@ -196,31 +223,45 @@ export async function toolViaOutbox(cwd: string, name: string, args: Record<stri
   const request = join(dirPath, `${id}.request.json`), result = join(dirPath, `${id}.result.json`);
   writeFileSync(`${request}.tmp`, JSON.stringify({ name, args }));
   renameSync(`${request}.tmp`, request);
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    try {
-      const answer = JSON.parse(readFileSync(result, 'utf8')) as { ok: boolean };
-      rmSync(result, { force: true });
-      return answer;
-    } catch { await new Promise(resolve => setTimeout(resolve, 250)); }
-    // No bridge took it: the caller goes direct.
-    if (Date.now() - started > 5000 && existsSync(request)) break;
-  }
-  rmSync(request, { force: true });
-  return undefined;
+  return new Promise(resolve=>{
+    let settled=false;
+    const finish=(answer:{ok:boolean;data?:unknown;error?:string}|undefined)=>{
+      if(settled)return;settled=true;clearTimeout(deadline);watcher.close();resolve(answer);
+    };
+    const inspect=()=>{
+      try{
+        const answer=JSON.parse(readFileSync(result,'utf8')) as {ok:boolean};
+        rmSync(result,{force:true});finish(answer);
+      }catch{/* Only a completed atomic result rename admits another inspection. */}
+    };
+    const watcher=watch(dirPath,(_event,file)=>{if(String(file??'')===`${id}.result.json`)inspect();});
+    const deadline=setTimeout(()=>{
+      inspect();if(settled)return;
+      // Atomically take back an unclaimed request before permitting direct
+      // fallback. A bridge-claimed write has an UNKNOWN outcome, never a retry.
+      const abandoned=request+'.abandoned';
+      try{renameSync(request,abandoned);rmSync(abandoned,{force:true});finish(undefined);}
+      catch{finish({ok:false,error:'Beeline tool result is awaiting confirmation'});}
+    },timeoutMs);
+    inspect();
+  });
 }
 
 /** Calls a tool through the bridge; undefined when no bridge answers, so the caller goes direct. */
 export function toolViaBridge(dir: string, key: string, name: string, args: Record<string, unknown>): Promise<{ ok: boolean; data?: unknown; error?: string } | undefined> {
   return new Promise(resolve => {
     const connection = createConnection(join(dir, 'bridge.sock'));
-    let text = '';
+    let text = '', sent = false, settled = false;
+    const unknown = { ok: false, error: 'Beeline tool result is awaiting confirmation' };
+    const finish = (answer: {ok:boolean;data?:unknown;error?:string}|undefined) => {
+      if (settled) return; settled=true; resolve(answer); connection.destroy();
+    };
     connection.setEncoding('utf8');
-    connection.once('error', () => resolve(undefined));
+    connection.once('connect', () => { sent=true; connection.write(JSON.stringify({ key, name, args }) + '\n'); });
+    connection.once('error', () => finish(sent ? unknown : undefined));
     connection.on('data', chunk => { text += chunk; });
-    connection.on('end', () => { try { resolve(JSON.parse(text) as { ok: boolean }); } catch { resolve(undefined); } });
-    connection.setTimeout(90_000, () => { connection.destroy(); resolve(undefined); });
-    connection.write(JSON.stringify({ key, name, args }) + '\n');
+    connection.on('end', () => { try { finish(JSON.parse(text) as { ok: boolean }); } catch { finish(sent ? unknown : undefined); } });
+    connection.setTimeout(90_000, () => finish(sent ? unknown : undefined));
   });
 }
 
@@ -237,40 +278,85 @@ export async function runBridge(dir: string, runner: Runner): Promise<void> {
     writeFileSync(pidFile, String(process.pid), { mode: 0o600 });
   }
   const sources = machineSources(dir);
-  const polling = new Map<string, Promise<void>>();
+  type Stream={fingerprint:string;controller:AbortController;expiry?:ReturnType<typeof setTimeout>};
+  const streams=new Map<string,Stream>();
+  const outboxWatches=new Map<string,ReturnType<typeof watch>>();
+  let localDirty=true,wake:(()=>void)|undefined;
+  const changed=()=>{localDirty=true;wake?.();};
   serveTools(dir);
-  let serving = false;
-  setInterval(() => {
-    if (serving) return;
-    serving = true;
-    void serveOutboxes(dir).catch(error => log(dir, `outbox: ${String(error)}`)).finally(() => { serving = false; });
-  }, 500).unref();
-  const stop = () => { rmSync(pidFile, { force: true }); rmSync(join(dir, 'bridge.sock'), { force: true }); process.exit(0); };
-  process.once('SIGTERM', stop);
-  process.once('SIGINT', stop);
-  log(dir, `bridge ${process.pid} started`);
-  for (;;) {
-    const keys = readState(dir).sessions.map(s => s.key);
-    if (!keys.length) break;
-    for (const key of keys) {
-      if (polling.has(key)) continue;
-      polling.set(key, (async () => {
-        let pause = 0;
-        while (readState(dir).sessions.some(s => s.key === key)) {
-          try {
-            if (await pollOnce(dir, key, runner)) await flush(dir, sources);
-            pause = 0;
-          } catch (error) {
-            const message = error instanceof Error ? error.message : String(error);
-            log(dir, `${key}: ${message}`);
-            pause = Math.min(60_000, (pause || 2000) * 2);
-            await new Promise(resolve => setTimeout(resolve, pause));
-          }
-        }
-      })().finally(() => polling.delete(key)));
+  const localWatch=watch(dir,{recursive:true},(_event,name)=>{
+    const path=String(name??'');
+    if(path==='state.json'||path.startsWith('hooks/')||path.startsWith('inbox/')||path.startsWith('deliveries/'))changed();
+  });
+  const stop = () => {
+    for(const stream of streams.values()){stream.controller.abort();if(stream.expiry)clearTimeout(stream.expiry);}
+    localWatch.close();for(const watcher of outboxWatches.values())watcher.close();
+    rmSync(pidFile,{force:true});rmSync(join(dir,'bridge.sock'),{force:true});process.exit(0);
+  };
+  process.once('SIGTERM',stop);process.once('SIGINT',stop);
+  log(dir,`bridge ${process.pid} started`);
+  const fingerprint=(session:JoinedSession)=>createHash('sha256').update(JSON.stringify([
+    session.server,session.clientId,session.refreshToken,session.accessToken,session.accessExpiresAt,session.joinedAt])).digest('hex');
+  const start=(joined:JoinedSession)=>{
+    const controller=new AbortController(),entry:Stream={fingerprint:fingerprint(joined),controller};
+    streams.set(joined.key,entry);
+    const remaining=(joined.accessExpiresAt??0)-Date.now();
+    if(remaining>0){
+      // One real persisted credential expiry, never a failed-observation retry.
+      entry.expiry=setTimeout(()=>{
+        controller.abort();
+        void accessToken(dir,joined.key).then(changed,error=>log(dir,`${joined.key}: credential renewal ended: ${String(error)}`));
+      },remaining);entry.expiry.unref?.();
     }
-    await flush(dir, sources).catch(error => log(dir, `flush: ${String(error)}`));
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    void(async()=>{
+      let recovered=false;
+      while(!controller.signal.aborted){
+        let opened=false,terminal=false;
+        try{
+          const token=await accessToken(dir,joined.key);
+          const current=readState(dir).sessions.find(session=>session.key===joined.key);
+          if(!current||fingerprint(current)!==entry.fingerprint){changed();return;}
+          for await(const raw of memberStream(current,token,controller.signal,()=>{opened=true;})){
+            const frame=memberStreamFrame(raw);
+            if(frame.type==='ended'){terminal=true;break;}
+            if(await acceptMemberDelivery(dir,joined.key,runner,frame)){recovered=false;await flush(dir,sources);}
+          }
+        }catch(error){if(!controller.signal.aborted)log(dir,`${joined.key}: ${error instanceof Error?error.message:String(error)}`);}
+        if(controller.signal.aborted||terminal||!opened||recovered)return;
+        // One replacement after an established stream drops. A failed initial
+        // or replacement connection parks until credentials/join state changes.
+        recovered=true;
+      }
+    })();
+  };
+  try{
+    for(;;){
+      localDirty=false;
+      const sessions=readState(dir).sessions;
+      if(!sessions.length)break;
+      for(const [key,stream]of streams)if(!sessions.some(session=>session.key===key)){
+        stream.controller.abort();if(stream.expiry)clearTimeout(stream.expiry);streams.delete(key);
+      }
+      for(const joined of sessions){
+        const old=streams.get(joined.key);
+        if(!old||old.fingerprint!==fingerprint(joined)){
+          old?.controller.abort();if(old?.expiry)clearTimeout(old.expiry);start(joined);
+        }
+        const path=outboxDir(joined.cwd);
+        if(!outboxWatches.has(path)){
+          mkdirSync(path,{recursive:true,mode:0o700});
+          const ignore=join(joined.cwd,'.beeline','.gitignore');if(!existsSync(ignore))writeFileSync(ignore,'*\n',{mode:0o600});
+          outboxWatches.set(path,watch(path,(_event,name)=>{if(String(name??'').endsWith('.request.json'))changed();}));
+        }
+      }
+      await serveOutboxes(dir).catch(error=>log(dir,`outbox: ${String(error)}`));
+      await flush(dir,sources).catch(error=>log(dir,`flush: ${String(error)}`));
+      if(!localDirty)await new Promise<void>(resolve=>{wake=resolve;});
+      wake=undefined;
+    }
+  }finally{
+    localWatch.close();for(const watcher of outboxWatches.values())watcher.close();
+    for(const stream of streams.values()){stream.controller.abort();if(stream.expiry)clearTimeout(stream.expiry);}
   }
   log(dir, `bridge ${process.pid} stopped: no joined sessions`);
   rmSync(pidFile, { force: true });

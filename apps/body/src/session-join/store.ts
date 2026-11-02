@@ -24,6 +24,8 @@ export interface JoinedSession {
   pid?: number;
   /** Mentions after this `list_mentions` cursor are not delivered yet. */
   cursor: string;
+  /** Committed member-stream delivery cursor, persisted after durable inbox. */
+  streamCursor?: { epoch: string; through: number };
   /** Wakes already handed to the session, so a waiting order is delivered once. */
   deliveredWakes: string[];
   /** The newest wake handed over: only a newer one ends a long poll early. */
@@ -135,12 +137,43 @@ export function queueInbox(dir: string, key: string, text: string): void {
   writePrivate(path, existing ? `${existing}\n\n${text}` : text);
 }
 
+/** A stable delivery is stored before its transport cursor advances. A taken
+ * delivery retains a content-free tombstone, so replay after a crash cannot
+ * append the same text to an app inbox again. This is local delivery identity,
+ * not a claim of exactly-once behavior by a third-party app. */
+export function queueInboxOnce(dir: string, key: string, deliveryId: string, text: string): boolean {
+  if (!deliveryId || deliveryId.length > 256) throw new Error('Invalid inbox delivery identity');
+  const folder = ensureDir(join(dir, 'deliveries', createHash('sha256').update(key).digest('hex').slice(0,24)));
+  const stem = join(folder, createHash('sha256').update(deliveryId).digest('hex'));
+  if (existsDelivery(stem+'.pending') || existsDelivery(stem+'.done')) return false;
+  writePrivate(stem+'.pending', JSON.stringify({id:deliveryId,text,queuedAt:Date.now()}));
+  return true;
+}
+function existsDelivery(path: string): boolean { try { statSync(path); return true; } catch { return false; } }
+function takeDeliveries(dir: string, key: string): string[] {
+  const folder=join(dir,'deliveries',createHash('sha256').update(key).digest('hex').slice(0,24));
+  let names: string[]; try { names=readdirSync(folder); } catch { return []; }
+  const pending=names.filter(name=>name.endsWith('.pending')).flatMap(name=>{
+    try { const item=JSON.parse(readFileSync(join(folder,name),'utf8')) as {text:string;queuedAt:number};
+      return typeof item.text==='string' ? [{name,...item}] : []; } catch { return []; }
+  }).sort((a,b)=>a.queuedAt-b.queuedAt || a.name.localeCompare(b.name));
+  const text: string[]=[];
+  for (const item of pending) {
+    const path=join(folder,item.name),done=path.replace(/\.pending$/,'.done');
+    try { renameSync(path,done); } catch { continue; }
+    text.push(item.text); writePrivate(done,'');
+  }
+  return text;
+}
+
 /** Takes everything waiting for a joined session; it is gone once taken. */
 export function takeInbox(dir: string, key: string): string {
   const path = inboxPath(dir, key);
   const taken = `${path}.${process.pid}.taking`;
-  try { renameSync(path, taken); } catch { return ''; }
-  try { return readFileSync(taken, 'utf8'); } finally { rmSync(taken, { force: true }); }
+  let legacy='';
+  try { renameSync(path, taken); legacy=readFileSync(taken,'utf8'); } catch { /* No legacy text. */ }
+  finally { rmSync(taken, { force: true }); }
+  return [legacy,...takeDeliveries(dir,key)].filter(Boolean).join('\n\n');
 }
 
 export function recordHookSession(dir: string, session: HookSession): void {

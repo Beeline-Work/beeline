@@ -404,7 +404,7 @@ async function main() {
   const sentryWakeAgentId = sentryWakeAgentFromEnv();
   const server = createBeelineServer({
     replay: new DurableLiveReplay(database, live),
-    roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth), phone, live, daemon, objectService),
+    roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth), phone, live, daemon, objectService, undefined, () => liveListener.projectionHealth().connected),
     sentryWakeAgentId,
     database,
     sentryTelegram: sentryTelegramFromEnv(),

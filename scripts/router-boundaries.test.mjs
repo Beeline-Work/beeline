@@ -7,6 +7,31 @@ import { fileURLToPath } from 'node:url';
 import { inspectSource, judgeInventory, scanRouterTree, baselineInventory } from './router-boundaries.mjs';
 
 const core = 'packages/net/src/example.ts';
+const dispatcherSource = `import { Agent } from 'undici';
+class MemberStreamAgent extends Agent {
+  override dispatch(options: Parameters<Agent['dispatch']>[0], handler: Parameters<Agent['dispatch']>[1]): ReturnType<Agent['dispatch']> {
+    return super.dispatch({ ...options, bodyTimeout: 0 }, handler);
+  }
+}
+const memberStreamAgent = new MemberStreamAgent();
+function request(url, stream) { return fetch(url, { ...(stream ? { dispatcher: memberStreamAgent } : {}) }); }`;
+test('MCP idle dispatcher only configures the existing inventoried fetch', () => {
+  const result = inspectSource('apps/body/src/session-join/beeline-api.ts', dispatcherSource);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.hits.map(hit => hit.kind), ['fetch']);
+});
+test('dispatcher aliases, exports, direct calls and altered SDK wrappers remain network boundaries', () => {
+  for (const source of [
+    `${dispatcherSource}\nconst escape = memberStreamAgent;`,
+    `${dispatcherSource}\nmemberStreamAgent.dispatch(options, handler);`,
+    `${dispatcherSource}\nexport { memberStreamAgent };`,
+    `${dispatcherSource}\nconst other = new Agent();`,
+    `${dispatcherSource}\nconst Factory = MemberStreamAgent;`,
+    dispatcherSource.replace('bodyTimeout: 0', 'bodyTimeout: options.bodyTimeout'),
+    dispatcherSource.replace('{ Agent }', '{ Agent, request as anotherRequest }'),
+  ]) assert.ok(inspectSource('apps/body/src/session-join/beeline-api.ts', source).hits.some(hit => hit.kind === 'import:undici'));
+  assert.ok(inspectSource('apps/body/src/elsewhere.ts', dispatcherSource).hits.some(hit => hit.kind === 'import:undici'));
+});
 for (const [name, source] of Object.entries({
   'alias fetch': 'const f = fetch; f("/api");',
   'global alias': 'const g = globalThis; g.fetch("/api");',
@@ -100,4 +125,23 @@ test('only exact persisted owner may access the command executor, including alia
   for (const source of ['socket.requestCommand(op,args,id)', 'const send = socket.requestCommand;', 'socket["requestCommand"](op,args,id)'])
     assert.ok(inspectSource('apps/mobile/sources/feature.ts', source).errors.length);
   assert.deepEqual(inspectSource('apps/mobile/sources/buzz/command-owner.ts', 'socket.requestCommand(op,args,id)').errors, []);
+});
+
+
+test('owner admission cannot escape through aliases, reexports or namespace access', () => {
+  for (const source of [
+    'import { routerOwnerArtifactAction as mint } from "@/buzz/router-owner";',
+    'export { routerOwnerArtifactAction } from "@/buzz/router-owner";',
+    'export * from "@/buzz/router-owner";',
+    'import * as owner from "@/buzz/router-owner";',
+    'const owner = require("@/buzz/router-owner");',
+    'const owner = await import("@/buzz/router-owner");',
+    'owner["routerOwnerArtifactAction"]("OpenArtifact", id);',
+  ]) assert.ok(inspectSource('apps/mobile/sources/feature.ts', source).errors.length, source);
+  assert.deepEqual(inspectSource('apps/mobile/sources/components/buzz/ArtifactCard.tsx',
+    'import { routerOwnerArtifactAction as act } from "@/buzz/router-owner";').errors, []);
+  assert.ok(inspectSource('apps/mobile/sources/components/buzz/ArtifactCard.tsx',
+    'import { routerOwnerArtifactViewport } from "@/buzz/router-owner";').errors.length);
+  assert.deepEqual(inspectSource('apps/mobile/sources/feature.ts',
+    'import { routerFamilyMode } from "@/buzz/router-owner";').errors, []);
 });

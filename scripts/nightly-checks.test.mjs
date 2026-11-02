@@ -7,7 +7,8 @@ import { classify, easternSlot, publishIssues, runNightly } from './nightly-chec
 const job = (name, conclusion, attempt) => ({ name, conclusion, id: attempt, html_url: `https://example/jobs/${attempt}`, started_at: `2026-01-01T08:0${attempt}:00Z`, completed_at: `2026-01-01T08:0${attempt + 1}:00Z` });
 test('nightly schedule selects 03 Eastern in winter and summer and dispatches all on main', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/nightly-checks.yml', import.meta.url), 'utf8'));
-  assert.equal(workflow.on.schedule[0].cron, '0 7,8 * * *');
+  assert.deepEqual(workflow.on.schedule.map(s => s.cron), ['7 7 * * *', '7 8 * * *']);
+  assert.equal(workflow.jobs.nightly.steps[2].env.SCHEDULE, '${{ github.event.schedule }}');
   assert.equal(workflow.permissions.actions, 'write');
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
   for (const [yes, no] of [['2026-01-01T08:00Z', '2026-01-01T07:00Z'], ['2026-07-01T07:00Z', '2026-07-01T08:00Z']]) {
@@ -40,7 +41,7 @@ test('controller dispatch → failure → rerun → artifact exercises the exact
     if (endpoint.includes('/jobs?')) return { total_count: 1, jobs: [job('suite', attempt === 1 ? 'failure' : 'success', attempt)] };
     return { run_attempt: attempt, status: 'completed', conclusion: attempt === 1 ? 'failure' : 'success', head_sha: 'abc' };
   };
-  const result = await runNightly({ api, pause: () => assert.fail('unexpected wait'), manual: true, save: a => artifacts.push(a) });
+  const result = await runNightly({ api, pause: () => assert.fail('unexpected wait'), schedule: '7 8 * * *', now: () => new Date('2026-11-02T08:17Z'), save: a => artifacts.push(a) });
   assert.equal(result.failures.length, 0);
   assert.equal(result.flakyJobs.length, 1);
   assert.deepEqual(result.flakyJobs[0].attempts[0].failingTests, ['not ok 1 - failing test']);
@@ -88,4 +89,36 @@ test('nightly result opens, updates and closes one issue per job for the fix loo
   assert.deepEqual(await publishIssues({ api, result: { skipped: true }, runUrl: 'x' }), []);
   assert.equal(calls.length, 0);
   assert.deepEqual(await publishIssues({ api, result: { infrastructureError: 'boom' }, runUrl: 'x' }), [['comment', 'Nightly Checks: the nightly run did not finish']]);
+});
+
+test('scheduled starts reject missed slots and quietly ignore DST twins, including delayed twins', async () => {
+  for (const [date, schedule, late] of [
+    ['2026-01-01T07:07Z', '7 7 * * *', false],
+    ['2026-01-01T08:17Z', '7 7 * * *', false],
+    ['2026-01-01T09:07Z', '7 8 * * *', true],
+    ['2026-07-01T08:07Z', '7 8 * * *', false],
+    ['2026-07-01T09:07Z', '7 8 * * *', false],
+    ['2026-07-01T08:07Z', '7 7 * * *', true],
+    ['2026-11-01T09:07Z', '7 8 * * *', true],
+    ['2026-03-08T08:07Z', '7 7 * * *', true],
+  ]) {
+    const run = runNightly({ schedule, now: () => new Date(date), api: () => assert.fail('must not dispatch'), save: () => assert.fail('must not classify'), pause: () => {} });
+    if (late) await assert.rejects(run, /missed the 03:00 America\/New_York slot/);
+    else assert.equal(await run, undefined);
+  }
+});
+test('correct scheduled trigger enters nightly controller in winter, summer and on DST transition dates', async () => {
+  for (const [date, schedule] of [
+    ['2026-01-01T08:07Z', '7 8 * * *'],
+    ['2026-07-01T07:07Z', '7 7 * * *'],
+    ['2026-03-08T07:07Z', '7 7 * * *'],
+    ['2026-11-01T08:07Z', '7 8 * * *'],
+  ]) {
+    let calls = 0;
+    await runNightly({ schedule, now: () => new Date(date), save: () => {}, api: async () => {
+      calls++;
+      return { workflow_runs: [{ status: 'in_progress' }] };
+    } });
+    assert.equal(calls, 1);
+  }
 });

@@ -91,3 +91,15 @@ test('actual ASC published build order resolves the newest three runtimes withou
   assert.deepEqual(storeRuntimeTargets({ pins: { android: '43', ios: '36' }, stores })
     .filter(t => t.platform === 'ios').map(t => t.runtimeVersion), ['36', '34', '31']);
 });
+
+test('published Play 144 resolves to runtime44 and receives OTA alongside older installed phones', () => {
+  const builds = JSON.parse(readFileSync(new URL('../apps/mobile/store/native-runtime-builds.json', import.meta.url), 'utf8'));
+  const live = resolveStoreBuilds('android', playLiveBuilds({ releases: [{
+    track: 'production', releaseLifecycleState: 'RELEASE_LIFECYCLE_STATE_PUBLISHED',
+    activeArtifacts: [{ versionCode: 144 }, { versionCode: 138 }],
+  }] }), builds);
+  const targets = storeRuntimeTargets({ pins: { android: '44', ios: '37' }, stores: {
+    android: { status: 'readable', latestRuntimeVersion: '44', live },
+  }, previouslyLive: [{ platform: 'android', runtimeVersion: '39' }, { platform: 'android', runtimeVersion: '38' }] });
+  assert.deepEqual(targets.map(t => t.runtimeVersion), ['44', '40', '39']);
+});

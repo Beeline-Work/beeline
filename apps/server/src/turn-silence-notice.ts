@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { reportToCommander } from './commander.js';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
 import type { CommandRow } from './agent-command.js';
@@ -262,7 +263,7 @@ export async function noteFirstSilence(
       login_handle: string | null;
       harness: string | null;
     }>(
-      `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
+      `SELECT COALESCE(NULLIF(agent.name,''),$4::text) agent_name,
               agent.handle login_handle,
               (SELECT harness FROM agents WHERE agent_id=$3) harness
        FROM messages message
@@ -271,7 +272,7 @@ export async function noteFirstSilence(
        WHERE message.id=$2
          AND requester.kind='human' AND message.presentation IN ('message','system')
          AND (message.room_id=$1 OR message.room_id=(SELECT parent_id FROM rooms WHERE id=$1))`,
-      [input.roomId, input.requestId, input.agentId],
+      [input.roomId, input.requestId, input.agentId, systemMessage("system-line.agent-name")],
     )
   ).rows[0];
   // A harness hang or update interruption belongs to the claimed command,
@@ -283,7 +284,7 @@ export async function noteFirstSilence(
         login_handle: string | null;
         harness: string | null;
       }>(
-        `SELECT COALESCE(NULLIF(agent.name,''),'The agent') agent_name,
+        `SELECT COALESCE(NULLIF(agent.name,''),$5::text) agent_name,
               agent.handle login_handle, configuration.harness
        FROM agent_commands command JOIN identities agent ON agent.id=command.agent_id
        LEFT JOIN agents configuration ON configuration.agent_id=agent.id
@@ -296,6 +297,7 @@ export async function noteFirstSilence(
           input.agentId,
           input.reasonKind === 'update-interrupted' ||
             Boolean(input.reason?.startsWith('turn_backstop:')) || isModelCapacityFault(input.reason),
+          systemMessage("system-line.agent-name"),
         ],
       )
     ).rows[0];
@@ -334,7 +336,7 @@ async function inscribeSilence(
     turnSilenceLockKey(input.roomId, input.requestId, input.agentId),
   ]);
 
-  const reason = (input.reason ?? '').replace(/\s+/g, ' ').trim().slice(0, TURN_FAILURE_REASON_MAX);
+  const reason = (input.reason ?? '').replace(/\s+/g, systemMessage("turn-silence-notice.space")).trim().slice(0, TURN_FAILURE_REASON_MAX);
   const classified = classifyTurnSilence(reason || undefined, input.reasonKind);
   const standing = ['helper-out-of-date', 'not-signed-in'].includes(classified.kind) ||
     /GitHub rate limit; checks readable again at/.test(reason);
@@ -558,7 +560,7 @@ async function inscribeSilence(
       database,
       input.roomId,
       input.agentId,
-      `failed: ${place.name} (${input.roomId}): ${reason || classified.fault || 'agent turn failed'}`,
+      systemMessage("turn-silence-notice.failed", place.name, input.roomId, reason || classified.fault || systemMessage("turn-silence-notice.agent-turn-failed")),
       command,
       `failure:${command.id}:${attempt}`,
       { automatic: true },

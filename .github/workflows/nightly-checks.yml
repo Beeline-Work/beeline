@@ -7,7 +7,9 @@ name: Nightly Checks
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 7,8 * * *'
+    # Separate triggers identify the harmless DST twin even when it is delayed.
+    - cron: '7 7 * * *'
+    - cron: '7 8 * * *'
 permissions:
   contents: read
   actions: write
@@ -31,6 +33,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           EVENT_NAME: ${{ github.event_name }}
+          SCHEDULE: ${{ github.event.schedule }}
         run: node scripts/nightly-checks.mjs
       - name: Publish nightly result
         if: always()

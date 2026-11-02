@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { REVIEW_VERDICT_SQL, missingReviewAttachments } from './review-evidence.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { cornerReportWaiting } from './corner-state.js';
@@ -283,7 +284,7 @@ async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow 
  */
 async function cornerBookkeepingSubject(db: SqlDatabase): Promise<SystemLineInput['subject']> {
   await ensureSystemIdentity(db);
-  return { kind: 'system', id: SYSTEM_IDENTITY_ID, name: '@system' };
+  return { kind: 'system', id: SYSTEM_IDENTITY_ID, name: systemMessage("corner-lifecycle.system") };
 }
 
 function terminalStatus(toState: string): WorkflowTerminalState['status'] | undefined {
@@ -323,8 +324,8 @@ async function writeStartCard(
     roomId: input.cornerId,
     authorId: SYSTEM_IDENTITY_ID,
     subject,
-    verb: 'opened',
-    object: 'corner',
+    verb: systemMessage("corner-lifecycle.opened"),
+    object: systemMessage("corner-lifecycle.corner"),
     // Never a chat line: `hiddenWakeCardSql` excludes this card type from the
     // transcript a human reads.
     presentation: 'card',
@@ -403,7 +404,7 @@ class Transition {
       roomId: this.cornerId,
       authorId: SYSTEM_IDENTITY_ID,
       subject,
-      verb: 'handed off',
+      verb: systemMessage("corner-lifecycle.handed-off"),
       object: toState,
       // The card never wakes anyone itself (no `wakes`); the one wake of the
       // next role is this transition's own side effect in `advanceCorner`.
@@ -536,7 +537,7 @@ export async function advanceCorner(
         { toState: 'opened', outcome: undefined, headSha: undefined, roleBindings, seq: 0 },
         corner.lifecycle.pr?.headSha,
       );
-      return { state: await transition.take('opened'), accepted: true };
+      return { state: await transition.take(systemMessage("corner-lifecycle.opened")), accepted: true };
     }
     run ??= await backfillRun(db, cornerId, corner);
     const transition = new Transition(db, cornerId, run, corner.lifecycle.pr?.headSha);
@@ -573,7 +574,7 @@ async function applyEvent(
   switch (event.kind) {
     case 'push':
       if (!transition.allows('pushed')) return no('no push edge');
-      await transition.take('pushed', event.contents);
+      await transition.take(systemMessage("corner-lifecycle.pushed"), event.contents);
       return OK;
     case 'checks':
       return checksReported(db, cornerId, corner, transition, event);
@@ -594,7 +595,7 @@ async function applyEvent(
       });
       if (!command) return { ok: true, wake: { queued: false, reason: 'The revision recipient cannot be woken' } };
       if (transition.state === 'ask_human')
-        await transition.take('revision_work', { briefRevision: event.revision });
+        await transition.take(systemMessage("corner-lifecycle.revision-work"), { briefRevision: event.revision });
       return { ok: true, wake: { queued: true, agentId } };
     }
     case 'checks-pending': {
@@ -606,18 +607,18 @@ async function applyEvent(
         (transition.state === 'implement' &&
           transition.run.outcome === 'failing');
       if (!verdictHolds) return no('no checks verdict to re-run');
-      await transition.take('rechecked');
+      await transition.take(systemMessage("corner-lifecycle.rechecked"));
       return OK;
     }
     case 'approval':
       return approvalRecorded(db, cornerId, corner, transition, event);
     case 'merge-unconfirmed':
       if (!transition.allows('merge_unconfirmed')) return no('merge recovery already escalated');
-      await transition.take('merge_unconfirmed');
+      await transition.take(systemMessage("corner-lifecycle.merge-unconfirmed"));
       await ensureSystemIdentity(db);
       const unconfirmed = await systemLine(db, {
-        roomId: cornerId, authorId: SYSTEM_IDENTITY_ID, subject: GITHUB_SUBJECT, verb: 'could not confirm the merge of',
-        object: `pull request #${event.number}`, consequence: `${event.error} · merge outcome is unconfirmed`,
+        roomId: cornerId, authorId: SYSTEM_IDENTITY_ID, subject: GITHUB_SUBJECT, verb: systemMessage("corner-lifecycle.could-not-confirm-the-merge-of"),
+        object: systemMessage("corner-lifecycle.pull-request", event.number), consequence: systemMessage("corner-lifecycle.merge-outcome-is-unconfirmed", event.error),
       });
       if (corner.worker_agent_id)
         await wake(db, cornerId, corner.worker_agent_id, unconfirmed.id, 'corner_merge_unconfirmed');
@@ -627,15 +628,15 @@ async function applyEvent(
     case 'merged':
       // Landing wakes no one in the parent Room: the merge card announces it,
       // and an agent with work left after the merge subscribes to `merged`.
-      await transition.take(corner.locked ? 'pr_closed' : 'landed', event.contents);
+      await transition.take(corner.locked ? systemMessage("corner-lifecycle.pr-closed") : systemMessage("corner-lifecycle.landed"), event.contents);
       return OK;
     case 'pull-request-closed':
       if (corner.lifecycle.pr) return no('the corner still has a pull request');
       if (!transition.allows('pr_closed')) return no('no pull request close edge');
-      await transition.take('pr_closed', { pullRequestNumber: event.number });
+      await transition.take(systemMessage("corner-lifecycle.pr-closed"), { pullRequestNumber: event.number });
       return OK;
     case 'closed':
-      await transition.take('closed');
+      await transition.take(systemMessage("corner-lifecycle.closed"));
       return OK;
   }
 }
@@ -692,7 +693,7 @@ async function checksReported(
     const reviewerAgentId = await reachableReviewer(db, cornerId, corner, event.sourceMessageId, headSha);
     if (!reviewerAgentId)
       return noteReviewBlocked(db, cornerId, corner, headSha ?? event.sourceMessageId,
-        'the configured reviewer is unreachable or unhealthy', false);
+        systemMessage("corner-lifecycle.the-configured-reviewer-is-unreachable-or-unhealthy"), false);
     plan = { outcome: 'passing', approved: false, reviewerAgentId };
   }
   if (from === 'review' && sameHead && plan.outcome === 'no_reviewer')
@@ -701,7 +702,7 @@ async function checksReported(
     const repeat = transition.run.outcome === plan.outcome;
     if (repeat && plan.outcome === 'failing' && event.followup) {
       if (!corner.worker_agent_id) {
-        await noteReviewDispatchFailure(db, cornerId, headSha ?? event.sourceMessageId, 'the corner has no implementer');
+        await noteReviewDispatchFailure(db, cornerId, headSha ?? event.sourceMessageId, systemMessage("corner-lifecycle.the-corner-has-no-implementer"));
         return no('the corner has no implementer');
       }
       const command = await createAgentCommand(db, {
@@ -719,7 +720,7 @@ async function checksReported(
   // report of the same verdict retries it.
   if (plan.outcome === 'failing') {
     if (!corner.worker_agent_id) {
-      await noteReviewDispatchFailure(db, cornerId, headSha ?? event.sourceMessageId, 'the corner has no implementer');
+      await noteReviewDispatchFailure(db, cornerId, headSha ?? event.sourceMessageId, systemMessage("corner-lifecycle.the-corner-has-no-implementer"));
       return no('the corner has no implementer');
     }
     const command = await createAgentCommand(db, {
@@ -743,18 +744,18 @@ async function checksReported(
       reason: 'subscribed_event',
     });
     if (!queued.command && !queued.blocked) {
-      const reason = `the reviewer command could not be queued on ${headSha ?? 'this head'}${queued.error ? `: ${queued.error}` : ''}; restore reviewer access or choose an available reviewer`;
+      const reason = systemMessage("corner-lifecycle.the-reviewer-command-could-not-be-queued-on-restore-reviewer-acce", headSha ?? systemMessage("corner-lifecycle.this-head"), queued.error ? systemMessage("corner-lifecycle.dispatch-error", queued.error) : '');
       console.error(`[corner-lifecycle] ${cornerId}: ${reason}`);
       return noteReviewBlocked(db, cornerId, corner, headSha ?? event.sourceMessageId, reason);
     }
   }
-  if (from !== 'checks') await transition.take('rechecked');
+  if (from !== 'checks') await transition.take(systemMessage("corner-lifecycle.rechecked"));
   await transition.take(plan.outcome, headSha ? { headSha } : {});
   if (plan.outcome === 'no_reviewer') {
     return noteMissingReviewer(db, cornerId, corner, headSha ?? event.sourceMessageId);
   }
   if (plan.outcome === 'passing' && plan.approved) {
-    await transition.take('approved', { verdict: 'approved' });
+    await transition.take(systemMessage("corner-lifecycle.approved"), { verdict: 'approved' });
     await wakeToLand(db, cornerId, corner, transition);
   }
   return OK;
@@ -773,7 +774,7 @@ async function noteMissingReviewer(db: SqlDatabase, cornerId: string, corner: Co
     return { ok: true, wake: command ? { queued: true, agentId: corner.worker_agent_id! }
       : { queued: false, reason: 'The implementer cannot be woken to ask its commander for a merge decision' } };
   }
-  return noteReviewBlocked(db, cornerId, corner, headKey, 'no reviewer is configured');
+  return noteReviewBlocked(db, cornerId, corner, headKey, systemMessage("corner-lifecycle.no-reviewer-is-configured"));
 }
 
 /**
@@ -790,7 +791,7 @@ async function noteReviewBlocked(
   reportCommander = true,
 ): Promise<Applied> {
   const episode = `${cornerId}:${headKey}:${reason}`;
-  if (reportCommander) await reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID, `blocked: ${reason}`,
+  if (reportCommander) await reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID, systemMessage("corner-lifecycle.blocked", reason),
     undefined, createHash('sha256').update(`review-gap:${episode}`).digest('hex'));
   const command = corner.worker_agent_id ? await createAgentCommand(db, {
     id: createHash('sha256').update(`review-needed:${episode}`).digest('hex'),
@@ -800,7 +801,7 @@ async function noteReviewBlocked(
     reason: 'corner_review_needed',
   }) : undefined;
   const wakeResult = command ? { queued: true, agentId: corner.worker_agent_id! }
-    : { queued: false, reason: 'The implementer cannot be woken to arrange review' };
+    : { queued: false, reason: systemMessage("corner-lifecycle.the-implementer-cannot-be-woken-to-arrange-review") };
   if (!command) await noteReviewDispatchFailure(db, cornerId, headKey, wakeResult.reason!);
   return { ok: true, wake: wakeResult };
 }
@@ -808,7 +809,7 @@ async function noteReviewBlocked(
 async function noteReviewDispatchFailure(
   db: SqlDatabase, cornerId: string, headSha: string, reason: string,
 ): Promise<void> {
-  await reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID, `blocked: ${reason}`,
+  await reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID, systemMessage("corner-lifecycle.blocked", reason),
     undefined, createHash('sha256').update(`review-dispatch:${cornerId}:${headSha}:${reason}`).digest('hex'));
 }
 
@@ -867,7 +868,7 @@ async function ensureReviewDispatch(
       `SELECT result.text FROM agent_commands command JOIN messages result ON result.id=command.result_message_id
        WHERE command.id=$1`, [ended],
     )).rows[0]?.text;
-    const reason = `the reviewer completed its review of the current head${evidence ? `; prior verdict and evidence: ${evidence}` : ''}`;
+    const reason = systemMessage("corner-lifecycle.the-reviewer-completed-its-review-of-the-current-head", evidence ? systemMessage("corner-lifecycle.prior-verdict-and-evidence", evidence) : '');
     // A consumed handback already delivered these findings. In particular,
     // an implementer's explicit wait must not turn that delivery into a wake
     // failure, whose report can send the same target back to the reviewer
@@ -896,7 +897,7 @@ async function ensureReviewDispatch(
   if (!reviewerAgentId) {
     console.error(`[corner-lifecycle] ${cornerId}: green review reviewer is unreachable or unhealthy; reporting to the commander`);
     return noteReviewBlocked(db, cornerId, corner, pr.headSha,
-      'the configured reviewer is unreachable or unhealthy', false);
+      systemMessage("corner-lifecycle.the-configured-reviewer-is-unreachable-or-unhealthy"), false);
   }
   if (await reviewerStandingFailure(db, reviewerAgentId)) return OK;
   // A fresh source lets a recovered review wake follow an earlier completed
@@ -905,8 +906,8 @@ async function ensureReviewDispatch(
     roomId: cornerId,
     authorId: corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,
     subject: GITHUB_SUBJECT,
-    verb: 'requested review of',
-    object: { text: pr.title ?? `pull request #${pr.number}`, ...(pr.url ? { url: pr.url } : {}), headSha: pr.headSha },
+    verb: systemMessage("corner-lifecycle.requested-review-of"),
+    object: { text: pr.title ?? systemMessage("corner-lifecycle.pull-request", pr.number), ...(pr.url ? { url: pr.url } : {}), headSha: pr.headSha },
   });
   const queued = await queueReviewerCommand(db, {
     roomId: cornerId,
@@ -915,7 +916,7 @@ async function ensureReviewDispatch(
     reason: 'corner_review_dispatch',
   });
   if (!queued.command && !queued.blocked) {
-    const reason = `the reviewer command could not be queued on ${pr.headSha}${queued.error ? `: ${queued.error}` : ''}; restore reviewer access or choose an available reviewer`;
+    const reason = systemMessage("corner-lifecycle.the-reviewer-command-could-not-be-queued-on-restore-reviewer-acce", pr.headSha, queued.error ? systemMessage("corner-lifecycle.dispatch-error", queued.error) : '');
     console.error(`[corner-lifecycle] ${cornerId}: ${reason}`);
     return noteReviewBlocked(db, cornerId, corner, pr.headSha, reason);
   }
@@ -1061,7 +1062,7 @@ async function queueReviewerCommand(
   } catch (error) {
     await db.query('ROLLBACK TO SAVEPOINT corner_reviewer_dispatch');
     await db.query('RELEASE SAVEPOINT corner_reviewer_dispatch');
-    return { error: error instanceof Error ? error.message.slice(0, 160) : 'unknown dispatch error' };
+    return { error: error instanceof Error ? error.message.slice(0, 160) : systemMessage("corner-lifecycle.unknown-dispatch-error") };
   }
 }
 
@@ -1240,7 +1241,7 @@ export async function reassignFailedCornerReviewer(
     );
     if (!next) {
       await noteReviewBlocked(db, input.roomId, corner, corner.lifecycle.pr?.headSha ?? input.requestId,
-        'no reviewer on the configured list is healthy enough to continue', false);
+        systemMessage("corner-lifecycle.no-reviewer-on-the-configured-list-is-healthy-enough-to-continue"), false);
       return;
     }
     const queued = await queueReviewerCommand(db, {
@@ -1251,7 +1252,7 @@ export async function reassignFailedCornerReviewer(
     });
     if (!queued.command && !queued.blocked)
       await noteReviewBlocked(db, input.roomId, corner, corner.lifecycle.pr?.headSha ?? input.requestId,
-        `the fallback reviewer command could not be queued${queued.error ? `: ${queued.error}` : ''}`);
+        systemMessage("corner-lifecycle.the-fallback-reviewer-command-could-not-be-queued", queued.error ? systemMessage("corner-lifecycle.dispatch-error", queued.error) : ''));
   });
 }
 
@@ -1267,7 +1268,7 @@ async function approvalRecorded(
   // skips the review.
   if (corner.lifecycle.checks !== 'passing') return no('checks are not green yet');
   if (transition.state !== 'review') return no('not waiting for a yes');
-  await transition.take('approved', { verdict: 'approved', headSha: event.headSha });
+  await transition.take(systemMessage("corner-lifecycle.approved"), { verdict: 'approved', headSha: event.headSha });
   // A person's order is landed by its caller at once; nobody else is woken.
   if (event.by === 'reviewer') await wakeToLand(db, cornerId, corner, transition);
   return OK;
@@ -1300,7 +1301,7 @@ async function mergeRefused(
     );
   }
   if (!transition.allows('merge_refused')) return no('not landing');
-  await transition.take('merge_refused', { headSha: event.headSha, reason: event.reason });
+  await transition.take(systemMessage("corner-lifecycle.merge-refused"), { headSha: event.headSha, reason: event.reason });
   const pullRequest = corner.lifecycle.pr;
   const line = await systemLine(db, {
     // Confirmed refusals can recur on one head; each needs its own wake source.
@@ -1311,9 +1312,9 @@ async function mergeRefused(
     roomId: cornerId,
     authorId: corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,
     subject: GITHUB_SUBJECT,
-    verb: 'refused to merge',
+    verb: systemMessage("corner-lifecycle.refused-to-merge"),
     object: {
-      text: pullRequest?.title ?? `pull request #${pullRequest?.number ?? ''}`,
+      text: pullRequest?.title ?? systemMessage("corner-lifecycle.pull-request", pullRequest?.number ?? ''),
       ...(pullRequest?.url ? { url: pullRequest.url } : {}),
       headSha: event.headSha,
     },
@@ -1361,7 +1362,7 @@ async function noteUnreachableReviewer(
     .update(`beeline:${input.cornerId}:reviewer-unreachable:${input.reviewerId}:${input.reason}`)
     .digest('hex');
   await reportToCommander(db, input.cornerId, input.reviewerId,
-    `blocked: configured reviewer ${input.reviewerName ?? input.reviewerId} could not be reached: ${input.reason}`,
+    systemMessage("corner-lifecycle.blocked-configured-reviewer-could-not-be-reached", input.reviewerName ?? input.reviewerId, input.reason),
     undefined, id);
 }
 
@@ -1382,7 +1383,7 @@ async function noteReviewerListExhausted(
     )
     .digest('hex');
   await reportToCommander(db, input.cornerId, SYSTEM_IDENTITY_ID,
-    'blocked: no reviewer on the configured list is healthy; arrange a reviewer or restore access',
+    systemMessage("corner-lifecycle.blocked-no-reviewer-on-the-configured-list-is-healthy-arrange-a-r"),
     undefined, id);
 }
 

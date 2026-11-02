@@ -111,3 +111,29 @@ pool refuses the old receipt while released_at remains unconfirmed. Production
 composition must supply this private callback; it remains unselected. Active
 remote-cache notifications remain an activation gate. No new timer, lease,
 listener or general retry policy was added.
+
+## Shared committed availability control
+
+`jobs:tray-clock-health` captures exact aggregate-owner and health-receipt
+changes in their transaction. No-op updates and rolled-back changes emit nothing.
+The capture floor audits both triggers; reference triggers for the two control
+tables use an explicitly qualified `pg_temp` schema clone, so the audit does not
+block remote health reads or drop a live control table.
+
+`TrayClockAvailability` is one consumer per application server. It installs its
+existing-Live listeners before baseline, coalesces hints, drains at most1024
+closed control causes, preserves loss even when a later healthy generation is
+already committed, and parks on unknown/gapped history. Only real feed recovery
+opens a new baseline. It owns no timer, socket, client inventory or data snapshot.
+The actual two-pool PostgreSQL notification proof parks two simulated consumers
+with four shared control statements, independent of consumer count. Availability7,
+PostgreSQL14 and the source/readiness/traversal proofs pass.
+
+Root's staged integration emits one `control:tray-clock` frame per socket and
+parks only local Tray state. The modern Tray cohort requires the installed
+shared consumer, and a parked consumer refuses snapshot admission before a read.
+Projection24 and mobile-owner28 pass, including a late opening reply that cannot
+restore parked data and an unaffected visible Room list. This phone/socket slice
+is not yet in the combined PR; the owner bundle still exceeds its unchanged
+budget. Full production composition, workload/cohort proof and the removal sweep
+remain open. No additional whole finding is closed.

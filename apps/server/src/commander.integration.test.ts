@@ -1,3 +1,4 @@
+import { readCornerObjective, backfillCornerObjectives } from './corner-objective.js';
 import { activeCornerHolds } from './corner-holds.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { cornerMergeGate } from './corner-lifecycle.js';
@@ -602,6 +603,9 @@ it('R-REVISE revises and restores the cited approval without a false reproductio
     expectedRevision: 1, brief: { spec: '## Intent\nFix the reported endpoint bug.\n## Reproduction R-REVISE\nRevise the brief and restore it; the approval link disappears.', repositoryWork: true,
       approval: { sourceMessageId: order.sourceMessageId }, change: 'Clarify the endpoint' } }, RUBY);
   expect(revision.revision).toBe(2);
+  expect(await readCornerObjective(db, opened.cornerId)).toBe('Build the widget');
+  expect((await db.query(`SELECT objective FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision`, [opened.cornerId])).rows)
+    .toEqual([{objective:'Build the widget'},{objective:'Build the widget'}]);
   const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, RUBY);
   expect(restored.brief?.approval?.sourceMessageId).toBe(order.sourceMessageId);
   expect(revision.warnings ?? []).toEqual([]);
@@ -831,6 +835,7 @@ it('prepares the first brief of a human-opened corner from a member DM', async (
     name: 'Prepared', objective: 'Build the widget',
     brief: { spec: 'Build the widget', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } } }, RUBY))
     .resolves.toMatchObject({ name: 'Prepared' });
+  expect(await readCornerObjective(db, opened.id)).toBe('Build the widget');
 });
 it('private order IDs authorize child briefs without storing private text as messages', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
@@ -1071,8 +1076,7 @@ it('keeps Room opening facts historical while current worker and commander goals
     const name = actor === WORKER ? 'Current-widget' : 'Next-widget';
     await daemon.execute('renameCorner', { ...authority(command), cornerId: opened.cornerId,
       name, objective }, actor);
-    expect((await db.query(`SELECT objective FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0])
-      .toMatchObject({ objective });
+    expect(await readCornerObjective(db, opened.cornerId)).toBe(objective);
     expect((await db.query(`SELECT * FROM messages ORDER BY id`)).rows).toEqual(stored);
     const currentCard = { type: 'corner-open', cornerId: opened.cornerId, name: 'Widget', objective: 'Widget' };
     for (const page of [
@@ -2195,4 +2199,69 @@ it('HOLD-CITATION: human hold needs no citation and still blocks merge', async (
   const opened = await open();
   await phone.execute('setCornerHold', { cornerId: opened.cornerId }, HUMAN);
   expect(await cornerMergeGate(db, opened.cornerId, {number:1,headSha:'head'})).toMatchObject({held:true,open:false});
+});
+
+it('OBJECTIVE-BRIEF: reads the latest brief and renames navigation in place without authority changes or a wake', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await db.query(`ALTER TABLE corner_facts ALTER COLUMN objective DROP NOT NULL`);
+  await db.query(`UPDATE corner_facts SET objective=NULL WHERE corner_id=$1`, [opened.cornerId]);
+  await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,objective,author_id,source_room_id)
+    VALUES($1,2,'Latest authorized scope','Latest navigation',$2,$3)`, [opened.cornerId,RUBY,ROOM]);
+  expect(await readCornerObjective(db, opened.cornerId)).toBe('Latest navigation');
+  await db.query(`UPDATE corner_brief_revisions SET objective=NULL WHERE corner_id=$1 AND revision=2`,[opened.cornerId]);
+  expect(await readCornerObjective(db,opened.cornerId)).toBe('');
+  await db.query(`UPDATE corner_brief_revisions SET objective='Latest navigation' WHERE corner_id=$1 AND revision=2`,[opened.cornerId]);
+  expect((await phone.readRoom(opened.cornerId,HUMAN))?.room.about).toBe('Latest navigation');
+  expect((await phone.readCorners(ROOM,HUMAN))?.corners)
+    .toContainEqual(expect.objectContaining({corner: expect.objectContaining({id: opened.cornerId, about: 'Latest navigation'})}));
+  const before = (await db.query(`SELECT * FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision`,[opened.cornerId])).rows;
+  const facts = (await db.query(`SELECT * FROM corner_facts WHERE corner_id=$1`,[opened.cornerId])).rows;
+  const wakes = (await db.query(`SELECT * FROM agent_commands ORDER BY id`)).rows;
+  await daemon.execute('renameCorner',{...authority(turn),cornerId:opened.cornerId,name:'New-name',objective:'New navigation'},WORKER);
+  expect(await readCornerObjective(db,opened.cornerId)).toBe('New navigation');
+  expect((await daemon.execute('getCornerRestoreState',{cornerId:opened.cornerId},WORKER)).objective).toBe('New navigation');
+  expect((await db.query(`SELECT * FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision`,[opened.cornerId])).rows)
+    .toEqual(before.map(row => row.revision === 2 ? {...row,objective:'New navigation'} : row));
+  expect((await db.query(`SELECT * FROM corner_facts WHERE corner_id=$1`,[opened.cornerId])).rows).toEqual(facts);
+  expect((await db.query(`SELECT * FROM agent_commands ORDER BY id`)).rows).toEqual(wakes);
+});
+
+it('OBJECTIVE-BRIEF: no-brief objectives use the opening order and plan fills only missing navigation', async () => {
+  const opened = await daemon.execute('createCorner',{...authority(order),targetRoomId:ROOM,
+    name:'Scratch',objective:'Opening navigation',implementer:'worker'},RUBY);
+  const turn = await worker(opened.cornerId);
+  expect(await readCornerObjective(db,opened.cornerId)).toBe('Opening navigation');
+  expect((await phone.readRoom(opened.cornerId,HUMAN))?.room.about).toBe('Opening navigation');
+  await daemon.execute('renameCorner',{...authority(turn),cornerId:opened.cornerId,name:'Scratch-renamed',objective:'Edited navigation'},WORKER);
+  expect(await readCornerObjective(db,opened.cornerId)).toBe('Edited navigation');
+  const postPlan = (objective:string) => daemon.execute('postCornerPlan',{...authority(turn),cornerId:opened.cornerId,objective,items:[]},WORKER);
+  await postPlan('Must not replace');
+  expect(await readCornerObjective(db,opened.cornerId)).toBe('Edited navigation');
+  await db.query(`UPDATE agent_commands SET private_payload=private_payload-'objective' WHERE room_id=$1`,[opened.cornerId]);
+  await postPlan('Filled navigation');
+  expect(await readCornerObjective(db,opened.cornerId)).toBe('Filled navigation');
+  expect((await db.query(`SELECT count(*)::int n FROM corner_brief_revisions WHERE corner_id=$1`,[opened.cornerId])).rows[0]).toEqual({n:0});
+});
+
+it('OBJECTIVE-BRIEF: migration copies legacy objectives once into only the latest brief or opening order', async () => {
+  const opened = await open();
+  const scratch = await daemon.execute('createCorner',{...authority(order),targetRoomId:ROOM,
+    idempotencyKey:'legacy-scratch',name:'Scratch',objective:'Initial',implementer:'worker'},RUBY);
+  await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,author_id,source_room_id)
+    VALUES($1,2,'Scope',$2,$3)`,[opened.cornerId,RUBY,ROOM]);
+  await db.query(`UPDATE corner_facts SET objective='Legacy navigation' WHERE corner_id=ANY($1::uuid[])`,[[opened.cornerId,scratch.cornerId]]);
+  await db.query(`UPDATE agent_commands SET private_payload=private_payload-'objective' WHERE room_id=$1`,[scratch.cornerId]);
+  const briefs = (await db.query(`SELECT * FROM corner_brief_revisions ORDER BY corner_id,revision`)).rows;
+  const orders = (await db.query(`SELECT * FROM agent_commands ORDER BY id`)).rows;
+  await backfillCornerObjectives(db);
+  expect(await readCornerObjective(db,opened.cornerId)).toBe('Legacy navigation');
+  expect(await readCornerObjective(db,scratch.cornerId)).toBe('Legacy navigation');
+  expect((await db.query(`SELECT * FROM corner_brief_revisions ORDER BY corner_id,revision`)).rows)
+    .toEqual(briefs.map(row=>row.revision===2?{...row,objective:'Legacy navigation'}:row));
+  expect((await db.query(`SELECT * FROM agent_commands ORDER BY id`)).rows)
+    .toEqual(orders.map(row=>row.room_id===scratch.cornerId?{...row,private_payload:{...row.private_payload,objective:'Legacy navigation'}}:row));
+  await db.query(`UPDATE corner_facts SET objective='Stale legacy navigation' WHERE corner_id=ANY($1::uuid[])`,[[opened.cornerId,scratch.cornerId]]);
+  await backfillCornerObjectives(db);
+  expect(await readCornerObjective(db,opened.cornerId)).toBe('Legacy navigation');
+  expect(await readCornerObjective(db,scratch.cornerId)).toBe('Legacy navigation');
 });

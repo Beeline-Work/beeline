@@ -2488,8 +2488,9 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     githubRollupState = 'passed';
     // Nothing merges until the implementer asks.
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+    // Close stops only a claimed (running) assignment; pending ones are just cancelled.
     const assignmentsBefore = (await db.query(`SELECT DISTINCT turn_request_id FROM agent_commands
-      WHERE room_id=$1 AND agent_id=$2 AND action IN ('input','resume') AND state IN ('pending','claimed')`,
+      WHERE room_id=$1 AND agent_id=$2 AND action IN ('input','resume') AND state='claimed'`,
       [cornerId, A])).rowCount;
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,

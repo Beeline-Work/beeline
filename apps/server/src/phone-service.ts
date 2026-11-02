@@ -1,3 +1,4 @@
+import { cornerObjectiveSql } from './corner-objective.js';
 import { prepareMentionReplyInput, isMentionReplyInput } from './owed-mentions.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
@@ -373,7 +374,6 @@ interface RoomRow {
   created_by: string | null;
   name: string;
   about: string | null;
-  avatar: string | null;
   visibility: 'public' | 'invite-only';
   archived_at: Date | null;
   direct_participants: string[] | null;
@@ -677,7 +677,6 @@ function roomHeader(row: RoomHeaderRow, publicOrigin: string) {
     ...(row.parent_id ? { parentId: row.parent_id } : {}),
     name: row.name,
     ...(row.about ? { about: row.about } : {}),
-    ...(row.avatar ? { avatar: assetUrl(row.avatar, publicOrigin) } : {}),
     visibility: row.visibility,
     ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
     ...(row.reviewer_agent_id && row.reviewer_fallback_ids?.length
@@ -1553,7 +1552,7 @@ export class PhoneService {
     }>(
       `WITH deleted AS (
          DELETE FROM workspace_deletion_notices WHERE identity_id=$1
-         RETURNING workspace_id,workspace_name
+         RETURNING workspace_id
        ), visible AS (
        SELECT w.id, w.name, w.avatar, w.visibility, m.role, w.updated_at, summary.room_count, summary.attention
        FROM memberships m JOIN workspaces w ON w.id = m.workspace_id
@@ -1579,8 +1578,9 @@ export class PhoneService {
        SELECT visible.*,viewer.id viewer_id,viewer.kind viewer_kind,
          viewer.name viewer_name,viewer.handle viewer_handle,
          viewer.avatar viewer_avatar,viewer.face_id viewer_face_id,
-         (SELECT jsonb_agg(jsonb_build_object('workspaceId',workspace_id,
-            'workspaceName',workspace_name)) FROM deleted) deleted_notices
+         (SELECT jsonb_agg(jsonb_build_object('workspaceId',deleted.workspace_id,
+            'workspaceName',deletion.workspace_name))
+          FROM deleted JOIN workspace_deletions deletion USING(workspace_id)) deleted_notices
        FROM identities viewer LEFT JOIN visible ON true
        WHERE viewer.id=$1
        ORDER BY visible.updated_at DESC NULLS LAST,visible.id`,
@@ -1625,7 +1625,7 @@ export class PhoneService {
         id: row.id,name: row.name,
         ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
         visibility: row.visibility,role: row.role,updatedAt: unix(row.updated_at),
-        ...(row.about ? { about: row.about } : {}),createdAt: unix(row.created_at),
+        createdAt: unix(row.created_at),
       },
       ...(managedRooms ? { managerSettings: {
         visibility: row.visibility,allowFixSweep: row.allow_fix_sweep,rooms: managedRooms,
@@ -2935,7 +2935,7 @@ export class PhoneService {
              'parent',(SELECT (to_jsonb(parent) - 'github_installation_id') ||
                jsonb_build_object('github_installation_id',parent.github_installation_id::text)
                FROM rooms parent WHERE parent.id=authorized_room.parent_id),
-             'facts',(SELECT to_jsonb(f) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
+             'facts',(SELECT (to_jsonb(f)-'objective') || jsonb_build_object('objective',${cornerObjectiveSql('authorized_room')}) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
              'owed',(SELECT owed.owed FROM rooms c
                ${cornerOwedLookupSql('c', '$2')} WHERE c.id=authorized_room.id),
              'brief',(SELECT to_jsonb(brief) || jsonb_build_object('approver_name',approver.name,'author_handle',brief_author.handle)
@@ -3183,7 +3183,7 @@ export class PhoneService {
     const limit = `LIMIT ${(archived ? ARCHIVED_CORNER_PAGE : OPEN_CORNER_PAGE) + 1}`;
     const facts = cornerFactsSql('$2');
     return `
-      SELECT ${cornerRoomColumnsSql},${facts.columns},f.objective,lm.id latest_id,lm.text latest_text,lm.author_id latest_author_id,
+      SELECT ${cornerRoomColumnsSql},${facts.columns},${cornerObjectiveSql('c')} objective,lm.id latest_id,lm.text latest_text,lm.author_id latest_author_id,
         initiator.id initiator_id,initiator.name initiator_name,
         initiator.handle initiator_handle,initiator.avatar initiator_avatar,
         initiator.face_id initiator_face,
@@ -6680,8 +6680,8 @@ export class PhoneService {
         return false;
       }
       await database.query(
-        `INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind,lifecycle,title_generated)
-         VALUES($1,$2,'','human','{"lifecycle":"working","checks":"unknown"}',$3)`,
+        `INSERT INTO corner_facts(corner_id,commissioned_by,kind,lifecycle,title_generated)
+         VALUES($1,$2,'human','{"lifecycle":"working","checks":"unknown"}',$3)`,
         [id, viewerId, input.titleGenerated === true],
       );
       await advanceCorner(database, id, {
@@ -8494,6 +8494,11 @@ export class PhoneService {
       // history: they keep the tombstone as author, like messages do.
       for (const [table, column] of [
         ['messages', 'deleted_by'],
+        // Retained only for rolling-deployment and rollback compatibility.
+        ['corner_apps', 'author_agent_id'],
+        ['corner_app_installations', 'installed_by'],
+        ['corner_app_installations', 'developer_agent_id'],
+        ['corner_app_bindings', 'bound_by'],
         ['corner_brief_revisions', 'author_id'],
         ['corner_validation_stages', 'actor_id'],
         ['corner_merge_holds', 'actor_id'],
@@ -10505,7 +10510,7 @@ export class PhoneService {
     query: WorkspaceMemberListQuery = {},
   ): Promise<(WorkspaceMemberListView & {
     workspaceRow: {
-      id: string; name: string; about: string | null; avatar: string | null;
+      id: string; name: string; avatar: string | null;
       visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
       role: 'owner' | 'admin' | 'member' | 'spectator';
     };
@@ -10520,7 +10525,7 @@ export class PhoneService {
     const kind = query.kind === 'human' || query.kind === 'agent' ? query.kind : undefined;
     const result = await this.database.query<{
       workspace_row: {
-        id: string; name: string; about: string | null; avatar: string | null;
+        id: string; name: string; avatar: string | null;
         visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
         role: 'owner' | 'admin' | 'member' | 'spectator';
       };
@@ -10533,7 +10538,7 @@ export class PhoneService {
       people_total: string;
       agent_total: string;
     }>(`WITH visible_workspace AS (
-        SELECT w.id,w.name,w.about,w.avatar,w.visibility,w.allow_fix_sweep,w.created_at,w.updated_at,wm.role
+        SELECT w.id,w.name,w.avatar,w.visibility,w.allow_fix_sweep,w.created_at,w.updated_at,wm.role
         FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
         WHERE w.id=$1 AND wm.identity_id=$7 AND wm.removed_at IS NULL
       ), viewer_row AS (

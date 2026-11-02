@@ -161,3 +161,38 @@ change. No live prompt/tool change ships from this replay PR.
 
 Validation without subscription use:
 `node --import tsx --test scripts/prompt-subscription-replay.test.mjs`.
+
+## Archived prompt block measurement
+
+Run the offline archive analysis with Node alone (no login or model calls):
+
+```sh
+node scripts/prompt-blocks-analysis.mjs \
+  --archive /home/lunchbox/prompt-blocks/archive --out .beeline-proof/prompt-blocks
+```
+
+It streams Claude `projects/**/*.jsonl` and Codex `sessions/**/*.jsonl` records
+and writes only aggregate `prompt-blocks.md` and `prompt-blocks.json` reports.
+Without `--out`, both reports go to stdout. Windows split at the verified merges
+of #3127 (`2026-10-30T23:24:01Z`) and #3248 (`2026-11-02T04:30:16Z`). Repeat
+`--split <ISO time with timezone>` to replace those defaults; each boundary
+belongs to the following window.
+
+Rows group by window, turn kind and assembler section id. Turn counts are the
+presence denominator; medians use only turns where the block was delivered.
+Warm turns retain their known surface for classification, but omitted blocks
+are not counted as delivered. Classification uses current-task, capability and
+review markers, with nonhuman status-prefixed tasks counted as report wakes;
+unidentifiable turns use `other`. Task content never creates additional blocks.
+The enclosing `turn.session` prefix is split into its named session sections,
+avoiding double counting. Unrecognized delivered text is the fixed `other` block.
+
+This builtins-only measurement uses the assembler snapshots' approximation,
+`ceil(UTF-8 bytes / 4)`, rather than the subscription audit's dependency-based
+`o200k_base` counts. Share is a block's fraction of newly delivered prompt text
+(rounded to 0.01 percent), including unrecognized instructions, excluding retained
+history, tool schemas/results and provider framing. It cannot measure session
+instructions absent from the saved records or infer provider billing. Repeated
+provider token events and tool continuations do not create extra turns. Malformed
+lines and missing turn timestamps are reported as aggregate skip counts. Reports
+contain no session paths, message text, identity ids or Room ids.

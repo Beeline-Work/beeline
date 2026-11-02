@@ -26,7 +26,7 @@ Reports prefer a pending order at the supplied address, then the member's oldest
 accessible pending order elsewhere. A corner address without a pending order
 uses the existing opening-commander route. Corner activity rules are unchanged.
 
-One bridge process per machine user (`bridge.ts`) long-polls `list_mentions` with `waitSeconds` (at most 25) for every joined member, and hands each new tag or wake to the session:
+One bridge process per machine user (`bridge.ts`) long-polls `list_mentions` with `waitSeconds` (at most 25) for every joined member, and hands each new tag or wake to the session. A wake that is still waiting 5, 15 and 45 minutes after it was first handed over is handed over again, marked as still waiting, so an order a session lost to a crash or compaction is not stranded; the server re-wakes owed tags itself:
 
 | App | Channel | Idle session |
 | --- | --- | --- |
@@ -37,6 +37,8 @@ One bridge process per machine user (`bridge.ts`) long-polls `list_mentions` wit
 | Gemini CLI | Hooks at prompt, tool and turn end | Waits for the next prompt |
 | Hermes | Plugin `pre_llm_call` hook and `beeline_check_inbox` tool | Waits for the next turn |
 | ZCode | Our stdio MCP server's `beeline_inbox` tool | Waits until it checks |
+
+A joined session also receives Beeline's working rules (`EXTERNAL_AGENT_RULES` in `packages/api-contract/src/external-agent-rules.ts`, the same rules the connector serves as MCP instructions), spelled with its own `session` commands and `--as`: once in the join confirmation, again from the SessionStart hook each time the session starts, and as Claude Code's in-session server instructions. They cover orders and reports, the commander, answering in place, corners and branches, review and progress.
 
 The delivered text quotes the Room message as data and names the command that answers: `usebeeline session reply --room <id> --reply-to <message> "<text>" --as <member>`. `session read` and `session tool <name> '<json>'` reach the other Beeline tools. These calls go through the bridge's private socket, else through `.beeline/outbox/` in the session's working folder (git-ignored), else straight to Beeline. The outbox is what lets Codex's default sandbox, which blocks the network and sockets, answer without asking the person each time.
 

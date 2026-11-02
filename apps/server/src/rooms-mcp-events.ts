@@ -18,7 +18,7 @@ const MENTION_EVENT = {
 };
 /** Same wording list_mentions returns on a pending wake, so a webhook and a poll agree. */
 export const MCP_ORDER_WAKE_HINT = 'Do the work, then call report with this address.';
-export const MCP_WAKE_HINT = 'Handle it, then call no_reply_needed with this address if nothing needs posting.';
+export const MCP_WAKE_HINT = 'Handle it, then call no_reply_needed with this address and this wake\'s id as commandId if nothing needs posting.';
 export function mcpWakeHint(kind: string | null | undefined): string {
   return kind === 'order' ? MCP_ORDER_WAKE_HINT : MCP_WAKE_HINT;
 }
@@ -171,14 +171,15 @@ export async function queueMcpMentionEvents(db: SqlDatabase, member: string, roo
  * command write stays one statement.
  *
  * Parameters, in order, starting at `first`:
- * the live channel, the order hint, and the hint for every other wake.
+ * the live channel, the order hint, the hint for every other wake, and the review hint.
  */
 export function mcpCommandWakeSql(first: number): { cte: string; join: string; params: readonly string[] } {
   const channel = `$${first}`;
   const orderHint = `$${first + 1}`;
   const wakeHint = `$${first + 2}`;
+  const reviewHint = `$${first + 3}`;
   return {
-    params: [POSTGRES_LIVE_CHANNEL, MCP_ORDER_WAKE_HINT, MCP_WAKE_HINT],
+    params: [POSTGRES_LIVE_CHANNEL, MCP_ORDER_WAKE_HINT, MCP_WAKE_HINT, MCP_REVIEW_WAKE_HINT],
     cte: `queued_mcp_wakes AS (
       INSERT INTO rooms_mcp_event_deliveries(subscription_id,command_id,room_id,event_id,body)
       SELECT s.id,command.id,command.room_id,'evt_'||s.id||'_cmd_'||command.id,
@@ -187,7 +188,8 @@ export function mcpCommandWakeSql(first: number): { cte: string; join: string; p
             'roomId',command.room_id,'address',command.room_id,'commandId',command.id,'id',command.id,
             'reason',command.reason,'kind',command.private_payload->>'kind',
             'text',left(COALESCE(command.private_payload->>'text',source.text),16000),
-            'next',CASE WHEN command.private_payload->>'kind'='order' THEN ${orderHint}::text ELSE ${wakeHint}::text END),
+            'next',CASE WHEN command.reason='corner_review_dispatch' THEN ${reviewHint}::text
+              WHEN command.private_payload->>'kind'='order' THEN ${orderHint}::text ELSE ${wakeHint}::text END),
           'cursor',NULL)::text
       FROM inserted command
       LEFT JOIN messages source ON source.id=command.source_message_id
@@ -254,4 +256,15 @@ export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, li
     [row.event_id, finished, 30 * 2 ** (row.attempts - 1)]);
   }
   return delivered;
+}
+
+/**
+ * A reviewer dispatch asks for a review, not a plain acknowledgement: its text names the pull request and the
+ * head SHA to review. Webhooks, MCP Events and list_mentions all give it this hint.
+ */
+export const MCP_REVIEW_WAKE_HINT = 'Review this corner: read its brief, pull request and checks (read facets brief, pr and checks), then call approve_merge with the head SHA named above, or post your findings in the corner. Never approve work you implemented or authored.';
+
+/** The hint a wake carries, from its command's reason and private kind. */
+export function mcpWakeNext(kind: string | null | undefined, reason: string | null | undefined): string {
+  return reason === 'corner_review_dispatch' ? MCP_REVIEW_WAKE_HINT : mcpWakeHint(kind);
 }

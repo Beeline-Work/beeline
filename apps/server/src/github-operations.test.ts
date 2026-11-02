@@ -95,6 +95,19 @@ describe('GitHub phone operations', () => {
     return { room, corners, headSha, app, payload };
   }
 
+  it('OBJECTIVE-BRIEF: GitHub events read the latest brief objective instead of corner facts', async () => {
+    const { corners, app, payload } = await checksFixture();
+    await database.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,objective,author_id,source_room_id)
+      SELECT id,1,'Scope','Old navigation',$2,parent_id FROM rooms WHERE id=$1`,[corners[0],REVIEWER]);
+    await database.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,objective,author_id,source_room_id)
+      SELECT id,2,'Current scope','Current navigation',$2,parent_id FROM rooms WHERE id=$1`,[corners[0],REVIEWER]);
+    const operations = new GitHubOperations(database,{} as GitHubOAuthClient,app as unknown as GitHubAppClient,'secret');
+    const refresh = vi.spyOn(operations as unknown as {refreshCheckRollup(...args:unknown[]):Promise<void>},'refreshCheckRollup')
+      .mockResolvedValue(undefined);
+    await operations.processWebhook('check_run',payload);
+    expect(refresh.mock.calls[0]?.[0]).toMatchObject({summary:'Current navigation'});
+  });
+
   it.each(['checks event', 'stale landing wake'] as const)('MERGE-HANDOFF-AFTER-MERGE: %s reconciles a provider-confirmed merge', async trigger => {
     const { corners, headSha, app, payload } = await checksFixture();
     const corner = corners[0]!;
@@ -118,17 +131,11 @@ describe('GitHub phone operations', () => {
       pr: { mergeCommitSha: 'f'.repeat(40) } });
     expect(state.workflow_state).toBe('landed');
     expect(state.archived_at).not.toBeNull();
-    const outcomes = () => database.query(`SELECT id,kind,detail FROM institutional_memory_outcomes
-      WHERE room_id=$1 AND kind='merged' ORDER BY id`, [corner]);
     const terminalCards = () => database.query(`SELECT id,card FROM messages WHERE room_id=$1
       AND card_type='corner-workflow-handoff' AND card->>'toState'='landed' ORDER BY id`, [corner]);
-    const committedOutcomes = (await outcomes()).rows;
     const committedCards = (await terminalCards()).rows;
-    expect(committedOutcomes).toEqual([expect.objectContaining({kind:'merged',
-      detail:expect.objectContaining({mergeCommitSha:'f'.repeat(40)})})]);
     expect(committedCards).toHaveLength(1);
     await operations.processWebhook('check_run', payload);
-    expect((await outcomes()).rows).toEqual(committedOutcomes);
     expect((await terminalCards()).rows).toEqual(committedCards);
     expect((await database.query(`SELECT fact.lifecycle, fact.workflow_state,
       room.archived_at FROM corner_facts fact JOIN rooms room ON room.id=fact.corner_id

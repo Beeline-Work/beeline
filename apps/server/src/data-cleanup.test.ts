@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { compactPushClaims, compactWebhookDeliveries } from './database.js';
-import { cancelArchivedCornerAssignments } from './corner-close.js';
+import {
+  cancelArchivedCornerAssignments,
+  cancelCornerAgentCommands,
+  cancelStaleClosedCornerStops,
+} from './corner-close.js';
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PendingAttachmentCleanupLoop, sweepPendingAttachments } from './pending-attachment-cleanup.js';
 
 const HUMAN = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
+const OTHER_AGENT = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const CORNER = '33333333-3333-4333-8333-333333333333';
@@ -86,6 +92,54 @@ describe('release data cleanup', () => {
       WHERE room_id=$1`, [CORNER])).rows).toEqual([{ state: 'cancelled' }]);
     expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1`, [CORNER])).rows)
       .toEqual([{ status: 'cancelled' }]);
+  });
+
+  it('stops only the claimed turn when a corner closes, never a command that did not start', async () => {
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES
+      ($1,'human','Human'),($2,'agent','Agent'),($3,'agent','Other')`, [HUMAN, AGENT, OTHER_AGENT]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Space')`, [WORKSPACE]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [ROOM, WORKSPACE]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Open')`,
+      [CORNER, WORKSPACE, ROOM]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+      ($1,$2,$3,'member'),($1,$2,$4,'member')`, [WORKSPACE, ROOM, AGENT, OTHER_AGENT]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text)
+      VALUES('source',$1,$2,'work')`, [CORNER, HUMAN]);
+    await db.query(`INSERT INTO agent_commands
+      (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
+        root_command_id,root_source_message_id,agent_depth,state,generation_id,claimed_at,lease_expires_at)
+      VALUES('queued',$1,$2,'source','queued-turn','input','test','queued','source',0,'pending',NULL,NULL,NULL),
+        ('running',$1,$3,'source','running-turn','input','test','running','source',0,'claimed','g1',now(),
+          now()+interval '5 minutes')`, [CORNER, AGENT, OTHER_AGENT]);
+    await cancelCornerAgentCommands(new CornerAccessDatabase(db), CORNER);
+    expect((await db.query(`SELECT agent_id,turn_request_id,state FROM agent_commands
+      WHERE room_id=$1 AND action='stop'`, [CORNER])).rows).toEqual([
+      { agent_id: OTHER_AGENT, turn_request_id: 'running-turn', state: 'pending' },
+    ]);
+    expect((await db.query(`SELECT id,state FROM agent_commands
+      WHERE room_id=$1 AND action='input' ORDER BY id`, [CORNER])).rows).toEqual([
+      { id: 'queued', state: 'cancelled' },
+      { id: 'running', state: 'cancelled' },
+    ]);
+  });
+
+  it('settles day-old stops left pending in archived corners and keeps recent ones deliverable', async () => {
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES
+      ($1,'human','Human'),($2,'agent','Agent')`, [HUMAN, AGENT]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Space')`, [WORKSPACE]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [ROOM, WORKSPACE]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,archived_at)
+      VALUES($1,$2,$3,'Closed',now())`, [CORNER, WORKSPACE, ROOM]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text)
+      VALUES('source',$1,$2,'work'),('later',$1,$2,'more')`, [CORNER, HUMAN]);
+    await db.query(`INSERT INTO agent_commands
+      (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
+        root_command_id,root_source_message_id,agent_depth,created_at)
+      VALUES('old-stop',$1,$2,'source','old','stop','corner_close','old-stop','source',0,now()-interval '2 days'),
+        ('new-stop',$1,$2,'later','new','stop','corner_close','new-stop','later',0,now())`, [CORNER, AGENT]);
+    await expect(cancelStaleClosedCornerStops(db)).resolves.toBe(1);
+    expect((await db.query(`SELECT id,state FROM agent_commands WHERE room_id=$1 ORDER BY id`, [CORNER])).rows)
+      .toEqual([{ id: 'new-stop', state: 'pending' }, { id: 'old-stop', state: 'cancelled' }]);
   });
 
   it('expires terminal claims while retaining mobile read-clear claims for a week', async () => {

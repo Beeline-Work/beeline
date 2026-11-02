@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
-import { classify, easternSlot, runNightly } from './nightly-checks.mjs';
+import { classify, easternSlot, publishIssues, runNightly } from './nightly-checks.mjs';
 
 const job = (name, conclusion, attempt) => ({ name, conclusion, id: attempt, html_url: `https://example/jobs/${attempt}`, started_at: `2026-01-01T08:0${attempt}:00Z`, completed_at: `2026-01-01T08:0${attempt + 1}:00Z` });
 test('nightly schedule selects 03 Eastern in winter and summer and dispatches all on main', () => {
@@ -56,4 +56,36 @@ test('active release publishes an explicit skip without dispatching checks', asy
   } });
   assert.equal(result.skipped, true);
   assert.equal(calls.length, 1);
+});
+test('nightly result opens, updates and closes one issue per job for the fix loop', async () => {
+  const issues = [
+    { number: 1, title: 'Nightly Checks: steady is flaky' },
+    { number: 2, title: 'Nightly Checks: fixed failed twice' },
+    { number: 3, title: 'Nightly Checks: other failed twice' },
+    { number: 4, title: 'Nightly Checks: the nightly run did not finish' },
+    { number: 5, title: 'A pull request', pull_request: {} },
+  ];
+  const calls = [];
+  const api = async (method, endpoint, body) => { calls.push([method, endpoint, body]); return method === 'GET' ? issues : {}; };
+  const failing = { ...job('broken', 'failure', 1), failingTests: ['not ok 3 - sends'] };
+  const result = classify([
+    { sha: 'abc', jobs: [failing, job('steady', 'failure', 1), job('fixed', 'success', 1), job('other', 'skipped', 1)] },
+    { sha: 'abc', jobs: [job('broken', 'failure', 2), job('steady', 'success', 2)] },
+  ]);
+  const actions = await publishIssues({ api, result, runUrl: 'https://example/runs/9' });
+  assert.deepEqual(actions, [
+    ['open', 'Nightly Checks: broken failed twice'],
+    ['comment', 'Nightly Checks: steady is flaky'],
+    ['close', 'Nightly Checks: fixed failed twice'],
+    ['close', 'Nightly Checks: the nightly run did not finish'],
+  ]);
+  const opened = calls.find(([method, endpoint]) => method === 'POST' && endpoint === 'issues')[2];
+  assert.deepEqual(opened.labels, ['nightly-checks']);
+  assert.match(opened.body, /not ok 3 - sends/);
+  assert.ok(calls.some(([method, endpoint, body]) => method === 'PATCH' && endpoint === 'issues/2' && body.state === 'closed'));
+  // A skipped night changes nothing; an unfinished night is reported once.
+  calls.length = 0;
+  assert.deepEqual(await publishIssues({ api, result: { skipped: true }, runUrl: 'x' }), []);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await publishIssues({ api, result: { infrastructureError: 'boom' }, runUrl: 'x' }), [['comment', 'Nightly Checks: the nightly run did not finish']]);
 });

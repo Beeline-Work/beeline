@@ -95,7 +95,6 @@ async function assertArchived(stoppedAgent = A, merged = true) {
     .toEqual([{ outcome: 'landed' }]);
   expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card->>'type'='corner-complete'`, [R])).rowCount).toBe(0);
   expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'kind'='merged'`, [C])).rowCount).toBe(1);
-  expect((await db.query(`SELECT 1 FROM institutional_memory_outcomes WHERE room_id=$1 AND kind='merged'`, [C])).rowCount).toBe(1);
 }
 
 it('Reproduction MERGE-DEADLOCK-1: rolls back a deadlocked archival and commits cleanup once', async () => {

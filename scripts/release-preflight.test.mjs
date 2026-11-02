@@ -4,13 +4,14 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { compareReleasedRuntime, enforceReleasedRuntime } from './release-preflight-native.mjs';
 const require = createRequire(import.meta.url);
-const { triageFailure, watchRunners } = require('./release-preflight.cjs');
+const { triageFailure, recoverFailures, watchRunners } = require('./release-preflight.cjs');
 
 test('forced release failure creates exactly one triage issue even after redelivery and closure', async () => {
   const issues = [];
+  const failedJobs = [{name: 'server', conclusion: 'failure'}, {name: 'website', conclusion: 'success'}, {name: 'helper', conclusion: 'skipped'}];
   const github = {
-    paginate: async () => issues,
-    rest: { issues: {
+    paginate: async method => method === github.rest.actions.listJobsForWorkflowRun ? failedJobs : issues,
+    rest: { actions: { listJobsForWorkflowRun() {} }, issues: {
       listForRepo() {}, getLabel: async () => ({}),
       create: async data => { issues.push(data); return data; },
     } },
@@ -22,6 +23,8 @@ test('forced release failure creates exactly one triage issue even after redeliv
   await triageFailure({ github, context, run });
   assert.equal(issues.length, 1);
   assert.deepEqual(issues[0].labels, ['release-failure']);
+  assert.match(issues[0].body, /<!-- release-failed-jobs:\["server"\] -->/);
+  assert.match(issues[0].body, /Failed jobs: server/);
   await triageFailure({ github, context, run: {...run, id: 124, conclusion: 'cancelled', path: '.github/workflows/release-preflight.yml' } });
   assert.equal(issues.length, 2);
   await triageFailure({ github, context, run: {...run, id: 125, conclusion: 'success' } });
@@ -66,14 +69,133 @@ test('failure intake holds serialization until a new issue is visible in eventua
   const issues = [];
   let waits = 0, creates = 0;
   const github = {
-    paginate: async () => waits < 2 ? [] : issues,
-    rest: {issues:{listForRepo(){},getLabel:async()=>({}),create:async data=>{creates++;issues.push(data);return {data:{number:42}};}}},
+    paginate: async method => method === github.rest.actions.listJobsForWorkflowRun ? [] : waits < 2 ? [] : issues,
+    rest: {actions:{listJobsForWorkflowRun(){}},issues:{listForRepo(){},getLabel:async()=>({}),create:async data=>{creates++;issues.push(data);return {data:{number:42}};}}},
   };
   const args = {github, context:{repo:{}}, run:{id:99,path:'.github/workflows/release-preflight.yml',conclusion:'failure'},wait:async()=>{waits++;}};
   await triageFailure(args);
   await triageFailure(args);
   assert.equal(waits,2);
   assert.equal(creates,1);
+});
+
+function recoveryFixture() {
+  const issues = [], comments = [], updates = [];
+  let failClose = false;
+  const jobs = [{name: 'server', conclusion: 'success'}, {name: 'helper', conclusion: 'skipped'}, {name: 'website', conclusion: 'success'}];
+  const run = {id: 200, path: '.github/workflows/unified-release.yml', conclusion: 'success', run_started_at: '2026-11-02T05:00:00Z', html_url: 'https://github.com/test/test/actions/runs/200'};
+  const context = {repo: {owner: 'test', repo: 'test'}, payload: {workflow_run: run}};
+  const github = {
+    rest: {
+      actions: {listJobsForWorkflowRun() {}},
+      issues: {
+        listForRepo() {}, listComments() {},
+        createComment: async data => { comments.push(data); },
+        update: async data => {
+          if (failClose) { failClose = false; throw new Error('close failed'); }
+          updates.push(data);
+          issues.find(issue => issue.number === data.issue_number).state = data.state;
+        },
+      },
+    },
+    paginate: async (method, args) => {
+      if (method === github.rest.actions.listJobsForWorkflowRun) {
+        assert.equal(args.filter, 'latest');
+        return jobs;
+      }
+      if (method === github.rest.issues.listComments) return comments.filter(comment => comment.issue_number === args.issue_number);
+      assert.equal(args.state, 'open');
+      assert.equal(args.labels, 'release-failure');
+      return issues.filter(issue => issue.state === 'open');
+    },
+  };
+  const add = (title, failedJobs, extra = {}) => {
+    const issue = {number: issues.length + 1, state: 'open', created_at: '2026-11-01T05:00:00Z', title,
+      body: failedJobs === undefined ? 'Old failure' : `<!-- release-failed-jobs:${JSON.stringify(failedJobs)} -->`, ...extra};
+    issues.push(issue);
+    return issue;
+  };
+  return {github, context, run, issues, jobs, comments, updates, add, failNextClose: () => { failClose = true; }};
+}
+
+test('successful preflight closes all earlier preflight issues with recovery links, leaving release failures open', async () => {
+  const f = recoveryFixture();
+  f.run.path = '.github/workflows/release-preflight.yml';
+  f.add('Release preflight: failure (run 100)');
+  f.add('Release preflight: cancelled (run 101)');
+  f.add('Unified production release: failure (run 102)', ['server']);
+  await recoverFailures(f);
+  assert.deepEqual(f.issues.map(issue => issue.state), ['closed', 'closed', 'open']);
+  assert.equal(f.comments.length, 2);
+  assert.ok(f.comments.every(comment => comment.body.includes(f.run.html_url)));
+  assert.ok(f.updates.every(update => update.state_reason === 'completed'));
+});
+
+test('unified recovery requires every recorded failed job to succeed; skipped or absent jobs keep issues open', async () => {
+  const f = recoveryFixture();
+  f.add('Unified production release: failure (run 100)', ['server', 'website']);
+  f.add('Production release · @firstmate · receipt: failure (run 101)', ['website']);
+  f.add('Unified production release: failure (run 102)', ['server', 'helper']);
+  f.add('Unified production release: failure (run 103)', ['mobile_native_ios']);
+  f.add('Release preflight: failure (run 104)', ['native']);
+  await recoverFailures(f);
+  assert.deepEqual(f.issues.map(issue => issue.state), ['closed', 'closed', 'open', 'open', 'open']);
+  assert.equal(f.comments.length, 2);
+});
+
+test('OTA-only success never closes a preflight issue', async () => {
+  const f = recoveryFixture();
+  f.jobs.splice(0, f.jobs.length, {name: 'mobile_ota', conclusion: 'success'});
+  f.add('Release preflight: failure (run 100)', ['Native fingerprint and released runtime']);
+  await recoverFailures(f);
+  assert.equal(f.issues[0].state, 'open');
+  assert.equal(f.comments.length, 0);
+});
+
+test('legacy unified failures require all component jobs to succeed without skips', async () => {
+  const f = recoveryFixture();
+  f.add('Unified production release: failure (run 100)');
+  await recoverFailures(f);
+  assert.equal(f.issues[0].state, 'open');
+  f.jobs[1].conclusion = 'success';
+  f.jobs.push({name: 'release_proof', conclusion: 'skipped'});
+  await recoverFailures(f);
+  assert.equal(f.issues[0].state, 'closed');
+});
+
+test('recovery leaves newer issues, unrelated issues and pull requests untouched', async () => {
+  const f = recoveryFixture();
+  f.add('Unified production release: failure (run 100)', ['server'], {created_at: f.run.run_started_at});
+  f.add('Unified production release: failure (run 101)', ['server'], {created_at: '2026-11-02T05:01:00Z'});
+  f.add('Unrelated failure', ['server']);
+  f.add('Unified production release: failure (run 102)', ['server'], {pull_request: {}});
+  await recoverFailures(f);
+  assert.equal(f.updates.length, 0);
+  assert.equal(f.comments.length, 0);
+});
+
+test('recovery is idempotent on redelivery and reruns, including a retry after comment creation', async () => {
+  const f = recoveryFixture();
+  f.add('Unified production release: failure (run 100)', ['server']);
+  f.failNextClose();
+  await assert.rejects(recoverFailures(f), /close failed/);
+  await recoverFailures(f);
+  await recoverFailures(f);
+  f.run.run_attempt = 2;
+  await recoverFailures(f);
+  assert.equal(f.comments.length, 1);
+  assert.equal(f.updates.length, 1);
+});
+
+test('recovery ignores unsuccessful and unrelated workflow runs', async () => {
+  const f = recoveryFixture();
+  f.add('Unified production release: failure (run 100)', ['server']);
+  f.run.conclusion = 'failure';
+  await recoverFailures(f);
+  f.run.conclusion = 'success';
+  f.run.path = '.github/workflows/checks.yml';
+  await recoverFailures(f);
+  assert.equal(f.updates.length, 0);
 });
 
 

@@ -62,6 +62,8 @@ export interface HookInput {
   state?: string;
   pid?: number;
   env?: NodeJS.ProcessEnv;
+  /** The session's identity and Beeline rules, put in front of the model when its session starts. */
+  rules?: (joined: JoinedSession) => string;
 }
 
 /** The joined record this hook's session acts as: its own conversation first, else its folder's. */
@@ -88,8 +90,9 @@ export function runHook(dir: string, input: HookInput, now = Date.now()): string
   const joined = joinedFor(readState(dir).sessions, agent, sessionId, cwd);
   if (!joined || !takesMail(agent, event)) return '';
   const waiting = takeInbox(dir, joined.key);
-  // Say who it is on Beeline once, at session start.
-  const text = waiting;
+  // Say who it is on Beeline and how to work there once, at session start: a reopened or compacted session
+  // otherwise knows only the text of its next delivery.
+  const text = [ev === 'start' && input.rules ? input.rules(joined) : '', waiting].filter(Boolean).join('\n\n');
   if (!text) return '';
   return formatFor(agent, event, text);
 }

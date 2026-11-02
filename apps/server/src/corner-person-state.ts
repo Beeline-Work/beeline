@@ -26,7 +26,7 @@ CREATE INDEX IF NOT EXISTS corner_person_state_identity_idx ON corner_person_sta
 -- authorize themselves: even a saved preference needs a live parent member.
 CREATE OR REPLACE VIEW room_access AS
 SELECT member.id,member.workspace_id,member.room_id,member.identity_id,member.role,
-  member.generation,member.identity_profile,member.invited_by,member.joined_at,
+  1::bigint generation,NULL::jsonb identity_profile,member.invited_by,member.joined_at,
   member.removed_at,member.push_muted,member.event_subscriptions
 FROM memberships member
 WHERE member.room_id IS NULL OR EXISTS (
@@ -73,10 +73,10 @@ export async function migrateCornerPersonState(database: SqlDatabase): Promise<n
            FROM memberships member JOIN rooms corner ON corner.id=member.room_id
            LEFT JOIN memberships parent ON parent.room_id=corner.parent_id AND parent.identity_id=member.identity_id
            WHERE member.id=ANY($1::bigint[])
-         ) INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions,identity_profile,generation,created_at,push_muted)
+         ) INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions,created_at,push_muted)
          SELECT room_id,identity_id,CASE WHEN subscriptions<>inherited_subscriptions THEN subscriptions END,
-           identity_profile,generation,joined_at,push_muted FROM legacy
-         WHERE subscriptions<>inherited_subscriptions OR identity_profile IS NOT NULL OR generation<>1 OR push_muted
+           joined_at,push_muted FROM legacy
+         WHERE subscriptions<>inherited_subscriptions OR push_muted
          ON CONFLICT(corner_id,identity_id) DO NOTHING RETURNING corner_id`,
         [ids, SUBSCRIBABLE_EVENT_KINDS],
       );

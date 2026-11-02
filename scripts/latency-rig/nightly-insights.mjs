@@ -3,7 +3,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { caseKey } from './nightly-history.mjs';
-import { MAX_CLOCK_UNCERTAINTY_MS } from './device-clock.mjs';
+import { compareNightly, summarizeLoad, contention } from './nightly-compare.mjs';
 
 export function latencyLoops(current, verdict, updatedAt = new Date().toISOString()) {
   if (!verdict.final) throw new Error('Only a final nightly verdict may be published');
@@ -12,10 +12,11 @@ export function latencyLoops(current, verdict, updatedAt = new Date().toISOStrin
   const loop = result.loops?.find((item) => item.slug === 'latency');
   if (!loop || !Array.isArray(loop.charts)) throw new Error('Missing latency loop charts');
   const report = verdict.report;
-  const measured = report?.commit === verdict.head && report.complete === true && report.clockCalibrated === true &&
-    Number.isFinite(report.maxClockUncertaintyMs) && report.maxClockUncertaintyMs >= 0 && report.maxClockUncertaintyMs <= MAX_CLOCK_UNCERTAINTY_MS;
-  const rows = measured ? (report.rows ?? []).filter((row) => row && row.samples >= 20 &&
-    Number.isFinite(row.p50Ms) && row.p50Ms >= 0 && Number.isFinite(row.p95Ms) && row.p95Ms >= row.p50Ms) : [];
+  const contended = verdict.contended === true || contention(summarizeLoad(verdict.load ?? verdict.hostLoad));
+  const measured = verdict.capture?.pass !== false && compareNightly(report).capture.pass &&
+    report?.commit === verdict.head && contended === false && report.rows.every((row) =>
+      Number.isFinite(row.p50Ms) && row.p50Ms >= 0 && row.p95Ms >= row.p50Ms);
+  const rows = measured ? report.rows : [];
   for (const row of rows) {
     const key = caseKey(row);
     const seriesKey = (percentile) => `case:${key}:${percentile}`;
@@ -36,7 +37,7 @@ export function latencyLoops(current, verdict, updatedAt = new Date().toISOStrin
     }
   }
   const note = rows.length ? `Measured ${rows.length} local emulator cases on ${verdict.night}; ${verdict.pass ? 'PASS' : 'FAIL'}. Per-case p50/p95 are measured native-frame timings, not production phone timings.` :
-    `No usable capture on ${verdict.night}; no latency point added. Next measurement: the next scheduled 03:00 Eastern run.`;
+    `${contended === true ? 'Contended capture' : 'No usable capture'} on ${verdict.night}; no latency point added. Next measurement: the next scheduled 03:00 Eastern run.`;
   loop.note = note;
   loop.log ??= [];
   loop.log = [{ date: verdict.night, text: `${note} Run ${verdict.runId}. ${verdict.failures.join('; ')}` },

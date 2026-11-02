@@ -1,3 +1,5 @@
+import { readFile } from 'node:fs/promises';
+import { priorReleaseCornerListSql } from './fixtures/sentry-22-load-corners.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Pool } from 'pg';
@@ -10,7 +12,6 @@ import {
   MESSAGE_SEARCH_DOCUMENT_MAX_BYTES,
   backfillInstitutionalMemoryRollout,
   backfillPerItemEventSubscriptions,
-  backfillYoloModeDefault,
   MESSAGE_CURSOR_MS_SQL,
   migrate,
   APP_POOL_WAIT_TIMEOUT_MS,
@@ -1188,7 +1189,6 @@ describe('the yolo default migration', () => {
   const OWNER = 'a'.repeat(64);
   const ON_AGENT = '1'.repeat(64);
   const OFF_AGENT = '2'.repeat(64);
-  const ALREADY_ON_AGENT = '3'.repeat(64);
   const FRESH_AGENT = '4'.repeat(64);
   let database: PgliteDatabase;
   beforeEach(async () => {
@@ -1199,28 +1199,23 @@ describe('the yolo default migration', () => {
   });
   afterEach(() => database.close());
 
-  it('flips every existing agent, including one an owner had explicitly turned off, and reports the count', async () => {
+  it('keeps an owner\'s explicit yolo off across a release migration', async () => {
     await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','On'),($2,'agent','Off'),($3,'agent','AlreadyOn')`,
-      [ON_AGENT, OFF_AGENT, ALREADY_ON_AGENT],
+      `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Off'),($2,'agent','On')`,
+      [OFF_AGENT, ON_AGENT],
     );
-    // Simulates rows written before this migration: the pre-change default (false),
-    // an owner's explicit off, and an agent an owner had already turned on.
     await database.query(
-      `INSERT INTO agents(agent_id,owner_id,yolo_mode) VALUES($1,$4,false),($2,$4,false),($3,$4,true)`,
-      [ON_AGENT, OFF_AGENT, ALREADY_ON_AGENT, OWNER],
+      `INSERT INTO agents(agent_id,owner_id,yolo_mode) VALUES($1,$3,false),($2,$3,true)`,
+      [OFF_AGENT, ON_AGENT, OWNER],
     );
-    await expect(backfillYoloModeDefault(database)).resolves.toBe(2);
+    await migrate(database);
     const rows = await database.query<{ agent_id: string; yolo_mode: boolean }>(
       `SELECT agent_id,yolo_mode FROM agents ORDER BY agent_id`,
     );
     expect(rows.rows).toEqual([
       { agent_id: ON_AGENT, yolo_mode: true },
-      { agent_id: OFF_AGENT, yolo_mode: true },
-      { agent_id: ALREADY_ON_AGENT, yolo_mode: true },
+      { agent_id: OFF_AGENT, yolo_mode: false },
     ]);
-    // A second run is a no-op: nothing left to flip.
-    await expect(backfillYoloModeDefault(database)).resolves.toBe(0);
   });
 
   it('defaults a newly created agent to yolo on', async () => {
@@ -1615,23 +1610,69 @@ describe('the agent_grants kind vocabulary migration', () => {
   });
 });
 
-describe('retired app storage', () => {
-  it('drops old tables in dependency order and stays safe on a repeated migration', async () => {
-    const database = new PgliteDatabase();
-    const prefix = ['corner', 'app'].join('_');
-    const tables = [`${prefix}s`, `${prefix}_bindings`, `${prefix}_installations`];
+describe('retired app storage — SENTRY-22', () => {
+  const parent = '10000000-0000-4000-8000-000000000001';
+  const corner = '10000000-0000-4000-8000-000000000002';
+  const installation = '10000000-0000-4000-8000-000000000003';
+  const instance = '10000000-0000-4000-8000-000000000004';
+  const viewer = 'a'.repeat(64);
+
+  async function seedCorner(database: SqlDatabase) {
+    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Rollout')`, [DEFAULT_WORKSPACE_ID]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Reader')`, [viewer]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Rollout Room')`,
+      [parent, DEFAULT_WORKSPACE_ID]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Visible corner')`,
+      [corner, DEFAULT_WORKSPACE_ID, parent]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$2,'owner'),($1,$3,$2,'owner')`, [DEFAULT_WORKSPACE_ID, viewer, parent]);
+  }
+
+  async function readPriorRelease(database: SqlDatabase) {
+    const result = await database.query<{ corner_rows: Array<{ id: string; app_manifest: unknown }> }>(
+      priorReleaseCornerListSql(), [parent, viewer]);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0].corner_rows.map(row => row.id)).toEqual([corner]);
+    return result.rows[0].corner_rows[0];
+  }
+
+  it('lets the prior release list corners after retirement, including repair of already dropped tables', async () => {
+    const database = await migratedDatabase();
     try {
-      await database.query(`CREATE TABLE ${tables[2]} (id integer PRIMARY KEY)`);
-      await database.query(`CREATE TABLE ${tables[1]} (installation_id integer REFERENCES ${tables[2]}(id))`);
-      await database.query(`CREATE TABLE ${tables[0]} (id integer PRIMARY KEY)`);
-      await database.query(`INSERT INTO ${tables[2]} VALUES (1)`);
-      await database.query(`INSERT INTO ${tables[1]} VALUES (1)`);
+      await seedCorner(database);
+      // Model a database where #3221 already ran; repairing only future upgrades is insufficient.
+      await database.query(`DROP TABLE IF EXISTS corner_apps;
+        DROP TABLE IF EXISTS corner_app_bindings;
+        DROP TABLE IF EXISTS corner_app_installations;`);
+      await expect(readPriorRelease(database)).rejects.toThrow('corner_app_bindings');
+      await migrate(database);
+      expect((await readPriorRelease(database)).app_manifest).toBeNull();
+      await migrate(database);
+      await readPriorRelease(database);
+    } finally {
+      await database.close();
+    }
+  });
+
+  it('keeps existing retired rows and rollback writes across repeated migrations', async () => {
+    const database = await migratedDatabase();
+    try {
+      await seedCorner(database);
+      await database.query(await readFile(new URL('./fixtures/sentry-22-app-schema.sql', import.meta.url), 'utf8'));
+      await database.query(`INSERT INTO corner_app_installations(id,workspace_id,installed_by,manifest)
+        VALUES($1,$2,$3,'{"name":"Legacy"}')`, [installation, DEFAULT_WORKSPACE_ID, viewer]);
+      await database.query(`INSERT INTO corner_app_bindings(corner_id,installation_id,instance_id,bound_by)
+        VALUES($1,$2,$3,$4)`, [corner, installation, instance, viewer]);
+      await database.query(`INSERT INTO corner_apps(corner_id,slug,author_agent_id,definition)
+        VALUES($1,'legacy',$2,'{"command":"legacy"}')`, [corner, viewer]);
       await migrate(database);
       await migrate(database);
-      const remaining = await database.query<{ tablename: string }>(
-        'SELECT tablename FROM pg_tables WHERE tablename = ANY($1)', [tables],
-      );
-      expect(remaining.rows).toEqual([]);
+      expect((await readPriorRelease(database)).app_manifest).toEqual({ name: 'Legacy' });
+      expect((await database.query(`SELECT definition FROM corner_apps WHERE corner_id=$1`, [corner])).rows)
+        .toEqual([{ definition: { command: 'legacy' } }]);
+      // Previous images can still write if rolled back. New images expose no app surfaces.
+      await database.query(`UPDATE corner_app_installations SET manifest='{"name":"Rollback"}' WHERE id=$1`, [installation]);
+      expect((await readPriorRelease(database)).app_manifest).toEqual({ name: 'Rollback' });
     } finally {
       await database.close();
     }

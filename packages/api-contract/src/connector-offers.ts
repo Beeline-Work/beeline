@@ -25,7 +25,7 @@ export function isConnectorOfferIntent(value: unknown): value is ConnectorOfferI
   return (CONNECTOR_OFFER_INTENTS as readonly string[]).includes(value as string);
 }
 
-export const CONNECTOR_OFFER_STATUSES = ['pending', 'connecting', 'accepted', 'denied'] as const;
+export const CONNECTOR_OFFER_STATUSES = ['pending', 'connecting', 'accepted', 'denied', 'failed'] as const;
 export type ConnectorOfferStatus = (typeof CONNECTOR_OFFER_STATUSES)[number];
 
 export function isConnectorOfferStatus(value: unknown): value is ConnectorOfferStatus {

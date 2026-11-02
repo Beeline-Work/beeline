@@ -1,7 +1,7 @@
 # Publishes the free starter agent base image after a successful production
 # release that shipped the server. It runs outside the release so it never
 # delays the release record or holds a production host runner during it, and
-# it is best effort: a failure leaves Machines on the previous image.
+# publication failures fail visibly; the server ref is promoted only after publish.
 name: Free starter agent image
 
 on:
@@ -22,6 +22,8 @@ jobs:
     if: github.event.workflow_run.conclusion == 'success'
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 18
+    outputs:
+      image_ref: ${{ steps.publish.outputs.image_ref }}
     steps:
       # The release record lives on the GitHub Release the run published.
       - uses: actions/checkout@v4
@@ -61,29 +63,60 @@ jobs:
         with:
           platform: linux-x64
       - name: Publish the free starter agent base image
+        id: publish
         if: steps.release.outputs.sha != ''
         shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
           image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
-          if BEELINE_RELEASE_SHA="$RELEASE_SHA" BEELINE_RELEASE_VERSION="$RELEASE_VERSION" \
-            bash scripts/stage-free-agent-helper.sh \
-            && flyctl deploy . \
-            --local-only \
-            --config fly.beeline-free-agents.toml \
-            --dockerfile infra/free-agent/Dockerfile \
-            --app beeline-free-agents \
+          BEELINE_RELEASE_SHA="$RELEASE_SHA" BEELINE_RELEASE_VERSION="$RELEASE_VERSION" \
+            bash scripts/stage-free-agent-helper.sh
+          flyctl deploy . \
+            --local-only --config fly.beeline-free-agents.toml \
+            --dockerfile infra/free-agent/Dockerfile --app beeline-free-agents \
             --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
             --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
-            --image-label "$image_label" --build-only --push --yes \
-            && flyctl auth docker \
-            && docker tag "registry.fly.io/beeline-free-agents:$image_label" registry.fly.io/beeline-free-agents:latest \
-            && docker push registry.fly.io/beeline-free-agents:latest; then
-            echo "Published registry.fly.io/beeline-free-agents:$image_label and :latest"
-          else
-            echo "::warning::Free starter agent image was not published; Machines keep the previous image"
-          fi
+            --image-label "$image_label" --build-only --push --yes
+          flyctl auth docker
+          image="registry.fly.io/beeline-free-agents:$image_label"
+          docker manifest inspect --verbose "$image" > "$RUNNER_TEMP/free-agent-manifest.json"
+          digest=$(node -e 'const m=require(process.argv[1]); const d=m.Descriptor?.digest; if(!/^sha256:[0-9a-f]{64}$/.test(d)) throw Error("Missing published image digest"); console.log(d)' "$RUNNER_TEMP/free-agent-manifest.json")
+          echo "image_ref=$image@$digest" >> "$GITHUB_OUTPUT"
         env:
           FLY_API_TOKEN: ${{ secrets.FLY_FREE_AGENT_IMAGE_TOKEN }}
           RELEASE_SHA: ${{ steps.release.outputs.sha }}
           RELEASE_VERSION: ${{ steps.release.outputs.version }}
+
+  promote_image_ref:
+    needs: free_agent_image
+    if: needs.free_agent_image.outputs.image_ref != ''
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 10
+    concurrency:
+      group: deploy-beeline-server
+      cancel-in-progress: false
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Use the runner's server deployment authority, not the image-only token.
+      # Staging plus one-at-a-time updates keeps the other server serving turns.
+      - name: Promote and verify the published image on every server
+        env:
+          IMAGE_REF: ${{ needs.free_agent_image.outputs.image_ref }}
+        run: |
+          set -euo pipefail
+          flyctl secrets set --app beeline-server --stage "FLY_FREE_AGENT_IMAGE=$IMAGE_REF"
+          flyctl machine list --app beeline-server --json > "$RUNNER_TEMP/free-agent-servers.json"
+          node -e 'for(const m of require(process.argv[1]).filter(m=>m.state!=="destroyed")) console.log(m.id)' "$RUNNER_TEMP/free-agent-servers.json" > "$RUNNER_TEMP/free-agent-server-ids"
+          test -s "$RUNNER_TEMP/free-agent-server-ids"
+          while read -r machine; do
+            flyctl machine update "$machine" --app beeline-server --yes --wait-timeout 300
+            actual=$(flyctl machine exec "$machine" --app beeline-server 'printenv FLY_FREE_AGENT_IMAGE')
+            if [ "$actual" != "$IMAGE_REF" ]; then
+              echo "::error::Server $machine still uses an older free-agent image"
+              exit 1
+            fi
+            curl --fail --silent --show-error --retry 5 --retry-all-errors --retry-delay 2 \
+              --header "fly-force-instance-id: $machine" https://server.usebeeline.app/readyz
+          done < "$RUNNER_TEMP/free-agent-server-ids"

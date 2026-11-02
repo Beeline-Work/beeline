@@ -36,7 +36,7 @@ import { waitForConnection } from './connection-wait.js';
 import { machineSquireReport, queueSquireWork, squireAssignments, squireMachineAddress,
   squireMachineId, squireWorkStatus, reportSquireWork, recordSquireSignIn, forgetSquireSignIn,
   squireSignedIn } from './squire-machine.js';
-import { completeSquireMachineOffers } from './connector-offer-completion.js';
+import { completeSquireMachineOffers, failConnectingOffers } from './connector-offer-completion.js';
 import { activeCornerHolds, setCornerHold } from './corner-holds.js';
 import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
 import { renderAgentAvatar } from './agent-avatar.js';
@@ -2700,6 +2700,7 @@ export class DaemonService {
       )
     ).rows[0];
     if (!row) throw new Error('connector not found for this helper');
+    if (input.errorMessage) await this.database.transaction(db => failConnectingOffers(db, { agentId, connectorId: row.id }));
     if (input.signIn?.url) await this.notifyTailscaleSignIn(row.id, input.signIn.url, agentId);
     if (row.connector_type === 'registry-mcp' && input.signIn?.url && input.signIn.attemptId)
       await this.resumeRegistrySignIn(row, input.signIn);

@@ -3413,6 +3413,21 @@ describe('Room message variant components', () => {
       expect(onContinue).toHaveBeenCalledWith('offer-1', 'trusty-squire', 'connector-row-1');
     });
 
+    it('settles a failed install and offers Retry to the authorized person', () => {
+      const onAccept = vi.fn();
+      const failed = render(<ConnectorOfferCard
+        message={message({ connectorOffer: { ...pending.connectorOffer!, status: 'failed' } })}
+        viewerIsAgent={false} viewerPubkey="zeke" actionId={null}
+        onAccept={onAccept} onContinue={vi.fn()} onOpenWorkbench={vi.fn()}
+      />);
+      expect(failed.root.findByProps({ testID: 'connector-offer-settled' })).toBeDefined();
+      expect(failed.root.findByProps({ testID: 'connector-offer-offer-1-outcome' }).props.children)
+        .toBe('Connection failed. Retry to continue.');
+      act(() => failed.root.findByProps({ testID: 'connector-offer-offer-1-accept' }).props.onPress());
+      expect(onAccept).toHaveBeenCalledWith('offer-1', 'trusty-squire');
+      expect(failed.root.findAllByProps({ testID: 'connector-offer-offer-1-continue' })).toHaveLength(0);
+    });
+
     it('retains the automatic reconnect note while sign-in is in progress', () => {
       const reconnecting = render(
         <ConnectorOfferCard

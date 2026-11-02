@@ -2,6 +2,8 @@
 
 Every newly created Workspace gets a free starter team, Beebee and Luna, owned
 by its creator, when the owner has room for both under the free-agent limit.
+Otherwise #general explains where the existing starter agents live and why a
+new team was not created.
 Existing Workspaces and the operator single-agent addition keep their existing
 behavior. Each agent runs on its own small Fly Machine in the `beeline-free-agents` app, which sleeps after
 a minute without work. People who only join an existing Workspace by invite get
@@ -64,7 +66,11 @@ soul. Existing free agents keep their names.
   `sleeping` and asks Fly to suspend the Machine. If suspend fails, it stops the
   Machine. A helper behind the announced release asks for `refresh` and gets a stop,
   so its next boot installs the new release. The helper never updates in place.
-- **Wake.** Every committed `agent_commands` INSERT for a free agent calls
+- **Wake.** Before starting an existing Machine, the server compares its image
+  with the configured published digest and updates it while keeping its complete
+  configuration and persistent rootfs. Cold boot reconciles the broker marker
+  directory anchor after an image replacement, preserving its account binding.
+  Every committed `agent_commands` INSERT for a free agent calls
   `FreeAgentService.wake`. A committed connector-assignment notification also
   wakes a free agent with active connector installation or sign-in work, through
   the same budget and start-limit fences. The leader sweep retries both kinds of
@@ -294,9 +300,12 @@ The isolated entry is `infra/free-agent/hosted-install-proof.mjs`; evidence and
 remaining full-account checks are in [the onboarding connection proof](onboarding-connect-proof.md).
 
 
-The unified release's server leg builds `infra/free-agent/Dockerfile` and pushes
-`registry.fly.io/beeline-free-agents:<label>` and `:latest`. A failed push only
-warns. `scripts/build-free-agent-image.sh` builds the same image by hand.
+After a server release, `.github/workflows/free-agent-image.yml` builds
+`infra/free-agent/Dockerfile`, publishes its immutable digest, stages that digest
+as the server's `FLY_FREE_AGENT_IMAGE`, and updates server Machines one at a time.
+It verifies the running image setting on each server and fails on an older ref.
+Image publication failures fail this independent workflow without holding the
+main release open. `scripts/build-free-agent-image.sh` builds the same image by hand.
 `npm run prove:free-agent:docker-machines` stands in for the Machines API with
 Docker for a local end-to-end run (suspend = `docker pause`). `npm run
 prove:free-agent` runs the end-to-end proof and the rewake latency measurement
@@ -381,3 +390,25 @@ this proof does not claim a native app or live model run.
 ## Next-morning check-in
 
 The one-time outside-person check-in uses a normal starter-agent command, Room reply and push delivery. Configuration, email behavior and isolated proof: [next-morning check-in](next-day-checkin.md).
+
+## Hosted Squire install recovery
+
+Reproduction `fb_32e642993b10b09e8a03bb7f`: helper-reported install failure settles
+the connector offer as `failed`, resumes its waiting request and frees the open
+card slot. The person can Retry the same card, or the agent can offer again.
+The maintenance sweep fails connecting offers after fifteen minutes and releases
+stale helper install work. A newer open card takes precedence over an old Retry.
+
+Run `node --import tsx scripts/prove-hosted-squire-failure.mjs` after building the
+server to demonstrate connect → accept → helper failure → phone failed card →
+resume → Retry → new assignment through built HTTP handlers. PGlite and a
+simulated helper failure stand in for production; this does not prove a live
+signup, Squire account sign-in or native Android rendering.
+
+Live diagnosis on Mahesh's Beebee (2 November, UTC): the replacement sq1139 image
+booted successfully; the user service manager responded; starting the existing
+broker unit returned active, with both broker and MCP sockets and no restarts.
+Connect then failed because the persisted marker's parent inode was 218 while
+the directory's inode was 81. Reanchoring that metadata, preserving the account
+binding, advanced connect to `needs-sign-in` with a sign-in page. Account sign-in
+and the post-release fresh-signup proof remain outstanding.

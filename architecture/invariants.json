@@ -32,6 +32,22 @@
       "fix": "Change corner state through the corner module: advanceCorner/lockCornerLifecycle in apps/server/src/corner-lifecycle.ts, or closeCornerState in apps/server/src/corner-close.ts. If the module lacks the write you need, add a named function there and call it."
     },
     {
+      "id": "corner.archive",
+      "module": "Corner state machine",
+      "invariant": "A corner is archived only by closeCornerState or the merge path, so its run, wakes and state end with it.",
+      "pattern": "UPDATE\\s+rooms\\s+(?:\\w+\\s+)?SET\\s+archived_at",
+      "flags": "i",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/corner-close.ts",
+        "apps/server/src/github-operations.ts"
+      ],
+      "total": 1,
+      "fix": "Close the corner with closeCornerState(db, cornerId) from apps/server/src/corner-close.ts. It archives the room, cancels commands, abandons the workflow run, deletes wake sources and advances the corner to closed."
+    },
+    {
       "id": "corner.merge-call",
       "module": "Corner state machine",
       "invariant": "A pull request is merged only through GitHubOperations.landCorner.",
@@ -87,6 +103,33 @@
       ],
       "total": 40,
       "fix": "Change membership through a named helper in apps/server/src/membership-join.ts (add one there if needed) and call it."
+    },
+    {
+      "id": "agents.server-harness-branch",
+      "module": "Agent types",
+      "invariant": "The server and shared contract never branch on a harness name; harness behaviour lives in the helper's AgentKind tables.",
+      "pattern": "===?\\s*'(?:codex|claude|goose|pi|grok|cursor|opencode|reference|custom)'|'(?:codex|claude|goose|pi|grok|cursor|opencode|reference|custom)'\\s*===?",
+      "scope": [
+        "apps/server/src",
+        "packages/api-contract/src"
+      ],
+      "owners": [],
+      "total": 3,
+      "fix": "Send the server a capability or setting, not the harness name, and keep the per-harness value in a Record<AgentKind, ...> table beside AGENT_KINDS in apps/body/src/agent-command.ts."
+    },
+    {
+      "id": "agents.helper-harness-branch",
+      "module": "Agent types",
+      "invariant": "Helper behaviour per harness is read from AgentKind tables, not from scattered harness-name comparisons.",
+      "pattern": "===?\\s*'(?:codex|claude|goose|pi|grok|cursor|opencode|reference|custom)'|'(?:codex|claude|goose|pi|grok|cursor|opencode|reference|custom)'\\s*===?",
+      "scope": [
+        "apps/body/src"
+      ],
+      "owners": [
+        "apps/body/src/agent-command.ts"
+      ],
+      "total": 85,
+      "fix": "Add the behaviour as a field of a Record<AgentKind, ...> table beside AGENT_KINDS in apps/body/src/agent-command.ts and read that field here instead of comparing the harness name."
     }
   ]
 }

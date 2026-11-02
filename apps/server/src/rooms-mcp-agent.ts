@@ -174,6 +174,10 @@ export const MCP_AGENT_TOOLS: Tool[] = [
     address: address(), recipients: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' }, minItems: 1 }] },
     text: { type: 'string', minLength: 1, maxLength: 16000 },
   }, ['address', 'recipients', 'text']),
+  tool('approve_architecture_relax', 'Record the owner\'s yes on one exact PR head that relaxes architecture/invariants.json, on the owner\'s own message naming the PR and head.', {
+    address: address(), repository: { type: 'string' }, pullRequest: { type: 'integer', minimum: 1 },
+    headSha: { type: 'string', pattern: '^[0-9a-f]{40}$' },
+  }, ['address', 'repository', 'pullRequest', 'headSha']),
   tool('read_operator_system_dm', 'Read the delivery counts of a queued System DM send.', {
     address: address(), sendId: { type: 'string', format: 'uuid' },
   }, ['address', 'sendId'], false),
@@ -420,6 +424,8 @@ export class RoomsMcpAgentTools {
       case 'close_corner_pr': return exec('closeCornerPullRequest', { cornerId: addressArg(args.address) });
       case 'send_operator_system_dm': return turn((_, context) => exec('sendOperatorSystemDm', { ...context, agentId: member, recipients: args.recipients, text: args.text }));
       case 'read_operator_system_dm': return turn((_, context) => exec('readOperatorSystemDm', { ...context, agentId: member, sendId: args.sendId }));
+      case 'approve_architecture_relax': return turn((_, context) => exec('approveArchitectureRelax', { ...context, agentId: member,
+        repository: args.repository, pullRequest: args.pullRequest, headSha: args.headSha }));
       case 'dispatch_release': return turn((_, context) => exec('dispatchRoomWorkflow', { ...context, inputs: args.inputs }));
       case 'post': return turn((_, context) => exec('postCornerMessage', { ...context, cornerId: addressArg(args.address), text: args.text }));
       case 'post_artifact': return this.postArtifact(member, args, exec);

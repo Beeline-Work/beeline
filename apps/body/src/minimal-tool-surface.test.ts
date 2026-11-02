@@ -23,6 +23,7 @@ const names = [
   'approve_merge',
   'merge_corner',
   'send_operator_system_dm',
+  'approve_architecture_relax',
   'read_operator_system_dm',
   'record_merge_yes',
   'set_corner_hold',
@@ -204,6 +205,15 @@ describe('minimal agent surface', () => {
     } });
     expect(calls[1]!.operation).toBe('readOperatorSystemDm');
     expect(calls[1]!.input).toMatchObject({ roomId: 'corner', requestId: 'request', generationId: 'generation' });
+  });
+
+  it('routes the owner\'s architecture relax approval with active command authority', async () => {
+    const headSha = '0123456789abcdef0123456789abcdef01234567';
+    await callAgentTool('approve_architecture_relax', { repository: 'Beeline-Work/beeline', pullRequest: 7, headSha }, 'approve');
+    expect(calls[0]).toEqual({ operation: 'approveArchitectureRelax', input: {
+      roomId: 'corner', requestId: 'request', generationId: 'generation', agentId: 'self',
+      repository: 'Beeline-Work/beeline', pullRequest: 7, headSha,
+    } });
   });
 
   it('R1 accepts the nested brief its schema advertises for revise_corner(action:brief)', async () => {

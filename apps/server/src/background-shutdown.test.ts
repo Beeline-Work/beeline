@@ -132,6 +132,9 @@ describe('background shutdown', () => {
     const cycle = recurring.slice(0, recurring.indexOf('const leader = new BackgroundLeader'));
     expect(cycle).not.toContain('recoverUnfinishedMergeClaims');
     expect(cycle).toContain('githubJobs.reconcileMergedCorners()');
+    expect(source).not.toContain('retryBranchDeletions');
+    expect(source).not.toContain('retryCornerBranchDeletions');
+    expect(source).not.toContain('repairPromotedCornerBranches');
     expect(source).not.toContain('recoveredCornerMerges');
     expect(source).not.toContain('reconciledMergedCorners');
   });

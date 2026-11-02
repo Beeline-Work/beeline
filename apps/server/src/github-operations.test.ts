@@ -71,13 +71,13 @@ describe('GitHub phone operations', () => {
       VALUES($1,$2,$3,'member')`, [workspace, room, REVIEWER]);
     const corners: string[] = [];
     for (let number = 1; number <= count; number++) {
-      const corner = `33333333-3333-4333-8333-${String(number).padStart(12, '0')}`;
+      const corner = `33333333-${String(number).padStart(4, '0')}-4333-8333-333333333333`;
       corners.push(corner);
       await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
         VALUES($1,$2,$3,$4,'Checks')`, [corner, workspace, room, HUMAN]);
-      await database.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,feature_branch,lifecycle)
-        VALUES($1,'Fix checks',$2,$3,$4::jsonb)`,
-      [corner, REVIEWER, `feature/checks-${number}`, JSON.stringify({ checks: 'passing',
+      await database.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,lifecycle)
+        VALUES($1,'Fix checks',$2,$3::jsonb)`,
+      [corner, REVIEWER, JSON.stringify({ checks: 'passing',
         pr: { number, headSha, url: `https://github.com/owner/widgets/pull/${number}`, mergeability: 'clean' } })]);
     }
     const app = {
@@ -92,7 +92,7 @@ describe('GitHub phone operations', () => {
     };
     const payload = { action: 'completed', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
       check_run: { name: 'lint', status: 'completed', conclusion: 'success', head_sha: headSha,
-        check_suite: { head_branch: 'feature/checks-1', head_sha: headSha } } };
+        check_suite: { head_branch: 'feature/corner-333333330001', head_sha: headSha } } };
     return { room, corners, headSha, app, payload };
   }
 
@@ -116,7 +116,7 @@ describe('GitHub phone operations', () => {
       SELECT workspace_id,'live' FROM rooms WHERE id=$1`, [corner]);
     // GitHub merged the PR, but its pull_request/closed webhook has not arrived.
     Object.assign(app, { readPullRequest: vi.fn(async () => ({
-      number: 1, headSha, headRef: 'feature/checks-1', baseRef: 'main',
+      number: 1, headSha, headRef: 'feature/corner-333333330001', baseRef: 'main',
       url: 'https://github.com/owner/widgets/pull/1', merged: true,
       mergedAt: '2026-10-30T12:00:00Z', mergeCommitSha: 'f'.repeat(40),
       mergedBy: 'owner', state: 'closed', mergeability: 'unknown',
@@ -293,7 +293,7 @@ describe('GitHub phone operations', () => {
       app as unknown as GitHubAppClient, 'secret');
     const refresh = (trigger === 'webhook'
       ? operations.processWebhook('check_run', payload)
-      : operations.prChecksStatus({ cornerId: '33333333-3333-4333-8333-000000000001' }))
+      : operations.prChecksStatus({ cornerId: '33333333-0001-4333-8333-333333333333' }))
       .catch(error => error);
     await started;
     const queued = trigger === 'webhook'
@@ -315,7 +315,7 @@ describe('GitHub phone operations', () => {
     expect(closed).toBe(true);
     const readsBefore = app.readCommitCheckRollup.mock.calls.length;
     await expect(operations.processWebhook('check_run', payload)).rejects.toThrow('shutting down');
-    await expect(operations.prChecksStatus({ cornerId: '33333333-3333-4333-8333-000000000001' }))
+    await expect(operations.prChecksStatus({ cornerId: '33333333-0001-4333-8333-333333333333' }))
       .rejects.toThrow('shutting down');
     expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(readsBefore);
   });
@@ -407,7 +407,7 @@ describe('GitHub phone operations', () => {
       if (trigger === 'workflow completion') {
         await operations.processWebhook('workflow_run', { action: 'completed',
           installation: payload.installation, repository: payload.repository,
-          workflow_run: { head_branch: 'feature/checks-1', head_sha: headSha, conclusion: 'success' } });
+          workflow_run: { head_branch: 'feature/corner-333333330001', head_sha: headSha, conclusion: 'success' } });
       } else {
         expect(await operations.prChecksStatus({ cornerId: corner })).toMatchObject({ checks: 'passed', checkCount: 34 });
       }
@@ -742,12 +742,12 @@ describe('GitHub phone operations', () => {
     await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [corner, implementer]);
     app.readPullRequest.mockImplementation(async (_token, _repository, number) => ({
       number, headSha, url: `https://github.com/owner/widgets/pull/${number}`,
-      mergeability: 'clean', state: number === 1 ? 'closed' : 'open', headRef: 'feature/checks-1',
+      mergeability: 'clean', state: number === 1 ? 'closed' : 'open', headRef: 'feature/corner-333333330001',
     }));
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     await operations.processWebhook('pull_request', { ...payload, action: 'opened', pull_request: {
       number: 2, title: 'Replacement', html_url: 'https://github.com/owner/widgets/pull/2',
-      head: { ref: 'feature/checks-1', sha: headSha }, base: { ref: 'main' }, mergeable_state: 'clean',
+      head: { ref: 'feature/corner-333333330001', sha: headSha }, base: { ref: 'main' }, mergeable_state: 'clean',
     } });
     const lifecycle = (await database.query<{ lifecycle: { pr?: { number: number }; checks: string } }>(
       'SELECT lifecycle FROM corner_facts WHERE corner_id=$1', [corner])).rows[0]!.lifecycle;
@@ -787,12 +787,12 @@ describe('GitHub phone operations', () => {
     const prEvent = (action: string, sha: string) => ({
       ...payload, action, pull_request: {
         number: 1, title: 'Fix checks', html_url: 'https://github.com/owner/widgets/pull/1',
-        head: { ref: 'feature/checks-1', sha }, base: { ref: 'main' }, mergeable_state: 'clean',
+        head: { ref: 'feature/corner-333333330001', sha }, base: { ref: 'main' }, mergeable_state: 'clean',
       },
     });
     await operations.processWebhook('pull_request', prEvent('closed', oldHead));
     await operations.processWebhook('push', {
-      ...payload, ref: 'refs/heads/feature/checks-1', after: newHead,
+      ...payload, ref: 'refs/heads/feature/corner-333333330001', after: newHead,
     });
     // Old-head CI can arrive while the PR association is absent.
     app.readCommitCheckRollup.mockResolvedValue({ state: timing === 'prior head green' ? 'passed' : 'pending', total: 40, failing: [],
@@ -811,7 +811,7 @@ describe('GitHub phone operations', () => {
       app.readCommitCheckRollup.mockResolvedValue(green);
       await operations.processWebhook('check_run', { ...payload,
         check_run: { ...payload.check_run, head_sha: newHead,
-          check_suite: { head_branch: 'feature/checks-1', head_sha: newHead } } });
+          check_suite: { head_branch: 'feature/corner-333333330001', head_sha: newHead } } });
     }
     const lifecycle = (await database.query<{ lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView }>(
       `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
@@ -870,7 +870,7 @@ describe('GitHub phone operations', () => {
     expect(await rowState()).toBe('idle');
     await operations.processWebhook('push', {
       installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
-      ref: 'refs/heads/feature/checks-1', after: newHead, size: 1,
+      ref: 'refs/heads/feature/corner-333333330001', after: newHead, size: 1,
     });
     expect(await rowState()).toBe('review');
 
@@ -879,7 +879,7 @@ describe('GitHub phone operations', () => {
       url: 'https://github.com/owner/widgets/pull/1', mergeability: 'clean' });
     app.readCommitCheckRollup.mockResolvedValueOnce({ state: 'passed', total: 0, failing: [], checks: [] });
     const check = { ...payload.check_run, head_sha: newHead,
-      check_suite: { head_branch: 'feature/checks-1', head_sha: newHead } };
+      check_suite: { head_branch: 'feature/corner-333333330001', head_sha: newHead } };
     await operations.processWebhook('check_run', { ...payload, check_run: check });
     expect((await database.query<{ lifecycle: { checksSummary: unknown } }>(
       `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
@@ -909,7 +909,7 @@ describe('GitHub phone operations', () => {
     const oldSuite = {
       ...payload,
       check_suite: {
-        head_branch: 'feature/checks-1', head_sha: oldHead,
+        head_branch: 'feature/corner-333333330001', head_sha: oldHead,
         status: 'completed', conclusion: 'failure',
       },
     };
@@ -925,13 +925,13 @@ describe('GitHub phone operations', () => {
 
     await operations.processWebhook('push', {
       installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
-      ref: 'refs/heads/feature/checks-1', after: newHead,
+      ref: 'refs/heads/feature/corner-333333330001', after: newHead,
     });
     await operations.processWebhook('pull_request', {
       action: 'synchronize', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
       pull_request: {
         number: 1, title: 'Fix checks', html_url: 'https://github.com/owner/widgets/pull/1',
-        head: { ref: 'feature/checks-1', sha: newHead }, base: { ref: 'main' },
+        head: { ref: 'feature/corner-333333330001', sha: newHead }, base: { ref: 'main' },
         mergeable_state: 'clean', merged: false,
       },
     });
@@ -956,7 +956,7 @@ describe('GitHub phone operations', () => {
     await operations.processWebhook('check_suite', {
       ...payload,
       check_suite: {
-        id: 42, status: 'completed', conclusion: 'success', head_branch: 'feature/checks-1',
+        id: 42, status: 'completed', conclusion: 'success', head_branch: 'feature/corner-333333330001',
         head_sha: headSha, app: { name: 'GitHub Actions' },
         url: 'https://api.github.com/repos/owner/widgets/check-suites/42',
       },
@@ -980,13 +980,13 @@ describe('GitHub phone operations', () => {
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + (new Error().stack?.includes('@electric-sql/pglite') ? 0 : 86_400_000));
     try {
       if (n === 4) {
-        await operations.processWebhook('push', { ...payload, ref: 'refs/heads/feature/checks-1', after: headSha, size: 1 });
+        await operations.processWebhook('push', { ...payload, ref: 'refs/heads/feature/corner-333333330001', after: headSha, size: 1 });
         await operations.processWebhook('check_run', payload);
       } else {
         for (const action of ['opened', 'synchronize']) {
           await operations.processWebhook('pull_request', { ...payload, action, pull_request: {
             number: 1, html_url: 'https://github.com/owner/widgets/pull/1', title: 'Checks',
-            head: { ref: 'feature/checks-1', sha: headSha }, base: { ref: 'main' }, mergeable_state: 'clean',
+            head: { ref: 'feature/corner-333333330001', sha: headSha }, base: { ref: 'main' }, mergeable_state: 'clean',
           } });
         }
       }
@@ -996,7 +996,7 @@ describe('GitHub phone operations', () => {
       expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(n === 4 ? 1 : 2);
       if (n === 5) {
         app.readCommitCheckRollup.mockResolvedValueOnce({ state: 'pending', total: 0, failing: [], checks: [] });
-        await operations.processWebhook('pull_request', { ...payload, action: 'opened', pull_request: { number: 1, html_url: 'https://github.com/owner/widgets/pull/1', title: 'Checks', head: { ref: 'feature/checks-1', sha: headSha }, base: { ref: 'main' }, mergeable_state: 'clean' } });
+        await operations.processWebhook('pull_request', { ...payload, action: 'opened', pull_request: { number: 1, html_url: 'https://github.com/owner/widgets/pull/1', title: 'Checks', head: { ref: 'feature/corner-333333330001', sha: headSha }, base: { ref: 'main' }, mergeable_state: 'clean' } });
         const opened = (await database.query<{ checks: string; status: string }>(`SELECT lifecycle->>'checks' checks,lifecycle->'checksSummary'->>'status' status FROM corner_facts WHERE corner_id=$1`, [corners[0]])).rows[0]!;
         console.info(`Reproduction CI-1: wrong=unknown (no tests configured); right=pending (tests running); observed=${opened.checks}`);
         expect(opened).toEqual({ checks: 'pending', status: 'pending' });
@@ -1084,7 +1084,7 @@ describe('GitHub phone operations', () => {
     try {
       if (kind === 'moved') await otherServer.processWebhook('push', {
         installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
-        ref: 'refs/heads/feature/checks-1', after: '2'.repeat(40), commits: [],
+        ref: 'refs/heads/feature/corner-333333330001', after: '2'.repeat(40), commits: [],
       });
       else await database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'pr' WHERE corner_id=$1`, [corners[0]]);
       const before = await database.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]]);
@@ -1095,7 +1095,7 @@ describe('GitHub phone operations', () => {
     } finally { release(); await delivery; }
   });
 
-  it('routes a corner PR and checks by its repository-scoped branch prefix', async () => {
+  it('BRANCH-DERIVED: routes PR, push and checks with NULL stored branch and refuses an ambiguous prefix', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';
     const corner = '33333333-3333-4333-8333-333333333333';
@@ -1120,8 +1120,8 @@ describe('GitHub phone operations', () => {
        VALUES($1,$2,$3,$4,'Promoted')`, [corner, workspace, room, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
-       VALUES($1,'Promoted work','feature/stale','{"checks":"unknown"}')`, [corner],
+      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
+       VALUES($1,'Promoted work','{"checks":"unknown"}')`, [corner],
     );
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
@@ -1154,20 +1154,15 @@ describe('GitHub phone operations', () => {
     const fact = (await database.query<{ feature_branch: string; lifecycle: object }>(
       `SELECT feature_branch,lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
     )).rows[0]!;
-    expect(fact.feature_branch).toBe(branch);
+    expect(fact.feature_branch).toBeNull();
+    expect(fact.lifecycle).not.toHaveProperty('branch');
     expect(fact.lifecycle).toMatchObject({ checks: 'passing', pr: { number: 4, headSha } });
     expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='github-event'`, [room])).rowCount).toBe(1);
-    await database.query(
-      `UPDATE corner_facts SET feature_branch=NULL,lifecycle='{"checks":"unknown"}'::jsonb WHERE corner_id=$1`,
-      [corner],
-    );
-    await operations.repairPromotedCornerBranches();
-    expect((await database.query<{ feature_branch: string; lifecycle: object }>(
-      `SELECT feature_branch,lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
-    )).rows[0]).toMatchObject({
-      feature_branch: branch,
-      lifecycle: { checks: 'passing', pr: { number: 4, headSha } },
+    await operations.processWebhook('push', {
+      installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      ref: `refs/heads/${branch}`, after: '2'.repeat(40), commits: [{}],
     });
+    expect((await database.query(`SELECT lifecycle->'pr'->>'headSha' head FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.head).toBe('2'.repeat(40));
     const collision = '33333333-3333-4333-8333-444444444444';
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
@@ -1178,7 +1173,7 @@ describe('GitHub phone operations', () => {
        VALUES($1,'Another corner','{"checks":"unknown"}')`, [collision],
     );
     await database.query(
-      `UPDATE corner_facts SET feature_branch=NULL,lifecycle='{"checks":"unknown"}'::jsonb WHERE corner_id=$1`,
+      `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb WHERE corner_id=$1`,
       [corner],
     );
     await operations.processWebhook('pull_request', {
@@ -1196,12 +1191,38 @@ describe('GitHub phone operations', () => {
       installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
       ref: `refs/heads/${branch}`, after: headSha,
     });
-    await operations.repairPromotedCornerBranches();
     expect((await database.query<{ feature_branch: string | null }>(
       `SELECT feature_branch FROM corner_facts WHERE corner_id=ANY($1::uuid[]) ORDER BY corner_id`,
       [[corner, collision]],
     )).rows).toEqual([{ feature_branch: null }, { feature_branch: null }]);
-    expect(app.openPullRequestsForBranch).toHaveBeenCalledTimes(1);
+    expect((await database.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=ANY($1::uuid[])`, [[corner, collision]])).rows).toEqual([{ lifecycle: { checks: 'unknown' } }, { lifecycle: { checks: 'unknown' } }]);
+    await operations.processWebhook('pull_request', {
+      action: 'opened', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      pull_request: { number: 6, title: 'Ambiguous work', html_url: 'https://github.com/owner/widgets/pull/6',
+        head: { ref: branch, sha: headSha }, base: { ref: 'main' }, mergeable_state: 'clean' },
+    });
+    expect((await database.query(`SELECT card FROM messages WHERE room_id=$1 AND card->>'url' LIKE '%/pull/6'`, [room])).rows)
+      .toEqual([expect.objectContaining({ card: expect.not.objectContaining({ cornerId: expect.anything() }) })]);
+    // An archived collision still makes the prefix ambiguous in this repository.
+    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [collision]);
+    await operations.processWebhook('push', {
+      installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      ref: `refs/heads/${branch}`, after: headSha,
+    });
+    expect((await database.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.lifecycle)
+      .toEqual({ checks: 'unknown' });
+    // A collision in another repository does not block this one.
+    const otherRoom = '44444444-4444-4444-8444-444444444444';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name,repository_remote,github_installation_id)
+      VALUES($1,$2,'Other','https://github.com/owner/other.git',77)`, [otherRoom, workspace]);
+    await database.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [collision, otherRoom]);
+    await operations.processWebhook('push', {
+      installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+      ref: `refs/heads/${branch}`, after: headSha,
+    });
+    expect((await database.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.lifecycle)
+      .toHaveProperty('checksSummary');
+    expect(app.openPullRequestsForBranch).not.toHaveBeenCalled();
   });
   it('Reproduction R10-1: records pre-PR checks as the corner opener', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
@@ -1246,9 +1267,9 @@ describe('GitHub phone operations', () => {
         [workspace,room,opener],
       );
       await tx.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,feature_branch,lifecycle)
-         VALUES($1,$2,'Convo chains',$3,$4::jsonb)`,
-        [corner, opener, branch, JSON.stringify({ branch })],
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
+         VALUES($1,$2,'Convo chains',$3::jsonb)`,
+        [corner, opener, JSON.stringify({ checks: 'unknown' })],
       );
     });
     const app = {
@@ -1323,9 +1344,9 @@ describe('GitHub phone operations', () => {
       [corner, workspace, room, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,kind,feature_branch,lifecycle)
-       VALUES($1,'Hidden river','human',$2,'{"checks":"unknown"}')`,
-      [corner, branch],
+      `INSERT INTO corner_facts(corner_id,objective,kind,lifecycle)
+       VALUES($1,'Hidden river','human','{"checks":"unknown"}')`,
+      [corner],
     );
     // An earlier system note carries the old fallback's author; it must not count.
     await database.query(
@@ -1388,11 +1409,10 @@ describe('GitHub phone operations', () => {
       [corner, workspace, room, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
-       VALUES($1,'Two PRs',$2,$3::jsonb)`,
+      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
+       VALUES($1,'Two PRs',$2::jsonb)`,
       [
         corner,
-        branch,
         JSON.stringify({
           checks: 'passing',
           pr: {
@@ -1477,11 +1497,10 @@ describe('GitHub phone operations', () => {
       [corner, workspace, room, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
-       VALUES($1,'Two PRs',$2,$3::jsonb)`,
+      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
+       VALUES($1,'Two PRs',$2::jsonb)`,
       [
         corner,
-        branch,
         JSON.stringify({
           checks: 'passing',
           pr: {
@@ -1589,9 +1608,9 @@ describe('GitHub phone operations', () => {
     // The corner starts with a branch but no pull association, so #200's
     // branch lookup matches it with no recorded number.
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
-       VALUES($1,'Two PRs',$2,$3::jsonb)`,
-      [corner, branch, JSON.stringify({ checks: 'passing' })],
+      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
+       VALUES($1,'Two PRs',$2::jsonb)`,
+      [corner, JSON.stringify({ checks: 'passing' })],
     );
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
@@ -1675,13 +1694,7 @@ describe('GitHub phone operations', () => {
     expect(mergedNotes.rowCount).toBe(0);
     expect(app.deleteBranch).not.toHaveBeenCalled();
   });
-  it('matches a webhook on its recorded feature branch, never the prefix fallback', async () => {
-    // A corner with a recorded feature_branch must have its webhook
-    // resolve through the exact `fact.feature_branch=$3` join (processCornerEvent
-    // line ~1352), not the prefix-recovery path. Proven by giving this corner
-    // an existing pull request (`has_pr=true`): the prefix path's own
-    // candidate filter (`!target.has_pr`) would refuse to match it, so an
-    // update landing here can only have come from the exact-match branch.
+  it('matches checks on the derived branch when a PR is already associated', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';
     const corner = '33333333-3333-4333-8333-333333333333';
@@ -1708,11 +1721,10 @@ describe('GitHub phone operations', () => {
       [corner, workspace, room, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
-       VALUES($1,'Promoted work',$2,$3::jsonb)`,
+      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
+       VALUES($1,'Promoted work',$2::jsonb)`,
       [
         corner,
-        branch,
         JSON.stringify({
           checks: 'unknown',
           pr: {
@@ -1757,10 +1769,10 @@ describe('GitHub phone operations', () => {
         )
       ).rows[0],
     ).toMatchObject({
-      feature_branch: branch,
+      feature_branch: null,
       lifecycle: { checks: 'passing' },
     });
-    // The prefix-recovery path never ran: it is the only caller of this.
+    // Checks on an associated PR need no branch-to-PR discovery.
     expect(app.openPullRequestsForBranch).not.toHaveBeenCalled();
   });
   it('recovers a missed merge webhook and ignores branch deletion pushes', async () => {
@@ -1798,8 +1810,8 @@ describe('GitHub phone operations', () => {
       [workspace, HUMAN, room],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,commissioned_by,objective,feature_branch,lifecycle)
-       VALUES($1,$3,'Recover missed merge','feature/recovery',$2::jsonb)`,
+      `INSERT INTO corner_facts(corner_id,commissioned_by,objective,lifecycle)
+       VALUES($1,$3,'Recover missed merge',$2::jsonb)`,
       [
         corner,
         JSON.stringify({
@@ -1823,7 +1835,7 @@ describe('GitHub phone operations', () => {
         number: 42,
         url: 'https://github.com/owner/widgets/pull/42',
         headSha,
-        headRef: 'feature/recovery',
+        headRef: 'feature/corner-333333333333',
         baseRef: 'main',
         title: 'Recover missed merge',
         merged: false,
@@ -1848,7 +1860,7 @@ describe('GitHub phone operations', () => {
     const deletedPush = {
       installation: { id: 77 },
       repository: { full_name: 'owner/widgets' },
-      ref: 'refs/heads/feature/recovery',
+      ref: 'refs/heads/feature/corner-333333333333',
       after: '0'.repeat(40),
       deleted: true,
     };
@@ -1873,7 +1885,7 @@ describe('GitHub phone operations', () => {
       number: 42,
       url: 'https://github.com/owner/widgets/pull/42',
       headSha,
-      headRef: 'feature/recovery',
+      headRef: 'feature/corner-333333333333',
       baseRef: 'main',
       title: 'Recover missed merge',
       merged: true,
@@ -2597,13 +2609,13 @@ describe('GitHub phone operations', () => {
       [corner, workspace, room, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective,feature_branch,lifecycle)
-       VALUES($1,'Fix checks','feature/checks',$2::jsonb)`,
+      `INSERT INTO corner_facts(corner_id,objective,lifecycle)
+       VALUES($1,'Fix checks',$2::jsonb)`,
       [
         corner,
         JSON.stringify({
           lifecycle: 'in-review',
-          branch: 'feature/checks',
+          branch: 'feature/corner-333333333333',
           checks: 'unknown',
           pr: {
             number: 1,
@@ -2673,7 +2685,7 @@ describe('GitHub phone operations', () => {
         name,
         status,
         ...(status === 'completed' ? { conclusion: 'success' } : {}),
-        check_suite: { head_branch: 'feature/checks', head_sha: headSha },
+        check_suite: { head_branch: 'feature/corner-333333333333', head_sha: headSha },
       },
     });
     const first = operations.processWebhook('check_run', payload('lint', 'completed'));
@@ -2751,7 +2763,7 @@ describe('GitHub phone operations', () => {
         number: 1,
         title: 'Fix checks',
         html_url: 'https://github.com/owner/widgets/pull/1',
-        head: { ref: 'feature/checks', sha: headSha },
+        head: { ref: 'feature/corner-333333333333', sha: headSha },
         base: { ref: 'main' },
         mergeable_state: 'dirty',
         merged: false,
@@ -3253,7 +3265,7 @@ describe('GitHub phone operations', () => {
         number: 1,
         title: 'Fix checks',
         html_url: 'https://github.com/owner/widgets/pull/1',
-        head: { ref: 'feature/checks-1', sha: headSha },
+        head: { ref: 'feature/corner-333333330001', sha: headSha },
         base: { ref: 'main', sha: '4'.repeat(40) },
         mergeable_state: 'dirty',
         merged: false,
@@ -3348,7 +3360,7 @@ describe('GitHub phone operations', () => {
         status: 'completed',
         conclusion: 'success',
         head_sha: headSha,
-        check_suite: { head_branch: 'feature/checks-1', head_sha: headSha },
+        check_suite: { head_branch: 'feature/corner-333333330001', head_sha: headSha },
       },
     });
     const command = (

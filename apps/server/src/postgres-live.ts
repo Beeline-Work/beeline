@@ -186,6 +186,8 @@ BEGIN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.id, OLD.id),
+        'closeRequested', COALESCE(NEW.parent_id,OLD.parent_id) IS NOT NULL AND
+          CASE WHEN TG_OP='DELETE' THEN OLD.archived_at IS NOT NULL ELSE NEW.archived_at IS NOT NULL END,
         'cornerTextChanged', CASE WHEN TG_OP = 'UPDATE' THEN NEW.name IS DISTINCT FROM OLD.name ELSE false END,
         'repositoryChanged', CASE WHEN TG_OP = 'UPDATE' THEN
           ROW(NEW.repository_key,NEW.repository_remote,NEW.repository_target_branch,
@@ -283,7 +285,8 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
         'cornerId', COALESCE(NEW.corner_id, OLD.corner_id),
-        'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false),
+        'closeRequested', COALESCE((SELECT archived_at IS NOT NULL FROM rooms
+          WHERE id=COALESCE(NEW.corner_id,OLD.corner_id)),false),
         'cornerParentId', CASE WHEN ${rowChangedSql(CORNER_ROW_FACT_COLUMNS)}
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.corner_id, OLD.corner_id)) END
       );

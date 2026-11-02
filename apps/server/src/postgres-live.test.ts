@@ -117,6 +117,26 @@ describe('Postgres live fanout', () => {
     vi.restoreAllMocks();
   });
 
+  it('BRANCH-DERIVED: room archival and fact updates publish closeRequested without the retired flag', async () => {
+    const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`, [corner, WORKSPACE, ROOM]);
+    await database.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`, [corner]);
+    const live = new LiveHub();
+    const received: LiveEvent[] = [];
+    live.subscribe(corner, event => received.push(event));
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]);
+    await eventually(() => received.some(event => event.type === 'invalidate' && event.reason === 'postgres:rooms' && event.closeRequested === true));
+    await database.query(`UPDATE corner_facts SET updated_at=now() WHERE corner_id=$1`, [corner]);
+    await eventually(() => received.some(event => event.type === 'invalidate' && event.reason === 'postgres:corner_facts' && event.closeRequested === true));
+    expect((await database.query(`SELECT close_requested FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0])
+      .toEqual({ close_requested: false });
+  });
+
   it('re-arms Sentry batching on every server without publishing a Room message', async () => {
     const live = new LiveHub();
     const received: LiveEvent[] = [];
@@ -1126,7 +1146,7 @@ describe('Postgres live fanout', () => {
 
     // A write that changes no corner-row column stays off the parent.
     await settle(parent);
-    await database.query(`UPDATE corner_facts SET close_requested=true WHERE corner_id=$1`, [corner]);
+    await database.query(`UPDATE corner_facts SET updated_at=now() WHERE corner_id=$1`, [corner]);
     await database.query(
       `UPDATE rooms SET repository_updated_at=now() WHERE id=$1`, [corner]);
     await database.query(

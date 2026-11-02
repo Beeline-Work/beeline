@@ -87,8 +87,8 @@ beforeEach(async () => {
     [WORKSPACE, REQUESTER, OTHER_HUMAN, WORKER, OTHER_AGENT, ROOM],
   );
   await database.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,feature_branch,lifecycle)
-     VALUES($1,$2,$3,'Make release migrations safe','memory-procedure',$4::jsonb)`,
+    `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,lifecycle)
+     VALUES($1,$2,$3,'Make release migrations safe',$4::jsonb)`,
     [
       CORNER,
       WORKER,

@@ -11,7 +11,7 @@ import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
 import { LiveHub } from './live.js';
 import { backfillArchivedCornerCleanup } from './corner-cleanup-backfill.js';
-import { enqueueCornerBranchDeletion } from './corner-branch-cleanup.js';
+import { deleteArchivedCornerBranch } from './corner-branch-cleanup.js';
 import { systemLine } from './system-line.js';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { addressedToPersonSql } from './corner-owed.js';
@@ -307,10 +307,6 @@ async function claim(c: AgentCommand, generationId = 'g1') {
 async function pushToCorner(cornerId: string, headSha: string) {
   const branch = `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
   githubHead = headSha;
-  await db.query(
-    `UPDATE corner_facts SET feature_branch=COALESCE(feature_branch,$2) WHERE corner_id=$1`,
-    [cornerId, branch],
-  );
   await github.processWebhook('push', {
     installation: { id: 77 },
     repository: { id: 101, full_name: 'owner/widgets' },
@@ -575,7 +571,7 @@ describe('corner lock', () => {
     expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).state).not.toBe('archived');
     expect((await phone.readRoom(cornerId, H))?.cornerLifecycle?.pr).toBeUndefined();
     expect(await currentState(cornerId)).toBe('implement');
-    expect((await daemon.execute('getCornerRestoreState', { cornerId }, A)).state).not.toBe('archived');
+    expect(await daemon.execute('getCornerRestoreState', { cornerId }, A)).toMatchObject({ closeRequested: false, archived: false });
     expect((await phone.readCorners(R, H))!.corners.find(c => c.corner.id === cornerId)!.state).not.toBe('archived');
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1
       AND card->>'type'='corner-complete' AND card->>'cornerId'=$2
@@ -714,7 +710,7 @@ describe('a person-opened corner in a repository Room', () => {
       pusher: { name: 'goosy' },
     });
     expect((await db.query(`SELECT feature_branch FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toEqual({ feature_branch: branchOf(cornerId) });
+      .toEqual({ feature_branch: null });
     expect(await currentState(cornerId)).toBe('checks');
   });
 });
@@ -722,14 +718,10 @@ describe('a person-opened corner in a repository Room', () => {
 describe('checks dispatch (rows 6-8)', () => {
   it('a push records implement -> checks', async () => {
     const cornerId = await open('owner/widgets');
-    await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [
-      cornerId,
-      'feature/corner-test01',
-    ]);
     await github.processWebhook('push', {
       installation: { id: 77 },
       repository: { id: 101, full_name: 'owner/widgets' },
-      ref: 'refs/heads/feature/corner-test01',
+      ref: `refs/heads/${branchOf(cornerId)}`,
       after: '1'.repeat(40),
       commits: [{}],
       pusher: { name: 'hoots' },
@@ -4050,6 +4042,8 @@ describe('every contract edge (AC-1)', () => {
 
 
 describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
+  beforeEach(() => { Object.assign(phone, { github }); });
+  afterEach(() => { Object.assign(phone, { github: undefined }); });
   it.each(['daemon', 'phone', 'merge'] as const)('CLEANUP-ATTACH-1: %s archival removes pending attachments', async (path) => {
     const cornerId = path === 'merge' ? await inReview() : await open('owner/widgets');
     await db.query(`INSERT INTO agent_pending_attachments
@@ -4062,39 +4056,58 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived).toBe(true);
     expect((await db.query(`SELECT id FROM agent_pending_attachments WHERE room_id=$1`, [cornerId])).rowCount).toBe(0);
   });
-  async function recordedCorner() {
-    const cornerId = await open('owner/widgets');
-    await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [cornerId, branchOf(cornerId)]);
-    return cornerId;
-  }
   async function closeAndClean() {
-    const cornerId = await recordedCorner();
+    const cornerId = await open('owner/widgets');
     await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
     return cornerId;
   }
 
-  it('deletes a branch after closing a corner with no PR', async () => {
+  it('BRANCH-DERIVED: old helper remote posts keep branch fields dead and restore derives branch and close state', async () => {
+    const cornerId = await open('owner/widgets');
+    await daemon.execute('postCornerRemoteState', {
+      cornerId, state: 'working', branch: 'feature/old-helper', checks: 'unknown',
+    }, A);
+    expect((await db.query(`SELECT feature_branch,close_requested,lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toMatchObject({ feature_branch: null, close_requested: false });
+    expect((await db.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.lifecycle)
+      .not.toHaveProperty('branch');
+    expect(await daemon.execute('getCornerRestoreState', { cornerId }, A)).toMatchObject({
+      featureBranch: branchOf(cornerId), lifecycle: { branch: branchOf(cornerId) }, closeRequested: false,
+    });
+    await daemon.execute('archiveCorner', { cornerId }, A);
+    expect(await daemon.execute('getCornerRestoreState', { cornerId }, A)).toMatchObject({ closeRequested: true });
+    expect(await daemon.execute('getCornerCloseRequests', { cornerId }, A)).toMatchObject({ closeRequested: true });
+    expect((await db.query(`SELECT close_requested FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0])
+      .toEqual({ close_requested: false });
+  });
+
+  it('BRANCH-DERIVED: closes and deletes once after commit, without a queue or repeat on duplicate close', async () => {
+    githubApp.deleteBranch.mockImplementation(async (_installation: number, _repository: number, _name: string, branch: string) => {
+      const rows = await db.query(`SELECT 1 FROM rooms WHERE archived_at IS NOT NULL
+        AND 'feature/corner-'||left(replace(id::text,'-',''),12)=$1`, [branch]);
+      expect(rows.rowCount).toBe(1);
+    });
     const cornerId = await closeAndClean();
+    await phone.execute('requestCornerClose', { roomId: cornerId }, H);
+    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(cornerId));
+    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
   });
 
   it('keeps the branch after close_corner_pr and deletes after the corner closes', async () => {
     const cornerId = await inReview();
     await github.closeCornerPullRequest(cornerId);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
     await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(cornerId));
   });
 
-  it('keeps a branch used by another unarchived corner', async () => {
-    const cornerId = await recordedCorner();
-    const sibling = await recordedCorner();
-    await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [sibling, branchOf(cornerId)]);
+  it('keeps a branch used by an unarchived corner with a colliding prefix', async () => {
+    const cornerId = await open('owner/widgets');
+    const sibling = cornerId.slice(0, -1) + (cornerId.endsWith('0') ? '1' : '0');
+    await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Collision')`, [sibling, W, R]);
+    await db.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`, [sibling]);
     await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
   });
 
@@ -4105,157 +4118,103 @@ describe('closed corner branch cleanup (Reproduction BRANCH-CLOSE-1)', () => {
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
   });
 
-  it.each(['main', 'release/v2', 'releases/v2', 'release-2026'])('never deletes reserved branch %s', async branch => {
-    const cornerId = await recordedCorner();
-    await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [cornerId, branch]);
-    await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
-    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
-  });
-
   it.each(['default', 'protected'])('keeps a live %s branch', async kind => {
-    const cornerId = await recordedCorner();
-    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: kind === 'default' ? branchOf(cornerId) : 'main', protected: kind === 'protected' });
+    const cornerId = await open('owner/widgets');
+    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: kind === 'default' ? branchOf(cornerId) : 'main', aheadBy: 0, protected: kind === 'protected' });
     await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
   });
 
-  it('persists a failure, waits for backoff, then retries successfully', async () => {
+  it('logs a failed deletion without blocking archival, queuing or retrying', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
     githubApp.deleteBranch.mockRejectedValueOnce(new Error('offline'));
     const cornerId = await closeAndClean();
-    expect((await db.query(`SELECT attempts,finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ attempts: 1, finished_at: null, last_error: 'offline' });
-    await github.retryBranchDeletions();
+    await phone.execute('requestCornerClose', { roomId: cornerId }, H);
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at).not.toBeNull();
+    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
-    await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
-    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(2);
-    expect((await db.query(`SELECT finished_at FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0]!.finished_at).not.toBeNull();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('offline'));
+    log.mockRestore();
   });
 
-  it.each([404, 422])('treats deletion HTTP %i as success', async status => {
+  it.each([404, 422])('treats deletion HTTP %i as done', async status => {
     githubApp.deleteBranch.mockRejectedValueOnce(new GitHubHttpError('delete', status));
     const cornerId = await closeAndClean();
-    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: expect.anything(), last_error: null });
-  });
-
-  it('rechecks live protection before retrying a failed deletion', async () => {
-    githubApp.deleteBranch.mockRejectedValueOnce(new Error('offline'));
-    const cornerId = await closeAndClean();
-    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: true });
-    await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
-    expect((await db.query(`SELECT last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0]!.last_error)
-      .toBe('default or protected branch');
+    expect((await db.query(`SELECT 1 FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rowCount).toBe(0);
   });
 
-  it('retries a failed deletion after a merged corner is archived', async () => {
+  it('BRANCH-DERIVED: deletes a merged branch once with no queue', async () => {
     const cornerId = await approved();
-    githubApp.deleteBranch.mockRejectedValueOnce(new Error('offline'));
+    await mergedWebhook(cornerId, 7, SHA);
     await mergedWebhook(cornerId, 7, SHA);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
-    expect((await db.query(`SELECT attempts,finished_at FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ attempts: 1, finished_at: null });
-    await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
-    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(2);
+    expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(cornerId));
+    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
   });
 
-  it('cleans a recorded branch after a person closes the corner', async () => {
-    const cornerId = await recordedCorner();
+  it('cleans the derived branch after a person closes the corner', async () => {
+    const cornerId = await open('owner/widgets');
     await phone.execute('requestCornerClose', { roomId: cornerId }, H);
-    await github.retryBranchDeletions();
     expect(githubApp.deleteBranch).toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(cornerId));
   });
 
   it('finishes without deletion if GitHub already removed the branch', async () => {
     githubApp.branchDeletionSafety.mockResolvedValue(undefined);
-    const cornerId = await closeAndClean();
+    await closeAndClean();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
-    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: expect.anything(), last_error: null });
   });
 
-  it('CLEANUP-GIT-1: backfills historical archives once and keeps live corners out', async () => {
+  it('CLEANUP-GIT-1: maintenance scans historical archives on each explicit invocation and excludes live corners', async () => {
     const archived = await inReview();
-    const live = await recordedCorner();
+    const live = await open('owner/widgets');
     await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [archived]);
-    await backfillArchivedCornerCleanup(db);
-    await backfillArchivedCornerCleanup(db);
-    expect((await db.query(`SELECT corner_id FROM corner_branch_deletions WHERE corner_id IN ($1,$2)`, [archived, live])).rows)
-      .toEqual([{ corner_id: archived }]);
-    await enqueueCornerBranchDeletion(db);
-    expect((await db.query(`SELECT corner_id FROM corner_branch_deletions WHERE corner_id=$1`, [archived])).rowCount).toBe(1);
+    const app = githubApp as unknown as GitHubAppClient;
+    const results = await backfillArchivedCornerCleanup(db, app);
+    expect(results).toEqual([{ cornerId: archived, branch: branchOf(archived), status: 'deleted_or_already_absent' }]);
+    expect(githubApp.deleteBranch).not.toHaveBeenCalledWith(77, 101, 'owner/widgets', branchOf(live));
+    await backfillArchivedCornerCleanup(db, app);
+    expect((await db.query(`SELECT 1 FROM corner_branch_deletions`)).rowCount).toBe(0);
+    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(2);
   });
 
-  it.each(['head', 'base', 'corner'])('CLEANUP-GIT-1: retries after temporary %s blocker clears', async kind => {
-    const cornerId = await recordedCorner();
+  it.each(['head', 'base'])('CLEANUP-GIT-1: maintenance rechecks a temporary %s blocker only when invoked', async kind => {
     if (kind === 'head') githubApp.openPullRequestsForBranch.mockResolvedValue([42]);
-    if (kind === 'base') githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: true });
-    if (kind === 'corner') {
-      const sibling = await recordedCorner();
-      await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [sibling, branchOf(cornerId)]);
-    }
-    await daemon.execute('archiveCorner', { cornerId }, A);
-    await github.retryBranchDeletions();
+    else githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: true });
+    await closeAndClean();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
-    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: null, last_error: expect.any(String) });
     githubApp.openPullRequestsForBranch.mockResolvedValue([]);
     githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 0, protected: false, openBasePullRequest: false });
-    if (kind === 'corner') await db.query(`UPDATE rooms SET archived_at=now() WHERE id IN
-      (SELECT corner_id FROM corner_facts WHERE feature_branch=$1)`, [branchOf(cornerId)]);
-    await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now() WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
+    await backfillArchivedCornerCleanup(db, githubApp as unknown as GitHubAppClient);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
   });
 
-  it('CLEANUP-GIT-1: records retention when the repository mapping is unavailable', async () => {
-    const cornerId = await recordedCorner();
-    const parent = (await db.query<{ repository_key: string; repository_remote: string }>(`SELECT repository_key,repository_remote FROM rooms WHERE id=$1`, [R])).rows[0]!;
-    await db.query(`UPDATE rooms SET repository_key='unknown/missing',repository_remote=NULL
-      WHERE id=(SELECT parent_id FROM rooms WHERE id=$1)`, [cornerId]);
+  it('CLEANUP-GIT-1: reports retention when the repository mapping is unavailable', async () => {
+    const cornerId = await open('owner/widgets');
+    await db.query(`UPDATE rooms SET repository_key='unknown/missing',repository_remote=NULL WHERE id=$1`, [R]);
     await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
-    await enqueueCornerBranchDeletion(db, cornerId);
-    await db.query(`UPDATE rooms SET repository_key=$2,repository_remote=$3 WHERE id=$1`, [R, parent.repository_key, parent.repository_remote]);
-    expect((await db.query(`SELECT finished_at,last_error,repository_id FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: expect.anything(), repository_id: null, last_error: 'GitHub repository is unavailable; branch retained' });
-  });
-
-  it('CLEANUP-GIT-1: records why unpublished branch commits are kept', async () => {
-    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 3, protected: false, openBasePullRequest: false });
-    const cornerId = await closeAndClean();
+    expect(await deleteArchivedCornerBranch(db, githubApp as unknown as GitHubAppClient, cornerId))
+      .toMatchObject({ status: 'kept', reason: 'GitHub repository is unavailable' });
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
-    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: expect.anything(), last_error: 'branch has commits absent from the default branch' });
+    await db.query(`UPDATE rooms SET repository_key='owner/widgets',repository_remote='https://github.com/owner/widgets.git' WHERE id=$1`, [R]);
   });
 
-  it('CLEANUP-GIT-1: historical containment retains a squash-merged branch while normal merge cleanup still works', async () => {
+  it('BRANCH-DERIVED: closing an unmerged corner retains commits absent from the default branch', async () => {
+    githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 3, protected: false, openBasePullRequest: false });
+    await closeAndClean();
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
+  });
+
+  it.each([true, false])('CLEANUP-GIT-1: historical squash-merge cleanup requires the exact merged head (matches=%s)', async matches => {
     const cornerId = await approved();
     githubApp.branchDeletionSafety.mockResolvedValue({ defaultBranch: 'main', aheadBy: 2, protected: false, openBasePullRequest: false });
     await mergedWebhook(cornerId, 7, SHA);
     expect(githubApp.deleteBranch).toHaveBeenCalledTimes(1);
     githubApp.deleteBranch.mockClear();
-    await db.query(`DELETE FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId]);
-    await enqueueCornerBranchDeletion(db, cornerId, true);
-    await github.retryBranchDeletions();
-    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
-    expect((await db.query(`SELECT finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0])
-      .toMatchObject({ finished_at: expect.anything(), last_error: 'branch has commits absent from the default branch' });
-  });
-
-  it('stops after eight failed attempts', async () => {
-    githubApp.deleteBranch.mockRejectedValue(new Error('offline'));
-    const cornerId = await closeAndClean();
-    await db.query(`UPDATE corner_branch_deletions SET next_attempt_at=now(),attempts=7 WHERE corner_id=$1`, [cornerId]);
-    await github.retryBranchDeletions();
-    const row = (await db.query(`SELECT attempts,finished_at,last_error FROM corner_branch_deletions WHERE corner_id=$1`, [cornerId])).rows[0]!;
-    expect(row).toMatchObject({ attempts: 8, finished_at: expect.anything(), last_error: 'offline' });
-    await github.retryBranchDeletions();
-    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(2);
+    const app = { ...githubApp, readBranchHead: vi.fn(async () => matches ? SHA : 'new-unpublished-head') } as unknown as GitHubAppClient;
+    const results = await backfillArchivedCornerCleanup(db, app);
+    expect(results[0]?.status).toBe(matches ? 'deleted_or_already_absent' : 'kept');
+    expect(githubApp.deleteBranch).toHaveBeenCalledTimes(matches ? 1 : 0);
   });
 });
 

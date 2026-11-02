@@ -456,7 +456,6 @@ async function main() {
         : {}),
     },
   });
-  let repairedPromotedCorners = false;
   let reconciledMergeability = false;
   const reconciliationMs = Number(process.env.BACKGROUND_RECONCILIATION_MS ?? '60000');
   const work = new BackgroundWork();
@@ -529,13 +528,7 @@ async function main() {
   });
   work.add('repair', reconciliationMs, async (newLeader) => {
     if (newLeader) {
-      repairedPromotedCorners = false;
       reconciledMergeability = false;
-    }
-    if (githubJobs && !repairedPromotedCorners) {
-      const repair = await backgroundJobs.run('github-promoted-corner-repair', () =>
-        githubJobs.repairPromotedCornerBranches());
-      repairedPromotedCorners = repair.ok;
     }
     if (voice) await backgroundJobs.run('voice-call-recovery', () => voice.recover());
     await backgroundJobs.run('operator-system-dms', () => flushOperatorSystemDms(jobsDatabase));
@@ -545,7 +538,6 @@ async function main() {
       reconcileConfiguredCornerReviewers(jobsDatabase, undefined,
         githubJobs ? id => githubJobs.refreshCornerReviewHead(id) : undefined));
     if (githubJobs) {
-      await backgroundJobs.run('corner-branch-cleanup', () => githubJobs.retryBranchDeletions());
       await backgroundJobs.run('github-check-refresh', () => githubJobs.refreshQueuedChecks());
     }
     if (githubJobs && !reconciledMergeability) {

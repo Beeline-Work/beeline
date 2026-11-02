@@ -1,4 +1,6 @@
 import { cornerObjectiveSql, readCornerObjective, writeCornerObjective } from './corner-objective.js';
+import { deleteCornerBranchBestEffort } from './corner-branch-cleanup.js';
+import { cornerFeatureBranch } from './corner-branch.js';
 import { owedMentions, clearOwedMention, mentionReplyKey, mentionReplyId } from './owed-mentions.js';
 import { cornerOwnerSql } from './corner-worker.js';
 import { cornerRunStateSql } from './corner-run.js';
@@ -3253,11 +3255,11 @@ export class DaemonService {
       name === 'getCornerCloseRequests'
         ? Boolean(
             (
-              await this.database.query<{ close_requested: boolean }>(
-                `SELECT close_requested FROM corner_facts WHERE corner_id=$1`,
+              await this.database.query<{ closed: boolean }>(
+                `SELECT archived_at IS NOT NULL closed FROM rooms WHERE id=$1`,
                 [roomId],
               )
-            ).rows[0]?.close_requested,
+            ).rows[0]?.closed,
           )
         : undefined;
     if (name === 'getRoomInbox' || name === 'getCornerCloseRequests')
@@ -3894,9 +3896,7 @@ export class DaemonService {
         title: string;
         title_generated: boolean;
         kind: 'agent' | 'human';
-        feature_branch: string | null;
         request_id: string | null;
-        close_requested: boolean;
         lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView;
         pull_request_number: number | null;
         approval_head_sha: string | null;
@@ -3906,7 +3906,7 @@ export class DaemonService {
         last_excerpt: string | null;
       }>(
         `SELECT c.parent_id parent_room_id,c.archived_at,${facts.columns},
-           f.opened_from_corner_id,${cornerImplementerSql('f', 'c')} implementer_agent_id,${cornerObjectiveSql('c')} objective,c.name title,f.title_generated,f.kind,f.feature_branch,f.request_id,f.close_requested,
+           f.opened_from_corner_id,${cornerImplementerSql('f', 'c')} implementer_agent_id,${cornerObjectiveSql('c')} objective,c.name title,f.title_generated,f.kind,f.request_id,
            approval.pull_request_number,approval.head_sha approval_head_sha,
            lm.author_id last_author_id,lm.created_at last_created_at,
            lm.presentation last_type,left(lm.text,280) last_excerpt
@@ -3930,10 +3930,10 @@ export class DaemonService {
       ...(brief ? { brief } : {}),
       ...(row ? { title: row.title, kind: row.kind } : {}),
       ...(row?.title_generated ? { titleGenerated: true } : {}),
-      ...(row?.feature_branch ? { featureBranch: row.feature_branch } : {}),
+      ...(row ? { featureBranch: cornerFeatureBranch(cornerId) } : {}),
       ...(row?.request_id ? { requestId: row.request_id } : {}),
-      closeRequested: row?.close_requested ?? false,
-      ...(row?.lifecycle ? { lifecycle: row.lifecycle } : {}),
+      closeRequested: Boolean(row?.archived_at),
+      ...(row?.lifecycle ? { lifecycle: { ...row.lifecycle, branch: cornerFeatureBranch(cornerId) } } : {}),
       ...(row?.pull_request_number && row.approval_head_sha
         ? {
             mergeApproval: {
@@ -6523,25 +6523,23 @@ export class DaemonService {
     // A `gone` remote branch is recorded as an unknown remote state.
     const lifecycle = {
       lifecycle: input.state === 'gone' ? 'unknown' : input.state,
-      branch: input.branch,
       checks: input.checks,
       ...(input.pullRequest ? { pr: input.pullRequest } : {}),
     };
     await this.database.query(
-      `INSERT INTO corner_facts(corner_id,feature_branch,lifecycle)
-       VALUES($1,$2,$3::jsonb)
+      `INSERT INTO corner_facts(corner_id,lifecycle)
+       VALUES($1,$2::jsonb)
        ON CONFLICT(corner_id) DO UPDATE SET
-         feature_branch=EXCLUDED.feature_branch,
          lifecycle=CASE
            -- A helper's restart heartbeat is lower authority than GitHub's PR/check facts.
            -- Keep the complete webhook-owned lifecycle so it cannot lose the PR, mergeability,
-           -- or check summary; the branch remains the daemon's current local fact.
+           -- or check summary.
            WHEN EXCLUDED.lifecycle->>'lifecycle'='working' AND corner_facts.lifecycle ? 'pr'
-             THEN corner_facts.lifecycle || jsonb_build_object('branch', EXCLUDED.lifecycle->'branch')
-           ELSE corner_facts.lifecycle || EXCLUDED.lifecycle
+             THEN corner_facts.lifecycle-'branch'
+           ELSE (corner_facts.lifecycle-'branch') || EXCLUDED.lifecycle
          END,
          updated_at=now()`,
-      [input.cornerId, input.branch, JSON.stringify(lifecycle)],
+      [input.cornerId, JSON.stringify(lifecycle)],
     );
     return this.writeResult();
   }
@@ -8927,10 +8925,11 @@ export class DaemonService {
     };
     await this.database.transaction(authorize);
     await closeCornerPullRequestBestEffort(this.database, cornerId, this.closePullRequest);
-    await this.database.transaction(async database => {
+    const closed = await this.database.transaction(async database => {
       await authorize(database);
-      await closeCornerState(database, cornerId);
+      return closeCornerState(database, cornerId);
     });
+    if (closed.archived) await deleteCornerBranchBestEffort(cornerId, this.github ? id => this.github!.deleteCornerBranch(id) : undefined);
     return this.writeResult();
   }
   private async ensureMembership(input: Input<'ensureAgentMembership'>, agentId: string) {

@@ -107,8 +107,8 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       repository_resolution,github_installation_id) VALUES($1,$2,$3,'Parent','owner/widgets',
       'https://github.com/owner/widgets.git','repository',77)`, [R,W,H]);
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Incident')`, [C,W,R,A]);
-    await db.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,feature_branch,lifecycle,workflow_state)
-      VALUES($1,'Prove recovery',$2,'feature/incident',$3::jsonb,'implement')`, [C,A,JSON.stringify({checks:'passing',
+    await db.query(`INSERT INTO corner_facts(corner_id,objective,owner_agent_id,lifecycle,workflow_state)
+      VALUES($1,'Prove recovery',$2,$3::jsonb,'implement')`, [C,A,JSON.stringify({checks:'passing',
       pr:{number:1,headSha,url:'https://github.com/owner/widgets/pull/1',mergeability:'clean'}})]);
     for (const who of [H,A,B,F]) for (const room of [null,R])
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [W,room,who]);
@@ -146,7 +146,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     } as unknown as GitHubAppClient;
     const payload = {action:'completed',installation:{id:77},repository:{full_name:'owner/widgets'},
       check_run:{name:'lint',status:'completed',conclusion:'failure',head_sha:headSha,
-        check_suite:{head_branch:'feature/incident',head_sha:headSha}}};
+        check_suite:{head_branch:'feature/corner-333333333333',head_sha:headSha}}};
     const first = new GitHubOperations(race.victim, {} as GitHubOAuthClient, app, 'secret');
     const second = new GitHubOperations(race.other, {} as GitHubOAuthClient, app, 'secret');
     const refresh = first.processWebhook('check_run', payload);

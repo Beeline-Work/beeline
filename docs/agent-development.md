@@ -18,6 +18,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 - Write corner evidence under `.beeline-proof/` and publish evidence needed after close. The manifest labels provenance only: a confirmed archived corner deletes all per-corner data, including proof, dirty work and unpushed commits, after stopping attributable processes. Open/unknown corner lifecycle never authorizes archive deletion.
 - After building the body, `node scripts/prove-archived-output.mjs` demonstrates `ARCHIVED-OUTPUT-1` through the built storage report and archive sweep in a throwaway checkout, including a live child and dirty source.
 
+- **Test database teardown releases the engine.** `PgliteDatabase.close()` in `apps/server/src/test-support.ts` drains background work, closes PostgreSQL, then drops the PGlite engine reference. Vitest 2 instance spies retain old services and wrappers; keeping a closed engine attached retains its WASM heap. Coverage: `test-support.test.ts`.
+
 - **Dead code is baseline-gated.** After building workspace `dist/`, `npm run dead-code` runs Knip against `knip-baseline.json`; only run `dead-code:baseline` for an intentional API addition. Expo Router entries are declared in `knip.jsonc`.
 - **Hand-testing `beeline start`/`pair` in a worktree can start a REAL production daemon** (runtime pointers live in the shared git common dir; `start-command.ts` converges the machine helper). Lifecycle tests require isolated `HOME`, `XDG_CONFIG_HOME`, `XDG_STATE_HOME` and a separate native manager; use `scripts/helper-proof/run-linux.sh` for real installation/start/update tests. `lifecycle-test-guard.ts` refuses live paths and unmocked managers in tests. Use `--repo` a throwaway repo for `pair`.
 

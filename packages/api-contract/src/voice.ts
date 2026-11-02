@@ -1,3 +1,4 @@
+import { systemMessage } from './system-message-catalog.js';
 import type { RoomViewIdentity } from './phone-types.js';
 
 export const VOICE_QUOTA_MESSAGE = 'Daily voice limit reached. Try again tomorrow.';
@@ -50,7 +51,7 @@ export const VOICE_LONG_PRESS_MS = 450;
 
 export function voiceDuration(seconds: number): string {
   const elapsed = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(elapsed / 60)}:${String(elapsed % 60).padStart(2, '0')}`;
+  return systemMessage("voice.elapsed-time", Math.floor(elapsed / 60), String(elapsed % 60).padStart(2, systemMessage("voice.0")));
 }
 
 export function readVoiceCall(value: unknown): VoiceCall | undefined {

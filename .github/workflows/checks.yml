@@ -250,6 +250,7 @@ jobs:
               - 'scripts/release-job-output*'
               - 'scripts/release-artifact-allowlist*'
               - 'scripts/ota-release.test.mjs'
+              - 'scripts/assert-mobile-release-origin*'
               - 'scripts/ota-launch-proof.test.mjs'
               - 'apps/mobile/scripts/release-proof.mjs'
               - 'scripts/read-store-runtimes.mjs'
@@ -392,6 +393,30 @@ jobs:
           node scripts/check-phone-network-channels.mjs --base "$CHANNEL_BASE"
           node --test scripts/router-boundaries.test.mjs
           node scripts/check-router-boundaries.mjs --base "$CHANNEL_BASE"
+      # The base commit's copy of the guard judges the PR, so a PR cannot
+      # weaken its own check. A merge group was already judged as its PRs.
+      - name: Keep each module's sinks in their owner files
+        env:
+          ARCHITECTURE_BASE: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
+          ARCHITECTURE_PR: ${{ github.event.pull_request.number }}
+          ARCHITECTURE_HEAD: ${{ github.event.pull_request.head.sha }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$ARCHITECTURE_BASE"
+          node --test scripts/check-architecture.test.mjs
+          runner=scripts
+          if git cat-file -e "$ARCHITECTURE_BASE:scripts/check-architecture.mjs" 2>/dev/null; then
+            runner="$RUNNER_TEMP/architecture-guard"
+            mkdir -p "$runner"
+            for file in check-architecture.mjs architecture-invariants.mjs architecture-storage.mjs; do
+              git show "$ARCHITECTURE_BASE:scripts/$file" > "$runner/$file" 2>/dev/null || rm -f "$runner/$file"
+            done
+          fi
+          if [ -n "$ARCHITECTURE_PR" ]; then
+            node "$runner/check-architecture.mjs" --root . --base "$ARCHITECTURE_BASE"
+          else
+            node "$runner/check-architecture.mjs" --root .
+          fi
       # `npx turbo run typecheck` misses two of the three legs the root script
       # runs: the isolated mobile app (its own tsconfig and node_modules, which
       # turbo does not see) and tsconfig.scripts.json. This gate is unfiltered
@@ -1087,7 +1112,7 @@ jobs:
       - name: Test store upload identity, rerun store checks and Apple processing verification
         run: node --test scripts/ios-store-build.test.mjs scripts/store-shipped.test.mjs scripts/play-scripts.test.mjs
       - name: Test release preflight, failure intake and governor regressions
-        run: node --test scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs scripts/mobile-store-minimum.test.mjs scripts/release-record.test.mjs scripts/release-bookkeeping.test.mjs scripts/ota-release.test.mjs scripts/ota-launch-proof.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs
+        run: node --test scripts/pr-store-build.test.mjs scripts/release-preflight.test.mjs scripts/unified-release.test.mjs scripts/npm-package-visibility.test.mjs scripts/smoke-helper-package.test.mjs scripts/mobile-store-minimum.test.mjs scripts/release-record.test.mjs scripts/release-bookkeeping.test.mjs scripts/ota-release.test.mjs scripts/ota-launch-proof.test.mjs scripts/store-runtime-targets.test.mjs scripts/release-artifact-allowlist.test.mjs scripts/assert-mobile-release-origin.test.mjs
       # Release state lives in the systems that own it and the published
       # GitHub Release record; artifacts and caches carry build outputs only.
       - name: Refuse release state in artifacts and caches

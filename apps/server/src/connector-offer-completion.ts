@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import type { ConnectorOfferCardView } from '@beeline/api-contract/connector-offers';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
@@ -62,8 +63,8 @@ export async function failConnectingOffers(
         AND card->>'status'='connecting'`, [offer.room_id, offer.id]);
     await ensureSystemIdentity(database);
     await systemLine(database, { roomId: offer.room_id, authorId: SYSTEM_IDENTITY_ID,
-      subject: { kind: 'system', name: 'Connector setup' }, verb: 'failed',
-      consequence: 'Retry the connection to continue', kind: 'connector-offer-decided',
+      subject: { kind: 'system', name: systemMessage("connector-offer-completion.connector-setup") }, verb: systemMessage("connector-offer-completion.failed"),
+      consequence: systemMessage("connector-offer-completion.retry-the-connection-to-continue"), kind: 'connector-offer-decided',
       ...(offer.command_id ? { commandId: offer.command_id } : {}), wakes: [offer.agent_id],
       cardType: 'connector-offer-decision', card: { offerId: offer.id, status: 'failed' } });
     result.push({ offerId: offer.id, roomId: offer.room_id, agentId: offer.agent_id });
@@ -167,7 +168,7 @@ async function settleConnectingOffers(
         kind: offer.accepted_kind,
         name: offer.accepted_name,
       }) : { kind: 'system', name: connectorName },
-      verb: offer.accepted_by ? (offer.intent === 'reconnect' ? 'reconnected' : 'added') : 'reconnected automatically',
+      verb: offer.accepted_by ? (offer.intent === 'reconnect' ? systemMessage("connector-offer-completion.reconnected") : systemMessage("connector-offer-completion.added")) : systemMessage("connector-offer-completion.reconnected-automatically"),
       ...(offer.accepted_by ? { object: connectorName } : {}),
       kind: 'connector-offer-decided',
       ...(offer.command_id ? { commandId: offer.command_id } : {}),

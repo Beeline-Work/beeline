@@ -13,7 +13,7 @@ import {
 const ts = createRequire(import.meta.url)('typescript');
 const script = new URL('../apps/server/scripts/test-selection.mjs', import.meta.url);
 
-const guard = 'apps/server/src/system-messages-lock.test.ts';
+const guard = 'apps/server/src/system-message-catalog.test.ts';
 const records = [
   { test: 'apps/server/src/a.test.ts', sources: { 'apps/server/src/rooms.ts': ['', 'createRoom', 'listRooms'] }, reads: [] },
   { test: 'apps/server/src/b.test.ts', sources: { 'apps/server/src/rooms.ts': ['', 'listRooms'], 'apps/server/src/wallet.ts': ['pay'] }, reads: ['docs/workflows/triage.json'] },
@@ -313,7 +313,7 @@ test('replaying fifty past PRs selects every test file that really failed on the
     for (const file of pr.failed) if (!selected.includes(file)) misses.push(`#${pr.number} ${file}`);
   }
   assert.deepEqual(misses, []);
-  assert.ok(replay.prs.filter((pr) => pr.failed.includes(guard)).length >= 7, 'the seven System guard failures stay in the replay');
+  assert.ok(replay.prs.filter((pr) => pr.failed.includes('apps/server/src/system-messages-lock.test.ts')).length >= 7, 'the seven System guard failures stay in the replay');
 });
 
 test('every edited server test survives a missing or stale coverage entry', () => {

@@ -460,6 +460,62 @@ check that record before any retry so one failed night produces one alert.
 A skipped setup also gets one rerun and then one failure alert.
 Stop only the emulator and fixture processes owned by this wake.
 
+### Host runner (optional)
+
+The host runner is built but **not installed**. Switch only if any of the next
+three scheduled nights (November 2–4, 2026) fails for a non-app reason. It fetches
+and detaches exact main in `<state-dir>/checkout`, installs root/mobile dependencies
+only when their lockfile hashes change, leases one emulator, bind-tests unused
+ports, and runs the same `nightly-run.sh`. It reports a held capture, verdict or
+emulator lane as blocked (exit 2), leaving the holder alone. Stale `host.lock` or
+`nightly.lock` directories require verifying that no writer remains before removal.
+
+Before enabling it, replace agent capture schedule `390f36c4-454d-475a-a789-0d3561bcdc92`
+with a short verdict-reading turn after the host run. That turn reads
+`host-run.json` and its `nightlyJson` path even on failure, posts the verdict and
+evidence using the existing contract above, and files `fix-order.json` for failures.
+**The host timer and agent capture must never run the same night.** Keep this
+03:00 Eastern capture outside the 02:00 release and 04:00/04:15 jobs; allow up to
+four hours before reading the result. The reader reports setup failures when
+`nightlyJson` is null. Switching schedules is an operator action, not installation
+performed by this script.
+
+On the host, prepare `%h/.config/beeline-latency-rig.env` with absolute values
+(systemd EnvironmentFile does not expand `$HOME` or other variables):
+
+```ini
+PATH=/absolute/node/bin:/absolute/beeline/bin:/absolute/android-sdk/platform-tools:/usr/local/bin:/usr/bin:/bin
+LATENCY_RIG_STATE=/absolute/private/latency-rig-speedy
+LATENCY_RIG_RUNNER=/absolute/repository/scripts/latency-rig/nightly-host.sh
+ANDROID_HOME=/absolute/android-sdk
+BEELINE_ANDROID_EMULATOR_BINARY=/absolute/android-sdk/emulator/emulator
+BEELINE_ANDROID_BASE_AVD_HOME=/absolute/avd-metadata-containing-se_api35
+BEELINE_ANDROID_LEASE_ROOT=/absolute/private/latency-rig-speedy/emulator-leases
+BEELINE_ANDROID_INSTANCE_ROOT=/absolute/private/latency-rig-speedy/emulator-instances
+```
+
+Include the host JDK/toolchain environment and optional prepared
+`GRADLE_RO_DEP_CACHE` described above. Use the existing persistent rig state to
+retain baseline history. Requires the local-run prerequisites plus `git`, `npm`,
+`beeline`, `adb`, `ss`, `flock`, `setsid` and `pkill`. Install only after the
+schedule switch:
+
+```sh
+mkdir -p "$HOME/.config/systemd/user"
+cp scripts/latency-rig/systemd/beeline-latency-rig.{service,timer} "$HOME/.config/systemd/user/"
+systemctl --user daemon-reload
+systemctl --user enable --now beeline-latency-rig.timer
+```
+
+The timer uses `Persistent=false`, so missed nights are not replayed. The service
+caps its process tree at 31 GiB and four hours. The runner saves the measured SHA,
+exit status and verdict path in `host-run.json`, and the command log/PID/status
+in `host-nightly.{log,pid,exit}`. Its EXIT trap cleans only its owned emulator and
+nightly process session, including local server/proxy descendants. For a manual
+host invocation within the same memory allowance, use
+`bash scripts/latency-rig/nightly-host.sh <state-dir>`; `LATENCY_HOST_NIGHTLY_RUN`
+is a script-path override for isolated stub tests.
+
 ### Schedule prompt
 
 The existing Jellybean schedule uses

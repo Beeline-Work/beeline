@@ -87,7 +87,7 @@ import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { cornerWaitingFunctionSql } from './corner-waiting-report.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
-import { logLockHolders, retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
+import { logLockHolders, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 import { QueryProfiler } from './query-profile.js';
 import { DatabaseBackgroundWork } from './database-background-work.js';
@@ -3172,7 +3172,7 @@ export async function migrate(
   options: { deferData?: boolean } = {},
 ): Promise<void> {
   const ddl = (name: string, sql: string) =>
-    retryMigrationStep(name, async () => { await database.query(sql); }, {
+    runMigrationStep(name, async () => { await database.query(sql); }, {
       onLockTimeout: () => logLockHolders(database, name, sql),
     });
   const ddlScript = async (name: string, sql: string) => {
@@ -3183,18 +3183,18 @@ export async function migrate(
   await ddlScript('server schema', SCHEMA);
   await ddlScript('Rooms MCP OAuth', ROOMS_MCP_SCHEMA);
   await ddlScript('historical storage schema', LEGACY_STORAGE_SCHEMA);
-  await retryMigrationStep('webhook retention index', () => createIndexConcurrently(
+  await runMigrationStep('webhook retention index', () => createIndexConcurrently(
     database, 'github_webhook_deliveries_received_idx',
     `CREATE INDEX CONCURRENTLY github_webhook_deliveries_received_idx
      ON github_webhook_deliveries(received_at)`,
   ));
-  await retryMigrationStep('terminal push claim expiry index', () => createIndexConcurrently(
+  await runMigrationStep('terminal push claim expiry index', () => createIndexConcurrently(
     database, 'push_delivery_claims_terminal_idx',
     `CREATE INDEX CONCURRENTLY push_delivery_claims_terminal_idx
      ON push_delivery_claims(completed_at)
      WHERE status IN ('delivered','suppressed','failed')`,
   ));
-  await retryMigrationStep('pending read-clear claim index', () => createIndexConcurrently(
+  await runMigrationStep('pending read-clear claim index', () => createIndexConcurrently(
     database, 'push_delivery_claims_read_clear_idx',
     `CREATE INDEX CONCURRENTLY push_delivery_claims_read_clear_idx
      ON push_delivery_claims(device_token,message_id)
@@ -3209,18 +3209,18 @@ export async function migrate(
   await ddlScript('startup wake backoff', STARTUP_WAKE_BACKOFF_SCHEMA);
   await ddlScript('free agents schema', FREE_AGENTS_SCHEMA);
   await ddlScript('starter onboarding schema', STARTER_ONBOARDING_SCHEMA);
-  await retryMigrationStep('checkin human history index', () => createIndexConcurrently(
+  await runMigrationStep('checkin human history index', () => createIndexConcurrently(
     database, 'messages_checkin_author_history',
     `CREATE INDEX CONCURRENTLY messages_checkin_author_history ON messages(author_id,created_at,id)
      WHERE presentation='message' AND system_event IS NULL`,
   ));
   await ddlScript('next day checkin schema', NEXT_DAY_CHECKIN_SCHEMA);
-  await retryMigrationStep('pending command re-nudge index', () => createIndexConcurrently(
+  await runMigrationStep('pending command re-nudge index', () => createIndexConcurrently(
     database, 'agent_commands_pending_renudge',
     `CREATE INDEX CONCURRENTLY agent_commands_pending_renudge ON agent_commands(created_at)
      WHERE state='pending' AND action='input' AND renudged_at IS NULL`,
   ));
-  await retryMigrationStep('room pending command index', () => createIndexConcurrently(
+  await runMigrationStep('room pending command index', () => createIndexConcurrently(
     database, 'agent_commands_room_pending_status',
     `CREATE INDEX CONCURRENTLY agent_commands_room_pending_status
      ON agent_commands(room_id,agent_id,created_at,id)
@@ -3233,7 +3233,7 @@ export async function migrate(
   await ddlScript('sentry wakes', SENTRY_WAKE_SCHEMA);
   await ddlScript('operator System DMs', OPERATOR_SYSTEM_DM_SCHEMA);
   await ddlScript('operator finances snapshots', OPERATOR_FINANCES_SCHEMA);
-  await retryMigrationStep('operator model cost history index', () => createIndexConcurrently(
+  await runMigrationStep('operator model cost history index', () => createIndexConcurrently(
     database, 'free_agent_events_model_cost_at',
     `CREATE INDEX CONCURRENTLY free_agent_events_model_cost_at ON free_agent_events(at)
      WHERE kind='model_usage'`,
@@ -3246,7 +3246,7 @@ export async function migrate(
   await ddlScript('mobile store minimum schema', MOBILE_MINIMUM_SCHEMA);
   // Bounded operator history reads use date-leading indexes rather than
   // scanning the message/turn ledgers once for every plotted day.
-  await retryMigrationStep('operator message history index', () => createIndexConcurrently(
+  await runMigrationStep('operator message history index', () => createIndexConcurrently(
     database, 'messages_operator_history_idx',
     `CREATE INDEX CONCURRENTLY messages_operator_history_idx
      ON messages(created_at,author_id) WHERE presentation='message' AND deleted_at IS NULL`,
@@ -3254,64 +3254,64 @@ export async function migrate(
   // Membership attention refreshes ask for this person's last answer in each
   // candidate Room. A date-leading index re-scans history for every item when
   // a newcomer has no answers.
-  await retryMigrationStep('corner answer lookup index', () => createIndexConcurrently(
+  await runMigrationStep('corner answer lookup index', () => createIndexConcurrently(
     database, 'messages_room_author_answer_idx',
     `CREATE INDEX CONCURRENTLY messages_room_author_answer_idx
      ON messages(room_id,author_id,created_at DESC)
      WHERE presentation='message' AND deleted_at IS NULL`,
   ));
-  await retryMigrationStep('operator turn history index', () => createIndexConcurrently(
+  await runMigrationStep('operator turn history index', () => createIndexConcurrently(
     database, 'agent_turns_operator_history_idx',
     `CREATE INDEX CONCURRENTLY agent_turns_operator_history_idx ON agent_turns(created_at) INCLUDE(status)`,
   ));
-  await retryMigrationStep('operator invited join history index', () => createIndexConcurrently(
+  await runMigrationStep('operator invited join history index', () => createIndexConcurrently(
     database, 'memberships_operator_invited_history_idx',
     `CREATE INDEX CONCURRENTLY memberships_operator_invited_history_idx
      ON memberships(joined_at,invited_by) WHERE room_id IS NULL AND invited_by IS NOT NULL`,
   ));
-  await retryMigrationStep('operator invite creation index', () => createIndexConcurrently(
+  await runMigrationStep('operator invite creation index', () => createIndexConcurrently(
     database, 'invites_operator_created_idx',
     `CREATE INDEX CONCURRENTLY invites_operator_created_idx
      ON invites(created_at,created_by) WHERE created_at IS NOT NULL`,
   ));
-  await retryMigrationStep('operator pairing code creation index', () => createIndexConcurrently(
+  await runMigrationStep('operator pairing code creation index', () => createIndexConcurrently(
     database, 'agent_pairing_codes_operator_created_idx',
     `CREATE INDEX CONCURRENTLY agent_pairing_codes_operator_created_idx
      ON agent_pairing_codes(created_at,created_by) WHERE created_at IS NOT NULL`,
   ));
-  await retryMigrationStep('operator turn token index', () => createIndexConcurrently(
+  await runMigrationStep('operator turn token index', () => createIndexConcurrently(
     database, 'agent_turns_operator_tokens_idx',
     `CREATE INDEX CONCURRENTLY agent_turns_operator_tokens_idx
      ON agent_turns(created_at,agent_id) INCLUDE (input_tokens,output_tokens)`,
   ));
-  await retryMigrationStep('operator repository link index', () => createIndexConcurrently(
+  await runMigrationStep('operator repository link index', () => createIndexConcurrently(
     database, 'repository_link_successes_operator_linked_idx',
     `CREATE INDEX CONCURRENTLY repository_link_successes_operator_linked_idx
      ON repository_link_successes(first_linked_at,identity_id)`,
   ));
-  await retryMigrationStep('operator repository card index', () => createIndexConcurrently(
+  await runMigrationStep('operator repository card index', () => createIndexConcurrently(
     database, 'messages_repository_onboarding_idx',
     `CREATE INDEX CONCURRENTLY messages_repository_onboarding_idx
      ON messages(created_at) WHERE card_type='repository-onboarding' AND deleted_at IS NULL`,
   ));
-  await retryMigrationStep('operator unrevoked daemon token index', () => createIndexConcurrently(
+  await runMigrationStep('operator unrevoked daemon token index', () => createIndexConcurrently(
     database, 'daemon_tokens_unrevoked_created_idx',
     `CREATE INDEX CONCURRENTLY daemon_tokens_unrevoked_created_idx
      ON daemon_tokens(agent_id,created_at) WHERE revoked_at IS NULL`,
   ));
-  await retryMigrationStep('message cursor index', () => createIndexConcurrently(
+  await runMigrationStep('message cursor index', () => createIndexConcurrently(
     database, 'messages_room_cursor_idx',
     `CREATE INDEX CONCURRENTLY messages_room_cursor_idx ON messages (room_id,
      (${MESSAGE_CURSOR_MS_SQL}), id)`,
   ));
-  await retryMigrationStep('live activity index', () => createIndexConcurrently(
+  await runMigrationStep('live activity index', () => createIndexConcurrently(
     database, 'messages_live_activity_idx',
     `CREATE INDEX CONCURRENTLY messages_live_activity_idx
      ON messages(room_id,author_id,created_at DESC,id DESC)
      WHERE presentation='activity' AND durable_fact IS NULL`,
   ));
   await database.query('DROP INDEX IF EXISTS messages_workflow_active_trigger_idx');
-  await retryMigrationStep('unread cursor index', () => createIndexConcurrently(
+  await runMigrationStep('unread cursor index', () => createIndexConcurrently(
     database, 'messages_unread_cursor_idx',
     `CREATE INDEX CONCURRENTLY messages_unread_cursor_idx
      ON messages(room_id,created_at,id) INCLUDE(author_id)
@@ -3325,28 +3325,28 @@ export async function migrate(
   // which is every pre-window row the backfill deliberately skips below. The
   // drain reads newest-first and stops at the window edge, so those entries are
   // never visited — they are exactly what makes a converged probe free.
-  await retryMigrationStep('search backfill index', () => createIndexConcurrently(
+  await runMigrationStep('search backfill index', () => createIndexConcurrently(
     database,
     'messages_search_document_backfill_idx',
     `CREATE INDEX CONCURRENTLY messages_search_document_backfill_idx
      ON messages(created_at DESC)
      WHERE search_document IS NULL AND presentation='message'`,
   ));
-  await retryMigrationStep('search document index', () => createIndexConcurrently(
+  await runMigrationStep('search document index', () => createIndexConcurrently(
     database,
     'messages_search_document_idx',
     `CREATE INDEX CONCURRENTLY messages_search_document_idx
      ON messages USING GIN(search_document)
      WHERE deleted_at IS NULL AND presentation='message'`,
   ));
-  await retryMigrationStep('search stem backfill index', () => createIndexConcurrently(
+  await runMigrationStep('search stem backfill index', () => createIndexConcurrently(
     database,
     'messages_search_stem_document_backfill_idx',
     `CREATE INDEX CONCURRENTLY messages_search_stem_document_backfill_idx
      ON messages(created_at DESC)
      WHERE search_stem_document IS NULL AND presentation='message'`,
   ));
-  await retryMigrationStep('search stem document index', () => createIndexConcurrently(
+  await runMigrationStep('search stem document index', () => createIndexConcurrently(
     database,
     'messages_search_stem_document_idx',
     `CREATE INDEX CONCURRENTLY messages_search_stem_document_idx
@@ -3356,7 +3356,7 @@ export async function migrate(
   // Embedding-cycle scan: cheap once the backfill converges, for the same
   // reason as the search backfill index above (a filled row never re-enters
   // this partial index).
-  await retryMigrationStep('institutional memory embedding backfill index', () =>
+  await runMigrationStep('institutional memory embedding backfill index', () =>
     createIndexConcurrently(
       database,
       'institutional_memory_items_embedding_backfill_idx',
@@ -3366,7 +3366,7 @@ export async function migrate(
     ));
   // Exact distance scans stay inside one Workspace's small active set.
   await database.query('DROP INDEX IF EXISTS institutional_memory_items_embedding_idx');
-  await retryMigrationStep('workspace skill embedding backfill index', () =>
+  await runMigrationStep('workspace skill embedding backfill index', () =>
     createIndexConcurrently(
       database,
       'workspace_skills_embedding_backfill_idx',
@@ -3376,13 +3376,13 @@ export async function migrate(
     ));
   await database.query('DROP INDEX IF EXISTS workspace_skills_embedding_idx');
   // A corner's run state is its newest handoff card (corner-run.ts).
-  await retryMigrationStep('corner run card index', () => createIndexConcurrently(
+  await runMigrationStep('corner run card index', () => createIndexConcurrently(
     database, 'messages_corner_run_card_idx',
     `CREATE INDEX CONCURRENTLY messages_corner_run_card_idx
      ON messages (room_id, ((card->>'seq')::int) DESC) WHERE card_type='corner-workflow-handoff'`,
   ));
   // A corner's worker and owner are its assignment commands (corner-worker.ts).
-  await retryMigrationStep('corner assignment index', () => createIndexConcurrently(
+  await runMigrationStep('corner assignment index', () => createIndexConcurrently(
     database, 'agent_commands_corner_assignment_idx',
     `CREATE INDEX CONCURRENTLY agent_commands_corner_assignment_idx
      ON agent_commands (room_id, inbox_sequence) WHERE reason IN ('corner_objective','human_tag')`,
@@ -3394,7 +3394,7 @@ export async function migrate(
   );
   // Machine connection changes find their one open notice without scanning
   // transcript history. messages is busy, so this index builds concurrently.
-  await retryMigrationStep('machine offline notice index', () => createIndexConcurrently(
+  await runMigrationStep('machine offline notice index', () => createIndexConcurrently(
     database, 'messages_machine_offline_open_idx',
     `CREATE INDEX CONCURRENTLY messages_machine_offline_open_idx
      ON messages((card->>'machineId'),(card->>'ownerId'))
@@ -3402,14 +3402,14 @@ export async function migrate(
   ));
   // Reviewer recovery reads one successful sign-in without scanning transcript
   // history on each reconciliation. Build outside the busy messages transaction.
-  await retryMigrationStep('agent sign-in recovery index', () => createIndexConcurrently(
+  await runMigrationStep('agent sign-in recovery index', () => createIndexConcurrently(
     database, 'messages_agent_sign_in_success_idx',
     `CREATE INDEX CONCURRENTLY messages_agent_sign_in_success_idx
      ON messages((card->>'agentId'),created_at DESC,id DESC)
      WHERE card_type='agent-sign-in' AND card->>'status'='signed-in'`,
   ));
   // The Needs-you tray finds undecided grant cards without reading transcripts.
-  await retryMigrationStep('grant request index', () => createIndexConcurrently(
+  await runMigrationStep('grant request index', () => createIndexConcurrently(
     database, 'messages_grant_request_idx',
     `CREATE INDEX CONCURRENTLY messages_grant_request_idx
      ON messages(room_id,created_at DESC) WHERE card_type='grant-request'`,
@@ -3418,13 +3418,13 @@ export async function migrate(
   // scan the whole messages table for the FK check on reply_to_message_id,
   // which is what stalled DELETE FROM workspaces past the app pool's
   // statement_timeout (reported as the delete dialog hanging forever).
-  await retryMigrationStep('reply-to index', () => createIndexConcurrently(
+  await runMigrationStep('reply-to index', () => createIndexConcurrently(
     database, 'messages_reply_to_idx',
     `CREATE INDEX CONCURRENTLY messages_reply_to_idx
      ON messages(reply_to_message_id) WHERE reply_to_message_id IS NOT NULL`,
   ));
   // Every live-run check reads the start card's saved status through this index.
-  await retryMigrationStep('workflow run live index', () => createIndexConcurrently(
+  await runMigrationStep('workflow run live index', () => createIndexConcurrently(
     database, 'messages_workflow_run_live_idx',
     `CREATE INDEX CONCURRENTLY messages_workflow_run_live_idx
      ON messages(room_id) WHERE card_type='workflow-handoff' AND ${workflowRunIsLiveSql('card')}`,
@@ -3432,39 +3432,39 @@ export async function migrate(
   // The phone finds each persisted start card, then the latest handoff for
   // that run. Both indexes are built outside the schema transaction because
   // messages is a busy table.
-  await retryMigrationStep('workflow run start index', () => createIndexConcurrently(
+  await runMigrationStep('workflow run start index', () => createIndexConcurrently(
     database, 'messages_workflow_run_start_idx',
     `CREATE INDEX CONCURRENTLY messages_workflow_run_start_idx
      ON messages(room_id,created_at DESC,id DESC)
      WHERE card_type='workflow-handoff' AND id=card->>'runId'`,
   ));
-  await retryMigrationStep('workflow run handoff index', () => createIndexConcurrently(
+  await runMigrationStep('workflow run handoff index', () => createIndexConcurrently(
     database, 'messages_workflow_handoff_run_seq_idx',
     `CREATE INDEX CONCURRENTLY messages_workflow_handoff_run_seq_idx
      ON messages(room_id,(card->>'runId'),((card->>'seq')::int) DESC NULLS LAST)
      WHERE card_type='workflow-handoff' AND card->>'runId' IS NOT NULL`,
   ));
   // Empty once every start card has its saved status, so each release's check is free.
-  await retryMigrationStep('workflow run status backfill index', () => createIndexConcurrently(
+  await runMigrationStep('workflow run status backfill index', () => createIndexConcurrently(
     database, 'messages_workflow_run_status_backfill_idx',
     `CREATE INDEX CONCURRENTLY messages_workflow_run_status_backfill_idx
      ON messages(id) WHERE card_type='workflow-handoff' AND ${workflowRunStatusUnsavedSql('card', 'id')}`,
   ));
   // The Task Tray reads sign-in and Trusty Squire approval cards at any age
   // (they leave only when decided or expired), so it reads them through these.
-  await retryMigrationStep('needs-you approval index', () => createIndexConcurrently(
+  await runMigrationStep('needs-you approval index', () => createIndexConcurrently(
     database, 'messages_needs_you_approval_idx',
     `CREATE INDEX CONCURRENTLY messages_needs_you_approval_idx
      ON messages(room_id)
      WHERE card_type IN ('agent-sign-in','app-sign-in','squire-approval') AND deleted_at IS NULL`,
   ));
   // Index the three deadlines read by DeadlineExpiry.
-  await retryMigrationStep('needs-you mark expiry index', () => createIndexConcurrently(
+  await runMigrationStep('needs-you mark expiry index', () => createIndexConcurrently(
     database, 'needs_you_marks_open_first_seen_idx',
     `CREATE INDEX CONCURRENTLY needs_you_marks_open_first_seen_idx
      ON needs_you_marks(first_seen_at) WHERE cleared_at IS NULL`,
   ));
-  await retryMigrationStep('needs-you card expiry index', () => createIndexConcurrently(
+  await runMigrationStep('needs-you card expiry index', () => createIndexConcurrently(
     database, 'messages_needs_you_expiry_idx',
     `CREATE INDEX CONCURRENTLY messages_needs_you_expiry_idx
      ON messages(${cardExpiresAtSql()})
@@ -3472,32 +3472,32 @@ export async function migrate(
   ));
   // The v2 predicate includes actionable commander reports. Build it before
   // retiring the old question-only index, so deployed databases keep indexed reads.
-  await retryMigrationStep('needs-you actionable lookback index', () => createIndexConcurrently(
+  await runMigrationStep('needs-you actionable lookback index', () => createIndexConcurrently(
     database, 'messages_needs_you_actionable_idx',
     `CREATE INDEX CONCURRENTLY messages_needs_you_actionable_idx
      ON messages(created_at) WHERE ${askingMessageSql()}`,
   ));
-  await retryMigrationStep('retire needs-you question-only index', async () => {
+  await runMigrationStep('retire needs-you question-only index', async () => {
     await database.query('DROP INDEX CONCURRENTLY IF EXISTS messages_needs_you_question_idx');
   });
-  await retryMigrationStep('squire decision index', () => createIndexConcurrently(
+  await runMigrationStep('squire decision index', () => createIndexConcurrently(
     database, 'messages_squire_decision_idx',
     `CREATE INDEX CONCURRENTLY messages_squire_decision_idx
      ON messages(room_id,(card->>'approvalId')) WHERE card_type='squire-approval-decision'`,
   ));
   await ddlScript('corner merge holds', CORNER_MERGE_HOLDS_SCHEMA);
   await ddlScript('agent corner holds', AGENT_CORNER_HOLDS_SCHEMA);
-  await retryMigrationStep('corner forwarded item index', () => createIndexConcurrently(
+  await runMigrationStep('corner forwarded item index', () => createIndexConcurrently(
     database, 'messages_source_room_idx',
     `CREATE INDEX CONCURRENTLY messages_source_room_idx
      ON messages ((card->>'sourceRoomId')) WHERE card->>'sourceRoomId' IS NOT NULL`,
   ));
-  await retryMigrationStep('corner report message index', () => createIndexConcurrently(
+  await runMigrationStep('corner report message index', () => createIndexConcurrently(
     database, 'messages_report_request_idx',
     `CREATE INDEX CONCURRENTLY messages_report_request_idx
      ON messages (request_id) WHERE request_id IS NOT NULL`,
   ));
-  await retryMigrationStep('corner report origin index', () => createIndexConcurrently(
+  await runMigrationStep('corner report origin index', () => createIndexConcurrently(
     database, 'agent_commands_report_origin_idx',
     `CREATE INDEX CONCURRENTLY agent_commands_report_origin_idx ON agent_commands
      ((CASE WHEN private_payload->>'originCornerId' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
@@ -3505,12 +3505,12 @@ export async function migrate(
   ));
   await ddlScript('corner person state', CORNER_PERSON_STATE_SCHEMA);
   await ddlScript('corner membership guard', CORNER_MEMBERSHIPS_SCHEMA);
-  await retryMigrationStep('corner human report return index', () => createIndexConcurrently(
+  await runMigrationStep('corner human report return index', () => createIndexConcurrently(
     database, 'corner_human_reports_return',
     `CREATE INDEX CONCURRENTLY corner_human_reports_return ON messages(room_id,created_at DESC,id DESC)
      WHERE card->>'reportToId' IS NOT NULL`,
   ));
-  await retryMigrationStep('corner human report worker index', () => createIndexConcurrently(
+  await runMigrationStep('corner human report worker index', () => createIndexConcurrently(
     database, 'corner_human_reports_worker',
     `CREATE INDEX CONCURRENTLY corner_human_reports_worker ON messages(author_id,created_at DESC,id DESC)
      WHERE card->>'reportToId' IS NOT NULL`,
@@ -3545,7 +3545,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await backfillCornerHoldMessages(database);
   const dataStep = async <T>(name: string, run: () => Promise<T>): Promise<T> => {
     let result!: T;
-    await retryMigrationStep(name, async () => {
+    await runMigrationStep(name, async () => {
       result = await run();
     });
     return result;
@@ -3825,7 +3825,7 @@ export async function backfillMessageSearchDocuments(
   let filled = 0;
   for (;;) {
     let updated: { rowCount: number } | undefined;
-    await retryMigrationStep('message search backfill batch', async () => {
+    await runMigrationStep('message search backfill batch', async () => {
       const run = (db: SqlDatabase) => db.query(
         `UPDATE messages SET search_document=${messageSearchDocumentSql('')},
                             search_stem_document=${messageSearchDocumentSql('', 'english')}
@@ -3901,7 +3901,7 @@ async function boundedMigrationUpdate(
   let changed = 0;
   for (;;) {
     let count = 0;
-    await retryMigrationStep(name, async () => {
+    await runMigrationStep(name, async () => {
       count = (await database.transaction(async (transaction) => {
         await transaction.query(`SET LOCAL statement_timeout='10000ms'`);
         await transaction.query(`SET LOCAL lock_timeout='500ms'`);
@@ -3943,7 +3943,7 @@ export async function backfillAgentHandles(database: SqlDatabase): Promise<numbe
   let changed = 0;
   for (const agent of agents.rows) {
     let updated = 0;
-    await retryMigrationStep(`agent handle ${agent.id}`, async () => {
+    await runMigrationStep(`agent handle ${agent.id}`, async () => {
       updated = await database.transaction(async (transaction) => {
         await transaction.query(`SET LOCAL statement_timeout='10000ms'`);
         await transaction.query(`SET LOCAL lock_timeout='500ms'`);

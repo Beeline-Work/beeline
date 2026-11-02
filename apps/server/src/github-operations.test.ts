@@ -151,7 +151,7 @@ describe('GitHub phone operations', () => {
 
   it.each(['40P01', '55P03'].flatMap(code =>
     ['before writes', 'after writes'].map(boundary => ({ code, boundary }))))(
-    'CHECK-LOCK-1: rolls back and retries $code $boundary without refetching or duplicate wakes', async ({ code, boundary }) => {
+    'CHECK-LOCK-1: rolls back $code $boundary and waits for a new event without duplicate wakes', async ({ code, boundary }) => {
       const { corners, app, payload } = await checksFixture();
       const corner = corners[0]!;
       app.readCommitCheckRollup.mockResolvedValue({ state: 'failed', total: 1,
@@ -174,12 +174,16 @@ describe('GitHub phone operations', () => {
         if (attempt === 1) throw Object.assign(new Error('lock conflict'), { code });
         return result;
       }));
+      await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ code });
+      expect(attempts).toBe(1);
+      expect(changed).not.toHaveBeenCalled();
+      expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(1);
       await operations.processWebhook('check_run', payload);
-      // Two refresh attempts, then the separate mergeability transaction.
+      // A separate event owns the next refresh and mergeability transaction.
       expect(attempts).toBe(3);
       expect(changed).toHaveBeenCalledTimes(1);
-      expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(1);
-      expect(app.readPullRequest).toHaveBeenCalledTimes(1);
+      expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(2);
+      expect(app.readPullRequest).toHaveBeenCalledTimes(2);
       expect((await database.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.checks).toBe('failing');
       await operations.processWebhook('check_run', payload);
       expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`, [corner])).rows).toHaveLength(1);
@@ -187,7 +191,7 @@ describe('GitHub phone operations', () => {
     });
 
   it.each(['40P01', '55P03', '23514'])(
-    'CHECK-LOCK-1: propagates exhausted or nonretryable %s failures with no partial writes', async code => {
+    'CHECK-LOCK-1: propagates %s failure immediately with no partial writes', async code => {
       const { corners, app, payload } = await checksFixture();
       const corner = corners[0]!;
       const changed = vi.fn();
@@ -200,7 +204,7 @@ describe('GitHub phone operations', () => {
         throw failure;
       }));
       await expect(operations.processWebhook('check_run', payload)).rejects.toBe(failure);
-      expect(spy).toHaveBeenCalledTimes(code === '23514' ? 1 : 3);
+      expect(spy).toHaveBeenCalledOnce();
       expect(changed).not.toHaveBeenCalled();
       expect((await database.query(`SELECT lifecycle->'checksSummary' summary FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.summary).toBeNull();
       expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [corner])).rows).toHaveLength(0);
@@ -233,7 +237,7 @@ describe('GitHub phone operations', () => {
 
   it.each(['40P01', '55P03'].flatMap(code =>
     ['head', 'fetch'].map(guard => ({ code, guard }))))(
-    'CHECK-LOCK-1: revalidates a changed $guard after $code rollback', async ({ code, guard }) => {
+    'CHECK-LOCK-1: preserves a changed $guard after $code rollback without replay', async ({ code, guard }) => {
       const { corners, app, payload } = await checksFixture();
       const corner = corners[0]!;
       const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
@@ -255,9 +259,8 @@ describe('GitHub phone operations', () => {
           throw error;
         }
       });
-      await operations.processWebhook('check_run', payload);
-      // Two refresh attempts, then the separate mergeability transaction.
-      expect(attempts).toBe(3);
+      await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ code });
+      expect(attempts).toBe(1);
       const lifecycle = (await database.query<{ lifecycle: { pr: { headSha: string }; checksSummary?: { total: number } } }>(
         `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]!.lifecycle;
       if (guard === 'head') expect(lifecycle.pr.headSha).toBe('new-head');
@@ -2163,7 +2166,7 @@ describe('GitHub phone operations', () => {
     }
   });
 
-  it.each(['installation', 'repository', 'removal'])('INSTALL-SYNC-1: recovers a deadlock at %s and completes repository access sync', async boundary => {
+  it.each(['installation', 'repository', 'removal'])('INSTALL-SYNC-1: returns a deadlock at %s and completes sync only on a new event', async boundary => {
     await database.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
       VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN]);
     await database.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
@@ -2182,14 +2185,16 @@ describe('GitHub phone operations', () => {
       if (target && ++attempts === 1) throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
       return query(sql, values);
     });
+    await expect(operations.processWebhook('installation', { action: 'created', installation: { id: 77 } })).rejects.toMatchObject({ code: '40P01' });
+    expect(attempts).toBe(1);
     await operations.processWebhook('installation', { action: 'created', installation: { id: 77 } });
     expect(attempts).toBe(2);
-    expect(app.listRepositories).toHaveBeenCalledTimes(1);
+    expect(app.listRepositories).toHaveBeenCalledTimes(boundary === 'installation' ? 1 : 2);
     expect((await query(`SELECT repository_id,active FROM github_repositories ORDER BY repository_id`)).rows)
       .toEqual([{ repository_id: 101, active: true }, { repository_id: 102, active: false }]);
   });
 
-  it.each([['40P01', 3], ['23505', 1]] as const)('INSTALL-SYNC-1: surfaces %s after bounded attempts', async (code, expected) => {
+  it.each([['40P01', 1], ['23505', 1]] as const)('INSTALL-SYNC-1: surfaces %s after one attempt', async (code, expected) => {
     await database.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
       VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN]);
     const app = { installationAccount: async () => ({ id: '42', login: 'owner', type: 'User', repositorySelection: 'selected' }), listRepositories: vi.fn() };
@@ -3333,7 +3338,7 @@ describe('GitHub phone operations', () => {
     console.info(`Reproduction C2-1: failing wake body="${command?.body ?? ''}"`);
     expect(command?.body).toContain('typecheck');
   });
-  it('CHECK-DEADLOCK-1: wakes on first failure and settled followup once despite rollback and replay', async () => {
+  it('CHECK-DEADLOCK-1: wakes on first failure and settled followup once across rollback and a new explicit event', async () => {
     const { corners, headSha, app, payload } = await checksFixture();
     const corner = corners[0]!;
     const checks = [
@@ -3371,6 +3376,8 @@ describe('GitHub phone operations', () => {
       }
       return result;
     }));
+    await expect(operations.processWebhook('check_run', failure('TYPECHECK'))).rejects.toMatchObject({ code: '40P01' });
+    expect(await wakes()).toHaveLength(0);
     await operations.processWebhook('check_run', failure('TYPECHECK'));
     expect((await wakes())).toHaveLength(1);
     expect((await wakes())[0]?.body).toContain('TYPECHECK');
@@ -3388,6 +3395,8 @@ describe('GitHub phone operations', () => {
     expect((await wakes())).toHaveLength(1);
     checks[2] = { name: 'lint', status: 'passed' };
     replay = true;
+    await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ code: '40P01' });
+    expect(await wakes()).toHaveLength(1);
     await operations.processWebhook('check_run', payload);
     expect((await wakes())).toHaveLength(2);
     expect((await wakes())[1]?.body).toContain('desktop');
@@ -3395,7 +3404,7 @@ describe('GitHub phone operations', () => {
     expect(followupInbox.commands.some(command => command.source.body.includes('https://github.com/owner/widgets/actions/runs/10/job/102'))).toBe(true);
     await operations.processWebhook('check_run', payload);
     expect((await wakes())).toHaveLength(2);
-    expect(readJobLog).toHaveBeenCalledTimes(2);
+    expect(readJobLog).toHaveBeenCalledTimes(4);
   });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

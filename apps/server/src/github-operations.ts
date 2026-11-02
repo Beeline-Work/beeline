@@ -31,7 +31,6 @@ import { cornerImplementerSql } from './corner-worker.js';
 import { currentCornerBrief, assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cancelCornerAgentCommands, lockCornerArchivalAuthority } from './corner-close.js';
 import { captureServerError } from './sentry.js';
-import { retryMigrationStep, retryOnDeadlock } from './migration-retry.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import {
@@ -2756,12 +2755,9 @@ export class GitHubOperations {
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
         });
-        // A supplied transaction belongs to its caller: only the owner can
-        // roll back and replay the complete unit after lock contention.
-        if (database !== this.database) await refresh();
-        else await retryMigrationStep('GitHub check refresh', async () => { await refresh(); }, {
-          attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50),
-        });
+        // The admitted webhook/command owns one transaction. Contention
+        // returns to that owner; it does not replay reads or writes here.
+        await refresh();
         if (noteInserted) this.onRoomChanged?.(target.corner_id);
     } catch (error) {
       if (transientGitHubError(error)) {
@@ -2863,7 +2859,7 @@ export class GitHubOperations {
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
     let updated = false;
     let archived = false;
-    await retryOnDeadlock(() => database.transaction(async (database) => {
+    await database.transaction(async (database) => {
       updated = false;
       archived = false;
       await lockCornerLifecycle(database, target.corner_id);
@@ -2974,7 +2970,7 @@ export class GitHubOperations {
         pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
           head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },
       }, Number(target.installation_id), database);
-    }), { attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50) });
+    });
     if (!updated) return;
     this.onRoomChanged?.(target.corner_id);
     this.onRoomChanged?.(target.parent_id);
@@ -2992,16 +2988,10 @@ export class GitHubOperations {
     transaction?: SqlDatabase,
   ) {
     const database = transaction ?? this.database;
-    // Only autocommit writes can replay independently. A supplied transaction
-    // must propagate the deadlock so its owner can roll back the entire unit.
-    const write = async (run: () => Promise<unknown>) => {
-      if (transaction) { await run(); return; }
-      await retryOnDeadlock(async () => { await run(); }, {
-        attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50),
-      });
-    };
+    // Every statement belongs to this one installation event. A contended
+    // statement fails the event; only another admitted event can run it again.
     const account = await this.app.installationAccount(installationId);
-    await write(() => database.query(
+    await database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES($1,$2,$3,$4,$5,$6,$7,'active') ON CONFLICT(installation_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,account_id=EXCLUDED.account_id,account_login=EXCLUDED.account_login,account_type=EXCLUDED.account_type,account_avatar_url=EXCLUDED.account_avatar_url,repository_selection=EXCLUDED.repository_selection,status='active',updated_at=now()
        WHERE (github_installations.owner_id,github_installations.account_id,github_installations.account_login,github_installations.account_type,github_installations.account_avatar_url,github_installations.repository_selection,github_installations.status)
          IS DISTINCT FROM (EXCLUDED.owner_id,EXCLUDED.account_id,EXCLUDED.account_login,EXCLUDED.account_type,EXCLUDED.account_avatar_url,EXCLUDED.repository_selection,EXCLUDED.status)`,
@@ -3014,14 +3004,14 @@ export class GitHubOperations {
         account.avatarUrl ?? null,
         account.repositorySelection,
       ],
-    ));
+    );
     const repositories = await this.app.listRepositories(installationId);
-    for (const repository of repositories) await write(() => this.storeRepository(repository, database));
-    await write(() => database.query(
+    for (const repository of repositories) await this.storeRepository(repository, database);
+    await database.query(
       `UPDATE github_repositories SET active=false,updated_at=now()
        WHERE installation_id=$1 AND NOT (repository_id=ANY($2::bigint[])) AND active`,
       [installationId, repositories.map((repository) => repository.id)],
-    ));
+    );
   }
   /**
    * GET /user/installations is keyed to the OAuth lookup token's visibility:

@@ -121,7 +121,7 @@
     "src/media-object-routes.test.ts": 197,
     "src/merge-archival.test.ts": 7641,
     "src/message-mentions.test.ts": 11,
-    "src/migration-retry.test.ts": 12,
+    "src/migration-steps.test.ts": 12,
     "src/migrations/corner-names.test.ts": 2893,
     "src/model-catalog-notice.test.ts": 7997,
     "src/monolith-auth.test.ts": 27256,

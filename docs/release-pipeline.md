@@ -222,7 +222,11 @@ The migration writes `beeline_schema_state` only after both the server and auth
 schemas and all backfills finish. Normal boot uses `DATABASE_URL` only to read
 that marker and exits with an explicit release-migration error when the schema
 is absent or stale. A Machine restart therefore cannot rerun or queue a
-migration behind live traffic.
+migration behind live traffic. Each release-owned SQL step runs once. Lock
+timeout/deadlock returns the original failure with bounded lock diagnostics;
+there is no timed backoff or automatic statement replay. A new authorized
+release invocation can resume the existing idempotent steps. Proof:
+`apps/server/src/migration-steps.test.ts` (including isolated PostgreSQL).
 
 The promotion records the two current Machine image refs, builds and pushes one
 tagged Fly image (the image that ships; there is no separate build), and

@@ -2,76 +2,35 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
-import { isDeadlock, lockedTables, logLockHolders, retryMigrationStep, retryOnDeadlock, splitMigrationStatements } from './migration-retry.js';
+import { lockedTables, logLockHolders, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
 
-// Optional real PostgreSQL proof: loopback only, unique schema, never a shared account.
 const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
 if (postgresUrl && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgresUrl).hostname))
   throw new Error('migration lock proofs require an isolated loopback PostgreSQL');
 
-const deadlock = () => Object.assign(new Error('deadlock detected'), { code: '40P01' });
+afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 
-describe('retryOnDeadlock', () => {
-  it('reruns the idempotent migration after a deadlock', async () => {
-    let calls = 0;
-    const waits: number[] = [];
-    await retryOnDeadlock(
-      async () => {
-        calls += 1;
-        if (calls < 3) throw deadlock();
-      },
-      { delayMs: () => 5, sleep: async (ms) => void waits.push(ms) },
-    );
-    expect(calls).toBe(3);
-    expect(waits).toEqual([5, 5]);
-  });
-
-  it('gives up after the attempt budget', async () => {
-    let calls = 0;
-    await expect(
-      retryOnDeadlock(
-        async () => {
-          calls += 1;
-          throw deadlock();
-        },
-        { attempts: 2, sleep: async () => undefined },
-      ),
-    ).rejects.toThrow('deadlock detected');
-    expect(calls).toBe(2);
-  });
-
-  it('does not retry other failures', async () => {
-    let calls = 0;
-    await expect(
-      retryOnDeadlock(
-        async () => {
-          calls += 1;
-          throw Object.assign(new Error('syntax error'), { code: '42601' });
-        },
-        { sleep: async () => undefined },
-      ),
-    ).rejects.toThrow('syntax error');
-    expect(calls).toBe(1);
-    expect(isDeadlock(deadlock())).toBe(true);
-  });
-});
-
-describe('retryMigrationStep', () => {
-  it('backs off across multiple push intervals with a bounded retry budget', async () => {
-    const waits: number[] = [];
-    let calls = 0;
-    await expect(retryMigrationStep('burst reader', async () => {
-      calls++;
-      throw Object.assign(new Error('lock timeout'), { code: '55P03' });
-    }, { sleep: async ms => { waits.push(ms); } })).rejects.toMatchObject({ code: '55P03' });
-    expect(calls).toBe(20);
-    expect(waits.reduce((total, ms) => total + ms, 0)).toBeGreaterThanOrEqual(145_000);
-    expect(waits.reduce((total, ms) => total + ms, 0)).toBeLessThan(155_000);
-    expect(Math.max(...waits)).toBeLessThan(10_500);
+describe('release-owned migration steps', () => {
+  it.each(['40P01', '55P03', '57014', '42601'])('returns %s once and stays idle until another release command', async code => {
+    vi.useFakeTimers();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const failure = Object.assign(new Error(code), { code });
+    const run = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(undefined);
+    const prior = vi.fn(async () => {});
+    await runMigrationStep('prior', prior);
+    await expect(runMigrationStep('contended', run)).rejects.toBe(failure);
+    await vi.advanceTimersByTimeAsync(86_400_000);
+    expect(run).toHaveBeenCalledOnce();
+    expect(prior).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    // A new explicit release invocation owns this attempt.
+    await runMigrationStep('contended', run);
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(prior).toHaveBeenCalledOnce();
     expect(MIGRATION_LOCK_TIMEOUT_MS).toBe(1_000);
   });
 
-  it.skipIf(!postgresUrl)('R-MIGRATION-READER retries burst reads and alters messages in a gap', async () => {
+  it.skipIf(!postgresUrl)('a real contended DDL step resumes only on an explicit invocation after lock release', async () => {
     const schema = `release_proof_${randomUUID().replaceAll('-', '')}`;
     const admin = new Pool({ connectionString: postgresUrl, max: 1 });
     const reader = await admin.connect();
@@ -82,37 +41,17 @@ describe('retryMigrationStep', () => {
     try {
       await reader.query(`CREATE SCHEMA ${schema}`);
       await reader.query(`CREATE TABLE ${schema}.messages (id int)`);
-      const ddl = 'ALTER TABLE messages ADD COLUMN delivered boolean';
-      const runBursts = async (attempts?: number) => {
-        let bursts = 0;
-        let gaps = 0;
-        await reader.query(`BEGIN; SELECT * FROM ${schema}.messages`);
-        try {
-          await retryMigrationStep('R-MIGRATION-READER', async () => {
-            await migration.query(ddl);
-          }, {
-            attempts,
-            // Compress the 12–30s cadence; use real, separate PostgreSQL sessions
-            // and table locks. Release each read before starting the next burst.
-            sleep: async () => {
-              await reader.query('COMMIT');
-              gaps++;
-              if (gaps < 7) {
-                await reader.query(`BEGIN; SELECT * FROM ${schema}.messages`);
-                bursts++;
-              }
-            },
-          });
-        } finally { await reader.query('ROLLBACK'); }
-        return { bursts, gaps };
-      };
-      // The old six-attempt policy exhausts while reads keep recurring.
-      await expect(runBursts(6)).rejects.toMatchObject({ code: '55P03' });
-      // The default policy reaches the seventh gap without changing the worker.
-      await expect(runBursts()).resolves.toEqual({ bursts: 6, gaps: 7 });
-      const columns = await reader.query(`SELECT column_name FROM information_schema.columns
-        WHERE table_schema=$1 AND table_name='messages'`, [schema]);
-      expect(columns.rows).toContainEqual({ column_name: 'delivered' });
+      await reader.query(`BEGIN; SELECT * FROM ${schema}.messages`);
+      const run = vi.fn(async () => { await migration.query('ALTER TABLE messages ADD COLUMN delivered boolean'); });
+      await expect(runMigrationStep('reader contention', run)).rejects.toMatchObject({ code: '55P03' });
+      expect(run).toHaveBeenCalledOnce();
+      await reader.query('COMMIT');
+      const columns = async () => (await reader.query(`SELECT column_name FROM information_schema.columns
+        WHERE table_schema=$1 AND table_name='messages'`, [schema])).rows;
+      expect(await columns()).not.toContainEqual({ column_name: 'delivered' });
+      await runMigrationStep('reader contention', run);
+      expect(run).toHaveBeenCalledTimes(2);
+      expect(await columns()).toContainEqual({ column_name: 'delivered' });
     } finally {
       await reader.query('ROLLBACK');
       await migration.close();
@@ -138,31 +77,6 @@ FOR EACH ROW EXECUTE FUNCTION sample_fn();`;
     expect(statements[2]).toContain('CREATE TRIGGER');
   });
 
-  it('retries only the contended DDL step after a lock timeout', async () => {
-    let priorStep = 0;
-    let contendedStep = 0;
-    const waits: number[] = [];
-    await retryMigrationStep('schema', async () => { priorStep++; });
-    await retryMigrationStep('index', async () => {
-      contendedStep++;
-      if (contendedStep < 3)
-        throw Object.assign(new Error('lock timeout'), { code: '55P03' });
-    }, { delayMs: () => 1, sleep: async (ms) => void waits.push(ms) });
-    expect(priorStep).toBe(1);
-    expect(contendedStep).toBe(3);
-    expect(waits).toEqual([1, 1]);
-  });
-
-  it('does not retry a statement timeout or syntax error', async () => {
-    for (const code of ['57014', '42601']) {
-      let calls = 0;
-      await expect(retryMigrationStep('schema', async () => {
-        calls++;
-        throw Object.assign(new Error(code), { code });
-      }, { sleep: async () => undefined })).rejects.toThrow(code);
-      expect(calls).toBe(1);
-    }
-  });
 });
 
 describe('lock holder diagnostic', () => {
@@ -198,17 +112,15 @@ describe('lock holder diagnostic', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { database, queries } = fakeDatabase();
     const sql = 'ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean';
-    await expect(retryMigrationStep('server schema 3/567', async () => { throw lockTimeout(); }, {
-      attempts: 2,
-      sleep: async () => undefined,
+    await expect(runMigrationStep('server schema 3/567', async () => { throw lockTimeout(); }, {
       onLockTimeout: () => logLockHolders(database, 'server schema 3/567', sql),
     })).rejects.toMatchObject({ code: '55P03' });
     const diagnostics = queries.filter((query) => query.sql.includes('pg_locks'));
-    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics).toHaveLength(1);
     expect(diagnostics[0]!.values).toEqual([['identities']]);
     expect(queries.some((query) => /SET LOCAL statement_timeout/.test(query.sql))).toBe(true);
     const logged = warn.mock.calls.filter(([message]) => message === '[migration] lock holder').map(([, row]) => row);
-    expect(logged).toHaveLength(2);
+    expect(logged).toHaveLength(1);
     expect(Object.keys(logged[0] as object)).toEqual(expect.arrayContaining([
       'pid', 'state', 'wait_event', 'xact_start', 'query_start', 'application_name', 'query',
     ]));
@@ -217,8 +129,7 @@ describe('lock holder diagnostic', () => {
   it('keeps the original lock timeout when the diagnostic fails', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const { database } = fakeDatabase(true);
-    await expect(retryMigrationStep('schema', async () => { throw lockTimeout(); }, {
-      attempts: 1,
+    await expect(runMigrationStep('schema', async () => { throw lockTimeout(); }, {
       onLockTimeout: () => logLockHolders(database, 'schema', 'ALTER TABLE identities ADD COLUMN x int'),
     })).rejects.toThrow('canceling statement due to lock timeout');
     expect(warn).toHaveBeenCalledWith('[migration] schema lock holder diagnostic failed: permission denied for pg_locks');
@@ -239,9 +150,8 @@ describe('lock holder diagnostic', () => {
       await held.query(`BEGIN; SELECT count(*) FROM ${schema}.lock_proof`);
       const holderPid = (await held.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0]!.pid;
       const sql = 'ALTER TABLE lock_proof ADD COLUMN IF NOT EXISTS hidden boolean';
-      await expect(retryMigrationStep('proof 1/1', async () => { await database.query(sql); }, {
-        attempts: 1,
-        onLockTimeout: () => logLockHolders(database, 'proof 1/1', sql),
+      await expect(runMigrationStep('proof 1/1', async () => { await database.query(sql); }, {
+          onLockTimeout: () => logLockHolders(database, 'proof 1/1', sql),
       })).rejects.toMatchObject({ code: '55P03' });
       const logged = warn.mock.calls.filter(([message]) => message === '[migration] lock holder').map(([, row]) => row);
       expect(logged).toContainEqual(expect.objectContaining({

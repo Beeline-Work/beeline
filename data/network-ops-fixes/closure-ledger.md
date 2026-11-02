@@ -85,3 +85,6 @@ These counts identify the staged validation run; later changes must rerun affect
 
 
 - F18 SQL admission now removes generic query/BEGIN and boot-schema retry clocks. A lost INSERT reply reproduced two effects before removal. Database59 pass across full57 + corrected legacy-fixture2; actual PostgreSQL2 proves one effect despite lost INSERT/COMMIT replies; background recovery4, operator delivery9 and server91 pass. The new PostgreSQL proof and mixed-leader proof run in the isolated CI lane. Higher-level and SDK retry/removal coverage remains open.
+
+
+- F18 release/GitHub SQL contention no longer self-retries. `migration-steps.test.ts` passes10, including two real PostgreSQL lock/diagnostic cases and idle-day no-attempt checks. Focused GitHub31 pass across26 + corrected event-read-count5, covering installation/check/confirmed-merge reconciliation, transaction rollback, head/fetch fences and one wake per committed result. CI and timing references follow the renamed single-attempt helper. Provider retries and periodic GitHub discovery remain open.

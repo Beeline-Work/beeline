@@ -17,7 +17,7 @@ import { sentryTelegramFromEnv } from './sentry-telegram.js';
 import { flushSentryWakes, nextSentryWakeAt, sentryWakeAgentFromEnv } from './sentry-wake.js';
 import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
-import { retryMigrationStep } from './migration-retry.js';
+import { runMigrationStep } from './migration-steps.js';
 import { databaseConnectionBudget } from './database-budget.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
@@ -97,7 +97,7 @@ async function runReleaseMigration(): Promise<void> {
   });
   try {
     await migrate(database, { deferData: true });
-    await retryMigrationStep('auth schema', async () => {
+    await runMigrationStep('auth schema', async () => {
       await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     });
     await migrateData(database);
@@ -110,7 +110,7 @@ async function runReleaseMigration(): Promise<void> {
     }
     // This is deliberately last: boot may proceed only after both schema owners
     // and every data backfill completed successfully.
-    await retryMigrationStep('schema marker', () => markSchemaCurrent(database));
+    await runMigrationStep('schema marker', () => markSchemaCurrent(database));
     console.log('[migration] server and auth schemas are current');
   } finally {
     await database.close();

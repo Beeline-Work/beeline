@@ -148,3 +148,10 @@ Remove the generic 100/300/700ms query and transaction-start retry wrapper and t
 `DatabaseTransactionStartError` continues to distinguish a callback that never ran. Failures after work or COMMIT preserve the original uncertain failure and never replay the callback. A successful separately admitted query or committed transaction emits one recovery boundary after recorded unavailability. No timer manufactures that boundary. Existing explicit operations and job obligations can admit new work under their own policies.
 
 Proofs are in `database.test.ts`, `database-one-attempt.postgres.test.ts` and the existing server/background/operator delivery suites. The PostgreSQL proof drops replies after real INSERT/COMMIT success and observes exactly one effect from another pool without a uniqueness-based dedupe shortcut. Both this proof and old/new leader overlap are included in the serialized isolated-PostgreSQL CI step. Remaining higher-level/SDK retries and full F18 closure remain open.
+
+
+## D069 — Release and GitHub contention return to their existing owners
+
+Delete `retryOnDeadlock` and the timer/attempt policy from migration helpers. `migration-steps.ts` now runs a named release step once and preserves the existing bounded lock-holder diagnostic on timeout. Completed migration steps and the final schema marker retain their existing semantics. A contended release stops before promotion; another explicitly authorized release can resume idempotent steps. No production release is performed for this proof.
+
+GitHub check refresh, confirmed-merge reconciliation and installation synchronization now propagate a contended transaction/statement once. An explicit new event may reread its current provider/head/authority evidence; the failed event cannot replay autonomously. Tests preserve rollback, no partial wakes, current head/fetch fencing, and one committed wake across repeated admitted events. This removes SQL contention retries only; provider read retries and recurring GitHub discovery remain open.

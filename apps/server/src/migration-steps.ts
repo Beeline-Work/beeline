@@ -1,10 +1,5 @@
-/** Postgres reports a deadlock victim with SQLSTATE 40P01. */
-export function isDeadlock(error: unknown): boolean {
-  return (error as { code?: unknown } | null)?.code === '40P01';
-}
-
 /** Split a migration script without breaking SQL strings, comments, or PL/pgSQL
- * dollar-quoted bodies. Each returned statement can have its own lock retry. */
+ * dollar-quoted bodies. Each returned statement is one explicit release step. */
 export function splitMigrationStatements(sql: string): string[] {
   const statements: string[] = [];
   let start = 0;
@@ -62,67 +57,21 @@ export function splitMigrationStatements(sql: string): string[] {
   return statements;
 }
 
-/** Lock timeout and deadlock are contention with live traffic, not a reason
- * to repeat completed release steps. Call this around each DDL statement. */
-export async function retryMigrationStep(
+/** One release-owned step. Contention reports its original outcome and never
+ * creates a timer or repeats completed work. A later release command can
+ * resume the existing idempotent migration. */
+export async function runMigrationStep(
   name: string,
   run: () => Promise<void>,
-  options: {
-    attempts?: number;
-    delayMs?: (attempt: number) => number;
-    sleep?: (ms: number) => Promise<void>;
-    /** Runs after every lock timeout, before the retry or the final throw. */
-    onLockTimeout?: () => Promise<void>;
-  } = {},
+  options: { onLockTimeout?: () => Promise<void> } = {},
 ): Promise<void> {
-  // Allow roughly three minutes to find a gap between the live server
-  // push scans. Keep each DDL lock wait short; back off outside PostgreSQL.
-  const attempts = options.attempts ?? 20;
-  const delayMs = options.delayMs ?? ((attempt) => Math.min(10_000, 1_000 * attempt) + Math.floor(Math.random() * 500));
-  const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  for (let attempt = 1; ; attempt++) {
-    try {
-      await run();
-      return;
-    } catch (error) {
-      const code = (error as { code?: unknown } | null)?.code;
-      if (code === '55P03') await options.onLockTimeout?.().catch(() => undefined);
-      if ((code !== '40P01' && code !== '55P03') || attempt >= attempts) throw error;
-      const wait = delayMs(attempt);
-      console.warn(`[migration] ${name} lock conflict on attempt ${attempt}/${attempts}; retrying in ${wait}ms`);
-      await sleep(wait);
-    }
-  }
-}
-
-/**
- * The release migration runs against live traffic, so a schema statement can
- * lose a lock race and be chosen as a deadlock victim. Every step is
- * idempotent, so the safe response is to run the whole migration again after a
- * short backoff rather than fail the release.
- */
-export async function retryOnDeadlock(
-  run: () => Promise<void>,
-  options: {
-    attempts?: number;
-    delayMs?: (attempt: number) => number;
-    sleep?: (ms: number) => Promise<void>;
-  } = {},
-): Promise<void> {
-  const attempts = options.attempts ?? 6;
-  const delayMs =
-    options.delayMs ?? ((attempt) => 2_000 * attempt + Math.floor(Math.random() * 1_000));
-  const sleep = options.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  for (let attempt = 1; ; attempt += 1) {
-    try {
-      await run();
-      return;
-    } catch (error) {
-      if (!isDeadlock(error) || attempt >= attempts) throw error;
-      const wait = delayMs(attempt);
-      console.warn(`[migration] deadlock on attempt ${attempt}/${attempts}; retrying in ${wait}ms`);
-      await sleep(wait);
-    }
+  try {
+    await run();
+  } catch (error) {
+    const code = (error as { code?: unknown } | null)?.code;
+    if (code === '55P03') await options.onLockTimeout?.().catch(() => undefined);
+    if (code === '40P01' || code === '55P03') console.warn(`[migration] ${name} lock conflict; step stopped`);
+    throw error;
   }
 }
 

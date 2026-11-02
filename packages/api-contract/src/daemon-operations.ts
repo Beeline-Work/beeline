@@ -1309,8 +1309,8 @@ export type RetractLiveOutputInput = TurnOutputAuthority &
   };
 export type PostTurnReceiptInput = AgentRoomInput & {
   /** Current owner ends model-dependent work without claiming provider failure
-   * or delivery. Exact model UUID only; server derives all outcome evidence. */
-  readonly modelOwnerEnd?: Readonly<{ requestId: string }>;
+   * or delivery. An unreadable private journal ends only owner authority, not provider outcome. */
+  readonly modelOwnerEnd?: Readonly<{ requestId: string } | { journalUnavailable: true }>;
   readonly trace?: TurnReplay;
   readonly requestId: string;
   /**

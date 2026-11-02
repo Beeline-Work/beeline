@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encodeOwnedModelReceipt } from '@beeline/api-contract/helper-model-receipt';
@@ -18,6 +18,21 @@ function fixture() {
   const context = {}; bindOwnedModelTurn(context, owner); return { context, owner };
 }
 describe('owned model terminal interception before higher recovery', () => {
+  it.each(['missing','corrupt','unsafe-mode'] as const)('ends the selected owner on a %s journal without inventing a request UUID', async mode => {
+    const {context,owner}=fixture(),work=vi.fn();
+    const request=owner.prepareHeaders();
+    expect(owner.confirmReceipt(encodeOwnedModelReceipt(token,{requestId:request.requestId,state:'succeeded',evidence:{kind:'usage',tokens:1,usd:0}}))).toBe(true);
+    const path=owner.paths().journal;
+    if(mode==='missing')unlinkSync(path);
+    else if(mode==='corrupt')writeFileSync(path,'{broken');
+    else chmodSync(path,0o644);
+    let error:unknown;
+    try{await ownedModelPrompt(context,async()=>work());}catch(value){error=value;}
+    expect(error).toBeInstanceOf(OwnedModelOutcomeUnknown);expect(work).not.toHaveBeenCalled();
+    expect(ownedModelEndReceipt(error as OwnedModelOutcomeUnknown,{agentId:'agent',roomId:'room',requestId:'turn',generationId:'generation'}))
+      .toEqual({agentId:'agent',roomId:'room',requestId:'turn',generationId:'generation',status:'failed',modelOwnerEnd:{journalUnavailable:true}});
+  });
+
   it('leaves legacy tasks and their errors unchanged', async () => {
     expect(await ownedModelPrompt({}, async () => 'legacy')).toBe('legacy');
     const error = new Error('legacy refusal'); await expect(ownedModelPrompt({}, async () => { throw error; })).rejects.toBe(error);

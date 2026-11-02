@@ -6,6 +6,10 @@ it('admits only the bounded causal model owner end on a terminal failed wire rec
   const input = { roomId: 'room', agentId: 'agent', requestId: 'turn', generationId: 'generation', status: 'failed',
     modelOwnerEnd: { requestId: '11111111-1111-4111-8111-111111111111' } };
   expect(parse(input)).toEqual(input);
+  const unavailable={...input,modelOwnerEnd:{journalUnavailable:true}};
+  expect(parse(unavailable)).toEqual(unavailable);
+  for(const modelOwnerEnd of [{journalUnavailable:false},{journalUnavailable:true,requestId:input.modelOwnerEnd.requestId},{}])
+    expect(()=>parse({...input,modelOwnerEnd})).toThrow();
   for (const value of [{ ...input, status: 'complete' }, { ...input, status: 'working' }, { ...input, heartbeat: false },
     { ...input, modelOwnerEnd: { requestId: 'not-a-uuid' } }, { ...input, modelOwnerEnd: { ...input.modelOwnerEnd, evidence: 'claimed' } }])
     expect(() => parse(value)).toThrow();

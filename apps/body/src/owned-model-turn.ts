@@ -3,7 +3,7 @@ import { OwnedModelFiles } from './owned-model-files.js';
 
 const owners = new WeakMap<object, OwnedModelFiles>();
 export class OwnedModelOutcomeUnknown extends Error {
-  constructor(readonly modelRequestId: string) { super('Owned model outcome UNKNOWN; dependent work ended without resubmission.'); }
+  constructor(readonly modelRequestId?: string) { super('Owned model outcome UNKNOWN; dependent work ended without resubmission.'); }
 }
 /** Private activation seam only. Never copy the owner into command/context DTOs,
  * trace/fingerprint/logs or environment; a generation cannot be rebound. */
@@ -20,8 +20,11 @@ export function releaseOwnedModelTurn(context: object): void {
 }
 export function assertOwnedModelTurnSettled(context: object): void {
   const owner = owners.get(context); if (!owner) return;
-  const snapshot = owner.snapshot(), last = snapshot.requests.at(-1);
-  if (snapshot.state === 'unknown' && last) throw new OwnedModelOutcomeUnknown(last);
+  let snapshot: ReturnType<OwnedModelFiles['snapshot']>;
+  try { snapshot=owner.snapshot(); }
+  catch { throw new OwnedModelOutcomeUnknown(); }
+  const last=snapshot.requests.at(-1);
+  if (snapshot.state === 'unknown') throw new OwnedModelOutcomeUnknown(last);
 }
 /** Guard BOTH successful ACP completion and exceptions before any login repair,
  * provider re-pin, device/steer/context recovery or dependent publication. */
@@ -33,5 +36,5 @@ export async function ownedModelPrompt<T>(context: object, task: () => Promise<T
  * server authenticates exact command/source/attempt and commits owner end. */
 export function ownedModelEndReceipt(error: OwnedModelOutcomeUnknown,
   turn: { agentId: string; roomId: string; requestId: string; generationId: string }): PostTurnReceiptInput {
-  return { ...turn, status: 'failed', modelOwnerEnd: { requestId: error.modelRequestId } };
+  return { ...turn, status: 'failed', modelOwnerEnd: error.modelRequestId ? { requestId: error.modelRequestId } : { journalUnavailable: true } };
 }

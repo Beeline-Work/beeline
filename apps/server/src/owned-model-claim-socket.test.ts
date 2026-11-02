@@ -103,6 +103,20 @@ describe('actual selected model credential claim socket', () => {
     const replay=await claim('claim-after-owner-end');expect(replay.error).toBe('turn_operation_unconfirmed');
   });
 
+  it('ends a selected owner with an unreadable journal before any provider dispatch without creating an attempt',async()=>{
+    await register();expect((await claim()).error).toBeUndefined();
+    send({type:'turn-operation',operation:'postAgentTurnReceipt',requestId:'journal-end',input:{
+      roomId:MODEL_ROOM,agentId:MODEL_AGENT,requestId:'model-socket-request',generationId:'model-socket-generation',
+      status:'failed',modelOwnerEnd:{journalUnavailable:true},
+    }});
+    const ended=await next(frame=>frame.type==='turn-result'&&frame.requestId==='journal-end');
+    expect(ended.error).toBeUndefined();expect(ended.result).toBeDefined();
+    expect((await f.db.query('SELECT model_request_id FROM agent_command_owner_ends WHERE command_id=$1',[commandId])).rows)
+      .toEqual([{model_request_id:null}]);
+    expect((await f.db.query('SELECT 1 FROM owned_model_attempts WHERE command_id=$1',[commandId])).rowCount).toBe(0);
+    expect((await claim('claim-after-journal-end')).error).toBe('turn_operation_unconfirmed');
+  });
+
   it('keeps helpers without installed model support and a server without signer configuration on the legacy claim wire', async () => {
     const old = await register(false); expect(old.capabilities).not.toHaveProperty('ownedModelV1'); expect(old.capabilities).not.toHaveProperty('turnOwnershipV1');
     expect(old.capabilities?.intakeHeartbeat).toBe(true);

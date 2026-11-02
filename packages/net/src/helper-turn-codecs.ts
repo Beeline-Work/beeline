@@ -37,8 +37,9 @@ const receiptParams: typeof receipt.params = Object.freeze({ parse(value: unknow
   const parsed = closed(receipt.params, receiptFields).parse(value);
   const end = parsed.modelOwnerEnd;
   if (end !== undefined && (parsed.status !== 'failed' || parsed.heartbeat !== undefined || !end || typeof end !== 'object' ||
-      Array.isArray(end) || Object.keys(end).join() !== 'requestId' || typeof end.requestId !== 'string' ||
-      !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(end.requestId))) throw new Error('Turn model owner end invalid');
+      Array.isArray(end) || !(('requestId' in end && Object.keys(end).join()==='requestId' && typeof end.requestId==='string' &&
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(end.requestId)) ||
+      ('journalUnavailable' in end && Object.keys(end).join()==='journalUnavailable' && end.journalUnavailable===true)))) throw new Error('Turn model owner end invalid');
   return parsed;
 } });
 const codecs = Object.freeze({

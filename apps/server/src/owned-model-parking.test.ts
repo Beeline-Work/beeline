@@ -24,6 +24,16 @@ describe('causal owned-model generation parking', () => {
   const terminal = { ...input, status: 'failed' as const, modelOwnerEnd: { requestId: ONE } };
   const row = async () => (await f.db.query(`SELECT state,generation_id FROM agent_commands WHERE id=$1`, [MODEL_CLAIM.commandId])).rows[0];
 
+  it.each(['unknown','succeeded'] as const)('journal loss ends authority without altering a %s attempt or inventing its identity',async outcome=>{
+    if(outcome==='succeeded')await attempts.settleUsage(f.actor,ONE,{tokens:2,usd:0},'succeeded',async()=>{});
+    const receipt={...input,status:'failed' as const,modelOwnerEnd:{journalUnavailable:true as const}};
+    await expect(f.db.transaction(tx=>parkOwnedModelTerminal(tx,receipt,MODEL_AGENT,{...MODEL_SOURCE,epoch:2}))).rejects.toThrow();
+    expect(await f.db.transaction(tx=>parkOwnedModelTerminal(tx,receipt,MODEL_AGENT,MODEL_SOURCE))).toBe(true);
+    expect((await f.db.query('SELECT model_request_id FROM agent_command_owner_ends')).rows).toEqual([{model_request_id:null}]);
+    expect((await f.db.query('SELECT state FROM owned_model_attempts')).rows).toEqual([{state:outcome}]);
+    expect((await f.db.query(`SELECT ${commandOwnerLiveSql()} live FROM agent_commands`)).rows[0]?.live).toBe(false);
+  });
+
   it('preserves command/generation/UNKNOWN and clears only live execution presentation', async () => {
     expect(await f.db.transaction(tx => parkOwnedModelTerminal(tx, terminal, MODEL_AGENT, MODEL_SOURCE))).toBe(true);
     expect(await row()).toEqual({ state: 'claimed', generation_id: input.generationId });

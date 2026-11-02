@@ -7,11 +7,12 @@ import type { PostTurnReceiptInput } from '@beeline/api-contract/daemon';
 export const OWNED_MODEL_OWNER_END_SCHEMA = `
 CREATE TABLE IF NOT EXISTS agent_command_owner_ends (
  command_id text NOT NULL, generation_id text NOT NULL,
- model_request_id text NOT NULL, ended_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ model_request_id text, ended_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  transaction_id bigint NOT NULL DEFAULT txid_current(),
  PRIMARY KEY(command_id,generation_id),
  FOREIGN KEY(command_id,generation_id) REFERENCES agent_command_generation_owners(command_id,generation_id) ON DELETE CASCADE
 );
+ALTER TABLE agent_command_owner_ends ALTER COLUMN model_request_id DROP NOT NULL;
 CREATE OR REPLACE FUNCTION beeline_command_generation_open(command text,generation text) RETURNS boolean
  LANGUAGE sql STABLE AS $$ SELECT NOT EXISTS(SELECT 1 FROM agent_command_owner_ends ended
    WHERE ended.command_id=command AND ended.generation_id=generation) $$;
@@ -42,7 +43,7 @@ CREATE TRIGGER beeline_preserve_owner_end BEFORE UPDATE OR DELETE ON agent_comma
  FOR EACH ROW EXECUTE FUNCTION beeline_preserve_owner_end();
 `;
 type Identity = { roomId: string; agentId: string; requestId: string; generationId?: string | null };
-type Cause = { kind: 'terminal-receipt'; source: HelperTurnOwnershipSource; modelRequestId: string } | { kind: 'source-ended' };
+type Cause = { kind: 'terminal-receipt'; source: HelperTurnOwnershipSource; modelRequestId: string | null } | { kind: 'source-ended' };
 export class OwnedModelOwnerEndRefusal extends Error {
   constructor() { super('Owned model owner end could not be authorized'); }
 }
@@ -58,7 +59,7 @@ async function modelInstalled(database: SqlDatabase): Promise<boolean> {
  * DELETE sources own committed fanout; rollback emits no application event. */
 export async function parkOwnedModelGeneration(database: SqlDatabase, input: Identity, cause: Cause): Promise<boolean> {
   if (!input.generationId) { if (cause.kind === 'terminal-receipt') throw new OwnedModelOwnerEndRefusal(); return false; }
-  if (cause.kind === 'terminal-receipt' && (!uuid.test(cause.modelRequestId) || !cause.source.connectionId ||
+  if (cause.kind === 'terminal-receipt' && (cause.modelRequestId!==null&&!uuid.test(cause.modelRequestId) || !cause.source.connectionId ||
       !Number.isSafeInteger(cause.source.epoch) || cause.source.epoch <= 0)) throw new OwnedModelOwnerEndRefusal();
   const command = (await database.query<{ id: string; turn_owner_connection_id: string | null; turn_owner_epoch: string | number | null }>(
     `SELECT id,turn_owner_connection_id,turn_owner_epoch FROM agent_commands
@@ -84,7 +85,18 @@ export async function parkOwnedModelGeneration(database: SqlDatabase, input: Ide
   const previous = await database.query(`SELECT 1 FROM agent_command_owner_ends WHERE command_id=$1 AND generation_id=$2`,
     [command.id, input.generationId]);
   if (previous.rowCount) return true;
-  const attempt = (await database.query<{ model_request_id: string }>(
+  let modelRequestId: string | null;
+  if(cause.kind==='terminal-receipt'&&cause.modelRequestId===null){
+    // Journal loss supplies no provider outcome or invented request identity.
+    // Only an actually issued credential for this exact current owner can end.
+    const credential=await database.query(`SELECT 1 FROM owned_model_credentials
+      WHERE command_id=$1 AND generation_id=$2 AND agent_id=$3 AND room_id=$4 AND request_id=$5
+        AND connection_id=$6 AND connection_epoch=$7 LIMIT 1`,
+      [command.id,input.generationId,input.agentId,input.roomId,input.requestId,command.turn_owner_connection_id,command.turn_owner_epoch]);
+    if(!credential.rowCount)throw new OwnedModelOwnerEndRefusal();
+    modelRequestId=null;
+  }else{
+    const attempt = (await database.query<{ model_request_id: string }>(
     `SELECT attempt.model_request_id FROM owned_model_attempts attempt
      JOIN owned_model_credentials credential ON credential.id=attempt.credential_id
      WHERE attempt.command_id=$1 AND attempt.generation_id=$2 AND attempt.agent_id=$3
@@ -96,11 +108,13 @@ export async function parkOwnedModelGeneration(database: SqlDatabase, input: Ide
     [command.id, input.generationId, input.agentId, input.roomId, input.requestId,
       command.turn_owner_connection_id, command.turn_owner_epoch,
       ...(cause.kind === 'terminal-receipt' ? [cause.modelRequestId] : [])])).rows[0];
-  if (!attempt) { if (cause.kind === 'terminal-receipt') throw new OwnedModelOwnerEndRefusal(); return false; }
+    if (!attempt) { if (cause.kind === 'terminal-receipt') throw new OwnedModelOwnerEndRefusal(); return false; }
+    modelRequestId=attempt.model_request_id;
+  }
   if (cause.kind === 'terminal-receipt') await database.query('SELECT beeline_register_owned_effect($1,$2,$3,$4,$5)',
     [command.id, input.agentId, input.generationId, command.turn_owner_connection_id, command.turn_owner_epoch]);
   await database.query(`INSERT INTO agent_command_owner_ends(command_id,generation_id,model_request_id)
-    VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, [command.id, input.generationId, attempt.model_request_id]);
+    VALUES($1,$2,$3) ON CONFLICT DO NOTHING`, [command.id, input.generationId, modelRequestId]);
   await database.query(`DELETE FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
     AND generation_id=$4 AND status='working'`, [input.roomId, input.agentId, input.requestId, input.generationId]);
   await database.query(`DELETE FROM live_outputs WHERE room_id=$1 AND agent_id=$2 AND turn_id=$3
@@ -147,11 +161,15 @@ export async function parkOwnedModelTerminal(
   const explicit = input.modelOwnerEnd !== undefined;
   if (explicit && (input.status !== 'failed' || input.heartbeat !== undefined || !source || !input.modelOwnerEnd ||
       typeof input.modelOwnerEnd !== 'object' || Array.isArray(input.modelOwnerEnd) ||
-      Object.keys(input.modelOwnerEnd).join() !== 'requestId' || !uuid.test(input.modelOwnerEnd.requestId))) throw new OwnedModelOwnerEndRefusal();
+      !(('requestId' in input.modelOwnerEnd && Object.keys(input.modelOwnerEnd).join()==='requestId' &&
+        typeof input.modelOwnerEnd.requestId==='string' && uuid.test(input.modelOwnerEnd.requestId)) ||
+        ('journalUnavailable' in input.modelOwnerEnd && Object.keys(input.modelOwnerEnd).join()==='journalUnavailable' && input.modelOwnerEnd.journalUnavailable===true)))) throw new OwnedModelOwnerEndRefusal();
   if (!source || !['failed', 'complete'].includes(input.status) || input.heartbeat) return false;
   if (!await modelInstalled(database)) {
     if (explicit) throw new OwnedModelOwnerEndRefusal(); return false;
   }
+  if(input.modelOwnerEnd&&'journalUnavailable' in input.modelOwnerEnd)
+    return parkOwnedModelGeneration(database,{...input,agentId},{kind:'terminal-receipt',source,modelRequestId:null});
   let modelRequestId = input.modelOwnerEnd?.requestId;
   if (!modelRequestId) {
     modelRequestId = (await database.query<{ model_request_id: string }>(`SELECT attempt.model_request_id

@@ -3348,6 +3348,15 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY messages_operator_history_idx
      ON messages(created_at,author_id) WHERE presentation='message' AND deleted_at IS NULL`,
   ));
+  // Membership attention refreshes ask for this person's last answer in each
+  // candidate Room. A date-leading index re-scans history for every item when
+  // a newcomer has no answers.
+  await retryMigrationStep('corner answer lookup index', () => createIndexConcurrently(
+    database, 'messages_room_author_answer_idx',
+    `CREATE INDEX CONCURRENTLY messages_room_author_answer_idx
+     ON messages(room_id,author_id,created_at DESC)
+     WHERE presentation='message' AND deleted_at IS NULL`,
+  ));
   await retryMigrationStep('operator turn history index', () => createIndexConcurrently(
     database, 'agent_turns_operator_history_idx',
     `CREATE INDEX CONCURRENTLY agent_turns_operator_history_idx ON agent_turns(created_at) INCLUDE(status)`,

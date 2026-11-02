@@ -510,9 +510,14 @@ BEGIN
   END IF;
   DELETE FROM corner_owed owed USING rooms corner
     WHERE owed.corner_id=corner.id AND corner.parent_id=member.room_id AND owed.person_id=member.identity_id;
-  ${CORNER_OWED_INSERT}
-  ${cornerOwedRowsSql('owed_corner.parent_id=member.room_id AND person.id=member.identity_id', true, undefined, 'member.room_id')}
-  ON CONFLICT DO NOTHING;
+  -- Most projected public Rooms have no corners. Do not plan/evaluate the
+  -- bulk message-history query once for each such membership during a join.
+  IF EXISTS (SELECT 1 FROM rooms child WHERE child.parent_id=member.room_id) THEN
+    ${CORNER_OWED_INSERT}
+    ${cornerOwedRowsSql('owed_corner.parent_id=member.room_id AND person.id=member.identity_id', true, undefined, 'member.room_id')}
+    ON CONFLICT DO NOTHING;
+  END IF;
+  -- Cross-Room reports can still be owed when the return Room has no children.
   ${refreshReportedCornersSql('member.room_id', 'member.identity_id')}
   RETURN NULL;
 END

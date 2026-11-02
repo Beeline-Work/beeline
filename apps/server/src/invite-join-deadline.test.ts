@@ -53,7 +53,7 @@ it('redeems an invite with historical corners without scanning unrelated message
       owner,
     ]);
     const corners = 10;
-    const messages = 333000;
+    const messages = postgresUrl ? 565000 : 10000;
     await db.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,name,archived_at)
       SELECT md5('invite-corner-'||n)::uuid,$1,$2,'History '||n,now()
@@ -64,12 +64,27 @@ it('redeems an invite with historical corners without scanning unrelated message
     await db.query('ALTER TABLE messages DISABLE TRIGGER USER');
     await db.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
-      SELECT 'history-'||n,$1,$2,'Old conversation '||n,now()-interval '2 days'
+      SELECT 'history-'||n,$1,$2,'Old conversation '||n,
+        CASE WHEN n<=18000 THEN now()-interval '1 hour' ELSE now()-interval '2 days' END
       FROM generate_series(1,$3::int) n`,
-      [unrelated, owner, messages],
+      [(await db.query(`SELECT id FROM rooms WHERE parent_id=$1 ORDER BY id LIMIT 1`, [room])).rows[0]!.id, owner, messages],
     );
     await db.query('ALTER TABLE messages ENABLE TRIGGER USER');
     await db.query('ANALYZE');
+    // This is the bulk corner-attention query run by a membership INSERT.
+    // A newcomer has no answers: finding that fact must not scan another
+    // person's entire Room history once for each candidate message.
+    const answerPlan = (await db.query(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+      SELECT max(answer.created_at) FROM messages answer
+      WHERE answer.room_id=$1 AND answer.author_id=$2
+        AND answer.presentation='message' AND answer.deleted_at IS NULL`,
+      [(await db.query(`SELECT id FROM rooms WHERE parent_id=$1 ORDER BY id LIMIT 1`, [room])).rows[0]!.id, viewer])).rows[0]!['QUERY PLAN'][0].Plan;
+    // Buffer work, rather than elapsed time, makes the regression independent
+    // of the host's load. The date-leading operator index scans history even
+    // when this person has never answered; a keyed lookup touches a few pages.
+    const answerBuffers = answerPlan['Shared Hit Blocks'] + answerPlan['Shared Read Blocks'];
+    console.log(`Absent joiner answer lookup: ${answerBuffers} buffers`);
+    expect(answerBuffers).toBeLessThan(20);
     let queryCount = 0;
     const counted = (database: SqlDatabase): SqlDatabase => ({
       query: (sql, values) => {

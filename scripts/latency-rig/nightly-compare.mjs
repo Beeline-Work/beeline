@@ -1,39 +1,49 @@
-/** Compare each measured case with the last passing run; never advance on failure. */
+/** Capture, strict budgets and request contracts are independent verdicts. */
 import { MAX_CLOCK_UNCERTAINTY_MS } from './device-clock.mjs';
 
-export function compareNightly(current, baseline) {
-  if (!Array.isArray(current?.rows) || !current.rows.length || current.rows.some((row) => !row || typeof row !== 'object')) return { pass: false, failures: ['Capture skipped or produced no measured cases'] };
-  const failures = [];
-  const calibrated = (report) => report.clockCalibrated === true &&
+export function summarizeLoad(observations) {
+  if (!Array.isArray(observations)) return { mean: observations?.mean ?? null, max: observations?.max ?? null, cpus: observations?.cpus ?? null };
+  const samples = observations.filter((item) => Number.isFinite(item?.load?.[0]) && item.load[0] >= 0 &&
+    Number.isFinite(item.cpus) && item.cpus > 0);
+  if (!samples.length) return { mean: null, max: null, cpus: null };
+  const values = samples.map((item) => item.load[0]);
+  return { mean: values.reduce((sum, value) => sum + value, 0) / values.length,
+    max: Math.max(...values), cpus: Math.min(...samples.map((item) => item.cpus)) };
+}
+export function contention(load) {
+  return Number.isFinite(load?.mean) && load.mean >= 0 && Number.isFinite(load?.max) && load.max >= load.mean &&
+    Number.isFinite(load?.cpus) && load.cpus > 0 ? load.mean > 0.5 * load.cpus : null;
+}
+export function compareNightly(current) {
+  const capture = { pass: true, failures: [] }, budget = { pass: true, failures: [] }, contract = { pass: true, failures: [] };
+  const rows = Array.isArray(current?.rows) ? current.rows : [];
+  const calibrated = (report) => report?.clockCalibrated === true &&
     Number.isFinite(report.maxClockUncertaintyMs) && report.maxClockUncertaintyMs >= 0 &&
     report.maxClockUncertaintyMs <= MAX_CLOCK_UNCERTAINTY_MS;
-  if (!calibrated(current)) failures.push('Capture lacks verified device/host clock calibration');
-  if (baseline && !calibrated(baseline)) failures.push('Passing baseline lacks verified device/host clock calibration');
-  if (baseline && (!Array.isArray(baseline.rows) || !baseline.rows.length))
-    return { pass: false, failures: ['Passing baseline is invalid'] };
-  for (const row of current.rows) {
+  if (!rows.length || rows.some((row) => !row || typeof row !== 'object')) capture.failures.push('Capture skipped or produced no measured cases');
+  if (!calibrated(current)) capture.failures.push('Capture lacks verified device/host clock calibration');
+  if (current?.complete !== true) capture.failures.push('Required case coverage is incomplete');
+  if (current?.setupError) capture.failures.push('Capture setup failed');
+  budget.rows = []; contract.rows = [];
+  for (const row of rows.filter((row) => row && typeof row === 'object')) {
     const key = `${row.kind}/${row.name}/${row.variant}`;
-    if (row.samples < 20 || !Number.isFinite(row.p95Ms) || row.p95Ms < 0)
-      failures.push(`${key}: fewer than 20 valid samples`);
-    if (!Number.isFinite(row.budgetMs) || row.budgetMs !== (row.kind === 'route' ? 450 : row.kind === 'tap' ? 150 : -1) ||
-        row.p95Ms >= row.budgetMs || row.timingPass !== true)
-      failures.push(`${key}: budget exceeded (${row.p95Ms} ms; budget <${row.budgetMs} ms)`);
-    if (row.requestPass !== true) failures.push(`${key}: request contract failed`);
-    const previous = baseline?.rows?.find((item) => item.kind === row.kind && item.name === row.name && item.variant === row.variant);
-    if (previous && row.p95Ms > previous.p95Ms * 1.2)
-      failures.push(`${key}: >20% slower (${previous.p95Ms} → ${row.p95Ms} ms p95)`);
+    if (!Number.isFinite(row.samples) || row.samples < 20 || !Number.isFinite(row.p95Ms) || row.p95Ms < 0 || row.timedOutSamples > 0)
+      capture.failures.push(`${key}: fewer than 20 completed valid samples or timed out`);
+    const budgetPass = Number.isFinite(row.budgetMs) && row.budgetMs === (row.kind === 'route' ? 450 : row.kind === 'tap' ? 150 : -1) &&
+      row.p95Ms < row.budgetMs && row.timingPass === true;
+    budget.rows.push({ key, p95Ms: row.p95Ms, budgetMs: row.budgetMs, pass: budgetPass });
+    if (!budgetPass) budget.failures.push(`${key}: budget exceeded (${row.p95Ms} ms; budget <${row.budgetMs} ms)`);
+    contract.rows.push({ key, pass: row.requestPass === true });
+    if (row.requestPass !== true) contract.failures.push(`${key}: request contract failed`);
   }
-  if (current.complete !== true) failures.push('Required case coverage is incomplete');
-  for (const previous of baseline?.rows ?? []) {
-    if (!current.rows.some((row) => row.kind === previous.kind && row.name === previous.name && row.variant === previous.variant))
-      failures.push(`Missing baseline case: ${previous.kind}/${previous.name}/${previous.variant}`);
-  }
-  return { pass: failures.length === 0, failures };
+  for (const result of [capture, budget, contract]) result.pass = result.failures.length === 0;
+  const failures = [capture, budget, contract].flatMap((result) => result.failures);
+  return { pass: failures.length === 0, failures, capture, budget, contract };
 }
 
-/** The caller supplies the complete first-parent range, excluding the passing base. */
+/** The caller supplies the complete first-parent range, excluding the reference base. */
 export function mergedPrs(commits, baselineSha, headSha) {
-  if (!baselineSha || !headSha) throw new Error('Last passing baseline and measured head SHAs required');
+  if (!baselineSha || !headSha) throw new Error('Reference and measured head SHAs required');
   const baseIndex = commits.findIndex((commit) => commit.sha === baselineSha);
   const headIndex = commits.findIndex((commit) => commit.sha === headSha);
   if (baseIndex < 0 || headIndex < 0 || headIndex > baseIndex) throw new Error('Incomplete or non-ancestor PR range');

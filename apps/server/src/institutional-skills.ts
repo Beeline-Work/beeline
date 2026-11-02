@@ -580,22 +580,6 @@ export async function loadWorkspaceSkill(
       )
     ).rows[0];
     if (!skill) throw new WorkspaceSkillNotFoundError(slug);
-    await db.query(
-      `INSERT INTO workspace_skill_uses
-       (id,workspace_id,skill_id,skill_version,room_id,request_id,
-        requester_identity_id,agent_id)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [
-        randomUUID(),
-        room.workspace_id,
-        skill.id,
-        skill.current_version,
-        command.room_id,
-        command.turn_request_id,
-        command.agent_id,
-        command.agent_id,
-      ],
-    );
     await db.query(`UPDATE workspace_skills SET last_served_at=now() WHERE id=$1`, [skill.id]);
     return {
       ...(skill.kind === 'workflow'

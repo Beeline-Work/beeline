@@ -131,17 +131,11 @@ describe('GitHub phone operations', () => {
       pr: { mergeCommitSha: 'f'.repeat(40) } });
     expect(state.workflow_state).toBe('landed');
     expect(state.archived_at).not.toBeNull();
-    const outcomes = () => database.query(`SELECT id,kind,detail FROM institutional_memory_outcomes
-      WHERE room_id=$1 AND kind='merged' ORDER BY id`, [corner]);
     const terminalCards = () => database.query(`SELECT id,card FROM messages WHERE room_id=$1
       AND card_type='corner-workflow-handoff' AND card->>'toState'='landed' ORDER BY id`, [corner]);
-    const committedOutcomes = (await outcomes()).rows;
     const committedCards = (await terminalCards()).rows;
-    expect(committedOutcomes).toEqual([expect.objectContaining({kind:'merged',
-      detail:expect.objectContaining({mergeCommitSha:'f'.repeat(40)})})]);
     expect(committedCards).toHaveLength(1);
     await operations.processWebhook('check_run', payload);
-    expect((await outcomes()).rows).toEqual(committedOutcomes);
     expect((await terminalCards()).rows).toEqual(committedCards);
     expect((await database.query(`SELECT fact.lifecycle, fact.workflow_state,
       room.archived_at FROM corner_facts fact JOIN rooms room ON room.id=fact.corner_id

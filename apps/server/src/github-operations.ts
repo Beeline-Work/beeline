@@ -43,7 +43,6 @@ import {
   reconcileCornerMergeBlockers,
   routeSystemCommand,
 } from './agent-command.js';
-import { recordInstitutionalCornerOutcome } from './institutional-memory-shadow.js';
 import { reviewerList, roomAgentHealth } from './agent-health.js';
 import { fireRepositorySubscriptions } from './agent-subscriptions.js';
 
@@ -3045,16 +3044,6 @@ export class GitHubOperations {
        updated_at=now() WHERE corner_id=$1`,
       [cornerId, JSON.stringify(lifecycle)],
     );
-    // The outcome ledger records the TRANSITION, not the state: a corner that
-    // was already green and is re-read green did not reach green again, and a
-    // second row would move the measured cohort's clock for nothing.
-    if (patch.checks === 'passing' && previous.checks !== 'passing') {
-      await recordInstitutionalCornerOutcome(database, {
-        cornerId,
-        kind: 'ci_green',
-        detail: { checks: 'passing' },
-      });
-    }
   }
 
   private async systemNote(
@@ -3209,15 +3198,6 @@ export class GitHubOperations {
         ...merged,
         cardType: 'github-corner-note',
         card: { source: 'github', dedupe: mergeKey },
-      });
-      await recordInstitutionalCornerOutcome(database, {
-        cornerId: target.corner_id,
-        kind: 'merged',
-        detail: {
-          repository: pullRequest.repository,
-          ...(pullRequest.number !== undefined ? { pullRequestNumber: pullRequest.number } : {}),
-          ...(pullRequest.mergeCommitSha ? { mergeCommitSha: pullRequest.mergeCommitSha } : {}),
-        },
       });
       if (!locked) await enqueueCornerBranchDeletion(database, target.corner_id);
       await advanceCorner(database, target.corner_id, {

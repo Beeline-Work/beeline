@@ -1,3 +1,4 @@
+import { postRoomChoice } from './room-choice.js';
 import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
 import type { RouterCommandReceipt } from '@beeline/api-contract/router-command';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -26,6 +27,22 @@ describe('P7 dispatcher durable command adapter', () => {
     const options = { database: db, phone, live } as ServerOptions;
     return { dispatch: createPhoneOperationDispatcher(options, phoneReadLimits(), phone.execute), live };
   }
+  it('selects outcome-only Tray decisions through the real dispatcher and never invokes the legacy override or coverage builder',async()=>{
+    const agent='d'.repeat(64);
+    await db.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')",[agent]);
+    await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)',[agent,VIEWER]);
+    await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')",[WORKSPACE,ROOM,agent]);
+    const choice=await db.transaction(tx=>postRoomChoice(tx,{roomId:ROOM,agentId:agent,mode:'question',prompt:'Synthetic?',
+      options:[{label:'One',consequence:'Use one'},{label:'Two',consequence:'Use two'}],ttlSeconds:300}));
+    const first=server(),second=server(),legacy=vi.fn(async()=>{throw new Error('Legacy bypass');});
+    const input={choiceId:choice.choiceId},identity={v:1 as const,id:'tray-dispatch-skip'};
+    const receipt=await first.dispatch('skipChoice',input,VIEWER,undefined,legacy,undefined,identity);
+    expect(receipt).toMatchObject({state:'committed',operation:'skipChoice',result:null});expect(receipt).not.toHaveProperty('coverage');
+    const publish=vi.spyOn(second.live,'publish');
+    expect(await second.dispatch('skipChoice',input,VIEWER,undefined,legacy,undefined,identity)).toEqual(receipt);
+    expect(publish).not.toHaveBeenCalled();expect(legacy).not.toHaveBeenCalled();
+    expect((await db.query('SELECT status FROM room_choices WHERE id=$1',[choice.choiceId])).rows).toEqual([{status:'skipped'}]);
+  });
   it('retry on a second dispatcher preserves a toggled reaction and does not announce twice', async () => {
     const first = server(), second = server();
     const publish = vi.spyOn(second.live, 'publish');

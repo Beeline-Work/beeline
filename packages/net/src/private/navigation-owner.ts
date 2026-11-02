@@ -1,4 +1,4 @@
-export type NavigationScreen = 'AppShell' | 'Room' | 'AgentProfile';
+export type NavigationScreen = 'AppShell' | 'Room' | 'AgentProfile'|'ScheduledWork'|'Tray';
 export type NavigationRoute = Readonly<{ key?: string; name: string; params?: Readonly<object>;
   state?: NavigationState }>;
 export type NavigationState = Readonly<{ index?: number; routes: readonly NavigationRoute[] }>;
@@ -45,10 +45,11 @@ export class NavigationOwner {
     }
     const name = route?.name ?? '';
     const params = route?.params as Record<string, unknown> | undefined;
-    const roomId = typeof params?.channelId === 'string' ? params.channelId : undefined;
+    const scheduled=['beeline/settings/schedules','beeline/settings/schedule','beeline/settings/subscription'].includes(name);
+    const roomId = typeof params?.channelId === 'string' ? params.channelId : scheduled&&typeof params?.roomId==='string'?params.roomId:undefined;
     const agentId = typeof params?.agentId === 'string' ? params.agentId : undefined;
     const workspaceId = typeof params?.communityId === 'string' ? params.communityId : typeof params?.workspaceId === 'string' ? params.workspaceId : undefined;
-    const screen = name === 'beeline/channels' || name === 'beeline/tray' ||
+    const screen = scheduled&&roomId?'ScheduledWork':name === 'beeline/tray'?'Tray':name === 'beeline/channels' ||
       name.startsWith('beeline/settings/') || name === 'beeline/members' ? 'AppShell' :
       name === 'beeline/chat/[channelId]' && roomId ? 'Room' : name === 'beeline/agent-profile' && agentId ? 'AgentProfile' : undefined;
     const key = JSON.stringify([path, screen, roomId, workspaceId, agentId]);

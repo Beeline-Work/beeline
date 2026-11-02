@@ -16,6 +16,7 @@ import { useSharedSurface } from './use-shared-surface';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { subscribeClientReset } from '@/sync/client-reset';
 import type { SurfaceCacheAddress } from '@beeline/buzz-client';
+import {useRoutedScheduledWork,prepareScheduledStop} from './router-scheduled-work';
 
 
 const NEXT_RUN = new Intl.DateTimeFormat(undefined, {
@@ -214,26 +215,24 @@ function holdScheduledWork(roomId: string, address: SurfaceCacheAddress): { firs
  * Only focused consumers retain a live observer. A new visible residency
  * makes one covering read; retained/unmounted screens make no requests.
  */
-export function useScheduledWork(roomId: string | undefined) {
+export function useScheduledWork(roomId: string | undefined,legacyTargetValid=true) {
   const focused = useSurfaceFocus();
+  const routed=useRoutedScheduledWork(roomId,focused);
   const request = useCallback(() => monolithPhoneOperation('readScheduledWork', { roomId: roomId! }), [roomId]);
   const { value, address, loading, error, setError, refresh } = useSharedSurface(
-    '/room/:id/scheduled-work', roomId ? { roomId } : undefined, isScheduledWork, request, Boolean(roomId) && focused, true);
+    '/room/:id/scheduled-work', roomId&&legacyTargetValid ? { roomId } : undefined, isScheduledWork, request, Boolean(roomId)&&legacyTargetValid&&focused&&routed.mode==='legacy', true);
   useEffect(() => {
-    if (!focused || !roomId || !address) return;
+    if (routed.mode!=='legacy'||!focused || !roomId || !address) return;
     const owner = holdScheduledWork(roomId, address);
     if (owner.first && AppState.currentState === 'active') void refresh();
     return owner.release;
-  }, [address, roomId, focused, refresh]);
-  const work = useMemo<ScheduledWork | null>(() => value && ({
-    roomName: value.roomName,
-    isDirectMessage: value.isDirectMessage === true,
-    agentNames: new Map(value.agentNames),
-    schedules: value.schedules,
-    subscriptions: value.subscriptions,
-  }), [value]);
-  return { work, loading: loading && !value, error: roomId ? error : 'Schedules target is missing.',
-    setError, retry: () => { if (focused && AppState.currentState === 'active') void refresh(); } };
+  }, [address, roomId, focused, refresh,routed.mode]);
+  const selected=routed.mode==='legacy'?value:routed.value;
+  const work = useMemo<ScheduledWork | null>(() => selected && ({roomName:selected.roomName,isDirectMessage:selected.isDirectMessage===true,
+    agentNames:new Map(selected.agentNames),schedules:selected.schedules,subscriptions:selected.subscriptions}),[selected]);
+  return { work,routed:routed.mode==='router',loading:routed.mode==='legacy'?loading&&!value:routed.loading,
+    error:roomId&&(routed.mode!=='legacy'||legacyTargetValid)?(routed.mode==='legacy'?error:routed.error):'Schedules target is missing.',
+    setError,retry:()=>{if(routed.mode==='router')routed.retry();else if(routed.mode==='legacy'&&focused&&AppState.currentState==='active')void refresh();} };
 }
 
 /**
@@ -258,6 +257,8 @@ async function stopRow(
 }
 
 export async function stopSchedule(roomId: string, scheduleId: string): Promise<StopOutcome> {
+  const command=prepareScheduledStop('deleteRoomSchedule',roomId,scheduleId);
+  if(command){await command;return 'stopped';}
   const outcome = await stopRow(
     () => monolithPhoneOperation('deleteRoomSchedule', { roomId, scheduleId }), 'schedule not found');
   const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
@@ -271,6 +272,8 @@ export async function stopSchedule(roomId: string, scheduleId: string): Promise<
 }
 
 export async function stopSubscription(roomId: string, subscriptionId: string): Promise<StopOutcome> {
+  const command=prepareScheduledStop('deleteRoomSubscription',roomId,subscriptionId);
+  if(command){await command;return 'stopped';}
   const outcome = await stopRow(
     () => monolithPhoneOperation('deleteRoomSubscription', { roomId, subscriptionId }), 'subscription not found');
   const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);

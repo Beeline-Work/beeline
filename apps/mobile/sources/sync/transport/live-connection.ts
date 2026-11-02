@@ -1,7 +1,7 @@
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import type { MediaMetadata, MediaLink } from '@beeline/api-contract/phone';
 import { parseRouterCommandIdentity, type RouterCommandIdentity, type RouterCommandReceipt } from '@beeline/api-contract/router-command';
-import type { RouterFamily, RouterSnapshotInput, RouterSnapshot, RouterPushFrame, RouterUnavailable, RouterAuthorityFence } from '@beeline/api-contract/router-protocol';
+import type { RouterFamily, RouterSnapshotInput, RouterSnapshot, RouterPushFrame, RouterUnavailable, RouterAuthorityFence, RouterCapabilities } from '@beeline/api-contract/router-protocol';
 import { RouteObservation } from './route-observation';
 import { PHONE_SOCKET_MAX_IN_FLIGHT, PHONE_SOCKET_MAX_FRAME_BYTES, type PhoneOperationMap } from '@beeline/api-contract/phone';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
@@ -71,8 +71,8 @@ type Registration = {
 type RoomCursor = { epoch: string; base: number; seen: Set<number> };
 
 type RouterOwnerBridge = {
-  requestedCapabilities?: () => Promise<{ families: readonly RouterFamily[]; authorityFencesV1: boolean }>;
-  negotiated: (next: { generation: number; families: readonly RouterFamily[]; usageCellV1?: boolean; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>; authorityFencesV1?: boolean; roomHeadContinuityV1?: boolean; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>; executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>; execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> }) => Promise<void>;
+  requestedCapabilities?: () => Promise<{ families: readonly RouterFamily[]; authorityFencesV1: boolean; scheduledWorkCoverageV1?:boolean }>;
+  negotiated: (next: { generation: number; families: readonly RouterFamily[]; usageCellV1?: boolean; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>; authorityFencesV1?: boolean; roomHeadContinuityV1?: boolean; scheduledWorkCoverageV1?:RouterCapabilities['scheduledWorkCoverageV1']; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>; executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>; execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> }) => Promise<void>;
   disconnected: () => void;
   receive: (frame: RouterPushFrame | RouterUnavailable | RouterAuthorityFence) => void;
 };
@@ -355,10 +355,12 @@ export class LiveConnection {
     if (this.routerState === 'waiting' && (frame.type === 'router-capabilities' ||
       frame.type === 'sync-ok' || frame.type === 'subscribed' || frame.t === 'res')) {
       const families: RouterFamily[] = frame.type === 'router-capabilities' && frame.protocol === 1 && Array.isArray(frame.families)
-        ? ['room-list', 'needs-you-count', 'room-head'].filter(f => (frame.families as unknown[]).includes(f)) as RouterFamily[] : [];
+        ? ['room-list', 'needs-you-count', 'room-head','room-scheduled-work'].filter(f => (frame.families as unknown[]).includes(f)&&
+          (f!=='room-scheduled-work'||frame.commandDedupV1===true&&frame.authorityFencesV1===true)) as RouterFamily[] : [];
       this.commandDedupV1 = frame.type === 'router-capabilities' && frame.protocol === 1 && frame.commandDedupV1 === true;
       this.routerState = 'initializing';
       void this.deps.router.negotiated({ generation: this.socketEpoch, families,
+        scheduledWorkCoverageV1: families.includes('room-scheduled-work') ? frame.scheduledWorkCoverageV1 as RouterCapabilities['scheduledWorkCoverageV1'] : undefined,
         roomHeadContinuityV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.roomHeadContinuityV1 === true && families.includes('room-head'),
         authorityFencesV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.authorityFencesV1 === true,
         mediaMetadataV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.mediaMetadataV1 === true,
@@ -377,7 +379,7 @@ export class LiveConnection {
       }).catch(() => { if (this.socket === socket) this.deps.router?.disconnected(); });
     }
     if (frame.type === 'router-capabilities') return true;
-    if (!['push-part', 'push-commit', 'router-unavailable', 'authority-fence', 'usage-cell', 'usage-unavailable'].includes(String(frame.kind))) return false;
+    if (!['push-part', 'push-commit', 'scheduled-work-authority-part', 'scheduled-work-authority-commit', 'scheduled-work-authority-restart', 'router-unavailable', 'authority-fence', 'usage-cell', 'usage-unavailable'].includes(String(frame.kind))) return false;
     if (this.routerState === 'ready') this.deps.router.receive(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence);
     else {
       const bytes = utf8ToBytes(JSON.stringify(value)).length;
@@ -698,7 +700,7 @@ export class LiveConnection {
       const token = await this.deps.authorization();
       const requested = this.deps.router?.requestedCapabilities
         ? await this.deps.router.requestedCapabilities()
-        : { families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true };
+        : { families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true, scheduledWorkCoverageV1:false };
       if (generation !== this.generation) return;
       if (this.registrations.size === 0 && this.requests.size === 0) {
         setConnectionState('disconnected');
@@ -715,6 +717,7 @@ export class LiveConnection {
         this.socketEpoch += 1;
         if (this.deps.router) next.send(JSON.stringify({ type: 'router-negotiate', protocol: 1,
           families: requested.families, authorityFencesV1: requested.authorityFencesV1, usageCellV1: true,
+          ...(requested.scheduledWorkCoverageV1&&requested.families.includes('room-scheduled-work')?{scheduledWorkCoverageV1:true}:{}),
           ...(requested.families.includes('room-head') ? { roomHeadContinuityV1: true } : {}) }));
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
         this.sendSubscribe([...this.refcount.keys()]);

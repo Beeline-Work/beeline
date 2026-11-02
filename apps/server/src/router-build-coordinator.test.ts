@@ -26,6 +26,20 @@ const ticket=(db:SqlDatabase=new ReadSnapshot(),request:RouterSnapshotInput=inpu
 function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(done=>{resolve=done;});return {promise,resolve};}
 
 describe('shared DB-derived canonical projection builds',()=>{
+  it('keeps distinct ordinary Saved cursors in the cache key while sharing equal windows',async()=>{
+    const coordinator=new RouterBuildCoordinator(),seen:Array<string|undefined>=[];
+    const build:RouterValueBuilder=async(_db,args)=>{
+      if(args.family!=='needs-you-saved-page')throw new Error('wrong fixture family');
+      seen.push(args.before);return{windowId:args.before??'head',rows:[]};
+    };
+    const request=(before?:string):RouterSnapshotInput=>({family:'needs-you-saved-page',workspaceId:input.workspaceId,...(before?{before}:{})});
+    const head=await coordinator.build(await ticket(new ReadSnapshot(),request()),build);
+    const first=await coordinator.build(await ticket(new ReadSnapshot(),request('saved1.first')),build);
+    const second=await coordinator.build(await ticket(new ReadSnapshot(),request('saved1.second')),build);
+    expect([head.value,first.value,second.value]).toEqual([{windowId:'head',rows:[]},{windowId:'saved1.first',rows:[]},{windowId:'saved1.second',rows:[]}]);
+    expect((await coordinator.build(await ticket(new ReadSnapshot(),request('saved1.first')),build)).value).toEqual(first.value);
+    expect(seen).toEqual([undefined,'saved1.first','saved1.second']);
+  });
   it('joins concurrent sockets, reuses a settled result for a slower socket, and gives consumers independent immutable wire copies',async()=>{
     const coordinator=new RouterBuildCoordinator(),blocked=deferred<{count:number}>();let builds=0,started!:()=>void;
     const began=new Promise<void>(done=>{started=done;}),firstDb=new ReadSnapshot();

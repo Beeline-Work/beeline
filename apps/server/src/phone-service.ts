@@ -1,7 +1,12 @@
+import { buildTrayProjection, readMessageBookmarks } from './tray-projection.js';
+import { readTraySavedWindow } from './tray-saved-window.js';
+import { buildTraySavedFacts, type TraySavedTarget } from './tray-saved-projection.js';
 import { workingTurnFreshSql } from './turn-ownership.js';
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
-import { buildRouterSnapshot } from './router-projections.js';
+import { buildRouterSnapshot,RouterProjectionUnavailable } from './router-projections.js';
 import { CommandScopedDatabase } from './command-scoped-database.js';
+import type { TrayDecisionOperation } from './tray-decision-command.js';
+import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
 import type { RouterSnapshotInput, RouterValues, RouterFamily } from '@beeline/api-contract/router-protocol';
 import { withdrawMergeApprovalsBy } from './corner-merge-approval.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
@@ -39,6 +44,7 @@ import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
 import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
 import { webhookDetails, webhookToken, requireWebhookAdmin, requireScheduledWorkManager } from './subscription-webhooks.js';
+import {buildRoomSchedulesProjection} from './room-schedules-projection.js';
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
 import {
   beginAgentSignInCards,
@@ -306,7 +312,6 @@ const SLOW_ROOM_READ_MS = 500;
 /** Archived corners come ten at a time, newest closure first. */
 const ARCHIVED_CORNER_PAGE = 10;
 const OPEN_CORNER_PAGE = 30;
-const BOOKMARK_PAGE = 30;
 /** A profile paints a recent ledger window; older entries stay in the store. */
 const PROFILE_GRANT_LIMIT = 100;
 type MemberGrantRow = {
@@ -1125,15 +1130,61 @@ export class PhoneService {
     return (this.database as CommandScopedDatabase).run(new CornerAccessDatabase(database), work);
   }
 
-  readRouterSnapshot(input: RouterSnapshotInput, viewerId: string) {
-    if (input.family === 'needs-you-count') return readNeedsYouCountSnapshot(this.database, input.workspaceId, viewerId);
-    return buildRouterSnapshot(this.database, input, viewerId, (db, args, viewer) => this.buildRouterValue(db, args, viewer));
+  /** Only the closed durable decision adapter installs this transaction and
+   * owns the postcommit notification queue. Legacy callers keep their result
+   * and immediate-after-own-transaction notification behavior. */
+  async applyTrayDecisionCommand(operation: TrayDecisionOperation,
+    input: PhoneOperationMap[TrayDecisionOperation]['input'], viewerId: string,
+    defer: (notification: () => void) => void): Promise<void> {
+    if (!(this.database as CommandScopedDatabase).active) throw new Error('Tray decision requires its durable command transaction');
+    if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(operation)) throw new Error(REVIEW_IDENTITY_MESSAGE);
+    if (operation === 'decideAgentGrant') await this.decideAgentGrant(input as Input<'decideAgentGrant'>, viewerId, defer);
+    else if (operation === 'decideWritePermission') await this.execute(operation, input as Input<'decideWritePermission'>, viewerId);
+    else if (operation === 'skipChoice') await this.execute(operation, input as Input<'skipChoice'>, viewerId);
+    else throw new Error('Unsupported Tray decision command');
+  }
+
+  /** New durable stop intents are idempotent desired state. Legacy operations
+   * keep their exact not-found response. Provider cleanup never holds the DB
+   * connection or authority fence and cannot be automatically replayed. */
+  async stopScheduledWorkCommand(operation:'deleteRoomSchedule'|'deleteRoomSubscription',
+    input:{roomId:string;scheduleId?:string;subscriptionId?:string},viewer:string):Promise<void>{
+    const authorize=async(db:SqlDatabase)=>{
+      await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
+      await requireScheduledWorkManager(db,input.roomId,viewer);
+      if((await db.query(`SELECT 1 FROM memberships member WHERE member.identity_id=$1 AND member.room_id IS NULL
+        AND member.removed_at IS NULL AND member.role='spectator' AND member.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)`,[viewer,input.roomId])).rowCount)
+        throw new Error('spectator access is read-only (access denied)');
+    };
+    if(operation==='deleteRoomSchedule'){
+      if(!(this.database as CommandScopedDatabase).active)throw new Error('Scheduled stop requires its durable command transaction');
+      await authorize(this.database);
+      await this.database.query(`DELETE FROM agent_schedules schedule USING rooms surface WHERE schedule.id=$1
+        AND surface.id=schedule.room_id AND(surface.id=$2 OR surface.parent_id=$2) AND schedule.workflow_run IS NULL`,[input.scheduleId,input.roomId]);
+      return;
+    }
+    const trigger=await this.database.transaction(async db=>{
+      await authorize(db);
+      const row=(await db.query<{trigger_id:string|null}>(`SELECT subscription.trigger_id FROM agent_subscriptions subscription JOIN rooms surface ON surface.id=subscription.room_id
+        WHERE subscription.id::text=$1 AND(surface.id=$2 OR surface.parent_id=$2)`,[input.subscriptionId,input.roomId])).rows[0];
+      try{await deleteRoomSubscription(db,input.roomId,input.subscriptionId!,undefined);}
+      catch(error){if(!(error instanceof Error)||error.message!=='subscription not found')throw error;}
+      if(!row?.trigger_id||/^[0-9a-f-]{36}$/.test(row.trigger_id))return;
+      if((await db.query(`SELECT 1 FROM agent_subscriptions WHERE trigger_id=$1 LIMIT 1`,[row.trigger_id])).rowCount)return;
+      return row.trigger_id;
+    });
+    if(trigger&&this.composio)await this.composio.deleteWebhookTrigger(trigger);
+  }
+
+  readRouterSnapshot(input: RouterSnapshotInput, viewerId: string,options?:{readonly trayClock?:true}) {
+    if (input.family === 'needs-you-count') return readNeedsYouCountSnapshot(this.database,input.workspaceId,viewerId,options?.trayClock?'committed':'wall');
+    return buildRouterSnapshot(this.database, input, viewerId, (db, args, viewer) => this.buildRouterValue(db, args, viewer,options),options);
   }
 
   /** Pure router builders bind both core and enrichment to the caller's
    * repeatable-read handle. No providers, live cache, onboarding or seen marks. */
   async buildRouterValue(database: SqlDatabase, input: RouterSnapshotInput,
-    viewerId: string): Promise<RouterValues[RouterFamily] | null> {
+    viewerId: string,options?:{readonly trayClock?:true}): Promise<RouterValues[RouterFamily] | null> {
     const reader = new PhoneService(database, this.publicOrigin);
     reader.pureProjection = true;
     if (input.family === 'room-list') return reader.readChats(input.workspaceId, viewerId);
@@ -1141,11 +1192,26 @@ export class PhoneService {
       if (!input.roomId) throw new Error('roomId is required for room-head');
       return reader.readRoom(input.roomId, viewerId);
     }
-    if(input.family==='needs-you-count')return {count:await countNeedsYouProjection(reader.database,input.workspaceId,viewerId)};
+    if(input.family==='room-scheduled-work')return buildRoomSchedulesProjection(reader.database,input.roomId,viewerId,this.publicOrigin);
+    if(input.family==='needs-you-tray')return buildTrayProjection(reader.database,input.workspaceId,viewerId,row=>identity(row,reader.publicOrigin),options?.trayClock?'committed':'wall');
+    if(input.family==='needs-you-saved-page')return readTraySavedWindow(reader.database,input,viewerId,row=>identity(row,reader.publicOrigin));
+    if(input.family==='needs-you-count')return {count:await countNeedsYouProjection(reader.database,input.workspaceId,viewerId,options?.trayClock?'committed':'wall')};
+    if(input.family!=='needs-you')throw new Error('Unsupported router projection family');
     await reader.requireWorkspaceMember(input.workspaceId, viewerId);
     const { items } = await needsYouItems(reader.database, input.workspaceId, viewerId,
-      (row) => identity(row, reader.publicOrigin), false);
+      (row) => identity(row, reader.publicOrigin), false,options?.trayClock?'committed':'wall');
     return { count: items.length, items };
+  }
+
+  /** Source-key row facts, never a window/top-N reread or a cache inventory. */
+  buildRouterSavedFacts(database:SqlDatabase,workspaceId:string,viewerId:string,targets:readonly TraySavedTarget[]){
+    return buildTraySavedFacts(database,workspaceId,viewerId,targets,row=>identity(row,this.publicOrigin));
+  }
+
+  async buildRouterNeedsHead(database:SqlDatabase,workspaceId:string,viewerId:string){
+    const value=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,'committed');
+    if(value.items.length>30||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
+    return value;
   }
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {
@@ -5549,96 +5615,7 @@ export class PhoneService {
     input: Input<'listMessageBookmarks'>,
     viewerId: string,
   ): Promise<Output<'listMessageBookmarks'>> {
-    const cursor = input.before?.match(/^(\d{1,19}),([a-zA-Z0-9_-]{1,128})$/);
-    if (input.before !== undefined && !cursor) throw new Error('invalid_cursor');
-    const result = await this.database.query<{ bookmarks: Array<{
-      message_id: string;
-      workspace_id: string;
-      room_id: string;
-      room_name: string;
-      room_kind: 'room' | 'corner';
-      message_created_at: Date;
-      bookmarked_at: Date;
-      bookmarked_us: string;
-      available: boolean;
-      text: string | null;
-      author_id: string | null;
-      author_kind: 'human' | 'agent' | null;
-      author_name: string | null;
-      author_handle: string | null;
-      author_avatar: string | null;
-      author_face: string | null;
-    }> }>(
-      `WITH authorized AS (
-         SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
-           AND identity_id=$2 AND removed_at IS NULL
-       ), bookmarks AS (
-       SELECT bookmark.message_id,bookmark.workspace_id,bookmark.room_id,
-         COALESCE(room.name,bookmark.source_room_name) room_name,
-         bookmark.source_room_kind room_kind,
-         bookmark.message_created_at,bookmark.created_at bookmarked_at,
-         (extract(epoch FROM bookmark.created_at)*1000000)::bigint::text bookmarked_us,
-         (message.id IS NOT NULL AND message.deleted_at IS NULL AND room.id IS NOT NULL AND room_member.identity_id IS NOT NULL) available,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN message.text END text,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.id END author_id,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.kind END author_kind,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.name END author_name,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.handle END author_handle,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.avatar END author_avatar,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.face_id END author_face
-       FROM message_bookmarks bookmark
-       LEFT JOIN rooms room ON room.id=bookmark.room_id AND room.workspace_id=bookmark.workspace_id
-       LEFT JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
-         AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
-       LEFT JOIN messages message ON message.id=bookmark.message_id AND message.room_id=room.id
-       LEFT JOIN identities author ON author.id=message.author_id
-       WHERE bookmark.workspace_id=$1 AND bookmark.identity_id=$2
-         ${cursor ? `AND ((extract(epoch FROM bookmark.created_at)*1000000)::bigint < $3::bigint
-           OR ((extract(epoch FROM bookmark.created_at)*1000000)::bigint = $3::bigint
-             AND bookmark.message_id > $4))` : ''}
-       ORDER BY bookmark.created_at DESC,bookmark.message_id
-       LIMIT ${BOOKMARK_PAGE + 1}
-       )
-       SELECT COALESCE((SELECT jsonb_agg(to_jsonb(bookmarks) ORDER BY bookmarked_at DESC,message_id)
-         FROM bookmarks),'[]'::jsonb) bookmarks FROM authorized`,
-      cursor ? [input.workspaceId, viewerId, cursor[1], cursor[2]] : [input.workspaceId, viewerId],
-    );
-    if (!result.rows[0]) throw new Error('workspace membership required');
-    const page = result.rows[0].bookmarks.slice(0, BOOKMARK_PAGE);
-    const last = page.at(-1);
-    return {
-      ...(result.rows[0].bookmarks.length > BOOKMARK_PAGE && last
-        ? { next: `${last.bookmarked_us},${last.message_id}` } : {}),
-      bookmarks: page.map((raw) => {
-        const row = reviveDates(raw, ['message_created_at','bookmarked_at']);
-        return ({
-        messageId: row.message_id,
-        workspaceId: row.workspace_id,
-        roomId: row.room_id,
-        roomName: row.room_name,
-        roomKind: row.room_kind,
-        messageCreatedAt: unix(row.message_created_at),
-        bookmarkedAt: unix(row.bookmarked_at),
-        available: row.available,
-        ...(row.available && row.text !== null ? { text: row.text } : {}),
-        ...(row.available && row.author_id && row.author_kind && row.author_name
-          ? {
-              author: identity(
-                {
-                  id: row.author_id,
-                  kind: row.author_kind,
-                  name: row.author_name,
-                  handle: row.author_handle,
-                  avatar: row.author_avatar,
-                  face_id: row.author_face,
-                },
-                this.publicOrigin,
-              ),
-            }
-          : {}),
-        });
-      }),
-    };
+    return readMessageBookmarks(this.database, input, viewerId, row => identity(row, this.publicOrigin));
   }
 
   /**
@@ -7476,7 +7453,8 @@ export class PhoneService {
    * decision settles the card in place and posts one system line mentioning
    * the agent so its daemon wakes and resumes the paused turn.
    */
-  private async decideAgentGrant(input: Input<'decideAgentGrant'>, viewerId: string) {
+  private async decideAgentGrant(input: Input<'decideAgentGrant'>, viewerId: string,
+    defer?: (notification: () => void) => void) {
     const decision: AgentGrantDecision | undefined =
       input.decision === 'always' || input.decision === 'once' || input.decision === 'deny'
         ? input.decision
@@ -7548,9 +7526,11 @@ export class PhoneService {
         card: { grantId: input.grantId, status },
       });
     });
-    for (const roomId of new Set(cardRoomIds))
-      if (roomId !== grant.room_id)
-        this.live?.publish({ type: 'invalidate', roomId, reason: 'grant' });
+    for (const roomId of new Set(cardRoomIds)) {
+      if (roomId === grant.room_id) continue;
+      const notify = () => this.live?.publish({ type: 'invalidate', roomId, reason: 'grant' });
+      if (defer) defer(notify); else notify();
+    }
     return { grantId: input.grantId, status, roomId: grant.room_id };
   }
   /** Revoke is one tap on the profile; a command rule stops matching at once. */

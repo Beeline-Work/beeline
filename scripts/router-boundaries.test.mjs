@@ -196,3 +196,20 @@ test('closed turn controls cannot escape their two existing machine adapters', (
     assert.ok(inspectSource(file, source).errors.length);
   assert.ok(inspectSource('packages/net/src/helper-activation-codecs.ts', 'export { AdmissionOwner } from "./private/admission.js";').errors.length);
 });
+
+test('Tray command and paint authority cannot escape their declared viewport and gesture wrappers',()=>{
+  for(const name of ['admitRouterTrayCommand','admitRouterTrayPaint','acquireRouterSavedContinuation']){
+    const source=`import { ${name} as mint } from '@/buzz/router-owner';`;
+    assert.deepEqual(inspectSource('apps/mobile/sources/buzz/router-tray.ts',source).errors,[]);
+    assert.ok(inspectSource('apps/mobile/sources/feature.ts',source).errors.length);
+  }
+  for(const source of [
+    "import { prepareTrayCommand as mint } from '@/buzz/router-tray';",
+    "import { acknowledgeRoutedTrayPaint } from './buzz/router-tray';",
+    "export * from '@/buzz/router-tray';",
+    "const mint=require('@/buzz/router-tray');",
+    "import * as tray from '@/buzz/router-tray';",
+  ])assert.ok(inspectSource('apps/mobile/sources/feature.ts',source).errors.length);
+  assert.deepEqual(inspectSource('apps/mobile/sources/app/(app)/beeline/tray.tsx',
+    "import { prepareTrayCommand, acknowledgeRoutedTrayPaint, useRoutedTray } from '@/buzz/router-tray';").errors,[]);
+});

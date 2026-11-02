@@ -99,12 +99,16 @@ const OWNER_CALLERS = {
   routerOwnerNavigation: ['buzz/use-router-navigation.ts'],
   routerOwnerListPanel: ['components/SidebarNavigator.tsx'],
   admitRouterPreparedMessage: ['buzz/command-message-gesture.ts'],
+  admitRouterScheduledStop: ['buzz/router-scheduled-work.ts'],
+  acquireRouterSavedContinuation: ['buzz/router-tray.ts'],
+  admitRouterTrayCommand: ['buzz/router-tray.ts'],
+  admitRouterTrayPaint: ['buzz/router-tray.ts'],
   routerOwnerCapabilities: ['sync/transport/live-connection.ts'],
   routerOwnerNegotiated: ['sync/transport/live-connection.ts'],
   routerOwnerDisconnected: ['sync/transport/live-connection.ts'],
   routerOwnerReceive: ['sync/transport/live-connection.ts'],
-  retryRouterLane: ['app/(app)/beeline/channels.tsx', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts'],
-  acquireRouterLane: ['app/(app)/beeline/chat/useRoomSurfaceSession.ts', 'buzz/router-chat-list.ts', 'buzz/needs-you-store.ts'],
+  retryRouterLane: ['buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/channels.tsx', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts'],
+  acquireRouterLane: ['buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts', 'buzz/router-chat-list.ts', 'buzz/needs-you-store.ts'],
 };
 const OWNER_READS = new Set(['routerFamilyMode', 'routerLaneSnapshot', 'subscribeRouterOwner']);
 function inspectOwnerAccess(file, source, errors) {
@@ -133,6 +137,39 @@ function inspectOwnerAccess(file, source, errors) {
         ? node.argumentExpression.text : undefined;
     if (member && Object.hasOwn(OWNER_CALLERS, member) && !allowed(member)) reject(member);
     ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+
+// Gesture wrappers retain the same exact caller boundary as the owner mint.
+// Observing a hook cannot be used to re-export its command/paint authority.
+function inspectGestureWrappers(file,source,errors){
+  const modules={
+    'buzz/router-tray':{'useRoutedTray':['app/(app)/beeline/tray.tsx'],
+      'prepareTrayCommand':['app/(app)/beeline/tray.tsx'],'acknowledgeRoutedTrayPaint':['app/(app)/beeline/tray.tsx']},
+    'buzz/router-scheduled-work':{'useRoutedScheduledWork':['buzz/scheduled-work.ts'],'prepareScheduledStop':['buzz/scheduled-work.ts']},
+  };
+  const resolve=specifier=>{
+    if(!specifier||!ts.isStringLiteralLike(specifier))return;
+    const target=(specifier.text.startsWith('.')?path.posix.normalize(path.posix.join(path.posix.dirname(file),specifier.text)):
+      specifier.text.replace(/^@\//,MOBILE)).replace(/\.[cm]?[jt]sx?$/,'');
+    return Object.keys(modules).find(name=>target===MOBILE+name);
+  };
+  const deny=()=>errors.push(`${file}: gesture wrapper authority belongs to its declared UI boundary`);
+  function visit(node){
+    if((ts.isImportDeclaration(node)||ts.isExportDeclaration(node))&&!node.isTypeOnly&&!node.importClause?.isTypeOnly){
+      const module=resolve(node.moduleSpecifier);
+      if(module){
+        const names=node.importClause?.namedBindings;
+        if(ts.isExportDeclaration(node)||node.importClause?.name||!names||!ts.isNamedImports(names))deny();
+        else for(const item of names.elements)if(!item.isTypeOnly){
+          const allowed=modules[module][(item.propertyName??item.name).text];
+          if(!allowed?.some(caller=>MOBILE+caller===file))deny();
+        }
+      }
+    }
+    if(ts.isCallExpression(node)&&(node.expression.kind===ts.SyntaxKind.ImportKeyword||ts.isIdentifier(node.expression)&&node.expression.text==='require')&&resolve(node.arguments[0]))deny();
+    ts.forEachChild(node,visit);
   }
   visit(source);
 }
@@ -192,6 +229,7 @@ export function inspectSource(file, text) {
     }
     commandAccess(source);
     inspectOwnerAccess(file, source, errors);
+    inspectGestureWrappers(file, source, errors);
     inspectConnectionOwners(file, source, errors);
     for (const entry of imports(file, text)) {
       if (entry.dynamic && !entry.specifier) hits.push({ kind: 'computed-import', line: 1 });

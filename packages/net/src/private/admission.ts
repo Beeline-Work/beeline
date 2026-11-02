@@ -8,16 +8,27 @@ const policies = {
   'phone.countNeedsYou': { mode: 'read', screen: 'AppShell' },
   'phone.readRoom': { mode: 'read', screen: 'Room' },
   'phone.readChats': { mode: 'read', screen: 'AppShell' },
-  'phone.readRouterSnapshot': { mode: 'read', screen: 'AppShell' as 'AppShell' | 'Room' },
+  'phone.readRouterSnapshot': { mode: 'read', screen: 'AppShell' as 'AppShell' | 'Room'|'ScheduledWork'|'Tray' },
   'phone.readMediaMetadata': { mode: 'read', screen: 'Room' },
   'phone.readAgentUsageCell': { mode: 'read', screen: 'AgentProfile' },
   'phone.readMediaLink': { mode: 'read-action', action: 'OpenArtifactBrowser' },
   'phone.readMediaPlayback': { mode: 'read-action', action: 'RunArtifact' },
   'phone.sendRoomMessage': { mode: 'command', action: 'SendMessage' },
   'phone.sendRoomReply': { mode: 'command', action: 'SendMessage' },
+  'phone.clearNeedsYou':{mode:'command',action:'EditTray'},
+  'phone.clearNeedsYouSection':{mode:'command',action:'EditTray'},
+  'phone.clearMessageBookmarks':{mode:'command',action:'EditTray'},
+  'phone.setMessageBookmark':{mode:'command',action:'EditTray'},
+  'phone.decideAgentGrant':{mode:'command',action:'EditTray'},
+  'phone.decideWritePermission':{mode:'command',action:'EditTray'},
+  'phone.skipChoice':{mode:'command',action:'EditTray'},
+  'phone.markNeedsYouSeen':{mode:'command',action:'PaintTray'},
+  'phone.deleteRoomSchedule':{mode:'command',action:'StopScheduledWork'},
+  'phone.deleteRoomSubscription':{mode:'command',action:'StopScheduledWork'},
 } as const;
 type Policy = typeof policies;
 type PolicyId = keyof Policy;
+type TapId = Exclude<{ [K in PolicyId]: Policy[K] extends {mode:'command'} ? K : never }[PolicyId], 'phone.markNeedsYouSeen'>;
 type ReadId = { [K in PolicyId]: Policy[K] extends { mode: 'read' } ? K : never }[PolicyId];
 type Screen = Policy[ReadId]['screen'];
 type ScreenRoute<S extends Screen> = { [K in ReadId]: S extends Policy[K]['screen'] ? K : never }[ReadId];
@@ -32,7 +43,7 @@ type State = {
 };
 type Residency = {
   generation: number; screen: Screen; signature: string; lifetime: { active: boolean };
-  passes: readonly object[]; keys: readonly string[];
+  passes: readonly object[]; keys: readonly string[]; painted?:Set<string>; paintedBytes?:number;
 };
 export type MediaAction = 'OpenArtifact' | 'CopyArtifact' | 'SaveArtifact' | 'OpenArtifactBrowser' | 'RunArtifact';
 type MediaOperation = 'phone.readMediaMetadata' | 'phone.readMediaLink' | 'phone.readMediaPlayback';
@@ -216,9 +227,9 @@ export class AdmissionOwner {
       if (!policy || !('screen' in policy)) return this.deny('wrong screen');
       if (request.route === 'phone.readRouterSnapshot') {
         const family = request.input.family;
-        if (screen === 'Room' ? family !== 'room-head' : !['room-list', 'needs-you-count'].includes(family))
+        if (screen === 'Room' ? family !== 'room-head' :screen==='ScheduledWork'?family!=='room-scheduled-work':screen==='Tray'?family!=='needs-you-tray':!['room-list', 'needs-you-count'].includes(family))
           return this.deny('wrong screen family');
-        if (family === 'room-head' ? !request.input.roomId : request.input.roomId !== undefined)
+        if (family === 'room-head'||family==='room-scheduled-work' ? !request.input.roomId : request.input.roomId !== undefined)
           return this.deny('wrong family scope');
       } else if (policy.screen !== screen) return this.deny('wrong screen');
     }
@@ -260,16 +271,57 @@ export class AdmissionOwner {
   }
 
   /** Handler return, including returning a Promise, ends gesture authority. */
-  tap<K extends 'phone.sendRoomMessage' | 'phone.sendRoomReply', T>(action: 'SendMessage', request: Request<K>,
+  tap<K extends TapId, T>(action: Policy[K]['action'], request: Request<K>,
     handler: (pass: Pass<K>) => T): T {
     if (!this.foreground) return this.deny('background');
-    if (action !== 'SendMessage' || !['phone.sendRoomMessage', 'phone.sendRoomReply'].includes(request.route)) return this.deny('wrong action');
+    if (policies[request.route]?.mode!=='command'||policies[request.route].action!==action||
+      (request.route as string)==='phone.markNeedsYouSeen') return this.deny('wrong action');
     this.validateRequests([request as Requests<PolicyId>]);
-    if (typeof request.input.messageId !== 'string' || !/^[0-9a-f]{64}$/.test(request.input.messageId))
+    if (action==='SendMessage' && (typeof (request.input as {messageId?:unknown}).messageId !== 'string' ||
+      !/^[0-9a-f]{64}$/.test((request.input as {messageId:string}).messageId)))
       return this.deny('prepared message identity required');
     const lifetime = { active: true };
     try { return handler(this.mint(request, lifetime)); }
     finally { lifetime.active = false; }
+  }
+
+  /** Trusted viewport only; painted IDs are spent once per navigation
+   * residency. This screen command admits no read and starts no flush timer. */
+  paintTray(generation:number,workspaceId:string,messageIds:readonly string[]) {
+    if(!this.foreground)return this.deny('background');
+    const read={route:'phone.readRouterSnapshot' as const,input:{family:'needs-you-tray' as const,workspaceId}};
+    const residency=[...this.residencies.values()].find(value=>value.generation===generation&&value.screen==='Tray'&&
+      value.lifetime.active&&value.keys.includes(this.key(read)));
+    if(!residency)return this.deny('inactive paint owner');
+    if(messageIds.length>30)return this.deny('paint quota');
+    const painted=residency.painted??=new Set<string>();
+    const ids=[...new Set(messageIds)].filter(id=>!painted.has(id));
+    if(!ids.length)return undefined;
+    const request={route:'phone.markNeedsYouSeen' as const,input:{workspaceId,messageIds:ids}};
+    this.validateRequests([request]);
+    const addedBytes=new TextEncoder().encode(JSON.stringify(ids)).length;
+    if((residency.paintedBytes??0)+addedBytes>64*1024)return this.deny('paint residency capacity');
+    const admitted=this.spend(request,this.mint(request,residency.lifetime));
+    residency.paintedBytes=(residency.paintedBytes??0)+addedBytes;
+    for(const id of ids)painted.add(id);
+    return admitted;
+  }
+
+  /** Actual Load More Saved gesture, bound to the existing focused Tray.
+   * The trusted adapter supplies only a continuation from its held server DTO.
+   * Attaching a continuation observer alone never calls this method. */
+  continueSaved<T>(generation:number,workspaceId:string,before:string,
+    handler:(pass:Pass<'phone.readRouterSnapshot'>)=>T):T{
+    const head={route:'phone.readRouterSnapshot' as const,input:{family:'needs-you-tray' as const,workspaceId}};
+    const residency=[...this.residencies.values()].find(value=>value.generation===generation&&value.screen==='Tray'&&
+      value.lifetime.active&&value.keys.includes(this.key(head)));
+    if(!this.foreground||!residency)return this.deny('inactive Saved action');
+    if(typeof before!=='string'||before.length>1024||!/^saved1\.[a-zA-Z0-9_-]+$/.test(before))return this.deny('invalid Saved continuation');
+    const request={route:'phone.readRouterSnapshot' as const,input:{family:'needs-you-saved-page' as const,workspaceId,before}};
+    this.validateRequests([request]);
+    const lifetime={active:true},pass=this.mint(request,lifetime);
+    this.states.get(pass)!.completionLifetime=residency.lifetime;
+    try{return handler(pass);}finally{lifetime.active=false;}
   }
 
   /** Explicit Retry's synchronous prefix. The spent read remains fenced by

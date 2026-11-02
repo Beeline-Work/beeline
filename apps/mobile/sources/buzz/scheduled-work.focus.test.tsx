@@ -2,6 +2,7 @@ import React from 'react';
 // @ts-expect-error React renderer declarations are absent in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+vi.mock('./router-scheduled-work',()=>({useRoutedScheduledWork:()=>({mode:'legacy',value:null,error:null,loading:false,retry:()=>{}}),prepareScheduledStop:()=>undefined}));
 const fixture = vi.hoisted(() => ({
   read: vi.fn(async () => ({ roomName: 'Room', agentNames: [], schedules: [], subscriptions: [] })),
   watches: [] as { callback: (event: any) => void; stopped: boolean }[],

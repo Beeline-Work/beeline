@@ -7,6 +7,8 @@ import { X_SIGNUP_DELIVERY_SCHEMA } from './x-ads.js';
 import { SERVER_LEASE_DEADLINE_SCHEMA } from './server-lease-deadlines.js';
 import { COMMAND_COMPLETION_SCHEMA } from './command-completion.js';
 import { ROUTER_PROJECTION_SCHEMA, ROUTER_EXTRA_CAPTURE_SCHEMA } from './router-projection-schema.js';
+import { SCHEDULED_WORK_AUTHORITY_SCHEMA } from './scheduled-work-authority.js';
+import { ROOM_SCHEDULES_CAPTURE_SCHEMA } from './room-schedules-capture.js';
 import { ROUTER_COMMAND_SCHEMA } from './router-command-ledger.js';
 import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
 import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
@@ -257,7 +259,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 60;
+export const REQUIRED_SCHEMA_VERSION = 61;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3549,6 +3551,8 @@ export async function migrate(
   await ddlScript('choice expiry source', CHOICE_EXPIRY_SCHEMA);
   await ddlScript('router projection authority', ROUTER_PROJECTION_SCHEMA);
   await ddlScript('router projection extra sources', ROUTER_EXTRA_CAPTURE_SCHEMA);
+  await ddlScript('scheduled work authority', SCHEDULED_WORK_AUTHORITY_SCHEMA);
+  await ddlScript('scheduled work sources', ROOM_SCHEDULES_CAPTURE_SCHEMA);
   await ddlScript('server lease deadlines', SERVER_LEASE_DEADLINE_SCHEMA);
   await ddlScript('X signup delivery deadlines', X_SIGNUP_DELIVERY_SCHEMA);
   await ddlScript('media authority domains', MEDIA_AUTHORITY_SCHEMA);

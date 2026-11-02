@@ -1,3 +1,4 @@
+import { dispatchTrayDecisionCommand, isTrayDecisionCommand } from './tray-decision-command.js';
 import { helperUsageEnabled, readAgentUsageCell } from './helper-usage.js';
 import { readMediaMetadata } from './phone-media.js';
 import { runnableOrigin } from './runnable-artifact.js';
@@ -35,8 +36,10 @@ export const ATOMIC_ROUTER_COMMANDS = new Set([
   'markRead', 'markUnread', 'reactToMessage', 'deleteRoomMessage',
   'setMessageBookmark', 'clearMessageBookmarks', 'markNeedsYouSeen',
   'clearNeedsYou', 'clearNeedsYouSection',
+  'deleteRoomSchedule',
 ]);
 const preparedMessageCommands = new Set(['sendRoomMessage', 'sendRoomReply']);
+const scheduledStopCommands=new Set(['deleteRoomSchedule','deleteRoomSubscription']);
 const clientErrorLimit = new IdentityRateLimit('client-error', 12);
 function refuse(status: number, error: string): never {
   throw new PhoneOperationError(status, { error });
@@ -101,8 +104,9 @@ export function createPhoneOperationDispatcher(
         if (!(ROUTER_FAMILIES as readonly unknown[]).includes(input.family)) refuse(400,'invalid_router_family');
         const family = input.family as RouterFamily;
         const roomId = input.roomId === undefined ? undefined : uuid(input,'roomId');
-        if ((family === 'room-head') !== Boolean(roomId)) refuse(400,'invalid_router_scope');
-        return phone.readRouterSnapshot(family === 'room-head'
+        const roomScoped=family==='room-head'||family==='room-scheduled-work';
+        if (roomScoped !== Boolean(roomId)) refuse(400,'invalid_router_scope');
+        return phone.readRouterSnapshot(roomScoped
           ? {family,roomId:roomId!,...(input.workspaceId ? {workspaceId:uuid(input,'workspaceId')} : {})}
           : {family,workspaceId:uuid(input,'workspaceId')},viewerId);
       }
@@ -256,27 +260,36 @@ export function createPhoneOperationDispatcher(
     if (command !== undefined) {
       try { identity = parseRouterCommandIdentity(command); }
       catch { refuse(400, 'invalid_command_identity'); }
-      if (!ATOMIC_ROUTER_COMMANDS.has(name) && !preparedMessageCommands.has(name))
+      if (!ATOMIC_ROUTER_COMMANDS.has(name) && !preparedMessageCommands.has(name)&&!scheduledStopCommands.has(name)&&!isTrayDecisionCommand(name))
         refuse(400, 'command_operation_not_supported');
     }
     if (identity && preparedMessageCommands.has(name) && input.messageId !== identity.id)
       refuse(400, 'command_message_identity_mismatch');
+    if(identity&&scheduledStopCommands.has(name)){
+      uuid(input,'roomId');
+      if(name==='deleteRoomSchedule')uuid(input,'scheduleId');else if(required(input,'subscriptionId').length>512)refuse(400,'invalid_subscriptionId');
+    }
     let result: unknown;
     let receipt;
     let performed = false;
-    const effect = () => { performed = true; return execute(name, input, viewerId, invokeLegacy, familyId); };
+    const effect = () => { performed = true;
+      if(identity&&scheduledStopCommands.has(name))return options.phone.stopScheduledWorkCommand(name as 'deleteRoomSchedule'|'deleteRoomSubscription',
+        input as {roomId:string;scheduleId?:string;subscriptionId?:string},viewerId);
+      return execute(name, input, viewerId, invokeLegacy, familyId);
+    };
     try {
       if (identity) {
+        if(isTrayDecisionCommand(name))return await dispatchTrayDecisionCommand(ledger,options.phone,options.live,name,input,viewerId,identity);
         const key = { principal: viewerId, operation: name, commandId: identity.id };
         receipt = ATOMIC_ROUTER_COMMANDS.has(name)
           ? await ledger.atomic(key, input, tx => options.phone.withCommandTransaction(tx, effect),
-              tx => captureCommandCoverage(tx, input, viewerId))
+              scheduledStopCommands.has(name)?undefined:tx => captureCommandCoverage(tx, input, viewerId))
           : await ledger.external(key, input, async () => {
-              const sent = await effect() as { messageId?: unknown };
+              const sent = await effect() as { messageId?: unknown }|undefined;
               // External/post-commit paths carry the stable effect identity only.
               // Their earlier optional DTO cannot be certified at a later cut.
-              return { messageId: sent.messageId };
-            }, tx => captureCommandCoverage(tx, input, viewerId));
+              return scheduledStopCommands.has(name)?null:{ messageId: sent?.messageId };
+            }, scheduledStopCommands.has(name)?undefined:tx => captureCommandCoverage(tx, input, viewerId));
         result = receipt.result;
         if (receipt.state !== 'committed') {
           if (command) return receipt;

@@ -73,7 +73,8 @@ export class MobileCommandOwner {
   async negotiated(): Promise<void> {
     const connection = this.socket.commandState();
     if (!connection.ready || !connection.commandDedupV1) return;
-    await Promise.all(this.intents.view().filter(record => ['unknown','pending'].includes(record.state) || record.state === 'prepared' && this.restored.has(record.id))
+    await Promise.all(this.intents.view().filter(record => ['unknown','pending'].includes(record.state) || record.state === 'prepared' &&
+      (this.restored.has(record.id)||record.operation==='deleteRoomSchedule'||record.operation==='deleteRoomSubscription'))
       .map(record => this.deliver(record.id, 'reconnect').catch(() => undefined)));
   }
   async cancel(id: string): Promise<void> {

@@ -106,6 +106,9 @@ type StoredAuthority = { authorityScope: string; epoch: string };
 export function routerAuthorityStorageReady(): boolean {
   return web === null || !!web.storage && typeof navigator !== 'undefined' && typeof navigator.locks?.request === 'function';
 }
+/** The existing durable command owner has a proven single native writer.
+ * Browser command cohorts remain legacy until cross-tab intent adoption. */
+export function routerCommandStorageReady():boolean{return web===null;}
 
 /** Router groups use the existing response store, with one encoded atomic
  * data+cut+authority envelope. Denials and minimum floors live outside LRU.

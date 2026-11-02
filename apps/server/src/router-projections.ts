@@ -1,12 +1,14 @@
 import { ROUTER_PROTOCOL, ROUTER_MAX_PART_BYTES as PART_BYTES, ROUTER_MAX_PARTS as MAX_PARTS, ROUTER_MAX_BATCH_BYTES as MAX_BYTES } from '@beeline/api-contract/router-protocol';
 import { createHash, randomUUID } from 'node:crypto';
 import type {
-  RouterAuthorityCertificate, RouterCut, RouterFact, RouterFamily, RouterPushFrame,
+  RouterAuthorityCertificate, RouterCut, RouterFact, RouterBatchRecord, RouterFamily, RouterPushFrame,
   RouterSnapshot, RouterSnapshotInput, RouterUnavailable, RouterValues,
 } from '@beeline/api-contract/router-protocol';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import {scheduledWorkAuthority,scheduledWorkAuthorities,scheduledRoomDomain} from './scheduled-work-authority.js';
+import {readTrayClockBasis} from './tray-clock-basis.js';
 
 export class RouterProjectionUnavailable extends Error {
   constructor(readonly reason: RouterUnavailable['reason']) { super(`Router projection unavailable: ${reason}`); }
@@ -22,18 +24,19 @@ export function routerAuthority(scopes: RouterAuthorityCertificate['scopes']): R
 }
 export function routerAtomicGroup(input: RouterSnapshotInput, viewer: string): string {
   return input.family.startsWith('needs-you') ? `needs-you:${input.workspaceId}:${viewer}`
-    : input.family === 'room-head' ? `room-head:${input.roomId}:${viewer}` : `room-list:${input.workspaceId}:${viewer}`;
+    : input.family === 'room-head'||input.family==='room-scheduled-work' ? `${input.family}:${input.roomId}:${viewer}` : `room-list:${input.workspaceId}:${viewer}`;
 }
-export type ResolvedRouterSnapshotInput = { readonly family: RouterFamily; readonly workspaceId:string; readonly roomId?:string };
+export type ResolvedRouterSnapshotInput = { readonly family: RouterFamily; readonly workspaceId:string; readonly roomId?:string; readonly before?:string };
 export async function resolveRouterInput(db: SqlDatabase, input: RouterSnapshotInput | ResolvedRouterSnapshotInput): Promise<ResolvedRouterSnapshotInput> {
   if (input.workspaceId) return {...input,workspaceId:input.workspaceId};
-  if (input.family !== 'room-head' || !input.roomId) throw new RouterProjectionUnavailable('dependency');
+  if ((input.family !== 'room-head'&&input.family!=='room-scheduled-work') || !input.roomId) throw new RouterProjectionUnavailable('dependency');
   const room=(await db.query<{workspace_id:string}>(`SELECT workspace_id FROM rooms WHERE id=$1`,[input.roomId])).rows[0];
   if (!room) throw new RouterProjectionUnavailable('authority');
   return {...input,workspaceId:room.workspace_id};
 }
 export async function readRouterCertificate(db: SqlDatabase, args: RouterSnapshotInput | ResolvedRouterSnapshotInput, viewer: string): Promise<RouterAuthorityCertificate> {
   const input = await resolveRouterInput(db,args);
+  if(input.family==='room-scheduled-work')return (await scheduledWorkAuthority(db,input.roomId!,viewer)).authority;
   const parent=input.roomId?(await db.query<{parent_id:string|null}>(`SELECT parent_id FROM rooms WHERE id=$1`,[input.roomId])).rows[0]?.parent_id:undefined;
   const scopes = [`reader:${viewer}:workspace:${input.workspaceId}`,
     ...(!input.roomId?[`reader:${viewer}:workspace:${input.workspaceId}:visibility`]:[]),
@@ -45,6 +48,11 @@ export async function readRouterCertificate(db: SqlDatabase, args: RouterSnapsho
 }
 export async function readRouterAuthority(db: SqlDatabase, args: RouterSnapshotInput | ResolvedRouterSnapshotInput, viewer: string): Promise<RouterAuthorityCertificate> {
   const input = await resolveRouterInput(db,args);
+  if(input.family==='room-scheduled-work'){
+    const scope=await scheduledWorkAuthority(db,input.roomId!,viewer);
+    if(!scope.allowed||!scope.complete||scope.workspaceId!==input.workspaceId)throw new RouterProjectionUnavailable('authority');
+    return scope.authority;
+  }
   const certificate = await readRouterCertificate(db,input,viewer);
   const allowed = await db.query(`SELECT 1 FROM memberships member
     WHERE member.workspace_id=$1 AND member.identity_id=$2 AND member.room_id IS NULL AND member.removed_at IS NULL
@@ -59,6 +67,7 @@ export async function readRouterAuthority(db: SqlDatabase, args: RouterSnapshotI
 export async function deniedRouterAuthorityScope(db: SqlDatabase, args: RouterSnapshotInput | ResolvedRouterSnapshotInput,
   viewer:string):Promise<{scope:string;authorityScope:string}> {
   const input=await resolveRouterInput(db,args);
+  if(input.family==='room-scheduled-work')return (await scheduledWorkAuthority(db,input.roomId!,viewer)).denied;
   const workspace=await db.query(`SELECT 1 FROM memberships WHERE workspace_id=$1 AND identity_id=$2
     AND room_id IS NULL AND removed_at IS NULL`,[input.workspaceId,viewer]);
   if(!workspace.rowCount)return {scope:input.workspaceId,authorityScope:`reader:${viewer}:workspace:${input.workspaceId}`};
@@ -79,16 +88,19 @@ export async function readRouterCut(db: SqlDatabase, workspace: string): Promise
 
 /** All DTO queries, authority and head share this transaction handle. */
 export async function buildRouterSnapshot(database: SqlDatabase, input: RouterSnapshotInput, viewer: string,
-  build: RouterValueBuilder): Promise<RouterSnapshot> {
+  build: RouterValueBuilder,options?:{readonly trayClock?:true}): Promise<RouterSnapshot> {
   return database.transaction(async db => {
     await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
     const resolved = await resolveRouterInput(db,input);
+    const clock=options?.trayClock?await readTrayClockBasis(db,resolved.workspaceId):undefined;
+    if(options?.trayClock&&(!input.family.startsWith('needs-you')||!clock?.ready))throw new RouterProjectionUnavailable('dependency');
     const authority = await readRouterAuthority(db, resolved, viewer);
     const value = await build(db, input, viewer);
     if (value === null) throw new RouterProjectionUnavailable('authority');
     const snapshot = { kind: 'snapshot' as const, family: input.family, scope: input.roomId ?? input.workspaceId,
-      value, cut: await readRouterCut(db, resolved.workspaceId), atomicGroup: routerAtomicGroup(input, viewer), authority } as RouterSnapshot;
-    const limit = input.family === 'needs-you-count' ? 1024 : input.family === 'room-head' ? PART_BYTES : MAX_BYTES;
+      value, cut: await readRouterCut(db, resolved.workspaceId), atomicGroup: routerAtomicGroup(input, viewer), authority,
+      ...(clock?{clockVersion:clock.clockVersion}:{}) } as RouterSnapshot;
+    const limit = input.family === 'needs-you-count' ? 1024 : ['room-head','room-scheduled-work','needs-you-tray','needs-you-saved-page'].includes(input.family) ? PART_BYTES : MAX_BYTES;
     if (Buffer.byteLength(JSON.stringify(snapshot)) > limit) throw new RouterProjectionUnavailable('budget');
     return snapshot;
   });
@@ -97,27 +109,39 @@ export async function buildRouterSnapshot(database: SqlDatabase, input: RouterSn
 /** Separate current snapshot and shared lock through the synchronous send.
  * An async enqueue callback is deliberately rejected by the type contract. */
 export async function fenceRouterEnqueue(database: SqlDatabase, input: RouterSnapshotInput, viewer: string,
-  expected: RouterAuthorityCertificate, enqueue: () => undefined): Promise<void> {
+  expected: RouterAuthorityCertificate, enqueue: () => undefined, expectedClockVersion?: string): Promise<void> {
   await database.transaction(async db => {
     await db.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
     await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
     if ((await readRouterAuthority(db, input, viewer)).digest !== expected.digest)
       throw new RouterProjectionUnavailable('authority');
+    if (expectedClockVersion !== undefined) {
+      if (!input.family.startsWith('needs-you') || !input.workspaceId)
+        throw new RouterProjectionUnavailable('dependency');
+      const clock = await readTrayClockBasis(db, input.workspaceId);
+      if (!clock?.ready || clock.clockVersion !== expectedClockVersion)
+        throw new RouterProjectionUnavailable('dependency');
+    }
     enqueue();
   });
 }
 
 /** Packetization preserves indivisible facts and never truncates a group. */
-export function encodeRouterBatch(from: RouterCut, to: RouterCut, facts: readonly RouterFact[]): RouterPushFrame[] {
+export function encodeRouterBatch(from: RouterCut, to: RouterCut, facts: readonly RouterBatchRecord[]): RouterPushFrame[] {
   if (from.stream !== to.stream || from.epoch !== to.epoch || to.through < from.through)
     throw new RouterProjectionUnavailable('dependency');
-  const domains = new Set(facts.flatMap(f => f.authority.scopes.map(s => s.authorityScope)));
+  const markers=facts.filter(f=>"kind" in f);
+  if(markers.length>1||markers.some(marker=>marker.kind!=='scheduled-work-classification'||marker.version!==1||
+    marker.authorityBarrier.protocol!==1||!marker.authorityBarrier.stream.startsWith('authority:')||
+    !marker.authorityBarrier.epoch||marker.authorityBarrier.epoch.length>128||!marker.authorityBarrier.segment||marker.authorityBarrier.segment.length>128||
+    !Number.isSafeInteger(marker.authorityBarrier.through)||marker.authorityBarrier.through<0))throw new RouterProjectionUnavailable('dependency');
+  const domains = new Set(facts.flatMap(f => 'authority' in f?f.authority.scopes.map(s => s.authorityScope):[]));
   if (domains.size > 256) throw new RouterProjectionUnavailable('budget');
   const batchId = randomUUID();
   const contentDigest = createHash('sha256').update(JSON.stringify(facts)).digest('hex');
-  const parts: RouterFact[][] = [[]];
+  const parts: RouterBatchRecord[][] = [[]];
   // Reserve the actual envelope overhead, including the maximum part count.
-  const bytes = (part: RouterFact[]) => Buffer.byteLength(JSON.stringify({kind:'push-part',batchId,from,to,
+  const bytes = (part: RouterBatchRecord[]) => Buffer.byteLength(JSON.stringify({kind:'push-part',batchId,from,to,
     partIndex:MAX_PARTS-1,partCount:MAX_PARTS,contentDigest,facts:part}));
   for (const fact of facts) {
     if (bytes([fact]) > PART_BYTES) throw new RouterProjectionUnavailable('budget');
@@ -188,6 +212,11 @@ function groupInput(group:string,workspace:string,viewer:string):ResolvedRouterS
   if(group===`room-list:${workspace}:${viewer}`)return {family:'room-list',workspaceId:workspace};
   if(group===`needs-you:${workspace}:${viewer}`)return {family:'needs-you',workspaceId:workspace};
   const prefix='room-head:',suffix=`:${viewer}`;
+  const scheduled='room-scheduled-work:';
+  if(group.startsWith(scheduled)&&group.endsWith(suffix)){
+    const room=group.slice(scheduled.length,-suffix.length);
+    if(ROOM_SCOPE.test(room))return {family:'room-scheduled-work',workspaceId:workspace,roomId:room};
+  }
   if(group.startsWith(prefix)&&group.endsWith(suffix)){
     const room=group.slice(prefix.length,-suffix.length);
     if(ROOM_SCOPE.test(room))return {family:'room-head',workspaceId:workspace,roomId:room};
@@ -206,6 +235,18 @@ function validGroupCertificate(authority:RouterAuthorityCertificate,readerScope:
 }
 function validProjectedMember(fact:RouterFact,input:ResolvedRouterSnapshotInput,workspace:string,viewer:string,readerScope:string):boolean {
   const payload=fact.payload,scope=input.roomId??workspace;
+  if(payload.kind==='tray-classification'||payload.kind==='tray-needs-replace'){
+    if(input.roomId||payload.scope!==workspace||fact.atomicGroup!==`needs-you:${workspace}:${viewer}`)return false;
+    return payload.kind==='tray-classification'?payload.version===1&&/^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion):payload.value.items.length<=30;
+  }
+  if(payload.kind==='saved-row-replace'||payload.kind==='saved-row-remove'){
+    if(input.roomId||payload.scope!==workspace||fact.atomicGroup!==`needs-you:${workspace}:${viewer}`)return false;
+    return payload.kind==='saved-row-remove'
+      ?ROOM_SCOPE.test(payload.bookmarkId)&&/^[a-zA-Z0-9_-]{1,128}$/.test(payload.messageId)
+      :ROOM_SCOPE.test(payload.row.bookmarkId)&&payload.row.value.workspaceId===workspace&&
+        /^[a-zA-Z0-9_-]{1,128}$/.test(payload.row.value.messageId)&&
+        payload.row.order.endsWith(`,${payload.row.value.messageId}`);
+  }
   if(payload.kind==='authority')return fact.authority.scopes.some(item=>item.authorityScope===payload.authorityScope)&&
     (payload.scope===workspace&&payload.authorityScope===readerScope||ROOM_SCOPE.test(payload.scope)&&payload.authorityScope===`room:${payload.scope}`);
   if(payload.kind==='authority-fence')return payload.mode==='advance'&&(input.roomId
@@ -220,15 +261,25 @@ function validProjectedMember(fact:RouterFact,input:ResolvedRouterSnapshotInput,
  * No per-socket/held-group inventory or delivery rewind is maintained here. */
 export async function fenceRouterBatch(database: SqlDatabase, workspace: string, viewer: string,
   facts: readonly RouterFact[], enqueue: (safeFacts:readonly RouterFact[]) => undefined): Promise<void> {
+  await database.transaction(async db=>{
+    await db.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
+    await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
+    await fenceRouterBatchInTransaction(db,workspace,viewer,facts,enqueue);
+  });
+}
+
+/** Server-internal worker. Both callers acquire the shared authority lock in
+ * READ COMMITTED before entry and retain it through synchronous enqueue. The
+ * compact authority actor uses this worker to avoid a second transaction or
+ * an unlocked gap between its control barrier and the data enqueue. */
+export async function fenceRouterBatchInTransaction(db:SqlDatabase,workspace:string,viewer:string,
+  facts:readonly RouterFact[],enqueue:(safeFacts:readonly RouterFact[])=>undefined):Promise<void>{
   const groups=new Map<string,RouterFact[]>();
   for(const fact of facts){
     if(!groups.has(fact.atomicGroup))groups.set(fact.atomicGroup,[]);
     groups.get(fact.atomicGroup)!.push(fact);
   }
   if(groups.size>256||facts.length>512)throw new RouterProjectionUnavailable('budget');
-  await database.transaction(async db => {
-    await db.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
-    await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
     const inputs=new Map([...groups.keys()].map(group=>[group,groupInput(group,workspace,viewer)]));
     const roomIds=[...new Set([...inputs.values()].flatMap(input=>input?.roomId?[input.roomId]:[]))];
     const access=(await db.query<{workspace_allowed:boolean;rooms:{id:string;workspace_id:string;parent_id:string|null;allowed:boolean}[]}>(
@@ -251,9 +302,35 @@ export async function fenceRouterBatch(database: SqlDatabase, workspace: string,
     const readerCertificate=certificate([readerScope]);
     if(!readerCertificate)throw new RouterProjectionUnavailable('authority');
     const safe:RouterFact[]=[];
+    const scheduled=await scheduledWorkAuthorities(db,[...inputs.values()].flatMap(input=>input?.family==='room-scheduled-work'?[input.roomId!]:[]),viewer);
     for(const [group,members]of groups){
       const input=inputs.get(group);
       const scope=input?.roomId??workspace;
+      if(input?.family==='room-scheduled-work'){
+        const current=scheduled.get(input.roomId!);
+        if(!current){
+          safe.push({atomicGroup:group,authority:readerCertificate,payload:{kind:'group-unavailable',scope,reason:'authority'}});continue;
+        }
+        const unavailable=(reason:'authority'|'dependency')=>safe.push({atomicGroup:group,authority:current.authority,payload:{kind:'group-unavailable',scope,reason}});
+        if(current.workspaceId!==workspace){unavailable('dependency');continue;}
+        if(!current.allowed){
+          if(!current.authority.scopes.some(item=>item.authorityScope===current.denied.authorityScope)){unavailable('authority');continue;}
+          safe.push({atomicGroup:group,authority:current.authority,payload:{kind:'authority-fence',...current.denied,mode:'deny'}});continue;
+        }
+        const expected=members[0]!.authority;
+        const coherent=current.complete&&members.every(fact=>fact.authority.digest===expected.digest&&
+          routerAuthority(fact.authority.scopes).digest===expected.digest&&(fact.payload.kind==='scope-replace'
+            ?fact.payload.family==='room-scheduled-work'&&fact.payload.scope===scope
+            :fact.payload.kind==='authority-fence'&&fact.payload.mode==='advance'&&fact.payload.scope===scope&&fact.payload.authorityScope===scheduledRoomDomain(scope)));
+        if(!coherent){unavailable('authority');continue;}
+        if(current.authority.digest===expected.digest){safe.push(...members);continue;}
+        const changed=current.authority.scopes.filter(now=>expected.scopes.some(prior=>prior.authorityScope===now.authorityScope&&prior.epoch!==now.epoch));
+        if(!changed.length){unavailable('authority');continue;}
+        for(const target of changed)safe.push({atomicGroup:group,authority:current.authority,payload:{kind:'authority-fence',
+          scope:target.authorityScope.startsWith('scheduled-work-principal:')?viewer:target.authorityScope.includes(':workspace:')?workspace:scope,
+          authorityScope:target.authorityScope,mode:'advance'}});
+        continue;
+      }
       const current=input?certificate([readerScope,...(input.roomId
         ?[`room:${input.roomId}`,...(rooms.get(input.roomId)?.parent_id?[`room:${rooms.get(input.roomId)!.parent_id}`]:[])]
         :[`${readerScope}:visibility`])]):undefined;
@@ -279,7 +356,7 @@ export async function fenceRouterBatch(database: SqlDatabase, workspace: string,
       const coherent=members.every(fact=>validGroupCertificate(fact.authority,readerScope,input)&&fact.authority.digest===expected.digest&&
         validProjectedMember(fact,input,workspace,viewer,readerScope));
       if(!coherent){unavailable();continue;}
-      if(expected.digest===current.digest&&members.every(fact=>fact.payload.kind==='scope-replace'||fact.payload.kind==='authority-fence')){safe.push(...members);continue;}
+      if(expected.digest===current.digest&&members.every(fact=>['scope-replace','authority-fence','saved-row-replace','saved-row-remove','tray-classification','tray-needs-replace'].includes(fact.payload.kind))){safe.push(...members);continue;}
       const changed=current.scopes.filter(now=>expected.scopes.some(prior=>prior.authorityScope===now.authorityScope&&prior.epoch!==now.epoch));
       if(!changed.length){unavailable();continue;}
       for(const target of changed){
@@ -287,6 +364,26 @@ export async function fenceRouterBatch(database: SqlDatabase, workspace: string,
         safe.push({atomicGroup:group,authority:current,payload:{kind:'authority-fence',scope:logical,authorityScope:target.authorityScope,mode:'advance'}});
       }
     }
+    // This is the final asynchronous read before synchronous enqueue. Cached
+    // classification cannot survive an overdue deadline or owner/readiness loss.
+    const trayGroups = new Set(safe.filter(fact => ['tray-classification', 'tray-needs-replace',
+      'saved-row-replace', 'saved-row-remove'].includes(fact.payload.kind)).map(fact => fact.atomicGroup));
+    if (trayGroups.size) {
+      const clock = await readTrayClockBasis(db, workspace);
+      const invalid = new Set([...trayGroups].filter(group => {
+        const markers = safe.filter(fact => fact.atomicGroup === group && fact.payload.kind === 'tray-classification');
+        return !clock?.ready || markers.length !== 1 || markers[0]!.payload.kind !== 'tray-classification'
+          || markers[0]!.payload.clockVersion !== clock.clockVersion;
+      }));
+      const emitted = new Set<string>();
+      enqueue(safe.flatMap(fact => {
+        if (!invalid.has(fact.atomicGroup)) return [fact];
+        if (emitted.has(fact.atomicGroup)) return [];
+        emitted.add(fact.atomicGroup);
+        return [{atomicGroup: fact.atomicGroup, authority: fact.authority,
+          payload: {kind: 'group-unavailable' as const, scope: workspace, reason: 'dependency' as const}}];
+      }));
+      return;
+    }
     enqueue(safe);
-  });
 }

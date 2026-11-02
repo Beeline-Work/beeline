@@ -1,6 +1,6 @@
 import { useEffect, useSyncExternalStore, useCallback, useRef } from 'react';
 import { useRouterFamily } from './router-family';
-import { acquireRouterLane, routerLaneSnapshot } from './router-owner';
+import { acquireRouterLane, routerLaneSnapshot, routerFamilyMode } from './router-owner';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
@@ -176,7 +176,9 @@ export async function loadNeedsYouList(workspaceId: string): Promise<readonly Ne
   } finally { slot.reads.delete(at); trim(slot); }
 }
 export async function loadSavedList(workspaceId: string, before?: string): Promise<void> {
+  if (routerFamilyMode('needs-you-tray') !== 'legacy') return;
   const slot = slotFor(await resolveViewer(), workspaceId);
+  if (routerFamilyMode('needs-you-tray') !== 'legacy') return;
   const at = ++slot.clock;
   slot.reads.add(at);
   try {
@@ -195,9 +197,11 @@ export async function loadSavedList(workspaceId: string, before?: string): Promi
 
 /** One cold tray response seeds both sections; a held pair costs no request. */
 export async function loadTrayList(workspaceId: string, force = false): Promise<{ needsError?: string; savedError?: string }> {
+  if (routerFamilyMode('needs-you-tray') !== 'legacy') return {};
   const slot = slotFor(await resolveViewer(), workspaceId);
   if (!slot.entry.needs) await seed(workspaceId, 'needs-you');
   if (!slot.entry.saved) await seed(workspaceId, 'bookmarks');
+  if (routerFamilyMode('needs-you-tray') !== 'legacy') return {};
   if (!force && !slot.forgotten && !slot.needsStale && slot.entry.needs && slot.entry.saved) return {};
   if (slot.trayRead) return slot.trayRead;
   const at = ++slot.clock;
@@ -304,22 +308,24 @@ export function holdNeedsYou(workspaceId: string, messageIds: readonly string[])
   if (slot) write(slot, { ...slot.entry, held: new Set(messageIds) }, false);
 }
 export function subscribeTrayGap(workspaceId: string, read: (reason: string) => void): () => void {
+  if (routerFamilyMode('needs-you-tray') !== 'legacy') return () => {};
   const readers = trayReaders.get(workspaceId) ?? new Set<(reason: string) => void>();
   readers.add(read);
   trayReaders.set(workspaceId, readers);
   return () => { readers.delete(read); if (!readers.size) trayReaders.delete(workspaceId); };
 }
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; };
-function useEntry(workspaceId: string | null | undefined): Entry {
-  useEffect(() => { void resolveViewer(); }, []);
-  return useSyncExternalStore(subscribe, () =>
-    workspaceId && viewer ? slots.get(`${viewer.key}\u0000${workspaceId}`)?.entry ?? EMPTY : EMPTY);
+function useEntry(workspaceId: string | null | undefined, enabled = true): Entry {
+  useEffect(() => { if (enabled) void resolveViewer(); }, [enabled]);
+  const observe = useCallback((listener: () => void) => enabled ? subscribe(listener) : () => {}, [enabled]);
+  return useSyncExternalStore(observe, () =>
+    enabled && workspaceId && viewer ? slots.get(`${viewer.key}\u0000${workspaceId}`)?.entry ?? EMPTY : EMPTY);
 }
 const EMPTY_SAVED: readonly MessageBookmarkView[] = [];
 const visibleNeeds = (entry: Entry) => entry.needs && entry.held.size
   ? entry.needs.filter((item) => !entry.held.has(item.messageId)) : entry.needs;
-export function useTrayList(workspaceId: string | null | undefined) {
-  const entry = useEntry(workspaceId);
+export function useTrayList(workspaceId: string | null | undefined, enabled = true) {
+  const entry = useEntry(workspaceId, enabled);
   return { needs: visibleNeeds(entry),
     bookmarks: entry.saved ?? EMPTY_SAVED, next: entry.next };
 }
@@ -388,6 +394,7 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
 
 /** Called only for viewable question cells in the focused Tray, after paint. */
 export async function acknowledgePaintedNeedsYou(workspaceId: string, messageIds: readonly string[]): Promise<void> {
+  if (routerFamilyMode('needs-you-tray') !== 'legacy') return;
   const slot = current(workspaceId);
   if (!slot || slot.forgotten) return;
   const ids = [...new Set(messageIds)].filter(id => !slot.seen?.has(id) && !slot.seeing?.has(id) &&

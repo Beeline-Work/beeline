@@ -5,10 +5,12 @@ import { authorizedMediaMetadata } from './phone-media.js';
 import { PhoneOperationError } from './phone-operations.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
 import { routerAuthority, RouterProjectionUnavailable } from './router-projections.js';
+import {currentScheduledWorkFence} from './scheduled-work-authority.js';
 
 /** Only principal-addressed, DB-authored causes enter this actor. No client
  * inventories, subscriptions or read lanes select its authority audience. */
 export async function currentAuthorityFence(db:SqlDatabase,viewer:string,scope:string,domain:string):Promise<RouterAuthorityFence|undefined>{
+  if(domain.startsWith('scheduled-work-'))return currentScheduledWorkFence(db,viewer,scope,domain);
   let allowed:boolean,mode:'deny'|'advance'='deny';
   const workspacePrefix=`reader:${viewer}:workspace:`;
   if(domain.startsWith(workspacePrefix)&&domain.endsWith(':visibility')){
@@ -47,7 +49,8 @@ export async function currentAuthorityFence(db:SqlDatabase,viewer:string,scope:s
 
 type Head={epoch:string;sequence:string};
 export async function subscribeAuthorityFences(database:SqlDatabase,live:LiveHub,viewer:string,
-  enqueue:(frame:RouterAuthorityFence)=>undefined,unavailable:(reason:string)=>void,ready:Promise<void>=Promise.resolve()):Promise<()=>void>{
+  enqueue:(frame:RouterAuthorityFence)=>undefined,unavailable:(reason:string)=>void,ready:Promise<void>=Promise.resolve(),
+  acceptDomain:(domain:string)=>boolean=domain=>!domain.startsWith('scheduled-work-')):Promise<()=>void>{
   const stream=`authority:${viewer}`;
   let stopped=false,dirty=false,running=false,initialized=false,position:Head|undefined;
   const head=async(db:SqlDatabase)=>(await db.query<Head>(`SELECT epoch,sequence::text FROM live_streams WHERE id=$1`,[stream])).rows[0];
@@ -77,6 +80,7 @@ export async function subscribeAuthorityFences(database:SqlDatabase,live:LiveHub
           }
           if(domains.size>256)throw new RouterProjectionUnavailable('budget');
           for(const [domain,scope]of domains){
+            if(!acceptDomain(domain))continue;
             const frame=await currentAuthorityFence(db,viewer,scope,domain);
             if(frame&&!stopped)enqueue(frame);
           }

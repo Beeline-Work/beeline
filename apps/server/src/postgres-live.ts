@@ -14,6 +14,7 @@ import type { LiveEvent, LiveHub } from './live.js';
 import { askSql } from './needs-you.js';
 import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
+import {SCHEDULED_WORK_ROW_SOURCE_SCHEMA} from './scheduled-work-row-source.js';
 import {
   CORNER_ROW_CACHE_COLUMNS,
   CORNER_ROW_FACT_COLUMNS,
@@ -146,6 +147,7 @@ export async function notifyAgentConfigChange(
 
 export const POSTGRES_LIVE_SCHEMA = `
 ${DURABLE_LIVE_SCHEMA}
+${SCHEDULED_WORK_ROW_SOURCE_SCHEMA}
 CREATE OR REPLACE FUNCTION beeline_notify_live() RETURNS trigger AS $$
 DECLARE
   payload jsonb;
@@ -486,6 +488,10 @@ BEGIN
       END IF;
       FOR workspace_target IN SELECT DISTINCT value FROM unnest(workspace_scopes) value
         WHERE value IS NOT NULL ORDER BY value LOOP
+        -- The early canonical row source owns these two Workspace appends,
+        -- before any legacy Room lock. Keep this notification's original
+        -- Workspace hints and every Room/parent journal body below unchanged.
+        IF TG_TABLE_NAME NOT IN('agent_schedules','agent_subscriptions') THEN
         PERFORM beeline_journal('workspace:' || workspace_target,jsonb_build_object(
           'type','invalidate','roomId','','reason','workspace-replay','sourceRoomId',source_room,
           'sourceTable',TG_TABLE_NAME,'operation',TG_OP,
@@ -498,6 +504,7 @@ BEGIN
             AND to_jsonb(OLD)->>'workspace_id'=workspace_target
             AND to_jsonb(NEW)->>'workspace_id' IS DISTINCT FROM to_jsonb(OLD)->>'workspace_id',
           'needsYouCandidate',payload->'needsYouCandidate','removed',payload->'removed'));
+        END IF;
         streams := array_append(streams,'workspace:' || workspace_target);
       END LOOP;
       IF source_room IS NOT NULL THEN

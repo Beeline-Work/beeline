@@ -10,4 +10,9 @@ export type { NavigationState, NavigationResidency } from './navigation-owner.js
 export { CommandIntents } from './command-intents.js';
 export { MediaDemandOwner } from './media-demand-owner.js';
 export { UsageDemandOwner } from './usage-demand-owner.js';
+export { ScheduledWorkAuthority } from './scheduled-work-authority.js';
+export type { ScheduledAuthorityCallbacks, ScheduledAuthorityDeferred, ScheduledAuthorityFault, ScheduledAuthorityFence } from './scheduled-work-authority.js';
+export {validateScheduledWorkProjection,validateTrayProjection} from './owner-inputs.js';
 export type { CommandIntent, CommandIntentStorage, CommandPartition, CommandAttempt, AdmittedCommand, IntentOperation, IntentState } from './command-intents.js';
+
+export {validateSavedWindow} from './saved-windows.js';

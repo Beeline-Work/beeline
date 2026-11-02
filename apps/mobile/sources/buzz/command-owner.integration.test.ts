@@ -15,10 +15,11 @@ vi.mock('react-native-mmkv', () => ({ MMKV: class {
 vi.mock('expo-crypto', () => ({ getRandomBytes: (length: number) => new Uint8Array(length).fill(fixture.random++) }));
 vi.mock('react-native', () => ({ AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } }));
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: async () => ({ publicKey: 'c'.repeat(64) }), getEffectiveRelayUrl: async () => 'https://command.test' }));
-vi.mock('./surface-storage', () => ({ routerLaneStorage: () => ({ write: async () => {}, fence: async () => {}, remove: async () => {}, subscribeFences: () => () => {}, floor: async () => {}, subscribeFloors: () => () => {} }) }));
+vi.mock('./surface-storage', () => ({routerAuthorityStorageReady:()=>true,routerCommandStorageReady:()=>true,
+  routerLaneStorage: () => ({ write: async () => {}, fence: async () => {},floor:async()=>{}, remove: async () => {}, subscribeFences: () => () => {},subscribeFloors:()=>()=>{} }) }));
 import { activateCommandOwner, suspendCommandOwner } from './command-owner';
 import { prepareRouterMessageGesture } from './command-message-gesture';
-import { routerOwnerNavigation, routerOwnerNegotiated } from './router-owner';
+import { routerOwnerNavigation, routerOwnerNegotiated,admitRouterScheduledStop } from './router-owner';
 import { resetClientState } from '@/sync/client-reset';
 import { MessageOutbox } from './message-outbox';
 const ORIGIN = 'https://command.test', PRINCIPAL = 'c'.repeat(64);
@@ -36,6 +37,39 @@ beforeEach(async () => {
   await focus();
 });
 describe('actual mobile prepared-command owner and existing outbox', () => {
+  async function scheduleFocus(){
+    routerOwnerNavigation({routes:[{key:'scheduled',name:'beeline/settings/schedule',params:{roomId:ROOM}}]});
+    await routerOwnerNegotiated({generation:++fixture.generation,families:['room-scheduled-work'],authorityFencesV1:true,
+      execute:async()=>{throw new Error('A stop must never read a display');}});
+  }
+  it('durable Scheduled Work stop reserves in the gesture, persists before dispatch and survives blur without a display read',async()=>{
+    await scheduleFocus();const trace:string[]=[];
+    const send=vi.fn(async(...args:Parameters<typeof committed>)=>{trace.push('network');return committed(...args);});
+    const owner=activateCommandOwner(ORIGIN,PRINCIPAL,bridge(send));fixture.write=()=>trace.push('persisted');
+    const schedule='33333333-3333-4333-8333-333333333333';
+    const pending=owner.prepare(admitRouterScheduledStop('deleteRoomSchedule',ROOM,schedule));
+    routerOwnerNavigation({routes:[{key:'elsewhere',name:'beeline/channels'}]});trace.push('gesture-returned');
+    const record=await pending;await owner.deliver(record.id);
+    expect(trace.indexOf('persisted')).toBeLessThan(trace.indexOf('network'));
+    expect(send).toHaveBeenCalledWith('deleteRoomSchedule',{roomId:ROOM,scheduleId:schedule},{v:1,id:record.id},undefined);
+    expect(owner.find(record.id)?.state).toBe('committed');
+  });
+  it('a lost subscription-stop receipt resumes the exact durable identity once on a real negotiated generation',async()=>{
+    await scheduleFocus();let effects=0;
+    const send=vi.fn(async(...args:Parameters<typeof committed>)=>{if(++effects===1)throw new Error('committed result dropped');return committed(...args);});
+    const owner=activateCommandOwner(ORIGIN,PRINCIPAL,bridge(send));
+    const record=await owner.prepare(admitRouterScheduledStop('deleteRoomSubscription',ROOM,'legacy:'+ROOM+':helper:joined'));
+    await expect(owner.deliver(record.id)).rejects.toThrow('dropped');expect(owner.find(record.id)?.state).toBe('unknown');
+    fixture.generation++;await owner.negotiated();await owner.negotiated();
+    expect(send).toHaveBeenCalledTimes(2);expect(send.mock.calls[0]![2]).toEqual(send.mock.calls[1]![2]);expect(owner.find(record.id)?.state).toBe('committed');
+  });
+  it('a stop admitted before connection loss remains prepared and sends once at the next actual connection',async()=>{
+    await scheduleFocus();const send=vi.fn(async(...args:Parameters<typeof committed>)=>committed(...args));
+    const owner=activateCommandOwner(ORIGIN,PRINCIPAL,bridge(send));
+    const record=await owner.prepare(admitRouterScheduledStop('deleteRoomSchedule',ROOM,'33333333-3333-4333-8333-333333333333'));
+    fixture.ready=false;await expect(owner.deliver(record.id)).rejects.toThrow();expect(owner.find(record.id)?.state).toBe('prepared');expect(send).not.toHaveBeenCalled();
+    fixture.ready=true;fixture.generation++;await owner.negotiated();await owner.negotiated();expect(send).toHaveBeenCalledTimes(1);
+  });
   it('negotiated send persists immutable intent before the existing outbox can send', async () => {
     const trace: string[] = [], send = vi.fn(async (...args: Parameters<typeof committed>) => { trace.push('network'); return committed(...args); });
     const commands = activateCommandOwner(ORIGIN, PRINCIPAL, bridge(send));

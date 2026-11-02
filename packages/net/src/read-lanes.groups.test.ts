@@ -28,6 +28,20 @@ async function setup(requests:readonly LaneRequest[]=[a,b]){
 }
 
 describe('classified per-group authority intervals',()=>{
+  it('a negotiated DB-audience Room keeps inactive coverage across other Room controls and its own later edit',async()=>{
+    let reads=0;const lanes=new ReadLanes(identity,()=>true);
+    lanes.connected(1,['room-head'],async request=>{reads++;return base(request);},{roomHeadContinuityV1:true});
+    const token={};const release=lanes.demand(a,token,{isCurrent:()=>true});await settle();release();
+    expect(lanes.peek(a).state).toBe('INACTIVE_CACHED');
+    await lanes.accept(interval(1,2,[control(a,'room:a','1'),replace(b)]));
+    expect(lanes.peek(a)).toMatchObject({state:'INACTIVE_CACHED',cut:{through:1}});
+    await lanes.accept(interval(2,3,[replace(a,cert('room:a'),{name:'edited while inactive'})]));
+    const resumed=lanes.demand(a,token,{isCurrent:()=>true});await settle();
+    expect(lanes.peek(a)).toMatchObject({state:'LIVE',value:{name:'edited while inactive'},cut:{through:3}});expect(reads).toBe(1);
+    lanes.disconnected();lanes.connected(2,['room-head'],async request=>{reads++;return base(request);});await settle();
+    resumed();
+    expect(lanes.peek(a)).toMatchObject({state:'PARKED',value:null});
+  });
   it('keeps allowed A live, hides B, and bridges only its verified interval without advancing its data cut or reading',async()=>{
     const {lanes,reads,writes}=await setup();
     await lanes.accept(interval(1,2,[replace(a),control(b,'room:b','2')]));

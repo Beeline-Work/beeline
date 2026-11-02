@@ -32,6 +32,7 @@ const dependencies: Readonly<Record<string, readonly RouterFamily[]>> = {
 };
 export function routerSourcePlan(causes: readonly Record<string,unknown>[], viewer: string) {
   const families = new Set<RouterFamily>(), rooms = new Set<string>(), removedRooms = new Set<string>();
+  const authorityRooms=new Set<string>(),priorRooms:{id:string;oldParentId:string|null}[]=[];
   let allRooms = false;
   for (const cause of causes) {
     const table = cause.sourceTable;
@@ -47,7 +48,16 @@ export function routerSourcePlan(causes: readonly Record<string,unknown>[], view
     if (typeof cause.oldRoomId === 'string') rooms.add(cause.oldRoomId);
     if (typeof cause.newRoomId === 'string') rooms.add(cause.newRoomId);
     if (typeof cause.parentRoomId === 'string') rooms.add(cause.parentRoomId);
-    if (['memberships','identities'].includes(table) || (families.has('room-head') && !cause.sourceRoomId)) allRooms = true;
+    if(typeof cause.oldParentRoomId==='string')rooms.add(cause.oldParentRoomId);
+    if(typeof cause.newParentRoomId==='string')rooms.add(cause.newParentRoomId);
+    if(table==='memberships'&&cause.identityId===viewer){
+      for(const id of [cause.sourceRoomId,cause.oldRoomId,cause.newRoomId])if(typeof id==='string')authorityRooms.add(id);
+    }
+    if(table==='rooms'){
+      const id=cause.oldRoomId??cause.sourceRoomId;
+      if(typeof id==='string')priorRooms.push({id,oldParentId:typeof cause.oldParentRoomId==='string'?cause.oldParentRoomId:null});
+    }
+    if(table==='identities'||dependencies[table]!.includes('room-head')&&!cause.sourceRoomId)allRooms=true;
   }
-  return {families,rooms,removedRooms,allRooms};
+  return {families,rooms,removedRooms,allRooms,authorityRooms,priorRooms};
 }

@@ -10,9 +10,10 @@ import { ROUTER_FAMILIES } from '@beeline/api-contract/router-protocol';
 import type { LiveHub } from './live.js';
 import type { PhoneService } from './phone-service.js';
 import { routerSourcePlan } from './router-source-plan.js';
+import {readRouterRoomAudience} from './router-room-audience.js';
 import type { SqlDatabase } from './database.js';
 import { PhoneOperationError } from './phone-operations.js';
-import { RouterProjectionDrain, RouterProjectionUnavailable, encodeRouterBatch, fenceRouterBatch, readRouterAuthority, readRouterCertificate, deniedRouterAuthorityScope, type ResolvedRouterSnapshotInput, routerAtomicGroup, fenceRouterEnqueue } from './router-projections.js';
+import { RouterProjectionDrain, RouterProjectionUnavailable, encodeRouterBatch, fenceRouterBatch, readRouterAuthority, readRouterCertificate, deniedRouterAuthorityScope, resolveRouterInput, routerAtomicGroup, fenceRouterEnqueue } from './router-projections.js';
 
 /** An explicit rollout policy, independently gated on the committed LISTEN.
  * Defaults advertise no families until capture/fence/differential proofs pass. */
@@ -20,6 +21,7 @@ export interface RouterProjectionPolicy {
   readonly families: readonly RouterFamily[];
   readonly listenerReady: () => boolean;
   readonly commandDedupV1?: boolean;
+  readonly roomHeadContinuityV1?:boolean;
   /** One coordinator per server, never one per socket. A caller must certify
    * the complete immutable builder/clock basis before setting this option. */
   readonly sharedBuilds?:{readonly coordinator:RouterBuildCoordinator;readonly basis:RouterBuilderBasis};
@@ -31,16 +33,20 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
   let stopped = false;
   let usageCellV1 = false;
   let negotiated: readonly RouterFamily[] = [];
+  let generation=0;
+  let refreshAudience:(()=>Promise<void>)|undefined;
+  let subscribedWorkspaces=new Set<string>();
   return {
     supportsUsage():boolean { return usageCellV1; },
     supports(family:RouterFamily):boolean {return negotiated.includes(family);},
-    close(): void { stopped = true; usageCellV1 = false; for (const release of releases.splice(0)) release(); },
+    close(): void { stopped = true; generation++;refreshAudience=undefined;usageCellV1 = false; for (const release of releases.splice(0)) release(); },
     async handle(message: Record<string, unknown>): Promise<boolean> {
       if (message.type !== 'router-negotiate') return false;
       const requested = message.protocol === 1 && Array.isArray(message.families)
         ? message.families.filter((family): family is RouterFamily =>
           typeof family === 'string' && (ROUTER_FAMILIES as readonly string[]).includes(family)) : [];
       for (const release of releases.splice(0)) release();
+      const currentGeneration=++generation;refreshAudience=undefined;subscribedWorkspaces=new Set();
       negotiated = sources && policy?.listenerReady() ? ROUTER_FAMILIES.filter(f => requested.includes(f) && policy.families.includes(f)) : [];
       let releaseReady!: () => void;
       const ready = new Promise<void>(resolve => { releaseReady = resolve; });
@@ -68,31 +74,53 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
         if(stopped)release();else releases.push(release);
       }
       if (negotiated.length && sources) {
-        const workspaces = await database.query<{workspace_id:string}>(
-          `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`, [viewer]);
+        const workspaceReleases=new Map<string,()=>void>();
+        releases.push(()=>{for(const release of workspaceReleases.values())release();workspaceReleases.clear();});
+        let refreshing:Promise<void>|undefined,dirty=false;
+        const refresh=()=>{
+          dirty=true;
+          if(refreshing)return refreshing;
+          const next=Promise.resolve().then(async()=>{
+          try{while(dirty){
+          dirty=false;
+          if(stopped||generation!==currentGeneration)return;
+          const workspaces = await database.query<{workspace_id:string}>(
+            `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id LIMIT 129`, [viewer]);
+          if(stopped||generation!==currentGeneration)return;
+          if(workspaces.rows.length>128)throw new RouterProjectionUnavailable('budget');
         for (const {workspace_id:workspace} of workspaces.rows) {
+          if(subscribedWorkspaces.has(workspace))continue;
+          if(subscribedWorkspaces.size>=128)throw new RouterProjectionUnavailable('budget');
           const release = await new RouterProjectionDrain(database,sources.live).subscribe(workspace,async (db,from,to,causes) => {
-            if (stopped) return;
+            if (stopped||generation!==currentGeneration) return;
             const plan = routerSourcePlan(causes,viewer);
             const facts: RouterFact[] = [];
+            const roomAudience=negotiated.includes('room-head')?await readRouterRoomAudience(db,workspace,viewer,plan):[];
             for (const family of negotiated) {
               const affected=plan.families.has(family);
               // Workspace group names follow DB audience and the closed
               // registry. This is not a report of what a phone caches.
-              if(!affected&&family==='room-head')continue;
-              const transportRooms = family === 'room-head' ? (await db.query<{id:string}>(
-                `SELECT id FROM rooms WHERE workspace_id=$1 AND id=ANY($2::uuid[])`,[workspace,[...sources.rooms()]] )).rows.map(r=>r.id) : [];
-              const scopes = family === 'room-head' ? [...new Set([...transportRooms.filter(room => plan.allRooms || plan.rooms.has(room)),...plan.removedRooms])] : [workspace];
+              const scopes = family === 'room-head' ? roomAudience.map(room=>room.roomId) : [workspace];
               for (const scope of scopes) {
                 const input = (family==='room-head' ? {family,workspaceId:workspace,roomId:scope} : {family,workspaceId:workspace}) satisfies RouterSnapshotInput;
+                const room=family==='room-head'?roomAudience.find(room=>room.roomId===scope):undefined;
+                const changed=room?.changed??affected;
+                if(room&&!room.complete){
+                  facts.push({atomicGroup:routerAtomicGroup(input,viewer),authority:room.authority,
+                    payload:{kind:'group-unavailable',scope,reason:'authority'}});continue;
+                }
+                if(room?.denied){
+                  facts.push({atomicGroup:routerAtomicGroup(input,viewer),authority:room.authority,
+                    payload:{kind:'authority',...room.denied,allowed:false}});continue;
+                }
                 let authority,ticket:RouterBuildTicket|undefined;
                 try {
-                  if(affected&&policy?.sharedBuilds){
+                  if(changed&&policy?.sharedBuilds){
                     ticket=await readRouterBuildTicket(db,input,viewer,policy.sharedBuilds.basis);
                     if(ticket.cut.stream!==to.stream||ticket.cut.epoch!==to.epoch||ticket.cut.through!==to.through)
                       throw new RouterProjectionUnavailable('dependency');
                     authority=ticket.authority;
-                  }else authority = await readRouterAuthority(db,input,viewer);
+                  }else authority = room?.authority??await readRouterAuthority(db,input,viewer);
                 }
                 catch (error) {
                   if (!(error instanceof RouterProjectionUnavailable) || error.reason !== 'authority') throw error;
@@ -101,10 +129,10 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
                     payload:{kind:'authority',...denied,allowed:false}});
                   continue;
                 }
-                if(!affected){
-                  const group=routerAtomicGroup(input,viewer),domain=`reader:${viewer}:workspace:${workspace}:visibility`;
+                if(!changed){
+                  const group=routerAtomicGroup(input,viewer),domain=family==='room-head'?`room:${scope}`:`reader:${viewer}:workspace:${workspace}:visibility`;
                   if(!facts.some(fact=>fact.atomicGroup===group&&fact.payload.kind==='authority-fence'))
-                    facts.push({atomicGroup:group,authority,payload:{kind:'authority-fence',scope:workspace,authorityScope:domain,mode:'advance'}});
+                    facts.push({atomicGroup:group,authority,payload:{kind:'authority-fence',scope:family==='room-head'?scope:workspace,authorityScope:domain,mode:'advance'}});
                   continue;
                 }
                 const value = ticket&&policy?.sharedBuilds
@@ -117,16 +145,35 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
             }
             return async () => {
               await ready;
-              if (stopped) return;
+              if (stopped||generation!==currentGeneration) return;
               await fenceRouterBatch(database,workspace,viewer,facts,safeFacts => {
                 const frames=encodeRouterBatch(from,to,safeFacts);
-                if (!stopped) for (const frame of frames) send(JSON.stringify(frame));
+                if (!stopped&&generation===currentGeneration) for (const frame of frames) send(JSON.stringify(frame));
                 return undefined;
               });
             };
-          }, reason => { if (!stopped) send(JSON.stringify({kind:'router-unavailable',stream:`workspace:${workspace}`,families:negotiated,reason})); });
-          if (stopped) release(); else releases.push(release);
+          }, reason => {
+            if(generation!==currentGeneration)return;
+            subscribedWorkspaces.delete(workspace);
+            workspaceReleases.delete(workspace);
+            if (!stopped) send(JSON.stringify({kind:'router-unavailable',stream:`workspace:${workspace}`,families:negotiated,reason}));
+          });
+          if (stopped||generation!==currentGeneration) release(); else {subscribedWorkspaces.add(workspace);workspaceReleases.set(workspace,release);}
         }
+          }}finally{refreshing=undefined;}
+          });refreshing=next;
+          // One error observer per actor run, not one retained callback per
+          // notification joining the same in-flight membership query.
+          void next.catch(()=>{
+            if(!stopped&&generation===currentGeneration)send(JSON.stringify({kind:'router-unavailable',stream:'',families:negotiated,reason:'dependency'}));
+          });
+          return next;
+        };
+        refreshAudience=refresh;
+        releases.push(sources.live.subscribeJournal(streams=>{
+          if(streams.includes(`authority:${viewer}`))void refresh();
+        }));
+        await refresh();
       }
       } catch {
         const affected = negotiated;
@@ -136,6 +183,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
         send(JSON.stringify({kind:'router-unavailable',stream:'',families:affected,reason:'listener'}));
       }
       const capabilities: RouterCapabilities = { protocol: 1, families: negotiated,
+        ...(message.roomHeadContinuityV1===true&&policy?.roomHeadContinuityV1===true&&authorityFencesV1&&negotiated.includes('room-head')?{roomHeadContinuityV1:true}:{}),
         ...(usageCellV1 ? {usageCellV1:true} : {}), commandDedupV1: policy?.commandDedupV1 === true,mediaMetadataV1:sources?.mediaMetadataV1===true&&authorityFencesV1,authorityFencesV1 };
       send(JSON.stringify({ type: 'router-capabilities', ...capabilities }));
       releaseReady();
@@ -151,11 +199,22 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
     async snapshot(input:RouterSnapshotInput):Promise<RouterSnapshot>{
       this.requireSnapshot({...input});
       if(!sources)throw new PhoneOperationError(409,{error:'router_family_unavailable'});
+      const resolved=await resolveRouterInput(database,input);
+      const scopedInput:RouterSnapshotInput=input.family==='room-head'?{...input,workspaceId:resolved.workspaceId}:input;
+      if(!subscribedWorkspaces.has(resolved.workspaceId))await refreshAudience?.();
+      // The subscribe-before-head barrier must already cover this server
+      // scope before opening its snapshot. A concurrent new grant can fail
+      // closed; it cannot relabel a snapshot whose prior interval was missed.
+      if(!subscribedWorkspaces.has(resolved.workspaceId))throw new PhoneOperationError(503,{error:'router_projection_unavailable'});
+      if(input.family==='room-head'){
+        try{await readRouterRoomAudience(database,resolved.workspaceId,viewer,routerSourcePlan([],viewer));}
+        catch(error){if(error instanceof RouterProjectionUnavailable)throw new PhoneOperationError(503,{error:'router_projection_unavailable'});throw error;}
+      }
       const shared=policy?.sharedBuilds;
-      if(!shared)return sources.phone.readRouterSnapshot(input,viewer);
+      if(!shared)return sources.phone.readRouterSnapshot(scopedInput,viewer);
       return database.transaction(async tx=>{
         await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-        const ticket=await readRouterBuildTicket(tx,input,viewer,shared.basis);
+        const ticket=await readRouterBuildTicket(tx,scopedInput,viewer,shared.basis);
         return shared.coordinator.build(ticket,(db,args,reader)=>sources.phone.buildRouterValue(db,args,reader));
       });
     },

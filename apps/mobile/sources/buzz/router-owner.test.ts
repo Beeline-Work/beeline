@@ -268,3 +268,28 @@ it('a healthy Room foreground resumes observation without a new pass and exposes
   retryRouterLane(room);await settle();expect(execute).toHaveBeenCalledTimes(2);expect(lane.current().state).toBe('LIVE');
   lane.release();
 });
+
+
+it('negotiated Room continuity resumes the same owner after an inactive authoritative delta without a read', async () => {
+  const room = { family: 'room-head' as const, roomId: '11111111-1111-4111-8111-111111111111', workspaceId: 'w' };
+  const roomScopes = [...scopes, { authorityScope: `room:${room.roomId}`, epoch: '1' }];
+  const certificate = { scopes: roomScopes, digest: hash(roomScopes) };
+  const value = { room: { id: room.roomId }, messages: [] };
+  const initial = { ...snapshot(), family: 'room-head', scope: room.roomId, value,
+    authority: certificate, atomicGroup: `room-head:${room.roomId}:ada` } as unknown as RouterSnapshot<'room-head'>;
+  const execute = vi.fn(async () => initial);
+  routerOwnerNavigation({ routes: [{ key: 'room', name: 'beeline/chat/[channelId]', params: { channelId: room.roomId, communityId: 'w' } }] });
+  const lane = acquireRouterLane(room, () => true, () => {});
+  await routerOwnerNegotiated({ generation: 1, families: ['room-head'], authorityFencesV1: true, roomHeadContinuityV1: true, execute });
+  await settle(); expect(lane.current().state).toBe('LIVE');
+  fixture.state = 'background'; fixture.events.forEach(listener => listener('background'));
+  const nextValue = { ...value, messages: [{ id: 'committed' }] };
+  const facts = [{ atomicGroup: initial.atomicGroup, authority: certificate,
+    payload: { kind: 'scope-replace', family: 'room-head', scope: room.roomId, value: nextValue } }];
+  const frame = { batchId: 'inactive-room', from: snapshot().cut, to: snapshot(2).cut, partCount: 1, contentDigest: hash(facts) };
+  routerOwnerReceive({ ...frame, kind: 'push-part', partIndex: 0, facts });
+  routerOwnerReceive({ ...frame, kind: 'push-commit' }); await settle();
+  fixture.state = 'active'; fixture.events.forEach(listener => listener('active')); await settle();
+  expect(lane.current()).toMatchObject({ state: 'LIVE', value: nextValue, cut: { through: 2 } });
+  expect(execute).toHaveBeenCalledTimes(1); lane.release();
+});

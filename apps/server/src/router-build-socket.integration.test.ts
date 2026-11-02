@@ -62,6 +62,13 @@ describe('shared reader projection execution through socket protocol',()=>{
   });
   it('keeps sharing disabled when no explicit server policy is supplied',async()=>{
     const plain:RouterProjectionPolicy={families:['needs-you-count'],listenerReady:()=>true},first=protocol(plain),second=protocol(plain);
-    await negotiate(first);await negotiate(second);await first.snapshot(input);await second.snapshot(input);expect(builds).toBe(2);
+    await negotiate(first);await negotiate(second);
+    const queries=vi.spyOn(db,'query');
+    const a=await first.snapshot(input),b=await second.snapshot(input);
+    expect(a).toEqual(b);expect(a.value).toEqual({count:0});
+    // Cold scalar badges have their own single-statement projection; both
+    // sockets must still execute it when no shared coordinator is selected.
+    expect(queries.mock.calls.filter(([sql])=>sql.includes('SELECT counted.*,head.epoch'))).toHaveLength(2);
+    expect(builds).toBe(0);
   });
 });

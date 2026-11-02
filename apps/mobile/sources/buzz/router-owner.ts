@@ -16,7 +16,7 @@ import { installMediaCacheConnection, installLegacyMediaCacheConnection, suspend
 export type RouterFamilyMode = 'pending' | 'legacy' | 'router';
 type Negotiation = { generation: number; families: readonly LaneFamily[];
   usageCellV1?: boolean; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>;
-  authorityFencesV1?: boolean; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>;
+  authorityFencesV1?: boolean; roomHeadContinuityV1?: boolean; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>;
   executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>;
   execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> };
 type Slot = { request: LaneRequest; consumers: Map<() => void, () => boolean>; listeners: Set<() => void>;
@@ -256,7 +256,7 @@ export async function routerOwnerNegotiated(next: Negotiation): Promise<void> {
       !validCertificate(result) || utf8ToBytes(JSON.stringify(result)).length > 64 * 1024)
       throw new Error('Invalid projection snapshot.');
     return result;
-  });
+  }, { roomHeadContinuityV1: next.roomHeadContinuityV1 === true && next.authorityFencesV1 === true });
   reconcile();
 }
 export function routerOwnerDisconnected(): void {

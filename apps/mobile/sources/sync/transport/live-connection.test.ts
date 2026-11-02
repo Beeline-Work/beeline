@@ -268,6 +268,16 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it.each([true, false, undefined])('requires an explicit Room continuity acknowledgement (%s)', async capability => {
+    const router = { negotiated: vi.fn(async (_next: unknown) => {}), disconnected: vi.fn(), receive: vi.fn() };
+    const connection = new LiveConnection({ authorization: async () => 'token',
+      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
+    await connection.register([], () => {}); sockets[0]!.open();
+    sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-head'], roomHeadContinuityV1: capability });
+    expect(router.negotiated.mock.calls[0]![0]).toMatchObject({ roomHeadContinuityV1: capability === true });
+    connection.dispose();
+  });
+
   it('negotiates on the sole socket and holds pushes until the local owner is ready', async () => {
     let ready!: () => void;
     const router = { negotiated: vi.fn((_next: unknown) => new Promise<void>(resolve => { ready = resolve; })),
@@ -277,7 +287,7 @@ describe('LiveConnection', () => {
     await connection.register([], () => {});
     sockets[0]!.open();
     expect(JSON.parse(sockets[0]!.sent[0]!)).toEqual({ type: 'router-negotiate', protocol: 1,
-      families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true, usageCellV1: true });
+      families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true, usageCellV1: true, roomHeadContinuityV1: true });
     sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-list'] });
     const frame = { kind: 'push-commit', batchId: 'batch' };
     sockets[0]!.emit(frame);

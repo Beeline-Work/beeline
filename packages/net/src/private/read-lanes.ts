@@ -41,12 +41,11 @@ const bytes = (value: unknown): number => new TextEncoder().encode(JSON.stringif
 const sameStream = (a: LaneCut, b: LaneCut): boolean => a.stream === b.stream && a.epoch === b.epoch && a.protocol === b.protocol;
 const liveOwner = (entry: Entry): boolean => [...entry.owners.values()].some(owner => owner.active && owner.permit.isCurrent());
 const scopeOf = (request: LaneRequest): string => request.family === 'room-head' ? request.roomId! : request.workspaceId;
-// Room heads still follow legacy transport/view filters on the server. They
-// have no proven inactive feed until DB-audience durable facts replace it.
+// The original projection cohort has no proven inactive Room feed. Only an
+// explicitly negotiated DB-audience feed can lift that conservative guard.
 const CONTINUOUS_CACHE:Readonly<Record<LaneFamily,boolean>>={
   'room-list':true,'needs-you':true,'needs-you-count':true,'room-head':false,
 };
-const continuouslyFed=(family:LaneFamily):boolean=>CONTINUOUS_CACHE[family]===true;
 
 /** An executor is installed only by the negotiated connection owner. Demand
  * arrives only after admission has atomically consumed a real owner pass.
@@ -61,6 +60,7 @@ export class ReadLanes {
   private session = 0;
   private executor?: (request: LaneRequest) => Promise<LaneSnapshot>;
   private families = new Set<LaneFamily>();
+  private continuousRooms=false;
   private serial: Promise<void> = Promise.resolve();
 
   constructor(private readonly identity: LaneIdentity,
@@ -93,11 +93,13 @@ export class ReadLanes {
   /** Every real successful socket epoch gets one frozen recovery demand set.
    * Focus attachment during recovery joins the same flight. No hidden lane is read.
    */
-  connected(generation: number, families: readonly LaneFamily[], execute: (request: LaneRequest) => Promise<LaneSnapshot>): void {
+  connected(generation: number, families: readonly LaneFamily[], execute: (request: LaneRequest) => Promise<LaneSnapshot>,
+    options?:{readonly roomHeadContinuityV1?:boolean}): void {
     if (!Number.isSafeInteger(generation) || generation <= this.generation) throw new Error('stale lane connection');
     this.generation = generation;
     this.executor = execute;
     this.families = new Set(families);
+    this.continuousRooms=options?.roomHeadContinuityV1===true;
     const demanded = [...this.entries.values()].filter(liveOwner);
     for (const entry of demanded) {
       entry.revision += 1;
@@ -112,6 +114,7 @@ export class ReadLanes {
   disconnected(): void {
     this.executor = undefined;
     this.families.clear();
+    this.continuousRooms=false;
     for (const entry of this.entries.values()) {
       entry.revision += 1; entry.flight = undefined; entry.pending = []; entry.pendingBytes = 0; entry.future = []; entry.futureBytes = 0;
       entry.snapshot = undefined;entry.baseline=undefined;entry.classified=undefined;
@@ -132,7 +135,7 @@ export class ReadLanes {
     if (!previous) this.joined.set(token, { key, entry });
     const owner: Owner = { permit, active: true };
     entry.owners.set(token, owner);
-    if(permit.isCurrent()&&continuouslyFed(request.family)&&entry.view.state==='INACTIVE_CACHED'&&entry.snapshot&&entry.covered&&
+    if(permit.isCurrent()&&this.continuouslyFed(request.family)&&entry.view.state==='INACTIVE_CACHED'&&entry.snapshot&&entry.covered&&
       entry.connection===this.generation&&!entry.flight&&!entry.committing&&!entry.pending.length&&!entry.future.length&&
       this.supports(request.family)&&this.authorized(entry.snapshot.authority))
       this.publish(entry,{state:'LIVE',value:entry.snapshot.value,cut:entry.snapshot.cut,error:null});
@@ -144,12 +147,12 @@ export class ReadLanes {
         // LIVE+covered is published only after a successful coherent commit.
         // The opening promise may still be unwinding after that notification;
         // its tail cannot invalidate this coverage when no facts are queued.
-        const reusable=continuouslyFed(entry.request.family)&&entry.view.state==='LIVE'&&entry.covered&&!entry.committing&&!entry.pending.length&&!entry.future.length;
+        const reusable=this.continuouslyFed(entry.request.family)&&entry.view.state==='LIVE'&&entry.covered&&!entry.committing&&!entry.pending.length&&!entry.future.length;
         if(!reusable)entry.covered=false;
         // A pending reply can no longer paint or restore authority.
         entry.revision += 1; entry.flight = undefined;
         entry.pending = []; entry.pendingBytes = 0; entry.future = []; entry.futureBytes = 0;
-        if(!continuouslyFed(entry.request.family)){
+        if(!this.continuouslyFed(entry.request.family)){
           entry.snapshot=undefined;entry.baseline=undefined;
           const state=entry.view.state==='REVOKED'?'REVOKED':'PARKED';
           this.publish(entry,{...absent(),state,error:state==='REVOKED'?'Access removed.':'Projection unavailable; Retry.'});
@@ -162,6 +165,7 @@ export class ReadLanes {
       this.evict();
     };
   }
+  private continuouslyFed(family:LaneFamily):boolean{return family==='room-head'?this.continuousRooms:CONTINUOUS_CACHE[family]===true;}
 
   /** Explicit Retry is passed an independently spent synchronous gesture. */
   retry(request: LaneRequest, permit: LanePermit): void {

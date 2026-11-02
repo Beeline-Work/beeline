@@ -414,6 +414,8 @@ BEGIN
           'messageId',payload->>'messageId','identityId',payload->>'identityId',
           'agentId',payload->>'agentId','parentRoomId',parent_room,
           'oldRoomId',previous_room,'newRoomId',source_room,
+          'oldParentRoomId',CASE WHEN TG_TABLE_NAME='rooms' THEN to_jsonb(OLD)->>'parent_id' END,
+          'newParentRoomId',CASE WHEN TG_TABLE_NAME='rooms' THEN to_jsonb(NEW)->>'parent_id' END,
           'sourceRemoved',TG_TABLE_NAME='rooms' AND TG_OP='UPDATE'
             AND to_jsonb(OLD)->>'workspace_id'=workspace_target
             AND to_jsonb(NEW)->>'workspace_id' IS DISTINCT FROM to_jsonb(OLD)->>'workspace_id',

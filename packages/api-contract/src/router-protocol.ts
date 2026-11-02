@@ -69,4 +69,6 @@ export type RouterCapabilities = {
   readonly mediaMetadataV1?: boolean;
   readonly usageCellV1?: boolean;
   readonly authorityFencesV1?: boolean;
+  /** DB-derived uninterrupted Room feed, independent of legacy viewing. */
+  readonly roomHeadContinuityV1?: boolean;
 };

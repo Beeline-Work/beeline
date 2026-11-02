@@ -208,8 +208,9 @@ function validProjectedMember(fact:RouterFact,input:ResolvedRouterSnapshotInput,
   const payload=fact.payload,scope=input.roomId??workspace;
   if(payload.kind==='authority')return fact.authority.scopes.some(item=>item.authorityScope===payload.authorityScope)&&
     (payload.scope===workspace&&payload.authorityScope===readerScope||ROOM_SCOPE.test(payload.scope)&&payload.authorityScope===`room:${payload.scope}`);
-  if(payload.kind==='authority-fence')return !input.roomId&&payload.mode==='advance'&&payload.scope===workspace&&
-    payload.authorityScope===`${readerScope}:visibility`;
+  if(payload.kind==='authority-fence')return payload.mode==='advance'&&(input.roomId
+    ?payload.scope===input.roomId&&payload.authorityScope===`room:${input.roomId}`
+    :payload.scope===workspace&&payload.authorityScope===`${readerScope}:visibility`);
   return payload.kind==='scope-replace'&&payload.scope===scope&&
     routerAtomicGroup({family:payload.family,workspaceId:workspace,...(payload.family==='room-head'?{roomId:scope}:{})} as RouterSnapshotInput,viewer)===fact.atomicGroup;
 }

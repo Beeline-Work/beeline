@@ -1,5 +1,5 @@
 import type { BackgroundJobRunner } from './background.js';
-import { BackgroundWork } from './background-work.js';
+import { BackgroundWork, startBackgroundWork } from './background-work.js';
 import type { SqlDatabase } from './database.js';
 
 const FLUSH_INTERVAL_MS = 5 * 60_000;
@@ -92,10 +92,5 @@ export function startOperationOutcomeFlush(database: SqlDatabase, outcomes: Oper
   work.add('operation-outcomes', FLUSH_INTERVAL_MS, async () => {
     await runner.run('operation-outcomes', () => outcomes.flush(database));
   });
-  let running: Promise<number> | undefined;
-  const tick = () => { running ??= work.run(false).finally(() => { running = undefined; }); };
-  const timer = setInterval(tick, FLUSH_INTERVAL_MS);
-  timer.unref();
-  tick();
-  return async () => { clearInterval(timer); await running; };
+  return startBackgroundWork(work);
 }

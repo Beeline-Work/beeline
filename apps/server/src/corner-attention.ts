@@ -1,3 +1,4 @@
+import { notifyCornerStateSql } from './postgres-live.js';
 import { createHash } from 'node:crypto';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
@@ -62,7 +63,7 @@ BEGIN
     AND EXISTS(SELECT 1 FROM identities WHERE id=NEW.author_id AND kind='human') THEN
     UPDATE corner_attention_spans SET last_state=NULL,last_turn_ended_at=NULL WHERE corner_id=NEW.room_id;
     IF FOUND THEN
-      PERFORM pg_notify('beeline_live_v1',json_build_object('table','corner_state','operation','UPDATE','roomId',NEW.room_id)::text);
+      PERFORM ${notifyCornerStateSql('NEW.room_id')};
     END IF;
   END IF;
   RETURN NULL;
@@ -129,7 +130,7 @@ BEGIN
         ELSE NULL END,ci_head=head WHERE corner_id=corner;
   END IF;
   IF EXISTS(SELECT 1 FROM rooms WHERE id=corner AND parent_id IS NOT NULL) THEN
-    PERFORM pg_notify('beeline_live_v1',json_build_object('table','corner_state','operation','UPDATE','roomId',corner)::text);
+    PERFORM ${notifyCornerStateSql('corner')};
   END IF;
   RETURN NULL;
 END $state$;

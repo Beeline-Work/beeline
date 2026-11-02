@@ -366,7 +366,7 @@ describe('PR-scoped check gate', () => {
     expect(await gate(AUTHOR)).toMatchObject({ checks: 'passed', stage: 'waiting_for_yes' });
   });
 
-  it('Reproduction EMPTY-SUITE-1: a deploy re-read wakes the reviewer when only empty suites were queued', async () => {
+  it('Reproduction EMPTY-SUITE-1: an explicit check read wakes the reviewer when only empty suites were queued', async () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
@@ -383,7 +383,7 @@ describe('PR-scoped check gate', () => {
         { __typename: 'CheckRun', name: 'TYPECHECK', status: 'COMPLETED', conclusion: 'SKIPPED', checkSuite: { app: { databaseId: 15368 } } },
       ],
     };
-    await operations.refreshOpenPendingChecks();
+    await operations.prChecksStatus({ cornerId: AUTHOR });
     expect((await db.query<{ checks: string }>(
       `SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`,
       [AUTHOR],
@@ -391,7 +391,7 @@ describe('PR-scoped check gate', () => {
     expect((await daemon.execute('getAgentCommands', { roomId: AUTHOR }, REVIEWER)).commands).toHaveLength(1);
   });
 
-  it('Reproduction R1: a green deploy re-read posts the passing result, not a pending check', async () => {
+  it('Reproduction R1: an explicit green check read posts the passing result, not a pending check', async () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
@@ -408,7 +408,7 @@ describe('PR-scoped check gate', () => {
         { __typename: 'CheckRun', name: 'TYPECHECK', status: 'COMPLETED', conclusion: 'SKIPPED', checkSuite: { app: { databaseId: 15368 } } },
       ],
     };
-    await operations.refreshOpenPendingChecks();
+    await operations.prChecksStatus({ cornerId: AUTHOR });
     const note = (await db.query<{ text: string; event: unknown }>(
       `SELECT text, system_event event FROM messages
        WHERE room_id=$1 AND system_event->>'kind'='check-passed'`,
@@ -1180,24 +1180,16 @@ describe('zero-check worker completion', () => {
   });
 });
 
-it('Reproduction idle-1: a later reconciliation repairs a lost completion without refetching a recently read head', async () => {
+it('Reproduction idle-1: a lost completion waits for explicit operator reconciliation', async () => {
   await ownPr();
   await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1',[R,REVIEWER]);
   rollupState='PENDING';
   expect(await gate(AUTHOR)).toMatchObject({checks:'pending'});
   const before=graphqlRequests().length;
-  await operations.refreshOpenPendingChecks();
-  expect(graphqlRequests()).toHaveLength(before);
-  // GitHub completes its sole test, but no completion webhook arrives.
   rollupState='SUCCESS';
-  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary,fetchStartedAt}',
-    to_jsonb(extract(epoch FROM clock_timestamp())-61)) WHERE corner_id=$1`,[AUTHOR]);
-  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry}',
-    jsonb_build_object('headSha',$2::text,'after',extract(epoch FROM clock_timestamp())+300)) WHERE corner_id=$1`,[AUTHOR,SHA]);
-  await operations.refreshOpenPendingChecks();
   expect(graphqlRequests()).toHaveLength(before);
-  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,[AUTHOR,'previous-head']);
-  await operations.refreshOpenPendingChecks();
+  expect((await db.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`,[AUTHOR])).rows[0]?.checks).toBe('pending');
+  await operations.prChecksStatus({cornerId:AUTHOR});
   expect(graphqlRequests()).toHaveLength(before+1);
   expect((await db.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`,[AUTHOR])).rows[0]?.checks).toBe('passing');
   expect((await daemon.execute('getAgentCommands',{roomId:AUTHOR},REVIEWER)).commands).toHaveLength(1);

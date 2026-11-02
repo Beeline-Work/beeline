@@ -166,3 +166,9 @@ The existing finite request deadline and current-head/authority checks remain. T
 ## D071 — Startup mergeability repair consumes its epoch even on failure
 
 Register `repository.startupRepair` separately with `BackgroundWork.addDeadline`, which consumes admission before awaiting the provider and resets only on a new leader epoch. Remove the success-only latch from the recurring repair job: an unavailable provider previously caused another startup repair every minute. Actual GitHub events and explicit review commands retain their addressed reads. The shutdown suite exercises 24 hours of unrelated repair cycles after failure and a fresh leader epoch. Other periodic GitHub discovery remains open; this is not full F16/F18/F22 closure.
+
+## D072 — Failed and pending check observations await an admitted event
+
+Delete `refreshQueuedChecks` and `refreshOpenPendingChecks` and their minute-job registrations. Transient failures still mark the current head pending, preventing stale green evidence from opening the merge gate, but no longer write `checkRefreshRetry` obligations. `Retry-After` remains caller-visible error metadata. Successful/head-change writes scrub legacy queue fields for rolling compatibility; new servers never consume them.
+
+A failed read, process restart, pending verdict or absent webhook supplies no admission. The existing explicit `prChecksStatus` operation or a real GitHub event can obtain fresh exact-head evidence and preserve review dispatch. The tests formerly asserting automatic recovery now exercise these admitted paths, including empty-suite semantics, permission/rate-limit classification, restart, and no obsolete-head restoration. An obsolete committed head is refused before provider access; the post-read transactional head/fetch fences remain. Other recurring merge/reviewer/background discovery and complete F16/F18/F22 closure remain open.

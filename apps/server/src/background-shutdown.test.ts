@@ -149,6 +149,16 @@ describe('background shutdown', () => {
     expect(refresh).toHaveBeenCalledTimes(2);
   });
 
+  it('does not admit GitHub pending-check or failed-read discovery on the repair clock', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const operations = readFileSync(new URL('./github-operations.ts', import.meta.url), 'utf8');
+    for (const retired of ['refreshQueuedChecks', 'refreshOpenPendingChecks']) {
+      expect(source).not.toContain(retired);
+      expect(operations).not.toContain(retired);
+    }
+    expect(operations).not.toContain("'{checkRefreshRetry}',");
+  });
+
   it('Reproduction MA-1: merge recovery repeats after startup on the reconciliation interval', () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     const repairStart = source.indexOf("work.add('repair', reconciliationMs, async (newLeader) => {");

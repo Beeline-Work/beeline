@@ -19,7 +19,6 @@ import {
   GitHubCredentialRejectedError,
   githubMergeability,
   transientGitHubError,
-  githubRetryDelay,
 } from '@beeline/auth/github';
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { CornerPullRequestResult } from '@beeline/api-contract/daemon';
@@ -2379,105 +2378,6 @@ export class GitHubOperations {
     }
   }
 
-  /** Drain persisted failed refreshes without needing another GitHub webhook. */
-  async refreshQueuedChecks(): Promise<void> {
-    const rows = await this.database.query<CornerWebhookTarget & {
-      repository: string; pr_number: string; head_sha: string;
-    }>(`SELECT fact.corner_id,corner.parent_id,corner.name corner_name,
-        ${cornerOwnerSql('corner.id')} author_id,github.full_name repository,
-        github.repository_id,github.installation_id,
-        fact.lifecycle->'pr'->>'number' pr_number,
-        fact.lifecycle->'checkRefreshRetry'->>'headSha' head_sha
-      FROM corner_github_cache fact JOIN rooms corner ON corner.id=fact.corner_id
-      JOIN rooms parent ON parent.id=corner.parent_id
-      JOIN github_repositories github ON github.installation_id=parent.github_installation_id
-        AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
-          COALESCE(parent.repository_remote,parent.repository_key,''),
-          '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-      WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-        AND fact.lifecycle->'checkRefreshRetry'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
-        AND (fact.lifecycle->'checkRefreshRetry'->>'after')::double precision
-          <= extract(epoch FROM clock_timestamp())
-      -- The longest-due retry goes first.
-      ORDER BY (fact.lifecycle->'checkRefreshRetry'->>'after')::double precision,fact.corner_id LIMIT 20`);
-    for (const target of rows.rows) {
-      // Lease the item in one committed statement; no lock spans a provider read.
-      const claimed = await this.database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(
-          lifecycle,'{checkRefreshRetry,after}',to_jsonb(extract(epoch FROM clock_timestamp())+300))
-        WHERE corner_id=$1 AND lifecycle->'checkRefreshRetry'->>'headSha'=$2
-          AND lifecycle->'pr'->>'headSha'=$2
-          AND (lifecycle->'checkRefreshRetry'->>'after')::double precision
-            <= extract(epoch FROM clock_timestamp()) RETURNING corner_id`,
-        [target.corner_id, target.head_sha]);
-      if (!claimed.rowCount) continue;
-      try {
-        await this.refreshCheckRollup({ ...target, has_pr: true }, target.repository,
-          { name: 'Pull request checks', status: 'pending', headSha: target.head_sha }, this.database);
-      } catch (error) {
-        if (!transientGitHubError(error)) {
-          await this.database.query(`UPDATE corner_github_cache SET lifecycle=lifecycle-'checkRefreshRetry'
-            WHERE corner_id=$1 AND lifecycle->'checkRefreshRetry'->>'headSha'=$2`,
-            [target.corner_id, target.head_sha]);
-        }
-        if (error instanceof GitHubHttpError && error.rateLimited) continue;
-        captureServerError(error, { background_job: 'github-check-refresh' });
-        console.error('[github] queued check refresh failed:', error);
-      }
-    }
-  }
-
-  /**
-   * Re-read open corners still stored as pending. A deploy uses this so a head
-   * whose only unfinished suites are empty app placeholders moves on without
-   * waiting for another check event. The reconciliation cadence also repairs
-   * missed final events after startup. Recently fetched heads wait a minute;
-   * a rate limit stops this bounded pass.
-   */
-  async refreshOpenPendingChecks(): Promise<void> {
-    const rows = await this.database.query<CornerWebhookTarget & {
-      repository: string; pr_number: string; head_sha: string;
-    }>(`SELECT fact.corner_id,corner.parent_id,corner.name corner_name,
-        '' AS summary,${cornerOwnerSql('corner.id')} author_id,github.full_name repository,
-        github.repository_id,github.installation_id,
-        fact.lifecycle->'pr'->>'number' pr_number,
-        fact.lifecycle->'pr'->>'headSha' head_sha
-      FROM corner_github_cache fact JOIN rooms corner ON corner.id=fact.corner_id
-      JOIN rooms parent ON parent.id=corner.parent_id
-      JOIN github_repositories github ON github.installation_id=parent.github_installation_id
-        AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
-          COALESCE(parent.repository_remote,parent.repository_key,''),
-          '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-      WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-        AND fact.lifecycle->>'checks'='pending'
-        AND fact.lifecycle->'checkRefreshRetry'->>'headSha'
-          IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha'
-        AND COALESCE((fact.lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0)
-          < extract(epoch FROM clock_timestamp())-60
-        AND ${cornerOwnerSql('corner.id')} IS NOT NULL
-        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-        AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
-      -- The least recently fetched head goes first, so a bounded pass reaches every corner.
-      ORDER BY COALESCE((fact.lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0),fact.corner_id LIMIT 100`);
-    for (const target of rows.rows) {
-      try {
-        await this.refreshCheckRollup(
-          { ...target, has_pr: true, pr_number: target.pr_number },
-          target.repository,
-          { name: 'Pull request checks', status: 'pending', headSha: target.head_sha },
-          this.database,
-          { quiet: true },
-        );
-      } catch (error) {
-        if (error instanceof GitHubHttpError && error.rateLimited) {
-          console.error('[github] pending check re-read stopped on a rate limit');
-          return;
-        }
-        captureServerError(error, { background_job: 'github-pending-checks' });
-        console.error('[github] pending check re-read failed:', error);
-      }
-    }
-  }
-
   private async refreshCheckRollup(
     target: CornerWebhookTarget & { has_pr?: boolean; pr_number?: string | null }, repository: string,
     check: NonNullable<ReturnType<typeof checkFact>>, database: SqlDatabase,
@@ -2489,6 +2389,10 @@ export class GitHubOperations {
     } },
   ) {
     const checkHeadSha = check.headSha!;
+    // An obsolete event cannot admit provider work for a head already replaced
+    // in committed state. Later checks still fence a push during this read.
+    const admitted = await this.lifecycle(target.corner_id, database);
+    if (admitted.pr?.headSha && admitted.pr.headSha !== checkHeadSha) return;
     let fetchStartedAt = 0;
     let confirmedPr: Awaited<ReturnType<GitHubAppClient['readPullRequest']>> | undefined;
     try {
@@ -2761,15 +2665,13 @@ export class GitHubOperations {
     } catch (error) {
       if (transientGitHubError(error)) {
         await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(
-            jsonb_set(jsonb_set(lifecycle,'{checks}','"pending"'::jsonb),
+            jsonb_set(lifecycle-'checkRefreshRetry','{checks}','"pending"'::jsonb),
               '{checksSummary}',jsonb_build_object('total',0,'failing','[]'::jsonb,
                 'checks','[]'::jsonb,'updatedAt',floor(extract(epoch FROM clock_timestamp()))) ||
-                COALESCE(lifecycle->'checksSummary','{}'::jsonb) || '{"status":"pending"}'::jsonb),'{checkRefreshRetry}',
-            jsonb_build_object('headSha',$2::text,'failedAt',extract(epoch FROM clock_timestamp()),
-              'after',extract(epoch FROM clock_timestamp())+$3::double precision))
+                COALESCE(lifecycle->'checksSummary','{}'::jsonb) || '{"status":"pending"}'::jsonb)
           WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2
-            AND COALESCE((lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0)<=$4`,
-          [target.corner_id, checkHeadSha, githubRetryDelay(error, 60_000) / 1000, fetchStartedAt]);
+            AND COALESCE((lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0)<=$3`,
+          [target.corner_id, checkHeadSha, fetchStartedAt]);
       }
       throw error;
     }

@@ -516,11 +516,6 @@ async function main() {
     await backgroundJobs.run('corner-reviewers', () =>
       reconcileConfiguredCornerReviewers(jobsDatabase, undefined,
         githubJobs ? id => githubJobs.refreshCornerReviewHead(id) : undefined));
-    if (githubJobs) {
-      await backgroundJobs.run('github-check-refresh', () => githubJobs.refreshQueuedChecks());
-    }
-    if (githubJobs) await backgroundJobs.run('github-pending-checks', () =>
-      githubJobs.refreshOpenPendingChecks());
     const now = Date.now();
     // Merges happen throughout a leader's tenure. Keep catching missed merge webhooks.
     if (githubJobs) {

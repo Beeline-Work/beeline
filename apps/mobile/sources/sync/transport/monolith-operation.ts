@@ -1,8 +1,8 @@
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
-import { MONOLITH_REQUEST_TIMEOUT_MS } from '@/auth/monolith-session';
+import { MONOLITH_REQUEST_TIMEOUT_MS, MonolithRequestTimeoutError } from '@/auth/monolith-session';
 import { sharedLiveConnection } from './live-connection';
-import { PhoneSocketError } from './phone-socket-error';
+import { PhoneSocketDisconnectedError, PhoneSocketError } from './phone-socket-error';
 
 /**
  * Reads Beeline answers from its own database in well under a second. They
@@ -62,6 +62,9 @@ export function phoneOperationRequestOptions(
   input: unknown,
   options?: { timeoutMs?: number },
 ): { timeoutMs: number } {
+  // Redemption can commit for 30 seconds after admission, even if the phone
+  // disconnects. Wait beyond that server transaction deadline before checking.
+  if (name === 'redeemInvite') return { timeoutMs: options?.timeoutMs ?? 40_000 };
   // Repository installation may wait for GitHub's installation propagation;
   // retain its existing longer deadline rather than cutting it to the default.
   if (name === 'actOnRepositoryCard') return { timeoutMs: options?.timeoutMs ?? 60_000 };
@@ -104,10 +107,26 @@ export async function monolithPhoneOperation<Name extends keyof PhoneOperationMa
   options?: { timeoutMs?: number },
 ): Promise<PhoneOperationMap[Name]['output']> {
   try {
-    const result = await sharedLiveConnection().request(name,
+    const args =
       name === 'createWorkspace' ? { ...input, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } : input,
-      phoneOperationRequestOptions(name, input, options),
-    );
+      requestOptions = phoneOperationRequestOptions(name, input, options);
+    let result: PhoneOperationMap[Name]['output'];
+    const ambiguous = (error: unknown) => error instanceof MonolithRequestTimeoutError || error instanceof PhoneSocketDisconnectedError;
+    try {
+      result = await sharedLiveConnection().request(name, args, requestOptions);
+    } catch (error) {
+      if (name !== 'redeemInvite' || !ambiguous(error)) throw error;
+      // Redemption is retry-safe for the same identity and token: a committed
+      // join returns its Workspace/Room with joined=false. Confirm once on the
+      // replacement socket instead of calling an unknown result a failed join.
+      try {
+        result = await sharedLiveConnection().request(name, args, requestOptions);
+      } catch (confirmationError) {
+        if (ambiguous(confirmationError) || (confirmationError instanceof PhoneSocketError && confirmationError.retryable))
+          throw new Error('Your join is not confirmed yet. Try Join again to check its result.');
+        throw confirmationError;
+      }
+    }
     if (['createWorkspace', 'sendRoomMessage', 'sendRoomReply'].includes(name))
       void import('@/auth/signin-funnel').then(module => module.funnelSuccessfulOperation(name)).catch(() => undefined);
     return result;

@@ -737,9 +737,9 @@ describe('fresh Room discovery through the live membership wake', () => {
   });
 
   it('pushes rooms-changed to a connected daemon socket on membership change', { timeout: 60_000 }, async () => {
-    const exchange = await auth.createDaemonExchange(AGENT);
-    const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
-    const watcher = new DaemonApiClient(origin, daemonToken, AGENT);
+    // Observe the fixture's current owner. A second lifecycle for the same
+    // agent competes with the running core and is correctly fenced.
+    const watcher = daemonApi;
     const changed = vi.fn();
     watcher.setRoomsChangedListener(changed);
     let subscribed = false;
@@ -752,7 +752,6 @@ describe('fresh Room discovery through the live membership wake', () => {
       await vi.waitFor(() => expect(changed).toHaveBeenCalled(), { timeout: 10_000 });
     } finally {
       unsubscribe();
-      watcher.closeLive();
     }
   });
 

@@ -1,4 +1,5 @@
 import { owedMentions, clearOwedMention, mentionReplyKey, mentionReplyId } from './owed-mentions.js';
+import { cornerOwnerSql } from './corner-worker.js';
 import { YouTubeUploadRefusal } from './composio-apps.js';
 import { missingReviewAttachments } from './review-evidence.js';
 import { consumeStarterVideoPost, restoreStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
@@ -3160,7 +3161,7 @@ export class DaemonService {
       [agentId],
     );
     const pending = await this.database.query<{ room_id: string; parent_id: string | null; owner_agent_id: string | null }>(
-      `SELECT DISTINCT command.room_id,r.parent_id,f.owner_agent_id
+      `SELECT DISTINCT command.room_id,r.parent_id,CASE WHEN f.corner_id IS NOT NULL THEN ${cornerOwnerSql('r.id')} END owner_agent_id
        FROM agent_commands command
        JOIN rooms r ON r.id=command.room_id AND r.archived_at IS NULL
        JOIN memberships m ON m.room_id=r.id AND m.identity_id=command.agent_id AND m.removed_at IS NULL
@@ -3861,7 +3862,7 @@ export class DaemonService {
       objective: string;
     }>(
       `SELECT r.id,r.parent_id,r.name,r.archived_at closed_at,f.objective,f.lifecycle,
-              COALESCE(f.owner_agent_id,r.created_by) created_by,
+              COALESCE(${cornerOwnerSql('r.id')},r.created_by) created_by,
               r.archived_at IS NOT NULL archived
        FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
        WHERE (r.parent_id=$1 OR (EXISTS(SELECT 1 FROM rooms dm WHERE dm.id=$1 AND dm.direct_participants IS NOT NULL)
@@ -4191,9 +4192,9 @@ export class DaemonService {
                      -- A fallback reviewer is told it holds the post itself.
                      WHEN ${cornerReviewerSql('room')} IS NOT NULL
                           AND a.agent_id=ANY(${cornerReviewerFallbacksSql('room')})
-                          AND a.agent_id<>COALESCE(fact.owner_agent_id,room.created_by)
+                          AND a.agent_id<>COALESCE(${cornerOwnerSql('room.id')},room.created_by)
                      THEN self.handle
-                     WHEN reviewer.id<>COALESCE(fact.owner_agent_id,room.created_by)
+                     WHEN reviewer.id<>COALESCE(${cornerOwnerSql('room.id')},room.created_by)
                      THEN reviewer.handle END reviewer_handle
          FROM agents a
          JOIN identities self ON self.id=a.agent_id
@@ -6538,13 +6539,10 @@ export class DaemonService {
       ...(input.pullRequest ? { pr: input.pullRequest } : {}),
     };
     await this.database.query(
-      `INSERT INTO corner_facts(corner_id,feature_branch,lifecycle,owner_agent_id)
-       VALUES($1,$2,$3::jsonb,$4)
+      `INSERT INTO corner_facts(corner_id,feature_branch,lifecycle)
+       VALUES($1,$2,$3::jsonb)
        ON CONFLICT(corner_id) DO UPDATE SET
          feature_branch=EXCLUDED.feature_branch,
-         -- A corner opened from the phone has no owner agent. The first agent to
-         -- record its branch is the one doing the work; never replace an owner.
-         owner_agent_id=COALESCE(corner_facts.owner_agent_id,EXCLUDED.owner_agent_id),
          lifecycle=CASE
            -- A helper's restart heartbeat is lower authority than GitHub's PR/check facts.
            -- Keep the complete webhook-owned lifecycle so it cannot lose the PR, mergeability,
@@ -6554,7 +6552,7 @@ export class DaemonService {
            ELSE corner_facts.lifecycle || EXCLUDED.lifecycle
          END,
          updated_at=now()`,
-      [input.cornerId, input.branch, JSON.stringify(lifecycle), agentId],
+      [input.cornerId, input.branch, JSON.stringify(lifecycle)],
     );
     return this.writeResult();
   }
@@ -8554,7 +8552,7 @@ export class DaemonService {
           brief_change: string | null;
           brief_attachments: import('@beeline/api-contract/daemon').CornerBriefAttachment[] | null;
         }>(
-          `SELECT child.id::text corner_id,child.name,fact.objective,fact.owner_agent_id,child.created_by,
+          `SELECT child.id::text corner_id,child.name,fact.objective,${cornerOwnerSql('child.id')} owner_agent_id,child.created_by,
                   fact.request_id,child.repository_key,child.repository_target_branch,
                   (SELECT handle FROM identities WHERE id=fact.reviewer_agent_id) reviewer_handle,
                   initial.revision brief_revision,
@@ -8666,11 +8664,10 @@ export class DaemonService {
         ],
       );
       await db.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,open_idempotency_key,opened_from_corner_id,lifecycle)
-         VALUES($1,$2,$3,$4,$5,$6,$7,'{"lifecycle":"working","checks":"unknown"}')`,
+        `INSERT INTO corner_facts(corner_id,commissioned_by,objective,request_id,open_idempotency_key,opened_from_corner_id,lifecycle)
+         VALUES($1,$2,$3,$4,$5,$6,'{"lifecycle":"working","checks":"unknown"}')`,
         [
           cornerId,
-          implementerAgentId,
           commissionedBy ?? null,
           objective,
           input.requestId,
@@ -8678,8 +8675,6 @@ export class DaemonService {
           host?.parent_id ? commandRoomId : null,
         ],
       );
-      if (input.reviewer !== undefined) await setCornerReviewer(db, cornerId, input.reviewer, agentId,
-        (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       if (input.hold === true) {
         await setCornerHold(db, { cornerId, sourceMessageId: input.sourceMessageId }, commissionedBy ?? agentId, agentId);
       }
@@ -8742,6 +8737,9 @@ export class DaemonService {
         retainDepth: true,
         turnRequestId: input.requestId,
       });
+      // After the opening order: the reviewer must be independent of the agent it assigns.
+      if (input.reviewer !== undefined) await setCornerReviewer(db, cornerId, input.reviewer, agentId,
+        (id, reviewer) => this.checkReviewerAuthors(db, id, reviewer));
       // Opening watches lifecycle events where the commander opened the corner.
       await db.query(
           `INSERT INTO corner_watches(watcher_room_id,agent_id,corner_id,kinds,incoming_command_id) VALUES($1,$2,$3,'["opened","merged"]'::jsonb,$4)
@@ -8806,7 +8804,7 @@ export class DaemonService {
           kind: string;
           created_by: string;
         }>(
-          `SELECT room.parent_id,fact.owner_agent_id,${cornerImplementerSql('fact', 'room')} implementer_agent_id,
+          `SELECT room.parent_id,${cornerOwnerSql('room.id')} owner_agent_id,${cornerImplementerSql('fact', 'room')} implementer_agent_id,
              fact.kind,room.created_by,EXISTS(SELECT 1 FROM rooms parent WHERE parent.id=room.parent_id
                AND (parent.repository_resolution='repository' OR parent.repository_key IS NOT NULL)) repository_backed FROM rooms room
          JOIN corner_facts fact ON fact.corner_id=room.id

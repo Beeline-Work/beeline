@@ -1,4 +1,5 @@
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
+import { cornerOwnerSql } from './corner-worker.js';
 import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
 import { voiceDateContext } from './voice-reply.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
@@ -1261,25 +1262,8 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       sourceMessageId: sourceId,
       reason: source.direct_participants ? 'direct_message' : 'human_tag',
     });
-    if (source.parent_id) await claimHumanCornerOwner(db, source.room_id, target);
   }
   return false;
-}
-
-/**
- * A person's tag assigns work in a corner: the tag's command makes the agent
- * the corner's worker (`cornerImplementerSql`) without stopping anyone. A
- * corner a person opened (`kind='human'`) has no opener agent, so the first
- * agent a person tags there becomes its owner, never the corner's reviewer.
- */
-async function claimHumanCornerOwner(db: SqlDatabase, cornerId: string, agentId: string): Promise<void> {
-  await db.query(
-    `UPDATE corner_facts fact SET owner_agent_id=$2,updated_at=now()
-     FROM rooms corner JOIN rooms parent ON parent.id=corner.parent_id
-     WHERE fact.corner_id=corner.id AND corner.id=$1 AND fact.kind='human' AND fact.owner_agent_id IS NULL
-       AND $2<>COALESCE(${cornerReviewerSql()},'')`,
-    [cornerId, agentId],
-  );
 }
 
 export async function routeAgentResult(
@@ -2449,7 +2433,7 @@ export async function reconcileConfiguredCornerReviewers(
     author_id: string;
     head_sha: string;
   }>(
-    `SELECT corner.id corner_id,COALESCE(fact.owner_agent_id,corner.created_by) author_id,
+    `SELECT corner.id corner_id,COALESCE(${cornerOwnerSql('corner.id')},corner.created_by) author_id,
             fact.lifecycle->'pr'->>'headSha' head_sha
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
@@ -2459,7 +2443,7 @@ export async function reconcileConfiguredCornerReviewers(
      WHERE corner.archived_at IS NULL AND fact.lifecycle->>'checks'='passing'
        AND fact.lifecycle->'pr'->>'number' IS NOT NULL
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-       AND COALESCE(fact.owner_agent_id,corner.created_by) IS NOT NULL
+       AND COALESCE(${cornerOwnerSql('corner.id')},corner.created_by) IS NOT NULL
        AND ($1::uuid IS NULL OR parent.id=$1)
        AND NOT EXISTS (
          SELECT 1 FROM agent_commands worker

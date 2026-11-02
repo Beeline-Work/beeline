@@ -10,6 +10,20 @@ import { parse } from 'yaml';
 
 const jobs = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8')).jobs;
 
+test('PR wall-clock suites leave the quota only when the required hosted replay runs them', () => {
+  const shard = jobs['server-suite-shard'].steps.find(step => /run-ci-shard/.test(step.run));
+  assert.equal(shard.env.SERVER_HOSTED_TIMING,
+    "${{ github.event_name == 'pull_request' && needs.changes.outputs.productionCorpusReplay == 'true' }}");
+  const replay = jobs['production-corpus-replay'];
+  assert.equal(replay.name, 'PRODUCTION-CORPUS REPLAY');
+  assert.equal(replay['runs-on'], 'ubuntu-latest');
+  assert.match(replay.if, /needs.changes.outputs.productionCorpusReplay == 'true'/);
+  const timing = replay.steps.find(step => /Run server wall-clock budgets/.test(step.name));
+  assert.equal(timing.if, "github.event_name == 'pull_request'");
+  assert.match(timing.run, /src\/production-corpus-width.test.ts src\/phone-service.read-room-latency.test.ts --maxWorkers=1 --minWorkers=1/);
+  assert.equal(timing['continue-on-error'], undefined);
+});
+
 test('release recovery uses trusted hosted code with job reads and success delivery', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/release-failure.yml', import.meta.url), 'utf8'));
   assert.deepEqual(workflow.on.workflow_run.workflows, ['Unified production release', 'Release preflight']);

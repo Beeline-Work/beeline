@@ -47,6 +47,28 @@ test('isolated latency and voice suites remain covered exactly once outside para
   }
 });
 
+test('PR timing suites move to the hosted gate with complete, disjoint coverage', () => {
+  const shards = Array.from({ length: 8 }, (_, index) => index + 1).map(position => {
+    const result = spawnSync(process.execPath, ['apps/server/scripts/run-ci-shard.mjs', `${position}/8`, '--list'], {
+      encoding: 'utf8', maxBuffer: 4 * 1024 * 1024,
+      env: { ...process.env, SERVER_HOSTED_TIMING: 'true', GITHUB_EVENT_NAME: 'pull_request' },
+    });
+    assert.equal(result.status, 0, result.stderr);
+    return JSON.parse(result.stdout);
+  });
+  const hosted = ['src/production-corpus-width.test.ts', 'src/phone-service.read-room-latency.test.ts'];
+  for (const shard of shards) assert.deepEqual(shard.hostedFiles, hosted);
+  const local = shards.flatMap(shard => [...shard.files, ...shard.isolatedFiles]);
+  assert.deepEqual(shards[1].isolatedFiles, ['src/voice-room-runtime.test.ts']);
+  for (const file of hosted) assert.equal(local.includes(file), false);
+  assert.equal(new Set([...local, ...hosted]).size, shards[0].totalFiles);
+  assert.equal(local.length + hosted.length, shards[0].totalFiles);
+  const invalid = spawnSync(process.execPath, ['apps/server/scripts/run-ci-shard.mjs', '1/8', '--list'], {
+    encoding: 'utf8', env: { ...process.env, SERVER_HOSTED_TIMING: 'true', GITHUB_EVENT_NAME: 'workflow_dispatch' },
+  });
+  assert.notEqual(invalid.status, 0, 'dispatch cannot omit its local timing coverage');
+});
+
 test('grouping files in one fork retains module and mock isolation between files', () => {
   const directory = mkdtempSync(join(tmpdir(), 'ci-fork-isolation-'));
   try {

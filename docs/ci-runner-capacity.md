@@ -27,8 +27,11 @@ capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
 | Privileged Body setup, PostgreSQL timing, Docker build/lint, corpus replay | `ubuntu-latest` | `ubuntu-latest` |
 
 Each server shard runs its balanced file assignment and one of the existing
-eight integration batches. Timing-sensitive isolated suites are distributed
-across the first three shards and still run outside the ordinary suite.
+eight integration batches. Held voice playback runs alone on shard two. On
+PRs, width and room-read latency budgets run with one worker in the existing
+hosted PRODUCTION-CORPUS REPLAY job, outside the shared quota. A shard moves
+them only when that required hosted gate is enabled; merge/dispatch runs
+retain their original isolated shard coverage. Timing limits stay unchanged.
 PRs consume SELECT SERVER TESTS; an unavailable selection fails closed to the
 full suite. Main coverage remains full. No integration batch is removed or
 repeated.

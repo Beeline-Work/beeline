@@ -34,7 +34,8 @@
 # already runs, so those filters stay a subset of the mobile module (a
 # skipped suite fails closed). PRODUCTION-CORPUS REPLAY has its own cached,
 # production-scale database because plan/timing evidence cannot come from
-# the tiny suite tables. SERVER INTEGRATION takes the verdict from both pools'
+# the tiny suite tables. On PRs it also runs width and room-read latency
+# budgets outside the shared CPU quota. SERVER INTEGRATION takes the verdict from both pools'
 # bounded shards of the large PGlite-backed integration file; SERVER SUITE
 # takes the verdict from eight shards and the hosted claim-latency budget.
 # On a pull request those runners execute only the server test
@@ -718,6 +719,9 @@ jobs:
       - name: Run the balanced server suite shard
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.suite != 'server-integration'
         working-directory: apps/server
+        env:
+          # Move wall-clock budgets only when their existing hosted gate runs.
+          SERVER_HOSTED_TIMING: ${{ github.event_name == 'pull_request' && needs.changes.outputs.productionCorpusReplay == 'true' }}
         run: node scripts/run-ci-shard.mjs ${{ matrix.shard }}/8
       - name: Run one bounded integration batch
         if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.suite == 'all' || inputs.suite == 'server-integration') }}
@@ -880,7 +884,7 @@ jobs:
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.productionCorpusReplay == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
@@ -904,6 +908,10 @@ jobs:
         with:
           path: ${{ runner.temp }}/beeline-production-corpus
           key: ${{ steps.corpus.outputs.cache-primary-key }}
+      - name: Run server wall-clock budgets outside the shared quota
+        if: github.event_name == 'pull_request'
+        working-directory: apps/server
+        run: npx vitest run src/production-corpus-width.test.ts src/phone-service.read-room-latency.test.ts --maxWorkers=1 --minWorkers=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:

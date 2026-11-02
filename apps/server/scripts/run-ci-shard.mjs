@@ -13,10 +13,15 @@ const workers = Number(process.env.CI_TEST_WORKERS || 2);
 assert.ok(Number.isInteger(workers) && workers >= 1 && workers <= 2, 'CI_TEST_WORKERS must be 1 or 2');
 const root = fileURLToPath(new URL('../', import.meta.url));
 const vitest = fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs', import.meta.url));
-// Wall-clock budgets and held voice playback must not compete with database
-// migrations in another worker. Keep their coverage in the same required job.
+// On PRs, wall-clock budgets run in the existing hosted replay gate, outside
+// the shared CPU quota. Merge/dispatch runs retain them in their hosted shards.
 const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts',
   'src/phone-service.read-room-latency.test.ts'];
+const timingFiles = [isolated[0], isolated[2]];
+const hostedTiming = process.env.SERVER_HOSTED_TIMING || 'false';
+assert.ok(['true', 'false'].includes(hostedTiming), 'SERVER_HOSTED_TIMING must be true or false');
+assert.ok(hostedTiming === 'false' || process.env.GITHUB_EVENT_NAME === 'pull_request',
+  'only PRs can move timing coverage to the required hosted replay gate');
 const exclusions = ['src/production-corpus-hot-reads.test.ts', 'src/integration.test.ts', 'src/agent-command.scaling.test.ts', ...isolated]
   .flatMap((file) => ['--exclude', file]);
 function list(files = [], exclude = exclusions) {
@@ -34,12 +39,14 @@ const files = discovered.filter((file) => chosen(selection, file));
 const timingData = JSON.parse(readFileSync(new URL('./ci-test-timings.json', import.meta.url), 'utf8'));
 const shards = balanceFiles(files, timingData.files, count);
 const selected = shards[position - 1];
-const isolatedFiles = isolated.filter((file, index) => position === index % count + 1 && chosen(selection, file));
+const hostedFiles = hostedTiming === 'true' ? timingFiles.filter(file => chosen(selection, file)) : [];
+const isolatedFiles = isolated.filter((file, index) => !hostedFiles.includes(file)
+  && position === index % count + 1 && chosen(selection, file));
 assert.deepEqual(list(isolated, []).sort(), [...isolated].sort(), 'isolated suites must remain discoverable');
 if (selection.mode === 'full') assert.ok(selected.files.length > 0, 'server shard has no files');
 if (selected.files.length) assert.deepEqual(list(selected.files).sort(), [...selected.files].sort(), 'Vitest must select exactly the assigned files');
 console.log(JSON.stringify({ shard: `${position}/${count}`, totalFiles: discovered.length + isolated.length, selection: selection.mode,
-  ...selected, isolatedFiles }, null, 2));
+  ...selected, isolatedFiles, hostedFiles }, null, 2));
 if (!process.argv.includes('--list')) {
   let status = 0;
   if (selected.files.length) {

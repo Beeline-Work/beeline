@@ -68,6 +68,7 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { NATIVE_SHELL_OUTPUT_SCRIPT, nativeShellHookCommand, nativeShellHookConfig } from './native-shell-output.js';
 import { DRAW_AVATAR_SKILL_NAME, drawAvatarSkillMarkdown } from './draw-avatar-skill.js';
 import type { AgentKind } from './agent-command.js';
 import { androidAgentEnv } from './android-agent-env.js';
@@ -840,7 +841,10 @@ async function provisionAgentSkillsAndMcp(
   // other Beeline-owned file in the harness home. Filesystem and command tools
   // remain absent and continue through the Room's fail-closed permission path.
   try {
-    const settings = { permissions: { allow: ['WebSearch', 'WebFetch'] } };
+    const shellHook = resolve(root, 'claude', 'beeline-shell-output.cjs');
+    await writeIsolatedHarnessFile(shellHook, NATIVE_SHELL_OUTPUT_SCRIPT);
+    const settings = { permissions: { allow: ['WebSearch', 'WebFetch'] },
+      ...nativeShellHookConfig(nativeShellHookCommand(shellHook, 'claude')) };
     await writeIsolatedHarnessFile(
       resolve(root, 'claude', 'settings.json'),
       `${JSON.stringify(settings, null, 2)}\n`,

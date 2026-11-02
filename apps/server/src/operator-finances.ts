@@ -186,7 +186,10 @@ export function createOperatorFinances(
     }
     let snapshotState: 'saved' | 'unavailable' = 'saved';
     try {
-      if (samples.length) await database.query(`
+      // Entered fixed-plan rows are recomputed from the configured costs on every
+      // read and always win the merge below, so storing them adds nothing.
+      const observed = samples.filter(s => s.source !== 'entered');
+      if (observed.length) await database.query(`
         INSERT INTO operator_finance_snapshots(day,service_id,scope,source,daily_usd,month_to_date_usd,measured_at)
         SELECT day::date,service_id,scope,source,daily_usd,month_to_date_usd,measured_at::timestamptz
         FROM jsonb_to_recordset($1::jsonb) AS r(day text,service_id text,scope text,source text,
@@ -195,7 +198,7 @@ export function createOperatorFinances(
           daily_usd=COALESCE(EXCLUDED.daily_usd,operator_finance_snapshots.daily_usd),
           month_to_date_usd=COALESCE(EXCLUDED.month_to_date_usd,operator_finance_snapshots.month_to_date_usd),
           measured_at=EXCLUDED.measured_at
-        WHERE operator_finance_snapshots.measured_at <= EXCLUDED.measured_at`, [JSON.stringify(samples)]);
+        WHERE operator_finance_snapshots.measured_at <= EXCLUDED.measured_at`, [JSON.stringify(observed)]);
     } catch { snapshotState = 'unavailable'; }
     let history: Sample[] = [];
     try {

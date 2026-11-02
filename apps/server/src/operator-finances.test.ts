@@ -136,6 +136,12 @@ describe('operator finances', () => {
     expect(expo.spend.lastMonth.usd).toBeCloseTo(29);
     expect(result.services.find(s => s.id === 'sentry')!.spend.monthToDate.usd).toBeNull();
     expect(result.daily.find(d => d.date === '2024-02-15')!.services.find(s => s.serviceId === 'expo')!.usd).toBe(1);
+    // Entered plans are recomputed from config on every read, never stored.
+    expect((await db.query(`SELECT 1 FROM operator_finance_snapshots WHERE source='entered'`)).rowCount).toBe(0);
+    const again = await createOperatorFinances(db, {}, providers(), () => Date.parse('2024-02-15T12:00:00Z'), [
+      { serviceId: 'expo', monthlyUsd: 29, effectiveFrom: '2024-01-01', effectiveThrough: null, note: 'Verified invoice' },
+    ])();
+    expect(again.services.find(s => s.id === 'expo')!.spend).toEqual(expo.spend);
   });
 
   it('isolates malformed provider data from other rows and never turns null credit into zero', async () => {

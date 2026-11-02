@@ -272,6 +272,35 @@ describe('PhoneService Needs-you tray', () => {
     expect(await count()).toBe(2);
   });
 
+  it('F04: live projections never start unseen clocks; only painted IDs are marked', async () => {
+    const first = await post(ROOM, PEER, '@ada please review this');
+    const second = await post(ROOM, PEER, '@ada can you confirm?');
+    const marks = async () => (await database.query(
+      `SELECT * FROM needs_you_marks ORDER BY message_id`,
+    )).rows;
+    const live = () => phone.liveNeedsYou(ROOM, VIEWER);
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const projection = await live();
+      expect(projection?.count).toBe(2);
+      expect(projection?.items.map(item => item.messageId)).toEqual([first, second]);
+      expect(projection?.items.every(item => item.expiresAt === undefined)).toBe(true);
+      expect(await marks()).toEqual([]);
+    }
+    await database.query(`UPDATE messages SET created_at=created_at-interval '25 hours'`);
+    expect((await live())?.count).toBe(2);
+    expect(await marks()).toEqual([]);
+    const seen = await phone.execute('markNeedsYouSeen', {
+      workspaceId: WORKSPACE, messageIds: [first],
+    }, VIEWER);
+    const before = await marks();
+    expect(before).toHaveLength(1);
+    const projection = await live();
+    expect(projection?.items.find(item => item.messageId === first)?.expiresAt)
+      .toBe(seen.seen[0]!.expiresAt);
+    expect(projection?.items.find(item => item.messageId === second)?.expiresAt).toBeUndefined();
+    expect(await marks()).toEqual(before);
+  });
+
   it('starts the 24-hour clock on the first read, never on the badge count', async () => {
     const id = await post(ROOM, PEER, '@ada can you look?');
     expect(await count()).toBe(1);

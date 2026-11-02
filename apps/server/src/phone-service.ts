@@ -1446,7 +1446,7 @@ export class PhoneService {
   }
 
   /** Current count plus only the changed Room's cells. This is a peek: the
-   * 24-hour first-seen clock starts only when the tray's read operation runs. */
+   * 24-hour first-seen clock starts only on explicit seen commands or legacy tray reads. */
   async liveNeedsYou(roomId: string, viewerId: string): Promise<{
     workspaceId: string; count: number; items: readonly NeedsYouItemView[];
   } | null> {
@@ -1461,7 +1461,7 @@ export class PhoneService {
     )).rows[0];
     if (!scope) return null;
     const { items } = await needsYouItems(this.database, scope.workspace_id, viewerId,
-      (row) => identity(row, this.publicOrigin));
+      (row) => identity(row, this.publicOrigin), false);
     return { workspaceId: scope.workspace_id, count: items.length,
       items: items.filter((item) => item.roomId === roomId) };
   }

@@ -1017,7 +1017,7 @@ export class GitHubOperations {
     await this.database.transaction(async db => {
       await lockCornerLifecycle(db, cornerId);
       // A webhook or close may have won while the provider read was in flight.
-      await db.query(`UPDATE corner_facts fact SET lifecycle=lifecycle || $3::jsonb,updated_at=now()
+      await db.query(`UPDATE corner_facts fact SET lifecycle=lifecycle || $3::jsonb
         FROM rooms room WHERE fact.corner_id=$1 AND room.id=fact.corner_id AND room.archived_at IS NULL
           AND ${cornerFeatureBranchSql('room')}=$2 AND fact.lifecycle->'pr'->>'number' IS NULL`,
       [cornerId, corner.branch, JSON.stringify({ lifecycle: 'in-review',
@@ -1050,7 +1050,7 @@ export class GitHubOperations {
       const changed = await db.query(
         `UPDATE corner_facts SET lifecycle=jsonb_set(
            jsonb_set(lifecycle-'checksSummary'-'checkRefreshRetry','{pr,headSha}',to_jsonb($4::text)),
-           '{checks}','"pending"'),updated_at=now()
+           '{checks}','"pending"')
          WHERE corner_id=$1 AND lifecycle->'pr'->>'number'=$2
            AND lifecycle->'pr'->>'headSha'=$3 RETURNING corner_id`,
         [cornerId, String(stored.number), stored.head, pr.headSha],
@@ -1391,7 +1391,7 @@ export class GitHubOperations {
       if (result === 'queued') {
         await this.database.query(
           `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
-             jsonb_build_object('headSha',$2::text)),updated_at=now()
+             jsonb_build_object('headSha',$2::text))
            WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`, [cornerId, status.headSha],
         );
         await this.reconcileQueuedCorners(cornerId);
@@ -1416,7 +1416,7 @@ export class GitHubOperations {
           confirmedUnqueued = !queue.entry;
           if (queue.entry && queue.headSha === status.headSha) {
             await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
-              jsonb_build_object('headSha',$2::text)),updated_at=now() WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`,
+              jsonb_build_object('headSha',$2::text)) WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`,
               [cornerId, status.headSha]);
             await this.reconcileQueuedCorners(cornerId);
             this.onRoomChanged?.(cornerId);
@@ -1529,8 +1529,7 @@ export class GitHubOperations {
         `UPDATE corner_facts fact SET
            lifecycle=(lifecycle-'pr'-'mergeQueue'-'checksSummary')||
              CASE WHEN corner.archived_at IS NULL THEN '{"lifecycle":"working","checks":"unknown"}'::jsonb
-               ELSE '{}'::jsonb END,
-           updated_at=now()
+               ELSE '{}'::jsonb END
          FROM rooms corner WHERE fact.corner_id=$1 AND corner.id=fact.corner_id
            AND ${cornerRunStateSql('fact.corner_id')} IS DISTINCT FROM 'landed'
            AND (fact.lifecycle->'pr'->>'number')::int=$2
@@ -1869,7 +1868,7 @@ export class GitHubOperations {
           : `Removed from the merge queue: ${rollup?.failing.join(', ') || 'GitHub removed the entry before merging'}`;
         await this.database.transaction(async db => {
           await lockCornerLifecycle(db, row.corner_id);
-          const changed = await db.query(`UPDATE corner_facts SET lifecycle=lifecycle-'mergeQueue',updated_at=now()
+          const changed = await db.query(`UPDATE corner_facts SET lifecycle=lifecycle-'mergeQueue'
             WHERE corner_id=$1 AND COALESCE(lifecycle->'mergeQueue'->>'headSha',lifecycle->'pr'->>'headSha')=$2
             RETURNING 1`, [row.corner_id, row.head_sha]);
           if (!changed.rowCount) return;
@@ -2400,7 +2399,8 @@ export class GitHubOperations {
         AND fact.lifecycle->'checkRefreshRetry'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
         AND (fact.lifecycle->'checkRefreshRetry'->>'after')::double precision
           <= extract(epoch FROM clock_timestamp())
-      ORDER BY fact.updated_at LIMIT 20`);
+      -- The longest-due retry goes first.
+      ORDER BY (fact.lifecycle->'checkRefreshRetry'->>'after')::double precision,fact.corner_id LIMIT 20`);
     for (const target of rows.rows) {
       // Lease the item in one committed statement; no lock spans a provider read.
       const claimed = await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(
@@ -2457,7 +2457,8 @@ export class GitHubOperations {
         AND ${cornerOwnerSql('corner.id')} IS NOT NULL
         AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
         AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
-      ORDER BY fact.updated_at LIMIT 100`);
+      -- The least recently fetched head goes first, so a bounded pass reaches every corner.
+      ORDER BY COALESCE((fact.lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0),fact.corner_id LIMIT 100`);
     for (const target of rows.rows) {
       try {
         await this.refreshCheckRollup(
@@ -2583,8 +2584,8 @@ export class GitHubOperations {
           const currentRow = (
             await database.query<{ lifecycle: CornerLifecycleView & {
               checksSummary?: { fetchStartedAt?: number };
-            }; updated_at: string }>(
-              `SELECT lifecycle,updated_at::text FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+            } }>(
+              `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
               [target.corner_id],
             )
           ).rows[0];
@@ -2645,6 +2646,12 @@ export class GitHubOperations {
           const reportFailure = firstFailure || followup || partialRepair;
           const storedSummary = {
             ...summary,
+            // Repeated reads of an unchanged status do not start new idle work.
+            statusChangedAt: current.pr?.headSha === checkHeadSha && priorReport?.status === summary.status
+              && !newAttempt && JSON.stringify((priorReport.checks ?? []).map(check => [check.name,check.status]).sort()) ===
+                JSON.stringify(summary.checks.map(check => [check.name,check.status]).sort())
+              ? (priorReport as typeof priorReport & { statusChangedAt?: number })?.statusChangedAt ?? priorReport.fetchStartedAt ?? priorReport.updatedAt
+              : summary.fetchStartedAt,
             attempt,
             reportedHeadSha: checkHeadSha,
             reportedFailing: reportFailure ? [...reported, ...newFailures] : reported,
@@ -2763,7 +2770,7 @@ export class GitHubOperations {
                 'checks','[]'::jsonb,'updatedAt',floor(extract(epoch FROM clock_timestamp()))) ||
                 COALESCE(lifecycle->'checksSummary','{}'::jsonb) || '{"status":"pending"}'::jsonb),'{checkRefreshRetry}',
             jsonb_build_object('headSha',$2::text,'failedAt',extract(epoch FROM clock_timestamp()),
-              'after',extract(epoch FROM clock_timestamp())+$3::double precision)),updated_at=now()
+              'after',extract(epoch FROM clock_timestamp())+$3::double precision))
           WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2
             AND COALESCE((lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0)<=$4`,
           [target.corner_id, checkHeadSha, githubRetryDelay(error, 60_000) / 1000, fetchStartedAt]);
@@ -2797,8 +2804,7 @@ export class GitHubOperations {
     const previous = await this.lifecycle(cornerId, database);
     const { branch: _branch, ...lifecycle } = { ...previous, ...patch };
     await database.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb,
-       updated_at=now() WHERE corner_id=$1`,
+      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
       [cornerId, JSON.stringify(lifecycle)],
     );
   }
@@ -2914,8 +2920,7 @@ export class GitHubOperations {
       await database.query(
         `UPDATE corner_facts SET
            lifecycle=((lifecycle-'mergeQueue') -
-             CASE WHEN $3 THEN ARRAY['pr','outcome','checksSummary'] ELSE ARRAY[]::text[] END)||$2::jsonb,
-           updated_at=now() WHERE corner_id=$1`,
+             CASE WHEN $3 THEN ARRAY['pr','outcome','checksSummary'] ELSE ARRAY[]::text[] END)||$2::jsonb WHERE corner_id=$1`,
         [
           target.corner_id,
           JSON.stringify({

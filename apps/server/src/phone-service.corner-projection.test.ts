@@ -73,7 +73,7 @@ describe('one corner projection for the Room list read, the live frame and the C
     await database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [FAILING]);
     await seedCornerOpening(database, { cornerId: FAILING, agentId: AGENT, commissionedBy: VIEWER });
     await database.query(
-      `UPDATE corner_attention_spans SET ci_started_at=now()-interval '31 minutes' WHERE corner_id=$1`,
+      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',jsonb_build_object('status','failing','updatedAt',extract(epoch FROM now()-interval '31 minutes'),'checks','[]'::jsonb)) WHERE corner_id=$1`,
       [FAILING],
     );
     const read = await roomListRow(phone);

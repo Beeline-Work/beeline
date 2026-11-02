@@ -239,7 +239,7 @@
       "apps/auth/src"
     ],
     "bootstrapTotal": 1802,
-    "unusedTotal": 189,
+    "unusedTotal": 188,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -499,7 +499,8 @@
           "tool_calls": "existing before the registry; weekly audit reviews",
           "input_tokens": "existing before the registry; weekly audit reviews",
           "output_tokens": "existing before the registry; weekly audit reviews",
-          "startup_outcome": "existing before the registry; weekly audit reviews"
+          "startup_outcome": "existing before the registry; weekly audit reviews",
+          "ended_at": "when a turn ended; set by the turn's own status change, so idle timing never reads a mutable corner span"
         }
       },
       "agents": {
@@ -540,7 +541,8 @@
           "corner_id": "existing before the registry; weekly audit reviews",
           "agent_id": "existing before the registry; weekly audit reviews",
           "next_at": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
       },
       "avatars": {
         "module": "Identity and sign-in",
@@ -677,7 +679,8 @@
           "last_turn_ended_at": "existing before the registry; weekly audit reviews",
           "ci_started_at": "existing before the registry; weekly audit reviews",
           "ci_head": "existing before the registry; weekly audit reviews"
-        }
+        },
+        "drop": "https://github.com/Beeline-Work/beeline/pull/3355"
       },
       "corner_branch_deletions": {
         "module": "Corner state machine",
@@ -2963,7 +2966,8 @@
         "originCornerId": "existing before the registry; weekly audit reviews",
         "attachments": "existing before the registry; weekly audit reviews",
         "reportedOutcome": "existing before the registry; weekly audit reviews",
-        "objective": "existing before the registry; weekly audit reviews"
+        "objective": "existing before the registry; weekly audit reviews",
+        "idleSince": "the idle episode a stall alert reports; delivery and claim recompute it and drop a stale alert"
       },
       "review_context": {
         "reportIds": "existing before the registry; weekly audit reviews",
@@ -3022,7 +3026,9 @@
         "branch": "existing before the registry; weekly audit reviews",
         "mergeQueue": "existing before the registry; weekly audit reviews",
         "mergeRecovery": "existing before the registry; weekly audit reviews",
-        "checkRefreshRetry": "existing before the registry; weekly audit reviews"
+        "checkRefreshRetry": "existing before the registry; weekly audit reviews",
+        "lifecycle": "the GitHub display cache's coarse PR state; an idle read skips a corner GitHub reports done",
+        "outcome": "the GitHub display cache's landed/abandoned outcome; an idle read skips a finished corner"
       },
       "plan": {},
       "event_subscriptions": {},

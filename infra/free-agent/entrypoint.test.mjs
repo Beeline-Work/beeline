@@ -7,6 +7,43 @@ import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import './reconcile-broker-marker.test.mjs';
 
+for (const managerRunning of [true, false])
+  test(`hosted recovery restores the broker with machine HOME (manager running: ${managerRunning})`, async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-hosted-recovery-'));
+    try {
+      const state = resolve(root, 'manager-ready');
+      const log = resolve(root, 'calls');
+      const bin = resolve(root, 'bin');
+      await mkdir(bin);
+      if (managerRunning) await writeFile(state, '');
+      await writeFile(resolve(bin, 'node'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
+      await writeFile(resolve(bin, 'systemctl'), `#!/bin/sh
+echo "$HOME|$XDG_CONFIG_HOME|$XDG_RUNTIME_DIR|$*" >> '${log}'
+if [ "$2" = show-environment ]; then test -f '${state}'; fi
+`, { mode: 0o755 });
+      const manager = resolve(bin, 'manager');
+      await writeFile(manager, `#!/bin/sh
+echo "manager:$HOME:$XDG_CONFIG_HOME:$DBUS_SESSION_BUS_ADDRESS" >> '${log}'
+touch '${state}'
+`, { mode: 0o755 });
+      const source = await readFile(new URL('./hosted-services.sh', import.meta.url), 'utf8');
+      const script = resolve(root, 'services.sh');
+      await writeFile(script, source.replaceAll('/lib/systemd/systemd', manager)
+        .replaceAll('/run/user/0', resolve(root, 'run'))
+        .replaceAll('/run/systemd/system', resolve(root, 'system')));
+      const child = spawn('/bin/sh', [script], { env: { ...process.env,
+        PATH: `${bin}:${process.env.PATH}`, HOME: resolve(root, 'agent-home'),
+        XDG_CONFIG_HOME: resolve(root, 'agent-config'), XDG_RUNTIME_DIR: '/wrong-runtime' } });
+      const [code] = await once(child, 'exit');
+      assert.equal(code, 0);
+      const calls = await readFile(log, 'utf8');
+      assert.match(calls, /\/root\|\/root\/\.config\|.*\|--user start trusty-squire-broker.service/);
+      assert.equal(calls.includes('agent-home'), false);
+      assert.equal(calls.includes('agent-config'), false);
+      assert.equal(calls.includes('manager:/root:/root/.config:'), !managerRunning);
+    } finally { await rm(root, { recursive: true, force: true }); }
+  });
+
 test('a failed hosted service manager stops boot before the helper or installer runs', async () => {
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-hosted-services-'));
   try {

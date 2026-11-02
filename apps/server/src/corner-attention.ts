@@ -1,271 +1,135 @@
-import { commandOwnerLiveSql } from './turn-ownership.js';
-import { cornerWaitingReportSql, humanReportCornerSql } from './corner-waiting-report.js';
 import { notifyCornerStateSql } from './postgres-live.js';
 import { createHash } from 'node:crypto';
-import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
-import {
-  cornerWorkSql,
-  cornerBlockerSql,
-  cornerRowState,
-  cornerScheduledWaitSql,
-  type CornerStateRow,
-} from './chat-corner-counts.js';
+import { cornerIdleSql, cornerCanReportIdle, type CornerIdleRow } from './corner-idle.js';
+import { humanReportCornerSql } from './corner-waiting-report.js';
 import { reportToCommander } from './commander.js';
-import { cornerImplementerSql } from './corner-worker.js';
 
 export const CORNER_ATTENTION_SCHEMA = `
+-- Retired schema only: no rows are inserted, read or maintained.
 CREATE TABLE IF NOT EXISTS corner_attention_spans (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
-  revision bigint NOT NULL DEFAULT 0,
-  last_state text,
-  episode bigint NOT NULL DEFAULT 0,
-  checked_at timestamptz
+  revision bigint NOT NULL DEFAULT 0, last_state text, episode bigint NOT NULL DEFAULT 0,
+  reported_episode bigint NOT NULL DEFAULT 0, checked_at timestamptz,
+  last_turn_ended_at timestamptz, ci_started_at timestamptz, ci_head text
 );
-ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS episode bigint NOT NULL DEFAULT 0;
-UPDATE corner_attention_spans SET episode=revision WHERE episode=0 AND last_state='idle';
-ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS reported_episode bigint;
-UPDATE corner_attention_spans SET reported_episode=episode WHERE reported_episode IS NULL;
-ALTER TABLE corner_attention_spans ALTER COLUMN reported_episode SET DEFAULT 0;
-ALTER TABLE corner_attention_spans ALTER COLUMN reported_episode SET NOT NULL;
-CREATE INDEX IF NOT EXISTS corner_attention_checked ON corner_attention_spans(checked_at);
 ALTER TABLE needs_you_marks ADD COLUMN IF NOT EXISTS reminder_dismissed_at timestamptz;
--- Retire the repeating attention/reminder machinery without deleting historical messages.
+-- Leave the retired tables intact for the separately approved removal.
 DROP TRIGGER IF EXISTS corner_attention_command ON agent_commands;
 DROP TRIGGER IF EXISTS corner_attention_turn ON agent_turns;
 DROP TRIGGER IF EXISTS corner_attention_reminder_clear ON needs_you_marks;
-DROP FUNCTION IF EXISTS corner_attention_new_work();
-DROP FUNCTION IF EXISTS corner_attention_dismiss_reminder();
--- Historical flags remain readable during rolling upgrades; new servers never sweep them.
-
-CREATE OR REPLACE FUNCTION corner_attention_push() RETURNS trigger
-LANGUAGE plpgsql AS $attention$
-BEGIN
-  INSERT INTO corner_attention_spans(corner_id,revision) VALUES(NEW.corner_id,1)
-  ON CONFLICT(corner_id) DO UPDATE SET revision=corner_attention_spans.revision+1,last_state=NULL;
-  RETURN NULL;
-END
-$attention$;
 DROP TRIGGER IF EXISTS corner_attention_head ON corner_facts;
 DROP TRIGGER IF EXISTS corner_attention_open ON corner_facts;
-CREATE TRIGGER corner_attention_open AFTER INSERT ON corner_facts
-  FOR EACH ROW EXECUTE FUNCTION corner_attention_push();
-CREATE TRIGGER corner_attention_head AFTER UPDATE OF lifecycle ON corner_facts
-  FOR EACH ROW WHEN (OLD.lifecycle->'pr'->>'headSha' IS DISTINCT FROM NEW.lifecycle->'pr'->>'headSha'
-    OR COALESCE(OLD.lifecycle->'checksSummary'->>'status',OLD.lifecycle->>'checks')
-      IS DISTINCT FROM COALESCE(NEW.lifecycle->'checksSummary'->>'status',NEW.lifecycle->>'checks'))
-  EXECUTE FUNCTION corner_attention_push();
-INSERT INTO corner_attention_spans(corner_id)
-  SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL ON CONFLICT DO NOTHING;
-
-CREATE OR REPLACE FUNCTION corner_attention_human() RETURNS trigger LANGUAGE plpgsql AS $human$
-BEGIN
-  IF NEW.presentation='message' AND NEW.system_event IS NULL
-    AND NEW.author_id<>'${SYSTEM_IDENTITY_ID}'
-    AND EXISTS(SELECT 1 FROM identities WHERE id=NEW.author_id AND kind='human') THEN
-    UPDATE corner_attention_spans SET last_state=NULL,last_turn_ended_at=NULL WHERE corner_id=NEW.room_id;
-    IF FOUND THEN
-      PERFORM ${notifyCornerStateSql('NEW.room_id')};
-    END IF;
-  END IF;
-  RETURN NULL;
-END $human$;
 DROP TRIGGER IF EXISTS corner_attention_human ON messages;
-CREATE TRIGGER corner_attention_human AFTER INSERT ON messages
-  FOR EACH ROW EXECUTE FUNCTION corner_attention_human();
-
-ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS last_turn_ended_at timestamptz;
-ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS ci_started_at timestamptz;
-ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS ci_head text;
-CREATE OR REPLACE FUNCTION corner_state_changed() RETURNS trigger LANGUAGE plpgsql AS $state$
-DECLARE corner uuid; pending boolean; failing boolean; was_failing boolean; same_head boolean; head text; status text;
-BEGIN
-  IF TG_TABLE_NAME='agent_turns' THEN
-    corner=COALESCE(NEW.room_id,OLD.room_id);
-    -- A commander answering its own alert is not new corner work.
-    IF EXISTS(SELECT 1 FROM rooms WHERE id=corner AND created_by=COALESCE(NEW.agent_id,OLD.agent_id)) THEN
-      RETURN NULL;
-    END IF;
-    IF NEW.status='working' THEN
-      UPDATE corner_attention_spans SET last_state=NULL WHERE corner_id=corner;
-    END IF;
-    IF TG_OP='INSERT' AND NEW.status='working' AND NEW.generation_id LIKE 'pending:%' THEN
-      UPDATE corner_attention_spans SET last_turn_ended_at=NEW.created_at WHERE corner_id=corner;
-    END IF;
-    IF NEW.status='failed' THEN
-      UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=corner;
-    ELSIF TG_OP='UPDATE' AND OLD.status='working' AND NEW.status<>'working'
-      AND COALESCE(OLD.generation_id,'') NOT LIKE 'pending:%' THEN
-      UPDATE corner_attention_spans SET last_turn_ended_at=CASE
-        WHEN EXISTS(SELECT 1 FROM rooms report_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('report_corner')}) waiting WHERE report_corner.id=corner)
-          OR EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=corner AND released_at IS NULL)
-          OR EXISTS(SELECT 1 FROM corner_owed owed JOIN messages report ON report.id=owed.message_id
-            WHERE owed.corner_id=corner AND owed.blocking AND report.card->>'reportToId' IS NOT NULL
-              AND (owed.expires_at IS NULL OR owed.expires_at>now())) THEN NULL
-        ELSE clock_timestamp() END WHERE corner_id=corner;
-    END IF;
-  ELSIF TG_TABLE_NAME='agent_commands' THEN
-    IF NEW.private_payload->>'kind' IS DISTINCT FROM 'report' OR NOT EXISTS (
-      SELECT 1 FROM messages visible
-      WHERE visible.id=encode(sha256(convert_to('agent-command-card:'||NEW.id,'UTF8')),'hex')
-        AND visible.card_type='agent-command' AND visible.card->>'kind'='report'
-        AND visible.card->>'text' ~ '^(needs-decision|blocked):'
-    ) THEN RETURN NULL; END IF;
-    SELECT id INTO corner FROM rooms WHERE id::text=NEW.private_payload->>'fromRoomId';
-  ELSIF TG_TABLE_NAME='messages' THEN
-    IF NEW.card->>'reportToId' IS NULL AND NOT COALESCE(NEW.card_type='agent-command'
-      AND NEW.card->>'kind'='report' AND NEW.card->>'text' ~ '^(needs-decision|blocked):',false) THEN RETURN NULL; END IF;
-    SELECT id INTO corner FROM rooms WHERE id::text=${humanReportCornerSql('NEW')};
-  ELSIF TG_TABLE_NAME='agent_schedules' THEN
-    corner=COALESCE(NEW.room_id,OLD.room_id);
-  ELSE
-    corner=COALESCE(NEW.corner_id,OLD.corner_id);
-  END IF;
-  -- An explicit wait ends the work stretch. Answering it must not revive
-  -- the previous turn's grace period as if work had resumed.
-  IF TG_TABLE_NAME IN ('agent_commands','messages','corner_merge_holds') THEN
-    UPDATE corner_attention_spans SET last_turn_ended_at=NULL WHERE corner_id=corner;
-  END IF;
-  IF TG_TABLE_NAME='corner_facts' AND TG_OP<>'DELETE' THEN
-    head=NEW.lifecycle->'pr'->>'headSha';
-    status=COALESCE(NEW.lifecycle->'checksSummary'->>'status',NEW.lifecycle->>'checks');
-    pending=status='pending'
-      OR (head IS NOT NULL AND NEW.lifecycle->'checksSummary'->>'status'='unknown'
-        AND NEW.lifecycle->'checksSummary'->>'fetchStartedAt' IS NULL);
-    failing=status='failing';
-    was_failing=TG_OP='UPDATE' AND COALESCE(OLD.lifecycle->'checksSummary'->>'status',OLD.lifecycle->>'checks')='failing';
-    same_head=TG_OP='UPDATE' AND OLD.lifecycle->'pr'->>'headSha' IS NOT DISTINCT FROM head;
-    UPDATE corner_attention_spans SET
-      ci_started_at=CASE
-        WHEN pending THEN CASE WHEN ci_head IS DISTINCT FROM head OR ci_started_at IS NULL
-          THEN clock_timestamp() ELSE ci_started_at END
-        WHEN failing THEN CASE WHEN was_failing AND same_head AND ci_started_at IS NOT NULL
-          THEN ci_started_at ELSE clock_timestamp() END
-        ELSE NULL END,ci_head=head WHERE corner_id=corner;
-  END IF;
-  IF EXISTS(SELECT 1 FROM rooms WHERE id=corner AND parent_id IS NOT NULL) THEN
-    PERFORM ${notifyCornerStateSql('corner')};
-  END IF;
-  RETURN NULL;
-END $state$;
 DROP TRIGGER IF EXISTS corner_state_turn ON agent_turns;
-CREATE TRIGGER corner_state_turn AFTER INSERT OR UPDATE OF status OR DELETE ON agent_turns
- FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
 DROP TRIGGER IF EXISTS corner_state_facts ON corner_facts;
-CREATE TRIGGER corner_state_facts AFTER INSERT OR UPDATE OF lifecycle ON corner_facts
- FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
 DROP TRIGGER IF EXISTS corner_state_report ON corner_report_blockers;
 DROP TRIGGER IF EXISTS corner_state_report ON agent_commands;
-CREATE TRIGGER corner_state_report AFTER INSERT OR UPDATE OF private_payload ON agent_commands
- FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
 DROP TRIGGER IF EXISTS corner_state_report ON messages;
-CREATE TRIGGER corner_state_report AFTER INSERT OR UPDATE OF card,text,deleted_at ON messages
- FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
 DROP TRIGGER IF EXISTS corner_state_hold ON corner_merge_holds;
-CREATE TRIGGER corner_state_hold AFTER INSERT OR UPDATE OR DELETE ON corner_merge_holds
- FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
 DROP TRIGGER IF EXISTS corner_state_owed ON corner_owed;
-CREATE TRIGGER corner_state_owed AFTER INSERT OR UPDATE OR DELETE ON corner_owed
- FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
 DROP TRIGGER IF EXISTS corner_state_schedule ON agent_schedules;
-CREATE TRIGGER corner_state_schedule AFTER INSERT OR UPDATE OR DELETE ON agent_schedules
- FOR EACH ROW EXECUTE FUNCTION corner_state_changed();
--- Preserve pending heads during the first deployment; subsequent migrations never reset their clock.
-UPDATE corner_attention_spans span SET ci_head=f.lifecycle->'pr'->>'headSha',
- ci_started_at=to_timestamp(COALESCE((f.lifecycle->'checksSummary'->>'updatedAt')::double precision,extract(epoch FROM now())))
- FROM corner_facts f WHERE f.corner_id=span.corner_id AND span.ci_started_at IS NULL
- AND (COALESCE(f.lifecycle->'checksSummary'->>'status',f.lifecycle->>'checks')='pending'
-   OR (f.lifecycle->'pr'->>'headSha' IS NOT NULL AND f.lifecycle->'checksSummary'->>'status'='unknown'
-     AND f.lifecycle->'checksSummary'->>'fetchStartedAt' IS NULL));
+DROP FUNCTION IF EXISTS corner_attention_new_work();
+DROP FUNCTION IF EXISTS corner_attention_dismiss_reminder();
+DROP FUNCTION IF EXISTS corner_attention_push();
+DROP FUNCTION IF EXISTS corner_attention_human();
+DROP FUNCTION IF EXISTS corner_state_changed();
+
+-- A turn's end is an execution fact, independent of corner attention.
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS ended_at timestamptz;
+CREATE OR REPLACE FUNCTION record_agent_turn_end() RETURNS trigger LANGUAGE plpgsql AS $turn$
+BEGIN
+  IF NEW.status='working' THEN NEW.ended_at=NULL;
+  ELSIF TG_OP='INSERT' OR OLD.status IS DISTINCT FROM NEW.status THEN
+    NEW.ended_at=COALESCE(NEW.ended_at,clock_timestamp());
+  END IF;
+  RETURN NEW;
+END $turn$;
+DROP TRIGGER IF EXISTS record_agent_turn_end ON agent_turns;
+CREATE TRIGGER record_agent_turn_end BEFORE INSERT OR UPDATE OF status ON agent_turns
+  FOR EACH ROW EXECUTE FUNCTION record_agent_turn_end();
+-- Recover old terminal receipts from their durable completion, never migration time.
+UPDATE agent_turns turn SET ended_at=COALESCE(
+  (SELECT max(command.completed_at) FROM agent_commands command WHERE command.room_id=turn.room_id
+    AND command.agent_id=turn.agent_id AND command.turn_request_id=turn.request_id),turn.created_at)
+  WHERE turn.status<>'working' AND turn.ended_at IS NULL;
+
+CREATE OR REPLACE FUNCTION notify_corner_activity() RETURNS trigger LANGUAGE plpgsql AS $state$
+DECLARE corner uuid;
+BEGIN
+  IF TG_TABLE_NAME='agent_commands' THEN
+    -- A worker's explicit report starts or answers a derived wait.
+    IF NEW.private_payload->>'kind' IS DISTINCT FROM 'report' THEN RETURN NULL; END IF;
+    SELECT id INTO corner FROM rooms WHERE id::text=NEW.private_payload->>'fromRoomId';
+  ELSIF TG_TABLE_NAME IN ('agent_turns','agent_schedules','messages') THEN
+    corner=COALESCE(NEW.room_id,OLD.room_id);
+  ELSE corner=COALESCE(NEW.corner_id,OLD.corner_id); END IF;
+  IF TG_TABLE_NAME='messages' THEN
+   IF NEW.card->>'reportToId' IS NOT NULL OR COALESCE(NEW.card_type='agent-command'
+     AND NEW.card->>'kind'='report' AND NEW.card->>'text' ~ '^(needs-decision|blocked):',false) THEN
+    SELECT id INTO corner FROM rooms WHERE id::text=${humanReportCornerSql('NEW')};
+   ELSIF TG_OP<>'INSERT' OR NOT (
+    NEW.presentation='message' AND NEW.system_event IS NULL
+    AND NEW.author_id<>'${SYSTEM_IDENTITY_ID}'
+    AND EXISTS(SELECT 1 FROM identities WHERE id=NEW.author_id AND kind='human')) THEN RETURN NULL; END IF;
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM rooms WHERE id=corner AND parent_id IS NOT NULL) THEN RETURN NULL; END IF;
+  PERFORM ${notifyCornerStateSql('corner')};
+  RETURN NULL;
+END $state$;
+DROP TRIGGER IF EXISTS corner_activity_human ON messages;
+CREATE TRIGGER corner_activity_human AFTER INSERT OR UPDATE OF card,text,deleted_at ON messages
+ FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
+DROP TRIGGER IF EXISTS corner_activity_report ON agent_commands;
+CREATE TRIGGER corner_activity_report AFTER INSERT OR UPDATE OF private_payload ON agent_commands
+ FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
+DROP TRIGGER IF EXISTS corner_activity_turn ON agent_turns;
+CREATE TRIGGER corner_activity_turn AFTER INSERT OR UPDATE OF status OR DELETE ON agent_turns
+ FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
+DROP TRIGGER IF EXISTS corner_activity_facts ON corner_facts;
+CREATE TRIGGER corner_activity_facts AFTER INSERT OR UPDATE OF lifecycle ON corner_facts
+ FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
+DROP TRIGGER IF EXISTS corner_activity_report ON corner_report_blockers;
+DROP TRIGGER IF EXISTS corner_activity_hold ON corner_merge_holds;
+CREATE TRIGGER corner_activity_hold AFTER INSERT OR UPDATE OR DELETE ON corner_merge_holds
+ FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
+DROP TRIGGER IF EXISTS corner_activity_owed ON corner_owed;
+CREATE TRIGGER corner_activity_owed AFTER INSERT OR UPDATE OR DELETE ON corner_owed
+ FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
+DROP TRIGGER IF EXISTS corner_activity_schedule ON agent_schedules;
+CREATE TRIGGER corner_activity_schedule AFTER INSERT OR UPDATE OR DELETE ON agent_schedules
+ FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
 `;
 
-type Row = CornerStateRow & {
-  id: string;
-  name: string;
-  parent_id: string;
-  last_state: string | null;
-  episode: string;
-  reported_episode: string;
-  scheduled_wait: boolean;
-  held: boolean;
-  review_queued: boolean;
-};
-function attentionSql() {
-  return `SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,${cornerRunStateSql('c.id')} workflow_state,${cornerRunOutcomeSql('c.id')} workflow_outcome,
-    f.locked,activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
-    blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
-    blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
-    span.last_turn_ended_at,span.ci_started_at,span.last_state,span.episode::text,span.reported_episode::text,
-    EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=c.id AND released_at IS NULL) held,
-    EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=c.id
-      AND command.action='input' AND (command.state='pending' OR
-        (command.state='claimed' AND ${commandOwnerLiveSql('command')}))
-      AND command.review_context->>'headSha'=f.lifecycle->'pr'->>'headSha'
-      AND command.review_context->>'purpose' IS NULL
-      AND command.agent_id IS DISTINCT FROM ${cornerImplementerSql('f', 'c')}) review_queued,
-    ${cornerScheduledWaitSql('c')} scheduled_wait
-    FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
-    JOIN corner_attention_spans span ON span.corner_id=c.id
-    ${cornerWorkSql(true)} ${cornerBlockerSql()}
-    WHERE c.id=$1 AND c.archived_at IS NULL FOR UPDATE OF span`;
-}
-
-/** The span lock claims each transition across server instances. Delivery commits with it. */
+/** Commands are the once-per-episode claim; the recipient queue lock reserves its budget. */
 export async function refreshCornerAttention(
   db: SqlDatabase,
   cornerId: string,
 ): Promise<{ parentId: string; deadlines: number[] } | undefined> {
   return db.transaction(async (tx) => {
-    const row = (await tx.query<Row>(attentionSql(), [cornerId])).rows[0];
+    const row = (await tx.query<CornerIdleRow>(cornerIdleSql('$1'), [cornerId])).rows[0];
     if (!row) return;
-    const checks = row.lifecycle?.checksSummary?.status ?? row.lifecycle?.checks;
-    // Pending CI and standing scheduled waits are not idle-alert episodes.
-    // Ending a wait can open a real episode.
-    const summary = row.lifecycle?.checksSummary;
-    const pendingHead = Boolean(row.lifecycle?.pr) && (checks === 'pending' || row.lifecycle?.checks === 'pending' ||
-      (summary?.status === 'unknown' && summary.total === 0 && summary.fetchStartedAt === undefined));
-    const suppressed = row.scheduled_wait || row.held || row.review_queued || pendingHead || row.worker_active || row.reviewer_active;
-    if (suppressed) {
-      await tx.query('UPDATE corner_attention_spans SET last_state=NULL,checked_at=now() WHERE corner_id=$1', [cornerId]);
-      return { parentId: row.parent_id, deadlines: [] };
-    }
-    // The display reads idle as soon as a turn ends. The alert still waits out
-    // the post-turn gap, so a reply or new order inside it opens no episode.
-    const derived = cornerRowState(row).state;
-    const inGap = derived === 'idle' && row.last_turn_ended_at !== null && row.last_turn_ended_at !== undefined &&
-      Date.now() - new Date(row.last_turn_ended_at).getTime() < 30_000;
-    const state = inGap ? 'working' : derived;
-    const episode = BigInt(row.episode) + (state === 'idle' && row.last_state !== 'idle' ? 1n : 0n);
+    const current = cornerCanReportIdle(row) ? row.idle_since : null;
+    // A queued alert for an episode that has ended is withdrawn before anyone
+    // claims it; a claimed or delivered alert keeps its history.
     await tx.query(
-      `UPDATE corner_attention_spans SET last_state=$2,episode=$3,checked_at=now() WHERE corner_id=$1`,
-      [cornerId, state, episode.toString()],
+      `UPDATE agent_commands SET state='cancelled',completed_at=now(),cancellation_reason='stale_idle_alert'
+       WHERE state='pending' AND reason='report'
+         AND private_payload->>'authorId'=$3
+         AND private_payload->>'idleSince' IS NOT NULL
+         AND COALESCE(private_payload->>'originCornerId',private_payload->>'fromRoomId')=$1::text
+         AND private_payload->>'idleSince' IS DISTINCT FROM $2::text`,
+      [cornerId, current, SYSTEM_IDENTITY_ID],
     );
-    let reportDeadline = 0;
-    if (state === 'idle' && BigInt(row.reported_episode) < episode) {
-      const id = createHash('sha256').update(`corner-idle:${cornerId}:${episode}`).digest('hex');
-      const text = `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`;
-      const report = await reportToCommander(
-        tx,
-        cornerId,
-        SYSTEM_IDENTITY_ID,
-        text,
-        undefined,
-        id,
-        { automatic: true, agentOnly: true, wakeInCorner: true },
-      );
-      if (report.retryAt) reportDeadline = report.retryAt;
-      else await tx.query('UPDATE corner_attention_spans SET reported_episode=$2 WHERE corner_id=$1',
-        [cornerId,episode.toString()]);
-    }
-    const now = Date.now();
-    // Only the existing post-turn gap has an activity deadline.
-    const deadlines = [
-      reportDeadline ? Math.max(reportDeadline, now+1) : 0,
-      row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0,
-    ].filter((due) => due > now);
-    return { parentId: row.parent_id, deadlines };
+    if (!current) return { parentId: row.parent_id, deadlines: [] };
+    const id = createHash('sha256').update(`idle:${cornerId}:${row.idle_since}`).digest('hex');
+    const due = row.last_turn_ended_at ? new Date(row.last_turn_ended_at).getTime() + 30_000 : 0;
+    const report = await reportToCommander(tx, cornerId, SYSTEM_IDENTITY_ID,
+      `blocked: Corner ${row.name} is idle. Resume it, set a hold, or close it.`, undefined, id,
+      { automatic: true, agentOnly: true, wakeInCorner: true, idleSince: row.idle_since, wakeAfter: due });
+    return { parentId: row.parent_id, deadlines: report.retryAt ? [report.retryAt] : [] };
   });
 }
 
@@ -279,9 +143,8 @@ export async function runCornerAttention(db: SqlDatabase): Promise<void> {
   for (const row of rows) await refreshCornerAttention(db, row.id);
 }
 
-/** The existing post-turn gap deadline; check duration never changes state. */
+/** Event adapter only. CommanderWakeDeadlines owns every durable report deadline. */
 export class CornerAttentionDeadlines {
-  private timers = new Map<string, ReturnType<typeof setTimeout>[]>();
   private release: () => void;
   private resync: () => void;
   private stopped = false;
@@ -309,29 +172,13 @@ export class CornerAttentionDeadlines {
   async refresh(id: string): Promise<void> {
     if (this.stopped) return;
     const next = await refreshCornerAttention(this.db, id);
-    for (const timer of this.timers.get(id) ?? []) clearTimeout(timer);
-    this.timers.delete(id);
     if (!next || this.stopped) return;
     this.live.publish({ type: 'invalidate', roomId: next.parentId, reason: 'corner-status' });
-    this.timers.set(
-      id,
-      next.deadlines.map((due) => {
-        const timer = setTimeout(
-          () => {
-            void this.refresh(id).catch(this.report);
-          },
-          Math.max(1, due - Date.now()),
-        );
-        timer.unref?.();
-        return timer;
-      }),
-    );
   }
+
   stop(): void {
     this.stopped = true;
     this.release();
     this.resync();
-    for (const timers of this.timers.values()) for (const timer of timers) clearTimeout(timer);
-    this.timers.clear();
   }
 }

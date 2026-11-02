@@ -1,7 +1,10 @@
 import { requestMachine } from './machine-control.js';
 import { spawn, execFileSync } from 'node:child_process';
+import * as childProcess from 'node:child_process';
+import { FreeAgentIdle } from './free-agent-idle.js';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
+import { promisify } from 'node:util';
 import { access, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
@@ -28,6 +31,16 @@ import {
 import * as sentry from './sentry.js';
 import * as runtime from './runtime.js';
 import { ThinDaemonCore } from './thin-core.js';
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const execFile = vi.fn(actual.execFile);
+  // Node's promisified execFile returns { stdout, stderr }, not just stdout.
+  // Storage safety checks use that contract when /proc needs the sudo fallback.
+  const custom = Symbol.for('nodejs.util.promisify.custom');
+  Object.defineProperty(execFile, custom, Object.getOwnPropertyDescriptor(actual.execFile, custom)!);
+  return { ...actual, execFile };
+});
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -83,6 +96,12 @@ function fakeRuntimes(script: (agentId: string, run: number) => Promise<AgentExi
 }
 
 describe('one helper process hosts every agent on the machine', () => {
+
+  it('preserves the execFile promise contract used by storage process inventory', async () => {
+    const result = await promisify(childProcess.execFile)(process.execPath, ['-e',
+      "process.stdout.write('inventory'); process.stderr.write('diagnostic');"]);
+    expect(result).toMatchObject({ stdout: 'inventory', stderr: 'diagnostic' });
+  });
 
   // Reproduction HELPER-7: ownership blocks agent startup and therefore its update socket.
   it('updates without starting an agent while a previous owner is draining', async () => {
@@ -176,6 +195,32 @@ describe('one helper process hosts every agent on the machine', () => {
       await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toBe('ready\n'));
       await new Promise(done => setTimeout(done, 600));
       expect(exit).not.toHaveBeenCalled();
+    } finally { signals.emit('SIGTERM'); await running; }
+  });
+
+  it.each([true, false])('restores image services on resume only for hosted machines (%s)', async (hosted) => {
+    const { configPaths, env, signals } = await machine(1);
+    const fake = fakeRuntimes();
+    let idle: FreeAgentIdle | undefined;
+    let wall = Date.now();
+    vi.spyOn(Date, 'now').mockImplementation(() => wall);
+    vi.spyOn(FreeAgentIdle.prototype, 'start').mockImplementation(function (this: FreeAgentIdle) {
+      idle = this;
+    });
+    const running = runMachineHelper({ configPaths, env: { ...env, BEELINE_HOSTED_SERVICES: hosted ? '1' : '0' },
+      signals, runAgent: fake.runAgent, exitProcess: () => undefined,
+      freeAgentIdle: { idleMs: 60_000, requestSleep: async () => false } });
+    try {
+      await vi.waitFor(() => expect(fake.runAgent).toHaveBeenCalledTimes(1));
+      const exec = vi.spyOn(childProcess, 'execFile').mockImplementation((...args: unknown[]) => {
+        (args.at(-1) as (error: null) => void)(null);
+        return {} as childProcess.ChildProcess;
+      });
+      wall += 600_000;
+      await idle!.tick();
+      if (hosted) expect(exec).toHaveBeenCalledWith('/bin/sh', ['/opt/beeline/hosted-services.sh'],
+        expect.objectContaining({ timeout: 30_000 }), expect.any(Function));
+      else expect(exec).not.toHaveBeenCalled();
     } finally { signals.emit('SIGTERM'); await running; }
   });
 
@@ -501,7 +546,7 @@ describe('one update drain for every hosted agent', () => {
     const manifest = (version: string, commit: string) => JSON.stringify({ schemaVersion: 1,
       sourceCommit: commit, version, bundles: { [hostPlatformKey()]: { file: 'bundle.tar.gz',
         sha256: createHash('sha256').update(archive).digest('hex') } } });
-    let published = false;
+    let published = false, liveReady = false;
     let manifestReads = 0;
     const closes: { code: number; reason: string }[] = [];
     const server = createServer((request, response) => {
@@ -519,8 +564,12 @@ describe('one update drain for every hosted agent', () => {
       socket.on('message', (data) => {
         const frame = JSON.parse(data.toString());
         if (frame.type === 'register') socket.send(JSON.stringify({ type: 'registered', agentId }));
-        if (frame.type === 'subscribe') socket.send(JSON.stringify({ type: 'subscribed', agentId,
-          roomId: frame.roomId, capabilities: { pushIntake: true, connectionPresence: true } }));
+        if (frame.type === 'subscribe') {
+          socket.send(JSON.stringify({ type: 'subscribed', agentId,
+            roomId: frame.roomId, capabilities: { pushIntake: true, connectionPresence: true } }));
+          socket.send(JSON.stringify({ type: 'commands', agentId, roomId: frame.roomId, commandProtocol: 1, commands: [] }));
+          socket.send(JSON.stringify({ type: 'inbox', agentId, roomId: frame.roomId, items: [] }));
+        }
       });
     });
     await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', resolveListen));
@@ -539,7 +588,7 @@ describe('one update drain for every hosted agent', () => {
           host.notifyReleaseAvailable(`${version}:${sha}`);
           void host.tickUpdate();
         });
-        const unsubscribe = api.liveSubscribe('room');
+        const unsubscribe = api.liveSubscribe('room', undefined, undefined, connected => { liveReady = connected; });
         host.established(agentId);
         try {
           await new Promise<void>((resolveStop) => signal.addEventListener('abort', () => resolveStop(), { once: true }));
@@ -559,6 +608,7 @@ describe('one update drain for every hosted agent', () => {
         }, exitProcess: () => undefined });
       await vi.waitFor(() => expect(manifestReads).toBe(1));
       expect(await activeReleaseId(layout)).toBe('old');
+      await vi.waitFor(() => expect(liveReady).toBe(true));
       if (delivery === 'reconnect') {
         published = true;
         const oldSockets = [...sockets.clients];

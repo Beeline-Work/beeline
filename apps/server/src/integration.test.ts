@@ -663,7 +663,7 @@ describe('monolith integration', () => {
     await database.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
     // These projection fixtures begin after the approved turn gap has elapsed.
     await database.query(
-      `UPDATE corner_attention_spans SET last_turn_ended_at=now()-interval '40 seconds' WHERE corner_id=$1`,
+      `UPDATE agent_turns SET ended_at=now()-interval '40 seconds' WHERE room_id=$1 AND status<>'working'`,
       [cornerId],
     );
   };

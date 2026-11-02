@@ -1,5 +1,6 @@
 import { captureHelperError, flushHelperErrors } from './sentry.js';
 import { createHash, randomUUID } from 'node:crypto';
+import { execFile } from 'node:child_process';
 import { MachineControl, machineControlPath } from './machine-control.js';
 import { withKernelLock } from './kernel-lock.js';
 import { DaemonApiError, isAgentRemovedError } from './daemon-api-client.js';
@@ -746,7 +747,23 @@ async function serveMachineHelper(
         activeTurns: () =>
           [...hosted.values()].reduce((total, agent) => total + agent.core.activeTurnCount(), 0),
         onResume: () => {
-          for (const link of links.values()) link.reconnectNow();
+          const reconnect = () => {
+            for (const link of links.values()) link.reconnectNow();
+          };
+          if (env.BEELINE_HOSTED_SERVICES !== '1') {
+            reconnect();
+            return;
+          }
+          // The image owns the manager and unit. Restore them before taking
+          // resumed connector work; only systemd starts the production broker.
+          execFile('/bin/sh', ['/opt/beeline/hosted-services.sh'], { env, timeout: 30_000 }, (error) => {
+            if (error) {
+              console.error('[helper] hosted services recovery failed:', error.message);
+              restartHelper('failed');
+              return;
+            }
+            reconnect();
+          });
         },
         log: (line) => console.log(`[helper] free agent ${line}`),
       })

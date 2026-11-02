@@ -346,7 +346,10 @@ Use persistent private state `${XDG_STATE_HOME:-$HOME/.local/state}/beeline/late
 by the existing Beeline repository. Fetch `origin/main` and check out its exact
 SHA before every night. Never run the benchmark from an old feature checkout,
 never change a main branch, and never discard unrelated changes. Install root
-and mobile dependencies when the measured head changes. Read the current rig
+and mobile dependencies when the measured head changes. This install is owned by
+the scheduled agent outside the repository: retain dependency install scripts
+(do not pass `--ignore-scripts`). Skia needs its postinstall to fetch native
+prebuilt libraries before the fixture build. Read the current rig
 scripts before running them. Use the repository's `build-local.sh` signing;
 production signing is unnecessary.
 

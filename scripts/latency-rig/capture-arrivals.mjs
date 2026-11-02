@@ -10,7 +10,7 @@ import { createDeviceClockReader } from './device-clock-reader.mjs';
 import { isKeyboardShown, pointFor, requireRoomList, waitForReactionChip } from './capture-ui.mjs';
 import { dumpUi } from './dump-ui.mjs';
 import { openSync, closeSync } from 'node:fs';
-import { once } from 'node:events';
+import { captureTeardown } from './capture-child.mjs';
 import { extractArrivalMoments, nativeArrivalMoment, findNativeArrival, validateArrivalCases } from './room-arrivals.mjs';
 const databaseUrl = process.env.LATENCY_RIG_DATABASE_URL;
 const target = new URL(databaseUrl);
@@ -43,6 +43,7 @@ recordLoad();
 const loadTimer = setInterval(recordLoad, 10_000);
 loadTimer.unref();
 let capture;
+let stopCapture;
 let captureFd;
 let clockReader;
 try {
@@ -102,6 +103,7 @@ try {
   adb('logcat', '-c');
   captureFd = openSync(`${output}/logcat.txt`, 'w', 0o600);
   capture = spawn('adb', ['-s', device, 'logcat', '-v', 'epoch'], { stdio: ['ignore', captureFd, 'ignore'] });
+  stopCapture = captureTeardown(capture);
   await pause(100);
   const entry = process.env.LATENCY_RIG_ENTRY;
   if (entry && !['room-list', 'push', 'timed-taps', ...taps].includes(entry)) throw new Error('LATENCY_RIG_ENTRY must be room-list, push, or a timed tap action');
@@ -257,8 +259,7 @@ try {
       console.log(`${scenario.name} ${sample + 1}/${count}`);
     }
   }
-  capture.kill('SIGTERM');
-  await once(capture, 'close');
+  await stopCapture();
   capture = undefined;
   closeSync(captureFd);
   captureFd = undefined;
@@ -269,7 +270,7 @@ try {
   clearInterval(loadTimer);
   recordLoad();
   await writeFile(`${output}/host-load.json`, JSON.stringify(hostLoad, null, 2));
-  if (capture) { capture.kill('SIGTERM'); await once(capture, 'close'); }
+  if (capture) await stopCapture();
   if (captureFd !== undefined) closeSync(captureFd);
   await db.end();
 }

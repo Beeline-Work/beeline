@@ -69,7 +69,11 @@ class LiveServer {
           // Every agent that registers is taken, as the real server takes a valid token.
           if (frame.type === 'register')
             client.send(JSON.stringify({ type: 'registered', agentId: frame.agentId }));
-          if(frame.type==='subscribe')client.send(JSON.stringify({type:'subscribed',agentId:frame.agentId,roomId:frame.roomId,capabilities:{pushIntake:true}}));
+          if(frame.type==='subscribe'){
+            client.send(JSON.stringify({type:'subscribed',agentId:frame.agentId,roomId:frame.roomId,capabilities:{pushIntake:true}}));
+            client.send(JSON.stringify({type:'commands',agentId:frame.agentId,roomId:frame.roomId,commandProtocol:1,commands:[]}));
+            client.send(JSON.stringify({type:'inbox',agentId:frame.agentId,roomId:frame.roomId,items:[]}));
+          }
         });
       });
     });
@@ -305,7 +309,8 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
     client.setRoomsChangedListener(rooms);
     client.setConnectorAssignmentListener(connectors);
     client.onLiveOpen(updateCheck);
-    client.liveSubscribe('room-1', `1000,${'a'.repeat(64)}`);
+    let ready=false;
+    client.liveSubscribe('room-1', `1000,${'a'.repeat(64)}`,undefined,connected=>{ready=connected;});
     for (let open = 1; open <= 2; open++) {
       await vi.waitFor(() =>
         expect(server.frames.filter((frame) => frame.type === 'subscribe')).toHaveLength(open),
@@ -314,6 +319,8 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
       expect(rooms).toHaveBeenLastCalledWith();
       expect(connectors).toHaveBeenCalledTimes(open);
       expect(updateCheck).toHaveBeenCalledTimes(open);
+      await vi.waitFor(()=>expect(ready).toBe(true));
+      ready=false;
       server.openClients()[0]?.terminate();
     }
     expect(server.frames.filter((frame) => frame.type === 'subscribe').at(-1)).toMatchObject({

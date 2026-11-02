@@ -218,13 +218,15 @@ describe('command intake mechanics', () => {
         socket.send(JSON.stringify({ type: 'subscribed', roomId: 'room', agentId: 'agent',
           capabilities: { pushIntake: true, connectionPresence: true } }));
         push();
+        socket.send(JSON.stringify({type:'inbox',roomId:'room',agentId:'agent',items:[]}));
       }
     }));
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address() as { port: number };
     const origin = `http://127.0.0.1:${address.port}`;
     const api = new DaemonApiClient(origin, 'test-token', 'agent');
-    const offWatch = api.liveSubscribe('room');
+    let ready=false;
+    const offWatch = api.liveSubscribe('room',undefined,undefined,connected=>{ready=connected;});
     const onLeave = vi.fn(() => {
       if (firstLeave) { firstLeave = false; throw new Error('onLeave failure'); }
     });
@@ -249,7 +251,10 @@ describe('command intake mechanics', () => {
         await ctx.bind(api).execute('postRoomMessage', { roomId: 'room', text: `Answer: ${row.source.body}` });
       } });
     try {
-      await vi.waitFor(() => expect(api.metrics().subscriptionsSent).toBeGreaterThanOrEqual(2));
+      // Both consumers share one Room subscription; readiness requires the
+      // committed commands and inbox snapshots, not a duplicate subscribe.
+      await vi.waitFor(() => expect(ready).toBe(true));
+      expect(api.metrics().subscriptionsSent).toBe(1);
       offWatch();
       for (const id of ['first', 'next']) {
         await fetch(`${origin}/messages`, { method: 'POST', body: JSON.stringify({ id, body: id }) });

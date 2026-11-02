@@ -25,8 +25,8 @@ describe.skipIf(!url)('actual System DM deadline owner transfer',()=>{
       await oldDb.query(OPERATOR_SYSTEM_DM_SCHEMA);
       await oldDb.query('CREATE TABLE proof_dm_effects(id text PRIMARY KEY,workspace_id uuid,recipient_id text,text text)');
       const sendId=randomUUID(),workspace=randomUUID();
-      await oldDb.query(`INSERT INTO operator_system_dm_sends(id,caller_id,owner_id,source_message_id,recipients,text_hash,text)
-        VALUES($1,'synthetic-agent','synthetic-owner','synthetic-command','["synthetic-person"]','synthetic-hash','Synthetic transfer notice')`,[sendId]);
+      await oldDb.query(`INSERT INTO operator_system_dm_sends(id,caller_id,owner_id,source_message_id,recipients,text)
+        VALUES($1,'synthetic-agent','synthetic-owner','synthetic-command','["synthetic-person"]','Synthetic transfer notice')`,[sendId]);
       await oldDb.query(`INSERT INTO operator_system_dm_deliveries(send_id,recipient_id,workspace_id) VALUES($1,'synthetic-person',$2)`,[sendId,workspace]);
       const oldWorker:SqlDatabase={query:(sql,values)=>oldDb.query(sql,values),transaction:work=>oldDb.transaction(tx=>work({
         transaction:nested=>tx.transaction(nested),query:async(sql,values)=>{

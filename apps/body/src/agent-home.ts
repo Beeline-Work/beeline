@@ -862,6 +862,17 @@ async function provisionAgentSkillsAndMcp(
   if (agentKind === 'codex' && process.platform !== 'win32')
     await writeIsolatedHarnessFile(resolve(root, 'codex', 'beeline-shell-output.cjs'), NATIVE_SHELL_OUTPUT_SCRIPT);
 
+  if (agentKind === 'cursor' && process.platform !== 'win32') {
+    const shellHook = resolve(root, 'cursor', 'beeline-shell-output.cjs');
+    await writeIsolatedHarnessFile(shellHook, NATIVE_SHELL_OUTPUT_SCRIPT);
+    const config = resolve(root, 'user', '.cursor');
+    await mkdir(config, { recursive: true, mode: 0o700 });
+    await assertRealContainedDirectory(config, root);
+    await writeIsolatedHarnessFile(resolve(config, 'hooks.json'), JSON.stringify({
+      version: 1, hooks: { preToolUse: [{ matcher: '^Shell$', command: nativeShellHookCommand(shellHook, 'cursor') }] },
+    }));
+  }
+
   await applyGrantedHostRoutes(
     root,
     operatorHome,

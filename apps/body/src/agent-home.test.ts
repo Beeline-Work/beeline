@@ -62,6 +62,17 @@ afterEach(async () => {
 });
 
 describe('per-room harness state isolation', () => {
+  it('installs the Cursor shell hook in its isolated user config', async () => {
+    const root = await scratch('cursor-shell-home-');
+    const operatorHome = await scratch('cursor-shell-operator-');
+    const env = await prepareRoomAgentHome({ root, operatorHome, agentKind: 'cursor', failClosed: true });
+    const config = JSON.parse(await readFile(resolve(env.HOME!, '.cursor', 'hooks.json'), 'utf8'));
+    expect(config.version).toBe(1);
+    expect(config.hooks.preToolUse[0].matcher).toBe('^Shell$');
+    expect(config.hooks.preToolUse[0].command).toContain('beeline-shell-output.cjs');
+    expect(config.hooks.preToolUse[0].command).toContain('cursor');
+  });
+
   it('pins the selected OpenRouter model to its live-derived provider set, per model', async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');

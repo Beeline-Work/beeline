@@ -425,21 +425,23 @@ describe('Beeline display branding', () => {
     );
   });
 
-  it('keeps review-only store submission profiles explicit for both tracks', () => {
+  it('defaults store submission to completed production, with beta only as an explicit profile', () => {
     const submissionProfiles = JSON.parse(easConfig).submit as Record<string, unknown>;
+    expect(Object.keys(submissionProfiles)).toEqual(['production', 'beta']);
     expect(submissionProfiles.production).toMatchObject({
       android: {
         serviceAccountKeyPath: '$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON',
-        track: 'internal',
-        releaseStatus: 'draft',
+        track: 'production',
+        releaseStatus: 'completed',
+        changesNotSentForReview: false,
       },
     });
     expect(submissionProfiles.beta).toMatchObject({
       extends: 'production',
       android: {
-        serviceAccountKeyPath: '$GOOGLE_PLAY_SERVICE_ACCOUNT_JSON',
         track: 'beta',
-        releaseStatus: 'draft',
+        releaseStatus: 'completed',
+        changesNotSentForReview: false,
       },
     });
   });

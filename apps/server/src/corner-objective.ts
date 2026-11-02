@@ -37,20 +37,3 @@ export async function writeCornerObjective(
     [cornerId, objective],
   );
 }
-
-/** Copy legacy navigation text once, without changing any authority or timestamps. */
-export async function backfillCornerObjectives(database: SqlDatabase): Promise<void> {
-  await database.query(`UPDATE corner_brief_revisions brief SET objective=fact.objective
-    FROM corner_facts fact WHERE brief.corner_id=fact.corner_id AND brief.objective IS NULL
-      AND fact.objective IS NOT NULL
-      AND brief.revision=(SELECT max(latest.revision) FROM corner_brief_revisions latest
-        WHERE latest.corner_id=fact.corner_id)`);
-  await database.query(`UPDATE agent_commands opening
-    SET private_payload=jsonb_set(COALESCE(opening.private_payload,'{}'::jsonb),'{objective}',to_jsonb(fact.objective))
-    FROM corner_facts fact WHERE opening.room_id=fact.corner_id AND opening.reason='corner_objective'
-      AND opening.private_payload->>'objective' IS NULL
-      AND fact.objective IS NOT NULL
-      AND opening.id=(SELECT first.id FROM agent_commands first
-        WHERE first.room_id=fact.corner_id AND first.reason='corner_objective' ORDER BY first.created_at,first.id LIMIT 1)
-      AND NOT EXISTS(SELECT 1 FROM corner_brief_revisions brief WHERE brief.corner_id=fact.corner_id)`);
-}

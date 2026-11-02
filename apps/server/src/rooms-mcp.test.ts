@@ -1,4 +1,5 @@
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
+import { cornerOwnerSql } from './corner-worker.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer } from 'node:http';
 import { Webhook } from 'standardwebhooks';
@@ -9,7 +10,7 @@ import type { AddressInfo } from 'node:net';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { migrate } from './database.js';
-import { PgliteDatabase, assignCornerWorker } from './test-support.js';
+import { PgliteDatabase, assignCornerWorker, insertCornerFacts } from './test-support.js';
 import { TokenAuth, tokenHash } from './auth.js';
 import { recordSigninAttempt } from './signin-attempts.js';
 import { PhoneService } from './phone-service.js';
@@ -50,7 +51,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$3,'Demo','public'),($2,$3,'Private','invite-only')`, [ROOM, PRIVATE, WORKSPACE]);
     await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Private corner',$3)`, [CORNER, WORKSPACE, PRIVATE]);
     await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Demo corner',$3)`, [PUBLIC_CORNER, WORKSPACE, ROOM]);
-    await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [PUBLIC_CORNER, AGENT]);
+    await insertCornerFacts(db, { cornerId: PUBLIC_CORNER, ownerAgentId: AGENT });
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
       ($1,NULL,$4,'owner'),($1,NULL,$5,'member'),($1,NULL,$6,'member'),($1,$2,$4,'owner'),($1,$2,$6,'member'),($1,$3,$5,'member')`, [WORKSPACE, ROOM, PRIVATE, USER, OTHER, AGENT]);
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'private nebula')`, ['d'.repeat(64), PRIVATE, OTHER]);
@@ -2255,7 +2256,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     async function reportCorner(member: string) {
       const corner = randomUUID();
       await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id,created_by) VALUES($1,$2,'Report proof',$3,$4)`, [corner, WORKSPACE, ROOM, AGENT]);
-      await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [corner, AGENT]);
+      await insertCornerFacts(db, { cornerId: corner, ownerAgentId: AGENT });
       await assignCornerWorker(db, corner, member);
       await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,approval_basis,author_id,source_room_id)
         VALUES($1,1,'Report proof','{"repositoryWork":false}',$2,$3)`, [corner, AGENT, ROOM]);
@@ -2263,7 +2264,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     }
     async function cornerWorking(corner: string) {
       return (await db.query<{ worker_active: boolean }>(`SELECT activity.worker_active FROM rooms c
-        JOIN corner_facts f ON f.corner_id=c.id ${cornerWorkSql()} WHERE c.id=$1`, [corner])).rows[0]!.worker_active;
+        JOIN corner_facts f ON f.corner_id=c.id
+        LEFT JOIN corner_github_cache gh ON gh.corner_id=c.id ${cornerWorkSql()} WHERE c.id=$1`, [corner])).rows[0]!.worker_active;
     }
     // Reproduction (R-MCP-PROGRESS): an outside agent could only post whole messages, so a corner showed none of
     // its work while it ran; created agents' narration lands as corner activity.
@@ -2344,7 +2346,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         implementer: 'demo-agent', brief: { spec: '## Intent\nCheck the nebula numbers.', repositoryWork: false } });
       expect(opened.status).toBe('starting');
       const corner = opened.address as string;
-      expect((await db.query<{ owner_agent_id: string }>('SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1', [corner])).rows[0]?.owner_agent_id).toBeDefined();
+      expect((await db.query<{ owner_agent_id: string }>(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`, [corner])).rows[0]?.owner_agent_id).toBeDefined();
       const posted = await ok(client, 'post', { address: corner, text: 'Numbers attached below.' });
       expect(posted.stored).toBe(true);
       await ok(client, 'react_to_message', { address: corner, messageId: posted.id, emoji: '👀' });

@@ -8,7 +8,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { materializeCornerWorktree } from '../apps/body/dist/room-runtime.js';
-import { PgliteDatabase } from '../apps/server/src/test-support.ts';
+import { PgliteDatabase, insertCornerFacts } from '../apps/server/src/test-support.ts';
 import { migrate } from '../apps/server/dist/database.js';
 import { DaemonService } from '../apps/server/dist/daemon-service.js';
 import { LiveHub } from '../apps/server/dist/live.js';
@@ -56,7 +56,7 @@ try {
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Fixture')`, [workspace]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name,created_by) VALUES($1,$2,'Parent',$3),($4,$2,'Corner',$5)`, [parent, workspace, owner, corner, commander]);
   await db.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [parent, corner]);
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective) VALUES($1,$2,$2,'Prove startup failure')`, [corner, worker]);
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: worker, workerAgentId: worker });
   for (const identity of [owner, commander, worker]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,$3,$2,'member')`, [workspace, identity, parent]);
   const command = await createAgentCommand(db, { roomId: corner, agentId: worker, sourceMessageId: null, reason: 'order', privatePayload: { kind: 'order', text: 'Prove startup', authorId: commander, fromRoomId: parent } });
   const token = 'bdt_startup_fixture_123456789';

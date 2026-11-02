@@ -40,6 +40,7 @@ interface AgentBehavior {
   cliModelCatalog?: boolean;
   providerModelEnv?: { provider: string; model: string };
   roomTomlDefaults?: boolean;
+  nativeShellHook?: { config: 'launch-config' | 'hooks-file'; output: 'updated-input' | 'hook-specific' };
   quotaCredential?: { homeEnv: string; directory: string; file: string };
   importedMcp?: { format: 'toml' | 'json' | 'extensions'; source: string; homeEnv: string; file: string };
   session?: SessionAgentBehavior;
@@ -109,7 +110,7 @@ export const AGENT_BEHAVIORS: Readonly<Record<AgentKind, AgentBehavior>> = {
     label: 'Grok', cliSignIn: 'grok', modelLaunch: 'native-args',
     importedMcp: { format: 'toml', source: '.grok/config.toml', homeEnv: 'GROK_HOME', file: 'config.toml' },
   },
-  cursor: { label: 'Cursor', cliSignIn: 'cursor', resolveCommandOnStart: true, identityLabel: CURSOR_ACP_BRIDGE_LABEL, cliModelCatalog: true },
+  cursor: { nativeShellHook: { config: 'hooks-file', output: 'updated-input' }, label: 'Cursor', cliSignIn: 'cursor', resolveCommandOnStart: true, identityLabel: CURSOR_ACP_BRIDGE_LABEL, cliModelCatalog: true },
   opencode: { label: 'OpenCode', providerKeyStore: 'auth-file', modelCatalogOwnsCredentials: true, hostedModelConfig: 'inline-provider',
     session: { processNames: ['opencode'], clientNames: ['opencode'], mailEvents: ['poll'], pollText: true } },
   reference: {},

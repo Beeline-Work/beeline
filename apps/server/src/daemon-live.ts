@@ -628,7 +628,7 @@ export class DaemonAgentSession {
             transport.send({ type: 'rooms-changed', roomId, repositoryChanged: true });
           return;
         }
-        if (event.closeRequested && ['postgres:rooms', 'postgres:corner_facts'].includes(event.reason ?? '')) {
+        if (event.closeRequested && ['postgres:rooms', 'postgres:corner_facts', 'postgres:corner_github_cache'].includes(event.reason ?? '')) {
           if (transport.isOpen()) transport.send({ type: 'corner-complete', roomId });
           return;
         }

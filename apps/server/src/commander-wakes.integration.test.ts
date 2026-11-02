@@ -101,7 +101,6 @@ it.each([
   const report = (await commands(opened.cornerId, WORKER)).find(command => command.reason === 'report')!;
   expect(report).toBeDefined();
   // A delegate is not the corner implementer, so its blocker has no attention-index row.
-  expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE report_id=$1', [report.id])).rowCount).toBe(0);
   await daemon.execute('order', { ...authority(turn), address: opened.cornerId, agent: 'ruby', text: 'Use the recovered input' }, WORKER);
   if (path === 'cached claim') await expect(claim(report)).rejects.toThrow('command claim conflict');
   expect((await commands(opened.cornerId, WORKER)).some(command => command.id === report.id)).toBe(status === 'done');
@@ -226,7 +225,7 @@ it('Reproduction report-schema: stores and delivers a complete multi-paragraph r
 });
 it.each([false, true])('Reproduction report-step: delivers a finished PR step while merging is blocked (held: %s)', async hold => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
   held = hold;
   expect((await checks()).mergeAllowed).toBe(false);
   checks.mockClear();
@@ -237,7 +236,7 @@ it.each([false, true])('Reproduction report-step: delivers a finished PR step wh
 });
 it('R-GH-RETRY-REPORT: a GitHub outage cannot refuse or delay a finished-step report', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
   const fetchMock = vi.fn().mockImplementation(async () => new Response('upstream unavailable', { status: 502 }));
   vi.stubGlobal('fetch', fetchMock);
   checks.mockClear();
@@ -253,7 +252,7 @@ it('accepts done with live merge-ready checks, and batches its commander wake', 
   const opened = await open(), turn = await worker(opened.cornerId);
   await batch();
   ready = true;
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
   await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: ready to merge' }, WORKER);
   expect(checks).not.toHaveBeenCalled();
   expect((await commands(DM, RUBY)).some(c => c.reason === 'report')).toBe(false);
@@ -262,7 +261,7 @@ it('accepts done with live merge-ready checks, and batches its commander wake', 
 });
 it('accepts done for a committed merged PR without requiring another GitHub read', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'mergeCommitSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '8'.repeat(40)]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'mergeCommitSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '8'.repeat(40)]);
   await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: PR merged' }, WORKER);
   expect(checks).not.toHaveBeenCalled();
   await expireWindow();

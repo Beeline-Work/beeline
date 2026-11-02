@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { PgliteDatabase, seedCornerOpening } from './test-support.js';
+import { PgliteDatabase, seedCornerOpening, insertCornerFacts } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -759,10 +759,7 @@ beforeAll(async () => {
     W,
   ]);
   await db.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [R, C]);
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Do work','{"checks":"unknown"}')`,
-    [C, B],
-  );
+  await insertCornerFacts(db, { cornerId: C, ownerAgentId: B, lifecycle: '{"checks":"unknown"}' });
   for (const who of [H, A, B, P])
     for (const room of [null, R])
       await db.query(
@@ -805,7 +802,7 @@ beforeEach(async () => {
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
   await db.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`, [C]);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"unknown"}'::jsonb`,
   );
 });
 
@@ -1307,7 +1304,7 @@ it('wakes the opener for failed checks even after a reviewer turn and retries a 
   await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
   const headSha = 'e'.repeat(40);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -1346,7 +1343,7 @@ it('wakes the opener for failed checks even after a reviewer turn and retries a 
 
 it('recovers a dirty PR lifecycle once per head and retries an undelivered conflict', async () => {
   const headSha = 'f'.repeat(40);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
     C,
     JSON.stringify({
       checks: 'passing',
@@ -1368,7 +1365,7 @@ it('recovers a dirty PR lifecycle once per head and retries an undelivered confl
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
   expect(await commands(B, C)).toHaveLength(1);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,baseSha}',to_jsonb($2::text))
+    `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,baseSha}',to_jsonb($2::text))
      WHERE corner_id=$1`,
     [C, 'a'.repeat(40)],
   );
@@ -1391,13 +1388,13 @@ it('Reproduction STALE-1: drops a merge-conflict wake whose head moved before th
         mergeability: 'dirty',
       },
     });
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C, dirty(headA)]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C, dirty(headA)]);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
   const [staleWake] = await commands(B, C);
   expect(staleWake?.reason).toBe('corner_merge_conflict');
   expect(staleWake?.source.body).toContain(headA);
   // The PR head moves before the implementer claims the queued wake.
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C, dirty(headB)]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C, dirty(headB)]);
   const delivered = (await commands(B, C)).filter((command) => command.reason === 'corner_merge_conflict');
   const staleState = (
     await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [staleWake!.id])
@@ -1420,7 +1417,7 @@ it('Reproduction STALE-1: drops a merge-conflict wake whose head moved before th
 
 it.each(['delivery', 'claim'])('Reproduction CHECK-HEAD-1: cancels a failed-check wake for the previous head at %s', async boundary => {
   const oldHead = '1'.repeat(40), newHead = '2'.repeat(40);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
     JSON.stringify({ checks: 'failing', pr: { number: 41, headSha: oldHead } })]);
   const line = await systemLine(db, { roomId: C, authorId: H,
     subject: { kind: 'github', name: 'GitHub' }, verb: 'found failing checks on',
@@ -1429,7 +1426,7 @@ it.each(['delivery', 'claim'])('Reproduction CHECK-HEAD-1: cancels a failed-chec
   expect(queued).toBeTruthy();
   const [stale] = await commands(B, C);
   expect(stale?.reason).toBe('corner_check');
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
     JSON.stringify({ checks: 'passing', pr: { number: 41, headSha: newHead } })]);
   if (boundary === 'delivery') expect(await commands(B, C)).toHaveLength(0);
   await expect(claim(stale!)).rejects.toThrow();
@@ -1441,7 +1438,7 @@ it.each(['delivery', 'claim'])('Reproduction CHECK-HEAD-1: cancels a failed-chec
 it('keeps a failed-check wake retryable while its opener is unreachable', async () => {
   const headSha = '9'.repeat(40);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -1500,7 +1497,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
   expect(resume?.action).toBe('resume');
   expect(resume?.turnRequestId).toBe(c!.turnRequestId);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
     [C],
   );
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
@@ -1527,7 +1524,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
     A,
   ]);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"failing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"failing"}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -1542,7 +1539,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
   await db.query(`DELETE FROM agent_commands`);
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -1572,7 +1569,7 @@ it('holds the green review wake while the corner worker still holds a live turn'
   await claim(workerCommand!, 'gw');
 
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -1601,7 +1598,7 @@ it('holds the green review wake while the corner worker still holds a live turn'
   // This suite shares one store, so leave none of the above behind.
   await db.query(`DELETE FROM agent_commands`);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
     [C],
   );
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
@@ -1613,7 +1610,7 @@ it('wakes the implementer without consuming a green transition when the configur
     A,
   ]);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"passing"}' WHERE corner_id=$1`,
     [C],
   );
   await systemLine(db, {
@@ -1635,7 +1632,7 @@ it('wakes the implementer without consuming a green transition when the configur
 it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green head', async () => {
   const headSha = '7'.repeat(40);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -1686,7 +1683,7 @@ it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green he
 it('recovers a green head whose earlier GitHub note never dispatched its reviewer', async () => {
   const headSha = '8'.repeat(40);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -1764,7 +1761,7 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
   );
   await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -1796,7 +1793,7 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
   await claim(fix!);
   await result(fix!, 'Pushed the fix');
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -2732,7 +2729,7 @@ it('stuck-turn-1: a completion receipt closes a working turn even when its comma
 it('Reproduction stuck-turn-1: superseded review output completes its command and closes its turn together', async () => {
   const corner = '44444444-4444-4444-8444-444444444444';
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'stuck-turn-proof')`, [corner,W,R]);
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES($1,$2,'{"lifecycle":"working"}')`, [corner,A]);
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: A, lifecycle: '{"lifecycle":"working"}' });
   await send('@hoots review this head', corner);
   const [command] = await commands(A, corner);
   await claim(command!);

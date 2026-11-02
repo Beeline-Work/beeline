@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts, recordCornerRun } from './test-support.js';
 import { PhoneService } from './phone-service.js';
-import { CORNER_ROW_FACT_COLUMNS, CORNER_ROW_MESSAGE_COLUMNS } from './corner-row-projection.js';
+import { CORNER_ROW_CACHE_COLUMNS, CORNER_ROW_FACT_COLUMNS, CORNER_ROW_MESSAGE_COLUMNS } from './corner-row-projection.js';
 
 const VIEWER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
@@ -39,15 +39,15 @@ async function fixture() {
        VALUES($1,$2,$3,$4,$5,'2026-01-01T00:00:00Z'::timestamptz + make_interval(mins => $6))`,
       [id, WORKSPACE, ROOM, AGENT, name, index],
     );
-    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [id, AGENT]);
-    await seedCornerOpening(database, { cornerId: id, agentId: AGENT, commissionedBy: mine ? VIEWER : null });
+    await insertCornerFacts(database, { cornerId: id, ownerAgentId: AGENT, commissionedBy: mine ? VIEWER : null });
   }
   await database.query(
-    `UPDATE corner_facts SET workflow_state='implement',workflow_outcome=NULL,
+    `UPDATE corner_facts SET
        lifecycle='{"lifecycle":"open","checks":"failing","pr":{"url":"https://github.com/o/r/pull/1","number":1}}'
      WHERE corner_id=$1`,
     [FAILING],
   );
+  await recordCornerRun(database, FAILING, 'implement');
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
      SELECT $1::uuid,NULL::uuid,$2::text,'owner' UNION ALL
@@ -73,7 +73,7 @@ describe('one corner projection for the Room list read, the live frame and the C
     await database.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [FAILING]);
     await seedCornerOpening(database, { cornerId: FAILING, agentId: AGENT, commissionedBy: VIEWER });
     await database.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',jsonb_build_object('status','failing','updatedAt',extract(epoch FROM now()-interval '31 minutes'),'checks','[]'::jsonb)) WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',jsonb_build_object('status','failing','updatedAt',extract(epoch FROM now()-interval '31 minutes'),'checks','[]'::jsonb)) WHERE corner_id=$1`,
       [FAILING],
     );
     const read = await roomListRow(phone);
@@ -179,6 +179,8 @@ describe('corner row live trigger inputs', () => {
       new Set([...sql.matchAll(new RegExp(`\\b${alias}\\.(\\w+)`, 'g'))].map((match) => match[1]!));
     expect([...read('f')].filter((column) =>
       column !== 'corner_id' && !(CORNER_ROW_FACT_COLUMNS as readonly string[]).includes(column))).toEqual([]);
+    expect([...read('gh')].filter((column) =>
+      column !== 'corner_id' && !(CORNER_ROW_CACHE_COLUMNS as readonly string[]).includes(column))).toEqual([]);
     expect([...read('lm')].filter((column) =>
       !(CORNER_ROW_MESSAGE_COLUMNS as readonly string[]).includes(column))).toEqual([]);
     expect([...read('message')].filter((column) =>

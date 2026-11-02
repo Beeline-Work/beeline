@@ -1,3 +1,4 @@
+import { cornerOwnerSql } from './corner-worker.js';
 import { cornerCommissionerSql, cornerKindSql, cornerOpenedFromSql, cornerRequestSql } from './corner-opening.js';
 import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
@@ -8,7 +9,7 @@ import { claimAgentCommand } from './agent-command.js';
 import { setCornerHold } from './corner-holds.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { cornerRunStateSql } from './corner-run.js';
-import { seedCornerOpening, MemoryObjectStorage, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, MemoryObjectStorage, PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner } from './test-support.js';
 import { ObjectService } from './object-service.js';
 import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
@@ -87,8 +88,7 @@ describe('deleteAccount', () => {
        WHERE workspace_id=$2 AND room_id IS NULL AND identity_id=$3`,
       [OWNER, WORKSPACE, PARTNER],
     );
-    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective,lifecycle) VALUES($1,$2,$3,'ship it','{"lifecycle":"working"}'::jsonb)`, [CORNER, AGENT, AGENT]);
-    await seedCornerOpening(database, { cornerId: CORNER, agentId: AGENT, commissionedBy: OWNER });
+    await insertCornerFacts(database, { cornerId: CORNER, ownerAgentId: AGENT, commissionedBy: OWNER, workerAgentId: AGENT, lifecycle: '{"lifecycle":"working"}' });
     // Authored content: the owner in the shared Room mentioning the partner,
     // the agent in the shared Room mentioning the owner, the owner in the
     // human DM.
@@ -250,13 +250,6 @@ describe('deleteAccount', () => {
          private_payload=private_payload||jsonb_build_object('fromRoomId',$2::text,'openKey','provenance-open')
        WHERE room_id=$1 AND reason='corner_objective'`, [CORNER, origin],
     );
-    // Nullable legacy provenance is empty; deliberately stale kind/title flags
-    // prove the nonnullable retired columns no longer influence reads either.
-    await database.query(`UPDATE corner_facts SET kind='human',title_generated=true WHERE corner_id=$1`, [CORNER]);
-    expect((await database.query(`SELECT commissioned_by,opened_from_corner_id,request_id,open_idempotency_key
-      FROM corner_facts WHERE corner_id=$1`, [CORNER])).rows[0]).toEqual({
-      commissioned_by: null, opened_from_corner_id: null, request_id: null, open_idempotency_key: null,
-    });
     const provenance = async (id: string) => (await database.query(
       `SELECT ${cornerKindSql('corner.id')} kind,${cornerCommissionerSql('corner.id')} commissioner,
          ${cornerOpenedFromSql('corner.id')} opened_from,${cornerRequestSql('corner.id')} request
@@ -365,35 +358,20 @@ describe('deleteAccount', () => {
     );
     await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1`, [DM_AGENT], 0);
 
-    // The agent's corner archives as done/abandoned and loses its owner.
+    // The agent's corner archives as done/abandoned; its opening order now
+    // names the deleted-account tombstone, so the agent no longer owns it.
     await expectRowCount(
       `SELECT 1 FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
        WHERE r.id=$1 AND r.archived_at IS NOT NULL
-         AND f.owner_agent_id IS NULL
+         AND ${cornerOwnerSql('r.id')}=$2
          AND f.lifecycle->>'lifecycle'='done' AND f.lifecycle->>'outcome'='abandoned'`,
-      [CORNER],
+      [CORNER, DELETED_ACCOUNT_IDENTITY_ID],
       1,
     );
     // It closes through closeCornerState, as a human close does: the corner
     // state machine reaches `closed` with the archival.
     await expectRowCount(
       `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND ${cornerRunStateSql('corner_id')}='closed'`,
-      [CORNER],
-      1,
-    );
-    // R-1983-1: the current-implementer pointer clears with the identity it
-    // named. A surviving `worker_agent_id` would trip its foreign key on the
-    // `DELETE FROM identities` below and fail the whole deletion with a 503.
-    await expectRowCount(
-      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND worker_agent_id IS NULL`,
-      [CORNER],
-      1,
-    );
-    // The commissioner pointer clears the same way: a surviving
-    // `commissioned_by` would trip its own foreign key on the same
-    // `DELETE FROM identities` and fail the whole deletion with a 503.
-    await expectRowCount(
-      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND commissioned_by IS NULL`,
       [CORNER],
       1,
     );
@@ -469,11 +447,10 @@ describe('deleteAccount', () => {
       'computer_sessions.agent_id', 'connector_offers.accepted_by',
       'corner_apps.author_agent_id', 'corner_app_bindings.bound_by',
       'corner_app_installations.installed_by', 'corner_app_installations.developer_agent_id',
-      'corner_brief_revisions.author_id', 'corner_facts.commissioned_by',
-      'corner_facts.owner_agent_id', 'corner_facts.reviewer_agent_id',
-      'corner_facts.worker_agent_id', 'corner_merge_approvals.approved_by',
+      'corner_brief_revisions.author_id', 'corner_facts.reviewer_agent_id',
+      'corner_merge_approvals.approved_by',
       'corner_merge_holds.actor_id', 'corner_merge_holds.released_by',
-      'corner_merge_holds.set_by_agent_id', 'corner_validation_stages.actor_id',
+      'corner_merge_holds.set_by_agent_id',
       'free_agents.owner_id', 'github_installations.owner_id',
       'identity_successions.new_identity_id', 'identity_successions.old_identity_id',
       'invites.created_by', 'live_outputs.agent_id', 'messages.author_id',
@@ -577,15 +554,7 @@ describe('deleteAccount', () => {
     const partnerAgent = 'c'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Partner Bee')`, [partnerAgent]);
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [partnerAgent, PARTNER]);
-    await database.query(`UPDATE corner_facts SET owner_agent_id=$2,worker_agent_id=$2 WHERE corner_id=$1`, [
-      CORNER,
-      partnerAgent,
-    ]);
-    // The owner is derived from the opening order, so the partner agent opens it.
-    await database.query(`UPDATE agent_commands SET agent_id=$2 WHERE room_id=$1 AND reason='corner_objective'`, [
-      CORNER,
-      partnerAgent,
-    ]);
+    await setCornerOwner(database, CORNER, partnerAgent);
     // A plain member stays a member after the deletion promotes the partner.
     const member = 'e'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Member','member')`, [member]);

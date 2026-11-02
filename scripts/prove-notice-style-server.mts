@@ -2,7 +2,7 @@ import { createServer } from 'node:http';
 import { readFile, writeFile } from 'node:fs/promises';
 import assert from 'node:assert/strict';
 import { migrate } from '../apps/server/src/database.js';
-import { PgliteDatabase } from '../apps/server/src/test-support.js';
+import { PgliteDatabase, insertCornerFacts } from '../apps/server/src/test-support.js';
 import { PhoneService } from '../apps/server/src/phone-service.js';
 
 const rows = JSON.parse(await readFile('apps/mobile/notice-style-proof/rows.json', 'utf8'));
@@ -20,8 +20,7 @@ for (const row of rows) {
   await db.query(`INSERT INTO identities(id,kind,name,handle,avatar,face_id) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(id) DO NOTHING`,
     [row.author_id,row.author_kind,row.author_name,row.author_handle,row.author_avatar,row.author_face]);
 }
-await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,$3)`,
-  [corner,rows[1].author_id,'On Android, opening a Workspace invite link with Beeline backgrounded must land existing members in the invited Workspace, not the last one']);
+await insertCornerFacts(db, { cornerId: corner, ownerAgentId: rows[1].author_id });
 for (const roomId of [null, parent, corner])
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [workspace,roomId,viewer]);
 await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [workspace,corner,rows[1].author_id]);

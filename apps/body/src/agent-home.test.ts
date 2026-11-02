@@ -62,6 +62,26 @@ afterEach(async () => {
 });
 
 describe('per-room harness state isolation', () => {
+  it('does not provision the blocked Codex shell cap or its trust flags', async () => {
+    const root = await scratch('codex-shell-home-');
+    const operatorHome = await scratch('codex-shell-operator-');
+    const env = await prepareRoomAgentHome({ root, operatorHome, agentKind: 'codex', failClosed: true });
+    expect(env.CODEX_CONFIG).toBeUndefined();
+    expect(env.BEELINE_CODEX_SHELL_HOOK_COMMAND).toBeUndefined();
+    expect(existsSync(resolve(root, 'codex', 'beeline-shell-output.cjs'))).toBe(false);
+  });
+
+  it('installs the Cursor shell hook in its isolated user config', async () => {
+    const root = await scratch('cursor-shell-home-');
+    const operatorHome = await scratch('cursor-shell-operator-');
+    const env = await prepareRoomAgentHome({ root, operatorHome, agentKind: 'cursor', failClosed: true });
+    const config = JSON.parse(await readFile(resolve(env.HOME!, '.cursor', 'hooks.json'), 'utf8'));
+    expect(config.version).toBe(1);
+    expect(config.hooks.preToolUse[0].matcher).toBe('^Shell$');
+    expect(config.hooks.preToolUse[0].command).toContain('beeline-shell-output.cjs');
+    expect(config.hooks.preToolUse[0].command).toContain('cursor');
+  });
+
   it('pins the selected OpenRouter model to its live-derived provider set, per model', async () => {
     const operatorHome = await scratch('beeline-operator-home-');
     const roomRoot = resolve(await scratch('beeline-room-a-'), 'agent-home');

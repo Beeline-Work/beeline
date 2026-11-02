@@ -68,6 +68,7 @@ import {
 } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
+import { NATIVE_SHELL_OUTPUT_SCRIPT, nativeShellHookCommand, nativeShellHookConfig } from './native-shell-output.js';
 import { DRAW_AVATAR_SKILL_NAME, drawAvatarSkillMarkdown } from './draw-avatar-skill.js';
 import { AGENT_BEHAVIORS, IMPORTED_MCP_KINDS, SHARED_CREDENTIALS, agentBehavior, type AgentKind } from './agent-command.js';
 import { androidAgentEnv } from './android-agent-env.js';
@@ -807,7 +808,11 @@ async function provisionAgentSkillsAndMcp(
   // other Beeline-owned file in the harness home. Filesystem and command tools
   // remain absent and continue through the Room's fail-closed permission path.
   try {
-    const settings = { permissions: { allow: ['WebSearch', 'WebFetch'] } };
+    const shellHook = resolve(root, 'claude', 'beeline-shell-output.cjs');
+    if (process.platform !== 'win32')
+      await writeIsolatedHarnessFile(shellHook, NATIVE_SHELL_OUTPUT_SCRIPT);
+    const settings = { permissions: { allow: ['WebSearch', 'WebFetch'] },
+      ...(process.platform !== 'win32' ? nativeShellHookConfig(nativeShellHookCommand(shellHook, 'claude')) : {}) };
     await writeIsolatedHarnessFile(
       resolve(root, 'claude', 'settings.json'),
       `${JSON.stringify(settings, null, 2)}\n`,
@@ -815,6 +820,17 @@ async function provisionAgentSkillsAndMcp(
   } catch (error) {
     if (failClosed) throw error;
     console.warn('[body] claude web-search settings provisioning failed:', error);
+  }
+
+  if (agentBehavior(agentKind).nativeShellHook?.config === 'hooks-file' && process.platform !== 'win32') {
+    const shellHook = resolve(root, 'cursor', 'beeline-shell-output.cjs');
+    await writeIsolatedHarnessFile(shellHook, NATIVE_SHELL_OUTPUT_SCRIPT);
+    const config = resolve(root, 'user', '.cursor');
+    await mkdir(config, { recursive: true, mode: 0o700 });
+    await assertRealContainedDirectory(config, root);
+    await writeIsolatedHarnessFile(resolve(config, 'hooks.json'), JSON.stringify({
+      version: 1, hooks: { preToolUse: [{ matcher: '^Shell$', command: nativeShellHookCommand(shellHook, 'cursor') }] },
+    }));
   }
 
   await applyGrantedHostRoutes(

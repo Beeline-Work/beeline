@@ -1,6 +1,6 @@
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
-import { PgliteDatabase, migratedDatabase, recordCornerRun } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, recordCornerRun, insertCornerFacts } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
@@ -32,10 +32,8 @@ beforeAll(async () => {
     OTHER,
     WS,
   ]);
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,workflow_state,owner_agent_id) VALUES($1,'implement',$3),($2,'implement',$3)`,
-    [A, B, W],
-  );
+  for (const corner of [A, B])
+    await insertCornerFacts(db, { cornerId: corner, ownerAgentId: W, workflowState: 'implement' });
   await db.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,
     [WS, P, W],
@@ -51,8 +49,9 @@ beforeEach(async () => {
   await db.query(`UPDATE rooms SET archived_at=NULL`);
   await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [B, P]);
   await db.query(
-    `UPDATE corner_facts SET workflow_state='implement',lifecycle='{"lifecycle":"working","checks":"unknown"}'`,
+    `UPDATE corner_github_cache SET lifecycle='{"lifecycle":"working","checks":"unknown"}'`,
   );
+  for (const corner of [A, B]) await recordCornerRun(db, corner, 'implement');
 });
 const watch = (kinds: CornerWatchKind[] = ['merged'], roomId = A, cornerId = B, agentId = W) =>
   daemon.execute('watchCorner', { roomId, cornerId, kinds }, agentId);
@@ -119,7 +118,7 @@ it.each(['non-member', 'self', 'room', 'invalid kind', 'closed kind'])(
 
 it('returns all merged PR snapshot fields from corner facts', async () => {
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       B,
       JSON.stringify({

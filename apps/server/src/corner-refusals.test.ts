@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import type { AddressInfo } from 'node:net';
 import { migrate } from './database.js';
-import { PgliteDatabase, describedWorkflow } from './test-support.js';
+import { PgliteDatabase, describedWorkflow, insertCornerFacts } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { TokenAuth, tokenHash } from './auth.js';
@@ -33,7 +33,7 @@ beforeAll(async () => {
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Parent')`, [parent, workspace]);
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`, [corner, workspace, parent]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [workspace, parent, agent]);
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [corner, agent]);
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: agent });
   await db.query(`INSERT INTO daemon_tokens(token_hash,agent_id) VALUES($1,$2)`, [tokenHash('bdt_refusal_fixture_123456789'), agent]);
   server = createBeelineServer({ database: db, daemon, live, auth: new TokenAuth(db, async () => { throw new Error('unused'); }), phone: new PhoneService(db, 'http://test'), mediaMaximumBytes: 1 });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -68,7 +68,7 @@ it.each([
   ['STALE_HEAD', `pull request head is ${head}; review the current head before approving`],
 ] as const)('Reproduction SENTRY-C: %s returns unchanged code and excludes Sentry', async (code, detail) => {
   await db.query('UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1', [parent, code === 'NOT_CONFIGURED_REVIEWER' ? null : agent]);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify(code === 'NO_PULL_REQUEST' ? {} : { pr: { number: 7, headSha: head } })]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify(code === 'NO_PULL_REQUEST' ? {} : { pr: { number: 7, headSha: head } })]);
   const error = await refusal('approveCornerMerge', `${code}: ${detail}`);
   expect(error).toBeInstanceOf(CornerVerdictRejectedError);
   expect(error.code).toBe(code);
@@ -136,7 +136,7 @@ it('Reproduction SENTRY-R: start workflow with missing starter returns aggregate
 });
 
 it('R1 / SENTRY-B: close_corner still archives when GitHub is not configured', async () => {
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify({ pr: { number: 7, headSha: head } })]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner, JSON.stringify({ pr: { number: 7, headSha: head } })]);
   vi.mocked(captureException).mockClear();
   const response = await fetch(`${origin}/v1/daemon/operations/archiveCorner`, {
     method: 'POST', headers: { authorization: 'Bearer bdt_refusal_fixture_123456789', 'content-type': 'application/json' },

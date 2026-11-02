@@ -8,15 +8,8 @@ import { humanReportCornerSql } from './corner-waiting-report.js';
 import { reportToCommander } from './commander.js';
 
 export const CORNER_ATTENTION_SCHEMA = `
--- Retired schema only: no rows are inserted, read or maintained.
-CREATE TABLE IF NOT EXISTS corner_attention_spans (
-  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
-  revision bigint NOT NULL DEFAULT 0, last_state text, episode bigint NOT NULL DEFAULT 0,
-  reported_episode bigint NOT NULL DEFAULT 0, checked_at timestamptz,
-  last_turn_ended_at timestamptz, ci_started_at timestamptz, ci_head text
-);
 ALTER TABLE needs_you_marks ADD COLUMN IF NOT EXISTS reminder_dismissed_at timestamptz;
--- Leave the retired tables intact for the separately approved removal.
+-- The retired attention triggers; their tables are dropped by the server schema.
 DROP TRIGGER IF EXISTS corner_attention_command ON agent_commands;
 DROP TRIGGER IF EXISTS corner_attention_turn ON agent_turns;
 DROP TRIGGER IF EXISTS corner_attention_reminder_clear ON needs_you_marks;
@@ -25,7 +18,6 @@ DROP TRIGGER IF EXISTS corner_attention_open ON corner_facts;
 DROP TRIGGER IF EXISTS corner_attention_human ON messages;
 DROP TRIGGER IF EXISTS corner_state_turn ON agent_turns;
 DROP TRIGGER IF EXISTS corner_state_facts ON corner_facts;
-DROP TRIGGER IF EXISTS corner_state_report ON corner_report_blockers;
 DROP TRIGGER IF EXISTS corner_state_report ON agent_commands;
 DROP TRIGGER IF EXISTS corner_state_report ON messages;
 DROP TRIGGER IF EXISTS corner_state_hold ON corner_merge_holds;
@@ -89,9 +81,9 @@ DROP TRIGGER IF EXISTS corner_activity_turn ON agent_turns;
 CREATE TRIGGER corner_activity_turn AFTER INSERT OR UPDATE OF status OR DELETE ON agent_turns
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
 DROP TRIGGER IF EXISTS corner_activity_facts ON corner_facts;
-CREATE TRIGGER corner_activity_facts AFTER INSERT OR UPDATE OF lifecycle ON corner_facts
+DROP TRIGGER IF EXISTS corner_activity_github ON corner_github_cache;
+CREATE TRIGGER corner_activity_github AFTER INSERT OR UPDATE OF lifecycle ON corner_github_cache
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
-DROP TRIGGER IF EXISTS corner_activity_report ON corner_report_blockers;
 DROP TRIGGER IF EXISTS corner_activity_hold ON corner_merge_holds;
 CREATE TRIGGER corner_activity_hold AFTER INSERT OR UPDATE OR DELETE ON corner_merge_holds
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();

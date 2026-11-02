@@ -36,7 +36,7 @@ const roots = ['', ...['apps', 'packages'].flatMap((parent) =>
 
 const missing = [];
 let checked = 0;
-for (const file of [...yamlFiles('.github/workflows'), ...yamlFiles('.github/actions')]) {
+for (const file of [...yamlFiles('.github/workflows'), ...yamlFiles('.github/actions'), 'scripts/ci-workspace-tasks.sh']) {
   for (const [index, line] of readFileSync(file, 'utf8').split('\n').entries()) {
     for (const [reference] of line.matchAll(TEST_PATH)) {
       if (/[${}]/.test(reference)) continue;

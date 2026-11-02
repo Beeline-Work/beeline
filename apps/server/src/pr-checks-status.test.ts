@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun, insertCornerFacts, setCornerOwner, seedCornerOpening } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -85,11 +85,7 @@ beforeEach(async () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Review PR 614')`,
       [corner, W, R, H],
     );
-    await db.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
-       VALUES($1,$2,'Review PR 614','{"checks":"unknown","lifecycle":"working"}')`,
-      [corner, A],
-    );
+    await insertCornerFacts(db, { cornerId: corner, ownerAgentId: A, lifecycle: '{"checks":"unknown","lifecycle":"working"}' });
   }
   for (const room of [R]) {
     await db.query(
@@ -261,7 +257,7 @@ it('Reproduction SENTRY-1D: checks command exposes the workflow refusal instead 
 });
 
 async function ownPr() {
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
     AUTHOR,
     JSON.stringify({
       lifecycle: 'in-review',
@@ -294,7 +290,7 @@ describe('PR-scoped check gate', () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
       [AUTHOR],
     );
     associatedPulls = [{ state: 'open', base: { ref: 'main' } }];
@@ -331,7 +327,7 @@ describe('PR-scoped check gate', () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
       [AUTHOR],
     );
     suiteStatus = 'queued';
@@ -374,7 +370,7 @@ describe('PR-scoped check gate', () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
       [AUTHOR],
     );
     suiteStatus = 'queued';
@@ -399,7 +395,7 @@ describe('PR-scoped check gate', () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
       [AUTHOR],
     );
     suiteStatus = 'queued';
@@ -466,7 +462,7 @@ describe('PR-scoped check gate', () => {
 
   it('keeps a formerly zero-check head pending when a workflow registers later', async () => {
     await ownPr();
-    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}','{"total":0}') WHERE corner_id=$1`, [AUTHOR]);
+    await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary}','{"total":0}') WHERE corner_id=$1`, [AUTHOR]);
     rollupContexts = { totalCount: 0, nodes: [] };
     workflowStatus = 'queued';
     expect(await gate(AUTHOR)).toMatchObject({ checks: 'pending', mergeAllowed: false });
@@ -568,7 +564,7 @@ describe('PR-scoped check gate', () => {
 
   it('treats a zero-check head as complete after the worker handoff records it', async () => {
     rollupState = null;
-    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
       C,
       JSON.stringify({
         lifecycle: 'in-review',
@@ -582,7 +578,10 @@ describe('PR-scoped check gate', () => {
 
   it('does not single out a configured reviewer that opened the corner', async () => {
     await ownPr();
-    await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [AUTHOR, A]);
+    // The reviewer opened this corner: its opening order and creator are A.
+    await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason IN ('corner_objective','human_tag')`, [AUTHOR]);
+    await seedCornerOpening(db, { cornerId: AUTHOR, agentId: A });
+    await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [AUTHOR, A]);
     await db.query(`UPDATE identities SET handle='reviewer' WHERE id=$1`, [A]);
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
     // An opener with no separate worker is the effective implementer.
@@ -642,7 +641,7 @@ describe('PR-scoped check gate', () => {
     head = '9'.repeat(40);
     expect(await gate(AUTHOR)).toMatchObject({ checks: 'passed', approved: false, mergeAllowed: false });
     await db.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
       [AUTHOR, head],
     );
     await daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: head }, REVIEWER);
@@ -692,7 +691,7 @@ describe('PR-scoped check gate', () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
       [
         AUTHOR,
         JSON.stringify({
@@ -728,7 +727,7 @@ describe('PR-scoped check gate', () => {
   it('Reproduction REVIEWERWAKE-1: repairs the stored snapshot and reports the resulting green transition', async () => {
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
       [
         AUTHOR,
         JSON.stringify({
@@ -895,7 +894,7 @@ describe('PR-scoped check gate', () => {
     expect(gate5).toMatchObject({ approved: true, held: false, mergeAllowed: true });
     // CHECK-HEAD-1: the shipped helper's checks read follows registration and
     // live verdicts even when restore state still says pending.
-    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
+    await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
       JSON.stringify({ checks: 'pending', pr: { number: 614, url: URL, headSha: SHA } })]);
     workflowStatus = 'queued';
     expect(await callGate(6)).toMatchObject({ checks: 'pending', mergeAllowed: false,
@@ -917,7 +916,7 @@ describe('zero-check worker completion', () => {
       { roomId: R, reviewerAgentId: REVIEWER },
       H,
     );
-    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
       C,
       JSON.stringify({
         lifecycle: 'in-review',
@@ -1191,13 +1190,13 @@ it('Reproduction idle-1: a later reconciliation repairs a lost completion withou
   expect(graphqlRequests()).toHaveLength(before);
   // GitHub completes its sole test, but no completion webhook arrives.
   rollupState='SUCCESS';
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary,fetchStartedAt}',
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary,fetchStartedAt}',
     to_jsonb(extract(epoch FROM clock_timestamp())-61)) WHERE corner_id=$1`,[AUTHOR]);
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry}',
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry}',
     jsonb_build_object('headSha',$2::text,'after',extract(epoch FROM clock_timestamp())+300)) WHERE corner_id=$1`,[AUTHOR,SHA]);
   await operations.refreshOpenPendingChecks();
   expect(graphqlRequests()).toHaveLength(before);
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,[AUTHOR,'previous-head']);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,[AUTHOR,'previous-head']);
   await operations.refreshOpenPendingChecks();
   expect(graphqlRequests()).toHaveLength(before+1);
   expect((await db.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`,[AUTHOR])).rows[0]?.checks).toBe('passing');

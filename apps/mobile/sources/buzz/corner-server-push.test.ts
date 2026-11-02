@@ -5,6 +5,7 @@ import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { CHOICE_CARD_TYPE, readCornerListView, readChatListView } from '@beeline/api-contract/phone';
 import { migrate } from '../../../server/src/database';
 import { PgliteDatabase } from '../../../server/src/test-support';
+import { seedCornerOpening } from '../../../server/src/test-fixtures/corner-commands';
 import { PhoneService } from '../../../server/src/phone-service';
 import { PushDeliveryLoop, type PushSender } from '../../../server/src/background';
 import { apnsPushRequest } from '../../../server/src/apns-push';
@@ -54,8 +55,8 @@ it.each([
   const messageId = index.toString(16).padStart(64, '0');
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by)
     VALUES($1,$2,$3,$4,$5)`, [corner, workspace, room, `Corner ${index}`, human]);
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by)
-    VALUES($1,$2,$3)`, [corner, agent, human]);
+  await db.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`, [corner]);
+  await seedCornerOpening(db, { cornerId: corner, agentId: agent, commissionedBy: human });
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
     VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,CASE WHEN $5='card' THEN now()-interval '1 minute' ELSE now() END)`,
   [messageId, corner, agent, reason ? '@owner please respond' : 'done: @owner finished',

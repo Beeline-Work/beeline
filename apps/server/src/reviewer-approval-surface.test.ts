@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner, seedCornerOpening } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -66,19 +66,11 @@ beforeAll(async () => {
     `INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Corner',$4)`,
     [C, W, R, H],
   );
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
-     VALUES($1,$2,'Do work',$3::jsonb)`,
-    [
-      C,
-      IMPLEMENTER,
-      JSON.stringify({
+  await insertCornerFacts(db, { cornerId: C, ownerAgentId: IMPLEMENTER, lifecycle: JSON.stringify({
         lifecycle: 'in-review',
         checks: 'passing',
         pr: { number: 7, url: 'https://github.com/acme/repo/pull/7', headSha: HEAD },
-      }),
-    ],
-  );
+      }) });
   for (const who of [H, REVIEWER, IMPLEMENTER])
     for (const room of [null, R])
       await db.query(
@@ -92,7 +84,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => db?.close());
 beforeEach(async () => {
-  await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [C, IMPLEMENTER]);
+  await setCornerOwner(db, C, IMPLEMENTER);
   await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [C, H]);
   await db.query(
     `UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,
@@ -111,6 +103,8 @@ beforeEach(async () => {
   // corner's workflow run moved with that dispatch, so it is cleared with it.
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM messages WHERE card_type='corner-workflow-handoff'`);
+  // The owner is an assignment command, so it is seeded after the clear.
+  await setCornerOwner(db, C, IMPLEMENTER);
 });
 
 /** The reconciled wake, as the reviewer's own command poll would see it. */
@@ -135,7 +129,7 @@ describe('the turn a reconciled reviewer is woken into', () => {
     // `owner_agent_id` predates the corner-owner backfill. The listing must
     // fall back to the Room's recorded creator, exactly as the configuration
     // query does — never to whichever agent happens to be polling.
-    await db.query(`UPDATE corner_facts SET owner_agent_id=NULL WHERE corner_id=$1`, [C]);
+    await setCornerOwner(db, C, null);
     await expect(reconcileConfiguredCornerReviewers(db)).resolves.toEqual(
       expect.objectContaining({ commands: 1 }),
     );
@@ -151,7 +145,9 @@ describe('the turn a reconciled reviewer is woken into', () => {
   });
 
   it('agrees with the configuration query when the reviewer opened the corner itself', async () => {
-    await db.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [C, REVIEWER]);
+    // The reviewer's own opening order makes it the opener.
+    await setCornerOwner(db, C, null);
+    await seedCornerOpening(db, { cornerId: C, agentId: REVIEWER });
     // The reviewer keeps its reviewer rules; if it writes the code itself,
     // its conditional merge rule sends the yes to a person (prompt
     // discipline; the server gate no longer excludes the corner's opener).

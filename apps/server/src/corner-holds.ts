@@ -139,3 +139,21 @@ export async function backfillCornerHoldMessages(db: SqlDatabase): Promise<void>
   ).rows;
   for (const row of rows) await writeHoldMessage(db, row.corner_id, row.id, row.actor_id);
 }
+
+/**
+ * Account deletion: holds the deleted identities set collapse to one per
+ * corner under the tombstone. Person holds outrank agent holds, then standing.
+ */
+export async function collapseTombstonedCornerHolds(db: SqlDatabase, identityIds: string[], tombstoneId: string): Promise<void> {
+  await db.query(
+    `WITH tombstoned AS (
+       SELECT id,row_number() OVER (PARTITION BY corner_id ORDER BY set_by_agent_id IS NOT NULL,
+         CASE standing WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,set_at,id) rank
+       FROM corner_merge_holds
+       WHERE released_at IS NULL
+         AND (coalesce(set_by_agent_id,actor_id)=ANY($1) OR coalesce(set_by_agent_id,actor_id)=$2))
+     UPDATE corner_merge_holds SET released_at=now(),released_by=$2
+     WHERE id IN (SELECT id FROM tombstoned WHERE rank>1)`,
+    [identityIds, tombstoneId],
+  );
+}

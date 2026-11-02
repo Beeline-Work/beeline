@@ -19,7 +19,7 @@
 import { randomUUID } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import { migrate } from '../apps/server/src/database.js';
-import { PgliteDatabase } from '../apps/server/src/test-support.js';
+import { PgliteDatabase, insertCornerFacts } from '../apps/server/src/test-support.js';
 import { TokenAuth } from '../apps/server/src/auth.js';
 import { PhoneService } from '../apps/server/src/phone-service.js';
 import { DaemonService } from '../apps/server/src/daemon-service.js';
@@ -49,10 +49,7 @@ async function main(): Promise<void> {
     [ROOM, WORKSPACE, CORNER],
   );
   await database.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [CORNER, ROOM]);
-  await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'measure')`, [
-    CORNER,
-    AGENT,
-  ]);
+  await insertCornerFacts(database, { cornerId: CORNER, ownerAgentId: AGENT });
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
        ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`,

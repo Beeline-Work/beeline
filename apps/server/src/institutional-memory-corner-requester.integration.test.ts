@@ -106,7 +106,7 @@ describe('save_memory requester authority on corner wakes', () => {
     // CORNER keeps its commissioned requester. WATCHED was opened by an
     // agent turn, so its requester link is missing and only its brief
     // approval names the person. UNLINKED has neither.
-    await database.query(`INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,'Audit taps','{"lifecycle":"working","checks":"unknown"}'),($2,'Store step','{"lifecycle":"merged","checks":"passing"}'),($3,'Unlinked','{"lifecycle":"working","checks":"unknown"}')`, [CORNER, WATCHED, UNLINKED]);
+    await database.query(`INSERT INTO corner_facts(corner_id,lifecycle) VALUES($1,'{"lifecycle":"working","checks":"unknown"}'),($2,'{"lifecycle":"merged","checks":"passing"}'),($3,'{"lifecycle":"working","checks":"unknown"}')`, [CORNER, WATCHED, UNLINKED]);
     await seedCornerOpening(database, { cornerId: CORNER, commissionedBy: CAPTAIN });
     await seedCornerOpening(database, { cornerId: WATCHED });
     await seedCornerOpening(database, { cornerId: UNLINKED });

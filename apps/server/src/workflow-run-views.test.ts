@@ -1,7 +1,7 @@
 import { listRoomWorkflowRuns } from './workflow-run-views.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { seedCornerOpening, describedWorkflow, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, describedWorkflow, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { randomBytes } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase } from './test-support.js';
@@ -98,8 +98,7 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,created_by,name,parent_id) VALUES($1,$2,$3,'Issues triage',$4)`,
     [CORNER, WORKSPACE, OWNER, ROOM],
   );
-  await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'Run the feedback sweep')`, [CORNER, TRIAGER]);
-  await seedCornerOpening(database, { cornerId: CORNER, agentId: TRIAGER, commissionedBy: OWNER });
+  await insertCornerFacts(database, { cornerId: CORNER, ownerAgentId: TRIAGER, commissionedBy: OWNER });
   for (const who of [OWNER, TRIAGER, REVIEWER, OUTSIDER])
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,

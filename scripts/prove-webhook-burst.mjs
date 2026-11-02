@@ -1,3 +1,4 @@
+import { insertCornerFacts } from '../apps/server/src/test-support.ts';
 import assert from 'node:assert/strict';
 import { createHmac, createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
@@ -99,7 +100,7 @@ for(const [phase,Operations,Deadlines]of[['before',BeforeGitHub,BeforeDeadlines]
  await fixture.query(`INSERT INTO rooms(id,workspace_id,created_by,name,repository_key,repository_remote,repository_resolution,github_installation_id) VALUES($1,$2,$3,'Room','owner/widgets','https://github.com/owner/widgets.git','repository',77)`,[room,workspace,owner]);
  await fixture.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,[corner,workspace,room,worker]);
  await fixture.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'owner'),($1,NULL,$4,'member'),($1,NULL,$5,'member'),($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,[workspace,room,owner,worker,peer]);
- await fixture.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,feature_branch,lifecycle,workflow_state) VALUES($1,$2,$3,$4::jsonb,'checks')`,[corner,worker,branch,JSON.stringify({checks:'pending',pr:{number:1,headSha:head,url:'https://github.com/owner/widgets/pull/1'}})]);
+ await insertCornerFacts(fixture, { cornerId: corner, ownerAgentId: worker, lifecycle: JSON.stringify({checks:'pending',pr:{number:1,headSha:head,url:'https://github.com/owner/widgets/pull/1'}}), workflowState: 'checks' });
  const crossInstanceOrdering = await crossInstanceOrder(Operations, fixture);
  const pool=new Pool({connectionString:url,max:5,options:`-c search_path=${schema},public -c jit=off`});
  const connect=pool.connect.bind(pool);

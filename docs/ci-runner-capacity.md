@@ -1,31 +1,118 @@
 # PR runner capacity
 
-`.github/workflows/checks.yml` keeps GitHub-hosted runners in parallel with the
-credential-free `beeline-ci` Linux pool. `.github/workflows/desktop.yml` keeps
-its existing platform runners. Both workflows cancel superseded PR heads;
-their non-PR runs have unique concurrency groups and are never cancelled by
-another run.
+`.github/workflows/checks.yml` uses the isolated `beeline-ci` Linux pool for
+credential-free PR work. Desktop, Mac helper acceptance, privileged Body setup,
+PostgreSQL timing, Docker build/lint and production-corpus replay retain their
+existing platform or hosted runners. Main-push server coverage stays hosted
+and runs the full suite. Required check names stay stable.
 
-## Routing
+## Routing and resource budget
 
-| Checks work | Pull requests and merge groups | Manual dispatch |
+All ten listeners are active. Instance `01` has one CPU and the
+`beeline-ci-control` role for detection, cache preparation, shared tests and
+verdicts. Instances `02`–`09` have the `beeline-ci-heavy` role for eight server
+shards, each capped at two CPUs / 8 GiB. Instance `10` has only the
+`beeline-ci-workspace` role, capped at three CPUs / 12 GiB with CPUWeight 300.
+It combines two mobile workers and one sequential check lane. The **parent
+slice shares a ten-CPU hard quota across every listener and PR**, with
+MemoryHigh 48 GiB / MemoryMax 60 GiB; per-service maxima are not additive
+capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
+10 GiB. Verify both service and parent limits before activation.
+
+| Checks work | Pull requests | Merge groups / manual dispatch |
 | --- | --- | --- |
-| Server shards 1 and 3 | `ubuntu-latest` | `ubuntu-latest` |
-| Server shards 2 and 4 | `self-hosted, Linux, X64, beeline-ci` | `ubuntu-latest` |
-| TYPECHECK and MOBILE SUITE | `self-hosted, Linux, X64, beeline-ci` | `ubuntu-latest` |
-| Preparation, verdicts, Body and remaining Linux gates | `ubuntu-latest` | `ubuntu-latest` |
+| Eight server shards | `beeline-ci, beeline-ci-heavy` (02–09) | `ubuntu-latest` |
+| Typecheck, mobile, dead-code, fingerprint and export execution | `beeline-ci, beeline-ci-workspace` (10) | `ubuntu-latest` |
+| Detection, preparation, shared tests, selection, required verdicts, README, app associations | `beeline-ci, beeline-ci-control` (01) | `ubuntu-latest` |
+| Privileged Body setup, PostgreSQL timing, Docker build/lint, corpus replay | `ubuntu-latest` | `ubuntu-latest` |
 
-The PostgreSQL claim-latency job and shard 3's timing-sensitive isolated tests
-stay hosted. Body requires privileged tool installation and stays hosted.
-Mobile Vitest uses two workers on either pool, so ten services do not each
-start a worker for every CPU on the shared host. Server shards already bound
-Vitest to two workers and execute integration batches in separate processes.
-Required check names and all eight integration batches remain unchanged.
-Release workflows do not use this pool.
+Each server shard runs its balanced file assignment and one of the existing
+eight integration batches. Held voice playback runs alone on shard two. On
+PRs, width and room-read latency budgets run with one worker in the existing
+hosted PRODUCTION-CORPUS REPLAY job, outside the shared quota. A shard moves
+them only when that required hosted gate is enabled; merge/dispatch runs
+retain their original isolated shard coverage. Timing limits stay unchanged.
+PRs consume SELECT SERVER TESTS; an unavailable selection fails closed to the
+full suite. Main coverage remains full. No integration batch is removed or
+repeated.
+
+Ordinary server files use Vitest's single-fork mode with module isolation;
+eight smaller shards recover parallelism while amortizing process startup.
+A regression checks module/mock resets and process reuse. Mobile retains two
+separate per-file workers: grouping mobile files exposed state held by native
+storage mocks despite module resets. Other Vitest commands use at most two
+workers, control jobs use one, and timing/integration tests retain one.
+Node test-file concurrency, Turbo tasks, libuv and Metro are also bounded.
+Server setup yields to Node's real event loop between tests: PGlite query
+chains otherwise starve worker IPC long enough to expire Vitest progress
+RPCs under the shared quota. `scripts/ci-shards.test.mjs` exercises this with
+microtask-only tests and fake timers; RPC deadlines and error reporting stay
+unchanged.
+
+The required TYPECHECK job executes two workspace lanes through
+`scripts/run-ci-workspace-checks.mjs` and `scripts/ci-workspace-tasks.sh`.
+Mobile occupies one lane with two isolated workers; root typecheck and the
+conditional dead-code/fingerprint/export tasks run sequentially in the other.
+All previous policy checks, including the trusted-base architecture guard,
+remain in the task script. Required mobile/dead-code/fingerprint/export
+contexts keep their original conditions and take individual, fail-closed
+verdicts from the recorded task outputs. A failing task does not hide later
+checks. The job emits a timing artifact and forwards cancellation only to its
+own child process groups. The task script is included in workflow path lint.
+
+Detection precedes a cache-only producer on the reserved control listener.
+Preparation installs/builds once and publishes verified exact-commit builds
+before shared tests start. Linux consumers wait for preparation rather than
+independent shared-test completion, and the workspace lane restores its
+root/mobile/build caches once for all five checks. Consumers require those
+lockfile/manifest-keyed root/mobile and exact-commit build caches; a failed
+producer cannot fan out cold installs/builds. Compiled outputs never fall back
+to another commit. Build cache v2 uses explicit dist globs and validates API
+exports. TYPECHECK already runs the isolated mobile typecheck, so mobile does
+not repeat it. Required check names and platform routes remain unchanged.
+
+All CI-only workspace jobs prepend `.github/actions/ci-workspace/bin` to PATH.
+Its tar wrapper serializes only cache archives through the CI user's shared
+file lock; normal archives/probes bypass it. Compression uses one zstd worker.
+Cancellation releases the kernel lock. No service is added.
+
+Corpus replay stays hosted because cold setup exceeded ten minutes on squire.
+The corpus cache is published immediately after a successful replay. After
+landing, an on-demand replay dispatched on main also runs hosted and warms the
+default-branch corpus cache for later PRs. Schema/corpus source changes still
+invalidate it; a cache hit never substitutes for executing the timing tests.
+
+## Current measurement and remaining acceptance
+
+The previous five-listener / four-server-shard trial completed Linux work in
+34m14s, with max sampled CI usage 8.01 CPUs / 21.26 GiB and no hard-limit/OOM or
+helper restart. The final shard waited 15m08s, restored its workspace in 8s,
+then ran balanced tests for 13m21s and integration for 1m58s. Individual server
+shards were balanced at 15m40s–17m05s; late admission dominated the final shard.
+Hosted Body also waited 15m32s. Replay alone exceeded its ten-minute limit.
+The full per-job queue/setup/work breakdown is recorded in
+[the optimization PR](https://github.com/Beeline-Work/beeline/pull/3344).
+
+A bounded five-file server probe passed 40 tests in both fork modes. Grouping
+reduced CPU time from 71.6s to 60.7s (about 15%); one grouped worker took longer
+than two, motivating smaller parallel shards. This is a probe, not a passing
+end-to-end performance result. A later eight-shard consolidation run completed
+Linux checks in 24m22s, with two progress-RPC failures and a stale fingerprint
+workflow assertion. Its maximum sampled CI memory was 36.95 GiB, with no hard
+memory-limit/OOM events or helper restarts. The accepted initial landing target
+is now approximately 24 minutes at ten CPUs, followed by work toward twelve
+minutes or less on the same pool. A green real-PR measurement and subsequent
+concurrent-PR validation remain required; quotas alone do not prove capacity.
+
+Whole-host load includes independent Beeline agents, Gradle and emulators;
+record it as context. Abort trials on CI budget violations, sustained memory
+pressure/OOM or a helper watchdog event. Earlier load-15 and load-25 aborts
+were superseded by this CI-pool policy. See
+[`infra/ci/README.md`](../infra/ci/README.md) for activation and measurement.
 
 ## CI-only host isolation
 
-On 2026-10-31 the owner authorized ten repository runners on `squire`, named
+The original 2026-10-31 setup authorized ten repository runners on `squire`, named
 `beeline-ci-squire-01` through `beeline-ci-squire-10`, with only the default
 `self-hosted, Linux, X64` labels plus `beeline-ci`. Existing release runners,
 their labels, and their services were not changed.
@@ -40,9 +127,9 @@ Each runner has its own persistent directory and systemd unit:
 - `/var/lib/beeline-ci/runner-01` through `runner-10`, each with `_work` and
   `_tool`; npm uses the CI user's persistent home cache.
 - `/etc/systemd/system/beeline-ci@.service`, instances `01` through `10`.
-- `/etc/systemd/system/beeline-ci.slice` bounds the pool to 80 GiB, with
+- The original `/etc/systemd/system/beeline-ci.slice` bounded the pool to 80 GiB, with
   reclaim pressure at 64 GiB, CPU weight 25, and a shared 16-CPU quota on the
-  20-CPU host. Each service has a 10 GiB memory limit and can use idle CPUs
+  20-CPU host. Each service originally had a 10 GiB memory limit and could use idle CPUs
   within that shared budget. These limits apply only to the new pool.
 
 The services start with `env -i` and only the CI home, system binary path,
@@ -117,7 +204,7 @@ measurements.
 An initial provisioning trial demonstrated why CPU limits belong on the
 pool rather than each service: with the host 74% idle, one server job hit
 its two-CPU quota in 7,822 of 9,213 periods and accumulated 706s of throttling.
-The final configuration removes those per-service caps, retains the pool's
+That trial's final configuration removed those per-service caps, retained the pool's
 low scheduling weight, and caps the whole pool at 16 CPUs. Test worker counts
 remain bounded. The trial was superseded before recording a final full-run
 comparison, so that comparison uses the final resource policy throughout.

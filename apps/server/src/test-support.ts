@@ -1,4 +1,5 @@
-export { assignCornerWorker, seedCornerOpening } from './test-fixtures/corner-commands.js';
+import { assignCornerWorker, seedCornerOpening, seedCornerFactsRow } from './test-fixtures/corner-commands.js';
+export { assignCornerWorker, seedCornerOpening };
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { ensureSystemIdentity, systemLine } from './system-line.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
@@ -242,5 +243,68 @@ export async function recordCornerRun(
     verb: 'handed off', object: toState, presentation: 'card', cardType: CORNER_LIFECYCLE_CARD_TYPE,
     card: { runId: cornerId, toState, outcome: outcome ?? null, seq },
   });
+}
+
+/**
+ * A corner row plus the facts older fixtures stored on it, written where the
+ * code now derives them. An owner with a commissioner is an opening order. An
+ * owner alone becomes the corner's creator, or a person's first tag when the
+ * corner already has a creator: either names it the worker without making the
+ * corner agent-opened. A different worker is a later tag; the run state is a
+ * handoff card. Objectives live on briefs and opening orders (`writeCornerObjective`).
+ */
+export async function insertCornerFacts(db: SqlDatabase, input: {
+  cornerId: string;
+  lifecycle?: unknown;
+  locked?: boolean;
+  reviewerAgentId?: string | null;
+  ownerAgentId?: string | null;
+  workerAgentId?: string | null;
+  commissionedBy?: string | null;
+  human?: boolean;
+  workflowState?: string | null;
+  workflowOutcome?: string | null;
+}): Promise<void> {
+  const lifecycle = input.lifecycle === undefined || input.lifecycle === null ? null
+    : typeof input.lifecycle === 'string' ? input.lifecycle : JSON.stringify(input.lifecycle);
+  await seedCornerFactsRow(db, input.cornerId, lifecycle, input.locked ?? false, input.reviewerAgentId ?? null);
+  if (input.ownerAgentId && input.commissionedBy && !input.human) {
+    await seedCornerOpening(db, { cornerId: input.cornerId, agentId: input.ownerAgentId, commissionedBy: input.commissionedBy });
+  } else {
+    // A person-opened corner's commissioner is the person who created it.
+    if (input.commissionedBy)
+      await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [input.cornerId, input.commissionedBy]);
+    if (input.ownerAgentId) {
+      const created = await db.query(
+        `UPDATE rooms SET created_by=$2 WHERE id=$1 AND created_by IS NULL`, [input.cornerId, input.ownerAgentId]);
+      const creator = (await db.query<{ created_by: string | null }>(
+        `SELECT created_by FROM rooms WHERE id=$1`, [input.cornerId])).rows[0]?.created_by;
+      if (!created.rowCount && creator !== input.ownerAgentId) await assignCornerWorker(db, input.cornerId, input.ownerAgentId);
+    }
+  }
+  if (input.workerAgentId && input.workerAgentId !== input.ownerAgentId)
+    await assignCornerWorker(db, input.cornerId, input.workerAgentId);
+  if (input.workflowState) await recordCornerRun(db, input.cornerId, input.workflowState, input.workflowOutcome ?? undefined);
+}
+
+/**
+ * Replace a corner's owner the way older fixtures wrote `owner_agent_id`: its
+ * first assignment names the new agent (a person's tag when it has none);
+ * `null` removes the assignments and an agent creator, leaving no worker.
+ */
+export async function setCornerOwner(db: SqlDatabase, cornerId: string, agentId: string | null): Promise<void> {
+  if (!agentId) {
+    await db.query(`DELETE FROM agent_commands WHERE room_id=$1 AND reason IN ('corner_objective','human_tag')`, [cornerId]);
+    // An agent creator is how `insertCornerFacts` recorded an owner alone.
+    await db.query(`UPDATE rooms SET created_by=NULL WHERE id=$1
+      AND created_by IN (SELECT id FROM identities WHERE kind='agent')`, [cornerId]);
+    return;
+  }
+  const moved = await db.query(
+    `UPDATE agent_commands SET agent_id=$2 WHERE id=(SELECT id FROM agent_commands
+       WHERE room_id=$1 AND reason IN ('corner_objective','human_tag') ORDER BY inbox_sequence LIMIT 1)`,
+    [cornerId, agentId],
+  );
+  if (!moved.rowCount) await assignCornerWorker(db, cornerId, agentId);
 }
 

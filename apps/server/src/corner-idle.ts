@@ -32,15 +32,15 @@ export function cornerIdleSql(cornerId: string): string {
       COALESCE(lifecycle->'checksSummary'->>'status',lifecycle->>'checks','')='pending' OR
       COALESCE(lifecycle->'checksSummary'->'checks','[]'::jsonb) @> '[{"status":"pending"}]'::jsonb
     ) idle_eligible
-    FROM (SELECT c.id,c.name,c.parent_id,c.archived_at,f.lifecycle,f.locked,
+    FROM (SELECT c.id,c.name,c.parent_id,c.archived_at,gh.lifecycle,f.locked,
       ${cornerRunStateSql('c.id')} workflow_state,${cornerRunOutcomeSql('c.id')} workflow_outcome,
       activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
       blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
       blocker.reason waiting_reason,blocker.kind waiting_kind,blocker.person_id waiting_person_id,
       CASE WHEN ended.status='complete' AND ended.ended_at>=boundary.at THEN ended.ended_at END last_turn_ended_at,
       extract(epoch FROM GREATEST(c.created_at,ended.ended_at,boundary.at,
-        to_timestamp(COALESCE(f.lifecycle->'checksSummary'->>'statusChangedAt',
-          f.lifecycle->'checksSummary'->>'updatedAt')::double precision)))::text idle_since,
+        to_timestamp(COALESCE(gh.lifecycle->'checksSummary'->>'statusChangedAt',
+          gh.lifecycle->'checksSummary'->>'updatedAt')::double precision)))::text idle_since,
       (${cornerScheduledWaitSql('c')}
         OR EXISTS(SELECT 1 FROM agent_commands unresolved JOIN agent_command_owner_ends ended_owner
           ON ended_owner.command_id=unresolved.id AND ended_owner.generation_id=unresolved.generation_id
@@ -48,13 +48,14 @@ export function cornerIdleSql(cornerId: string): string {
         OR EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=c.id AND released_at IS NULL)
         OR EXISTS(SELECT 1 FROM agent_commands queued WHERE queued.room_id=c.id AND queued.action='input'
           AND (queued.state='pending' OR (queued.state='claimed' AND ${commandOwnerLiveSql('queued')}))
-          AND queued.review_context->>'headSha'=f.lifecycle->'pr'->>'headSha'
+          AND queued.review_context->>'headSha'=gh.lifecycle->'pr'->>'headSha'
           AND queued.review_context->>'purpose' IS NULL AND queued.agent_id IS DISTINCT FROM ${cornerImplementerSql('f', 'c')})
-        OR f.lifecycle->>'checks'='pending'
-        OR (NULLIF(f.lifecycle->'pr','null'::jsonb) IS NOT NULL AND f.lifecycle->'checksSummary'->>'status'='unknown'
-          AND f.lifecycle->'checksSummary'->>'fetchStartedAt' IS NULL)
+        OR gh.lifecycle->>'checks'='pending'
+        OR (NULLIF(gh.lifecycle->'pr','null'::jsonb) IS NOT NULL AND gh.lifecycle->'checksSummary'->>'status'='unknown'
+          AND gh.lifecycle->'checksSummary'->>'fetchStartedAt' IS NULL)
       ) IS TRUE suppressed
       FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
+      LEFT JOIN corner_github_cache gh ON gh.corner_id=c.id
       ${cornerWorkSql(true)} ${cornerBlockerSql()}
       LEFT JOIN LATERAL (SELECT turn.ended_at,turn.status FROM agent_turns turn
         WHERE turn.room_id=c.id AND turn.agent_id IS DISTINCT FROM c.created_by

@@ -263,7 +263,7 @@ test('documentation does not fan out Checks suites', () => {
 });
 
 test('representative PRs request fewer hosted runners without hiding check contexts', () => {
-  const commonJobs = ['changes', 'typecheck', 'shared-package-tests', 'dead-code'];
+  const commonJobs = ['changes', 'prepare-workspace', 'typecheck', 'shared-package-tests', 'dead-code'];
   const mobileJobs = ['mobile-suite', 'mobile-export-reachability', 'native-fingerprint'];
   const serverJobs = ['server-suite-shard', 'server-claim-latency', 'server-suite',
     'server-integration', 'production-corpus-replay', 'auth-image', 'server-test-selection'];
@@ -273,11 +273,11 @@ test('representative PRs request fewer hosted runners without hiding check conte
     'mixed-components': [...commonJobs, ...mobileJobs, ...serverJobs],
   };
   const examples = [
-    { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 14 },
-    { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 9 },
-    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 19 },
-    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 17 },
-    { name: 'docs-only', files: ['docs/foo.md'], before: 34, after: 3 },
+    { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 19 },
+    { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 10 },
+    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 24 },
+    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 22 },
+    { name: 'docs-only', files: ['docs/foo.md'], before: 34, after: 4 },
   ];
   for (const example of examples) {
     const { gates } = evaluate(example.files).checks;
@@ -287,8 +287,8 @@ test('representative PRs request fewer hosted runners without hiding check conte
     for (const [name, job] of Object.entries(checksWorkflow.jobs)) {
       const expression = String(job.if ?? 'true').replace(/^\$\{\{\s*|\s*\}\}$/g, '')
         .replace(/needs\.([a-z][a-z0-9-]*)/g, "needs['$1']");
-      const enabled = new Function('needs', 'github', 'inputs', 'cancelled', `return (${expression});`)(
-        needs, { event_name: 'pull_request' }, { suite: '' }, () => false,
+      const enabled = new Function('needs', 'github', 'inputs', 'cancelled', 'contains', 'fromJSON', `return (${expression});`)(
+        needs, { event_name: 'pull_request' }, { suite: '' }, () => false, (values, value) => values.includes(value), JSON.parse,
       );
       if (enabled) {
         selectedJobs.push(name);

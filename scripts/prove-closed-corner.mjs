@@ -1,6 +1,6 @@
 // Isolated built-service proof; provider responses are fixtures, never a real merge.
 import assert from 'node:assert/strict';
-import { PgliteDatabase } from '../apps/server/src/test-support.ts';
+import { PgliteDatabase, insertCornerFacts } from '../apps/server/src/test-support.ts';
 import { migrate } from '../apps/server/dist/database.js';
 import { GitHubOperations } from '../apps/server/dist/github-operations.js';
 import { DaemonService } from '../apps/server/dist/daemon-service.js';
@@ -25,7 +25,7 @@ try {
   await db.query(`INSERT INTO rooms(id,workspace_id,name,repository_key,repository_resolution,github_installation_id,reviewer_agent_id) VALUES($1,$2,'Parent','owner/widgets','repository',77,$3)`, [parent, workspace, agent]);
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`, [corner, workspace, parent, agent]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [workspace, parent, agent]);
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES($1,$2,$3::jsonb)`, [corner, implementer, JSON.stringify({pr:{number:1,headSha:head}})]);
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: implementer, lifecycle: JSON.stringify({pr:{number:1,headSha:head}}) });
   await db.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,head_sha,pull_request_number) VALUES($1,$2,$3,1)`, [corner, agent, head]);
   const operations = new GitHubOperations(db, {}, {
     installationToken: async () => ({token:'fixture',expiresAt:'2030-01-01T00:00:00Z'}),

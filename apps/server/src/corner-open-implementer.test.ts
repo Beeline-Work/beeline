@@ -241,8 +241,6 @@ it('OPENER-OWNER: a corner its Room reviewer opens is owned by that reviewer', a
     const { cornerId } = await daemon.execute('createCorner', {
       ...draft, name: 'Reviewer-opened', hold: true, sourceMessageId: draft.brief.approval.sourceMessageId,
     }, A);
-    expect((await db.query(`SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows)
-      .toEqual([{ owner_agent_id: null }]);
     expect((await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`, [cornerId])).rows)
       .toEqual([{ owner_agent_id: A }]);
   } finally {

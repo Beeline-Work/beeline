@@ -1,4 +1,5 @@
 // Isolated built-service proof: synthetic database and provider responses only.
+import { insertCornerFacts } from '../apps/server/src/test-support.ts';
 import assert from 'node:assert/strict';
 const root=process.cwd();
 const mod=path=>import(`${root}/${path}`);
@@ -27,7 +28,7 @@ try {
  await db.query(`INSERT INTO rooms(id,workspace_id,name,repository_key,repository_resolution,github_installation_id,reviewer_agent_id) VALUES($1,$2,'Parent','owner/widgets','repository',77,$3)`,[parent,workspace,reviewer]);
  await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,[corner,workspace,parent,commander]);
  for(const who of [human,worker,reviewer,commander]) for(const place of [null,parent]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,[workspace,place,who]);
- await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,lifecycle) VALUES($1,$2,$2,$3::jsonb)`,[corner,worker,JSON.stringify({checks:'passing',lifecycle:'in-review',pr:{number:1,headSha:head,url:'https://github.com/owner/widgets/pull/1'}})]);
+ await insertCornerFacts(db, { cornerId: corner, ownerAgentId: worker, workerAgentId: worker, lifecycle: JSON.stringify({checks:'passing',lifecycle:'in-review',pr:{number:1,headSha:head,url:'https://github.com/owner/widgets/pull/1'}}) });
  const opening=await createAgentCommand(db,{id:'proof-opening',roomId:corner,agentId:worker,sourceMessageId:null,reason:'order',
   privatePayload:{kind:'order',text:'Implement the agreed change.',authorId:commander,fromRoomId:parent}});
  await db.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`,[opening.id]);

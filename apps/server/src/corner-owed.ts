@@ -333,21 +333,6 @@ function cornerMessageCandidatesSql(corner?: string, parent?: string): string {
  */
 export function cornerOwedSchemaSql(): string {
   return `
-CREATE TABLE IF NOT EXISTS corner_report_blockers (
-  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  person_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
-  report_id text REFERENCES agent_commands(id) ON DELETE CASCADE,
-  return_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
-  created_at timestamptz NOT NULL DEFAULT now(),
-  PRIMARY KEY(corner_id,person_id)
-);
-ALTER TABLE corner_report_blockers ALTER COLUMN report_id DROP NOT NULL;
-ALTER TABLE corner_report_blockers ADD COLUMN IF NOT EXISTS message_id text REFERENCES messages(id) ON DELETE CASCADE;
-ALTER TABLE corner_report_blockers ADD COLUMN IF NOT EXISTS commander_id text REFERENCES identities(id) ON DELETE CASCADE;
--- Keep the legacy table and its FK indexes for later owner-approved removal.
--- Runtime readers and writers use the report log instead.
-CREATE INDEX IF NOT EXISTS corner_report_blockers_return_room ON corner_report_blockers(return_room_id,person_id);
-CREATE INDEX IF NOT EXISTS corner_report_blockers_message ON corner_report_blockers(message_id);
 CREATE INDEX IF NOT EXISTS corner_private_reports_origin ON agent_commands
   ((private_payload->>'fromRoomId'),(private_payload->>'authorId'),created_at DESC,id DESC)
   WHERE private_payload->>'kind'='report';
@@ -376,7 +361,7 @@ BEGIN
         UNION SELECT ${humanReportCornerSql('report')} FROM messages report
           WHERE report.room_id=answer_room AND report.card->>'reportToId' IS NOT NULL
       )))
-      AND (TG_TABLE_NAME='corner_facts'
+      AND (TG_TABLE_NAME='corner_github_cache'
         OR (TG_TABLE_NAME='agent_commands' AND waiting.commander_id=answer_author)
         OR (TG_TABLE_NAME='messages' AND waiting.created_at<answer_at
           AND (waiting.corner_id=answer_room OR waiting.return_room_id=answer_room)
@@ -399,7 +384,8 @@ DROP TRIGGER IF EXISTS corner_report_restart ON agent_turns;
 DROP TRIGGER IF EXISTS corner_report_order ON agent_commands;
 CREATE TRIGGER corner_report_order AFTER INSERT ON agent_commands FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
 DROP TRIGGER IF EXISTS corner_report_push ON corner_facts;
-CREATE TRIGGER corner_report_push AFTER UPDATE OF lifecycle ON corner_facts FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
+DROP TRIGGER IF EXISTS corner_report_push ON corner_github_cache;
+CREATE TRIGGER corner_report_push AFTER UPDATE OF lifecycle ON corner_github_cache FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
 -- A queued automatic wake predating the report is not new input either.
 CREATE OR REPLACE FUNCTION quiet_corner_report_wakes() RETURNS trigger LANGUAGE plpgsql AS $quiet$
 DECLARE corner uuid;
@@ -430,7 +416,6 @@ BEGIN
       AND turn.request_id=cancelled.turn_request_id AND turn.status='working';
   RETURN NULL;
 END $quiet$;
-DROP TRIGGER IF EXISTS corner_report_quiet ON corner_report_blockers;
 DROP TRIGGER IF EXISTS corner_report_quiet ON agent_commands;
 CREATE TRIGGER corner_report_quiet AFTER INSERT OR UPDATE OF private_payload ON agent_commands
   FOR EACH ROW EXECUTE FUNCTION quiet_corner_report_wakes();
@@ -609,7 +594,7 @@ CREATE TRIGGER corner_owed_handle_update AFTER UPDATE OF handle,kind ON identiti
   EXECUTE FUNCTION corner_owed_handle_changed();
 
 -- The commissioner and owner decide whose deliverables and finished
--- states are owed to whom.
+-- states are owed to whom; both come from the corner's commands.
 CREATE OR REPLACE FUNCTION corner_owed_facts_changed() RETURNS trigger
 LANGUAGE plpgsql AS $corner_owed$
 BEGIN
@@ -624,13 +609,9 @@ DROP TRIGGER IF EXISTS corner_owed_facts_insert ON corner_facts;
 CREATE TRIGGER corner_owed_facts_insert AFTER INSERT ON corner_facts
   FOR EACH ROW EXECUTE FUNCTION corner_owed_facts_changed();
 DROP TRIGGER IF EXISTS corner_owed_facts_update ON corner_facts;
-CREATE TRIGGER corner_owed_facts_update
-  AFTER UPDATE OF owner_agent_id ON corner_facts
-  FOR EACH ROW WHEN (
-    OLD.owner_agent_id IS DISTINCT FROM NEW.owner_agent_id
-  ) EXECUTE FUNCTION corner_owed_facts_changed();
 
--- Opening provenance becomes available only when the order is inserted.
+-- Opening provenance and the owner (the opening order, or a person's first
+-- tag in a person-opened corner) become available only when the command is inserted.
 CREATE OR REPLACE FUNCTION corner_owed_opening_inserted() RETURNS trigger
 LANGUAGE plpgsql AS $corner_owed$
 BEGIN
@@ -643,7 +624,7 @@ END
 $corner_owed$;
 DROP TRIGGER IF EXISTS corner_owed_opening_insert ON agent_commands;
 CREATE TRIGGER corner_owed_opening_insert AFTER INSERT ON agent_commands
-  FOR EACH ROW WHEN (NEW.reason='corner_objective')
+  FOR EACH ROW WHEN (NEW.reason IN ('corner_objective','human_tag'))
   EXECUTE FUNCTION corner_owed_opening_inserted();
 
 -- A grant changing status recomputes the cards that ask it: the owed ones,

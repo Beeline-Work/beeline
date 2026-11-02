@@ -1,6 +1,7 @@
 // CHECK-DEADLOCK-1: isolated PostgreSQL webhook → phone header proof.
 // Requires an empty throwaway local PostgreSQL database with pgvector (pgvector/pgvector:pg16).
-// Build the server, then run CHECK_ROLLUP_PROOF_URL=<local-url> node --import tsx scripts/prove-check-rollup-deadlock.mjs.
+// Build the server, then run CHECK_ROLLUP_PROOF_URL=<local-url> node --import { insertCornerFacts } from '../apps/server/src/test-support.ts';
+import tsx scripts/prove-check-rollup-deadlock.mjs.
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
 import pg from 'pg';
@@ -76,7 +77,7 @@ try {
   await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [workspace, owner]);
   for (const id of [owner, agent]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [workspace, parent, id]);
   const pr = { number: 1, headSha: head, title: 'Header proof', targetBranch: 'main', mergeability: 'clean', url: 'https://github.com/owner/widgets/pull/1', merged: false, state: 'open' };
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,feature_branch,lifecycle) VALUES($1,$2,$3,$4::jsonb)`, [corner, agent, branch, JSON.stringify({ pr, checks: 'pending' })]);
+  await insertCornerFacts(db, { cornerId: corner, ownerAgentId: agent, lifecycle: JSON.stringify({ pr, checks: 'pending' }) });
   const operations = new GitHubOperations(db, {}, {
     installationToken: async () => ({ token: 'fixture', expiresAt: '2030-01-01T00:00:00Z' }),
     readPullRequest: async () => pr,

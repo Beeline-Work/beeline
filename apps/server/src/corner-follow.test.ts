@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { backfillCornerFollows } from './corner-follow.js';
 import { PhoneService } from './phone-service.js';
-import { seedCornerOpening, PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -51,8 +51,7 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,name,parent_id,created_by) VALUES($1,$3,'Room',NULL,$4),($2,$3,'Corner',$1,$4)`,
     [ROOM, CORNER, WORKSPACE, TEAMMATE],
   );
-  await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'Work')`, [CORNER, AGENT]);
-  await seedCornerOpening(database, { cornerId: CORNER, agentId: AGENT, commissionedBy: TEAMMATE });
+  await insertCornerFacts(database, { cornerId: CORNER, ownerAgentId: AGENT, commissionedBy: TEAMMATE });
   for (const channel of [null, ROOM])
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'owner'),($1,$2,$5,'member')`,

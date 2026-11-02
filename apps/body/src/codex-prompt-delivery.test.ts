@@ -50,6 +50,17 @@ describe('Codex session block delivery', () => {
     expect(render(delivery).text).not.toContain('Session rules');
   });
 
+  it('keeps the workspace-core task-start action on every turn', () => {
+    const delivery = new CodexPromptDelivery();
+    const change = { memory: '- Procedure workspace-core (read facet:procedure): Workspace rules' };
+    expect(render(delivery, change).text).toContain('At task start, call read');
+    delivery.complete(true);
+    const warm = render(delivery, change);
+    expect(warm.text).toContain('At task start, call read');
+    expect(warm.text).not.toContain('Members: @bee');
+    expect(warm.text).not.toContain('Workspace rules');
+  });
+
   it('clears blocks that become empty, then caches the removal', () => {
     const delivery = new CodexPromptDelivery();
     render(delivery); delivery.complete(true);

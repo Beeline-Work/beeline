@@ -45,7 +45,6 @@ try {
   server = createBeelineServer({ database: db, daemon, live, auth: new TokenAuth(db, async () => { throw new Error('unused'); }), phone, mediaMaximumBytes: 1 });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const opened = await open();
-  await db.query(`UPDATE corner_facts SET feature_branch=$2 WHERE corner_id=$1`, [opened.cornerId, `feature/corner-${opened.cornerId.replaceAll('-', '').slice(0, 12)}`]);
   const turn = (await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, worker)).commands[0];
   await claim(turn);
   for (const present of [true, false]) {

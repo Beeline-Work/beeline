@@ -10,7 +10,7 @@ import { cornerOwedSchemaSql } from './corner-owed.js';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { Pool } from 'pg';
 import { randomUUID } from 'node:crypto';
-import { seedCornerOpening, PgliteDatabase, recordCornerRun } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, recordCornerRun, insertCornerFacts } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
@@ -80,8 +80,7 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Corner',$4)`,
     [C, WS, ROOM, COMMANDER],
   );
-  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective) VALUES($1,$2,$3,'Truthful corner states')`, [C, WORKER, WORKER]);
-  await seedCornerOpening(db, { cornerId: C, agentId: WORKER, commissionedBy: HUMAN });
+  await insertCornerFacts(db, { cornerId: C, ownerAgentId: WORKER, commissionedBy: HUMAN, workerAgentId: WORKER });
   await createAgentCommand(db, {
     id: 'opening-order',
     roomId: C,
@@ -177,7 +176,7 @@ async function end(agent = WORKER, age = 0) {
   );
 }
 async function ci(checks: string) {
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
     C,
     JSON.stringify({
       lifecycle: 'in-review',
@@ -200,7 +199,7 @@ async function ci(checks: string) {
   ]);
 }
 async function unreportedHead() {
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
     C,
     JSON.stringify({
       lifecycle: 'in-review',
@@ -383,7 +382,7 @@ it('an agent commander with inherited corner access wakes inside it, not the par
 it('pending CI past 30 minutes schedules no expiry, including after a new head', async () => {
   await ci('pending');
   await db.query(
-    `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM now()-interval '31 minutes'))) WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM now()-interval '31 minutes'))) WHERE corner_id=$1`,
     [C],
   );
   const before = await refreshCornerAttention(db, C);
@@ -391,7 +390,7 @@ it('pending CI past 30 minutes schedules no expiry, including after a new head',
   expect(await state()).toBe('review');
   expect(await commanderFlags()).toHaveLength(0);
   await db.query(
-    `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"next"') WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"next"') WHERE corner_id=$1`,
     [C],
   );
   const after = await refreshCornerAttention(db, C);
@@ -542,7 +541,7 @@ it('recovers and fires the gap deadline once across two server instances', async
 it('Reproduction IDLE-1: pending CI does not arm a deadline or an idle alert', async () => {
   await ci('pending');
   await db.query(
-    `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM now()-interval '31 minutes'))) WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM now()-interval '31 minutes'))) WHERE corner_id=$1`,
     [C],
   );
   vi.useFakeTimers();
@@ -565,7 +564,7 @@ it('Reproduction IDLE-1: pending CI does not arm a deadline or an idle alert', a
 });
 
 it('Reproduction CORNER-REVIEW-ROLE: a dispatched reviewer stays Review after Room settings change until its turn ends', async () => {
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [C,JSON.stringify({lifecycle:'in-review',checks:'passing',pr:{headSha:'review-head'}})]);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,system_event)
     VALUES('review-source',$1,$2,'Review requested','system',$3::jsonb)`,
@@ -578,7 +577,7 @@ it('Reproduction CORNER-REVIEW-ROLE: a dispatched reviewer stays Review after Ro
   expect(await serviceStates()).toEqual(['review','review']);
   await daemon.execute('claimAgentCommand',{roomId:C,commandId:dispatch!.id,generationId:'review-proof'},REVIEWER);
   expect(await serviceStates()).toEqual(['review','review']);
-  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}' WHERE id=$1`,[ROOM]);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`,[ROOM]);
   expect(await serviceStates()).toEqual(['review','review']);
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(0);
@@ -605,7 +604,7 @@ it('Reproduction IDLE-1: incidental orders cannot redirect an idle alert from it
 it.each(['archived', 'closed', 'landed'])('Reproduction IDLE-1: %s corners never alert', async (kind) => {
   if (kind === 'archived') await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [C]);
   else {
-    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('lifecycle',$2::text) WHERE corner_id=$1`, [C, kind]);
+    await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_build_object('lifecycle',$2::text) WHERE corner_id=$1`, [C, kind]);
     await recordCornerRun(db, C, kind);
   }
   await refreshCornerAttention(db, C);
@@ -641,21 +640,21 @@ it.each(['expired', 'exhausted', 'removed'])('Reproduction IDLE-1: %s scheduled 
 });
 it('Reproduction IDLE-1: an unfetched new PR head stays quiet beyond the display deadline', async () => {
   await ci('pending');
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',
     '{"status":"unknown","total":0}') WHERE corner_id=$1`, [C]);
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM now()-interval '31 minutes'))) WHERE corner_id=$1`, [C]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM now()-interval '31 minutes'))) WHERE corner_id=$1`, [C]);
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(0);
 });
 
 it('Reproduction IDLE-1: a running workflow label without a live turn still alerts', async () => {
-  await db.query(`UPDATE corner_facts SET lifecycle='{"lifecycle":"running"}' WHERE corner_id=$1`, [C]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle='{"lifecycle":"running"}' WHERE corner_id=$1`, [C]);
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
 });
 
 async function checksHead(sha: string, checks: 'pending' | 'failing') {
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
     C,
     JSON.stringify({
       lifecycle: 'in-review',
@@ -681,7 +680,7 @@ it('Reproduction FIC-1: a live repair stays Working after an hour with no idle a
   await turn(WORKER);
   expect(await state()).toBe('working');
   await db.query(
-    `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM now()-interval '60 minutes'))) WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM now()-interval '60 minutes'))) WHERE corner_id=$1`,
     [C],
   );
   await runCornerAttention(db);
@@ -708,7 +707,7 @@ it('Reproduction RED-STALL-PARTIAL: three failed checks wake the implementer whi
     'blocked: Four pushes without PASS. The reviewer cannot start until checks are green.',
   );
   const sha = heads[3]!;
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
     C,
     JSON.stringify({
       lifecycle: 'in-review',
@@ -876,7 +875,7 @@ it.each(['human','push','check','reviewer'])('Reproduction IDLE-STORM: a real %s
   await db.query("UPDATE agent_commands SET state='complete' WHERE reason='report'");
   await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{automaticNotBefore}',to_jsonb(extract(epoch FROM now()-interval '4 minutes')*1000)),wake_after=NULL WHERE reason='report' AND private_payload->>'originCornerId'=$1::text`,[C]);
   if (event === 'human') await post('human-change','Continue this work',HUMAN);
-  if (event === 'push') await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle,'{pr,headSha}','"new-head"'),'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM clock_timestamp()))) WHERE corner_id=$1`,[C]);
+  if (event === 'push') await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(jsonb_set(lifecycle,'{pr,headSha}','"new-head"'),'{checksSummary,updatedAt}',to_jsonb(extract(epoch FROM clock_timestamp()))) WHERE corner_id=$1`,[C]);
   if (event === 'check') await ci('failing');
   if (event === 'reviewer') {
     await turn(REVIEWER); await refreshCornerAttention(db,C); await end(REVIEWER);
@@ -902,7 +901,7 @@ it.each(['queued-review', 'hold-behind-report', 'pending-with-old-summary'])(
       await reportToCommander(db, C, WORKER, 'blocked: awaiting a decision');
       await db.query(`INSERT INTO corner_merge_holds(corner_id,actor_id,standing) VALUES($1,$2,'owner')`, [C,HUMAN]);
     } else {
-      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [C]);
+      await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [C]);
     }
     for (let cycle=0;cycle<3;cycle++) await refreshCornerAttention(db,C);
     expect(await commanderFlags()).toHaveLength(0);
@@ -992,7 +991,7 @@ it('Reproduction idle-1: an opening idle alert is discarded when delivered durin
   await refreshCornerAttention(db,C);
   const queued=(await daemon.execute('getAgentCommands',{roomId:C},COMMANDER)).commands;
   expect(queued.some(c=>c.source.body.includes('is idle'))).toBe(true);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,[C,JSON.stringify({checks:'pending',pr:{number:3101,headSha:'0db9eaa0713c7dc8d3027b7c045bbe1760cd391a'},checksSummary:{status:'pending',total:14,checks:[{name:'SHARED PACKAGE TESTS',status:'pending'},{name:'Build auth container',status:'pending'}]}})]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,[C,JSON.stringify({checks:'pending',pr:{number:3101,headSha:'0db9eaa0713c7dc8d3027b7c045bbe1760cd391a'},checksSummary:{status:'pending',total:14,checks:[{name:'SHARED PACKAGE TESTS',status:'pending'},{name:'Build auth container',status:'pending'}]}})]);
   expect((await daemon.execute('getAgentCommands',{roomId:C},COMMANDER)).commands).toEqual([]);
 });
 
@@ -1096,7 +1095,6 @@ it.each(['agent', 'human'] as const)('REPORT-WAITING-DERIVED: %s report quiets w
         .toEqual([{ status: 'working' }]);
       changes.length = 0;
       const report = await reportToCommander(db, C, WORKER, 'blocked: choose the next direction', undefined, `report-${input}`);
-      expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE corner_id=$1', [C])).rowCount).toBe(0);
       expect(await cornerReportWaiting(db, C)).toBe(true);
       expect(await state()).toBe('waiting');
       if (unlisten) expect(changes).toContain(C);
@@ -1123,7 +1121,7 @@ it.each(['agent', 'human'] as const)('REPORT-WAITING-DERIVED: %s report quiets w
         await db.query(`UPDATE agent_commands SET state='complete' WHERE id=$1`, [next!.id]);
         await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1 AND request_id=$2`, [C,next!.turn_request_id]);
       } else {
-        await db.query(`UPDATE corner_facts SET lifecycle='{"pr":{"headSha":"new-head"},"checks":"failing"}'::jsonb WHERE corner_id=$1`, [C]);
+        await db.query(`UPDATE corner_github_cache SET lifecycle='{"pr":{"headSha":"new-head"},"checks":"failing"}'::jsonb WHERE corner_id=$1`, [C]);
       }
       expect(await cornerReportWaiting(db, C)).toBe(false);
       if (unlisten) expect(changes).toContain(C);
@@ -1134,7 +1132,6 @@ it.each(['agent', 'human'] as const)('REPORT-WAITING-DERIVED: %s report quiets w
       const cardId = (await db.query<{ card_id: string }>(`SELECT encode(sha256(convert_to('agent-command-card:'||$1::text,'UTF8')),'hex') card_id`, [report.id])).rows[0]!.card_id;
       expect((await db.query(`SELECT card->>'waitingAnswered' answered FROM messages WHERE id=$1`, [cardId])).rows)
         .toEqual([{ answered: 'true' }]);
-      expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE corner_id=$1', [C])).rowCount).toBe(0);
     }
   } finally { await unlisten?.(); }
 });
@@ -1158,7 +1155,6 @@ it('IDLE-DERIVED: concurrent recomputations claim one command with no span rows'
   const reports = (await db.query<{ id: string }>(`SELECT id FROM agent_commands
     WHERE reason='report' AND private_payload->>'idleSince' IS NOT NULL`)).rows;
   expect(reports).toHaveLength(1);
-  expect((await db.query('SELECT 1 FROM corner_attention_spans')).rows).toEqual([]);
   expect(await commanderFlags()).toHaveLength(1);
   await refreshCornerAttention(db,C);
   expect((await db.query(`SELECT id FROM agent_commands WHERE reason='report'`)).rows).toEqual(reports);
@@ -1183,7 +1179,6 @@ it.each(['human','worker'] as const)('IDLE-DERIVED: a %s event replaces the epis
   await db.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE id=$1`,[current[0]!.id]);
   await flushDueCommanderWakes(db);
   expect((await commanderFlags()).map(command=>command.id)).toEqual([current[0]!.id]);
-  expect((await db.query('SELECT 1 FROM corner_attention_spans')).rows).toEqual([]);
 });
 
 it('IDLE-DERIVED: a commander reply and turn do not change the idle command', async () => {
@@ -1218,7 +1213,6 @@ it.each(['hold','owed','expiry'] as const)('IDLE-DERIVED: ending a %s opens an e
   expect(current).toHaveLength(1);
   expect(current[0]!.id).not.toBe(first.id);
   expect((await db.query('SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2',[C,WORKER])).rows).toEqual([]);
-  expect((await db.query('SELECT 1 FROM corner_attention_spans')).rows).toEqual([]);
 });
 
 it.each(['expired','removed','exhausted'] as const)('IDLE-DERIVED: a schedule ending (%s) alone does not reopen a reported episode', async ending => {
@@ -1254,7 +1248,6 @@ it.each(['message','order','same-time order'] as const)('IDLE-DERIVED: a report 
     VALUES('report-answer',$1,$2,'The narrow scope','message',$3)`,[ROOM,COMMANDER,at]);
   else await db.query(`INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth,private_payload,created_at,state)
     VALUES('report-answer',$1,$2,'report-answer','input','order','report-answer','report-answer',0,jsonb_build_object('kind','order','authorId',$3::text,'text','The narrow scope'),$4,'complete')`,[C,WORKER,COMMANDER,at]);
-  expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE corner_id=$1',[C])).rows).toEqual([]);
   const idleSince = async () => (await db.query<{idle_since:string}>(cornerIdleSql('$1'),[C])).rows[0]!.idle_since;
   expect(Number(await idleSince())).toBeCloseTo(at.getTime()/1000,3);
   await refreshCornerAttention(db,C);
@@ -1311,16 +1304,13 @@ it('IDLE-DERIVED: pending checks invalidate deferred delivery and a cached claim
   expect((await db.query(`SELECT id FROM agent_commands WHERE reason='report' AND state='pending'`)).rows).toEqual([]);
 });
 
-it('IDLE-DERIVED: migration preserves historical spans without maintaining them', async () => {
-  await db.query(`INSERT INTO corner_attention_spans(corner_id,revision,last_state,episode,reported_episode)
-    VALUES($1,7,'idle',3,2)`,[C]);
-  const before = (await db.query('SELECT * FROM corner_attention_spans WHERE corner_id=$1',[C])).rows;
+it('IDLE-DERIVED: the attention schema reruns with no span table or maintenance', async () => {
   await db.query(CORNER_ATTENTION_SCHEMA);
   await turn(); await end();
   await post('retired-span-human','Continue',HUMAN);
   await ci('pending');
   await refreshCornerAttention(db,C);
-  expect((await db.query('SELECT * FROM corner_attention_spans WHERE corner_id=$1',[C])).rows).toEqual(before);
+  expect((await db.query(`SELECT to_regclass('corner_attention_spans') IS NULL gone`)).rows[0]).toEqual({ gone: true });
   expect((await db.query(`SELECT proname FROM pg_proc WHERE proname IN (
     'corner_attention_push','corner_attention_human','corner_state_changed')`)).rows).toEqual([]);
 });

@@ -15,6 +15,7 @@ import { askSql } from './needs-you.js';
 import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import {
+  CORNER_ROW_CACHE_COLUMNS,
   CORNER_ROW_FACT_COLUMNS,
   CORNER_ROW_MESSAGE_COLUMNS,
   CORNER_ROW_ROOM_COLUMNS,
@@ -355,6 +356,12 @@ BEGIN
         FROM rooms room WHERE room.id = COALESCE(NEW.room_id, OLD.room_id)
       ), '{}'::jsonb);
     WHEN 'corner_facts' THEN
+      -- A lifecycle-only change is the cache mirror; corner_github_cache notifies it.
+      -- This test goes with the mirror and the corner_facts.lifecycle column.
+      IF TG_OP = 'UPDATE' AND NEW.lifecycle IS DISTINCT FROM OLD.lifecycle
+        AND (NEW.locked,NEW.reviewer_agent_id) IS NOT DISTINCT FROM (OLD.locked,OLD.reviewer_agent_id) THEN
+        RETURN NULL;
+      END IF;
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
@@ -363,6 +370,15 @@ BEGIN
           WHERE id=COALESCE(NEW.corner_id,OLD.corner_id)),false),
         'cornerParentId', CASE WHEN ${rowChangedSql(CORNER_ROW_FACT_COLUMNS)}
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.corner_id, OLD.corner_id)) END
+      );
+    WHEN 'corner_github_cache' THEN
+      payload = jsonb_build_object(
+        'table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', NEW.corner_id,
+        'cornerId', NEW.corner_id,
+        'closeRequested', COALESCE((SELECT archived_at IS NOT NULL FROM rooms WHERE id=NEW.corner_id),false),
+        'cornerParentId', CASE WHEN ${rowChangedSql(CORNER_ROW_CACHE_COLUMNS)}
+          THEN (SELECT parent_id FROM rooms WHERE id = NEW.corner_id) END
       );
     WHEN 'corner_brief_revisions' THEN
       payload = jsonb_build_object(
@@ -522,6 +538,11 @@ BEGIN
   RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
+
+-- The cache row is created and deleted with corner_facts, which notifies those.
+DROP TRIGGER IF EXISTS beeline_notify_live_corner_github_cache ON corner_github_cache;
+CREATE TRIGGER beeline_notify_live_corner_github_cache AFTER UPDATE ON corner_github_cache
+  FOR EACH ROW EXECUTE FUNCTION beeline_notify_live();
 
 -- Memory jobs no longer exist as work, so their rows no longer wake anyone.
 DROP TRIGGER IF EXISTS beeline_notify_live_institutional_memory_jobs ON institutional_memory_jobs;

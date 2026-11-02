@@ -1,7 +1,7 @@
 // Production-timed stalls are unsafe to manufacture; exercise the built service
 // with an isolated database and read the same command inbox helpers consume.
 import assert from 'node:assert/strict';
-import { PgliteDatabase } from '../apps/server/src/test-support.ts';
+import { PgliteDatabase, insertCornerFacts } from '../apps/server/src/test-support.ts';
 import { migrate } from '../apps/server/dist/database.js';
 import { runCornerAttention } from '../apps/server/dist/corner-attention.js';
 import { DaemonService } from '../apps/server/dist/daemon-service.js';
@@ -25,7 +25,7 @@ try {
     await db.query('DELETE FROM rooms WHERE id=$1', [corner]);
     await db.query('DELETE FROM agent_commands WHERE room_id=$1', [room]);
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Corner',$4)`, [corner,workspace,room,commander]);
-    await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id) VALUES($1,$2,$2)`, [corner,worker]);
+    await insertCornerFacts(db, { cornerId: corner, ownerAgentId: worker, workerAgentId: worker });
     // A later incidental peer order must not take ownership of attention.
     await createAgentCommand(db, {id:`peer-${scenario}`,roomId:corner,agentId:worker,sourceMessageId:null,reason:'order',
       privatePayload:{kind:'order',text:'Check',authorId:peer,fromRoomId:room}});

@@ -6,6 +6,7 @@ import { resolve, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import WebSocket from 'ws';
 import { PgliteDatabase } from '../apps/server/src/test-support.ts';
+import { cornerImplementerSql, cornerOwnerSql } from '../apps/server/dist/corner-worker.js';
 
 const source = process.argv
   .find((arg) => arg.startsWith('--source-root='))
@@ -68,20 +69,29 @@ try {
     [workspace, owner, fixtureTime],
   );
   await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by)
-    SELECT id,repeat(md5('fixture-agent-1'),2),$2 FROM rooms WHERE workspace_id=$1 AND parent_id IS NOT NULL`,
+    `INSERT INTO corner_facts(corner_id)
+    SELECT id FROM rooms WHERE workspace_id=$1 AND parent_id IS NOT NULL`,
+    [workspace],
+  );
+  // Each corner's opening order names its owner; the owner opened it from the parent Room.
+  await db.query(
+    `INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,root_command_id,
+       root_source_message_id,agent_depth,state,completed_at,private_payload)
+    SELECT 'opening-'||id,id,repeat(md5('fixture-agent-1'),2),'opening-'||id,'input','corner_objective',
+      'opening-'||id,'opening-'||id,0,'complete',now(),
+      jsonb_build_object('kind','order','authorId',$2::text,'fromRoomId',parent_id::text,'text','Fixture opening')
+    FROM rooms WHERE workspace_id=$1 AND parent_id IS NOT NULL`,
     [workspace, owner],
   );
   const activeCorner = (await db.query(`SELECT id FROM rooms WHERE name='Active 1'`)).rows[0].id;
   await db.query(
-    `UPDATE corner_facts SET worker_agent_id=repeat(md5('fixture-agent-1'),2),
-    reviewer_agent_id=repeat(md5('fixture-agent-2'),2) WHERE corner_id=$1`,
+    `UPDATE corner_facts SET reviewer_agent_id=repeat(md5('fixture-agent-2'),2) WHERE corner_id=$1`,
     [activeCorner],
   );
   const assignments = (
     await db.query(
-      `SELECT owner_agent_id,worker_agent_id,reviewer_agent_id
-    FROM corner_facts WHERE corner_id=$1`,
+      `SELECT ${cornerOwnerSql('c.id')} owner_agent_id,${cornerImplementerSql('f', 'c')} worker_agent_id,f.reviewer_agent_id
+    FROM corner_facts f JOIN rooms c ON c.id=f.corner_id WHERE f.corner_id=$1`,
       [activeCorner],
     )
   ).rows[0];
@@ -127,8 +137,8 @@ try {
   assert.deepEqual(
     (
       await db.query(
-        `SELECT owner_agent_id,worker_agent_id,reviewer_agent_id
-    FROM corner_facts WHERE corner_id=$1`,
+        `SELECT ${cornerOwnerSql('c.id')} owner_agent_id,${cornerImplementerSql('f', 'c')} worker_agent_id,f.reviewer_agent_id
+    FROM corner_facts f JOIN rooms c ON c.id=f.corner_id WHERE f.corner_id=$1`,
         [activeCorner],
       )
     ).rows[0],

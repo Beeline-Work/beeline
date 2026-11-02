@@ -15,7 +15,7 @@ import {
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
-import { seedCornerOpening, MemoryObjectStorage, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, MemoryObjectStorage, migratedDatabase, insertCornerFacts } from './test-support.js';
 import {
   ARTIFACT_TTL_HOURS,
   MEDIA_SWEEP_INTERVAL_MS,
@@ -1812,8 +1812,7 @@ describe('background advisory-lock ownership', () => {
          ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
         [workspace, room, human, other, agent],
       );
-      await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'Other work')`, [corner, agent]);
-      await seedCornerOpening(db, { cornerId: corner, agentId: agent, commissionedBy: other });
+      await insertCornerFacts(db, { cornerId: corner, ownerAgentId: agent, commissionedBy: other });
       await db.query(
         `INSERT INTO push_devices(token,identity_id,platform,environment)
          VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`,
@@ -1864,8 +1863,7 @@ describe('background advisory-lock ownership', () => {
        ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member') `,
         [workspace, room, commissioner, other, agent],
       );
-      await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'Ship push policy')`, [corner, agent]);
-      await seedCornerOpening(db, { cornerId: corner, agentId: agent, commissionedBy: commissioner });
+      await insertCornerFacts(db, { cornerId: corner, ownerAgentId: agent, commissionedBy: commissioner });
       await db.query(
         `INSERT INTO push_devices(token,identity_id,platform,environment) VALUES
          ('owner-device-token-12345678901234567890',$1,'android','physical'),
@@ -1937,7 +1935,7 @@ describe('background advisory-lock ownership', () => {
          ($1,$2,$3,'owner'),($1,$2,$4,'member')`,
         [workspace, room, owner, agent],
       );
-      await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'Open work'),($3,$4,'Closed work')`, [open, agent, closed, agent]);
+      await db.query(`INSERT INTO corner_facts(corner_id) VALUES($1),($2)`, [open, closed]);
       await seedCornerOpening(db, { cornerId: open, agentId: agent, commissionedBy: owner });
       await seedCornerOpening(db, { cornerId: closed, agentId: agent, commissionedBy: owner });
       await db.query(
@@ -1999,7 +1997,7 @@ describe('background advisory-lock ownership', () => {
          ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member')`,
         [workspace,parent,commissioner,other,agent,helper],
       );
-      await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,objective) VALUES($1,$2,'Write the report'),($3,$4,'Ship code')`, [noCode, agent, code, agent]);
+      await db.query(`INSERT INTO corner_facts(corner_id) VALUES($1),($2)`, [noCode, code]);
       await seedCornerOpening(db, { cornerId: noCode, agentId: agent, commissionedBy: commissioner });
       await seedCornerOpening(db, { cornerId: code, agentId: agent, commissionedBy: commissioner });
       await db.query(

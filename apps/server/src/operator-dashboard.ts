@@ -187,7 +187,7 @@ const FUNNEL_TIME_SQL = `WITH ${COHORT_SQL}, eligible AS (
     r.created_at opened_at,
     CASE WHEN f.lifecycle->'pr'->>'mergedAt' ~ '^20[0-9]{2}-[0-9]{2}-[0-9]{2}T'
       THEN (f.lifecycle->'pr'->>'mergedAt')::timestamptz ELSE NULL END merged_at
-  FROM corner_facts f JOIN rooms r ON r.id=f.corner_id JOIN production_workspaces cw ON cw.id=r.workspace_id
+  FROM corner_github_cache f JOIN rooms r ON r.id=f.corner_id JOIN production_workspaces cw ON cw.id=r.workspace_id
 ), timelines AS (
   SELECT 'people' kind, e.id actor_id, e.created_at signup_at,
     w.at workspace_at,

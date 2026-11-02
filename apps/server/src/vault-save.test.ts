@@ -5,7 +5,7 @@ import { vaultSaveRequest } from '@beeline/api-contract/daemon';
 import { vaultSaveHttp } from './vault-save-http.js';
 import { VaultSaveRelay } from './vault-save-relay.js';
 import { storeVaultSubmission, type VaultSaveSubmission } from '../../body/src/vault-save.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import type { TokenAuth } from './auth.js';
@@ -273,10 +273,7 @@ it('saves in a corner using inherited parent membership without copied membershi
     `INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Vault corner',$3)`,
     [cornerId, WORKSPACE, ROOM],
   );
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Vault proof','{}')`,
-    [cornerId, AGENT],
-  );
+  await insertCornerFacts(db, { cornerId: cornerId, ownerAgentId: AGENT, lifecycle: '{}' });
   const line = await systemLine(db, {
     roomId: cornerId,
     subject: { kind: 'agent', id: AGENT, name: 'Agent' },

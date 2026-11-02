@@ -151,7 +151,12 @@
     "lint:router": "node scripts/check-router-boundaries.mjs",
     "codecs:generate": "node scripts/generate-network-codecs.mjs",
     "codecs:check": "node scripts/generate-network-codecs.mjs --check",
-    "test:router-boundaries": "node --test scripts/router-boundaries.test.mjs"
+    "test:router-boundaries": "node --test scripts/router-boundaries.test.mjs",
+    "prove:fixed-context:baseline": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node --import tsx scripts/prove-fixed-context-baseline.mjs",
+    "prove:fixed-context": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node --import tsx scripts/prove-fixed-context-replay.mjs",
+    "prove:native-shell-claude": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node scripts/prove-native-shell-cap.mjs",
+    "prove:native-shell-codex": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node scripts/prove-codex-shell-cap.mjs",
+    "prove:native-shell-cursor": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node scripts/prove-cursor-shell-cap.mjs"
   },
   "devDependencies": {
     "@colbymchenry/codegraph": "^1.6.0",

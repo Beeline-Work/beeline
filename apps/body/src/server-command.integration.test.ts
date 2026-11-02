@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from '../../server/src/test-support.js';
+import { PgliteDatabase, insertCornerFacts } from '../../server/src/test-support.js';
 import { migrate } from '../../server/src/database.js';
 import { PhoneService } from '../../server/src/phone-service.js';
 import { DaemonService } from '../../server/src/daemon-service.js';
@@ -39,10 +39,7 @@ beforeAll(async () => {
     W,
   ]);
   await db.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [R, C]);
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Only server commands','{"checks":"unknown"}')`,
-    [C, B],
-  );
+  await insertCornerFacts(db, { cornerId: C, ownerAgentId: B, lifecycle: '{"checks":"unknown"}' });
   for (const who of [H, A, B])
     for (const room of [null, R])
       await db.query(

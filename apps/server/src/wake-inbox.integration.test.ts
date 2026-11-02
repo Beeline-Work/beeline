@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import { type SqlDatabase } from './database.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
@@ -127,7 +127,7 @@ it('keeps actual human messages immediate without shortening the pending digest 
 it('uses separate durable windows for the same agent in a Room and corner', async () => {
   await db.query('DELETE FROM memberships WHERE room_id=$1', [OTHER]);
   await db.query('UPDATE rooms SET parent_id=$2 WHERE id=$1', [OTHER, ROOM]);
-  await db.query("INSERT INTO corner_facts(corner_id,workflow_state,owner_agent_id) VALUES($1,'implement',$2)", [OTHER, AGENT]);
+  await insertCornerFacts(db, { cornerId: OTHER, workflowState: 'implement', ownerAgentId: AGENT });
   await delivery('batch:3');
   await wake('Room first'); await wake('Room second');
   await wake('Corner first', 'corner_brief', OTHER); await wake('Corner second', 'corner_brief', OTHER);

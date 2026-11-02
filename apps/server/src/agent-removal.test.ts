@@ -1,9 +1,10 @@
+import { cornerOwnerSql } from './corner-worker.js';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { PhoneService } from './phone-service.js';
 import { TokenAuth } from './auth.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, insertCornerFacts, seedCornerOpening } from './test-support.js';
 
 const OWNER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
@@ -44,11 +45,9 @@ describe('PhoneService agent removal', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
       [CORNER, WORKSPACE, ROOM],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
-       VALUES($1,$2,'ship the thing','{"lifecycle":"working","checks":"unknown"}'::jsonb)`,
-      [CORNER, AGENT],
-    );
+    await insertCornerFacts(database, { cornerId: CORNER, ownerAgentId: AGENT, lifecycle: '{"lifecycle":"working","checks":"unknown"}' });
+    // The removed agent opened this corner; its opening order records that.
+    await seedCornerOpening(database, { cornerId: CORNER, agentId: AGENT });
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
        ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member') `,
@@ -202,10 +201,10 @@ describe('PhoneService agent removal', () => {
   });
 
   it('leaves the corner the removed INITIAL agent opened open, with its PR facts untouched', async () => {
-    // The opener is the corner's initial agent (`corner_facts.owner_agent_id`).
+    // The opener is the corner's initial agent (its opening order, `cornerOwnerSql`).
     // Removal retires the helper; it must never close the shared corner.
     await database.query(
-      `UPDATE corner_facts SET lifecycle=lifecycle||$2::jsonb WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=lifecycle||$2::jsonb WHERE corner_id=$1`,
       [
         CORNER,
         JSON.stringify({
@@ -232,14 +231,12 @@ describe('PhoneService agent removal', () => {
     expect(corner).toEqual({ archived: false });
     const facts = (
       await database.query<{
-        close_requested: boolean;
         owner_agent_id: string | null;
         lifecycle: Record<string, unknown>;
-      }>(`SELECT close_requested,owner_agent_id,lifecycle FROM corner_facts WHERE corner_id=$1`, [
+      }>(`SELECT ${cornerOwnerSql('corner_id')} owner_agent_id,lifecycle FROM corner_facts WHERE corner_id=$1`, [
         CORNER,
       ])
     ).rows[0];
-    expect(facts?.close_requested).toBe(false);
     // The historical "opened by" survives the removal.
     expect(facts?.owner_agent_id).toBe(AGENT);
     expect(facts?.lifecycle).toMatchObject({

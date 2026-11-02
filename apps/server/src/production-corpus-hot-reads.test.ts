@@ -22,7 +22,7 @@ import {
   type HotReadName,
   type HotReadResult,
 } from './production-corpus-performance.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, seedCornerOpening } from './test-support.js';
 
 const WORKSPACE = '10000000-0000-4000-8000-000000000001';
 const ROOM = '20000000-0000-4000-8000-000000000001';
@@ -152,12 +152,13 @@ async function seedCorpus(database: PgliteDatabase): Promise<void> {
        ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member') `,
     [WORKSPACE, VIEWER, AGENT, ROOM],
   );
-  await database.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
-     VALUES($1,$2,'Exercise corner joins','{"lifecycle":"working","checks":"unknown"}')
+  const insertedCorner = await database.query(
+    `INSERT INTO corner_facts(corner_id,lifecycle)
+     VALUES($1,'{"lifecycle":"working","checks":"unknown"}')
      ON CONFLICT(corner_id) DO NOTHING`,
-    [CORNER, AGENT],
+    [CORNER],
   );
+  if (insertedCorner.rowCount) await seedCornerOpening(database, { cornerId: CORNER, agentId: AGENT });
   await database.query(
     `INSERT INTO messages(id,room_id,author_id,text,created_at)
      SELECT 'corpus-message-' || lpad(series::text,6,'0'),$1,

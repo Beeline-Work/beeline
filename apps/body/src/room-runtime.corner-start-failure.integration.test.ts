@@ -57,10 +57,10 @@ describe('corner-start standing faults against the real server', () => {
       [ROOM, WORKSPACE, CORNER],
     );
     await database.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [ROOM, CORNER]);
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'','{"checks":"unknown"}')`,
-      [CORNER, AGENT],
-    );
+    // The test's own opening order below names the corner's owner.
+    await database.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`, [CORNER]);
+    await database.query(`INSERT INTO corner_github_cache(corner_id,lifecycle) VALUES($1,'{"checks":"unknown"}')
+      ON CONFLICT(corner_id) DO UPDATE SET lifecycle=excluded.lifecycle`, [CORNER]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
        VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),
@@ -198,11 +198,10 @@ describe('corner-start transient clone against the real server', () => {
          repository_target_branch='main',repository_resolution='repository' WHERE id=$1`,
       [ROOM],
     );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
-       VALUES($1,$2,'Ship the importer dry-run flag','{"checks":"unknown"}')`,
-      [CORNER, AGENT],
-    );
+    // The test's own opening order below names the corner's owner.
+    await database.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`, [CORNER]);
+    await database.query(`INSERT INTO corner_github_cache(corner_id,lifecycle) VALUES($1,'{"checks":"unknown"}')
+      ON CONFLICT(corner_id) DO UPDATE SET lifecycle=excluded.lifecycle`, [CORNER]);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
        VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),

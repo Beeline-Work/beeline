@@ -1,3 +1,4 @@
+import { createCornerFacts } from './corner-lifecycle.js';
 import type { SqlDatabase } from './database.js';
 import { ensureFirstRoom } from './first-room.js';
 import {
@@ -96,11 +97,7 @@ export async function ensureReviewProofFixture(
       REVIEW_PROOF_OBJECTIVE,
     ],
   );
-  await database.query(
-    // The phone creator owns this proof corner; no agent opening order exists.
-    `INSERT INTO corner_facts(corner_id,owner_agent_id)
-     VALUES($1,NULL) ON CONFLICT(corner_id) DO NOTHING`,
-    [REVIEW_PROOF_CORNER_ID],
-  );
+  // The phone creator owns this proof corner; no agent opening order exists.
+  await createCornerFacts(database, REVIEW_PROOF_CORNER_ID);
 
 }

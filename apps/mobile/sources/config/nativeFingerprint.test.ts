@@ -29,6 +29,10 @@ const checksWorkflow = readFileSync(
   resolve(mobileRoot, '../../.github/workflows/checks.yml'),
   'utf8',
 );
+const workspaceTasks = readFileSync(
+  resolve(mobileRoot, '../../scripts/ci-workspace-tasks.sh'),
+  'utf8',
+);
 
 const execFileAsync = promisify(execFile);
 
@@ -109,7 +113,9 @@ describe('native fingerprint gate', () => {
 
   it('runs as a named PR gate over exactly the inputs that can move the stamp', () => {
     expect(checksWorkflow).toContain('name: NATIVE FINGERPRINT');
-    expect(checksWorkflow).toContain('run: npm run fingerprint:check');
+    expect(workspaceTasks).toMatch(/native_fingerprint\(\)\s*\{[^}]*npm run fingerprint:check/);
+    expect(checksWorkflow).toContain('run: node scripts/run-ci-workspace-checks.mjs');
+    expect(checksWorkflow).toContain("needs.typecheck.outputs['native-fingerprint']");
     for (const path of [
       'apps/mobile/package.json',
       'apps/mobile/package-lock.json',

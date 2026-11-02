@@ -690,3 +690,9 @@ test('R1: all arms and both models finish a seed before the next; budget interru
     assert.deepEqual(rows[m][name].map(r => r.samples.map(s => [s.seed, s.terminal])), rows[models[0]][names[0]].map(r => r.samples.map(s => [s.seed, s.terminal])));
   }
 });
+
+test('CTX-ONCE criterion 3 keeps both identical and different repeated answers invalid', () => {
+  const answer = '{"calls":[],"text":"done"}';
+  assert.throws(() => parseAnswer(`${answer}\n${answer}`), /one replay answer/);
+  assert.throws(() => parseAnswer(`${answer}\n{"calls":[],"text":"different"}`), /one replay answer/);
+});

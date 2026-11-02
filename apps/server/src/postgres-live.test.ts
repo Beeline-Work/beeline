@@ -979,6 +979,50 @@ describe('Postgres live fanout', () => {
     );
   });
 
+  it('OBJECTIVE-BRIEF: emits corner-text for opening objectives and latest brief inserts/edits', async () => {
+    const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    const agent = 'e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Worker')`,[agent]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,AUTHOR]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'member')`,[WORKSPACE,ROOM,agent]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
+      VALUES($1,$2,$3,$4,'Goal')`,[corner,WORKSPACE,ROOM,AUTHOR]);
+    const live = new LiveHub(), client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database,live,()=>client,1);
+    listeners.push(listener);
+    const parent: LiveEvent[] = [];
+    live.subscribe(ROOM,event=>parent.push(event));
+    void listener.run();
+    await eventually(()=>client.listenerCount('notification')===1);
+    const textChanged = () => parent.some(event=>event.type==='invalidate' && event.reason==='corner-text');
+    const opening = await createAgentCommand(database,{roomId:corner,agentId:agent,sourceMessageId:null,
+      reason:'corner_objective',privatePayload:{text:'Authorized order',objective:'Opening goal',authorId:AUTHOR,fromRoomId:ROOM,kind:'order'}});
+    expect(opening).toBeDefined();
+    await eventually(textChanged);
+    await settle(parent);
+    await database.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{objective}','"Edited goal"') WHERE id=$1`,[opening!.id]);
+    await eventually(textChanged);
+    await settle(parent);
+    await database.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,objective,author_id,source_room_id)
+      VALUES($1,1,'Approved scope','Brief goal',$2,$3)`,[corner,AUTHOR,ROOM]);
+    await eventually(textChanged);
+    await settle(parent);
+    await database.query(`UPDATE corner_brief_revisions SET objective='Current goal' WHERE corner_id=$1`,[corner]);
+    await eventually(textChanged);
+    await settle(parent);
+    await database.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,objective,author_id,source_room_id)
+      VALUES($1,2,'New approved scope','New goal',$2,$3)`,[corner,AUTHOR,ROOM]);
+    await eventually(textChanged);
+    await settle(parent);
+    await database.query(`UPDATE corner_brief_revisions SET objective='Historical goal' WHERE corner_id=$1 AND revision=1`,[corner]);
+    await database.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{objective}','"Historical opening"') WHERE id=$1`,[opening!.id]);
+    await settle([]);
+    expect(textChanged()).toBe(false);
+    expect(client.payloads.map(payload=>JSON.parse(payload)).filter(payload=>payload.cornerTextChanged))
+      .toEqual(expect.arrayContaining([expect.objectContaining({table:'agent_commands'}),expect.objectContaining({table:'corner_brief_revisions'})]));
+  });
+
   it('nudges the parent Room for every projected corner-row change', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
@@ -1060,7 +1104,8 @@ describe('Postgres live fanout', () => {
     // brief revision and the newest chat message.
     const priorGoalNudges = textNudges().length;
     await expectNudge(() => database.query(
-      `UPDATE corner_facts SET objective='still fix it' WHERE corner_id=$1`, [corner]));
+      `INSERT INTO corner_brief_revisions(corner_id,revision,content,objective,author_id,source_room_id)
+       VALUES($1,1,'brief','still fix it',$2,$3)`, [corner,agent,ROOM]));
     await eventually(() => textNudges().length > priorGoalNudges);
     await expectNudge(() => database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]));
     expect(textNudges()).toHaveLength(0);
@@ -1073,7 +1118,7 @@ describe('Postgres live fanout', () => {
     await expectNudge(() => database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]));
     await expectNudge(() => database.query(
       `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
-       VALUES($1,1,'brief',$2,$3)`, [corner, agent, ROOM]));
+       VALUES($1,2,'brief',$2,$3)`, [corner, agent, ROOM]));
     await expectNudge(() => database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES('latest-1',$1,$2,'done')`,
       [corner, agent]));

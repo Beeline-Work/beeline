@@ -1,3 +1,4 @@
+import { backfillCornerObjectives } from './corner-objective.js';
 import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
 import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
 import { clearConnectedAppPlaceholders } from './migrations/connected-app-turns.js';
@@ -2100,6 +2101,7 @@ CREATE TABLE IF NOT EXISTS corner_brief_revisions (
 );
 CREATE INDEX IF NOT EXISTS corner_brief_revisions_source_idx ON corner_brief_revisions(source_room_id);
 ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS source_message_id text;
+ALTER TABLE corner_brief_revisions ADD COLUMN IF NOT EXISTS objective text;
 -- Structured authority was added after the original opaque content field.
 -- Rows from before it keep null authority fields and read back as their
 -- build_spec alone.
@@ -3640,6 +3642,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     });
     return result;
   };
+  await dataStep('corner objectives', () => workflowBackfillOnce(
+    database, 'corner-objectives-brief-v1', backfillCornerObjectives));
   await dataStep('push outbox cutover', () => workflowBackfillOnce(
     database, 'push-outbox-v1', backfillPushOutbox));
   await dataStep('free agent connection guide', () =>

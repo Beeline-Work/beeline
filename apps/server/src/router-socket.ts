@@ -22,6 +22,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
   let stopped = false;
   let negotiated: readonly RouterFamily[] = [];
   return {
+    supports(family:RouterFamily):boolean {return negotiated.includes(family);},
     close(): void { stopped = true; for (const release of releases.splice(0)) release(); },
     async handle(message: Record<string, unknown>): Promise<boolean> {
       if (message.type !== 'router-negotiate') return false;

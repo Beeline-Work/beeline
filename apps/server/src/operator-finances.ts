@@ -48,7 +48,7 @@ const monthStart = (time: number, offset = 0) => {
 const money = (usd: number, source: Source, measuredAt: string, note: string, partial = false): Money =>
   ({ usd, source, state: partial ? 'partial' : 'measured', measuredAt, note });
 
-/** Shared by dashboard reads and the hourly leader collector. Never persists provider bodies. */
+/** Explicit operator collection. Never persists provider bodies or runs on a timer. */
 export function createOperatorFinances(
   database: SqlDatabase, env: Env = process.env, fetchImpl: typeof fetch = fetch,
   now: () => number = Date.now,
@@ -297,7 +297,7 @@ export function createOperatorFinances(
       perUser: { state: 'pending', delivery: 'PR B', activeUsers: null, attributedShare: null,
         attributedUsd: null, unattributedUsd: null, fixedCostPerActiveUserUsd: null,
         users: [], note: 'Per-user attribution follows in PR B' },
-      note: 'Known spend is a subtotal, not total operating cost. Missing history remains null. Snapshots refresh hourly and on dashboard reads.',
+      note: 'Known spend is a subtotal, not total operating cost. Missing history remains null. Snapshots refresh on explicit operator demand.',
     };
   }
   return async () => {

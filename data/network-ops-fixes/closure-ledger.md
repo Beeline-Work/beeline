@@ -44,3 +44,5 @@ These counts identify the staged validation run; later changes must rerun affect
 
 - F03/F05/F09 staged compatibility fixes filter transient roster events, release hidden schedule/workflow/profile observers, and make portraits consume parent detail. Focused suites pass; complete negotiated roster/workflow facts and cross-consumer closure remain open.
 - F11 staged auth/update migration uses held completion over committed ticket notifications, one event-driven recovery boundary and one shared SDK owner. Native-runtime40 SDK-internal launch behavior and the released native/browser matrix remain required before closure.
+
+- F13/F16/F17/F22 staged server changes add bounded journal retention, canonical projection suppression, actual due-record scheduling and idle voice/readiness proofs. Full presence (29), projection (12) and real PostgreSQL retention (2) passed; follow-up aggregate lease ownership (3) and actual phone viewing (9) regressions also pass. Findings remain open.

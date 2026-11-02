@@ -79,13 +79,21 @@ export class VoiceAudioMeter {
   private flushing?: Promise<void>;
   private closed = false;
   private paused = false;
-  private readonly timer: ReturnType<typeof setInterval>;
+  private timer?: ReturnType<typeof setTimeout>;
   constructor(private readonly store: VoiceBudgetStore, private readonly call: string,
     private readonly owner: string, private readonly workspace: string, initial: VoiceBudget,
     private readonly receipt: (budget: VoiceBudget | null) => void,
     private readonly log: (message: string) => void, private readonly now = Date.now) {
     this.budget = initial;
-    this.timer = setInterval(() => { void this.flush().catch(() => {}); }, 250);
+  }
+
+  /** Actual pending audio owns one accounting wake. An idle call owns none. */
+  private armCheckpoint(): void {
+    if (this.closed || this.timer || !this.pending.length) return;
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.flush().catch(() => {});
+    }, 250);
     this.timer.unref();
   }
 
@@ -120,16 +128,18 @@ export class VoiceAudioMeter {
     if (tail && tail[1] === start) this.pending[this.pending.length - 1] = [tail[0], acceptedEnd];
     else this.pending.push([start, acceptedEnd]);
     this.lastEnd = acceptedEnd;
+    this.armCheckpoint();
     return duration === elapsed ? milliseconds : Math.min(duration, milliseconds);
   }
 
   flush(): Promise<void> {
     if (this.flushing) return this.flushing;
+    clearTimeout(this.timer); this.timer = undefined;
+    if (!this.pending.length) return Promise.resolve();
     this.inFlight = this.pending; this.pending = [];
     this.flushing = (async () => {
       let budget: VoiceBudget | null;
       try {
-        // Empty checkpoints observe spending by another call in this workspace.
         budget = await this.store.record(this.call, this.owner, this.workspace, this.inFlight);
       } catch (error) {
         this.pending = [...this.inFlight, ...this.pending]; this.inFlight = [];
@@ -141,12 +151,17 @@ export class VoiceAudioMeter {
       if (this.paused) { this.paused = false; this.log('Voice input resumed after accounting checkpoint'); }
       // Receipt handlers must not be awaited: ending the call also closes meters.
       this.receipt(budget);
-    })().finally(() => { this.flushing = undefined; });
+    })().finally(() => {
+      this.flushing = undefined;
+      // This retains an existing nonempty accounting obligation, including
+      // failed interval commits. It never observes an empty call's budget.
+      this.armCheckpoint();
+    });
     return this.flushing;
   }
 
   async close() {
-    this.closed = true; clearInterval(this.timer);
+    this.closed = true; clearTimeout(this.timer); this.timer = undefined;
     if (this.flushing) await this.flushing.catch(() => {});
     // A normal leave must retain the last batch just like an active meter.
     // A successor lease makes record return null and ends this retry lane.

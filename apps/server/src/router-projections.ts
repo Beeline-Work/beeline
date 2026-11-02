@@ -155,7 +155,7 @@ export class RouterProjectionDrain {
             if (to.epoch !== from.epoch || to.through < from.through) throw new RouterProjectionUnavailable('retention');
             if (to.through === from.through) return {to,deliver:undefined};
             const entries = await db.query<{sequence: string; event: Record<string, unknown>}>(
-              `SELECT sequence::text,event FROM live_journal WHERE stream_id=$1 AND sequence>$2 AND sequence<=$3 ORDER BY sequence`,
+              `SELECT sequence::text,event FROM live_journal WHERE stream_id=$1 AND sequence>$2 AND sequence<=$3 ORDER BY live_journal.sequence`,
               [stream,from.through,to.through]);
             if (entries.rows.length !== to.through-from.through || entries.rows.some((r,i) => Number(r.sequence)!==from.through+i+1))
               throw new RouterProjectionUnavailable('retention');

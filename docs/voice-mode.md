@@ -24,8 +24,9 @@ in the budget's timezone, until reset.
 
 The runtime unions server-observed microphone intervals within each call in
 `voice_workspace_usage`; separate calls add to the Workspace total. Usage
-survives Room/call deletion until the Workspace itself is deleted. Checkpoints
-run every 250 ms outside the audio path. Failed checkpoints retain their batches
+survives Room/call deletion until the Workspace itself is deleted. A pending audio batch
+arms one 250 ms checkpoint outside the audio path; an empty meter owns no timer
+and makes no database observation. Failed nonempty checkpoints retain the same intervals
 for retry; all input in that call pauses at one second of uncommitted time and
 resumes after a successful checkpoint. Abrupt process death can lose at most
 one second per live call. Runtime lease checks fence stale writers. There are

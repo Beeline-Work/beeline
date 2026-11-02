@@ -1,3 +1,4 @@
+import { ServerLeaseDeadlines } from './server-lease-deadlines.js';
 import { recoverAdapterReviewsOnHelperChange } from './helper-review-recovery.js';
 import { CommanderWakeDeadlines } from './commander-wakes.js';
 import { CornerAttentionDeadlines } from './corner-attention.js';
@@ -93,6 +94,11 @@ export class ConnectionPresence {
   readonly #release: () => void;
   readonly #releaseResync: () => void;
   #leaseTimer: ReturnType<typeof setInterval> | undefined;
+  readonly #ownedConnections = new Map<string,string>();
+  #phoneConnections=0;
+  #leaseWrite?:Promise<void>;
+  #lastLeaseAt=Number.NEGATIVE_INFINITY;
+  readonly #serverLeaseDeadlines: ServerLeaseDeadlines;
   #attention: CornerAttentionDeadlines;
   #commanderWakes: CommanderWakeDeadlines;
   #stopped = false;
@@ -118,7 +124,12 @@ export class ConnectionPresence {
     this.instanceId = lease.instanceId ?? randomUUID();
     this.#leaseRenewMs = lease.renewMs ?? SERVER_LEASE_RENEW_MS;
     this.#leaseExpiryMs = lease.expiryMs ?? SERVER_LEASE_EXPIRY_MS;
+    this.#serverLeaseDeadlines = new ServerLeaseDeadlines(database,this.#leaseExpiryMs,async()=>{
+      const released=await releaseStaleServerConnections(this.database,this.#leaseExpiryMs);
+      for(const agentId of released)await broadcastAgentPresence(this.database,this.live,agentId);
+    },this.report);
     this.#releaseResync = live.subscribeResync(() => {
+      void this.recoverServerLeases().catch(this.report);
       void this.recoverWorkingStalls().catch(this.report);
       this.scheduleObserve();
     });
@@ -152,6 +163,7 @@ export class ConnectionPresence {
    * not a poll or a separately written delivery ledger. */
   async start(): Promise<void> {
     this.startLease();
+    await this.recoverServerLeases();
     await this.#commanderWakes.start();
     await this.#attention.start();
     await this.recoverWorkingStalls();
@@ -159,31 +171,52 @@ export class ConnectionPresence {
   }
 
   /**
-   * Renew this instance's lease and release connections whose server stopped
-   * renewing (crashed or scaled away). One statement pair per server instance
-   * per interval, whatever the number of agents; heartbeat pings never touch
-   * the database.
+   * Renew one aggregate owner row while this instance holds connections.
+   * Expired owners transition through their known one-shot deadlines; a
+   * renewal never discovers other connections or publishes phone state.
    */
   startLease(): void {
-    if (this.#leaseTimer || this.#stopped) return;
+    if (this.#leaseTimer || this.#stopped || (!this.#ownedConnections.size && !this.#phoneConnections)) return;
     const tick = () => void this.renewLease().catch(this.report);
-    tick();
     this.#leaseTimer = setInterval(tick, this.#leaseRenewMs);
     this.#leaseTimer.unref?.();
   }
 
+  /** A healthy authenticated phone also owns viewing/push suppression rows.
+   * Share the same aggregate lease with helpers, with an idempotent release. */
+  holdServerConnection():()=>void {
+    if(this.#stopped)return ()=>{};
+    this.#phoneConnections++;
+    void this.renewLease().catch(this.report);
+    this.startLease();
+    let released=false;
+    return ()=>{
+      if(released)return;released=true;
+      this.#phoneConnections=Math.max(0,this.#phoneConnections-1);
+      if(!this.#ownedConnections.size && !this.#phoneConnections){clearInterval(this.#leaseTimer);this.#leaseTimer=undefined;}
+    };
+  }
+
   async renewLease(): Promise<void> {
     if (this.#stopped) return;
-    await this.database.query(
-      `INSERT INTO live_server_instances(instance_id,renewed_at) VALUES($1,clock_timestamp())
-       ON CONFLICT(instance_id) DO UPDATE SET renewed_at=EXCLUDED.renewed_at`,
-      [this.instanceId],
-    );
-    const released = await releaseStaleServerConnections(
-      this.database,
-      this.#leaseExpiryMs,
-    );
-    for (const agentId of released) await broadcastAgentPresence(this.database, this.live, agentId);
+    if(this.#leaseWrite)return this.#leaseWrite;
+    if(Date.now()-this.#lastLeaseAt<this.#leaseRenewMs)return;
+    const pending=(async()=>{
+      await this.database.query(
+        `INSERT INTO live_server_instances(instance_id,renewed_at) VALUES($1,clock_timestamp())
+         ON CONFLICT(instance_id) DO UPDATE SET renewed_at=EXCLUDED.renewed_at`,
+        [this.instanceId],
+      );
+      this.#lastLeaseAt=Date.now();
+      this.#serverLeaseDeadlines.observe(this.instanceId,this.#lastLeaseAt);
+    })();
+    this.#leaseWrite=pending;
+    try{await pending;}finally{if(this.#leaseWrite===pending)this.#leaseWrite=undefined;}
+  }
+
+  recoverServerLeases(): Promise<void> { return this.#serverLeaseDeadlines.recover(); }
+  observeServerLease(instanceId:string,renewedAt:number,removed=false):void {
+    this.#serverLeaseDeadlines.observe(instanceId,renewedAt,removed);
   }
 
   /**
@@ -197,15 +230,22 @@ export class ConnectionPresence {
     if (this.#stopped) throw new Error('connection presence stopped');
     this.#authenticatedAt.set(agentId, Date.now());
     const { connectionId, ...presence } = metadata;
-    return claimAgentConnection(this.database, this.live, agentId, presence, {
+    // A real reconnect can prove recovery after a failed renewal. The local
+    // minimum interval coalesces concurrent registrations into one write.
+    await this.renewLease();
+    const epoch=await claimAgentConnection(this.database, this.live, agentId, presence, {
       connectionId,
       instanceId: this.instanceId,
     });
+    if(!this.#stopped){this.#ownedConnections.set(agentId,connectionId);this.startLease();}
+    return epoch;
   }
 
   /** The connection ended. Only the agent's current connection goes offline. */
   async releaseConnection(agentId: string, connectionId: string, forUpdate = false): Promise<void> {
     if (this.#stopped) return;
+    if(this.#ownedConnections.get(agentId)===connectionId)this.#ownedConnections.delete(agentId);
+    if(!this.#ownedConnections.size && !this.#phoneConnections){clearInterval(this.#leaseTimer);this.#leaseTimer=undefined;}
     await releaseAgentConnection(this.database, this.live, agentId, connectionId, forUpdate);
   }
 
@@ -284,6 +324,10 @@ export class ConnectionPresence {
     this.#attention.stop();
     this.#commanderWakes.stop();
     this.#leaseTimer = undefined;
+    this.#ownedConnections.clear();
+    this.#phoneConnections=0;
+    await this.#leaseWrite?.catch(this.report);
+    await this.#serverLeaseDeadlines.stop();
     this.#release();
     this.#releaseResync();
     for (const timer of this.#timers.values()) clearTimeout(timer);

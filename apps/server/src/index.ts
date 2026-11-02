@@ -1,11 +1,9 @@
 import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { NextDayCheckin } from './next-day-checkin.js';
-import { syncXSiteVisits } from './x-site-visits.js';
 import { RoomsMcp } from './rooms-mcp.js';
 import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
-import { syncXAdReports } from './x-ad-reports.js';
-import { deliverXSignups } from './x-ads.js';
+import { deliverXSignups, nextXSignupDeliveryAt } from './x-ads.js';
 import { flushOperatorSystemDms } from './operator-system-dm.js';
 import { captureServerError, flushServerErrors } from './sentry.js';
 
@@ -36,7 +34,6 @@ import {
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { PendingAttachmentCleanupLoop } from './pending-attachment-cleanup.js';
 import { BackgroundWork } from './background-work.js';
-import { dashboardFinances } from './operator-finances.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
@@ -279,6 +276,7 @@ async function main() {
   const connectionPresence = new ConnectionPresence(database, live, undefined, undefined, {
     instanceId: `${process.env.FLY_MACHINE_ID ?? 'local'}:${randomUUID()}`,
   });
+  liveListener.setServerLeaseEvidence((instance,renewedAt,removed)=>connectionPresence.observeServerLease(instance,renewedAt,removed));
   const mediaExpiryMediaMaximumBytes = Number(
     process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES),
   );
@@ -421,6 +419,7 @@ async function main() {
     healthDatabase,
     backgroundHealth: () => backgroundJobs.snapshot(),
     liveBridgeHealth: () => liveListener.projectionHealth(),
+    readiness: () => liveListener.projectionHealth().connected,
     auth,
     phone,
     daemon,
@@ -493,35 +492,13 @@ async function main() {
   if (freeAgents) work.add('free-agents', FREE_AGENT_SWEEP_MS, async () => {
     await backgroundJobs.run('free-agents', () => freeAgents.sweep());
   });
-  // External X requests must not hold up push delivery or schedule dispatch.
-  // Database claims fence retries across leaders; one local run per job bounds concurrency.
-  let xConversionsRunning = false;
-  let xReportsRunning = false;
-  let xSiteVisitsRunning = false;
-  let financesRunning = false;
-  work.add('operator-finances', 60 * 60_000, async () => {
-    if (financesRunning) return;
-    financesRunning = true;
-    void backgroundJobs.run('operator-finances', () => dashboardFinances(jobsDatabase))
-      .finally(() => { financesRunning = false; });
-  });
-  work.add('x-conversions', reconciliationMs, async () => {
-    if (xConversionsRunning) return;
-    xConversionsRunning = true;
-    void backgroundJobs.run('x-signup-conversions', () => deliverXSignups(jobsDatabase))
-      .finally(() => { xConversionsRunning = false; });
-  });
-  work.add('x-site-visits', reconciliationMs, async () => {
-    if (xSiteVisitsRunning) return;
-    xSiteVisitsRunning = true;
-    void backgroundJobs.run('x-site-visits', () => syncXSiteVisits(jobsDatabase))
-      .finally(() => { xSiteVisitsRunning = false; });
-  });
-  work.add('x-reports', reconciliationMs, async () => {
-    if (xReportsRunning) return;
-    xReportsRunning = true;
-    void backgroundJobs.run('x-ad-reports', () => syncXAdReports(jobsDatabase))
-      .finally(() => { xReportsRunning = false; });
+  // A committed signup row owns delivery. Vendor report/balance observations
+  // are explicit operator demand and never background calendar jobs.
+  work.addDeadline('x-conversions', async () => {
+    const delivered=await backgroundJobs.run('x-signup-conversions', () => deliverXSignups(jobsDatabase));
+    if(!delivered.ok)return;
+    const due=await backgroundJobs.run('x-signup-next-due',()=>nextXSignupDeliveryAt(jobsDatabase));
+    if(due.ok && due.value)return Math.max(0,due.value.getTime()-Date.now());
   });
   work.add('repair', reconciliationMs, async (newLeader) => {
     if (newLeader) {
@@ -578,6 +555,7 @@ async function main() {
   const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader), reconciliationMs);
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   if (push) liveListener.setPushWake(() => wakeWork('push'));
+  liveListener.setXSignupDeliveryWake(()=>wakeWork('x-conversions','signup-delivery'));
   liveListener.setOwedWake((source) => wakeWork(source === 'sentry' ? 'sentry' : 'deadlines', source));
   // An AI client's tag is POSTed the moment it commits. Each delivery is
   // claimed atomically, so every instance may drain; maintenance retries.

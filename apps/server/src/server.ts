@@ -1,3 +1,6 @@
+import { syncXAdReports } from './x-ad-reports.js';
+import { syncXSiteVisits } from './x-site-visits.js';
+import { dashboardFinances } from './operator-finances.js';
 import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
 import { parseRouterCommandIdentity } from '@beeline/api-contract/router-command';
 import { routerSocketProtocol, type RouterProjectionPolicy } from './router-socket.js';
@@ -163,6 +166,8 @@ export interface ServerOptions {
   backgroundHealth?: () => Record<string, unknown>;
   /** PostgreSQL notification projection pressure for this server instance. */
   liveBridgeHealth?: () => Record<string, unknown>;
+  /** Process/known dependency verdict. Hosting probes must not observe SQL. */
+  readiness?: () => boolean;
   /** Per-instance pool telemetry; the existing `database.pool` app shape is
    * retained for older release probes. */
   databasePools?: Partial<Record<'app' | 'enrichment' | 'diagnostics' | 'jobs', SqlDatabase>>;
@@ -860,6 +865,9 @@ export function createBeelineServer(options: ServerOptions): Server {
         else serveAgentSocket(daemonLive, client, principal, sendLive, trackSubscriptions);
         return;
       }
+      const releaseServerConnection = options.connectionPresence?.holdServerConnection();
+      client.once('close', () => releaseServerConnection?.());
+      client.once('error', () => releaseServerConnection?.());
       options.live.humanConnected(principal.identityId);
       // Rooms this socket views hold pushes until it says otherwise or closes.
       const viewingSession = randomUUID();
@@ -874,7 +882,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       // Workspace and identity changes keep their commit order on this socket.
       let identityDelivery = Promise.resolve();
       const sendNeedsYouDelta = (event: LiveEvent, roomId: string) => {
-        if (!options.phone.liveNeedsYou) return;
+        if ((routerProtocol.supports('needs-you') && routerProtocol.supports('needs-you-count')) || !options.phone.liveNeedsYou) return;
         // A later projection must not overtake an earlier one and then be
         // overwritten by its stale count or slice on the same socket.
         needsYouDelivery = needsYouDelivery.then(() =>
@@ -896,7 +904,8 @@ export function createBeelineServer(options: ServerOptions): Server {
         if (event.type !== 'invalidate') return;
         if (event.roomId !== '') {
           if (releases.has(event.roomId)) return;
-          if (!event.messageId || !options.phone.liveNeedsYou) return;
+          if (!event.messageId || !options.phone.liveNeedsYou ||
+              (routerProtocol.supports('needs-you') && routerProtocol.supports('needs-you-count'))) return;
           const local = event.committedRow?.type === 'message' ? event.committedRow.row : null;
           const candidate = event.needsYouCandidate || event.reason === 'phone-write' ||
             event.agentId === principal.identityId ||
@@ -1270,6 +1279,17 @@ export function createBeelineServer(options: ServerOptions): Server {
                         draftWire.delete(`${event.roomId}:${event.agentId}:${event.turnId}:${event.kind}`);
                       sendFrame(event);
                     }
+                    return;
+                  }
+                  // Canonical facts own these durable families after negotiation.
+                  // Keep the separate ephemeral branch above and legacy corner
+                  // lists until their own family is migrated.
+                  if(event.reason!=='corner-status' && (routerProtocol.supports('room-head') ||
+                    (routerProtocol.supports('room-list') && previewRooms.has(roomId) && !viewedRooms.has(roomId)))){
+                    const row=event.committedRow?.type==='message'?event.committedRow.row:undefined;
+                    if(event.messageId && (event.needsYouCandidate || event.agentId===principal.identityId || event.reason==='phone-write' ||
+                        (row && (row.author_id===principal.identityId || row.presentation==='card' || row.presentation==='system' || isNeedsYouAsk(row.text)))))
+                      sendNeedsYouDelta(event,roomId);
                     return;
                   }
                   // committedRow is process-local authority input. Strip it
@@ -1943,8 +1963,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
   if (method === 'GET' && url.pathname === '/readyz') {
-    await options.database.query('SELECT 1');
-    json(response, 200, { ok: true });
+    const ready = options.readiness?.() ?? true;
+    json(response, ready ? 200 : 503, { ok: ready });
     return;
   }
   if (method === 'GET' && url.pathname === '/version') {
@@ -1977,6 +1997,22 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       json(response, 429, { error: 'daily_cap_reached' }); return;
     }
     response.writeHead(204); response.end(); return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/admin/dashboard/refresh') {
+    if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {
+      json(response,403,{error:'access_denied'});return;
+    }
+    const input=await body(request);
+    if(Object.keys(input).some(key=>key!=='scope') || !['finances','x-reports','x-site-visits'].includes(String(input.scope))){
+      json(response,400,{error:'invalid_refresh_scope'});return;
+    }
+    if(input.scope==='finances')json(response,200,await dashboardFinances(options.database));
+    else{
+      if(input.scope==='x-reports')await syncXAdReports(options.database);
+      else await syncXSiteVisits(options.database);
+      json(response,200,{ok:true});
+    }
+    return;
   }
   if (method === 'POST' && url.pathname === '/v1/admin/dashboard/x-ads/screen') {
     if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {

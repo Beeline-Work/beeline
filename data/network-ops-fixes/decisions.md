@@ -21,3 +21,6 @@ The engineering specification and audit closure ledger remain authoritative. A p
 | D014 | Remove legacy observer waste immediately while the remaining per-family server facts are built; retain legacy compatibility for relevant durable changes. | Server-first staged migration. Filtering and focus fixes alone do not close F03/F05/F09. | Transient-event, hidden-consumer, parent-detail and focus regression suites; full negotiated-lane closure remains required. |
 
 Owner instruction 006 authorizes recommended or conservative compatible implementation decisions without waiting, with parallel helpers at high effort and serialized Vitest suites (heap 4096 MiB, at most two workers). Record further material choices here and in each affected PR.
+
+| D015 | Journal retention selects one exact count victim and only the newly expired byte interval, using a function-local indexed plan. | Bulk writes must not revisit dead history while retaining both existing replay bounds. | Real PostgreSQL generic-plan and independent trailing-history model proofs; numeric replay-order regression. |
+| D016 | Hosting readiness reports held dependency state; vendor reporting refreshes require explicit authenticated operator scope. | F16/F22 forbid status discovery on elapsed time. | Zero-query readiness and refresh authorization regressions; other scheduled obligations remain open. |

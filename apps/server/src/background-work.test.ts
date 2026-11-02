@@ -57,3 +57,21 @@ describe('R-BACKGROUND-WASTE', () => {
     expect(calls).toBe(2);
   });
 });
+
+
+describe('semantic deadline jobs',()=>{
+  it('runs one acquisition pass and then sleeps forever when no real obligation exists',async()=>{
+    let now=0;const run=vi.fn(async()=>{}),work=new BackgroundWork(()=>now,()=>{});
+    work.addDeadline('delivery',run);
+    expect(await work.run(true)).toBe(Infinity);expect(run).toHaveBeenCalledOnce();
+    now=24*60*60_000;expect(await work.run(false)).toBe(Infinity);expect(run).toHaveBeenCalledOnce();
+    work.wake('delivery','committed-row');expect(await work.run(false)).toBe(Infinity);expect(run).toHaveBeenCalledTimes(2);
+  });
+  it('arms only an actual returned due time and parks after a completed obligation',async()=>{
+    let now=0;const work=new BackgroundWork(()=>now,()=>{});
+    const run=vi.fn<()=>Promise<number|void>>().mockResolvedValueOnce(15_000).mockResolvedValue(undefined);
+    work.addDeadline('delivery',run);
+    expect(await work.run(true)).toBe(15_000);now=14_999;expect(await work.run(false)).toBe(1);expect(run).toHaveBeenCalledOnce();
+    now=15_000;expect(await work.run(false)).toBe(Infinity);expect(run).toHaveBeenCalledTimes(2);
+  });
+});

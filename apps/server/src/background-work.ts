@@ -20,6 +20,12 @@ export class BackgroundWork {
     this.jobs.set(name, { intervalMs, nextAt: -Infinity, pending: false, run });
   }
 
+  /** Initial/feed acquisition inspects once. Only an actual due record returned
+   * by the owner or a committed wake admits the next execution. */
+  addDeadline(name: string, run: (newLeader: boolean) => Promise<number | void>): void {
+    this.add(name, Number.POSITIVE_INFINITY, run);
+  }
+
   wake(name: string, source = name): void {
     const job = this.jobs.get(name);
     if (!job) return;

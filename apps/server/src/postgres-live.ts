@@ -1,3 +1,5 @@
+import { X_SIGNUP_DELIVERY_TABLE } from './x-ads.js';
+import { SERVER_LEASE_EVIDENCE_TABLE } from './server-lease-deadlines.js';
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion, recoverCommandCompletions } from './command-completion.js';
 import { Client } from 'pg';
 import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
@@ -484,6 +486,8 @@ type LivePgClientFactory = () => LivePgClient;
 
 interface LiveNotificationPayload {
   journalStreams?: string[];
+  instanceId?:string;
+  renewedAt?:number;
   table: string;
   operation: string;
   roomId: string;
@@ -549,6 +553,8 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
     return {
       ...(Array.isArray(parsed.journalStreams)
         ? { journalStreams: parsed.journalStreams.filter((s): s is string => typeof s === 'string') } : {}),
+      ...(typeof parsed.instanceId==='string' ? {instanceId:parsed.instanceId} : {}),
+      ...(Number.isSafeInteger(parsed.renewedAt) ? {renewedAt:parsed.renewedAt as number} : {}),
       table: parsed.table,
       operation: parsed.operation,
       roomId: parsed.roomId,
@@ -615,6 +621,10 @@ const wait = (milliseconds: number) =>
 /** One session-persistent LISTEN connection for one server machine. */
 export class PostgresLiveListener {
   private pushWake?: () => void;
+  private xSignupDeliveryWake?:()=>void;
+  setXSignupDeliveryWake(wake:()=>void):void {this.xSignupDeliveryWake=wake;}
+  private serverLeaseEvidence?: (instance:string,renewedAt:number,removed:boolean)=>void;
+  setServerLeaseEvidence(observe:(instance:string,renewedAt:number,removed:boolean)=>void):void { this.serverLeaseEvidence=observe; }
 
   setPushWake(wake: () => void): void { this.pushWake = wake; }
   private owedWake?: (source: 'sentry' | 'owed') => void;
@@ -712,6 +722,11 @@ export class PostgresLiveListener {
     if (!payload) return;
     if (payload.journalStreams?.length) this.live.journalChanged(payload.journalStreams);
     if (payload.table === 'router_source') return;
+    if(payload.table===X_SIGNUP_DELIVERY_TABLE){this.xSignupDeliveryWake?.();return;}
+    if(payload.table===SERVER_LEASE_EVIDENCE_TABLE){
+      if(payload.instanceId && payload.renewedAt!==undefined)this.serverLeaseEvidence?.(payload.instanceId,payload.renewedAt,payload.removed===true);
+      return;
+    }
     if (payload.table === 'sentry_wake_state') {
       this.owedWake?.('sentry');
       return;
@@ -845,6 +860,7 @@ export class PostgresLiveListener {
         await client.query(`LISTEN ${POSTGRES_LIVE_CHANNEL}`);
         await client.query(`LISTEN ${COMMAND_COMPLETION_CHANNEL}`);
         recoverCommandCompletions();
+        this.xSignupDeliveryWake?.();
         this.connected = true;
         console.log('[live-listener] connected');
         // A reconnect may have missed committed writes while LISTEN was down.

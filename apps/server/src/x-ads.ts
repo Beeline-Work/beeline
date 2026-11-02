@@ -41,6 +41,32 @@ export async function recordXSignup(
   return context.twclid && eventId ? { eventId, conversionId } : undefined;
 }
 
+export const X_SIGNUP_DELIVERY_TABLE = 'x_signup_delivery';
+export const X_SIGNUP_DELIVERY_SCHEMA = `
+CREATE OR REPLACE FUNCTION beeline_notify_x_signup_delivery() RETURNS trigger AS $$
+BEGIN
+  PERFORM pg_notify('beeline_live_v1',jsonb_build_object('table','${X_SIGNUP_DELIVERY_TABLE}',
+    'operation',TG_OP,'roomId','')::text);
+  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS beeline_notify_x_signup_delivery ON x_ad_signups;
+CREATE TRIGGER beeline_notify_x_signup_delivery AFTER INSERT OR UPDATE OR DELETE ON x_ad_signups
+FOR EACH ROW EXECUTE FUNCTION beeline_notify_x_signup_delivery();
+`;
+
+/** A persisted conversion remains a delivery obligation with its stable
+ * provider id. Missing credentials park it until an actual config/process
+ * boundary; they never produce a status-check deadline. */
+export async function nextXSignupDeliveryAt(database: SqlDatabase,
+  token = process.env.BEELINE_X_PIXEL_TOKEN): Promise<Date | null> {
+  if (!token || !xSignupEventId()) return null;
+  return (await database.query<{next_attempt_at:Date}>(`SELECT next_attempt_at FROM x_ad_signups
+    WHERE sent_at IS NULL AND twclid IS NOT NULL AND attempts<10 AND created_at>now()-interval '2 days'
+    ORDER BY next_attempt_at LIMIT 1`)).rows[0]?.next_attempt_at ?? null;
+}
+
 /** Leased, bounded outbox. A crash after X accepts retries the same deduplication ID. */
 export async function deliverXSignups(
   database: SqlDatabase,

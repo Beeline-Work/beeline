@@ -160,3 +160,41 @@ it('restores a persisted database into a new server store and fences the previou
     expect((await successor.read('human')).remainingMs).toBe(119_750);
   } finally { await restored.close(); }
 });
+
+it('owns no timer or database observation while audio is empty, then commits one actual batch', async () => {
+  vi.useFakeTimers();
+  const initial={remainingMs:180_000,resetAt:START+86_400_000,timeZone:'UTC'};
+  const record=vi.fn(async()=>initial);
+  const store={limitMs:180_000,record} as unknown as VoiceBudgetStore;
+  let clock=START;
+  const meter=new VoiceAudioMeter(store,'idle-call','owner','workspace',initial,()=>{},()=>{},()=>clock);
+  try{
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await meter.flush();expect(record).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);
+    clock+=100;expect(meter.audio(100)).toBe(100);
+    expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(249);expect(record).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(record).toHaveBeenCalledOnce();expect(record.mock.calls[0]).toEqual(['idle-call','owner','workspace',[[START,START+100]]]);
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60_000);await meter.flush();expect(record).toHaveBeenCalledOnce();
+  }finally{await meter.close();vi.useRealTimers();}
+});
+
+it('retains a nonempty failed accounting obligation and stops wakes as soon as it commits', async () => {
+  vi.useFakeTimers();
+  const initial={remainingMs:180_000,resetAt:START+86_400_000,timeZone:'UTC'};
+  const record=vi.fn().mockRejectedValueOnce(new Error('commit failed')).mockResolvedValue(initial);
+  const store={limitMs:180_000,record} as unknown as VoiceBudgetStore;
+  const receipt=vi.fn();let clock=START;
+  const meter=new VoiceAudioMeter(store,'call','owner','workspace',initial,receipt,()=>{},()=>clock);
+  try{
+    clock+=200;meter.audio(200);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(record).toHaveBeenCalledOnce();expect(receipt).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(1);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(record).toHaveBeenCalledTimes(2);expect(record.mock.calls[1]).toEqual(record.mock.calls[0]);
+    expect(receipt).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);
+  }finally{await meter.close();vi.useRealTimers();}
+});

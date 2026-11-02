@@ -76,7 +76,7 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
     const frames:string[]=[];
     const protocol=routerSocketProtocol(database,VIEWER,frame=>frames.push(frame));
     await protocol.handle({type:'router-negotiate',protocol:1,families:['room-list','needs-you']});
-    expect(JSON.parse(frames[0]!)).toEqual({type:'router-capabilities',protocol:1,families:[],commandDedupV1:false});
+    expect(JSON.parse(frames[0]!)).toEqual({type:'router-capabilities',protocol:1,families:[],commandDedupV1:false,mediaMetadataV1:false});
     expect(()=>protocol.requireSnapshot(input)).toThrow('router_family_unavailable');
     protocol.close();
   });
@@ -135,6 +135,18 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
       expect(lanes.peek(request).value).toBeNull();expect(reads).toBe(1);
       await database.query('SELECT 1');
     }finally{protocol.close();}
+  });
+  it('drains a coalesced multi-event interval in numeric sequence order across decimal boundaries',async()=>{
+    const live=new LiveHub();let delivered!:(value:number[])=>void,failed!:(error:Error)=>void;
+    const complete=new Promise<number[]>((resolve,reject)=>{delivered=resolve;failed=reject;});
+    const release=await new RouterProjectionDrain(database,live).subscribe(WORKSPACE,async(_db,from,to,causes)=>{
+      expect(to.through-from.through).toBe(12);delivered(causes.map(c=>Number(c.ordinal)));
+    },reason=>failed(new Error(reason)));
+    try{
+      await database.query(`SELECT beeline_journal($1,jsonb_build_object('sourceTable','rooms','ordinal',n)) FROM generate_series(1,12)n`,[`workspace:${WORKSPACE}`]);
+      live.journalChanged([`workspace:${WORKSPACE}`]);
+      expect(await complete).toEqual(Array.from({length:12},(_,i)=>i+1));await database.query('SELECT 1');
+    }finally{release();}
   });
   it('drains committed rows independently on two servers and parks on retention loss',async()=>{
     const hubs=[new LiveHub(),new LiveHub()]; const received:number[][]=[[],[]]; const parked:string[]=[];

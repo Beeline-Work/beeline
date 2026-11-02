@@ -36,15 +36,33 @@ DO $$ BEGIN
   END IF;
 END $$;
 CREATE INDEX IF NOT EXISTS live_journal_byte_start_idx ON live_journal(stream_id,byte_start);
-CREATE OR REPLACE FUNCTION beeline_journal(stream text, body jsonb) RETURNS void AS $$
+-- SPI may cache a tiny-table generic plan for an entire bulk source write.
+-- This function owns indexed stream/retention keys; keep that plan bounded
+-- from its first call without changing the caller's planner settings.
+CREATE OR REPLACE FUNCTION beeline_journal(stream text, body jsonb) RETURNS void
+SET enable_seqscan=off AS $$
 DECLARE position bigint; total bigint; bytes integer := octet_length(body::text);
 BEGIN
   INSERT INTO live_streams(id,sequence,byte_total) VALUES(stream,1,bytes)
     ON CONFLICT(id) DO UPDATE SET sequence=live_streams.sequence+1,byte_total=live_streams.byte_total+bytes
     RETURNING sequence,byte_total INTO position,total;
   INSERT INTO live_journal(stream_id,sequence,event,byte_start) VALUES(stream,position,body,total-bytes);
-  DELETE FROM live_journal WHERE stream_id=stream AND
-    (sequence<=position-${LIVE_REPLAY_LIMIT} OR byte_start<total-${LIVE_REPLAY_BYTE_LIMIT});
+  -- Match the one count victim by PRIMARY KEY. Prefix <= scans revisit
+  -- dead index entries until a bulk source transaction can commit/vacuum.
+  -- Byte victims are bounded below by that count victim, or by the previous
+  -- byte threshold when count history was already pruned. Each expired byte
+  -- range is therefore visited once, including short/gapped histories.
+  WITH count_victim AS MATERIALIZED (
+    SELECT ctid,byte_start FROM live_journal
+    WHERE stream_id=stream AND sequence=position-${LIVE_REPLAY_LIMIT}
+  )
+  DELETE FROM live_journal WHERE ctid=ANY(ARRAY(
+    SELECT ctid FROM count_victim
+    UNION
+    SELECT ctid FROM live_journal WHERE stream_id=stream
+      AND byte_start>=COALESCE((SELECT byte_start FROM count_victim),total-bytes-${LIVE_REPLAY_BYTE_LIMIT})
+      AND byte_start<total-${LIVE_REPLAY_BYTE_LIMIT}
+  ));
 END;
 $$ LANGUAGE plpgsql;
 `;

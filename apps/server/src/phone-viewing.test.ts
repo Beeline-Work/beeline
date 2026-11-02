@@ -169,7 +169,7 @@ describe('phone viewing over the live socket', () => {
       phone: {} as PhoneService,
       daemon: {} as DaemonService,
       live: new LiveHub(),
-      connectionPresence: { instanceId: instance } as ConnectionPresence,
+      connectionPresence: { instanceId: instance, holdServerConnection: () => () => {} } as ConnectionPresence,
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;

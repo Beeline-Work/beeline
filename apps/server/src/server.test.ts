@@ -52,6 +52,21 @@ describe('server readiness', () => {
     return fetch(`http://127.0.0.1:${port}${path}`, requestInit);
   }
 
+  it('requires explicit authenticated operator scope for vendor refresh', async () => {
+    const query = vi.fn(), transaction = vi.fn();
+    const options = { dashboardSecret: 'fixture-dashboard-secret' };
+    const denied = await get('/v1/admin/dashboard/refresh', { query, transaction }, options,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'finances' }) });
+    expect(denied.status).toBe(403);
+    for (const input of [{ scope: 'all' }, { scope: 'finances', force: true }]) {
+      const invalid = await get('/v1/admin/dashboard/refresh', { query, transaction }, options,
+        { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer fixture-dashboard-secret' }, body: JSON.stringify(input) });
+      expect(invalid.status).toBe(400);
+    }
+    expect(query).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
   it('Reproduction RETURN-1: retains a visible verifier return when the app handoff is blocked', async () => {
     const query = vi.fn(), transaction = vi.fn();
     const response = await get('/v1/apps/oauth/verify?session_uri=session-fixture',
@@ -152,13 +167,13 @@ describe('server readiness', () => {
     expect(response.status).toBe(404);
   });
 
-  it('returns 200 after a successful database query', async () => {
+  it('returns the known readiness verdict without observing the database', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
     const response = await get('/readyz', { query, transaction: vi.fn() });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
-    expect(query).toHaveBeenCalledWith('SELECT 1');
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('reports app pool pressure and the oldest active app query', async () => {
@@ -259,13 +274,11 @@ describe('server readiness', () => {
     });
   });
 
-  it('returns 503 when the database query fails', async () => {
-    const response = await get('/readyz', {
-      query: vi.fn().mockRejectedValue(new Error('Connection terminated unexpectedly')),
-      transaction: vi.fn(),
-    });
-
-    expect(response.status).toBe(503);
+  it('returns 503 for a known unavailable dependency without a database probe', async () => {
+    const query=vi.fn().mockRejectedValue(new Error('must not probe'));
+    const response=await get('/readyz',{query,transaction:vi.fn()},{readiness:()=>false});
+    expect(response.status).toBe(503);expect(await response.json()).toEqual({ok:false});
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('survives an injected pool checkout timeout and serves the next request', async () => {
@@ -298,7 +311,7 @@ describe('server readiness', () => {
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/readyz`;
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/health`;
 
     const failed = await fetch(url);
     expect(failed.status).toBe(503);

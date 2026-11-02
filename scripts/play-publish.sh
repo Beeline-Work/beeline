@@ -13,17 +13,13 @@
 #   AAB_PATH         — path to the .aab built by EAS (signed by the EAS upload key)
 #   MAPPING_PATH     — nonempty R8 mapping extracted from that exact AAB
 #   MAPPING_ARCHIVE_DIR — directory for version-code-named mapping artifacts
-#   TRACK            — internal | alpha | beta | production
-#   RELEASE_NAME     — release name shown in Play Console: "<app version> (<release marker>)";
-#                      a release already named this on any track is not uploaded again
-#   RELEASE_STATUS   — draft | completed
-#                       draft     = uploaded, not sent to testers; you press
-#                                   "Send to testers"/"Release" in Play Console.
-#                       completed = released to everyone on the track at once.
+#   RELEASE_NAME     — release name shown in Play Console: "<app version> (<release marker>)"
 # Optional:
+#   TRACK            — production by default; beta only when explicitly selected
+#   RELEASE_STATUS   — completed (full rollout after review)
 #   CHANGELOG_DIR    — per-versionCode release notes dir; <versionCode>.txt wins,
 #                      default.txt otherwise (default: the en-US fastlane dir)
-#   PUBLISH_LISTING=true — explicit listing consent permits the existing automatic-review commit fallback
+#   PUBLISH_LISTING=true — explicit owner consent unlocks the listing-change gate
 #   PLAY_DEFER_COMMIT=1 — leave commit to the workflow CD gate (writes edit_id to GITHUB_OUTPUT)
 #   PLAY_LISTING_BASELINE — pre-upload listing snapshot file for the CD gate
 #   PLAY_DRY_RUN=1   — print the API calls instead of making them (see play-api.sh)
@@ -34,9 +30,13 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/play-api.sh"
 
 : "${AAB_PATH:?AAB_PATH env var is required}"
-: "${TRACK:?TRACK env var is required (internal|alpha|beta|production)}"
+export TRACK="${TRACK:-production}"
+export RELEASE_STATUS="${RELEASE_STATUS:-completed}"
+if { [ "$TRACK" != production ] && [ "$TRACK" != beta ]; } || [ "$RELEASE_STATUS" != completed ]; then
+  echo "::error::Android releases require TRACK=production (or explicit beta) and RELEASE_STATUS=completed" >&2
+  exit 1
+fi
 : "${RELEASE_NAME:?RELEASE_NAME env var is required}"
-: "${RELEASE_STATUS:?RELEASE_STATUS env var is required (draft|completed)}"
 CHANGELOG_DIR="${CHANGELOG_DIR:-apps/mobile/fastlane/metadata/android/en-US/changelogs}"
 
 if [ ! -f "$AAB_PATH" ]; then
@@ -55,13 +55,15 @@ echo "  edit id: $edit_id"
 export PLAY_EDIT_ID="$edit_id"
 
 # A rerun of the same release must not upload a second bundle. RELEASE_NAME
-# carries the release marker, so a Play release with this exact name on any
-# track means this build already shipped: drop the edit and report it.
+# carries the release marker. Only a completed release on the selected track counts as
+# shipped: drop the edit and report it.
 shipped_code=$(api GET "$API/edits/$edit_id/tracks" | RELEASE_NAME="$RELEASE_NAME" python3 -c '
 import json, os, sys
 for track in json.load(sys.stdin).get("tracks", []):
+  if track.get("track") != os.environ["TRACK"]:
+    continue
   for release in track.get("releases", []):
-    if release.get("name") == os.environ["RELEASE_NAME"] and release.get("versionCodes"):
+    if release.get("status") == "completed" and release.get("name") == os.environ["RELEASE_NAME"] and release.get("versionCodes"):
       print(max(int(code) for code in release["versionCodes"]))
       sys.exit(0)
 ')
@@ -136,4 +138,4 @@ bash "$(dirname "${BASH_SOURCE[0]}")/play-commit-build.sh"
 echo "  edit committed — versionCode $version_code is on the $TRACK track as $RELEASE_STATUS"
 echo ""
 echo "Play Console: $(play_console_url)"
-echo "  open the app → Testing → ${TRACK} to see release $RELEASE_NAME"
+echo "  open the app → ${TRACK} to see release $RELEASE_NAME"

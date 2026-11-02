@@ -113,7 +113,11 @@ export async function computeNativeFingerprints(projectDir) {
       // Rules loaded with fs.readFile are not discovered as JS imports.
       extraSources: platform === 'android' ? [{ type: 'file', filePath: 'plugins/android-release.pro', reasons: ['Android release shrinker rules'] }] : [],
       fileHookTransform(source, chunk, ...rest) {
-        const transformed = config.fileHookTransform?.(source, chunk, ...rest) ?? chunk;
+        // A streaming hook intentionally returns null while buffering a file.
+        // Preserve that signal rather than hashing the original chunk as well.
+        const transformed = config.fileHookTransform
+          ? config.fileHookTransform(source, chunk, ...rest)
+          : chunk;
         if (
           source.type !== 'contents' ||
           source.id !== 'expoConfig' ||

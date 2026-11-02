@@ -87,29 +87,15 @@ play_console_url() {
   echo "https://play.google.com/console/u/0/developers/-/app-list?search=${PACKAGE_NAME}"
 }
 
-# commit_edit EDIT_ID [hold-for-review] — keep default builds unsent;
-# other callers retain the existing adaptive commit behavior.
-# Google toggles the required form of this call on the app's current state:
-# while an unsent/rejected change is pending, `:commit` must carry
-# `changesNotSentForReview=true` ("Changes cannot be sent for review
-# automatically. Please set the query parameter changesNotSentForReview to
-# true"); once changes are sent for review automatically, the same parameter
-# must NOT be set ("Changes are sent for review automatically. The query
-# parameter changesNotSentForReview must not be set."). Runs 34875518794 and
-# 34885345563 hit one each on the same day. Try the flagged form first and fall
-# back to the plain commit only on that exact complaint.
+# commit_edit EDIT_ID [send-for-review] — builds must enter review automatically.
+# Build and explicitly authorized listing publishers use the protected mode.
 commit_edit() {
   local edit_id="$1"
-  # Default build releases cannot safely detect console listing changes. Never
-  # retry without the hold flag, or cancel an existing review, in this mode.
-  # https://developers.google.com/android-publisher/concurrency-considerations
-  # https://developers.google.com/android-publisher/api-ref/rest/v3/edits/commit
-  if [ "${2:-}" = "hold-for-review" ]; then
-    if ! api POST "$API/edits/$edit_id:commit?changesNotSentForReview=true&changesInReviewBehavior=ERROR_IF_IN_REVIEW" -H "Content-Length: 0" >/dev/null; then
-      echo "::error::Play refused the safe commit; no automatic-review fallback attempted. Finish the build submission alone in Play Console." >&2
-      return 1
-    fi
-    echo "Build uploaded but not sent for review; send the build alone in Play Console and keep listing changes saved for later."
+  if [ "${2:-}" = "send-for-review" ]; then
+    # Preserve an existing review rather than cancelling it. Never fall back to
+    # saving an unsent build: a refusal must fail the release.
+    api POST "$API/edits/$edit_id:commit?changesInReviewBehavior=ERROR_IF_IN_REVIEW" -H "Content-Length: 0" >/dev/null
+    echo "Build sent for review; full rollout follows approval."
     return 0
   fi
   if [ "${PLAY_DRY_RUN:-0}" = "1" ]; then

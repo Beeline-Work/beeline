@@ -17,6 +17,10 @@
 // Verify: cd apps/mobile && npm run fingerprint:check
 // The recorded hashes must survive `rm -rf node_modules && npm ci`.
 
+// File hooks receive 1 KB chunks. Buffer each EAS source independently so the
+// submit section can be removed without ignoring build profiles or env inputs.
+const easChunks = new WeakMap();
+
 /** @type {import('@expo/fingerprint').Config} */
 module.exports = {
   // This patch catches a web-only font promise in JavaScript. It changes no
@@ -44,6 +48,20 @@ module.exports = {
     'ExpoConfigExtraSection',
   ],
   fileHookTransform(source, chunk, _isEndOfFile, _encoding) {
+    if (source.type === 'file' && source.filePath === 'eas.json') {
+      const chunks = easChunks.get(source) ?? [];
+      if (!_isEndOfFile) {
+        chunks.push(Buffer.from(chunk));
+        easChunks.set(source, chunks);
+        return null;
+      }
+      easChunks.delete(source);
+      const eas = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      // Store destination/status/review settings apply after the binary exists.
+      // Build profiles still count because they can change native compilation.
+      delete eas.submit;
+      return JSON.stringify(eas);
+    }
     if (source.type !== 'contents' || source.id !== 'expoConfig' || typeof chunk !== 'string') {
       return chunk;
     }

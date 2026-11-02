@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
+import { createRequire } from 'node:module';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -16,6 +17,7 @@ const mobileRoot = resolve(__dirname, '../..');
 const gateScript = join(mobileRoot, 'scripts/native-fingerprint.mjs');
 const appConfig = readFileSync(join(mobileRoot, 'app.config.js'), 'utf8');
 const fingerprintConfig = readFileSync(join(mobileRoot, 'fingerprint.config.js'), 'utf8');
+const fingerprintPolicy = createRequire(import.meta.url)(join(mobileRoot, 'fingerprint.config.js'));
 const baseline = JSON.parse(
   readFileSync(join(mobileRoot, 'native-fingerprint.json'), 'utf8'),
 ) as {
@@ -55,6 +57,22 @@ const recorded = {
 };
 
 describe('native fingerprint gate', () => {
+  it('ignores EAS submit metadata across file chunks but retains build-profile inputs', () => {
+    const normalized = (config: object) => {
+      const source = { type: 'file', filePath: 'eas.json' };
+      const contents = Buffer.from(JSON.stringify(config));
+      // Exercise the real hook's streaming contract, including split JSON tokens.
+      for (let offset = 0; offset < contents.length; offset += 7) {
+        expect(fingerprintPolicy.fileHookTransform(source, contents.subarray(offset, offset + 7), false, 'buffer')).toBeNull();
+      }
+      return fingerprintPolicy.fileHookTransform(source, null, true, 'utf8');
+    };
+    const build = { production: { env: { NATIVE_FLAG: 'enabled' } } };
+    expect(normalized({ build, submit: { production: { android: { track: 'production' } } } }))
+      .toBe(normalized({ build, submit: { beta: { android: { track: 'beta', releaseStatus: 'completed' } } } }));
+    expect(normalized({ build })).not.toBe(normalized({ build: { production: { env: { NATIVE_FLAG: 'disabled' } } } }));
+  });
+
   it('pins the runtime version by hand, because a computed stamp orphans installed binaries', () => {
     // v0.0.42 shipped `runtimeVersion: { policy: "fingerprint" }`. Every app
     // already installed carried the literal stamp it was built with, so it
@@ -210,7 +228,7 @@ describe('native fingerprint gate', () => {
       // of the project is a genuine native change — no stubbing of the
       // fingerprint itself, which is the thing under test.
       const project = mkdtempSync(join(tmpdir(), 'beeline-native-fingerprint-'));
-      for (const file of ['package.json', 'app.config.js', 'fingerprint.config.js']) {
+      for (const file of ['package.json', 'app.config.js', 'fingerprint.config.js', 'eas.json']) {
         cpSync(join(mobileRoot, file), join(project, file));
       }
       cpSync(join(mobileRoot, 'plugins'), join(project, 'plugins'), { recursive: true });
@@ -226,6 +244,16 @@ describe('native fingerprint gate', () => {
       expect(recordedRun.status).toBe(0);
       const before = JSON.parse(readFileSync(baselineFile, 'utf8'));
       expect(runtimeVersionsFromConfig(before)).toEqual({ android: '44', ios: '37' });
+
+      // Store submission happens after compilation. Changing the entire submit
+      // section must pass the real gate under the same native runtime pins.
+      const easFile = join(project, 'eas.json');
+      const eas = JSON.parse(readFileSync(easFile, 'utf8'));
+      eas.submit = { beta: { android: { track: 'beta', releaseStatus: 'completed' } } };
+      writeFileSync(easFile, JSON.stringify(eas));
+      const submitOnly = await runGate(fixture);
+      expect(submitOnly.status, submitOnly.stderr).toBe(0);
+      expect(submitOnly.stderr).toBe('');
 
       // The retired capability-stripper had iOS mods only. Adding it back must
       // move iOS's fingerprint without changing Android's normalized input.

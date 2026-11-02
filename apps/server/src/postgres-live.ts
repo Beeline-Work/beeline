@@ -375,7 +375,7 @@ BEGIN
         body := jsonb_strip_nulls(jsonb_build_object(
           'type','invalidate','roomId',source_room,'reason','postgres:' || TG_TABLE_NAME,
           'messageId',payload->>'messageId','agentId',payload->>'agentId',
-          'requestId',payload->>'requestId','operation',TG_OP,
+          'requestId',payload->>'requestId',
           'trace',jsonb_build_object('id',payload->>'traceId',
             'databaseAt',payload->'databaseAt','emittedAt',payload->'databaseAt'),
           'readerId',CASE WHEN TG_TABLE_NAME='room_read_marks' THEN payload->>'identityId' END));

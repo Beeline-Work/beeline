@@ -7145,7 +7145,7 @@ describe('monolith integration', () => {
     ).not.toEqual([{ lifecycle: 'done' }]);
   });
 
-  it('credits the branch agent, not a copied parent owner, on a phone-opened corner merge', async () => {
+  it('credits the opener, not a copied parent owner, on a phone-opened corner merge; recording a branch stores no owner', async () => {
     processWebhook.mockImplementation((event, payload) =>
       githubOperations.processWebhook(event, payload),
     );
@@ -7218,7 +7218,8 @@ describe('monolith integration', () => {
         )
       ).rows,
     ).toEqual([
-      { card_type: 'github-corner-note', author_id: AGENT },
+      // No assignment names an agent owner here, so the person who opened it is credited.
+      { card_type: 'github-corner-note', author_id: HUMAN },
     ]);
     expect(
       (
@@ -7227,26 +7228,7 @@ describe('monolith integration', () => {
           [cornerId],
         )
       ).rows,
-    ).toEqual([{ owner_agent_id: AGENT }]);
-    // A later agent recording a branch never replaces the recorded owner.
-    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [
-      cornerId,
-      candy,
-    ]);
-    await daemonOperation('postCornerRemoteState', {
-      cornerId,
-      branch,
-      state: 'working',
-      checks: 'unknown',
-    });
-    expect(
-      (
-        await database.query<{ owner_agent_id: string | null }>(
-          `SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`,
-          [cornerId],
-        )
-      ).rows,
-    ).toEqual([{ owner_agent_id: candy }]);
+    ).toEqual([{ owner_agent_id: null }]);
   });
 
   it('turns signed GitHub branch events into corner notes and closes a merged corner', async () => {
@@ -8045,15 +8027,15 @@ describe('monolith integration', () => {
     ).toEqual({ count: '0' });
   });
 
-  it('derives an owner for a legacy corner from its first agent-authored message', async () => {
+  it('reads a legacy corner owner from its stored column when no assignment survives', async () => {
     const legacyCornerId = '33333333-3333-4333-8333-333333333333';
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Legacy corner')`,
       [legacyCornerId, WORKSPACE, ROOM, HUMAN],
     );
     await database.query(
-      `INSERT INTO corner_facts(corner_id,objective) VALUES($1,'Legacy objective')`,
-      [legacyCornerId],
+      `INSERT INTO corner_facts(corner_id,objective,owner_agent_id) VALUES($1,'Legacy objective',$2)`,
+      [legacyCornerId, AGENT],
     );
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'Legacy objective','message')`,

@@ -12,6 +12,8 @@ export const CORNER_ROW_FACT_COLUMNS = [
 /** The latest-message (`lm`) columns, including those its visibility rule reads. */
 export const CORNER_ROW_MESSAGE_COLUMNS = [
   'id', 'room_id', 'author_id', 'text', 'created_at', 'presentation', 'deleted_at', 'card_type', 'card', 'system_event',
+  // A human report's originating corner is read through its request (`humanReportCornerSql`).
+  'request_id',
 ] as const;
 
 /** For a row trigger: the row was inserted or deleted, or one of `columns` changed. */

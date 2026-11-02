@@ -2409,9 +2409,10 @@ CREATE TABLE IF NOT EXISTS workspace_deletion_notices (
   id bigserial PRIMARY KEY,
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
   workspace_id uuid NOT NULL,
-  workspace_name text NOT NULL,
   created_at timestamptz NOT NULL DEFAULT now()
 );
+-- The name is read from workspace_deletions.
+ALTER TABLE workspace_deletion_notices DROP COLUMN IF EXISTS workspace_name;
 CREATE INDEX IF NOT EXISTS workspace_deletion_notices_identity_idx
   ON workspace_deletion_notices(identity_id, created_at);
 

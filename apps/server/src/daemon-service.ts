@@ -254,7 +254,6 @@ import { activeWorkflowRunIds, humanRoomAdmin, scheduleWorkflowName } from './wo
 import { isCornerReviewer } from './agent-health.js';
 import {
   recordStarPromptReply,
-  STAR_PROMPT_MILESTONES,
   starPromptReplySql,
 } from './github-star-prompt.js';
 
@@ -4641,7 +4640,7 @@ export class DaemonService {
                id,room_id,author_id,text,presentation,request_id,legacy_event,
                reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
              ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,
-                 writable.agent_depth,attachment_payload.attachments,$12::jsonb,
+                 writable.agent_depth,attachment_payload.attachments,$11::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload,recovery_barrier
              ON CONFLICT(id) DO NOTHING
@@ -4658,7 +4657,6 @@ export class DaemonService {
            ), star_count AS (
              ${starPromptReplySql(
                `(SELECT writable.root_source_message_id FROM writable,completed WHERE $5='message')`,
-               '$11::int[]',
              )}
            ), cleared AS (
              DELETE FROM live_outputs output USING completed
@@ -4718,7 +4716,6 @@ export class DaemonService {
           input.replyToMessageId ?? null,
           rootMessageId,
           input.generationId,
-          STAR_PROMPT_MILESTONES,
           steps,
         ],
       );

@@ -10,9 +10,8 @@ export const OPERATOR_OWNER_ID = '34cf4160723acd12d205dfbe292614bfec9489b78812d1
 export const OPERATOR_SYSTEM_DM_SCHEMA = `
 CREATE TABLE IF NOT EXISTS operator_system_dm_sends (
  id uuid PRIMARY KEY, caller_id text NOT NULL, owner_id text NOT NULL,
- source_message_id text NOT NULL, recipients jsonb NOT NULL, text_hash text NOT NULL,
- text text NOT NULL, created_at timestamptz NOT NULL DEFAULT now(),
- recipient_count integer NOT NULL DEFAULT 0
+ source_message_id text NOT NULL, recipients jsonb NOT NULL,
+ text text NOT NULL, created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE TABLE IF NOT EXISTS operator_system_dm_deliveries (
  send_id uuid NOT NULL REFERENCES operator_system_dm_sends(id),
@@ -20,9 +19,9 @@ CREATE TABLE IF NOT EXISTS operator_system_dm_deliveries (
  state text NOT NULL DEFAULT 'pending' CHECK(state IN ('pending','delivered','failed')),
  PRIMARY KEY(send_id,recipient_id)
 );
--- Neither is read: the hash was never compared and the count is the send's
--- delivery rows. Nullable/defaulted so old images can still insert them.
-ALTER TABLE operator_system_dm_sends ALTER COLUMN text_hash DROP NOT NULL;
+-- Retired copies: the hash was never compared and the count is the send's delivery rows.
+ALTER TABLE operator_system_dm_sends DROP COLUMN IF EXISTS text_hash;
+ALTER TABLE operator_system_dm_sends DROP COLUMN IF EXISTS recipient_count;
 CREATE INDEX IF NOT EXISTS operator_system_dm_pending ON operator_system_dm_deliveries(send_id,recipient_id)
  WHERE state='pending';
 `;

@@ -6588,8 +6588,8 @@ export class PhoneService {
              AND owner.removed_at IS NULL AND owner.role='owner'
          ) RETURNING workspace.id,workspace.name
        ), notices AS (
-         INSERT INTO workspace_deletion_notices(identity_id,workspace_id,workspace_name)
-         SELECT members.identity_id,deleted.id,deleted.name FROM deleted JOIN members ON true
+         INSERT INTO workspace_deletion_notices(identity_id,workspace_id)
+         SELECT members.identity_id,deleted.id FROM deleted JOIN members ON true
          WHERE members.identity_id<>$2 AND members.kind='human' RETURNING identity_id
        ), audit AS (
          INSERT INTO workspace_deletions(workspace_id,workspace_name,deleted_by)

@@ -778,8 +778,11 @@ jobs:
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
           EAS_SKIP_AUTO_FINGERPRINT: '1'
+          EXPO_PUBLIC_BUZZY_MONOLITH_URL: https://server.usebeeline.app
         run: |
           set -euo pipefail
+          # Metro transforms inline EXPO_PUBLIC_* values. Never reuse a rig's cache.
+          export TMPDIR="$(mktemp -d "$RUNNER_TEMP/native-metro-XXXXXX")"
           # Each pooled runner keeps its SDK in a different place; take the runner's
           # own ANDROID_HOME when it is set, else the first known layout that exists.
           for candidate in "${ANDROID_HOME:-}" /home/lunchbox/android-sdk "$HOME/Android/Sdk" /opt/android-sdk; do
@@ -792,6 +795,7 @@ jobs:
           bash ../../scripts/npm-ci-timed.sh
           "$EAS_CLI_PATH" build --local --platform android --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline.aab"
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'local EAS build did not produce a non-empty aab' >&2; exit 1; }
+          node ../../scripts/assert-mobile-release-origin.mjs "$RUNNER_TEMP/beeline.aab"
           unzip -p "$RUNNER_TEMP/beeline.aab" BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map > "$RUNNER_TEMP/mapping.txt"
           test -s "$RUNNER_TEMP/mapping.txt" || { echo 'R8 mapping missing from AAB' >&2; exit 1; }
           sha256=$(sha256sum "$RUNNER_TEMP/beeline.aab" | awk '{print $1}')

@@ -17,8 +17,8 @@ import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
 import { BROWSER_REFUSALS, RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { RoomsMcp } from './rooms-mcp.js';
-import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, MCP_APP_ROUTE_OPERATIONS } from './rooms-mcp-agent.js';
-import { createAgentCommand, claimAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
+import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, MCP_APP_ROUTE_OPERATIONS, pendingMcpWakes } from './rooms-mcp-agent.js';
+import { claimAgentCommand, createAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
 import { cornerWorkSql } from './chat-corner-counts.js';
 import { openSecrets } from './free-agents.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
@@ -187,7 +187,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const initialized = await eventCall(token, 'initialize', { protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'events-test', version: '1' } });
     expect(initialized.result.capabilities.events).toEqual({});
     expect((await eventCall(token, 'server/discover')).result.capabilities.events).toEqual({});
-    expect((await eventCall(token, 'events/list')).result.events).toMatchObject([{ name: 'mention', delivery: ['webhook'] }]);
+    expect((await eventCall(token, 'events/list')).result.events).toMatchObject([
+      { name: 'mention', delivery: ['webhook'] },
+      { name: 'wake', delivery: ['webhook'] },
+    ]);
     expect((await eventCall(token, 'events/list', { cursor: 'invalid' })).error?.code).toBe(-32602);
     const first = await eventCall(token, 'events/subscribe', params);
     expect(first.error).toBeUndefined();
@@ -264,7 +267,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect((await db.query('SELECT author_id FROM messages WHERE room_id=$1 AND text=$2', [ROOM, 'Event received.'])).rows).toEqual([{ author_id: member }]);
     } finally { receiver.closeAllConnections(); await new Promise<void>(resolve => receiver.close(() => resolve())); }
   });
-  it.each(['challenge', 'private HTTPS', 'url', 'secret', 'member', 'cursor', 'ttl'])('MCP-EVENTS-1: refuses invalid %s before activation', async kind => {
+  it.each(['challenge', 'private HTTPS', 'url', 'secret', 'member', 'cursor', 'ttl', 'name'])('MCP-EVENTS-1: refuses invalid %s before activation', async kind => {
     const { token, params, member } = await eventFixture();
     let input: Record<string, unknown> = params;
     if (kind === 'challenge') eventTransport = async () => Response.json({ challenge: 'wrong' });
@@ -277,6 +280,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     if (kind === 'member') input = { ...params, arguments: { memberId: OTHER } };
     if (kind === 'cursor') input = { ...params, cursor: '1000' };
     if (kind === 'ttl') input = { ...params, ttlMs: -1 };
+    if (kind === 'name') input = { ...params, name: 'order' };
     const result = await eventCall(token, 'events/subscribe', input);
     expect(result.error?.code).toBe(['challenge', 'private HTTPS'].includes(kind) ? -32015 : -32602);
     if (kind === 'challenge') expect(result.error?.data?.reason).toBe('challenge_failed');
@@ -349,6 +353,107 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(await deliverMcpMemberWebhooks(db, transport)).toBe(1);
     expect(attempts).toHaveLength(2);
     expect(attempts[1]).toBe(attempts[0]);
+  });
+  it('MCP-WAKE-1: a subscribed member gets one signed wake for an order, a report, and a corner assignment', async () => {
+    const fixture = await eventFixture();
+    const { token, params, member, secret, url } = fixture;
+    const other = await connected();
+    const wakeSecret = 'whsec_' + randomBytes(32).toString('base64');
+    const wakeUrl = 'https://hooks.example/wake/' + opaque();
+    eventTransport = async (_target, init) => Response.json({ challenge: JSON.parse(init.body).challenge });
+    const source = await phone.execute('sendRoomMessage', { roomId: ROOM, text: 'Hold a turn for a private order.' }, USER);
+    const commander = (await createAgentCommand(db, {
+      roomId: ROOM, agentId: AGENT, sourceMessageId: source.messageId, reason: 'human_message',
+    }))!;
+    await daemon.execute('claimAgentCommand', { roomId: ROOM, commandId: commander.id, generationId: 'wake-proof' }, AGENT);
+    const authority = { roomId: ROOM, requestId: commander.turn_request_id, generationId: 'wake-proof' };
+    const place = async (text: string, agent: string) => await daemon.execute('order',
+      { ...authority, address: ROOM, agent, text }, AGENT) as { id: string };
+    const queued = async (commandId: string) => (await db.query<{ subscription_id: string; body: string }>(
+      `SELECT subscription_id, body FROM rooms_mcp_event_deliveries WHERE command_id=$1 ORDER BY subscription_id`,
+      [commandId])).rows;
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    const otherHandle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [other.member])).rows[0]!.handle;
+    const early = await place('queued before any subscription', handle);
+    expect(await queued(early.id)).toEqual([]);
+    const mention = (await eventCall(token, 'events/subscribe', params)).result;
+    const wake = (await eventCall(other.token, 'events/subscribe', {
+      name: 'wake', arguments: {}, cursor: null,
+      delivery: { mode: 'webhook', url: wakeUrl, secret: wakeSecret },
+    })).result;
+    const text = 'private order for the subscribed member';
+    const ordered = await place(text, handle);
+    const rows = await queued(ordered.id);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]!.subscription_id).toBe(mention.id);
+    expect(JSON.parse(rows[0]!.body)).toMatchObject({ name: 'wake', cursor: null, data: {
+      roomId: ROOM, address: ROOM, commandId: ordered.id, id: ordered.id, reason: 'order', kind: 'order', text,
+      next: (await pendingMcpWakes(db, member)).find(item => item.id === ordered.id)!.next,
+    } });
+    expect((await db.query(`SELECT 1 FROM rooms_mcp_event_deliveries WHERE subscription_id=$1`, [wake.id])).rowCount).toBe(0);
+    const retried = await place(text, handle);
+    expect(retried.id).toBe(ordered.id);
+    expect(await queued(ordered.id)).toHaveLength(1);
+    const received: Array<{ url: string; event: { name?: string; data?: { text?: string } } }> = [];
+    const transport: typeof postMcpWebhook = async (target, init) => {
+      const signing = target === url ? secret : wakeSecret;
+      received.push({ url: target, event: new Webhook(signing).verify(init.body, init.headers) as { name?: string; data?: { text?: string } } });
+      return new Response(null, { status: 204 });
+    };
+    expect(await deliverMcpMemberWebhooks(db, transport)).toBe(1);
+    expect(received.map(item => item.url)).toEqual([url]);
+    expect(received[0]!.event.data!.text).toBe(text);
+    expect(await deliverMcpMemberWebhooks(db, transport)).toBe(0);
+    const opened = await daemon.execute('createCorner', {
+      ...authority, requestId: commander.turn_request_id, name: 'Wake-corner', objective: 'Carry the private assignment',
+      implementer: handle, brief: { spec: 'Private corner assignment for the subscribed implementer', repositoryWork: false },
+    }, AGENT);
+    const cornerCommand = (await db.query<{ id: string }>(
+      `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND reason='corner_objective'`,
+      [opened.cornerId, member])).rows[0]!;
+    expect(await queued(cornerCommand.id)).toHaveLength(1);
+    expect(JSON.parse((await queued(cornerCommand.id))[0]!.body).data).toMatchObject({
+      roomId: opened.cornerId, address: opened.cornerId, commandId: cornerCommand.id, kind: 'order',
+      text: 'Private corner assignment for the subscribed implementer',
+      next: 'Do the work, then call report with this address.',
+    });
+    const report = await createAgentCommand(db, {
+      roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'report',
+      privatePayload: { text: 'done: the report reached the commander', authorId: AGENT, fromRoomId: ROOM, kind: 'report' },
+    });
+    expect(await queued(report!.id)).toHaveLength(1);
+    expect(JSON.parse((await queued(report!.id))[0]!.body).data).toMatchObject({
+      kind: 'report', reason: 'report', text: 'done: the report reached the commander',
+      next: 'Handle it, then call no_reply_needed with this address if nothing needs posting.',
+    });
+    expect(await deliverMcpMemberWebhooks(db, transport)).toBe(2);
+    expect(received).toHaveLength(3);
+    expect(received.map(item => item.event.data?.text)).toEqual(expect.arrayContaining([
+      text, 'Private corner assignment for the subscribed implementer', 'done: the report reached the commander',
+    ]));
+    const heard = await place('only the wake subscription hears this', otherHandle);
+    const heardRows = await queued(heard.id);
+    expect(heardRows).toHaveLength(1);
+    expect(heardRows[0]!.subscription_id).toBe(wake.id);
+    expect(JSON.parse(heardRows[0]!.body).data.text).toBe('only the wake subscription hears this');
+    await db.query(`UPDATE rooms_mcp_event_subscriptions SET expires_at=now()-interval '1 second' WHERE id=$1`, [mention.id]);
+    expect(await queued((await place('order after the subscription expired', handle)).id)).toEqual([]);
+    await db.query(`UPDATE rooms_mcp_event_subscriptions SET expires_at=now()+interval '1 day' WHERE id=$1`, [mention.id]);
+    const wakeTooUrl = 'https://hooks.example/wake-too/' + opaque();
+    const both = (await eventCall(token, 'events/subscribe', {
+      ...params, name: 'wake', delivery: { ...params.delivery, url: wakeTooUrl, secret },
+    })).result;
+    expect((await queued((await place('wake subscription replaces the mention webhook', handle)).id))
+      .map(row => row.subscription_id)).toEqual([both.id]);
+    await eventCall(token, 'events/unsubscribe', { name: 'wake', arguments: {}, delivery: { mode: 'webhook', url: wakeTooUrl } });
+    await eventCall(token, 'events/unsubscribe', { name: 'mention', arguments: {}, delivery: { mode: 'webhook', url } });
+    expect(await queued((await place('order after unsubscribe', handle)).id)).toEqual([]);
+    await db.query(`UPDATE rooms_mcp_connections SET revoked_at=now() WHERE client_id=$1`, [other.grant.clientId]);
+    const revoked = await place('order after the connection was revoked', otherHandle);
+    expect(revoked.id).toEqual(expect.any(String));
+    expect(await queued(revoked.id)).toEqual([]);
+    await db.query(`UPDATE agent_commands SET state='complete', completed_at=now() WHERE id=$1`, [commander.id]);
+    await db.query(`UPDATE agent_turns SET status='complete' WHERE agent_id=$1 AND generation_id='wake-proof'`, [AGENT]);
   });
   it.each(['consent', 'profile'])('MCP-WAKE-SETUP: %s saves once, delivers tags and never reads the key back', async path => {
     vi.stubEnv('BEELINE_MCP_WEBHOOK_KEY', 'local-wake-test-key');

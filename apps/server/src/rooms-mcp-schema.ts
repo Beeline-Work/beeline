@@ -147,6 +147,14 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_event_subscriptions (
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_subscriptions_expiry ON rooms_mcp_event_subscriptions(expires_at);
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_subscriptions_member ON rooms_mcp_event_subscriptions(member_id);
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_subscriptions_connection ON rooms_mcp_event_subscriptions(client_id,owner_id);
+-- Existing rows are mention subscriptions. Wake is a separate subscribable event.
+ALTER TABLE rooms_mcp_event_subscriptions ADD COLUMN IF NOT EXISTS event_name text NOT NULL DEFAULT 'mention';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='rooms_mcp_event_subscriptions_event_name') THEN
+    ALTER TABLE rooms_mcp_event_subscriptions ADD CONSTRAINT rooms_mcp_event_subscriptions_event_name
+      CHECK (event_name IN ('mention','wake'));
+  END IF;
+END $$;
 CREATE TABLE IF NOT EXISTS rooms_mcp_event_deliveries (
   subscription_id text NOT NULL REFERENCES rooms_mcp_event_subscriptions(id) ON DELETE CASCADE,
   message_id text NOT NULL, room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -159,4 +167,33 @@ CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_done ON rooms_mcp_event_de
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_room ON rooms_mcp_event_deliveries(room_id);
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_pending ON rooms_mcp_event_deliveries(next_attempt_at)
   WHERE delivered_at IS NULL;
+-- A private wake has no message. command_id is its idempotency key; exactly one of the two is set.
+ALTER TABLE rooms_mcp_event_deliveries ADD COLUMN IF NOT EXISTS command_id text;
+DO $$ BEGIN
+  IF EXISTS (
+    SELECT 1 FROM pg_constraint c
+    JOIN pg_attribute a ON a.attrelid=c.conrelid AND a.attnum=ANY(c.conkey)
+    WHERE c.conrelid='rooms_mcp_event_deliveries'::regclass AND c.contype='p' AND a.attname='message_id'
+  ) THEN
+    ALTER TABLE rooms_mcp_event_deliveries DROP CONSTRAINT rooms_mcp_event_deliveries_pkey;
+  END IF;
+END $$;
+ALTER TABLE rooms_mcp_event_deliveries ALTER COLUMN message_id DROP NOT NULL;
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conrelid='rooms_mcp_event_deliveries'::regclass AND contype='p'
+  ) THEN
+    ALTER TABLE rooms_mcp_event_deliveries ADD CONSTRAINT rooms_mcp_event_deliveries_pkey PRIMARY KEY (event_id);
+  END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_message
+  ON rooms_mcp_event_deliveries(subscription_id,message_id) WHERE message_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_command
+  ON rooms_mcp_event_deliveries(subscription_id,command_id) WHERE command_id IS NOT NULL;
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='rooms_mcp_event_deliveries_subject') THEN
+    ALTER TABLE rooms_mcp_event_deliveries ADD CONSTRAINT rooms_mcp_event_deliveries_subject
+      CHECK ((message_id IS NOT NULL) <> (command_id IS NOT NULL));
+  END IF;
+END $$;
 `;

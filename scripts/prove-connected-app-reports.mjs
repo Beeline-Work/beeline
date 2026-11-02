@@ -16,7 +16,7 @@ try {
   await writeFile(proof, text, { flag: 'wx' });
   written = true;
   const result = spawnSync('npx', ['vitest', 'run', fileURLToPath(proof), '-t', 'R1:|R2:',
-    '--maxWorkers=1', '--minWorkers=1', '--silent'], { cwd: root, stdio: 'inherit' });
+    '--maxWorkers=1', '--minWorkers=1', '--silent', '--no-cache'], { cwd: root, stdio: 'inherit' });
   if (result.error) throw result.error;
   process.exitCode = result.status ?? 1;
   if (!process.exitCode) console.log('R1/R2 demonstrated: built MCP HTTP report reaches commander, objective completes, working clears, and tag receipts name each live route.');

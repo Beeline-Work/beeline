@@ -5,7 +5,7 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSyn
 import { delimiter, join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { agentLabel, defaultName, detectAgent, isAgentId, pickName, type AgentId } from './agents.js';
-import { accessToken, callTool, DEFAULT_SERVER, finishSignIn, registerClient, signInLink, type SignIn } from './beeline-api.js';
+import { accessToken, callTool, DEFAULT_SERVER, finishSignIn, NOT_JOINED, registerClient, signInLink, type SignIn } from './beeline-api.js';
 import { ensureBridge, renderMention, renderWake, runBridge, toolViaBridge, toolViaOutbox, type Mention, type Runner, type Wake } from './bridge.js';
 import { chosenName, claudeTranscript, heldBy, inboundSetting, permissionMode, postToClaude, scanClaude } from './claude.js';
 import { acceptClaudeInbound, assertClaudePolicy, restoreClaudeInbound } from './claude-inbound.js';
@@ -211,7 +211,7 @@ function own(args: string[], env: NodeJS.ProcessEnv): JoinedSession {
     const mine = findOwnSession(env, dir);
     return sessions.find(s => s.key === sessionKey(mine.agent, mine.cwd));
   })();
-  if (!found) throw new Error('This session has not joined Beeline. Run: npx -y usebeeline join');
+  if (!found) throw new Error(NOT_JOINED);
   return found;
 }
 

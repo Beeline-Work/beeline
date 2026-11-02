@@ -34,7 +34,7 @@ const files = discovered.filter((file) => chosen(selection, file));
 const timingData = JSON.parse(readFileSync(new URL('./ci-test-timings.json', import.meta.url), 'utf8'));
 const shards = balanceFiles(files, timingData.files, count);
 const selected = shards[position - 1];
-const isolatedFiles = (position === Math.min(3, count) ? isolated : []).filter((file) => chosen(selection, file));
+const isolatedFiles = isolated.filter((file, index) => position === index % count + 1 && chosen(selection, file));
 assert.deepEqual(list(isolated, []).sort(), [...isolated].sort(), 'isolated suites must remain discoverable');
 if (selection.mode === 'full') assert.ok(selected.files.length > 0, 'server shard has no files');
 if (selected.files.length) assert.deepEqual(list(selected.files).sort(), [...selected.files].sort(), 'Vitest must select exactly the assigned files');
@@ -44,7 +44,7 @@ if (!process.argv.includes('--list')) {
   let status = 0;
   if (selected.files.length) {
     const result = spawnSync(process.execPath, [vitest, 'run', ...exclusions, ...selected.files,
-      `--maxWorkers=${workers}`, '--minWorkers=1'], { cwd: root, stdio: 'inherit' });
+      `--maxWorkers=${workers}`, '--minWorkers=1', '--poolOptions.forks.singleFork', '--isolate'], { cwd: root, stdio: 'inherit' });
     if (result.error) throw result.error;
     status = result.status ?? 1;
   } else {

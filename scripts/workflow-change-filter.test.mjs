@@ -273,10 +273,10 @@ test('representative PRs request fewer hosted runners without hiding check conte
     'mixed-components': [...commonJobs, ...mobileJobs, ...serverJobs],
   };
   const examples = [
-    { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 14 },
+    { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 18 },
     { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 9 },
-    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 19 },
-    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 17 },
+    { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 23 },
+    { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 21 },
     { name: 'docs-only', files: ['docs/foo.md'], before: 34, after: 3 },
   ];
   for (const example of examples) {

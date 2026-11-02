@@ -4,11 +4,13 @@ These drop-ins change resource accounting only. Preserve the existing
 credential-free `beeline-ci` user, mount namespace, runner labels and all
 release/production services. There is no new service or workflow gate.
 
-The pool has ten registered listeners, five active at a time and one job per
-active listener. Test instances 02–05 have `CPUQuota=200%`; control instance 01
+The pool has ten registered listeners, all ten active and one job per
+active listener. Test instances 02–10 have `CPUQuota=200%`; control instance 01
 has an additional `CPUQuota=100%` override. All have `MemoryMax=8G`; the slice
-has `CPUQuota=1000%` and `MemoryMax=60G`. Limits cover all children, including
-test subprocesses. Vitest uses two workers for tests and one for control work. The CI workspace action
+has `CPUQuota=1000%` and `MemoryMax=60G`. The slice quota covers combined
+work even when several service quotas request more CPU. Limits cover all children, including test subprocesses.
+Ordinary server/mobile files share one fork with module isolation enabled;
+other tests use at most two workers and control work uses one. The CI workspace action
 serializes cache tar operations using a shared file lock; no service is added.
 
 ## Activation order
@@ -26,15 +28,14 @@ serializes cache tar operations using a shared file lock; no service is added.
    a two-CPU quota (one CPU for 01), 6 GiB MemoryHigh, 8 GiB MemoryMax and the correct slice.
    Existing resource drop-ins must not override these values. Verify the
    parent slice does not impose an unexpected tighter limit.
-4. Enable/start only `beeline-ci@01.service` through `beeline-ci@05.service`.
-   Keep `06` through `10` stopped and disabled, retaining their registrations
-   and labels as standby. Confirm all names remain `beeline-ci-squire-01`
-   through `-10`, with the `beeline-ci` label. Verify exactly five are online;
-   never start the standby instances to compensate for queues. Instance 01
-   also has `beeline-ci-control`; 02–05 have `beeline-ci-heavy`. PR gates select
+4. Enable/start `beeline-ci@01.service` through `beeline-ci@10.service`. Confirm
+   names remain `beeline-ci-squire-01` through `-10`, with the `beeline-ci`
+   label. Verify ten are online and the parent quota remains ten CPUs. Instance 01
+   also has `beeline-ci-control`; 02–10 have `beeline-ci-heavy`. PR gates select
    those roles explicitly so preparation cannot queue behind long suites.
-5. Run one monitored single-PR trial first. After a safe trial, firstmate
-   lands the CI change; the three-PR proof uses the next real PRs carrying
+5. Run a monitored real-PR trial. Accept the first rollout only when required
+   Linux checks pass within fifteen minutes while CI stays inside the pool.
+   Firstmate controls landing; subsequent three-PR proof uses real PRs carrying
    this routing and the leak fix. An older PR head still runs its own old workflow;
    rerunning it does not test the new routing. Coordinate those heads with
    their owners, without rewriting another worker's branch.

@@ -128,15 +128,15 @@ test('excluding the fingerprint regression from the mobile suite always has isol
 });
 
 const heavyJobs = ['server-suite-shard', 'typecheck', 'mobile-suite', 'dead-code',
-  'mobile-export-reachability', 'production-corpus-replay', 'native-fingerprint'];
+  'mobile-export-reachability', 'native-fingerprint'];
 const controlJobs = ['changes', 'shared-package-tests', 'server-test-selection',
   'server-suite', 'server-integration', 'frame-budget', 'state-upgrade',
   'readme-parity', 'app-link-associations'];
 const squireJobs = [...heavyJobs, ...controlJobs];
-const preparedConsumers = [...heavyJobs, 'app-link-associations'];
+const preparedConsumers = [...heavyJobs, 'production-corpus-replay', 'app-link-associations'];
 
 test('privileged setup and isolated PostgreSQL stay hosted', () => {
-  for (const name of ['server-claim-latency', 'body-suite', 'auth-image', 'actionlint']) {
+  for (const name of ['server-claim-latency', 'production-corpus-replay', 'body-suite', 'auth-image', 'actionlint']) {
     assert.equal(jobs[name]['runs-on'], 'ubuntu-latest');
   }
   for (const name of controlJobs) assert.equal(jobs[name].env.CI_TEST_WORKERS, '1', name);
@@ -195,14 +195,13 @@ test('required contexts survive server runner consolidation', () => {
   }
 });
 
-test('four runners retain all eight bounded integration batches and fail closed', () => {
+test('eight server shards retain all eight integration batches exactly once and fail closed', () => {
   const shard = jobs['server-suite-shard'];
-  assert.deepEqual(shard.strategy.matrix.shard, [1, 2, 3, 4]);
-  const integration = shard.steps.find((step) => step.name === 'Run two bounded integration batches');
+  assert.deepEqual(shard.strategy.matrix.shard, [1, 2, 3, 4, 5, 6, 7, 8]);
+  const integration = shard.steps.find((step) => step.name === 'Run one bounded integration batch');
   assert.ok(integration);
   assert.match(integration.run, /"\$SHARD\/8"/);
-  assert.match(integration.run, /"\$\(\(SHARD \+ 4\)\)\/8"/);
-  assert.deepEqual([1, 2, 3, 4].flatMap((n) => [n, n + 4]).sort((a, b) => a - b), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal((integration.run.match(/run-integration-shard\.mjs/g) ?? []).length, 1);
   for (const gate of ['server-suite', 'server-integration']) {
     assert.ok(jobs[gate].needs.includes('server-suite-shard'));
     assert.match(JSON.stringify(jobs[gate].steps), /needs.server-suite-shard.result/);
@@ -213,7 +212,7 @@ test('four runners retain all eight bounded integration batches and fail closed'
 test('every PR Linux workspace consumer waits for the shared preparation job', () => {
   for (const [name, job] of Object.entries(jobs)) {
     // Other operating systems and dispatch-only host lanes populate separate caches.
-    if (name === 'shared-package-tests' || (job['runs-on'] !== 'ubuntu-latest' && !squireJobs.includes(name))) continue;
+    if (name === 'shared-package-tests' || name.endsWith('-on-demand') || (job['runs-on'] !== 'ubuntu-latest' && !squireJobs.includes(name))) continue;
     if (!job.steps?.some((step) => step.uses === './.github/actions/ci-workspace')) continue;
     const needs = Array.isArray(job.needs) ? job.needs : [job.needs];
     assert.ok(needs.includes('shared-package-tests'), `${name} races cache preparation`);

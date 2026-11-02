@@ -1,76 +1,86 @@
 # PR runner capacity
 
-`.github/workflows/checks.yml` keeps GitHub-hosted runners in parallel with the
-credential-free `beeline-ci` Linux pool. `.github/workflows/desktop.yml` keeps
-its existing platform runners. Both workflows cancel superseded PR heads;
-their non-PR runs have unique concurrency groups and are never cancelled by
-another run.
+`.github/workflows/checks.yml` uses the isolated `beeline-ci` Linux pool for
+credential-free PR work. Desktop, Mac helper acceptance, privileged Body setup,
+PostgreSQL timing, Docker build/lint and production-corpus replay retain their
+existing platform or hosted runners. Main-push server coverage stays hosted
+and runs the full suite. Required check names stay stable.
 
-## Routing and CPU budget
+## Routing and resource budget
 
-The budget files in `infra/ci/` replace the older 16-CPU pool policy below.
-Five listeners are active: `01` has one CPU for control work and `02` through
-`05` have two CPUs each for tests. Every listener has an 8 GiB hard memory limit. Registered listeners `06` through `10` stay stopped and disabled
-as standby. The pool retains its ten-CPU quota and 60 GiB hard memory limit.
-Verify those effective limits and the five-listener count before activation.
+All ten listeners are active. Instance `01` has one CPU and the
+`beeline-ci-control` role for detection, preparation, selection and verdicts.
+Instances `02`–`10` have the `beeline-ci-heavy` role and at most two CPUs each.
+The **parent slice shares a ten-CPU hard quota across every listener and PR**;
+per-service maxima are not additive capacity. Each listener has MemoryHigh
+6 GiB / MemoryMax 8 GiB. The parent has MemoryHigh 48 GiB / MemoryMax 60 GiB.
+Preserve and verify both levels before activation.
 
 | Checks work | Pull requests | Merge groups / manual dispatch |
 | --- | --- | --- |
-| All four server shards, TYPECHECK, MOBILE SUITE | `beeline-ci, beeline-ci-heavy` (02–05) | `ubuntu-latest` |
-| DEAD CODE, MOBILE-EXPORT REACHABILITY, PRODUCTION-CORPUS REPLAY, NATIVE FINGERPRINT | `beeline-ci, beeline-ci-heavy` (02–05) | `ubuntu-latest` |
-| Detection, shared preparation/tests, selection, verdicts, README, app associations | `beeline-ci, beeline-ci-control` (01) | `ubuntu-latest` |
-| Privileged Body setup, PostgreSQL timing, Docker build/lint | `ubuntu-latest` | `ubuntu-latest` |
+| Eight server shards, TYPECHECK, MOBILE SUITE | `beeline-ci, beeline-ci-heavy` | `ubuntu-latest` |
+| DEAD CODE, MOBILE-EXPORT REACHABILITY, NATIVE FINGERPRINT | `beeline-ci, beeline-ci-heavy` | `ubuntu-latest` |
+| Detection, shared preparation/tests, selection, verdicts, README, app associations | `beeline-ci, beeline-ci-control` | `ubuntu-latest` |
+| Privileged Body setup, PostgreSQL timing, Docker build/lint, corpus replay | `ubuntu-latest` | `ubuntu-latest` |
 
-The PostgreSQL claim-latency job stays hosted. Body's privileged tool setup
-stays hosted. Desktop and Mac helper acceptance retain their existing runners.
-The main-push server coverage workflow stays hosted and runs the full suite;
-PR shards consume SELECT SERVER TESTS and fail closed to the full suite if
-selection is unavailable. No check contexts or integration batches change.
+Each server shard runs its balanced file assignment and one of the existing
+eight integration batches. Timing-sensitive isolated suites are distributed
+across the first three shards and still run outside the ordinary suite.
+PRs consume SELECT SERVER TESTS; an unavailable selection fails closed to the
+full suite. Main coverage remains full. No integration batch is removed or
+repeated.
 
-Test listeners use at most two Vitest workers; the control listener uses one,
-including shared-package tests. Body stays hosted with at most two workers. Integration batches and timing-sensitive isolated tests retain
-one worker. Node test-file concurrency, Turbo task concurrency, libuv's thread pool
-and Metro export workers are also bounded. Existing lockfile-keyed dependency
-caches and exact-commit build caches are reused after shared preparation;
-cold workspace builds execute one task at a time on the control producer. Squire
-consumers require those prepared caches and fail promptly on a miss, so a
-failed shared job cannot trigger parallel cold installs/builds. Compiled outputs
-never fall back to another commit. Cache version 2 includes explicit dist
-file globs, validates API exports and publishes the build snapshot immediately
-after compilation, before tests can change outputs.
+Ordinary server and mobile files use Vitest's single-fork mode with module
+isolation enabled. This retains module/mock resets between files while
+amortizing process startup and dependency loading; a regression checks both
+state isolation and process reuse. Eight smaller server shards recover
+parallelism within the shared budget. Other Vitest commands use at most two
+workers, control jobs use one, and timing/integration tests retain one.
+Node test-file concurrency, Turbo tasks, libuv and Metro export workers are
+also bounded. TYPECHECK already runs the isolated mobile typecheck, so the
+mobile suite does not repeat it.
 
-The service drop-in caps each active listener and its whole job process tree
-to two CPUs, with memory pressure at 6 GiB and a hard limit of 8 GiB. Instance
-01 has an additional one-CPU override and only the control role; instances
-02–05 have the heavy role. Their maxima total nine CPUs under the ten-CPU cap. The slice
-caps the pool at ten CPUs, with pressure at 48 GiB and a hard limit of 60 GiB.
-Five active listeners admit at most five simultaneous jobs across all PRs;
-workflow matrix limits alone cannot enforce a host-wide bound.
+Detection runs before shared preparation on the reserved control listener.
+Preparation installs/builds once and publishes verified exact-commit builds
+before tests. Consumers require the prepared lockfile/manifest-keyed root,
+mobile and exact-commit build caches; a failed producer cannot fan out cold
+installs/builds. Compiled outputs never fall back to another commit. Build
+cache v2 uses explicit dist globs and checks compiled API exports.
 
-Every CI-only producer and consumer prepends `.github/actions/ci-workspace/bin`
-to PATH. Archive compression also uses one zstd worker. Its
-`tar` wrapper uses the existing `flock` utility and the shared CI user's home
-to serialize cache archive operations across all listeners. Only the cache
-action's `cache.tar`, `cache.tgz` and `cache.tzst` files take that lock; tool
-probes and ordinary test fixtures run directly. The kernel releases the lock
-when tar and its children exit, including cancellation. No service is added.
+All CI-only workspace jobs prepend `.github/actions/ci-workspace/bin` to PATH.
+Its tar wrapper serializes only cache archives through the CI user's shared
+file lock; normal archives/probes bypass it. Compression uses one zstd worker.
+Cancellation releases the kernel lock. No service is added.
 
-Two earlier ten-job trials hit the load-15 safety abort, including a run with
-valid dependency/build cache hits and parallel tar processes waiting on disk.
-That profile used only 6.17 CPUs in its busiest five-second sample, showing
-why CPU quotas alone cannot control disk waits or whole-host load. The five-job
-profile and serialized cache operations address that measured bottleneck;
-concurrent-PR acceptance remains a separate measurement. Judge CI by its
-cgroup CPU/memory and Linux job wall time, not whole-host load from agents,
-Gradle or emulators. Hosted detection/selection queues previously held server
-shards for more than fifteen minutes, so the credential-free control path now
-has a reserved local listener. Host load is recorded as context; abort on CI
-pool budget violations, memory pressure/OOM or a helper watchdog event. The
-resource budget remains ten CPUs and 60 GiB.
+Corpus replay stays hosted because cold setup exceeded ten minutes on squire.
+The corpus cache is published immediately after a successful replay. After
+landing, an on-demand replay dispatched on main also runs hosted and warms the
+default-branch corpus cache for later PRs. Schema/corpus source changes still
+invalidate it; a cache hit never substitutes for executing the timing tests.
 
-See [`infra/ci/README.md`](../infra/ci/README.md) for activation, measurement and
-abort instructions. The new budget is installed, but concurrent PR validation remains pending;
-the historical measurements below do not establish the 15-minute target.
+## Current measurement and remaining acceptance
+
+The previous five-listener / four-server-shard trial completed Linux work in
+34m14s, with max sampled CI usage 8.01 CPUs / 21.26 GiB and no hard-limit/OOM or
+helper restart. The final shard waited 15m08s, restored its workspace in 8s,
+then ran balanced tests for 13m21s and integration for 1m58s. Individual server
+shards were balanced at 15m40s–17m05s; late admission dominated the final shard.
+Hosted Body also waited 15m32s. Replay alone exceeded its ten-minute limit.
+The full per-job queue/setup/work breakdown is recorded in
+[the optimization PR](https://github.com/Beeline-Work/beeline/pull/3344).
+
+A bounded five-file server probe passed 40 tests in both fork modes. Grouping
+reduced CPU time from 71.6s to 60.7s (about 15%); one grouped worker took longer
+than two, motivating smaller parallel shards. This is a probe, not a passing
+end-to-end performance result. The ten-listener/eight-shard profile still
+requires a measured real-PR run within fifteen minutes and subsequent
+concurrent-PR validation. Do not infer acceptance from configured quotas.
+
+Whole-host load includes independent Beeline agents, Gradle and emulators;
+record it as context. Abort trials on CI budget violations, sustained memory
+pressure/OOM or a helper watchdog event. Earlier load-15 and load-25 aborts
+were superseded by this CI-pool policy. See
+[`infra/ci/README.md`](../infra/ci/README.md) for activation and measurement.
 
 ## CI-only host isolation
 

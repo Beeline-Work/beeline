@@ -36,8 +36,8 @@
 # production-scale database because plan/timing evidence cannot come from
 # the tiny suite tables. SERVER INTEGRATION takes the verdict from both pools'
 # bounded shards of the large PGlite-backed integration file; SERVER SUITE
-# takes the verdict from four runners across both pools and the isolated claim
-# latency budget. On a pull request those runners execute only the server test
+# takes the verdict from eight shards and the hosted claim-latency budget.
+# On a pull request those runners execute only the server test
 # files SELECT SERVER TESTS picked from the main coverage map
 # (server-coverage-map.yml) plus every test that reads source code as text; the
 # merge queue, dispatch runs and any change the map cannot describe run every
@@ -89,8 +89,8 @@ concurrency:
   group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# One control listener uses one CPU; four test listeners use two CPUs each.
-# The CI slice retains its ten-CPU hard cap across all PRs.
+# One control listener uses one CPU; nine test listeners use at most two each.
+# The CI slice shares its ten-CPU hard cap across all ten jobs and every PR.
 env:
   CI_TEST_WORKERS: '2'
   UV_THREADPOOL_SIZE: '1'
@@ -455,7 +455,8 @@ jobs:
 
   shared-package-tests:
     name: SHARED PACKAGE TESTS
-    if: (github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'shared-package-tests'
+    needs: changes
+    if: "!cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'shared-package-tests')"
     runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
     env:
       CI_TEST_WORKERS: '1'
@@ -687,7 +688,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     steps:
@@ -710,17 +711,13 @@ jobs:
       - name: Run the balanced server suite shard
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.suite != 'server-integration'
         working-directory: apps/server
-        run: node scripts/run-ci-shard.mjs ${{ matrix.shard }}/4
-      - name: Run two bounded integration batches
+        run: node scripts/run-ci-shard.mjs ${{ matrix.shard }}/8
+      - name: Run one bounded integration batch
         if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.suite == 'all' || inputs.suite == 'server-integration') }}
         working-directory: apps/server
         env:
           SHARD: ${{ matrix.shard }}
-        run: |
-          status=0
-          node scripts/run-integration-shard.mjs "$SHARD/8" || status=1
-          node scripts/run-integration-shard.mjs "$((SHARD + 4))/8" || status=1
-          exit "$status"
+        run: node scripts/run-integration-shard.mjs "$SHARD/8"
 
   coverage-map:
     name: SERVER COVERAGE MAP (on demand)
@@ -840,11 +837,10 @@ jobs:
         working-directory: apps/mobile
         # Shared hosts expose all CPUs; keep each job's test worker count
         # bounded instead of multiplying that count by ten runner services.
-        run: npx vitest run --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 --exclude sources/config/nativeFingerprint.test.ts
+        run: npx vitest run --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 --poolOptions.forks.singleFork --isolate --exclude sources/config/nativeFingerprint.test.ts
       - name: Verify Android release shrinking mods
         run: node --test --test-concurrency=1 scripts/android-shrinking.test.mjs
-      - name: Typecheck the mobile app
-        run: npm run mobile:typecheck
+      # TYPECHECK already runs the same isolated mobile package command.
 
   # This is the one gate whose evidence exists nowhere else: a Metro export
   # resolves the real package-export graph, and no source-only unit test
@@ -894,23 +890,31 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group') &&
       needs.changes.outputs.productionCorpusReplay == 'true'
-    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
         with:
           prepared: ${{ github.event_name == 'pull_request' }}
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: corpus
         with:
           path: ${{ runner.temp }}/beeline-production-corpus
           key: production-corpus-${{ runner.os }}-${{ hashFiles('apps/server/src/database.ts', 'apps/server/src/production-corpus-*.ts') }}
       - name: Replay sanitized corpus and time production hot reads
+        id: replay
         env:
           PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
           PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
         run: |
           npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
+      # Publish the expensive corpus before artifact upload or later cleanup.
+      - uses: actions/cache/save@v4
+        if: steps.replay.outcome == 'success' && steps.corpus.outputs.cache-hit != 'true'
+        with:
+          path: ${{ runner.temp }}/beeline-production-corpus
+          key: ${{ steps.corpus.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -921,21 +925,32 @@ jobs:
   production-corpus-replay-on-demand:
     name: PRODUCTION-CORPUS REPLAY (on demand)
     if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'production-corpus-replay')
-    runs-on: [self-hosted, beeline-prod-host]
+    # Dispatch on main warms the default-branch corpus cache for later PRs.
+    runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
-      - uses: actions/cache@v4
+        with:
+          prepared: ${{ github.event_name == 'pull_request' }}
+      - uses: actions/cache/restore@v4
+        id: corpus
         with:
           path: ${{ runner.temp }}/beeline-production-corpus
           key: production-corpus-${{ runner.os }}-${{ hashFiles('apps/server/src/database.ts', 'apps/server/src/production-corpus-*.ts') }}
       - name: Replay sanitized corpus and time production hot reads
+        id: replay
         env:
           PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
           PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
         run: |
-          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts
+          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
+      # Publish the expensive corpus before artifact upload or later cleanup.
+      - uses: actions/cache/save@v4
+        if: steps.replay.outcome == 'success' && steps.corpus.outputs.cache-hit != 'true'
+        with:
+          path: ${{ runner.temp }}/beeline-production-corpus
+          key: ${{ steps.corpus.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         if: always()
         with:

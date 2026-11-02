@@ -106,6 +106,14 @@ describe('unselected bounded committed Tray capture readiness',()=>{
       CREATE TRIGGER beeline_tray_clock_message_change AFTER UPDATE ON messages FOR EACH ROW WHEN(false) EXECUTE FUNCTION beeline_tray_clock_capture()`);
     await expect(owner.initialize()).rejects.toThrow('trigger differs');
   });
+  it.each([
+    ['background_leader_owners','beeline_tray_clock_health_owner'],
+    ['tray_clock_health','beeline_tray_clock_health_receipt'],
+  ])('refuses a disabled health control trigger on %s before establishing readiness',async(table,trigger)=>{
+    await db.query(`ALTER TABLE ${table} DISABLE TRIGGER ${trigger}`);
+    await expect(owner.initialize()).rejects.toThrow('trigger differs');
+    expect((await db.query('SELECT * FROM tray_clock_readiness_floor')).rows).toEqual([]);
+  });
   it('changed functions or installed capture after initialization fail closed rather than preserving a stale ready bit',async()=>{
     await seed();await finish();
     await db.query(`CREATE OR REPLACE FUNCTION beeline_tray_clock_room_move() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RETURN NEW;END$$`);

@@ -1,0 +1,54 @@
+[
+  {
+    "action": "keyboard Enter on Next/Replay",
+    "section": 2,
+    "before": 0,
+    "after": 1,
+    "passed": true
+  },
+  {
+    "action": "keyboard Enter on Next/Replay",
+    "section": 2,
+    "before": 2,
+    "after": 0,
+    "passed": true
+  },
+  {
+    "action": "keyboard Enter on Next/Replay",
+    "section": 3,
+    "before": 0,
+    "after": 1,
+    "passed": true
+  },
+  {
+    "action": "keyboard Enter on Next/Replay",
+    "section": 3,
+    "before": 1,
+    "after": 0,
+    "passed": true
+  },
+  {
+    "action": "keyboard Enter on Next/Replay",
+    "section": 4,
+    "before": 7,
+    "after": 8,
+    "passed": true
+  },
+  {
+    "action": "keyboard Enter on Next/Replay",
+    "section": 4,
+    "before": 8,
+    "after": 0,
+    "passed": true
+  },
+  {
+    "action": "download preview, copy, offline, reduced motion",
+    "result": {
+      "toast": "Android download \u00b7 preview only\u00d7",
+      "forbiddenCopy": false,
+      "remoteResources": [],
+      "reducedMotionRulePresent": true
+    },
+    "passed": true
+  }
+]

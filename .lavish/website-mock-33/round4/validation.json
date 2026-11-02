@@ -1,0 +1,27 @@
+{
+  "round": 4,
+  "directions": [
+    "A: refined Beeline",
+    "B: original round animal characters",
+    "C: Astra editorial, unchanged",
+    "D: Astra animal stickers, unchanged"
+  ],
+  "ourMeasuredStates": 40,
+  "extraPromptFrames": 4,
+  "scoutFrames": 64,
+  "widths": [
+    1440,
+    390
+  ],
+  "horizontalOverflow": false,
+  "unexpectedDialogs": 0,
+  "oneCurrentSection": true,
+  "removedTermVisible": false,
+  "nativeConnectAndShareActions": "connected then local posted/report state verified",
+  "scoutSourceFilesByteIdentical": true,
+  "scoutPortableEntries": "Font packaging only; original files retained unchanged",
+  "onePromptUrlStatus": 404,
+  "noLiveConnectionOrPublication": true,
+  "noPR": true,
+  "public390TapNavigation": "Verified actual top A link tap navigates review iframe to working page; screenshot and accessibility snapshot retained"
+}

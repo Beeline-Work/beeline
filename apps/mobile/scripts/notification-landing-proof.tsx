@@ -1,4 +1,5 @@
 import React from 'react';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 // @ts-expect-error Standalone proof harness uses the installed react-dom.
 import { createRoot } from 'react-dom/client';
 
@@ -238,7 +239,11 @@ async function run() {
   // Expo's web shell gives the app root the window's height, as a phone screen does.
   const root = document.getElementById('root')!;
   root.style.cssText = 'height:100vh;display:flex;flex-direction:column;overflow:hidden';
-  createRoot(root).render(<BuzzChat />);
+  createRoot(root, { onUncaughtError: (error) => console.error(error) }).render(
+    <GestureHandlerRootView style={{ flex: 1 }}>
+      <BuzzChat />
+    </GestureHandlerRootView>,
+  );
   if (mode === 'warm' || mode === 'warm-retap' || mode === 'warm-edit' || mode === 'cold') {
     await warm(mode);
     return;

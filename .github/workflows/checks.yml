@@ -436,6 +436,8 @@ jobs:
         run: node --test scripts/log-walk/*.test.mjs
       - name: Send ACP adapter failures to the fix loop
         run: node --test scripts/acp-adapter-issue.test.mjs
+      - name: Keep the prompt-block analysis aggregate-only
+        run: node --test scripts/prompt-blocks-analysis.test.mjs
       - name: Check the weekly Reason adapter port job
         run: node --test scripts/reason-upstream-check.test.mjs
       - name: Protect nightly latency history and measured Loops publication

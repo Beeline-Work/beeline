@@ -1,3 +1,4 @@
+import { routes } from './routes.js';
 // Compiled by tsc, never executed; erased imports do not expose a factory.
 import type { AdmissionOwner, Pass } from './private/admission.js';
 import type { RouteInput, RouteOutput } from './routes.js';
@@ -15,6 +16,12 @@ function rejected(owner: AdmissionOwner, room: Pass<'phone.readRoom'>): void {
   const count: RouteOutput<'phone.countNeedsYou'> = { count: 1 };
   // @ts-expect-error count result cannot invent a string count
   const invalid: RouteOutput<'phone.countNeedsYou'> = { count: '1' };
+  const acknowledgement: ReturnType<typeof routes['phone.markRead']['result']['parse']> = null;
+  // @ts-expect-error void is explicitly null on the wire
+  const missingAck: ReturnType<typeof routes['phone.markRead']['result']['parse']> = undefined;
+  // @ts-expect-error binary upload is not a JSON socket operation
+  const socketUpload: typeof routes['phone.uploadMedia']['transport'] = 'main-socket';
+  void acknowledgement; void missingAck; void socketUpload;
   void count; void invalid; void unknown; void forged;
 }
 void rejected;

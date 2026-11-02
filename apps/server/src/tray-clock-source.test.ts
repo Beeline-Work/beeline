@@ -3,7 +3,7 @@ import type { SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import { TRAY_CLOCK_SOURCE_SCHEMA, consumeTrayClockInTransaction, readTrayClockBasis, readTrayClockCause, readTrayClockDue, readTrayClockNext, readTrayClockWake,
-  type TrayClockClaim } from './tray-clock-source.js';
+  readTrayClockBasisCause,type TrayClockClaim } from './tray-clock-source.js';
 
 const viewer='a'.repeat(64),other='b'.repeat(64),author='c'.repeat(64);
 const workspace='11111111-1111-4111-8111-111111111111',elsewhere='22222222-2222-4222-8222-222222222222';
@@ -195,5 +195,33 @@ describe('uninstalled durable Tray clock source',()=>{
     expect((await db.query(`SELECT 1 FROM tray_clock_sources WHERE source_id='unscoped'`)).rows).toEqual([]);
     const wake=(await db.query<{event:Record<string,unknown>}>(`SELECT event FROM live_journal WHERE stream_id='jobs:tray-clock'`)).rows;
     expect(wake).toHaveLength(1);expect(readTrayClockWake(wake[0]!.event)).toBeTruthy();
+  });
+  it('fresh committed clock identity advances its canonical Workspace even before readiness',async()=>{
+    await question();const basis=await readTrayClockBasis(db,workspace);
+    const rows=(await db.query<{event:Record<string,unknown>}>(`SELECT event FROM live_journal WHERE stream_id=$1`,[`workspace:${workspace}`])).rows;
+    expect(rows).toHaveLength(1);expect(readTrayClockBasisCause(rows[0]!.event)).toEqual({sourceTable:'tray-clock-basis',version:1,
+      trayWorkspaceId:workspace,generation:basis!.generation,revision:'0',ready:false});
+  });
+  it('a zero-reader expiry still advances the exact Workspace cut and emits its real changed basis',async()=>{
+    await question();await db.query(`DELETE FROM memberships WHERE identity_id=$1`,[viewer]);
+    const before=(await db.query<{sequence:string}>(`SELECT sequence::text FROM live_streams WHERE id=$1`,[`workspace:${workspace}`])).rows[0]!.sequence;
+    await advance('2000-01-14');expect(await consume(await claim())).toBe(true);expect(await causes()).toEqual([]);
+    const rows=(await db.query<{event:Record<string,unknown>}>(`SELECT event FROM live_journal WHERE stream_id=$1 AND sequence>$2`,[`workspace:${workspace}`,before])).rows;
+    expect(rows).toHaveLength(1);expect(readTrayClockBasisCause(rows[0]!.event)).toMatchObject({sourceTable:'tray-clock-basis',trayWorkspaceId:workspace,revision:'1'});
+  });
+  it('Room moves invalidate only two exact Workspace generations with bounded foreground work and no fake source completion',async()=>{
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) SELECT 'q-'||n,$1,$2,'@reader please?','2000-01-07' FROM generate_series(1,101)n`,[room,author]);
+    const before=(await db.query(`SELECT sequence::text FROM live_streams WHERE id='jobs:tray-clock'`)).rows;
+    const clock=await readTrayClockBasis(db,workspace);
+    await db.query(`UPDATE rooms SET workspace_id=$1 WHERE id=$2`,[elsewhere,room]);
+    expect((await db.query(`SELECT sequence::text FROM live_streams WHERE id='jobs:tray-clock'`)).rows).toEqual(before);
+    expect((await db.query(`SELECT DISTINCT workspace_id::text FROM tray_clock_deadlines`)).rows).toEqual([{workspace_id:workspace}]);
+    expect((await readTrayClockBasis(db,workspace))?.generation).not.toBe(clock!.generation);
+    const pending=(await db.query(`SELECT workspace_id::text,phase FROM tray_clock_readiness ORDER BY workspace_id`)).rows;
+    expect(pending).toEqual([{workspace_id:workspace,phase:'sources'},{workspace_id:elsewhere,phase:'sources'}]);
+    const readiness=(await db.query<{event:Record<string,unknown>}>(`SELECT event FROM live_journal WHERE event->>'sourceTable'='tray-clock-readiness' ORDER BY stream_id`)).rows;
+    expect(readiness).toHaveLength(2);expect(readiness.every(row=>readTrayClockBasisCause(row.event)?.ready===false)).toBe(true);
+    const cuts=(await db.query(`SELECT id,sequence::text FROM live_streams ORDER BY id`)).rows;
+    await db.query(`UPDATE rooms SET workspace_id=workspace_id WHERE id=$1`,[room]);expect((await db.query(`SELECT id,sequence::text FROM live_streams ORDER BY id`)).rows).toEqual(cuts);
   });
 });

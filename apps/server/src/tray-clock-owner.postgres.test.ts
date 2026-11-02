@@ -149,4 +149,24 @@ describe.skipIf(!url)('real aggregate-owner fenced Tray expiry at PostgreSQL COM
       expect((await f.second.query(`SELECT event FROM live_journal WHERE event->>'sourceTable'='tray-clock'`)).rows).toHaveLength(1);
     }finally{release.resolve();await flight?.catch(()=>{});await f.close();}
   });
+  it('refuses a real source-row→Workspace writer with NOWAIT instead of hiding a reverse-order wait cycle',async()=>{
+    const f=await fixture(),held=deferred(),release=deferred();let writer:Promise<unknown>|undefined;
+    const lock=await f.acquire(),core=new BackgroundOwnership(semanticDb(f.first),'first'),epoch=await core.claim(lock);f.scopes.push({owner:core,epoch});
+    try{
+      writer=f.second.transaction(async tx=>{
+        // This is the physical row→canonical Workspace order of an ordinary
+        // message UPDATE and its legacy live trigger. No mock canRead/lease
+        // assertion substitutes for the actual competing PostgreSQL locks.
+        await tx.query(`SELECT id FROM messages WHERE id='question' FOR UPDATE`);held.resolve();await release.promise;
+        await tx.query(`SELECT id FROM live_streams WHERE id=$1 FOR UPDATE`,[`workspace:${workspace}`]);
+        await tx.query(`UPDATE messages SET text='@reader please review?' WHERE id='question'`);
+      });
+      await held.promise;await expect(new TrayClockOwner(core).drain(epoch)).rejects.toMatchObject({code:'55P03'});
+      expect((await f.first.query(`SELECT revision::text FROM tray_clock_state`)).rows).toEqual([{revision:'0'}]);
+      expect((await f.first.query(`SELECT state FROM tray_clock_deadlines`)).rows).toEqual([{state:'pending'}]);
+      expect((await f.first.query(`SELECT event FROM live_journal WHERE event->>'sourceTable'='tray-clock'`)).rows).toEqual([]);
+      release.resolve();await writer;
+      expect((await f.first.query(`SELECT text FROM messages WHERE id='question'`)).rows).toEqual([{text:'@reader please review?'}]);
+    }finally{release.resolve();await writer?.catch(()=>{});await f.close();}
+  });
 });

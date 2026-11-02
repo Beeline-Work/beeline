@@ -1,5 +1,6 @@
 import { BackgroundOwnership, type BackgroundEpoch } from './background-ownership.js';
 import { consumeTrayClockInTransaction, type TrayClockClaim } from './tray-clock-source.js';
+import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
 
 export type TrayDeadline = Readonly<Omit<TrayClockClaim, 'kind'> & {
   kind: Exclude<TrayClockClaim['kind'], 'choice-close'>; remainingMs: number;
@@ -64,10 +65,12 @@ export class TrayClockOwner {
   constructor(private readonly ownership: BackgroundOwnership) {}
   drain(epoch: BackgroundEpoch): Promise<TrayClockDrain> {
     return this.ownership.withTransaction(epoch, 'tray.expire', async db => {
-      const claims = (await db.query<TrayClockClaim>(`SELECT id,incarnation,revision::text,kind,
+      await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
+      const claims = (await db.query<TrayClockClaim&{workspace_id:string}>(`SELECT id,incarnation,revision::text,kind,workspace_id,
         to_char(due_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS "dueAt"
         FROM tray_clock_deadlines WHERE state='pending' AND kind<>'choice-close'
           AND due_at<=clock_timestamp() ORDER BY due_at,id LIMIT 100`)).rows;
+      if(claims.length)await db.query('SELECT beeline_tray_clock_lock_workspaces($1::uuid[])',[[...new Set(claims.map(claim=>claim.workspace_id))]]);
       let consumed = 0;
       for (const claim of claims) if (await consumeTrayClockInTransaction(db, claim)) consumed++;
       const next = (await db.query<TrayDeadline>(`SELECT id,incarnation,revision::text,kind,

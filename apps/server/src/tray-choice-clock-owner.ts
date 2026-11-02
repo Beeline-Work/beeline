@@ -28,6 +28,7 @@ export class TrayChoiceClockOwner {
       if (planned) {
         if (planned.parentId) await lockCornerLifecycle(db, planned.roomId);
         await db.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
+        await db.query('SELECT beeline_tray_clock_lock_workspaces(ARRAY[$1::uuid])',[planned.workspaceId]);
         // Legacy expiry/decision paths can hold a source before their trigger
         // requests authority. Never wait on that inverse order.
         const source = (await db.query<{ room_id: string; workspace_id: string; room_workspace_id: string; parent_id: string | null;
@@ -49,7 +50,10 @@ export class TrayChoiceClockOwner {
             planned.workspaceId,planned.roomId,planned.dueAt,source.expiry_version]);
           if (current.rowCount) {
             consumed = await closeExpiredChoiceVersion(db, planned.choiceId, source.expiry_version);
-            if (consumed) await db.query('UPDATE tray_clock_state SET revision=revision+1 WHERE workspace_id=$1', [planned.workspaceId]);
+            if (consumed) {
+              await db.query('UPDATE tray_clock_state SET revision=revision+1 WHERE workspace_id=$1', [planned.workspaceId]);
+              await db.query('SELECT beeline_tray_clock_publish_basis($1::uuid)',[planned.workspaceId]);
+            }
           }
         }
       }

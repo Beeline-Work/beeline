@@ -2,33 +2,10 @@ import type { SqlDatabase } from './database.js';
 import { askingMessageSql, cardExpiresAtSql, questionForSql } from './needs-you.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
 import { liveControlNotificationSchema } from './postgres-live-notifications.js';
+import {TRAY_CLOCK_READINESS_SCHEMA} from './tray-clock-readiness.js';
 
-export const TRAY_CLOCK_KINDS = ['question-age', 'question-seen', 'agent-sign-in', 'squire-approval', 'choice-close'] as const;
-export type TrayClockKind = typeof TRAY_CLOCK_KINDS[number];
-export type TrayClockClaim = Readonly<{ id: string; incarnation: string; revision: string; kind: TrayClockKind; dueAt: string }>;
-export type TrayClockCause = Readonly<{ sourceTable: 'tray-clock'; trayReaderId: string; trayWorkspaceId: string;
-  kind: Exclude<TrayClockKind, 'choice-close'>; deadlineId: string; incarnation: string; revision: string }>;
-export type TrayClockWake = Readonly<{ sourceTable: 'tray-clock-source'; sourceKind: 'message' | 'seen' | 'choice';
-  sourceId: string; readerId: string; incarnation: string; revision: string }>;
-const scalar = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 128;
-const positive = (value: unknown): value is string => typeof value === 'string' && /^[1-9][0-9]{0,19}$/.test(value);
-export function readTrayClockCause(value: Record<string, unknown>): TrayClockCause | undefined {
-  if (value.sourceTable !== 'tray-clock' || !scalar(value.trayReaderId) || !scalar(value.trayWorkspaceId) ||
-    !(TRAY_CLOCK_KINDS as readonly unknown[]).includes(value.kind) || value.kind === 'choice-close' ||
-    typeof value.deadlineId !== 'string' || !/^[a-f0-9]{32}$/.test(value.deadlineId) ||
-    typeof value.incarnation !== 'string' || !/^[a-f0-9]{32}$/.test(value.incarnation) || !positive(value.revision) ||
-    Object.keys(value).some(key => !['sourceTable','trayReaderId','trayWorkspaceId','kind','deadlineId','incarnation','revision'].includes(key))) return;
-  return value as TrayClockCause;
-}
-/** Private durable job source, never a phone projection or arbitrary job ID. */
-export function readTrayClockWake(value: Record<string, unknown>): TrayClockWake | undefined {
-  if (value.sourceTable !== 'tray-clock-source' || !['message','seen','choice'].includes(String(value.sourceKind)) ||
-    !scalar(value.sourceId) || typeof value.readerId !== 'string' ||
-    (value.sourceKind === 'seen' ? !scalar(value.readerId) : value.readerId !== '') ||
-    typeof value.incarnation !== 'string' || !/^[a-f0-9]{32}$/.test(value.incarnation) || !positive(value.revision) ||
-    Object.keys(value).some(key=>!['sourceTable','sourceKind','sourceId','readerId','incarnation','revision'].includes(key))) return;
-  return value as TrayClockWake;
-}
+import {TRAY_CLOCK_KINDS,type TrayClockClaim} from './tray-clock-protocol.js';
+export * from './tray-clock-protocol.js';
 
 /** Uninstalled lifecycle capture + transaction-only expiry primitives. There is
  * deliberately no runner, timer, readiness setter or background owner adapter.
@@ -63,6 +40,24 @@ CREATE TABLE IF NOT EXISTS tray_clock_state (
  workspace_id uuid PRIMARY KEY, generation text NOT NULL DEFAULT md5(random()::text||clock_timestamp()::text),
  revision bigint NOT NULL DEFAULT 0 CHECK(revision>=0), ready boolean NOT NULL DEFAULT false
 );
+${TRAY_CLOCK_READINESS_SCHEMA}
+
+-- Read-side clock truth is committed state, never a fresh wall-clock filter.
+-- Missing source evidence is an unavailable projection, not an invented empty
+-- result. CASE guards in the reader invoke this only for qualifying sources.
+CREATE OR REPLACE FUNCTION beeline_tray_clock_is_open(deadline_kind text,source_key text,reader_key text DEFAULT '')
+RETURNS boolean LANGUAGE plpgsql STABLE AS $$
+DECLARE current_state text;
+BEGIN
+ IF deadline_kind NOT IN ('question-age','question-seen','agent-sign-in','squire-approval')
+   OR (deadline_kind='question-seen')<>(reader_key<>'') THEN RAISE EXCEPTION 'invalid Tray read clock'; END IF;
+ SELECT state INTO current_state FROM tray_clock_deadlines
+ WHERE source_kind=CASE WHEN deadline_kind='question-seen' THEN 'seen' ELSE 'message' END
+   AND source_id=source_key AND reader_id=reader_key AND kind=deadline_kind;
+ IF NOT FOUND THEN RAISE EXCEPTION 'Tray clock source incomplete' USING ERRCODE='23514'; END IF;
+ RETURN current_state='pending';
+END;
+$$;
 
 -- Source-derived only: callers cannot supply due times, audiences or callbacks.
 CREATE OR REPLACE FUNCTION beeline_tray_clock_desired(source_name text,source_key text,reader_key text DEFAULT '')
@@ -121,7 +116,11 @@ BEGIN
  UPDATE tray_clock_deadlines SET state='cancelled',incarnation=current_incarnation,revision=current_revision
  WHERE source_kind=source_name AND source_id=source_key AND reader_id=reader_key;
  FOR entry IN SELECT value FROM jsonb_array_elements(wanted) LOOP
-   INSERT INTO tray_clock_state(workspace_id) VALUES((entry->>'workspace')::uuid) ON CONFLICT DO NOTHING;
+   IF NOT EXISTS(SELECT 1 FROM tray_clock_state WHERE workspace_id=(entry->>'workspace')::uuid) THEN
+     PERFORM beeline_tray_clock_lock_workspaces(ARRAY[(entry->>'workspace')::uuid]);
+     INSERT INTO tray_clock_state(workspace_id) VALUES((entry->>'workspace')::uuid) ON CONFLICT DO NOTHING;
+     IF FOUND THEN PERFORM beeline_tray_clock_publish_basis((entry->>'workspace')::uuid);END IF;
+   END IF;
    INSERT INTO tray_clock_deadlines(id,source_kind,source_id,reader_id,incarnation,revision,kind,workspace_id,room_id,due_at,state)
    VALUES(md5(jsonb_build_array(source_name,source_key,reader_key,entry->>'kind')::text),source_name,source_key,reader_key,
      current_incarnation,current_revision,entry->>'kind',(entry->>'workspace')::uuid,(entry->>'room')::uuid,(entry->>'due')::timestamptz,
@@ -185,15 +184,20 @@ RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE candidate tray_clock_deadlines%ROWTYPE; audience record; emitted boolean:=false;
 BEGIN
  SELECT * INTO candidate FROM tray_clock_deadlines WHERE id=deadline_key;
- IF NOT FOUND OR candidate.kind='choice-close' THEN RETURN false; END IF;
+ IF NOT FOUND OR candidate.kind='choice-close' OR candidate.incarnation<>expected_incarnation OR candidate.revision<>expected_revision
+   OR candidate.state<>'pending' THEN RETURN false; END IF;
  -- Caller must additionally hold the exact tray.expire aggregate-owner fence.
  -- Authority capture and final enqueue share this existing conservative lock.
  PERFORM pg_advisory_xact_lock_shared(hashtextextended('${ROUTER_AUTHORITY_LOCK}',0));
+ PERFORM beeline_tray_clock_lock_workspaces(ARRAY[candidate.workspace_id]);
  -- Source row before registry/deadline: matches the lifecycle trigger order.
  IF candidate.source_kind='seen' THEN
-   PERFORM 1 FROM needs_you_marks WHERE identity_id=candidate.reader_id AND message_id=candidate.source_id FOR SHARE;
+   PERFORM 1 FROM needs_you_marks WHERE identity_id=candidate.reader_id AND message_id=candidate.source_id FOR SHARE NOWAIT;
  END IF;
- PERFORM 1 FROM messages WHERE id=candidate.source_id FOR SHARE;
+ PERFORM 1 FROM messages WHERE id=candidate.source_id FOR SHARE NOWAIT;
+ IF NOT pg_try_advisory_xact_lock(hashtextextended('tray-clock:'||jsonb_build_array(candidate.source_kind,candidate.source_id,candidate.reader_id)::text,0)) THEN
+   RAISE EXCEPTION 'Tray clock source busy' USING ERRCODE='55P03';
+ END IF;
  PERFORM beeline_tray_clock_reconcile(candidate.source_kind,candidate.source_id,candidate.reader_id);
  SELECT * INTO candidate FROM tray_clock_deadlines WHERE id=deadline_key FOR UPDATE;
  IF candidate.incarnation<>expected_incarnation OR candidate.revision<>expected_revision
@@ -210,6 +214,7 @@ BEGIN
    PERFORM beeline_notify_live_control(jsonb_build_object('table','router_source','operation','UPDATE','roomId','',
      'journalStreams',jsonb_build_array('workspace:'||candidate.workspace_id))::text);
  END IF;
+ IF NOT emitted THEN PERFORM beeline_tray_clock_publish_basis(candidate.workspace_id);END IF;
  RETURN true;
 END;
 $$;
@@ -259,8 +264,8 @@ DROP TRIGGER IF EXISTS beeline_tray_clock_message_insert ON messages;
 CREATE TRIGGER beeline_tray_clock_message_insert AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION beeline_tray_clock_capture();
 DROP TRIGGER IF EXISTS beeline_tray_clock_message_change ON messages;
 CREATE TRIGGER beeline_tray_clock_message_change AFTER UPDATE ON messages FOR EACH ROW
- WHEN (ROW(OLD.id,OLD.room_id,OLD.created_at,OLD.presentation,OLD.deleted_at,${askingMessageSql('OLD')},OLD.card_type,OLD.card->'expiresAt',OLD.card->'status',OLD.card->'approvalId')
- IS DISTINCT FROM ROW(NEW.id,NEW.room_id,NEW.created_at,NEW.presentation,NEW.deleted_at,${askingMessageSql('NEW')},NEW.card_type,NEW.card->'expiresAt',NEW.card->'status',NEW.card->'approvalId'))
+ WHEN (ROW(OLD.id,OLD.room_id,OLD.created_at,OLD.presentation,OLD.deleted_at,${askingMessageSql('OLD')},OLD.card_type,OLD.card->'expiresAt',OLD.card->'status',OLD.card->'approvalId',OLD.card->'ownerId',OLD.card->'sourceRoomId')
+ IS DISTINCT FROM ROW(NEW.id,NEW.room_id,NEW.created_at,NEW.presentation,NEW.deleted_at,${askingMessageSql('NEW')},NEW.card_type,NEW.card->'expiresAt',NEW.card->'status',NEW.card->'approvalId',NEW.card->'ownerId',NEW.card->'sourceRoomId'))
  EXECUTE FUNCTION beeline_tray_clock_capture();
 DROP TRIGGER IF EXISTS beeline_tray_clock_seen_retire ON needs_you_marks;
 CREATE TRIGGER beeline_tray_clock_seen_retire BEFORE DELETE OR UPDATE OF identity_id,message_id ON needs_you_marks
@@ -280,6 +285,18 @@ DROP TRIGGER IF EXISTS beeline_tray_clock_choice_change ON room_choices;
 CREATE TRIGGER beeline_tray_clock_choice_change AFTER UPDATE ON room_choices FOR EACH ROW
  WHEN (ROW(OLD.id,OLD.room_id,OLD.status,OLD.closes_at) IS DISTINCT FROM ROW(NEW.id,NEW.room_id,NEW.status,NEW.closes_at))
  EXECUTE FUNCTION beeline_tray_clock_capture();
+
+-- Moving a Room may affect arbitrarily many old messages/marks/choices. The
+-- foreground mutation invalidates only its two exact Workspace generations;
+-- actual bounded lifecycle reconciliation owns completion and ready=true.
+CREATE OR REPLACE FUNCTION beeline_tray_clock_room_move() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+ PERFORM beeline_tray_clock_require_readiness(ARRAY[OLD.workspace_id,NEW.workspace_id]);RETURN NEW;
+END;
+$$;
+DROP TRIGGER IF EXISTS beeline_tray_clock_room_move ON rooms;
+CREATE TRIGGER beeline_tray_clock_room_move BEFORE UPDATE OF workspace_id ON rooms FOR EACH ROW
+ WHEN(OLD.workspace_id IS DISTINCT FROM NEW.workspace_id) EXECUTE FUNCTION beeline_tray_clock_room_move();
 `;
 
 /** SQL primitives for a future private adapter, never a production scheduler.
@@ -299,13 +316,9 @@ export async function readTrayClockNext(db: SqlDatabase) {
     FROM tray_clock_deadlines WHERE state='pending' AND kind<>'choice-close' ORDER BY due_at,id LIMIT 1`)).rows[0];
 }
 export async function consumeTrayClockInTransaction(db: SqlDatabase, claim: TrayClockClaim): Promise<boolean> {
-  if (!claim || !/^[a-f0-9]{32}$/.test(claim.id) || !/^[a-f0-9]{32}$/.test(claim.incarnation) || !positive(claim.revision) ||
+  if (!claim || !/^[a-f0-9]{32}$/.test(claim.id) || !/^[a-f0-9]{32}$/.test(claim.incarnation) || !(typeof claim.revision==='string'&&/^[1-9][0-9]{0,19}$/.test(claim.revision)) ||
     !(TRAY_CLOCK_KINDS as readonly unknown[]).includes(claim.kind)) throw new Error('Invalid Tray clock claim');
   return (await db.query<{ consumed: boolean }>('SELECT beeline_tray_clock_consume($1,$2,$3::bigint) consumed',
     [claim.id,claim.incarnation,claim.revision])).rows[0]!.consumed;
 }
-export async function readTrayClockBasis(db: SqlDatabase, workspaceId: string) {
-  const row = (await db.query<{ generation: string; revision: string; ready: boolean }>(
-    'SELECT generation,revision::text,ready FROM tray_clock_state WHERE workspace_id=$1',[workspaceId])).rows[0];
-  return row ? { ...row, clockVersion: `tray-clock-v1:${row.generation}:${row.revision}` } : undefined;
-}
+export {readTrayClockBasis} from './tray-clock-basis.js';

@@ -80,9 +80,9 @@ describe.skipIf(!url)('real two-pool PostgreSQL Tray clock claim transactions',(
     });
   });
 
-  it('observes an in-flight deletion/recreation before admission and catches obligations older than ten minutes',async()=>{
+  it('refuses an in-flight deletion/recreation without waiting and catches the newly committed overdue obligation',async()=>{
     await rig(async(reader,writer)=>{
-      const [old]=await readTrayClockDue(reader),mutated=deferred(),commit=deferred(),started=deferred();
+      const [old]=await readTrayClockDue(reader),mutated=deferred(),commit=deferred();
       // Recreation happens before its actual due time so the new incarnation
       // is pending, then a multi-day owner absence leaves it durably overdue.
       await writer.query(`UPDATE clock_fixture SET now_at='2000-01-08'`);
@@ -92,10 +92,11 @@ describe.skipIf(!url)('real two-pool PostgreSQL Tray clock claim transactions',(
         mutated.resolve();await commit.promise;
       });
       await mutated.promise;
-      const observed:SqlDatabase={transaction:work=>reader.transaction(work),query:(sql,args)=>{started.resolve();return reader.query(sql,args);}};
-      const stale=consumeTrayClockInTransaction(observed,old!);
-      try{await started.promise;commit.resolve();await mutation;expect(await stale).toBe(false);}
-      finally{commit.resolve();await mutation;}
+      try{
+        await expect(reader.transaction(tx=>consumeTrayClockInTransaction(tx,old!))).rejects.toMatchObject({code:'55P03'});
+        commit.resolve();await mutation;
+        expect(await reader.transaction(tx=>consumeTrayClockInTransaction(tx,old!))).toBe(false);
+      }finally{commit.resolve();await mutation;}
       await writer.query(`UPDATE clock_fixture SET now_at='2000-02-01'`);
       const [remaining]=await readTrayClockDue(writer);expect(remaining?.incarnation).not.toBe(old!.incarnation);
       expect(await writer.transaction(tx=>consumeTrayClockInTransaction(tx,remaining!))).toBe(true);

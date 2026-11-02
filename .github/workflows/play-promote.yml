@@ -15,6 +15,10 @@ on:
         type: choice
         default: production
         options: [production, beta]
+      promote:
+        description: false = only list every track's releases (read-only)
+        type: boolean
+        default: true
       release_status:
         description: completed publishes once review passes; draft waits in Play Console
         type: choice
@@ -38,7 +42,17 @@ jobs:
         env:
           GOOGLE_PLAY_SERVICE_ACCOUNT_JSON: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON }}
         run: node scripts/play-token.mjs
+      - name: List every track (read-only)
+        env:
+          ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
+          PACKAGE_NAME: app.usebeeline
+        run: |
+          source scripts/play-api.sh
+          EDIT_ID=$(api POST "$API/edits" -H 'Content-Type: application/json' -d '{}' | json_field id)
+          api GET "$API/edits/$EDIT_ID/tracks" | node -e 'const t=JSON.parse(require("fs").readFileSync(0)).tracks||[];for(const x of t)for(const r of x.releases||[])console.log(x.track, r.status, (r.versionCodes||[]).join(","), r.userFraction??"", r.name??"")'
+          api DELETE "$API/edits/$EDIT_ID" >/dev/null || true
       - name: Promote
+        if: inputs.promote
         env:
           ACCESS_TOKEN: ${{ steps.play-auth.outputs.access_token }}
           PACKAGE_NAME: app.usebeeline

@@ -1,4 +1,7 @@
+import { cornerOpenedFromSql } from './corner-opening.js';
+import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
+import { lockCommanderWakes } from './commander-wakes.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -13,7 +16,7 @@ import {
   type CommandRow,
   type PrivateCommandPayload,
 } from './agent-command.js';
-import { resolveCurrentMemberMentions, tagsKnownIdentitySql } from './message-mentions.js';
+import { resolveCurrentMemberMentions } from './message-mentions.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { CommandRefusalError } from './command-refusal.js';
 import { systemIdentityMention, systemLine } from './system-line.js';
@@ -85,8 +88,7 @@ export async function assertCornerCommandTarget(
        UNION
        SELECT parent.id FROM ancestors ancestor
        JOIN rooms room ON room.id=ancestor.id
-       LEFT JOIN corner_facts fact ON fact.corner_id=room.id
-       CROSS JOIN LATERAL (VALUES (room.parent_id),(fact.opened_from_corner_id)) parent(id)
+       CROSS JOIN LATERAL (VALUES (room.parent_id),(${cornerOpenedFromSql('room.id')})) parent(id)
        WHERE parent.id IS NOT NULL
      ) SELECT 1 FROM ancestors WHERE id<>$1 AND id::text=lower($2)
        AND NOT ($3::boolean AND id=(SELECT parent_id FROM rooms WHERE id=$1)) LIMIT 1`,
@@ -317,7 +319,7 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { directRecipient?: string; automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean; wakeInCorner?: boolean } = {},
+  options: { directRecipient?: string; automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean; wakeInCorner?: boolean; idleSince?: string; wakeAfter?: number } = {},
 ): Promise<{ id: string; createdAt: number; delivered?: boolean; receipt?: string; skipped?: boolean; retryAt?: number }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
@@ -440,61 +442,94 @@ export async function reportToCommander(
     seen.add(hash);
     return true;
   });
+  // Capture a superseded human report before inserting the new newest wait.
+  // Clear its corner_owed item only after the new report is stored successfully.
+  // Private reports retain their delivery authority until an actual answer.
+  const supersededHumanReports = !options.automatic && origin && /^(needs-decision|blocked):/.test(text)
+    ? (await db.query<{ message_id: string }>(`SELECT DISTINCT waiting.message_id FROM rooms waiting_corner
+        JOIN corner_facts fact ON fact.corner_id=waiting_corner.id
+        CROSS JOIN LATERAL (${cornerWaitingReportSql('waiting_corner')}) waiting
+        WHERE waiting_corner.id=$1 AND ${cornerImplementerSql('fact', 'waiting_corner')}=$2
+          AND waiting.report_id IS NULL AND waiting.message_id<>$3`, [origin,agentId,reportId])).rows.map(row => row.message_id)
+    : [];
   if (member.kind === 'agent') {
-    // Automatic agent-only system status is private coordination. Only the
-    // idle alert opts into waking the commander inside its corner, so its
-    // reply stays with the corner's members instead of a parent Room
-    // strangers read; every other report keeps the caller's return route.
-    // effective corner access: inherited parent-roster membership counts, and
-    // this caller (refreshCornerAttention) runs on the raw database, so name
-    // the effective view instead of relying on query rewriting.
-    const wakeRoom = options.automatic && options.agentOnly && options.wakeInCorner && origin &&
-      (await db.query(
-        'SELECT 1 FROM room_access WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL',
-        [origin, recipient],
-      )).rowCount
-      ? origin
-      : returnRoom;
-    // A new episode cannot bypass the per-corner automatic report budget.
-    if (options.automatic && origin) {
-      const allowed = await db.query(`INSERT INTO automatic_report_wakes(corner_id,agent_id,next_at)
-        VALUES($1,$2,now()+interval '3 minutes') ON CONFLICT(corner_id,agent_id)
-        DO UPDATE SET next_at=EXCLUDED.next_at WHERE automatic_report_wakes.next_at<=now()
-        RETURNING corner_id`, [origin,recipient]);
-      if (!allowed.rowCount) {
-        const next = (await db.query<{ next_at: Date }>(
-          'SELECT next_at FROM automatic_report_wakes WHERE corner_id=$1 AND agent_id=$2', [origin,recipient])).rows[0]!;
-        return { id: reportId, createdAt: Math.floor(Date.now()/1000), delivered: true, skipped: true,
-          retryAt: new Date(next.next_at).getTime() };
+    const delivery = await db.transaction(async (db) => {
+      // Automatic agent-only system status is private coordination. Only the
+      // idle alert opts into waking the commander inside its corner, so its
+      // reply stays with the corner's members instead of a parent Room
+      // strangers read; every other report keeps the caller's return route.
+      // effective corner access: inherited parent-roster membership counts, and
+      // this caller (refreshCornerAttention) runs on the raw database, so name
+      // the effective view instead of relying on query rewriting.
+      const wakeRoom = options.automatic && options.agentOnly && options.wakeInCorner && origin &&
+        (await db.query(
+          'SELECT 1 FROM room_access WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL',
+          [origin, recipient],
+        )).rowCount
+        ? origin
+        : returnRoom;
+      // Reserve the same per-corner/recipient budget under the dispatch lock.
+      // The durable commands are both the reservations and the delivery history.
+      let notBefore = options.wakeAfter ?? 0;
+      if (options.automatic && origin) {
+        await lockCommanderWakes(db, wakeRoom, recipient);
+        await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`automatic-report:${origin}:${recipient}`]);
+        if (options.idleSince) await db.query(`UPDATE agent_commands SET state='cancelled',completed_at=now(),
+            cancellation_reason='idle_episode_ended'
+          WHERE reason='report' AND state='pending' AND wake_after IS NOT NULL AND agent_id=$3
+            AND private_payload->>'originCornerId'=$1 AND private_payload->>'idleSince' IS NOT NULL
+            AND private_payload->>'idleSince' IS DISTINCT FROM $2`,
+          [origin,options.idleSince,recipient]);
+        const existing = (await db.query<{ wake_after: Date | null }>(
+          'SELECT wake_after FROM agent_commands WHERE id=$1', [reportId])).rows[0];
+        if (existing) return { id: reportId, createdAt: Math.floor(Date.now()/1000), delivered: true,
+          ...(existing.wake_after ? { retryAt: new Date(existing.wake_after).getTime() } : {}) };
+        const next = (await db.query<{ next_at: Date | null }>(
+          `SELECT max(COALESCE(to_timestamp(
+            (report.private_payload->>'automaticNotBefore')::double precision/1000),report.created_at))+interval '3 minutes' next_at
+           FROM agent_commands report WHERE report.agent_id=$2 AND report.reason='report'
+             AND COALESCE(report.private_payload->>'originCornerId',report.private_payload->>'fromRoomId')=$1
+             AND (report.private_payload->>'automatic'='true' OR report.private_payload->>'authorId'=$3)
+             AND (report.state<>'cancelled' OR report.wake_after IS NULL OR report.cancellation_reason LIKE 'coalesced_into:%')`,
+          [origin,recipient,SYSTEM_IDENTITY_ID])).rows[0]?.next_at;
+        notBefore = Math.max(notBefore, next ? new Date(next).getTime() : 0);
+        if (!options.idleSince && notBefore > Date.now())
+          return { id: reportId, createdAt: Math.floor(Date.now()/1000), delivered: true, skipped: true, retryAt: notBefore };
       }
-    }
-    const queued = await createAgentCommand(db, {
-      id: reportId,
-      roomId: wakeRoom,
-      agentId: recipient,
-      sourceMessageId: null,
-      privatePayload: {
-        text,
-        authorId: agentId,
-        fromRoomId: roomId,
-        kind: 'report',
-        ask,
-        attachments,
-        originCornerId: origin,
-      },
-      parent,
-      reportSource: command,
-      retainDepth: true,
-      reason: 'report',
+      const queued = await createAgentCommand(db, {
+        id: reportId,
+        roomId: wakeRoom,
+        agentId: recipient,
+        sourceMessageId: null,
+        privatePayload: {
+          text,
+          authorId: agentId,
+          fromRoomId: roomId,
+          kind: 'report',
+          ask,
+          attachments,
+          originCornerId: origin,
+          ...(options.automatic ? { automatic: true, automaticNotBefore: Math.max(Date.now(),notBefore) } : {}),
+          ...(options.idleSince ? { idleSince: options.idleSince } : {}),
+        },
+        wakeAfter: notBefore,
+        parent,
+        reportSource: command,
+        retainDepth: true,
+        reason: 'report',
+      });
+      if (!queued) {
+        const head = typeof command?.review_context?.headSha === 'string' ? command.review_context.headSha : undefined;
+        // The verdict was routed back to the reviewer who already has this head.
+        // Skip the wake instead of failing the report.
+        if (head && await refuseVerdictedReviewerWake(db, wakeRoom, recipient, head))
+          return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true, skipped: true };
+        throw new CommandRefusalError('commander could not receive report', 409);
+      }
+      if (options.idleSince) return { id: reportId, createdAt: Math.floor(Date.now()/1000), delivered: true,
+        ...(queued.wake_after ? { retryAt: new Date(queued.wake_after).getTime() } : {}) };
     });
-    if (!queued) {
-      const head = typeof command?.review_context?.headSha === 'string' ? command.review_context.headSha : undefined;
-      // The verdict was routed back to the reviewer who already has this head.
-      // Skip the wake instead of failing the report.
-      if (head && await refuseVerdictedReviewerWake(db, wakeRoom, recipient, head))
-        return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true, skipped: true };
-      throw new CommandRefusalError('commander could not receive report', 409);
-    }
+    if (delivery) return delivery;
   } else {
     // The existing attention index follows this transport provenance; no public relay is created.
     if (origin && incoming?.private_payload)
@@ -521,40 +556,19 @@ export async function reportToCommander(
   }
   // The corner keeps a collapsed record of what its agent reported, so a
   // person reading a relay can open the full text where it was written.
-  let reportMessageId = member.kind === 'human' ? reportId : null;
   if (!options.automatic && (returnRoom !== roomId || member.kind === 'agent') &&
     (await db.query('SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL', [roomId])).rowCount) {
     await recordAgentCommandCard(db, { id: reportId, cornerId: roomId, kind: 'report', authorId: agentId,
       recipientId: recipient, text, status: /^(done|blocked|needs-decision|failed):/.exec(text)?.[1] });
-    if (member.kind === 'agent' && returnRoom === roomId)
-      reportMessageId = createHash('sha256').update(`agent-command-card:${reportId}`).digest('hex');
   }
+  if (supersededHumanReports.length) await db.query(
+    `UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
+     WHERE presentation='message' AND system_event IS NULL AND id=ANY($1::text[])`, [supersededHumanReports]);
   // Keep the reporting turn's evidence address with its head, including private reports.
   if (!options.automatic && command?.review_context) await db.query(
     `UPDATE agent_commands SET review_context=jsonb_set(review_context,'{reportIds}',
        COALESCE(review_context->'reportIds','[]'::jsonb)||jsonb_build_array($2::text)) WHERE id=$1`,
     [command.id,reportId]);
-  if (!options.automatic && origin && (await db.query(
-    'SELECT 1 FROM corner_facts WHERE corner_id=$1 AND COALESCE(worker_agent_id,owner_agent_id)=$2', [origin,agentId])).rowCount) {
-    if (/^(needs-decision|blocked):/.test(text)) {
-      await db.query(`UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
-        WHERE presentation='message' AND system_event IS NULL
-          AND id IN (SELECT message_id FROM corner_report_blockers WHERE corner_id=$1) AND id<>$2`, [origin,reportId]);
-      await db.query('DELETE FROM corner_report_blockers WHERE corner_id=$1', [origin]);
-      await db.query(
-      `INSERT INTO corner_report_blockers(corner_id,person_id,report_id,return_room_id,commander_id,message_id)
-       SELECT $1,person.id,$2,$3,$6,$7 FROM identities person
-       LEFT JOIN room_access member ON member.identity_id=person.id AND member.room_id=$1 AND member.removed_at IS NULL
-       CROSS JOIN (SELECT $4::text text,'message'::text presentation,$1::uuid room_id,$5::text author_id) item
-       WHERE (person.id=$6 OR (member.identity_id IS NOT NULL AND person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}))
-       AND EXISTS(SELECT 1 FROM corner_facts fact WHERE fact.corner_id=$1
-         AND COALESCE(fact.worker_agent_id,fact.owner_agent_id)=$5)
-       ON CONFLICT(corner_id,person_id) DO UPDATE SET report_id=EXCLUDED.report_id,
-         return_room_id=EXCLUDED.return_room_id,created_at=EXCLUDED.created_at,
-         commander_id=EXCLUDED.commander_id,message_id=EXCLUDED.message_id`,
-      [origin, member.kind === 'agent' ? reportId : null, returnRoom, text, agentId, recipient, reportMessageId]);
-    }
-  }
   if (assignment) await db.query(`UPDATE agent_commands SET report_outcome=
     CASE WHEN report_outcome IN ('done','failed') THEN report_outcome ELSE $2 END WHERE id=$1`,
     [assignment.id, /^(done|blocked|failed|needs-decision):/.exec(text)?.[1] ?? 'reported']);
@@ -689,8 +703,7 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
          UNION ALL
          SELECT ancestor.id,ancestor.archived_at,child.hop+1,child.path||ancestor.id
          FROM ancestry child JOIN rooms room ON room.id=child.id
-         LEFT JOIN corner_facts fact ON fact.corner_id=room.id
-         JOIN rooms ancestor ON ancestor.id=COALESCE(fact.opened_from_corner_id,room.parent_id)
+         JOIN rooms ancestor ON ancestor.id=COALESCE(${cornerOpenedFromSql('room.id')},room.parent_id)
          WHERE NOT ancestor.id=ANY(child.path)
        ) SELECT ancestry.id FROM ancestry
        WHERE ancestry.archived_at IS NULL

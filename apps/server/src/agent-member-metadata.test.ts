@@ -59,9 +59,11 @@ it('returns provider quota, billing and parent reviewer roles only to Room membe
   await database.query(`UPDATE agents SET selected_model='test-model',usage_snapshot=$2::jsonb WHERE agent_id=$1`, [JELLYBEAN, JSON.stringify(usage)]);
   await database.query(`UPDATE agents SET usage_snapshot=$2::jsonb WHERE agent_id=$1`, [RUBY, JSON.stringify({ updatedAt: 1000, windows: [], spend: { today: 0, remaining: 12 } })]);
   await database.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=ARRAY[$3] WHERE id=$1`, [ROOM, RUBY, JELLYBEAN]);
+  // A stored fallback is retired: it carries no reviewer role.
   for (const roomId of [ROOM, CORNER]) {
     const result = await service.execute('listRoomMembers', { roomId }, JELLYBEAN);
-    expect(result.members.find(m => m.id === JELLYBEAN)).toMatchObject({ model: 'test-model', billing: 'subscription', reviewer: 'fallback', remainingAllowance: { updatedAt: 1000, windows: [{ rateLimitType: 'weekly', remaining: 0.75, resetsAt: 2000 }] } });
+    expect(result.members.find(m => m.id === JELLYBEAN)).toMatchObject({ model: 'test-model', billing: 'subscription', remainingAllowance: { updatedAt: 1000, windows: [{ rateLimitType: 'weekly', remaining: 0.75, resetsAt: 2000 }] } });
+    expect(result.members.find(m => m.id === JELLYBEAN)).not.toHaveProperty('reviewer');
     expect(result.members.find(m => m.id === RUBY)).toMatchObject({ billing: 'pay-per-use', reviewer: 'primary', remainingAllowance: { usd: 12 } });
     expect(result.members.find(m => m.id === NEW)).not.toHaveProperty('remainingAllowance');
   }

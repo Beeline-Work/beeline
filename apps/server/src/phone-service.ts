@@ -1,6 +1,9 @@
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
+import { deleteCornerBranchBestEffort } from './corner-branch-cleanup.js';
+import { cornerKindSql, cornerCommissionerSql } from './corner-opening.js';
 import { prepareMentionReplyInput, isMentionReplyInput } from './owed-mentions.js';
+import { cornerOwnerSql } from './corner-worker.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
 import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { postStarterGame } from './starter-onboarding.js';
@@ -37,7 +40,7 @@ import {
 } from './agent-sign-in.js';
 import { settleWorkflowGate, startWorkflow } from './workflow-runs.js';
 import { humanRoomAdmin, humanRoomMember } from './workflow-admin.js';
-import { setCornerHold } from './corner-holds.js';
+import { releaseArchivedCornerHolds, setCornerHold } from './corner-holds.js';
 import {
   createAgentCommand,
   dropQueuedOrdersForStop,
@@ -225,7 +228,7 @@ import {
   postRoomChoice,
   skipRoomChoice,
 } from './room-choice.js';
-import { unreadMessageSql, visibleMessageSql, visibleChatMessageSql, VIEWER_READ_CURSOR_SQL } from './read-cursor.js';
+import { unreadMessageSql, visibleMessageSql, visibleChatMessageSql, viewerReadCursorSql } from './read-cursor.js';
 import {
   connectorCatalog,
   connectorDisplayName,
@@ -318,7 +321,6 @@ type MemberGrantRow = {
 };
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Agents a Room may list after its reviewer, tried in order (`agent-health.ts`). */
-const REVIEWER_FALLBACKS_MAX = 15;
 
 /** Where the next archived page starts: the last row's exact closure time and id. */
 export type ArchivedCornerCursor = { readonly micros: string; readonly id: string };
@@ -403,7 +405,6 @@ interface RoomRow {
   repository_resolution: 'repository' | 'none' | 'unverified';
   github_installation_id: string | null;
   reviewer_agent_id: string | null;
-  reviewer_fallback_ids: string[] | null;
   created_at: Date;
   updated_at: Date;
   leave_deletes_room?: boolean;
@@ -697,9 +698,6 @@ function roomHeader(row: RoomHeaderRow, publicOrigin: string) {
     ...(row.about ? { about: row.about } : {}),
     visibility: row.visibility,
     ...(row.reviewer_agent_id ? { reviewerAgentId: row.reviewer_agent_id } : {}),
-    ...(row.reviewer_agent_id && row.reviewer_fallback_ids?.length
-      ? { reviewerFallbackIds: row.reviewer_fallback_ids }
-      : {}),
     archived: Boolean(row.archived_at),
     createdAt: unix(row.created_at),
     updatedAt: unix(row.updated_at),
@@ -2953,7 +2951,7 @@ export class PhoneService {
              'parent',(SELECT (to_jsonb(parent) - 'github_installation_id') ||
                jsonb_build_object('github_installation_id',parent.github_installation_id::text)
                FROM rooms parent WHERE parent.id=authorized_room.parent_id),
-             'facts',(SELECT (to_jsonb(f)-'objective') || jsonb_build_object('objective',${cornerObjectiveSql('authorized_room')}) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
+             'facts',(SELECT (to_jsonb(f)-'objective') || jsonb_build_object('objective',${cornerObjectiveSql('authorized_room')},'owner_agent_id',${cornerOwnerSql('f.corner_id')}) FROM corner_facts f WHERE f.corner_id=authorized_room.id),
              'owed',(SELECT owed.owed FROM rooms c
                ${cornerOwedLookupSql('c', '$2')} WHERE c.id=authorized_room.id),
              'brief',(SELECT to_jsonb(brief) || jsonb_build_object('approver_name',approver.name,'author_handle',brief_author.handle)
@@ -2999,7 +2997,7 @@ export class PhoneService {
         'read-cursor',
         this.enrichmentDatabase.query<{
           read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
-        }>(`SELECT ${VIEWER_READ_CURSOR_SQL} read_cursor FROM rooms room WHERE room.id=$1`, [
+        }>(`SELECT ${viewerReadCursorSql()} read_cursor FROM rooms room WHERE room.id=$1`, [
           roomId,
           viewerId,
         ]),
@@ -3212,7 +3210,7 @@ export class PhoneService {
         (SELECT max(brief.revision) FROM corner_brief_revisions brief WHERE brief.corner_id=c.id) brief_revision
       FROM rooms c ${facts.joins}
       LEFT JOIN identities initiator
-        ON initiator.id=f.commissioned_by AND initiator.kind='human'
+        ON initiator.id=${cornerCommissionerSql('c.id')} AND initiator.kind='human'
       LEFT JOIN identities li ON li.id=lm.author_id
       LEFT JOIN LATERAL (
         SELECT i.id identity_id,
@@ -3220,7 +3218,7 @@ export class PhoneService {
         FROM identities i
         LEFT JOIN memberships member ON member.room_id=c.id AND member.identity_id=i.id
           AND member.removed_at IS NULL
-        WHERE i.id=f.owner_agent_id
+        WHERE i.id=${cornerOwnerSql('c.id')}
           AND i.kind='agent' LIMIT 1
       ) agent ON true
       WHERE c.parent_id=$1 AND c.archived_at IS ${archived ? 'NOT NULL' : 'NULL'} AND ${facts.member}
@@ -3356,7 +3354,7 @@ export class PhoneService {
           SELECT max(f.lifecycle->'pr'->>'title') title,
             f.lifecycle->'pr'->>'url' url,max(f.lifecycle->'pr'->>'mergedAt') merged_at
           FROM corner_facts f JOIN rooms r ON r.id=f.corner_id
-          WHERE r.workspace_id=$2 AND f.owner_agent_id=$1
+          WHERE r.workspace_id=$2 AND ${cornerOwnerSql('r.id')}=$1
             AND NULLIF(f.lifecycle->'pr'->>'mergedAt','') IS NOT NULL
             AND NULLIF(f.lifecycle->'pr'->>'title','') IS NOT NULL
             AND f.lifecycle->'pr'->>'url' ~ '^https://github[.]com/[^/]+/[^/]+/pull/[0-9]+$'
@@ -4855,7 +4853,7 @@ export class PhoneService {
     if (!(await this.canReadRooms([roomId], viewerId)).has(roomId)) return null;
     const row = (await this.database.query<{
       read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
-    }>(`SELECT ${VIEWER_READ_CURSOR_SQL} read_cursor FROM rooms room WHERE room.id=$1`,
+    }>(`SELECT ${viewerReadCursorSql()} read_cursor FROM rooms room WHERE room.id=$1`,
       [roomId, viewerId])).rows[0];
     return row?.read_cursor ?? null;
   }
@@ -6222,7 +6220,7 @@ export class PhoneService {
       if (!access.rowCount) throw new Error('room access denied');
       const room = (
         await database.query<{ created_by: string | null; kind: string }>(
-          `SELECT room.created_by,fact.kind
+          `SELECT room.created_by,${cornerKindSql('room.id')} kind
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
            WHERE room.id=$1 AND room.parent_id IS NOT NULL
            FOR KEY SHARE OF room FOR UPDATE OF fact`,
@@ -6240,17 +6238,18 @@ export class PhoneService {
     if (locked === undefined)
       await closeCornerPullRequestBestEffort(this.database, roomId,
         this.github ? id => this.github!.closeCornerPullRequest(id) : undefined);
-    await this.database.transaction(async database => {
+    const archived = await this.database.transaction(async database => {
       await authorize(database);
       if (locked !== undefined) {
         await database.query(
-          `UPDATE corner_facts SET locked=$2,updated_at=now() WHERE corner_id=$1`,
+          `UPDATE corner_facts SET locked=$2 WHERE corner_id=$1`,
           [roomId, locked],
         );
       } else {
-        await closeCornerState(database, roomId);
+        return (await closeCornerState(database, roomId)).archived;
       }
     });
+    if (archived) await deleteCornerBranchBestEffort(roomId, this.github ? id => this.github!.deleteCornerBranch(id) : undefined);
   }
   /** Decline a connector or settle a target-branch proposal under its existing authority. */
   private async decideApprovalCard(input: Input<'decideApprovalCard'>, viewerId: string) {
@@ -6667,9 +6666,9 @@ export class PhoneService {
         return false;
       }
       await database.query(
-        `INSERT INTO corner_facts(corner_id,commissioned_by,kind,lifecycle,title_generated)
-         VALUES($1,$2,'human','{"lifecycle":"working","checks":"unknown"}',$3)`,
-        [id, viewerId, input.titleGenerated === true],
+        `INSERT INTO corner_facts(corner_id,lifecycle)
+         VALUES($1,'{"lifecycle":"working","checks":"unknown"}')`,
+        [id],
       );
       await advanceCorner(database, id, {
         kind: 'open',
@@ -6739,27 +6738,12 @@ export class PhoneService {
     if (existing.parent_id) {
       if (
         input.visibility !== undefined ||
-        input.reviewerAgentId !== undefined ||
-        input.reviewerFallbackIds !== undefined
+        input.reviewerAgentId !== undefined
       ) {
         throw new Error('room lifecycle cannot target a corner');
       }
       await this.renameCorner(input.roomId, input.name, viewerId);
       return;
-    }
-    const fallbackIds = Array.isArray(input.reviewerFallbackIds)
-      ? input.reviewerFallbackIds.filter(id => id !== '')
-      : input.reviewerFallbackIds;
-    if (
-      fallbackIds !== undefined &&
-      (!Array.isArray(fallbackIds) ||
-        fallbackIds.length > REVIEWER_FALLBACKS_MAX ||
-        !fallbackIds.every((id) => typeof id === 'string' && /^[0-9a-f]{64}$/.test(id)) ||
-        new Set(fallbackIds).size !== fallbackIds.length)
-    ) {
-      throw new Error(
-        `reviewer fallbacks must be at most ${REVIEWER_FALLBACKS_MAX} distinct agent ids`,
-      );
     }
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
@@ -6774,18 +6758,7 @@ export class PhoneService {
           reviewer_agent_id: string | null;
         }>('SELECT visibility,reviewer_agent_id FROM rooms WHERE id=$1 FOR UPDATE', [input.roomId])
       ).rows[0];
-      const nextReviewer =
-        reviewerAgentId !== undefined ? reviewerAgentId : (current?.reviewer_agent_id ?? null);
-      // Fallbacks only exist behind a reviewer; clearing the reviewer clears them.
-      const nextFallbacks = !nextReviewer
-        ? []
-        : fallbackIds !== undefined
-          ? fallbackIds.filter((id) => id !== nextReviewer)
-          : undefined;
-      const required = [
-        ...(reviewerAgentId ? [reviewerAgentId] : []),
-        ...(fallbackIds !== undefined ? (nextFallbacks ?? []) : []),
-      ];
+      const required = reviewerAgentId ? [reviewerAgentId] : [];
       if (required.length) {
         const reviewers = await database.query<{ identity_id: string }>(
           `SELECT membership.identity_id
@@ -6803,7 +6776,6 @@ export class PhoneService {
         `UPDATE rooms
          SET name=COALESCE($2,name),visibility=COALESCE($3,visibility),
              reviewer_agent_id=CASE WHEN $4::boolean THEN $5 ELSE reviewer_agent_id END,
-             reviewer_fallback_ids=CASE WHEN $6::boolean THEN $7::text[] ELSE reviewer_fallback_ids END,
              updated_at=now()
          WHERE id=$1`,
         [
@@ -6812,8 +6784,6 @@ export class PhoneService {
           input.visibility ?? null,
           reviewerAgentId !== undefined,
           reviewerAgentId ?? null,
-          nextFallbacks !== undefined,
-          nextFallbacks ?? [],
         ],
       );
       if (reviewerAgentId !== undefined && reviewerAgentId !== current?.reviewer_agent_id) {
@@ -8282,7 +8252,7 @@ export class PhoneService {
       ]);
       const closingCorners = await database.query<{ id: string }>(
         `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
-           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1))
+           AND id IN (SELECT corner_id FROM corner_facts WHERE ${cornerOwnerSql('corner_facts.corner_id')}=ANY($1))
          ORDER BY id FOR KEY SHARE`,
         [gone],
       );
@@ -8290,8 +8260,8 @@ export class PhoneService {
       // wake sources and corner state end with the archival.
       for (const corner of closingCorners.rows) await closeCornerState(database, corner.id);
       await database.query(
-        `UPDATE corner_facts SET close_requested=true,owner_agent_id=NULL,
-           lifecycle=lifecycle||$2::jsonb,updated_at=now()
+        `UPDATE corner_facts SET owner_agent_id=NULL,
+           lifecycle=lifecycle||$2::jsonb
          WHERE owner_agent_id=ANY($1)`,
         [
           gone,
@@ -8307,14 +8277,13 @@ export class PhoneService {
       // `worker_agent_id` would block `DELETE FROM identities` on its foreign
       // key. Clearing it falls back to the opener, exactly as the column reads.
       await database.query(
-        `UPDATE corner_facts SET worker_agent_id=NULL,updated_at=now()
+        `UPDATE corner_facts SET worker_agent_id=NULL
          WHERE worker_agent_id=ANY($1)`,
         [gone],
       );
-      // A corner this person commissioned keeps that attribution until here; a
-      // surviving `commissioned_by` would also trip the foreign key below.
+      // Clear the retired column's legacy FK until the drop release removes it.
       await database.query(
-        `UPDATE corner_facts SET commissioned_by=NULL,updated_at=now()
+        `UPDATE corner_facts SET commissioned_by=NULL
          WHERE commissioned_by=ANY($1)`,
         [gone],
       );
@@ -8373,15 +8342,17 @@ export class PhoneService {
         ['corner_app_installations', 'developer_agent_id'],
         ['corner_app_bindings', 'bound_by'],
         ['corner_brief_revisions', 'author_id'],
+        // Retired and dropped in a later release; absent tables are skipped.
         ['corner_validation_stages', 'actor_id'],
         ['corner_merge_holds', 'actor_id'],
         ['corner_merge_holds', 'released_by'],
         ['corner_merge_holds', 'set_by_agent_id'],
       ])
-        await database.query(`UPDATE ${table} SET ${column}=$2 WHERE ${column}=ANY($1)`, [
-          gone,
-          DELETED_ACCOUNT_IDENTITY_ID,
-        ]);
+        if ((await database.query<{ present: boolean }>(`SELECT to_regclass($1) IS NOT NULL present`, [table])).rows[0]!.present)
+          await database.query(`UPDATE ${table} SET ${column}=$2 WHERE ${column}=ANY($1)`, [
+            gone,
+            DELETED_ACCOUNT_IDENTITY_ID,
+          ]);
       // Optional attributions simply lose the deleted id.
       for (const [table, column] of [
         ['corner_facts', 'reviewer_agent_id'],
@@ -8414,7 +8385,11 @@ export class PhoneService {
 
       // Receipts, output streams and authority rows that point at the gone ids.
       await database.query(`DELETE FROM live_outputs WHERE agent_id=ANY($1)`, [gone]);
-      await database.query(`DELETE FROM agent_commands WHERE agent_id=ANY($1)`, [gone]);
+      await database.query(
+        `UPDATE agent_commands SET agent_id=$2 WHERE agent_id=ANY($1) AND reason='corner_objective'`,
+        [gone, DELETED_ACCOUNT_IDENTITY_ID],
+      );
+      await database.query(`DELETE FROM agent_commands WHERE agent_id=ANY($1) AND reason<>'corner_objective'`, [gone]);
       await database.query(`DELETE FROM agent_turn_traces WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_turns WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_turn_traces WHERE agent_id=ANY($1)`, [gone]);

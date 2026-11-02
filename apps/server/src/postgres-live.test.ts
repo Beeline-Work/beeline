@@ -16,7 +16,7 @@ import {
   PostgresLiveListener,
   type LivePgClient,
 } from './postgres-live.js';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { createAgentCommand } from './agent-command.js';
 import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
@@ -115,6 +115,26 @@ describe('Postgres live fanout', () => {
     await Promise.all(listeners.map((listener) => listener.stop()));
     await database.close();
     vi.restoreAllMocks();
+  });
+
+  it('BRANCH-DERIVED: room archival and fact updates publish closeRequested without the retired flag', async () => {
+    const corner = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+    await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`, [corner, WORKSPACE, ROOM]);
+    await database.query(`INSERT INTO corner_facts(corner_id) VALUES($1)`, [corner]);
+    const live = new LiveHub();
+    const received: LiveEvent[] = [];
+    live.subscribe(corner, event => received.push(event));
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]);
+    await eventually(() => received.some(event => event.type === 'invalidate' && event.reason === 'postgres:rooms' && event.closeRequested === true));
+    await database.query(`UPDATE corner_facts SET updated_at=now() WHERE corner_id=$1`, [corner]);
+    await eventually(() => received.some(event => event.type === 'invalidate' && event.reason === 'postgres:corner_facts' && event.closeRequested === true));
+    expect((await database.query(`SELECT close_requested FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0])
+      .toEqual({ close_requested: false });
   });
 
   it('re-arms Sentry batching on every server without publishing a Room message', async () => {
@@ -844,7 +864,7 @@ describe('Postgres live fanout', () => {
       `INSERT INTO agent_commands(
          id,room_id,agent_id,source_message_id,turn_request_id,action,reason,
          root_command_id,root_source_message_id,agent_depth
-       ) VALUES($1,$2,$3,'tag-source',$4,'input','human_tag',$1,'tag-source',0)`,
+       ) VALUES($1,$2,$3,'tag-source',$4,'input','agent_tag',$1,'tag-source',0)`,
       ['command-1', corner, target, 'f'.repeat(64)],
     );
 
@@ -1065,16 +1085,15 @@ describe('Postgres live fanout', () => {
       reason: 'order', privatePayload: { text: 'Continue', kind: 'order', authorId: AUTHOR, fromRoomId: ROOM },
     }));
     await expectNudge(() => database.query(`UPDATE agent_commands SET state='complete' WHERE id='queued-state-proof'`));
-    await expectNudge(() => database.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`, [corner,agent]));
+    // A person's tag assigns the worker through its command, not a column.
+    await expectNudge(() => assignCornerWorker(database, corner, agent));
     await expectNudge(() => database.query(`INSERT INTO corner_merge_holds(corner_id,actor_id,standing)
       VALUES($1,$2,'owner')`, [corner,reader]));
     await expectNudge(() => database.query(`UPDATE corner_merge_holds SET released_at=now(),released_by=$2
       WHERE corner_id=$1`, [corner,reader]));
-    // A review verdict or ask_human moves only the workflow columns.
-    await expectNudge(() => database.query(
-      `UPDATE corner_facts SET workflow_state='review' WHERE corner_id=$1`, [corner]));
-    await expectNudge(() => database.query(
-      `UPDATE corner_facts SET workflow_outcome='ask_human' WHERE corner_id=$1`, [corner]));
+    // A review verdict or ask_human writes only a run card.
+    await expectNudge(() => recordCornerRun(database, corner, 'review'));
+    await expectNudge(() => recordCornerRun(database, corner, 'ask_human'));
     await expectNudge(() => database.query(
       `INSERT INTO corner_follows(corner_id,identity_id) VALUES($1,$2)`, [corner, reader]));
     await expectNudge(() => database.query(
@@ -1100,7 +1119,7 @@ describe('Postgres live fanout', () => {
     await expectNudge(() => database.query(
       `UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]));
 
-    // Every other projected column: objective, initiator, owner, row stamp,
+    // Every other projected column: objective, initiator, row stamp,
     // brief revision and the newest chat message.
     const priorGoalNudges = textNudges().length;
     await expectNudge(() => database.query(
@@ -1109,12 +1128,9 @@ describe('Postgres live fanout', () => {
     await eventually(() => textNudges().length > priorGoalNudges);
     await expectNudge(() => database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]));
     expect(textNudges()).toHaveLength(0);
-    await expectNudge(() => database.query(
-      `UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [corner, reader]));
-    await expectNudge(() => database.query(
-      `UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [corner]));
-    await expectNudge(() => database.query(
-      `UPDATE corner_facts SET owner_agent_id=NULL WHERE corner_id=$1`, [corner]));
+    await expectNudge(() => seedCornerOpening(database, {
+      cornerId: corner, agentId: agent, commissionedBy: reader,
+    }));
     await expectNudge(() => database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]));
     await expectNudge(() => database.query(
       `INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
@@ -1129,7 +1145,7 @@ describe('Postgres live fanout', () => {
 
     // A write that changes no corner-row column stays off the parent.
     await settle(parent);
-    await database.query(`UPDATE corner_facts SET close_requested=true WHERE corner_id=$1`, [corner]);
+    await database.query(`UPDATE corner_facts SET updated_at=now() WHERE corner_id=$1`, [corner]);
     await database.query(
       `UPDATE rooms SET repository_updated_at=now() WHERE id=$1`, [corner]);
     await database.query(

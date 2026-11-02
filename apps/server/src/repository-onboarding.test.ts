@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import type { SqlDatabase } from './database.js';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import type { GitHubOperations } from './github-operations.js';
 import { postRepositoryOnboarding, repositoryStarters, type RepositorySignals } from './repository-onboarding.js';
@@ -74,7 +74,8 @@ it('links from the card, displays starters, starts the selected task once and sw
   const corner='33333333-3333-4333-8333-333333333333';
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,repository_key,repository_name,repository_remote,repository_resolution,github_installation_id)
     VALUES($1,$2,$3,'open-work','github:42','tester/project','git://github.com/tester/project','repository',77)`, [corner,W,R]);
-  await db.query(`INSERT INTO corner_facts(corner_id,commissioned_by,lifecycle) VALUES($1,$2,'{"pr":{"number":17,"url":"https://github.com/tester/project/pull/17"}}')`, [corner,H]);
+  await db.query(`INSERT INTO corner_facts(corner_id,lifecycle) VALUES($1,'{"pr":{"number":17,"url":"https://github.com/tester/project/pull/17"}}')`, [corner]);
+  await seedCornerOpening(db, { cornerId: corner, commissionedBy: H });
   const switchCard = await postRepositoryOnboarding(db, github, { roomId:R, agentId:A, requesterId:H, kind:'repository' });
   expect(switchCard.repositories.find(r => r.id === 42)?.current).toBe(true);
   await phone.execute('actOnRepositoryCard', { roomId:R, cardId:switchCard.id, action:'link', repositoryId:43 }, H);

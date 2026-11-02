@@ -1,4 +1,4 @@
-import { cornerReviewerSql, cornerReviewerFallbacksSql } from './corner-reviewer.js';
+import { cornerReviewerSql } from './corner-reviewer.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 /**
  * Agent health for the ordered agent lists a Room reviewer and a workflow
@@ -111,55 +111,12 @@ export async function nextHealthyAgent(
   return firstHealthyAgent(db, roomId, ordered.slice(ordered.indexOf(failed) + 1), [failed]);
 }
 
-/** A Room's reviewer list in order: the configured reviewer, then its fallbacks. */
-export function reviewerList(room: {
-  reviewer_agent_id: string | null;
-  reviewer_fallback_ids: readonly string[] | null;
-}): string[] {
-  if (!room.reviewer_agent_id) return [];
-  return [
-    room.reviewer_agent_id,
-    ...(room.reviewer_fallback_ids ?? []).filter((id) => id.trim().length > 0 && id !== room.reviewer_agent_id),
-  ];
-}
-
 /**
- * Whether `agentId` holds a Room's reviewer post: the configured reviewer
- * itself, or one of its fallbacks that is a current parent member. Used at
- * every point that accepts a fallback reviewer without loosening the fixed
- * reviewer check (`approve_merge` and the corner-reviewer fast path in
- * `DaemonService.access`).
- */
-export async function isConfiguredReviewer(
-  db: SqlDatabase,
-  parentRoomId: string,
-  agentId: string,
-  configuration?: { reviewer_agent_id: string | null; reviewer_fallback_ids: string[] | null },
-): Promise<boolean> {
-    db = new CornerAccessDatabase(db);
-  const room = configuration ?? (
-    await db.query<{ reviewer_agent_id: string | null; reviewer_fallback_ids: string[] | null }>(
-      `SELECT reviewer_agent_id,reviewer_fallback_ids FROM rooms WHERE id=$1`,
-      [parentRoomId],
-    )
-  ).rows[0];
-  if (!room?.reviewer_agent_id) return false;
-  if (room.reviewer_agent_id === agentId) return true;
-  if (!reviewerList(room).includes(agentId)) return false;
-  const member = await db.query(
-    `SELECT 1 FROM room_access WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-    [parentRoomId, agentId],
-  );
-  return member.rowCount > 0;
-}
-
-/**
- * The reviewer post for one corner: its override or the parent Room reviewer
- * (or a current-member fallback when no override is set), also a
- * current member of the parent Room. It is the ONE predicate every reviewer
- * surface uses — `approveCornerMerge` and the reviewer instruction
- * `getAgentConfiguration.isReviewer` projects — so the instruction a reviewer
- * receives can never name a PASS the gate refuses.
+ * The reviewer post for one corner: its override or the parent Room reviewer,
+ * also a current agent member of the parent Room. It is the ONE predicate
+ * every reviewer surface uses — `approveCornerMerge` and the reviewer
+ * instruction `getAgentConfiguration.isReviewer` projects — so the
+ * instruction a reviewer receives can never name a PASS the gate refuses.
  */
 export async function isCornerReviewer(
   db: SqlDatabase,
@@ -167,21 +124,14 @@ export async function isCornerReviewer(
   agentId: string,
 ): Promise<boolean> {
     db = new CornerAccessDatabase(db);
-  const row = (
-    await db.query<{ parent_room_id: string; reviewer_agent_id: string | null; reviewer_fallback_ids: string[] }>(
-      `SELECT parent.id parent_room_id,${cornerReviewerSql()} reviewer_agent_id,
-       ${cornerReviewerFallbacksSql()} reviewer_fallback_ids FROM rooms corner
-       JOIN rooms parent ON parent.id=corner.parent_id WHERE corner.id=$1`,
-      [cornerId],
-    )
-  ).rows[0];
-  if (!row) return false;
-  if (!(await isConfiguredReviewer(db, row.parent_room_id, agentId, row))) return false;
   const member = await db.query(
-    `SELECT 1 FROM room_access reviewer
+    `SELECT 1 FROM rooms corner
+     JOIN rooms parent ON parent.id=corner.parent_id
+     JOIN room_access reviewer ON reviewer.room_id=parent.id AND reviewer.identity_id=$2
+       AND reviewer.removed_at IS NULL
      JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
-     WHERE reviewer.room_id=$1 AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL`,
-    [row.parent_room_id, agentId],
+     WHERE corner.id=$1 AND ${cornerReviewerSql()}=$2`,
+    [cornerId, agentId],
   );
   return member.rowCount > 0;
 }

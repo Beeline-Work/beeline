@@ -1,0 +1,99 @@
+{
+  "reproduction": "free-agent-broker-restart",
+  "machine": "683dd41ec45108",
+  "image": "ttl.sh/beeline-hosted-resume-proof-401b4f9d:24h@sha256:f8a81e97ee34bd4e0c089463a5b808e353528f5c280baac67f06e7826eb20d11",
+  "limitation": "Production helper runMachineHelper and real Fly/systemd/Squire; empty agent inventory substitutes for server registration and model turns.",
+  "baseline": {
+    "machine": "857614db620078",
+    "coldStartAt": "2026-11-02T15:27:26Z",
+    "manager": "running",
+    "broker": "inactive",
+    "unit": "static",
+    "afterSuspendResumeAt": "2026-11-02T15:28:09Z",
+    "afterSuspendResumeManager": "running",
+    "afterSuspendResumeBroker": "inactive"
+  },
+  "phases": {
+    "initial": {
+      "at": "2026-11-02T15:38:29.443Z",
+      "bootId": "39344ee2-f780-4ffb-a243-71eb0f095304",
+      "manager": "running",
+      "broker": "active",
+      "enabled": "enabled",
+      "sockets": {
+        "broker.sock": true,
+        "mcp.sock": true
+      },
+      "connect": {
+        "state": "needs-sign-in",
+        "hasSignIn": true,
+        "placement": "unknown"
+      }
+    },
+    "restart": {
+      "at": "2026-11-02T15:38:57.142Z",
+      "bootId": "45a48dbf-ed54-4e3d-8470-c51774a5ae05",
+      "manager": "running",
+      "broker": "active",
+      "enabled": "enabled",
+      "sockets": {
+        "broker.sock": true,
+        "mcp.sock": true
+      },
+      "connect": {
+        "state": "needs-sign-in",
+        "hasSignIn": true,
+        "placement": "unknown"
+      }
+    },
+    "resume": {
+      "at": "2026-11-02T15:39:37.838Z",
+      "bootId": "45a48dbf-ed54-4e3d-8470-c51774a5ae05",
+      "manager": "running",
+      "broker": "active",
+      "enabled": "enabled",
+      "sockets": {
+        "broker.sock": true,
+        "mcp.sock": true
+      },
+      "connect": {
+        "state": "needs-sign-in",
+        "hasSignIn": true,
+        "placement": "unknown"
+      }
+    },
+    "manager_removed": {
+      "stdout": "Mon Nov  2 15:39:51 UTC 2026\n  594     1 node /opt/beeline/resume-helper.mjs\n  796     1 sh -c export HOME=/root XDG_RUNTIME_DIR=/run/user/0 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/0/bus; date -u; systemctl --user is-system-running; ps -eo pid,ppid,args | rg 'systemd --user|resume-helper.mjs'\n  800   796 rg systemd --user|resume-helper.mjs\n",
+      "stderr": "Failed to connect to bus: Connection refused\n",
+      "exit_code": 0,
+      "exit_signal": 0
+    },
+    "manager_recovered": {
+      "at": "2026-11-02T15:40:28.952Z",
+      "bootId": "45a48dbf-ed54-4e3d-8470-c51774a5ae05",
+      "manager": "running",
+      "managerHome": "HOME=/root",
+      "broker": "active",
+      "enabled": "enabled",
+      "sockets": {
+        "broker.sock": true,
+        "mcp.sock": true
+      },
+      "connect": {
+        "state": "needs-sign-in",
+        "hasSignIn": true,
+        "placement": "unknown"
+      }
+    }
+  },
+  "cleanup": {
+    "proofMachine": "stopped and deleted after proof",
+    "baselineMachine": "returned to its initial stopped state"
+  },
+  "sourceSha256": {
+    "apps/body/src/machine-helper.ts": "cdd04ceaae476f899ec5ed2a8b75ac5b758caccbb775fea5a6d95c56c607ab7f",
+    "infra/free-agent/hosted-services.sh": "5e5c7dedc4bade191096d64e09ce2adc5fc499f713e49fead573f2bcf656880f",
+    "infra/free-agent/hosted-squire-broker.service": "a2e768b4a9252ad13a851a5abbdcf3b66e48e1ede9c34d51cf0e1c24bd230966",
+    "infra/free-agent/Dockerfile": "57a4732f356a906ded748df429f9d9baec1057fb14fda787b657eaa89d3ba41a"
+  }
+}

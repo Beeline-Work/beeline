@@ -8,7 +8,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { resolveCurrentMemberMentions } from './message-mentions.js';
-import { migratedDatabase, type PgliteDatabase } from './test-support.js';
+import { seedCornerOpening, migratedDatabase, type PgliteDatabase } from './test-support.js';
 import type { TokenAuth } from './auth.js';
 import { createBeelineServer } from './server.js';
 
@@ -44,10 +44,8 @@ beforeEach(async () => {
     WHERE (identity_id<>$6 OR surface IS NULL) AND $3::uuid IS NOT NULL`,
     [workspace, room, corner, person, agent, outsider],
   );
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by) VALUES($1,$2,$3)`,
-    [corner, agent, person],
-  );
+  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [corner, agent]);
+  await seedCornerOpening(db, { cornerId: corner, agentId: agent, commissionedBy: person });
   await db.query(
     `INSERT INTO messages(id,room_id,author_id,text) VALUES('history',$1,$2,'Keep corner history')`,
     [corner, person],

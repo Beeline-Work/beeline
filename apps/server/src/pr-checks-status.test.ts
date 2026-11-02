@@ -1,3 +1,4 @@
+import { cornerFeatureBranch } from './corner-branch.js';
 import { spawn } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
 import { createInterface } from 'node:readline';
@@ -5,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { PgliteDatabase, migratedDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase, assignCornerWorker, recordCornerRun } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -85,9 +86,9 @@ beforeEach(async () => {
       [corner, W, R, H],
     );
     await db.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,feature_branch,lifecycle)
-       VALUES($1,$3,'Review PR 614',$2,'{"checks":"unknown","lifecycle":"working"}')`,
-      [corner, `corner/${corner}`, A],
+      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
+       VALUES($1,$2,'Review PR 614','{"checks":"unknown","lifecycle":"working"}')`,
+      [corner, A],
     );
   }
   for (const room of [R]) {
@@ -302,7 +303,7 @@ describe('PR-scoped check gate', () => {
       action: 'completed', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
       check_run: {
         name: 'test', status: 'completed', conclusion: 'success', head_sha: SHA,
-        check_suite: { head_branch: `corner/${AUTHOR}`, head_sha: SHA },
+        check_suite: { head_branch: cornerFeatureBranch(AUTHOR), head_sha: SHA },
       },
     });
     expect((await daemon.execute('getAgentCommands', { roomId: AUTHOR }, REVIEWER)).commands).toHaveLength(1);
@@ -353,7 +354,7 @@ describe('PR-scoped check gate', () => {
         status: 'completed',
         conclusion: 'success',
         head_sha: SHA,
-        check_suite: { head_branch: `corner/${AUTHOR}`, head_sha: SHA },
+        check_suite: { head_branch: cornerFeatureBranch(AUTHOR), head_sha: SHA },
       },
     });
     const stored = (await db.query<{ checks: string }>(
@@ -458,7 +459,7 @@ describe('PR-scoped check gate', () => {
     else { suiteStatus = 'queued'; suiteRuns = 1; }
     await operations.processWebhook('check_run', { action: 'completed', installation: { id: 77 },
       repository: { full_name: 'owner/widgets' }, check_run: { name: 'test', status: 'completed',
-        conclusion: 'success', head_sha: SHA, check_suite: { head_branch: `corner/${AUTHOR}`, head_sha: SHA } } });
+        conclusion: 'success', head_sha: SHA, check_suite: { head_branch: cornerFeatureBranch(AUTHOR), head_sha: SHA } } });
     expect((await db.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [AUTHOR])).rows[0]?.checks).toBe('pending');
     expect((await daemon.execute('getAgentCommands', { roomId: AUTHOR }, REVIEWER)).commands).toHaveLength(0);
   });
@@ -599,7 +600,7 @@ describe('PR-scoped check gate', () => {
     expect(await gate(AUTHOR)).toMatchObject({ approved: false, mergeAllowed: false });
 
     // Opening the corner is allowed when another agent implements the work.
-    await db.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`, [AUTHOR, REVIEWER]);
+    await assignCornerWorker(db, AUTHOR, REVIEWER);
     await expect(
       daemon.execute('approveCornerMerge', { cornerId: AUTHOR, headSha: SHA }, A),
     ).resolves.toEqual({ status: 'approved', pullRequestNumber: 614, headSha: SHA });
@@ -715,10 +716,7 @@ describe('PR-scoped check gate', () => {
   it('reports dispatched after the green transition consumed the reviewer wake', async () => {
     await ownPr();
     await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, REVIEWER]);
-    await db.query(
-      `UPDATE corner_facts SET workflow_state='review',workflow_outcome='passing' WHERE corner_id=$1`,
-      [AUTHOR],
-    );
+    await recordCornerRun(db, AUTHOR, 'review', 'passing');
     expect(await gate(AUTHOR)).toMatchObject({
       reviewerWake: {
         status: 'dispatched',
@@ -1066,7 +1064,7 @@ describe('zero-check worker completion', () => {
     await operations.processWebhook('check_run', {
       installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' }, action: 'created',
       check_run: { id: 1, name: 'test', status: 'in_progress', conclusion: null,
-        check_suite: { head_branch: `corner/${C}`, head_sha: SHA } },
+        check_suite: { head_branch: cornerFeatureBranch(C), head_sha: SHA } },
     });
     const lifecycle = (await db.query<{ lifecycle: Record<string, unknown> }>(
       `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [C],
@@ -1105,7 +1103,7 @@ describe('zero-check worker completion', () => {
       await operations.processWebhook('check_run', {
         installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' }, action: 'created',
         check_run: { id: 1, name: 'test', status: 'in_progress', conclusion: null,
-          check_suite: { head_branch: `corner/${C}`, head_sha: SHA } },
+          check_suite: { head_branch: cornerFeatureBranch(C), head_sha: SHA } },
       });
       // The next provider read lags the webhook's committed rollup.
       rollupState = null;

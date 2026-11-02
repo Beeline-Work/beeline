@@ -83,12 +83,9 @@ beforeEach(async () => {
        ($7,$8,$3,'@niglet picked A · dispatch')`,
     [ROOT, ROOM, CAPTAIN, NOTE, CORNER, SYSTEM_IDENTITY_ID, CARD, OTHER_CORNER],
   );
-  await database.query(
-    `INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind,lifecycle,title_generated)
-     VALUES($1,$2,'Fix login','human','{"lifecycle":"working","checks":"passing"}',false),
-           ($3,$2,'Triage','human','{"lifecycle":"working","checks":"passing"}',false)`,
-    [CORNER, CAPTAIN, OTHER_CORNER],
-  );
+  await database.query(`INSERT INTO corner_facts(corner_id,objective,lifecycle) VALUES($1,'Fix login','{"lifecycle":"working","checks":"passing"}'),($2,'Triage','{"lifecycle":"working","checks":"passing"}')`, [CORNER, OTHER_CORNER]);
+  await database.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [CORNER, CAPTAIN]);
+  await database.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [OTHER_CORNER, CAPTAIN]);
   await database.query(
     `UPDATE institutional_memory_workspace_rollouts SET stage='live' WHERE workspace_id=$1`,
     [WORKSPACE],

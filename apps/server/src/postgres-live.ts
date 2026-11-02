@@ -1,4 +1,5 @@
 import { Client } from 'pg';
+import { cornerOwnerSql } from './corner-worker.js';
 import type { UsageRefreshOutcome } from '@beeline/api-contract/daemon';
 import type { AgentSignInStep } from './agent-sign-in.js';
 import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
@@ -160,10 +161,12 @@ BEGIN
         'needsYouCandidate', COALESCE(NEW.presentation,OLD.presentation) IN ('card','system')
           OR (COALESCE(NEW.presentation,OLD.presentation)='message' AND
             ${askSql('COALESCE(NEW.text,OLD.text)')}),
-        -- The newest chat message is a column of the parent's corner row.
-        'cornerParentId', CASE WHEN (NEW.presentation IN ('message','system')
+        -- The newest chat message is a column of the parent's corner row, and
+        -- a corner's newest handoff card is its run state.
+        'cornerParentId', CASE WHEN ((NEW.presentation IN ('message','system')
             OR OLD.presentation IN ('message','system'))
-            AND ${rowChangedSql(CORNER_ROW_MESSAGE_COLUMNS)}
+            AND ${rowChangedSql(CORNER_ROW_MESSAGE_COLUMNS)})
+            OR (TG_OP = 'INSERT' AND NEW.card_type = 'corner-workflow-handoff')
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.room_id, OLD.room_id)) END
       );
     WHEN 'room_read_marks' THEN
@@ -219,7 +222,7 @@ BEGIN
           SELECT jsonb_build_object(
             'parentRoomId', room.parent_id,
             'openedBy', CASE WHEN room.parent_id IS NOT NULL THEN COALESCE(
-              (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
+              ${cornerOwnerSql('room.id')},
               room.created_by
             ) END
           )
@@ -239,6 +242,8 @@ BEGIN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.id, OLD.id),
+        'closeRequested', COALESCE(NEW.parent_id,OLD.parent_id) IS NOT NULL AND
+          CASE WHEN TG_OP='DELETE' THEN OLD.archived_at IS NOT NULL ELSE NEW.archived_at IS NOT NULL END,
         'cornerTextChanged', CASE WHEN TG_OP = 'UPDATE' THEN NEW.name IS DISTINCT FROM OLD.name ELSE false END,
         'repositoryChanged', CASE WHEN TG_OP = 'UPDATE' THEN
           ROW(NEW.repository_key,NEW.repository_remote,NEW.repository_target_branch,
@@ -303,7 +308,7 @@ BEGIN
         'identityId',COALESCE(NEW.identity_id,OLD.identity_id),'removed',false)
         || COALESCE((SELECT jsonb_build_object('parentRoomId',room.parent_id,
           'cornerParentId',room.parent_id,'archived',room.archived_at IS NOT NULL,
-          'openedBy',COALESCE((SELECT owner_agent_id FROM corner_facts WHERE corner_id=room.id),room.created_by))
+          'openedBy',COALESCE(${cornerOwnerSql('room.id')},room.created_by))
           FROM rooms room WHERE room.id=COALESCE(NEW.corner_id,OLD.corner_id)),'{}'::jsonb);
     WHEN 'memberships' THEN
       -- Removing legacy copied rows changes no inherited authority or live session.
@@ -325,7 +330,7 @@ BEGIN
             THEN room.parent_id END,
           'archived', room.archived_at IS NOT NULL,
           'openedBy', CASE WHEN room.parent_id IS NOT NULL THEN COALESCE(
-            (SELECT fact.owner_agent_id FROM corner_facts fact WHERE fact.corner_id = room.id),
+            ${cornerOwnerSql('room.id')},
             room.created_by
           ) END
         )
@@ -336,7 +341,8 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
         'cornerId', COALESCE(NEW.corner_id, OLD.corner_id),
-        'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false),
+        'closeRequested', COALESCE((SELECT archived_at IS NOT NULL FROM rooms
+          WHERE id=COALESCE(NEW.corner_id,OLD.corner_id)),false),
         'cornerParentId', CASE WHEN ${rowChangedSql(CORNER_ROW_FACT_COLUMNS)}
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.corner_id, OLD.corner_id)) END
       );

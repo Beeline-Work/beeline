@@ -1,4 +1,6 @@
+import { cornerCommissionerSql } from './corner-opening.js';
 import { randomBytes } from 'node:crypto';
+import { cornerOwnerSql } from './corner-worker.js';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
@@ -83,7 +85,7 @@ it('Reproduction O1-1: naming Beta assigns the work to Beta and keeps Alpha as a
   const request = { ...draft, implementer: 'beta', hold: true, sourceMessageId: draft.brief.approval.sourceMessageId };
   const { cornerId } = await daemon.execute('createCorner', request, A);
   const fact = (
-    await db.query(`SELECT owner_agent_id,commissioned_by FROM corner_facts WHERE corner_id=$1`, [
+    await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id,${cornerCommissionerSql('corner_id')} commissioned_by FROM corner_facts WHERE corner_id=$1`, [
       cornerId,
     ])
   ).rows[0];
@@ -216,7 +218,7 @@ it.each([undefined, 'alpha'])('keeps caller assignment for implementer %s', asyn
   const request = { ...(await input()), ...(implementer ? { implementer } : {}) };
   const { cornerId } = await daemon.execute('createCorner', request, A);
   expect(
-    (await db.query(`SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows,
+    (await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows,
   ).toEqual([{ owner_agent_id: A }]);
   expect(
     (
@@ -230,4 +232,20 @@ it.each([undefined, 'alpha'])('keeps caller assignment for implementer %s', asyn
     cornerId,
     watch: { roomId: request.roomId, kinds: ['opened', 'merged'] },
   });
+});
+
+it('OPENER-OWNER: a corner its Room reviewer opens is owned by that reviewer', async () => {
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, A]);
+  try {
+    const draft = await input();
+    const { cornerId } = await daemon.execute('createCorner', {
+      ...draft, name: 'Reviewer-opened', hold: true, sourceMessageId: draft.brief.approval.sourceMessageId,
+    }, A);
+    expect((await db.query(`SELECT owner_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows)
+      .toEqual([{ owner_agent_id: null }]);
+    expect((await db.query(`SELECT ${cornerOwnerSql('$1::uuid')} owner_agent_id`, [cornerId])).rows)
+      .toEqual([{ owner_agent_id: A }]);
+  } finally {
+    await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [ROOM]);
+  }
 });

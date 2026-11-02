@@ -3,7 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, seedCornerOpening } from './test-support.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -586,6 +586,8 @@ it('carries accumulated history through a second offline return', async () => {
 });
 
 it('bootstrap identifies only pending member surfaces, including the corner parent', async () => {
+  // B opened the corner: its opening order owns the corner's kind and owner.
+  await seedCornerOpening(db, { cornerId: C, agentId: B });
   await send('@hoots Wake the Room');
   await send('@hoots Wake the corner', C);
   const bootstrap = await daemon.execute('getDaemonBootstrap', { agentId: A }, A);
@@ -803,7 +805,7 @@ beforeEach(async () => {
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
   await db.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`, [C]);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb,command_check_state=NULL`,
+    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb`,
   );
 });
 
@@ -884,6 +886,8 @@ it('a workflow wake for a run in the turn’s own Room still carries the run ins
 });
 
 it('lets the corner agent retitle its corner during its turn', async () => {
+  // B opened the corner: its opening order owns the corner's kind and owner.
+  await seedCornerOpening(db, { cornerId: C, agentId: B });
   await send('@hoots plan the launch', C);
   const [command] = await commands(A, C);
   await claim(command!);
@@ -1463,14 +1467,6 @@ it('keeps a failed-check wake retryable while its opener is unreachable', async 
     kind: 'check-failed',
     object: { text: 'typecheck', headSha },
   });
-  expect(
-    (
-      await db.query<{ command_check_state: string | null }>(
-        `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`,
-        [C],
-      )
-    ).rows[0]?.command_check_state,
-  ).toBeNull();
   await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [
     R,
     B,
@@ -1631,14 +1627,6 @@ it('wakes the implementer without consuming a green transition when the configur
   expect(handback.map(command => command.reason)).toEqual(['corner_review_needed']);
   expect(handback[0]?.source.body).toContain('the configured reviewer is unreachable');
   expect(handback[0]?.source.body).toContain('report the blocker to its commander');
-  expect(
-    (
-      await db.query<{ command_check_state: string | null }>(
-        `SELECT command_check_state FROM corner_facts WHERE corner_id=$1`,
-        [C],
-      )
-    ).rows[0]?.command_check_state,
-  ).toBeNull();
   expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%could not be reached%'`, [C])).rowCount).toBe(0);
   await expect(
     daemon.execute('getAgentConfiguration', { agentId: B, roomId: C }, B),
@@ -1845,10 +1833,12 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
       )
     ).rowCount,
   ).toBe(1);
-  // The PASS wakes the implementer to merge, alongside the reviewer's tag.
-  expect((await commands(B, C)).map((command) => command.source.body)).toEqual(
-    expect.arrayContaining(['@system handed off review', expect.stringContaining(`@goosy approved ${approvedHead}, merge\nCurrent handoff target: PR #7 at ${approvedHead}`)]),
+  // The server lands a PASS itself; the implementer hears only the reviewer's tag.
+  const implementerBodies = (await commands(B, C)).map((command) => command.source.body);
+  expect(implementerBodies).toEqual(
+    expect.arrayContaining([expect.stringContaining(`@goosy approved ${approvedHead}, merge\nCurrent handoff target: PR #7 at ${approvedHead}`)]),
   );
+  expect(implementerBodies).not.toContain('@system handed off review');
 });
 // The merge webhook writes the parent card, then reports the landing to the
 // corner workflow. Only the card's `merged` subscribers are woken by it.

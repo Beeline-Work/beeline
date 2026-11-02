@@ -5,6 +5,7 @@ StartLimitBurst=6
 
 [Service]
 Type=simple
+Environment=HOME=/root
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 Environment=TRUSTY_SQUIRE_PROFILE_DIR=/root/.trusty-squire/chrome-profile
 Environment=TRUSTY_SQUIRE_BROKER_SOCKET=/root/.trusty-squire/broker.sock
@@ -19,3 +20,6 @@ KillSignal=SIGINT
 KillMode=mixed
 TimeoutStopSec=30
 UMask=0077
+
+[Install]
+WantedBy=default.target

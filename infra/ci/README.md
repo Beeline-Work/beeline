@@ -36,9 +36,9 @@ are preserved. The cache tar wrapper uses a shared file lock; no service is adde
    also has `beeline-ci-control`; 02–09 have `beeline-ci-heavy`; 10 has
    `beeline-ci-workspace` and must not also have the heavy role. PR gates select
    those roles explicitly so preparation cannot queue behind long suites.
-5. Run a monitored real-PR trial. Accept the first rollout only when required
-   Linux checks pass within fifteen minutes while CI stays inside the pool.
-   Firstmate controls landing; subsequent three-PR proof uses real PRs carrying
+5. Run a monitored real-PR trial. Firstmate accepted the initial rollout at
+   27m20s; the follow-up target is twelve minutes or less while CI stays inside
+   the same pool. Firstmate controls landing; subsequent three-PR proof uses real PRs carrying
    this routing and the leak fix. An older PR head still runs its own old workflow;
    rerunning it does not test the new routing. Coordinate those heads with
    their owners, without rewriting another worker's branch.
@@ -71,7 +71,7 @@ helper and desktop timings separately. A failed or cancelled run is not a
 passing timing result. Report maximum sampled whole-host one-minute load,
 minimum available memory, peak pool memory and OOM/throttling deltas.
 
-Accept only three overlapping successful PR runs each at or below 15 minutes,
+The follow-up acceptance is three overlapping successful PR runs each at or below twelve minutes,
 with CI pool usage inside ten CPUs and 60 GiB and no OOM kills. Report host
 load as context; it is not the CI CPU budget. A ten-CPU quota alone does not
 prove the wall-time target.

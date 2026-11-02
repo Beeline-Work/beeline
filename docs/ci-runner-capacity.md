@@ -49,6 +49,22 @@ RPCs under the shared quota. `scripts/ci-shards.test.mjs` exercises this with
 microtask-only tests and fake timers; RPC deadlines and error reporting stay
 unchanged.
 
+The temporary migrated database template is an uncompressed tar image, shared
+immutably within each worker by its unique run path. Every test database still
+has its own PGlite filesystem and mutable state. The snapshot helper retains
+gzip as its default for persisted callers. Snapshot round-trip tests cover
+both formats, independent copies and rollback. Large read-history fixtures
+keep their rows and query-plan assertions while avoiding unrelated write
+fanout during bulk seeding; foreign keys remain active and hooks resume
+before the behavior under test.
+
+The workflow suite is split across four files with a shared per-file fixture.
+All 170 test names and the original test blocks are retained. Scheduling
+weights use the passing CI profile, with explicit local estimates for changed
+fixtures until a new real run refreshes them. The balancer reserves each
+shard's isolated-suite and integration-batch cost before assigning its
+ordinary files.
+
 The required TYPECHECK job executes two workspace lanes through
 `scripts/run-ci-workspace-checks.mjs` and `scripts/ci-workspace-tasks.sh`.
 Mobile occupies one lane with two isolated workers; root typecheck and the
@@ -100,9 +116,13 @@ end-to-end performance result. A later eight-shard consolidation run completed
 Linux checks in 24m22s, with two progress-RPC failures and a stale fingerprint
 workflow assertion. Its maximum sampled CI memory was 36.95 GiB, with no hard
 memory-limit/OOM events or helper restarts. The accepted initial landing target
-is now approximately 24 minutes at ten CPUs, followed by work toward twelve
-minutes or less on the same pool. A green real-PR measurement and subsequent
-concurrent-PR validation remain required; quotas alone do not prove capacity.
+was approximately 24 minutes at ten CPUs. The
+[initial passing run](https://github.com/Beeline-Work/beeline/actions/runs/41523839846)
+completed in 27m20s with a 37.04 GiB sampled memory peak, no OOM or helper
+restart, and all 41 PR-head checks green. Firstmate accepted that delivery.
+The follow-up targets twelve minutes or less on the same pool; its real-run
+measurement and concurrent-PR validation remain required. Quotas alone do not
+prove capacity.
 
 Whole-host load includes independent Beeline agents, Gradle and emulators;
 record it as context. Abort trials on CI budget violations, sustained memory

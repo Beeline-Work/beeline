@@ -6554,12 +6554,12 @@ export class DaemonService {
     );
     return this.writeResult();
   }
+  /** Retired plan checklist: older helpers may still post one; only a missing objective is kept. */
   private async cornerPlan(input: Input<'postCornerPlan'>, agentId: string) {
     await this.access(input.cornerId, agentId);
-    const plan = { ...(input.objective ? { objective: input.objective } : {}), items: input.items };
     await this.database.query(
-      `INSERT INTO corner_facts(corner_id,objective,plan) VALUES($1,$2,$3::jsonb) ON CONFLICT(corner_id) DO UPDATE SET objective=COALESCE(NULLIF(corner_facts.objective,''),NULLIF(EXCLUDED.objective,''),''),plan=EXCLUDED.plan,updated_at=now()`,
-      [input.cornerId, input.objective ?? '', JSON.stringify(plan)],
+      `INSERT INTO corner_facts(corner_id,objective) VALUES($1,$2) ON CONFLICT(corner_id) DO UPDATE SET objective=COALESCE(NULLIF(corner_facts.objective,''),NULLIF(EXCLUDED.objective,''),''),updated_at=now()`,
+      [input.cornerId, input.objective ?? ''],
     );
     return this.writeResult();
   }

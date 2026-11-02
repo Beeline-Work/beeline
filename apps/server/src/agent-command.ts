@@ -140,12 +140,6 @@ CREATE INDEX IF NOT EXISTS agent_commands_source_message_idx ON agent_commands(s
 CREATE INDEX IF NOT EXISTS agent_commands_result_message_idx ON agent_commands(result_message_id)
   WHERE result_message_id IS NOT NULL;
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS command_id text;
--- Retired: nothing reads or writes command_check_state; drop it in a later release.
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS command_check_state text;
--- Handbacks to the corner's worker, counted per pull-request head so a push
--- resets them and a review/fix loop over one commit cannot run forever.
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS review_handback_head text;
-ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS review_handback_count integer NOT NULL DEFAULT 0;
 ALTER TABLE agent_pending_attachments ADD COLUMN IF NOT EXISTS request_id text;
 ALTER TABLE agent_pending_attachments ADD COLUMN IF NOT EXISTS generation_id text;
 

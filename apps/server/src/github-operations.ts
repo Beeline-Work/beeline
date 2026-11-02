@@ -22,7 +22,7 @@ import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js'
 import { recordPersonMergeYes } from './corner-merge-approval.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { currentCornerBrief, assertCornerBriefAllowsMerge } from './corner-brief.js';
-import { cancelCornerAgentCommands, retryCornerPullRequestClosures } from './corner-close.js';
+import { cancelCornerAgentCommands } from './corner-close.js';
 import { captureServerError } from './sentry.js';
 import { retryMigrationStep, retryOnDeadlock } from './migration-retry.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
@@ -45,6 +45,7 @@ import {
 import { recordInstitutionalCornerOutcome } from './institutional-memory-shadow.js';
 import { reviewerList, roomAgentHealth } from './agent-health.js';
 import { fireRepositorySubscriptions } from './agent-subscriptions.js';
+import { releaseArchivedCornerHolds } from './corner-holds.js';
 
 type Input<Name extends keyof PhoneOperationMap> = PhoneOperationMap[Name]['input'];
 
@@ -3165,6 +3166,7 @@ export class GitHubOperations {
       updated = true;
       if (!locked) await abandonCornerWorkflowRuns(database, target.corner_id);
       if (!locked) await deleteCornerWakeSources(database, [target.corner_id]);
+      if (!locked) await releaseArchivedCornerHolds(database, [target.corner_id]);
       await database.query(
         `UPDATE corner_facts SET close_requested=$3,merge_attempt_head=NULL,
            lifecycle=((lifecycle-'mergeRecovery'-'mergeQueue') -
@@ -3239,9 +3241,6 @@ export class GitHubOperations {
   }
 
   async retryBranchDeletions(cornerId?: string) {
-    if (!cornerId) {
-      await retryCornerPullRequestClosures(this.database, id => this.closeCornerPullRequest(id));
-    }
     await retryCornerBranchDeletions(this.database, this.app, cornerId);
   }
 

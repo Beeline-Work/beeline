@@ -37,3 +37,7 @@ Owner instruction 006 authorizes recommended or conservative compatible implemen
 ### D023 — Negotiated helper overlays remain independently disabled
 
 F19 now has a bounded helper-local latest value, fresh-baseline viewing barrier, UTF-8 append offsets, current command/turn/run and helper connection fences, and terminal tombstones. Existing Room viewing supplies demand; no pass or durable cache inventory is sent. The server retains the coalesced latest `live_outputs` path. `BEELINE_HELPER_OVERLAY_V1` remains off until cross-machine/cohort proofs pass. The helper unit/integration and server authority/barrier suites are executable staged evidence, not full F19 closure.
+
+### D024 — CI observation follows explicit demand or completed work
+
+F22 staging removes observation cron from adapter/upstream/preflight audits. Live association inspection follows a successful production release or explicit dispatch. The existing nightly test and log-report calendar deliverables remain. Nightly dispatch returns immediately; a trusted default-branch completion handler reads the completed attempt once and may request the existing single bounded failed-test rerun. No release is dispatched by this work. Preflight runner/issue visibility loops and other completion waits remain open; this is not full F22 closure.

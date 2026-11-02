@@ -1,12 +1,10 @@
 name: Reason adapter upstream check
 
-# Beeline's session-join adapters are ported from Reason Network. Each week this
-# compares Reason's adapter files with the commit Beeline copied, and opens one
+# An explicit adapter audit compares Reason's files with the commit Beeline
+# copied, and opens one
 # "Port Reason adapter changes" issue when any changed. Ruby's repository
 # subscription opens a port corner from that issue.
 on:
-  schedule:
-    - cron: '23 9 * * 1'
   workflow_dispatch: {}
 
 permissions:

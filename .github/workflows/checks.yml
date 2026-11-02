@@ -48,6 +48,7 @@
 # (default `all`); the targeted `(on demand)` lanes run a single test on the
 # self-hosted production-squire runner without the surrounding suite.
 name: Checks
+run-name: ${{ inputs.nightly_id && format('Nightly Checks {0}', inputs.nightly_id) || github.event.pull_request.title || github.workflow }}
 
 on:
   pull_request: {}
@@ -55,6 +56,10 @@ on:
     types: [checks_requested]
   workflow_dispatch:
     inputs:
+      nightly_id:
+        description: Correlation identity for an authorized nightly test run
+        type: string
+        default: ""
       suite:
         description: Gate to run on demand
         type: choice
@@ -416,7 +421,7 @@ jobs:
       - name: Check path filters skip untouched suites
         run: node --test scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs scripts/ci-baseline.test.mjs
       - name: Test nightly Checks orchestration
-        run: node --test scripts/nightly-checks.test.mjs
+        run: node --test scripts/nightly-checks.test.mjs scripts/network-job-admission.test.mjs
 
   shared-package-tests:
     name: SHARED PACKAGE TESTS

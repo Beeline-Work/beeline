@@ -1,7 +1,5 @@
 name: Release preflight
 on:
-  schedule:
-    - cron: '30 5 * * *'
   workflow_dispatch:
 permissions:
   contents: read

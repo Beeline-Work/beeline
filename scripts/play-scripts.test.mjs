@@ -214,7 +214,7 @@ test('play-publish-listing.sh: one edit carrying text, cleared+uploaded images, 
     `DELETE ${listings}/phoneScreenshots`,
     `POST ${uploads}/phoneScreenshots?uploadType=media -H Content-Type: image/png --data-binary @${locale}/images/phoneScreenshots/01-room.png`,
     `POST ${uploads}/phoneScreenshots?uploadType=media -H Content-Type: image/png --data-binary @${locale}/images/phoneScreenshots/02-corner.png`,
-    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
+    `POST ${API}/edits/dry-run-edit:commit?changesInReviewBehavior=ERROR_IF_IN_REVIEW -H Content-Length: 0`,
   ]);
 });
 
@@ -283,7 +283,7 @@ function assertFullUpload(calls, locale) {
     `DELETE ${listings}/phoneScreenshots`,
     ...fs.readdirSync(shotDir).sort().map((name) =>
       `POST ${uploads}/phoneScreenshots?uploadType=media -H Content-Type: image/png --data-binary @${path.join(shotDir, name)}`),
-    `POST ${API}/edits/dry-run-edit:commit?changesNotSentForReview=true -H Content-Length: 0`,
+    `POST ${API}/edits/dry-run-edit:commit?changesInReviewBehavior=ERROR_IF_IN_REVIEW -H Content-Length: 0`,
   ]);
 }
 

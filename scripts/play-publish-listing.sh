@@ -320,7 +320,7 @@ done < <(printf '%s\n' "${shots[@]}")
 # changesNotSentForReview=true (validate has no such parameter), and commit
 # validates the edit itself before applying it.
 echo "▸ Committing edit"
-commit_edit "$EDIT_ID"
+commit_edit "$EDIT_ID" send-for-review
 EDIT_ID=""
 echo "  Listing updates are live in Play Console."
 echo ""

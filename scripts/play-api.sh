@@ -88,7 +88,7 @@ play_console_url() {
 }
 
 # commit_edit EDIT_ID [send-for-review] — builds must enter review automatically.
-# Explicit listing publishes retain their existing adaptive commit behavior.
+# Build and explicitly authorized listing publishers use the protected mode.
 commit_edit() {
   local edit_id="$1"
   if [ "${2:-}" = "send-for-review" ]; then

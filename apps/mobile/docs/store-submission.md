@@ -194,7 +194,8 @@ The build commit never uploads listing metadata. When explicitly authorized,
 unchanged text and image hashes. Changed listings clear and re-upload each
 image type in filename order. `publish_listing` permits uploading changes;
 it does not force re-uploading matching assets. That listing operation retains
-its existing review behavior independently of the build commit.
+the same `ERROR_IF_IN_REVIEW` commit as the build, so an explicitly authorized
+listing publish cannot cancel a build already in review.
 
 **`mobile_native_ios`** (TestFlight): decodes the `.p8` secret to a
 runner-temp file and points `EXPO_ASC_API_KEY_PATH` at it **before** the build

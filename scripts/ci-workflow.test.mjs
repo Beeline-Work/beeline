@@ -28,6 +28,10 @@ test('Android binary releases publish to production, completed, and send the bui
   assert.ok(gate.indexOf('play-listing-lock.mjs" verify') < gate.indexOf('commit_edit'));
   assert.match(gate, /commit_edit "\$PLAY_EDIT_ID" send-for-review/);
   assert.doesNotMatch(gate, /hold-for-review/);
+  const listing = readFileSync(new URL('./play-publish-listing.sh', import.meta.url), 'utf8');
+  assert.match(listing, /commit_edit "\$EDIT_ID" send-for-review/);
+  const listingStep = steps.find((step) => step.run === 'bash scripts/play-publish-listing.sh');
+  assert.equal(listingStep.if, 'inputs.publish_listing');
   const helper = readFileSync(new URL('./play-api.sh', import.meta.url), 'utf8');
   const review = helper.slice(helper.indexOf('if [ "${2:-}" = "send-for-review" ]'), helper.indexOf('if [ "${PLAY_DRY_RUN:-0}"', helper.indexOf('commit_edit()')));
   assert.match(review, /:commit\?changesInReviewBehavior=ERROR_IF_IN_REVIEW/);

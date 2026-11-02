@@ -13,8 +13,8 @@ const root = rootFlag === -1
   ? path.resolve(fileURLToPath(new URL('..', import.meta.url)))
   : path.resolve(args[rootFlag + 1]);
 try {
-  const sites = scanPhoneTree(root);
   const allowlist = JSON.parse(readFileSync(path.join(root, ALLOWLIST_PATH), 'utf8'));
+  const sites = scanPhoneTree(root);
   const errors = judgeChannels(sites, allowlist, base ? allowlistAtRef(root, base) : undefined);
   for (const error of errors) console.error(error);
   if (errors.length) {

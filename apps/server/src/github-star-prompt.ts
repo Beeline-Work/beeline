@@ -10,11 +10,9 @@ import type { SqlDatabase } from './database.js';
  *
  * Due once per milestone: the viewer's 3rd, 30th and 300th completed agent
  * reply (counted when the reply commits, across every Room and corner; cards
- * and failures never count). It shows on the first win after the milestone,
- * never on the count itself: a later agent reply carrying an artifact, the
- * viewer's 👍 on an agent message, or a corner they commissioned landing or
- * closing. It stays hidden while the viewer is mid-conversation, right after
- * a failed turn or a correction, and once GitHub says they already starred.
+ * and failures never count). It shows on the milestone reply itself. It stays
+ * hidden while the viewer is awaiting a reply, right after a failed turn or a
+ * correction, and once GitHub says they already starred.
  *
  * Starring only ever happens on the viewer's own tap, with their own token,
  * and nothing is gated on it (GitHub Acceptable Use Policies). "Not now"
@@ -31,10 +29,8 @@ CREATE TABLE IF NOT EXISTS github_star_prompts (
   identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
   replies integer NOT NULL DEFAULT 0,
   reached_milestone integer NOT NULL DEFAULT 0,
-  reached_at timestamptz,
   answered_milestone integer NOT NULL DEFAULT 0,
   checked_milestone integer NOT NULL DEFAULT 0,
-  last_win_at timestamptz,
   closed text CHECK (closed IN ('dismissed','starred')),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -51,17 +47,14 @@ interface StarPromptGitHub {
 
 /**
  * The upsert that counts one committed agent reply toward the person whose
- * message started the command. A reply that carries an artifact is also a
- * win. `command` yields the command's `root_source_message_id`, `artifact`
- * is a boolean expression and `milestones` an int[] expression, so the agent
- * reply statement can run it as one of its own CTEs.
+ * message started the command. `command` yields the command's
+ * `root_source_message_id` and `milestones` is an int[] expression, so the
+ * agent reply statement can run it as one of its own CTEs.
  */
-export function starPromptReplySql(command: string, artifact: string, milestones: string): string {
-  return `INSERT INTO github_star_prompts AS prompt(identity_id,replies,reached_milestone,reached_at,last_win_at)
+export function starPromptReplySql(command: string, milestones: string): string {
+  return `INSERT INTO github_star_prompts AS prompt(identity_id,replies,reached_milestone)
      SELECT source.author_id,1,
-       CASE WHEN 1=ANY(${milestones}) THEN 1 ELSE 0 END,
-       CASE WHEN 1=ANY(${milestones}) THEN now() END,
-       CASE WHEN ${artifact} AND NOT 1=ANY(${milestones}) THEN now() END
+       CASE WHEN 1=ANY(${milestones}) THEN 1 ELSE 0 END
      FROM ${command} command
      JOIN messages source ON source.id=command.root_source_message_id
      JOIN identities person ON person.id=source.author_id
@@ -71,23 +64,18 @@ export function starPromptReplySql(command: string, artifact: string, milestones
        replies=prompt.replies+1,
        reached_milestone=CASE WHEN prompt.replies+1=ANY(${milestones})
          THEN prompt.replies+1 ELSE prompt.reached_milestone END,
-       reached_at=CASE WHEN prompt.replies+1=ANY(${milestones}) THEN now() ELSE prompt.reached_at END,
-       -- An artifact on the milestone reply itself is not a later win.
-       last_win_at=CASE WHEN ${artifact} AND NOT prompt.replies+1=ANY(${milestones})
-         THEN now() ELSE prompt.last_win_at END,
        updated_at=now()`;
 }
 
 /** {@link starPromptReplySql} for a reply that is already committed. */
 export async function recordStarPromptReply(
   database: SqlDatabase,
-  reply: { roomId: string; agentId: string; requestId: string; messageId: string; artifact: boolean },
+  reply: { roomId: string; agentId: string; requestId: string; messageId: string },
 ): Promise<void> {
   await database.query(
     starPromptReplySql(
       `(SELECT root_source_message_id FROM agent_commands
         WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND result_message_id=$4)`,
-      '$6::boolean',
       '$5::int[]',
     ),
     [
@@ -96,20 +84,7 @@ export async function recordStarPromptReply(
       reply.requestId,
       reply.messageId,
       STAR_PROMPT_MILESTONES,
-      reply.artifact,
     ],
-  );
-}
-
-/** A win for the star card's timing, e.g. the person's 👍 on an agent message. */
-export async function recordStarPromptWin(
-  database: SqlDatabase,
-  identityId: string,
-): Promise<void> {
-  await database.query(
-    `INSERT INTO github_star_prompts(identity_id,last_win_at) VALUES($1,now())
-     ON CONFLICT(identity_id) DO UPDATE SET last_win_at=now(),updated_at=now()`,
-    [identityId],
   );
 }
 
@@ -123,7 +98,6 @@ export async function readStarPrompt(
       reached_milestone: number;
       answered_milestone: number;
       checked_milestone: number;
-      due: boolean;
       held: boolean;
     }>(
       `WITH rooms AS (
@@ -131,17 +105,16 @@ export async function readStarPrompt(
          WHERE identity_id=$1 AND room_id IS NOT NULL AND removed_at IS NULL
        )
        SELECT prompt.reached_milestone,prompt.answered_milestone,prompt.checked_milestone,
-         GREATEST(prompt.last_win_at,(
-           SELECT max(card.created_at) FROM corner_facts corner
-           JOIN messages card ON card.room_id=corner.corner_id
-             AND card.card_type='corner-workflow-handoff'
-             AND card.card->>'toState' IN ('landed','closed')
-           WHERE corner.commissioned_by=prompt.identity_id
-         ))>prompt.reached_at due,
          EXISTS(
            SELECT 1 FROM rooms JOIN messages message ON message.room_id=rooms.room_id
            WHERE message.author_id=$1
              AND message.created_at>now()-make_interval(secs=>$2)
+             AND NOT EXISTS (
+               SELECT 1 FROM messages reply JOIN identities agent ON agent.id=reply.author_id
+               WHERE reply.room_id=message.room_id AND agent.kind='agent'
+                 AND reply.presentation='message' AND reply.request_id IS NOT NULL
+                 AND reply.deleted_at IS NULL AND reply.created_at>=message.created_at
+             )
          ) OR COALESCE((
            SELECT turn.status='failed' FROM rooms
            CROSS JOIN LATERAL (
@@ -165,7 +138,7 @@ export async function readStarPrompt(
       [viewerId, MID_CONVERSATION_SECONDS, CORRECTION_WINDOW_MINUTES],
     )
   ).rows[0];
-  if (!row?.due || row.held) return { prompt: null };
+  if (!row || row.held) return { prompt: null };
   if (github && row.checked_milestone < row.reached_milestone) {
     const key = `${viewerId}:${row.reached_milestone}`;
     if (!starChecks.has(key)) {

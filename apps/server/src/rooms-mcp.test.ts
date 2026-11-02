@@ -19,6 +19,7 @@ import { BROWSER_REFUSALS, RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { RoomsMcp } from './rooms-mcp.js';
 import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, MCP_APP_ROUTE_OPERATIONS, pendingMcpWakes } from './rooms-mcp-agent.js';
 import { claimAgentCommand, createAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
+import { cornerWorkSql } from './chat-corner-counts.js';
 import { openSecrets } from './free-agents.js';
 import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
 import { runMaintenance } from './background.js';
@@ -158,6 +159,29 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     eventTransport = postMcpWebhook; vi.unstubAllEnvs();
     await db.query('DELETE FROM rooms_mcp_event_subscriptions');
   });
+  it.each(['webhook', 'events', 'bridge', 'none', 'expired bridge', 'expired events'])(
+    'R2: tag receipt accounts for connected member route %s', async route => {
+      const fixture = await eventFixture();
+      const { member, token, params, grant, client } = fixture;
+      const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+      if (route === 'webhook') await db.query("UPDATE rooms_mcp_clients SET callback_url='https://hooks.example/tags' WHERE id=$1", [grant.clientId]);
+      if (route.includes('events')) {
+        expect((await eventCall(token, 'events/subscribe', params)).error).toBeUndefined();
+        if (route === 'expired events') await db.query("UPDATE rooms_mcp_event_subscriptions SET expires_at=now()-interval '1 second' WHERE member_id=$1", [member]);
+      }
+      if (route.includes('bridge')) {
+        const now = new Date().toISOString();
+        await client.callTool({ name: 'list_mentions', arguments: { waitSeconds: 1, wakesAfter: now } });
+        if (route === 'expired bridge') await db.query("UPDATE rooms_mcp_members SET last_bridge_poll_at=now()-interval '61 seconds' WHERE member_id=$1", [member]);
+      }
+      const sender = await connected();
+      const response = await sender.client.callTool({ name: 'send_message', arguments: { room: ROOM, text: `@${handle} check this tag` } }) as { content: { text: string }[] };
+      const receipt = JSON.parse(response.content[0]!.text).data;
+      const live = ['webhook', 'events', 'bridge'].includes(route);
+      expect(receipt.woken).toEqual(live ? [handle] : []);
+      expect(receipt.notWoken).toEqual(live ? [] : [{ handle, reason: 'no live wake route; sees it on next list_mentions' }]);
+      expect((await db.query('SELECT 1 FROM rooms_mcp_mentions WHERE member_id=$1 AND message_id=$2', [member, receipt.messageId])).rowCount).toBe(1);
+    }, 60_000);
   it('MCP-EVENTS-1: discovers, verifies, refreshes and unsubscribes on the authenticated MCP endpoint', async () => {
     const fixture = await eventFixture();
     const { token, params, posts, member } = fixture;
@@ -235,7 +259,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(bearerCalls).toBe(1);
       expect(received).toHaveLength(2);
       expect(received[1]).toMatchObject({ name: 'mention', cursor: null,
-        data: { roomId: ROOM, messageId: sent.messageId, author: { id: USER }, text: '@' + handle + ' reply here' } });
+        data: { roomId: ROOM, messageId: sent.messageId, memberId: member, replyRule: `answer in this Room with replyTo ${sent.messageId}`, idempotencyKey: `mention:${member}:${sent.messageId}`, author: { id: USER }, text: '@' + handle + ' reply here' } });
       expect(await deliverMcpMemberWebhooks(db, deliveryTransport)).toBe(0);
       const reply = await client.callTool({ name: 'send_message', arguments: { room: ROOM, text: 'Event received.', replyTo: sent.messageId } });
       expect(reply.isError).not.toBe(true);
@@ -399,6 +423,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       privatePayload: { text: 'done: the report reached the commander', authorId: AGENT, fromRoomId: ROOM, kind: 'report' },
     });
     expect(await queued(report!.id)).toHaveLength(1);
+    // Subscribed delivery must not make an unclaimed app appear to be running.
+    expect((await phone.readRoom(ROOM, USER))!.latestAgentTurns.filter(
+      turn => turn.agentPubkey === member && turn.status === 'working',
+    )).toEqual([]);
     expect(JSON.parse((await queued(report!.id))[0]!.body).data).toMatchObject({
       kind: 'report', reason: 'report', text: 'done: the report reached the commander',
       next: 'Handle it, then call no_reply_needed with this address if nothing needs posting.',
@@ -970,7 +998,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(page).toContain('Joins as'); expect(page).toContain('Add Grok Bot to your team');
     expect(page).toContain('Starter instructions');
     expect(page).toContain('id="copy-routine" type="button">Copy</button>');
-    expect(page).toContain(MCP_STARTER_ROUTINE.replaceAll("'", '&#39;'));
+    for (const line of MCP_STARTER_ROUTINE.split('\n').filter(line => line.trim()))
+      expect(page).toContain(`<li>${line.replaceAll("'", '&#39;')}</li>`);
     expect(page).toMatch(/<script nonce="[A-Za-z0-9+/=]+">/);
     expect(page).toContain('Read public Rooms in selected Workspaces'); expect(page).toContain('It joins their public Rooms'); expect(page).toContain('Post as Grok Bot');
     // The real Beeline icon, never a letter stand-in.
@@ -995,6 +1024,15 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: client.client_id, code, code_verifier: verifier, redirect_uri: 'http://127.0.0.1:9876/callback', resource: origin + '/mcp' })).status).toBe(200);
     const member = (await db.query<{ member_id: string }>('SELECT member_id FROM rooms_mcp_members WHERE owner_id=$1 AND client_id=$2', [USER, client.client_id])).rows[0]!.member_id;
     expect((await db.query<{ name: string; handle: string }>('SELECT name,handle FROM identities WHERE id=$1', [member])).rows[0]).toEqual({ name: 'Firstmate', handle: 'firstmate' });
+  });
+  it('renders starter instructions as escaped ordered items with plain newline-separated copy text', async () => {
+    const { consentHtml } = await authorize();
+    const escape = (line: string) => line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const items = MCP_STARTER_ROUTINE.split('\n').filter(line => line.trim());
+    const list = consentHtml.match(/<ol id="starter-routine" class="routine-text">([\s\S]*?)<\/ol>/);
+    expect(list).not.toBeNull();
+    expect(list![1]).toBe(items.map(line => `<li>${escape(line)}</li>`).join('\n'));
+    expect(list![1].match(/<li>/g)).toHaveLength(items.length);
   });
   it('repeats the saved starter wake rule in server, setup and webhook instructions', async () => {
     const { client } = await connected();
@@ -1027,7 +1065,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     }
     const report = tools.find(tool => tool.name === 'report')?.description;
     expect(report).toContain('Answer an order');
-    expect(report).toContain('address is the place the order came from');
+    expect(report).toContain('Prefers an order at address, then your oldest pending order elsewhere');
     expect(report).toContain('done:, blocked:, failed:, needs-decision:');
     expect(report).toContain('Answer chat requests with a tagged message instead');
   });
@@ -2019,7 +2057,15 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     }, 60_000);
     it('still wakes the tagged agent when the provenance read fails', async () => {
       const { client } = await connected();
-      await db.query('ALTER TABLE rooms_mcp_mentions RENAME TO rooms_mcp_mentions_off');
+      const transaction = db.transaction.bind(db);
+      const fault = vi.spyOn(db, 'transaction').mockImplementation(work => transaction(async tx => {
+        const query = tx.query.bind(tx);
+        tx.query = ((sql: string, values?: unknown[]) => {
+          if (sql.includes('SELECT to_jsonb(command) command FROM rooms_mcp_mentions')) throw new Error('proof: provenance read failed');
+          return query(sql, values);
+        }) as typeof tx.query;
+        return work(tx);
+      }));
       try {
         const sent = data(await client.callTool({ name: 'send_message', arguments: { room: BIG, text: '@demo-agent wake without provenance' } }));
         expect(sent.woken).toEqual(['demo-agent']);
@@ -2028,7 +2074,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         expect(command.agent_depth).toBe(1);
         expect((await db.query('SELECT 1 FROM rooms_mcp_pending_routes WHERE message_id=$1', [sent.messageId])).rowCount).toBe(0);
       } finally {
-        await db.query('ALTER TABLE rooms_mcp_mentions_off RENAME TO rooms_mcp_mentions');
+        fault.mockRestore();
       }
     }, 60_000);
   });
@@ -2134,6 +2180,47 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         `SELECT private_payload FROM agent_commands WHERE agent_id=$1 AND reason='report' ORDER BY created_at DESC LIMIT 1`, [AGENT])).rows[0]!;
       expect(back.private_payload).toMatchObject({ kind: 'report', text: expect.stringContaining('three corners, all green') });
       expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND state<>'complete'`, [member])).rowCount).toBe(0);
+    });
+    async function reportCorner(member: string) {
+      const corner = randomUUID();
+      await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id,created_by) VALUES($1,$2,'Report proof',$3,$4)`, [corner, WORKSPACE, ROOM, AGENT]);
+      await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id) VALUES($1,$2,$3)`, [corner, AGENT, member]);
+      await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,spec,approval_basis,author_id,source_room_id)
+        VALUES($1,1,'Report proof','{"repositoryWork":false}',$2,$3)`, [corner, AGENT, ROOM]);
+      return corner;
+    }
+    async function cornerWorking(corner: string) {
+      return (await db.query<{ worker_active: boolean }>(`SELECT activity.worker_active FROM rooms c
+        JOIN corner_facts f ON f.corner_id=c.id ${cornerWorkSql()} WHERE c.id=$1`, [corner])).rows[0]!.worker_active;
+    }
+    it.each(['corner', 'parent'])('R1: reports a corner objective through the %s address and clears working', async address => {
+      const { client, member } = await connected();
+      const corner = await reportCorner(member);
+      const objective = await createAgentCommand(db, { roomId: corner, agentId: member, sourceMessageId: null,
+        reason: 'corner_objective', privatePayload: { kind: 'order', authorId: AGENT, fromRoomId: ROOM, text: 'Finish the corner' } });
+      expect(await cornerWorking(corner)).toBe(true);
+      await ok(client, 'report', { address: address === 'corner' ? corner : ROOM, status: 'done', text: 'done: corner work finished' });
+      expect((await db.query<{ state: string }>('SELECT state FROM agent_commands WHERE id=$1', [objective!.id])).rows[0]!.state).toBe('complete');
+      expect(await cornerWorking(corner)).toBe(false);
+      expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND reason='report' AND private_payload->>'originCornerId'=$2`, [AGENT, corner])).rowCount).toBe(1);
+    });
+    it('R1: no pending order reports to the opening commander, while nonmembers are refused', async () => {
+      const { client, member } = await connected();
+      const corner = await reportCorner(member);
+      await ok(client, 'report', { address: corner, status: 'done', text: 'done: finished without a pending order' });
+      expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND reason='report' AND private_payload->>'originCornerId'=$2`, [AGENT, corner])).rowCount).toBe(1);
+      expect((await call(client, 'report', { address: CORNER, status: 'done', text: 'done: forbidden corner' })).text).toContain('Access denied');
+    });
+    it('R1: prefers the given address, then the oldest pending order elsewhere', async () => {
+      const { client, member } = await connected();
+      const first = await reportCorner(member), second = await reportCorner(member);
+      const orders = [];
+      for (const corner of [first, second]) orders.push(await createAgentCommand(db, { roomId: corner, agentId: member, sourceMessageId: null,
+        reason: 'corner_objective', privatePayload: { kind: 'order', authorId: AGENT, fromRoomId: ROOM, text: 'Finish' } }));
+      await ok(client, 'report', { address: second, status: 'done', text: 'done: second first' });
+      expect((await db.query<{ state: string }>('SELECT state FROM agent_commands WHERE id=$1', [orders[0]!.id])).rows[0]!.state).toBe('pending');
+      await ok(client, 'report', { address: ROOM, status: 'done', text: 'done: oldest remaining' });
+      expect((await db.query<{ state: string }>('SELECT state FROM agent_commands WHERE id=$1', [orders[0]!.id])).rows[0]!.state).toBe('complete');
     });
     it('R-MCP-GATES: keeps reviewer, merge, hold and implementer gates for the app', async () => {
       const { client, member } = await connected();

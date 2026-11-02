@@ -43,7 +43,7 @@ async function fixture(agentId = JELLYBEAN) {
   await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Room')`,[ROOM,WORKSPACE,OWNER]);
   await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name,parent_id) VALUES($1,$2,$3,'issues-triage',$4)`,[TRIAGE,WORKSPACE,OWNER,ROOM]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-    ($1,NULL,$2,'owner'),($1,$3,$2,'owner'),($1,$3,$4,'member'),($1,$5,$4,'member')`,[WORKSPACE,OWNER,ROOM,JELLYBEAN,TRIAGE]);
+    ($1,NULL,$2,'owner'),($1,$3,$2,'owner'),($1,$3,$4,'member')`,[WORKSPACE,OWNER,ROOM,JELLYBEAN]);
   server = createBeelineServer({database:db,auth:{},phone:{},daemon:{},live:new LiveHub(),mediaMaximumBytes:1,
     sentryWakeSecret:SECRET,sentryWakeAgentId:agentId} as unknown as ServerOptions);
   await new Promise<void>(r => server.listen(0,'127.0.0.1',r));
@@ -75,7 +75,7 @@ it('routes immediate and trailing HTTP digests to the configured agent', async (
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Configured triager')`,[agentId]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agentId,OWNER]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-    VALUES($1,$2,$3,'member'),($1,$4,$3,'member')`,[WORKSPACE,ROOM,agentId,TRIAGE]);
+    VALUES($1,$2,$3,'member')`,[WORKSPACE,ROOM,agentId]);
   expect((await post(issue())).status).toBe(200);
   expect((await post(issue('456'))).status).toBe(200);
   expect((await commands()).rows.map(row => row.agent_id)).toEqual([agentId]);

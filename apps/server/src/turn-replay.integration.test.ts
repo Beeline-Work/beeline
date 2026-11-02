@@ -43,7 +43,6 @@ it.each([
   if (scope === 'corner') {
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Trace corner',$4)`, [roomId,WS,ROOM,HUMAN]);
     await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective) VALUES($1,$2,$2,'Trace proof')`,[roomId,AGENT]);
-    for (const person of [HUMAN,AGENT]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WS,roomId,person]);
   }
   if (limited) await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,state,sealed_keys) VALUES($1,$2,$3,'running','fixture')`, [AGENT,WS,HUMAN]);
   const trigger = randomUUID();

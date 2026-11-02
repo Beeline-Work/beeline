@@ -73,7 +73,11 @@ export function failureProofModule(root) {
 export function scanErrorPlaceholders(root) {
   const hits = [];
   function walk(directory) {
-    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+    let entries;
+    // Browser proof tests create and remove temporary folders under sources/test.
+    try { entries = fs.readdirSync(directory, { withFileTypes: true }); }
+    catch (error) { if (error.code === 'ENOENT') return; throw error; }
+    for (const entry of entries) {
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) { if (entry.name !== 'vendor') walk(file); continue; }
       if (!/\.tsx?$/.test(file) || /\.(test|spec)\./.test(file)) continue;

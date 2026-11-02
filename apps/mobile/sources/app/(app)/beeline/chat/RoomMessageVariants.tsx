@@ -9,7 +9,7 @@ import { Image, Platform, Pressable, Text, View } from 'react-native';
 export { GitHubEventCard, DaemonFactCard } from '@/components/buzz/LifecycleCard';
 import { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
 export { NotificationLifecycleCard };
-import { Swipeable } from 'react-native-gesture-handler';
+import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
@@ -857,52 +857,17 @@ function SwipeToReply({
   isDesktop: boolean;
   replyOnly?: boolean;
 }) {
-  const swipeableRef = useRef<Swipeable | null>(null);
-  const returnTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const closeTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
-  // Swipeable hides its action panels at rest only by translating them
-  // off-screen through a native interpolation. On Android that translation
-  // can be lost, which painted the CORNER panel under the transparent message
-  // text. The corner panel paints only from the start of a swipe until it closes.
+  const swipeableRef = useRef<SwipeableMethods | null>(null);
   const [swipeShown, setSwipeShown] = useState(false);
-  const cancelReturn = useCallback(() => {
-    clearTimeout(returnTimer.current);
-    clearTimeout(closeTimer.current);
-    clearTimeout(hideTimer.current);
-  }, []);
-  const showSwipe = useCallback(() => {
-    cancelReturn();
-    setSwipeShown(true);
-  }, [cancelReturn]);
-  const hideSwipe = useCallback(() => {
-    cancelReturn();
-    setSwipeShown(false);
-  }, [cancelReturn]);
-  // A closing spring that never reports its end must not leave the panel painted.
-  const hideSwipeSoon = useCallback(() => {
-    clearTimeout(hideTimer.current);
-    hideTimer.current = setTimeout(() => setSwipeShown(false), 700);
-  }, []);
-  useEffect(() => {
-    setSwipeShown(false);
-    return cancelReturn;
-  }, [cancelReturn, messageId]);
+  const showSwipe = useCallback(() => setSwipeShown(true), []);
+  const hideSwipe = useCallback(() => setSwipeShown(false), []);
+  useEffect(() => setSwipeShown(false), [messageId]);
   const commitSwipe = (direction: 'left' | 'right') => {
-    showSwipe();
-    // WillOpen runs after the swipe commits, even if its opening spring is
-    // interrupted. Wait for Swipeable's rowState update before closing it.
-    closeTimer.current = setTimeout(() => {
-      swipeableRef.current?.close();
-      // A cancelled or slow closing spring must not leave the row or its action
-      // panel exposed. Close again rather than reset(): on Android's new
-      // architecture, reset()'s setValue stops the native spring without
-      // repainting, freezing the row mid-return with the panel showing. A
-      // fresh close runs a native spring that always paints its rest frame.
-      returnTimer.current = setTimeout(() => swipeableRef.current?.close(), 480);
-    }, 0);
+    // ReanimatedSwipeable reports the movement direction. Its UI-thread spring
+    // can return immediately without the legacy native-driver close timers.
+    swipeableRef.current?.close();
     // Install the quote before a composer update can recycle this row.
-    if (direction === 'right') onReply?.();
+    if (direction === 'left') onReply?.();
     else onSwipeCorner?.();
   };
   const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
@@ -1005,7 +970,7 @@ function SwipeToReply({
     </View>
   );
   const swipeRow = () => (
-    <Swipeable
+    <ReanimatedSwipeable
       ref={swipeableRef}
       // Swipeable's container clips (`overflow: 'hidden'`) at the row's content
       // edge, where the byline tile sits — and a live agent's gold ring paints
@@ -1019,7 +984,6 @@ function SwipeToReply({
       dragOffsetFromRightEdge={18}
       friction={1.35}
       onSwipeableWillOpen={commitSwipe}
-      onSwipeableWillClose={hideSwipeSoon}
       onSwipeableClose={hideSwipe}
       onSwipeableOpenStartDrag={showSwipe}
       onSwipeableCloseStartDrag={showSwipe}
@@ -1040,7 +1004,7 @@ function SwipeToReply({
       testID={`swipe-reply-${messageId}`}
     >
       {message}
-    </Swipeable>
+    </ReanimatedSwipeable>
   );
   return swipeRow();
 }

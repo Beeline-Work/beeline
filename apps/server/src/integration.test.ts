@@ -1522,7 +1522,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ room_id: string; event_subscriptions: string[] }>(
-          `SELECT room_id,event_subscriptions FROM effective_memberships
+          `SELECT room_id,event_subscriptions FROM room_access
            WHERE identity_id=$1 AND room_id=ANY($2::uuid[]) ORDER BY room_id`,
           [reviewerId, [ROOM, cornerId]],
         )
@@ -1554,7 +1554,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ event_subscriptions: string[] }>(
-          `SELECT event_subscriptions FROM effective_memberships WHERE identity_id=$1 AND room_id=$2`,
+          `SELECT event_subscriptions FROM room_access WHERE identity_id=$1 AND room_id=$2`,
           [reviewerId, ROOM],
         )
       ).rows,
@@ -1579,7 +1579,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ event_subscriptions: string[] }>(
-          `SELECT event_subscriptions FROM effective_memberships
+          `SELECT event_subscriptions FROM room_access
            WHERE identity_id=$1 AND room_id=ANY($2::uuid[]) ORDER BY room_id`,
           [AGENT, [ROOM, cornerId]],
         )
@@ -6404,9 +6404,11 @@ describe('monolith integration', () => {
         )
       ).rows[0]?.status,
     ).toBe('cancelled');
-    const helperCommands = (await (
-      await daemonOperation('getAgentCommands', { roomId: cornerId })
-    ).json()) as { commands: Array<{ action: string; reason: string; turnRequestId: string }> };
+    const helperCommandsResponse = await daemonOperation('getAgentCommands', { roomId: cornerId });
+    expect(helperCommandsResponse.status).toBe(200);
+    const helperCommands = (await helperCommandsResponse.json()) as {
+      commands: Array<{ id: string; action: string; reason: string; turnRequestId: string }>
+    };
     expect(helperCommands.commands).toContainEqual(
       expect.objectContaining({
         action: 'stop',
@@ -6431,6 +6433,13 @@ describe('monolith integration', () => {
         agent_id: AGENT,
       }),
     ]);
+    const stop = helperCommands.commands.find(command => command.action === 'stop')!;
+    const stopInput = { roomId: cornerId, commandId: stop.id, generationId: 'closed-corner-stop' };
+    expect((await daemonOperation('claimAgentCommand', stopInput)).status).toBe(200);
+    expect((await daemonOperation('acknowledgeAgentCommand', stopInput)).status).toBe(200);
+    expect((await database.query(`SELECT 1 FROM memberships WHERE room_id=$1`, [cornerId])).rowCount).toBe(0);
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, AGENT]);
+    expect((await daemonOperation('getAgentCommands', { roomId: cornerId })).status).toBe(403);
     expect(
       (
         await database.query(
@@ -6458,7 +6467,7 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { id: cornerId } = (await created.json()) as { id: string };
     const inherited = await database.query<{ event_subscriptions: string[] }>(
-      `SELECT event_subscriptions FROM effective_memberships WHERE room_id=$1 AND identity_id=$2`,
+      `SELECT event_subscriptions FROM room_access WHERE room_id=$1 AND identity_id=$2`,
       [cornerId, AGENT],
     );
     expect(inherited.rows[0]!.event_subscriptions).toEqual(['joined']);
@@ -10865,7 +10874,7 @@ describe('monolith integration', () => {
       expect(
         (
           await database.query(
-            `SELECT 1 FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+            `SELECT 1 FROM room_access WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
             [cornerId, member],
           )
         ).rowCount,
@@ -13727,7 +13736,7 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
     const inherited = await database.query<{ event_subscriptions: string[] }>(
-      `SELECT event_subscriptions FROM effective_memberships WHERE room_id=$1 AND identity_id=$2`,
+      `SELECT event_subscriptions FROM room_access WHERE room_id=$1 AND identity_id=$2`,
       [cornerId, AGENT],
     );
     expect(inherited.rows[0]!.event_subscriptions).toEqual(['joined']);
@@ -13944,7 +13953,7 @@ describe('monolith integration', () => {
       room_id: string | null;
       event_subscriptions: string[];
     }>(
-      `SELECT room_id,event_subscriptions FROM effective_memberships WHERE identity_id=$1
+      `SELECT room_id,event_subscriptions FROM room_access WHERE identity_id=$1
        ORDER BY room_id NULLS FIRST`,
       [agentPubkey],
     );

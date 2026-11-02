@@ -1,3 +1,5 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
+import { clearOwedMention } from './owed-mentions.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { Tool } from '@modelcontextprotocol/sdk/types.js';
 import { REPOSITORY_SUBSCRIPTION_EVENTS } from '@beeline/api-contract/daemon';
@@ -145,7 +147,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('stop', 'Stop the running turn of an agent you ordered, or one working in a corner you opened.', {
     address: address(), agent: { type: 'string', maxLength: 120 },
   }, ['address']),
-  tool('report', 'Answer an order with its outcome to whoever ordered you. Answer chat requests with a tagged message instead. address is the place the order came from (list_mentions names it). Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
+  tool('report', 'Answer an order with its outcome to whoever ordered you. Answer chat requests with a tagged message instead. Prefers an order at address, then your oldest pending order elsewhere; without an order, a corner address reports to its commander. Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
     address: address(), status: { type: 'string', enum: ['done', 'blocked', 'failed', 'needs_decision'] },
     text: { type: 'string', minLength: 1, maxLength: 16000 }, ask: { type: 'string', maxLength: 140 },
   }, ['address', 'status', 'text']),
@@ -179,7 +181,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
     address: address(), inputs: { type: 'object', additionalProperties: { type: 'string', maxLength: 256 } },
   }, ['address']),
   tool('post', 'Post a public message at an address, as an agent does. Tags wake the named members; no assignment or report is owed. replyTo does not wake anyone; start with the asker\'s exact @handle.', {
-    address: address(), text: { type: 'string', minLength: 1, maxLength: 16000 },
+    address: address(), text: { type: 'string', minLength: 1, maxLength: 16000 }, replyTo: { type: 'string', pattern: '^[0-9a-f]{64}$' },
   }, ['address', 'text']),
   tool('post_artifact', 'Post a file at an address: html as text, or other content as base64 bytes. The file is validated like an agent\'s artifact. Code work goes in a corner with another agent as implementer: use feature/corner- plus the first 12 hex characters of its id with hyphens removed; push existing commits there in the same repository with your own GitHub access, or post the patch in that corner, not the Room, with base commit and test commands for the implementer to apply and push with the Beeline GitHub App; your owner\'s connection approval covers sharing the patch.', {
     address: address(), title: { type: 'string', minLength: 1, maxLength: 200 }, mime: { type: 'string' },
@@ -206,7 +208,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('react_to_message', 'React to a message with a supported emoji.', {
     address: address(), messageId: { type: 'string' }, emoji: { type: 'string', enum: [...MESSAGE_REACTION_EMOJIS] },
   }, ['address', 'messageId', 'emoji']),
-  tool('no_reply_needed', 'Mark the wakes waiting for you at an address handled without posting. Orders stay until you report.', { address: address() }, ['address']),
+  tool('no_reply_needed', 'Explicitly decline one tagged message by messageId without posting. Without messageId, mark non-order private wakes at an address handled; tags stay owed. Failed sends never decline tags.', { address: address(), messageId: { type: 'string', pattern: '^[0-9a-f]{64}$' } }, ['address']),
 ];
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -246,7 +248,11 @@ export class RoomsMcpAgentTools {
     private readonly objects?: ObjectService,
   ) {}
 
+  private readonly postReplyRouting = new AsyncLocalStorage<unknown>();
+
   private exec(member: string, op: string, input: Args): Promise<unknown> {
+    const replyTo = this.postReplyRouting.getStore();
+    if (op === 'postCornerMessage' && replyTo !== undefined) input.replyTo = replyTo;
     return this.daemon.execute(op as never, input as never, member) as Promise<unknown>;
   }
 
@@ -263,11 +269,11 @@ export class RoomsMcpAgentTools {
   }
 
   /**
-   * Open a turn at a place. A report binds the oldest order waiting there.
+   * Open a turn at a place. A report prefers the addressed order, then the oldest accessible order.
    * Any other call gets its own command, whose requester is the latest person
    * who tagged this member there, the way a tag starts an agent's turn.
    */
-  private async begin(member: string, roomId: string, order: boolean): Promise<McpTurn> {
+  private async begin(member: string, roomId: string, order: boolean, target = roomId): Promise<McpTurn> {
     const generationId = `mcp:${randomUUID()}`;
     // Continue the wake chain behind the latest tag, as send_message does, so
     // tags in this turn count toward the same depth limit.
@@ -280,16 +286,29 @@ export class RoomsMcpAgentTools {
     const chain = incoming?.command;
     return this.db.transaction(async tx => {
       if (order) {
-        const bound = (await tx.query<{ id: string; turn_request_id: string }>(
+        const bound = (await tx.query<{ id: string; turn_request_id: string; room_id: string }>(
           `UPDATE agent_commands SET state='claimed',generation_id=$3,lease_expires_at=now()+interval '90 seconds',claimed_at=now()
-           WHERE id=(SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND action IN ('input','resume')
-               AND private_payload->>'kind'='order'
-               AND (state='pending' OR (state='claimed' AND lease_expires_at<=now()))
-             ORDER BY created_at,id LIMIT 1 FOR UPDATE SKIP LOCKED)
-           RETURNING id,turn_request_id`, [roomId, member, generationId])).rows[0];
-        if (!bound) throw new McpToolError('no order is waiting for your report at this address; list_mentions names the places that ordered you');
-        await this.startTurn(tx, roomId, member, bound.turn_request_id, generationId);
-        return { roomId, requestId: bound.turn_request_id, generationId, commandId: bound.id, order: true };
+           WHERE id=(SELECT ordered.id FROM agent_commands ordered
+             JOIN rooms room ON room.id=ordered.room_id AND room.archived_at IS NULL
+             JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL
+             WHERE ordered.agent_id=$2 AND ordered.action IN ('input','resume')
+               AND ordered.private_payload->>'kind'='order'
+               AND (ordered.state='pending' OR (ordered.state='claimed' AND ordered.lease_expires_at<=now()))
+             ORDER BY (ordered.room_id=$1) DESC,ordered.created_at,ordered.id LIMIT 1 FOR UPDATE OF ordered SKIP LOCKED)
+           RETURNING id,turn_request_id,room_id`, [target, member, generationId])).rows[0];
+        if (bound) {
+          await this.startTurn(tx, bound.room_id, member, bound.turn_request_id, generationId);
+          return { roomId: bound.room_id, requestId: bound.turn_request_id, generationId, commandId: bound.id, order: true };
+        }
+        const corner = (await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL AND archived_at IS NULL`, [target])).rowCount;
+        if (!corner) {
+          const orders = (await tx.query<{ room_id: string }>(`SELECT DISTINCT room_id FROM agent_commands
+            WHERE agent_id=$1 AND private_payload->>'kind'='order' AND state IN ('pending','claimed') ORDER BY room_id`, [member])).rows;
+          throw new McpToolError(`no order is waiting for your report; order addresses: ${orders.map(row => row.room_id).join(', ') || 'none'}; use a corner address to report to its commander`);
+        }
+        // Membership was checked by place(). A fresh corner turn follows the
+        // existing opening-commander route even after its order has completed.
+        roomId = target;
       }
       const requester = (await tx.query<{ id: string }>(
         `SELECT m.id FROM rooms_mcp_mentions mention JOIN messages m ON m.id=mention.message_id AND m.deleted_at IS NULL
@@ -338,7 +357,7 @@ export class RoomsMcpAgentTools {
   }
 
   private async inTurn<T>(member: string, target: string, run: (turn: McpTurn, context: Args) => Promise<T>, order = false): Promise<T> {
-    const turn = await this.begin(member, await this.place(member, target), order);
+    const turn = await this.begin(member, await this.place(member, target), order, target);
     let reported = false;
     try {
       const result = await run(turn, { roomId: turn.roomId, requestId: turn.requestId, generationId: turn.generationId });
@@ -361,6 +380,7 @@ export class RoomsMcpAgentTools {
     const exec = (op: string, input: Args) => this.exec(member, op, defined(input));
     const turn = <T>(run: (turn: McpTurn, context: Args) => Promise<T>, target = addressArg(args.address)) =>
       this.inTurn(member, target, run);
+    return this.postReplyRouting.run(args.replyTo, async () => {
     switch (name) {
       case 'read': return this.read(member, args, exec, turn);
       case 'load_workspace_skill':
@@ -418,6 +438,10 @@ export class RoomsMcpAgentTools {
       case 'no_reply_needed': {
         const roomId = addressArg(args.address);
         await this.place(member, roomId);
+        if (args.messageId !== undefined) {
+          if (typeof args.messageId !== 'string' || !/^[0-9a-f]{64}$/.test(args.messageId)) throw new McpToolError('Invalid messageId');
+          return { cleared: await clearOwedMention(this.db, member, roomId, args.messageId) };
+        }
         const cleared = await this.db.query(
           `UPDATE agent_commands SET state='complete',completed_at=now()
            WHERE room_id=$1 AND agent_id=$2 AND state='pending' AND action IN ('input','resume')
@@ -426,6 +450,7 @@ export class RoomsMcpAgentTools {
       }
     }
     throw new McpToolError(`unknown tool: ${name}`);
+    });
   }
 
   private async read(member: string, args: Args, exec: (op: string, input: Args) => Promise<unknown>,
@@ -641,7 +666,7 @@ export async function pendingMcpWakes(db: SqlDatabase, member: string) {
      FROM agent_commands command LEFT JOIN messages source ON source.id=command.source_message_id
      WHERE command.agent_id=$1 AND command.action IN ('input','resume') AND command.reason<>'mcp_call'
        AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
-       AND EXISTS(SELECT 1 FROM effective_memberships member WHERE member.room_id=command.room_id
+       AND EXISTS(SELECT 1 FROM room_access member WHERE member.room_id=command.room_id
          AND member.identity_id=$1 AND member.removed_at IS NULL)
      ORDER BY command.created_at,command.id LIMIT 30`, [member])).rows
     .map(row => ({ id: row.id, address: row.room_id, reason: row.reason, ...(row.kind ? { kind: row.kind } : {}),

@@ -17,6 +17,15 @@ The page tells the agent to run `npx -y usebeeline@latest join` and show the lin
 
 ## Delivery
 
+Tag receipts count a connected member as woken when its webhook is configured,
+an unexpired MCP Event subscription queued the tag, or its bridge called
+`list_mentions` with a positive `waitSeconds` within the last (60) seconds.
+Without a live route the receipt says "no live wake route; sees it on next
+list_mentions"; the durable mention remains available for catch-up.
+Reports prefer a pending order at the supplied address, then the member's oldest
+accessible pending order elsewhere. A corner address without a pending order
+uses the existing opening-commander route. Corner activity rules are unchanged.
+
 One bridge process per machine user (`bridge.ts`) long-polls `list_mentions` with `waitSeconds` (at most 25) for every joined member, and hands each new tag or wake to the session:
 
 | App | Channel | Idle session |

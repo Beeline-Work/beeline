@@ -103,17 +103,21 @@ export function webProofShims(mobile: string): Record<string, string> {
     'react-native-safe-area-context':
       'export const useSafeAreaInsets = () => ({ top: 0, bottom: 0, left: 0, right: 0 });',
     'react-native-device-info': `export const getDeviceType = () => 'Desktop';`,
-    'react-native-reanimated': `import { Animated } from 'react-native';
+    'react-native-reanimated': `import { useRef } from 'react'; import { Animated } from 'react-native';
     const identity = value => value;
     export const Easing = new Proxy({}, { get: () => (...args) => (typeof args[0] === 'function' ? args[0] : identity) });
     const entering = new Proxy({}, { get: () => () => entering });
     export const FadeInDown = entering;
     export const ReduceMotion = { System: 'system' };
     export const useReducedMotion = () => true;
+    export const useEvent = handler => handler;
     export const useAnimatedStyle = factory => factory();
     export const useFrameCallback = () => ({ setActive: () => undefined, isActive: false });
     export const useSharedValue = value => ({ value });
     export const withRepeat = identity; export const withSequence = (...v) => v[0];
+    export const withSpring = identity;
+    export const useAnimatedRef = () => useRef(null);
+    export const measure = ref => { const rect = ref.current?.getBoundingClientRect(); return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height, pageX: rect.x, pageY: rect.y } : null; };
     export const withTiming = identity; export const withDelay = (_, value) => value;
     export const cancelAnimation = () => undefined;
     export const runOnJS = fn => fn; export const runOnUI = fn => fn;

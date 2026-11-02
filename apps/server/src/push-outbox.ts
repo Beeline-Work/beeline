@@ -71,7 +71,7 @@ BEGIN
       AND context.request_id=m.request_id AND context.message_id<>m.id;
   INSERT INTO push_outbox(message_id,device_token,expires_at)
     SELECT m.id,device.token,m.created_at+interval '1 hour'
-    FROM effective_memberships member
+    FROM room_access member
     JOIN push_devices device ON device.identity_id=member.identity_id
       AND device.registered_at<=m.created_at
     JOIN push_delivery_floors floor ON floor.id='message-delivery' AND floor.started_at<=m.created_at

@@ -127,7 +127,7 @@ describe('Room mute', () => {
     expect(await delivered()).toEqual([update]);
     await migrate(db);
     const muted = await db.query<{ push_muted: boolean }>(
-      `SELECT push_muted FROM effective_memberships WHERE room_id=$1 AND identity_id=$2`,
+      `SELECT push_muted FROM room_access WHERE room_id=$1 AND identity_id=$2`,
       [corner, person],
     );
     expect(muted.rows[0]?.push_muted).toBe(false);

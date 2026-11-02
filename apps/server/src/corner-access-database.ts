@@ -1,7 +1,7 @@
 import type { QueryResultRow } from 'pg';
 import type { QueryResult, SqlDatabase } from './database.js';
 
-/** Keep reviewed message statements intact while resolving their membership reads at execution. */
+/** Resolve generic surface access reads through current parent Room membership. */
 export class CornerAccessDatabase implements SqlDatabase {
   constructor(private readonly database: SqlDatabase) {
     if (database instanceof CornerAccessDatabase) this.database = database.database;
@@ -20,7 +20,7 @@ export class CornerAccessDatabase implements SqlDatabase {
   }
 }
 
-/** Resolve access reads outside owner-reviewed message query templates. */
+/** Workspace and Room rows are stored; corner access and preferences are projected. */
 export class CornerAccessStatement {
   readonly sql: string;
   constructor(sql: string) {
@@ -58,7 +58,7 @@ export class CornerAccessStatement {
     this.sql = sql.replace(tokens, (token, _dollarTag, offset: number) => {
       if (!/^(?:FROM|JOIN)\s+memberships$/i.test(token)) return token;
       const alias = /^\s+(\w+)/.exec(sql.slice(offset + token.length))?.[1];
-      return alias && parentAliases.has(alias) ? token : token.replace(/memberships$/i, 'effective_memberships');
+      return alias && parentAliases.has(alias) ? token : token.replace(/memberships$/i, 'room_access');
     });
   }
 }

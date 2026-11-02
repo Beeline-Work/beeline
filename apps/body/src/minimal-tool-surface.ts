@@ -1031,7 +1031,8 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       "type": "object",
       "properties": {
         "text": {"type": "string", "minLength": 1, "maxLength": 16000},
-        "address": {"type": "string", "description": "Target Room or corner id; omitted address uses the active corner."}
+        "address": {"type": "string", "description": "Target Room or corner id; omitted address uses the active corner."},
+        "replyTo": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Message id to answer in this Room."}
       },
       "required": ["text"],
       "additionalProperties": false
@@ -1337,8 +1338,8 @@ export const RUNNER_TOOL: ToolDefinition = {
 };
 export const SILENT_TOOL: ToolDefinition = {
   "name": "no_reply_needed",
-  "description": "On a nonhuman report, order, lifecycle, scheduler or system wake with nothing to post, end the turn immediately and silently. No further tools or final text are accepted. This tool posts nothing and reports nothing. Works alone, in parallel or in the background. Human-triggered turns cannot use it: call post({text: <your reply>}), then end the turn.",
-  "inputSchema": {"type": "object", "properties": {}, "additionalProperties": false}
+  "description": "On a nonhuman report, order, lifecycle, scheduler or system wake with nothing to post, end the turn immediately and silently. No further tools or final text are accepted. This tool posts nothing and reports nothing. Works alone, in parallel or in the background. For a tagged message, pass its messageId to explicitly decline that one reply.",
+  "inputSchema": {"type": "object", "properties": {"messageId": {"type": "string", "pattern": "^[0-9a-f]{64}$", "description": "Explicitly decline this tagged message in the current Room."}}, "additionalProperties": false}
 };
 /**
  * The Beeline apps app_tool serves in a place.

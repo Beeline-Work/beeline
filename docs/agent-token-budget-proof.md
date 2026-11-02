@@ -72,3 +72,19 @@ exact PR head.
   context-delivery changes or replay runner. No follow-up PR was opened.
 - Native shell output capping in Claude Code, Codex and Cursor. This PR caps
   owned MCP text results only; it makes no native-harness output changes.
+
+## Server CI repair
+
+The failing checks at head `521b9b95c7d79036325ea5a55c64f75f765e8500`
+were the MCP catalog parity case and the System-message fingerprint lock in
+server shard (3). The `SERVER SUITE` and `SERVER INTEGRATION` jobs inherited
+that shard's failure; its integration batches themselves passed. The repair
+restores procedure-tool parity and the original locked workflow wording,
+without changing either exclusion lists or the lock. Membership-race refusals
+remain aggregated caller errors.
+
+Main integration resolves the MCP reply overlap by applying the recoverable
+cap after the existing owed-mention wrapper. Wake deadlines use the current
+`room_access` view and continue excluding infinite allowance pauses. Neither
+change adds fixed-context caching or native shell output capping. The exact
+head and current CI verdict belong to the completion report.

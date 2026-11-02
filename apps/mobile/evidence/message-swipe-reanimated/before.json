@@ -1,0 +1,38 @@
+[
+  {
+    "case": "under-threshold",
+    "bounds": {
+      "swipe-reply-long-agent": [
+        53,
+        536,
+        1028,
+        1632
+      ],
+      "copy-message-long-agent": [
+        64,
+        536,
+        1018,
+        1632
+      ]
+    },
+    "quoteInstalled": false
+  },
+  {
+    "case": "scroll-interrupted",
+    "bounds": {
+      "swipe-reply-long-agent": [
+        53,
+        206,
+        1028,
+        1302
+      ],
+      "copy-message-long-agent": [
+        64,
+        206,
+        1018,
+        1302
+      ]
+    },
+    "quoteInstalled": false
+  }
+]

@@ -1,3 +1,4 @@
+import { owedMentions, clearOwedMention, mentionReplyKey, mentionReplyId } from './owed-mentions.js';
 import { YouTubeUploadRefusal } from './composio-apps.js';
 import { missingReviewAttachments } from './review-evidence.js';
 import { consumeStarterVideoPost, restoreStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
@@ -366,6 +367,15 @@ const CORNER_REACH_OPERATIONS = new Set<string>([
   'mergeCorner',
   'approveCornerMerge',
 ]);
+/** Closed corners still deliver stop commands and expose cleanup/history facts. */
+const CORNER_CLEANUP_OPERATIONS = new Set<string>([
+  'closeCornerPullRequest',
+  'getAgentCommands',
+  'claimAgentCommand',
+  'acknowledgeAgentCommand',
+  'getCornerCloseRequests',
+  'getRoomInbox',
+]);
 export { CORNER_WAKE_TIMEOUT_MS } from './corner-wake.js';
 
 /**
@@ -502,14 +512,15 @@ export class DaemonService {
             return this.reviewSourceAccess(scopedRoom, authenticatedAgentId).then(() => ({
               cornerReviewer: false, isCorner: false, privateCommand: false, voiceAgentName: null,
             })).catch((sourceError: unknown) => {
-              if (sourceError instanceof AccessDeniedError && name === 'getRoomConversation')
+              if (sourceError instanceof AccessDeniedError)
                 return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
                   cornerReviewer: false, isCorner: true, privateCommand: false, voiceAgentName: null,
                 }));
               throw sourceError;
             });
           // Reachable corner operations also admit a parent Room member.
-          if (error instanceof AccessDeniedError && CORNER_REACH_OPERATIONS.has(name))
+          if (error instanceof AccessDeniedError &&
+              (CORNER_REACH_OPERATIONS.has(name) || CORNER_CLEANUP_OPERATIONS.has(name)))
             return this.reach(scopedRoom, authenticatedAgentId).then(() => ({
               cornerReviewer: false,
               isCorner: true,
@@ -1284,6 +1295,8 @@ export class DaemonService {
           input as Input<'getWorkspaceRoster'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'getOwedMentions':
+        return { owedMentions: await owedMentions(this.database, authenticatedAgentId) } as Output<Name>;
       case 'getRoomInbox':
       case 'getRoomConversation':
       case 'getCornerCloseRequests':
@@ -1580,10 +1593,13 @@ export class DaemonService {
         )) as Output<Name>;
       case 'markAgentTurnSilent':
       case 'postRoomMessage': {
+        const declinedMessage = name === 'markAgentTurnSilent' ? (input as Input<'markAgentTurnSilent'>).messageId : undefined;
         if (name === 'markAgentTurnSilent') {
           const command = this.authorizedCommand;
           if (!command) throw new CommandRefusalError('silence requires an active turn', 409);
-          if (!['report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
+          if (declinedMessage && !await mentionReplyKey(this.database, authenticatedAgentId, command.room_id, declinedMessage))
+            throw new CommandRefusalError('messageId must be a tagged message in this Room', 400);
+          if (!declinedMessage && !['report', 'order', 'watched_corner', 'corner_check', 'corner_review_needed',
             'corner_review_dispatch', 'corner_merge_conflict', 'computer_activity',
             'schedule', 'subscribed_event', 'system', 'agent_tag', 'corner_objective',
             'corner_land', 'corner_merge_refused', 'corner_merge_unconfirmed',
@@ -1595,6 +1611,7 @@ export class DaemonService {
             await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
               WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
               [command.room_id, authenticatedAgentId, command.turn_request_id]);
+            if (declinedMessage) await clearOwedMention(this.database, authenticatedAgentId, command.room_id, declinedMessage);
             return this.writeResult() as Output<Name>;
           }
           // Drain promised files through the same ordinary reply path before
@@ -1611,6 +1628,7 @@ export class DaemonService {
           await this.database.query(`UPDATE agent_turns SET completion_kind='no-reply'
             WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`,
             [command.room_id, authenticatedAgentId, command.turn_request_id]);
+          if (declinedMessage) await clearOwedMention(this.database, authenticatedAgentId, command.room_id, declinedMessage);
           return this.writeResult() as Output<Name>;
         }
         return output as Output<Name>;
@@ -3119,7 +3137,7 @@ export class DaemonService {
       [agentId],
     );
     const rooms = await this.database.query<{ room_id: string; parent_id: string | null; workspace_id: string; archived: boolean; landed_head_sha: string | null; repository_revision: string }>(
-      `SELECT m.room_id, r.parent_id, r.workspace_id, r.archived_at IS NOT NULL archived,
+      `SELECT r.id room_id, r.parent_id, r.workspace_id, r.archived_at IS NOT NULL archived,
               CASE WHEN r.archived_at IS NOT NULL AND f.lifecycle->>'outcome'='landed'
                 AND f.lifecycle->'pr'->>'mergedAt' IS NOT NULL
                 THEN f.lifecycle->'pr'->>'headSha' END landed_head_sha,
@@ -3128,12 +3146,13 @@ export class DaemonService {
                 COALESCE(r.repository_updated_at::text,''),
                 COALESCE(i.status,''),COALESCE(i.updated_at::text,''),
                 COALESCE(g.active::text,''),COALESCE(g.updated_at::text,'')) repository_revision
-       FROM memberships m
-       JOIN rooms r ON r.id=m.room_id
+       FROM rooms r
+       JOIN memberships m ON m.room_id=COALESCE(r.parent_id,r.id)
        LEFT JOIN corner_facts f ON f.corner_id=r.id
        LEFT JOIN github_installations i ON i.installation_id=r.github_installation_id
        LEFT JOIN github_repositories g ON r.repository_key='github:' || g.repository_id::text
-       WHERE m.identity_id=$1 AND (m.removed_at IS NULL OR r.archived_at IS NOT NULL)`,
+       WHERE m.identity_id=$1 AND (m.removed_at IS NULL OR
+         (r.parent_id IS NULL AND r.archived_at IS NOT NULL))`,
       [agentId],
     );
     const pending = await this.database.query<{ room_id: string; parent_id: string | null; owner_agent_id: string | null }>(
@@ -3222,6 +3241,9 @@ export class DaemonService {
         ? (input as unknown as { cornerId: string }).cornerId
         : input.roomId;
     await this.access(roomId, agentId).catch((error: unknown) => {
+      if (error instanceof AccessDeniedError &&
+          (name === 'getRoomInbox' || name === 'getCornerCloseRequests'))
+        return this.reach(roomId, agentId);
       if (error instanceof AccessDeniedError && name === 'getRoomConversation')
         return this.reviewSourceAccess(roomId, agentId).catch((sourceError: unknown) => {
           if (sourceError instanceof AccessDeniedError) return this.reach(roomId, agentId);
@@ -3426,8 +3448,13 @@ export class DaemonService {
     let borrowedSource = false;
     await this.access(input.roomId, agentId).catch(async (error: unknown) => {
       if (!(error instanceof AccessDeniedError)) throw error;
-      await this.reviewSourceAccess(input.roomId, agentId);
-      borrowedSource = true;
+      try {
+        await this.reviewSourceAccess(input.roomId, agentId);
+        borrowedSource = true;
+      } catch (sourceError) {
+        if (!(sourceError instanceof AccessDeniedError)) throw sourceError;
+        await this.reach(input.roomId, agentId);
+      }
     });
     if (!input.messageId || input.messageId.length > 128) throw new Error('invalid message id');
     const offset = input.offset ?? 0;
@@ -3443,8 +3470,9 @@ export class DaemonService {
               substring(command.private_payload->>'text' FROM $3::integer + 1 FOR 4000) body,
               char_length(command.private_payload->>'text') total,
               command.private_payload->'attachments' attachments,
-              EXISTS(SELECT 1 FROM effective_memberships member
-                     WHERE member.room_id=CASE WHEN command.agent_id=$2 THEN command.room_id
+              EXISTS(SELECT 1 FROM rooms handoff_room
+                     JOIN memberships member ON member.room_id=COALESCE(handoff_room.parent_id,handoff_room.id)
+                     WHERE handoff_room.id=CASE WHEN command.agent_id=$2 THEN command.room_id
                        ELSE NULLIF(command.private_payload->>'fromRoomId','')::uuid END
                        AND member.identity_id=$2
                        AND member.removed_at IS NULL) accessible
@@ -3796,8 +3824,8 @@ export class DaemonService {
   /**
    * The corners of this Room that this agent may carry.
    *
-   * A corner operates as a Room: the branch on GitHub is the shared artifact
-   * and MEMBERSHIP is the authority, so every member agent lists the corner
+   * The branch on GitHub is the shared artifact. Parent Room access is the
+   * authority, so every parent Room agent lists the corner
    * and can be addressed in it. `corner_facts.owner_agent_id` survives as the
    * historical "opened by" — it still names `createdBy` here, and the phone
    * still shows it — but it no longer decides who may work. Listing on the
@@ -3835,7 +3863,7 @@ export class DaemonService {
        WHERE (r.parent_id=$1 OR (EXISTS(SELECT 1 FROM rooms dm WHERE dm.id=$1 AND dm.direct_participants IS NOT NULL)
          AND EXISTS(SELECT 1 FROM memberships target WHERE target.room_id=r.parent_id AND target.identity_id=$2 AND target.removed_at IS NULL))) ${activeOnly ? 'AND r.archived_at IS NULL' : ''} AND ($3 OR EXISTS(
          SELECT 1 FROM memberships m
-         WHERE m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL))`,
+         WHERE m.room_id=COALESCE(r.parent_id,r.id) AND m.identity_id=$2 AND m.removed_at IS NULL))`,
       [roomId, agentId, reachable],
     );
     return {
@@ -4361,7 +4389,8 @@ export class DaemonService {
     }
     if (!await checkinOutputAllowed(this.database, input.roomId, agentId, input.requestId, input))
       throw new ExpectedRefusalError('This one-time check-in is no longer due. Do not post another check-in message.');
-    const messageId = id();
+    const mentionKey = await mentionReplyKey(this.database, agentId, input.roomId, input.replyToMessageId);
+    const messageId = mentionKey ? mentionReplyId(mentionKey) : id();
     const parent = input.replyToMessageId
       ? (
           await this.database.query<{
@@ -4474,13 +4503,18 @@ export class DaemonService {
       if (this.commandTransaction) {
         return (
           await database.query<CommittedMessageLiveRow>(
-            `WITH inserted AS (
+            `WITH new_messages AS (
                INSERT INTO messages(
                  id,room_id,author_id,text,presentation,request_id,legacy_event,
                  reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
                ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3))
+               ON CONFLICT(id) DO NOTHING
                RETURNING *
+             ), inserted AS (
+               SELECT * FROM new_messages UNION ALL
+               SELECT stored.* FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
+                 AND NOT EXISTS(SELECT 1 FROM new_messages)
              ), completed AS (
                UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
                FROM inserted WHERE agent_commands.id=$13
@@ -4499,13 +4533,18 @@ export class DaemonService {
       }
       return (
         await database.query<CommittedMessageLiveRow>(
-          `WITH inserted AS (
+          `WITH new_messages AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
                reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
              ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                (SELECT selected_model FROM agents WHERE agent_id=$3))
+             ON CONFLICT(id) DO NOTHING
              RETURNING *
+           ), inserted AS (
+             SELECT * FROM new_messages UNION ALL
+             SELECT stored.* FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
+               AND NOT EXISTS(SELECT 1 FROM new_messages)
            )
            SELECT inserted.*,author.kind author_kind,author.name author_name,
              author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
@@ -4593,7 +4632,7 @@ export class DaemonService {
              SELECT count(*) recovered_count,
                (jsonb_agg(to_jsonb(recovered_public))->0) recovered_row
              FROM recovered_public
-           ), inserted AS (
+           ), new_messages AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
                reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
@@ -4601,7 +4640,12 @@ export class DaemonService {
                  writable.agent_depth,attachment_payload.attachments,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload,recovery_barrier
+             ON CONFLICT(id) DO NOTHING
              RETURNING *
+           ), inserted AS (
+             SELECT * FROM new_messages UNION ALL
+             SELECT stored.* FROM messages stored WHERE stored.id=$1 AND stored.room_id=$2 AND stored.author_id=$3
+               AND NOT EXISTS(SELECT 1 FROM new_messages)
            ), completed AS (
              UPDATE agent_commands command SET
                state='complete',completed_at=now(),result_message_id=inserted.id
@@ -4610,7 +4654,6 @@ export class DaemonService {
            ), star_count AS (
              ${starPromptReplySql(
                `(SELECT writable.root_source_message_id FROM writable,completed WHERE $5='message')`,
-               '(SELECT jsonb_array_length(attachments)>0 FROM attachment_payload)',
                '$11::int[]',
              )}
            ), cleared AS (
@@ -4774,7 +4817,6 @@ export class DaemonService {
         agentId,
         requestId: input.requestId,
         messageId: saved.id,
-        artifact: saved.attachments.length > 0,
       };
       const count = (database: SqlDatabase) => recordStarPromptReply(database, reply);
       if (this.afterCommit) this.afterCommit(count);
@@ -6325,7 +6367,7 @@ export class DaemonService {
     if (to !== undefined) {
       const target = typeof to === 'string' ? to.replace(/^@/, '') : '';
       const recipient = (await database.query<{ id: string }>(
-        `SELECT identity.id FROM effective_memberships member JOIN identities identity ON identity.id=member.identity_id
+        `SELECT identity.id FROM room_access member JOIN identities identity ON identity.id=member.identity_id
          WHERE member.room_id=$1 AND member.removed_at IS NULL AND (identity.id=$2 OR identity.handle=$2)`,
         [command.room_id, target],
       )).rows[0];
@@ -8989,7 +9031,7 @@ export class DaemonService {
          AND command.review_context->>'headSha'=fact.lifecycle->'pr'->>'headSha'
          AND command.review_context->'pullRequest'=fact.lifecycle->'pr'->'number'
          AND command.review_context->>'briefRevision'=brief.revision::text
-       JOIN effective_memberships member ON member.room_id=corner.id
+       JOIN room_access member ON member.room_id=corner.id
          AND member.identity_id=$2 AND member.removed_at IS NULL
        WHERE source.id=$1 AND EXISTS(SELECT 1 FROM messages approval
          WHERE approval.id=brief.source_message_id AND approval.room_id=source.id
@@ -9054,7 +9096,7 @@ export class DaemonService {
        LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=member.workspace_id
          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
          AND workspace_member.removed_at IS NULL
-       WHERE member.room_id=$1 AND member.removed_at IS NULL
+       WHERE member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1) AND member.removed_at IS NULL
        ORDER BY identity.kind,identity.name`,
       [roomId],
     );
@@ -9073,6 +9115,15 @@ export class DaemonService {
     );
     await refuseTagPastCommander(this.database, input.cornerId, agentId, text,
       command.room_id === input.cornerId.toLowerCase() ? command : undefined);
+    let root: string | null = null;
+    if (input.replyTo !== undefined) {
+      if (!/^[0-9a-f]{64}$/.test(input.replyTo)) throw new CommandRefusalError('Invalid replyTo', 400);
+      const parent = (await this.database.query<{root: string}>(
+        'SELECT COALESCE(root_message_id,id) root FROM messages WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL', [input.replyTo, input.cornerId])).rows[0];
+      if (!parent) throw new CommandRefusalError('reply parent is not in this Room', 400);
+      root = parent.root;
+    }
+    const key = await mentionReplyKey(this.database, agentId, input.cornerId, input.replyTo);
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
         `WITH pending AS (
@@ -9081,15 +9132,16 @@ export class DaemonService {
              AND room_id=$2
            RETURNING url,name,mime_type,size,created_at,id
          )
-         INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event,attachments)
+         INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event,attachments,reply_to_message_id,root_message_id)
          SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3),
            CASE WHEN room.id=$5::uuid THEN $6 ELSE NULL END,
            jsonb_build_object('turnGenerationId',$7::text),
            COALESCE((SELECT jsonb_agg(jsonb_build_object('url',url,'name',name,'mimeType',mime_type,'size',size)
-             ORDER BY created_at,id) FROM pending),'[]'::jsonb)
+             ORDER BY created_at,id) FROM pending),'[]'::jsonb),$8,$9
          FROM rooms room WHERE room.id=$2 AND room.archived_at IS NULL
+         ON CONFLICT(id) DO UPDATE SET id=messages.id
          RETURNING id,created_at`,
-        [id(), input.cornerId, agentId, text, input.roomId, input.requestId, input.generationId],
+        [key ? mentionReplyId(key) : id(), input.cornerId, agentId, text, input.roomId, input.requestId, input.generationId, input.replyTo ?? null, root],
       )
     ).rows[0];
     if (!saved) throw new CommandRefusalError('post refused: address is archived', 409);
@@ -9309,6 +9361,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   assignWorkflowRole: true,
   getDaemonBootstrap: true,
   getWorkspaceRoster: true,
+  getOwedMentions: true,
   getRoomInbox: true,
   getRoomConversation: true,
   getRoomMessage: true,

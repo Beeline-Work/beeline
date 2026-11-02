@@ -128,6 +128,11 @@ describe('addressed-message routing and claim scaling', () => {
     ).rows[0];
     if (!command) throw new Error('routed command missing');
     await claimAgentCommand(counted, BASE_ROOM, TARGET, command.id, generation);
+    // The private owed tag must commit with dispatch without adding a round trip.
+    expect((await database.query(
+      `SELECT message_id FROM rooms_mcp_mentions WHERE member_id=$1 AND message_id=$2`,
+      [TARGET, request],
+    )).rows).toEqual([{ message_id: request }]);
     const notifications = await database.query<{ table_name: string }>(
       `SELECT table_name FROM claim_live_notification_audit ORDER BY table_name`,
     );

@@ -78,10 +78,6 @@ try {
   await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
     SELECT corner_id::uuid,$1,$2,$3,name FROM unnest($4::text[],$5::text[]) AS c(corner_id,name)
     ON CONFLICT(id) DO NOTHING`, [busy.workspaceId, busy.roomId, reviewId, cornerIds, cornerNames]);
-  await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-    SELECT $1,corner_id::uuid,$2,'owner' FROM unnest($3::text[]) AS c(corner_id)
-    WHERE NOT EXISTS (SELECT 1 FROM memberships m WHERE m.room_id=c.corner_id::uuid
-      AND m.identity_id=$2 AND m.removed_at IS NULL)`, [busy.workspaceId, reviewId, cornerIds]);
   await database.query(`INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind)
     SELECT corner_id::uuid,$1,'Latency rig corner','human'
     FROM unnest($2::text[]) AS c(corner_id) ON CONFLICT(corner_id) DO NOTHING`, [reviewId, cornerIds]);

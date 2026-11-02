@@ -68,8 +68,8 @@ export async function ensureReviewWorkspace(
     [fixtureIds, REVIEW_WORKSPACE_ID],
   );
   await database.query(
-    `UPDATE memberships SET workspace_id=$2 WHERE room_id=ANY($1::uuid[]) AND workspace_id<>$2`,
-    [fixtureIds, REVIEW_WORKSPACE_ID],
+    `UPDATE memberships SET workspace_id=$2 WHERE room_id=$1 AND workspace_id<>$2`,
+    [REVIEW_PROOF_ROOM_ID, REVIEW_WORKSPACE_ID],
   );
   await ensureReviewProofFixture(database, reviewerId, REVIEW_WORKSPACE_ID);
 }

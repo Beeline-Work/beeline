@@ -1,5 +1,6 @@
 import { backfillWelcomeVideoWorkflow } from './welcome-video-workflow.js';
 import { closeCompletedCommandTurns } from './migrations/completed-command-turns.js';
+import { clearConnectedAppPlaceholders } from './migrations/connected-app-turns.js';
 import { AGENT_CORNER_HOLDS_SCHEMA } from './migrations/agent-corner-holds.js';
 import { MOBILE_MINIMUM_SCHEMA } from './mobile-minimum.js';
 import { STARTER_ONBOARDING_SCHEMA } from './starter-onboarding-run.js';
@@ -15,6 +16,7 @@ import { backfillPushOutbox, PUSH_OUTBOX_SCHEMA } from './push-outbox.js';
 import { LEGACY_STORAGE_SCHEMA } from './migrations/legacy-storage.js';
 import { SERVICE_REVIEW_READ_SCHEMA } from './service-review.js';
 import { CORNER_PERSON_STATE_SCHEMA, migrateCornerPersonState } from './corner-person-state.js';
+import { CORNER_MEMBERSHIPS_SCHEMA, removeCornerMemberships } from './migrations/corner-memberships.js';
 import { deleteArchivedCornerWakeSources } from './migrations/archived-corner-wakes.js';
 import { retireBotDirectMessages } from './migrations/one-system-thread.js';
 import { VOICE_SCHEMA } from './voice-schema.js';
@@ -237,7 +239,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 44;
+export const REQUIRED_SCHEMA_VERSION = 45;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -908,9 +910,6 @@ ALTER TABLE memberships DROP CONSTRAINT IF EXISTS memberships_invited_by_fkey;
 ALTER TABLE memberships ADD CONSTRAINT memberships_invited_by_fkey
   FOREIGN KEY (invited_by) REFERENCES identities(id) ON DELETE SET NULL;
 ALTER TABLE memberships ADD COLUMN IF NOT EXISTS push_muted boolean NOT NULL DEFAULT false;
--- Mute is a Room setting: a corner follows its Room's mute.
-UPDATE memberships member SET push_muted=false FROM rooms corner
-  WHERE corner.id=member.room_id AND corner.parent_id IS NOT NULL AND member.push_muted;
 -- What this member reacts to in THIS Room. An event happens in a Room, so the
 -- subscription lives on the Room membership row and not on the identity: an
 -- agent in several Rooms would otherwise inherit one Room's job everywhere.
@@ -3347,6 +3346,15 @@ export async function migrate(
     `CREATE INDEX CONCURRENTLY messages_operator_history_idx
      ON messages(created_at,author_id) WHERE presentation='message' AND deleted_at IS NULL`,
   ));
+  // Membership attention refreshes ask for this person's last answer in each
+  // candidate Room. A date-leading index re-scans history for every item when
+  // a newcomer has no answers.
+  await retryMigrationStep('corner answer lookup index', () => createIndexConcurrently(
+    database, 'messages_room_author_answer_idx',
+    `CREATE INDEX CONCURRENTLY messages_room_author_answer_idx
+     ON messages(room_id,author_id,created_at DESC)
+     WHERE presentation='message' AND deleted_at IS NULL`,
+  ));
   await retryMigrationStep('operator turn history index', () => createIndexConcurrently(
     database, 'agent_turns_operator_history_idx',
     `CREATE INDEX CONCURRENTLY agent_turns_operator_history_idx ON agent_turns(created_at) INCLUDE(status)`,
@@ -3579,6 +3587,7 @@ export async function migrate(
        THEN (private_payload->>'originCornerId')::uuid ELSE room_id END))`,
   ));
   await ddlScript('corner person state', CORNER_PERSON_STATE_SCHEMA);
+  await ddlScript('corner membership guard', CORNER_MEMBERSHIPS_SCHEMA);
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
@@ -3626,6 +3635,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'archived-corner-wakes-v1', deleteArchivedCornerWakeSources));
   await dataStep('completed command turns', () =>
     workflowBackfillOnce(database, 'completed-command-turns-v1', closeCompletedCommandTurns));
+  await dataStep('connected app dispatch placeholders', () =>
+    workflowBackfillOnce(database, 'connected-app-placeholders-v1', clearConnectedAppPlaceholders));
   await dataStep('terminal push claims', () =>
     workflowBackfillOnce(database, 'terminal-push-claims-v1', compactPushClaims));
   if (searchDocuments)
@@ -3637,6 +3648,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner follows backfill', () =>
     workflowBackfillOnce(database, 'corner-follows-v1', backfillCornerFollows));
   await dataStep('corner person state migration', () => migrateCornerPersonState(database));
+  await dataStep('remove corner memberships', () => removeCornerMemberships(database));
   await dataStep('rooms MCP preregistered clients', () => seedPreregisteredMcpClients(database));
   const mcpMembers = await dataStep('rooms MCP members', () => backfillMcpMembers(database));
   if (mcpMembers) console.log(`backfillMcpMembers: created ${mcpMembers} member(s)`);

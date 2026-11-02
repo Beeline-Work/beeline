@@ -324,6 +324,7 @@ export type DaemonOperationMap = {
   acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
+  getOwedMentions: Operation<Record<string, never>, { readonly owedMentions: readonly { readonly roomId: string; readonly messageId: string; readonly memberId: string; readonly replyRule: string; readonly idempotencyKey: string }[] }>;
   getRoomInbox: Operation<RoomCursorInput, RoomInboxResult>;
   getRoomConversation: Operation<RoomConversationInput, RoomConversationResult>;
   /** One bounded page of an exact message in this Room or a source authorized for the active turn. */
@@ -475,7 +476,7 @@ export type DaemonOperationMap = {
   readCornerPullRequest: Operation<CornerInput, CornerPullRequestResult>;
   /** A plain message into a reachable corner, from the caller's active turn. */
   postCornerMessage: Operation<
-    CornerInput & RoomInput & TurnOutputAuthority & { readonly text: string },
+    CornerInput & RoomInput & TurnOutputAuthority & { readonly text: string; readonly replyTo?: string },
     {
       readonly id: string;
       readonly createdAt: number;
@@ -512,7 +513,7 @@ export type DaemonOperationMap = {
   postAgentDraft: Operation<PostLiveOutputInput, WriteResult>;
   postAgentThought: Operation<PostLiveOutputInput, WriteResult>;
   retractAgentLiveOutput: Operation<RetractLiveOutputInput, WriteResult>;
-  markAgentTurnSilent: Operation<RoomInput & TurnOutputAuthority, WriteResult>;
+  markAgentTurnSilent: Operation<RoomInput & TurnOutputAuthority & { readonly messageId?: string }, WriteResult>;
   postAgentTurnReceipt: Operation<PostTurnReceiptInput, WriteResult>;
   postAgentActivity: Operation<PostAgentActivityInput, WriteResult>;
   /** Push a continuation when a tool from this command finishes after its prompt ended. */

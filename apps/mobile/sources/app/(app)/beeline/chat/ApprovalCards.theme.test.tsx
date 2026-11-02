@@ -68,6 +68,10 @@ vi.mock('react-native', async () => {
   };
 });
 
+vi.mock('react-native-gesture-handler/ReanimatedSwipeable', async () => ({
+  default: (await import('react-native-gesture-handler')).Swipeable,
+}));
+
 vi.mock('react-native-gesture-handler', async () => {
   const ReactModule = await import('react');
   return {

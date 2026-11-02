@@ -42,6 +42,8 @@
         "scripts/prove-agent-merge-holds.mjs",
         // BRIEF-CITATION invokes the isolated built Body/HTTP proof by path.
         "scripts/prove-brief-citation.mjs",
+        // The corner membership migration guide invokes the owner-shaped HTTP/socket proof by path.
+        "scripts/prove-archived-corner-memberships.mjs",
         "scripts/prove-tray-inline.ts",
         "scripts/prove-agent-usage-refresh.mjs",
         // VAULT-CARD-1 invokes the isolated built-server/Squire proof by path.
@@ -98,6 +100,8 @@
       "project": [
         "scripts/**/*.{js,cjs,mjs,ts,tsx}",
         "!scripts/fixtures/dead-code-regression/**",
+        // Ignored captures and ad hoc trace adapters are local benchmark artifacts.
+        "!scripts/latency-rig/.local/**",
         ".verification/**/*.ts",
         "web/**/*.{js,mjs}",
         "!web/join/invite.js",
@@ -233,6 +237,8 @@
         // Browser bundling and the temporary Metro main select these proof entries by path.
         "scripts/disclosure-rows-{browser,native}-proof.tsx",
         "scripts/transcript-dividers-{browser,native}-proof.tsx",
+        // The Android swipe regression runbook loads this temporary native app entry.
+        "scripts/message-swipe-native-proof.tsx",
         "scripts/lifecycle-rows-a-native-proof.tsx",
         "scripts/ci-accordion-proof.tsx",
         "scripts/tray-empty-proof.tsx",

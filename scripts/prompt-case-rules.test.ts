@@ -14,6 +14,22 @@ const turn: Transcript = {
 };
 const pass = (rule: Rule) => evaluateRule(rule, turn).pass;
 
+test('Room routing case requires a post at the delivered address with the source replyTo', async () => {
+  const { loadSource, replayPrompt } = await import('./prompt-cases.js');
+  const saved = JSON.parse(readFileSync(join(__dirname, '../docs/prompts/cases/routing-answers-source-message.json'), 'utf8'));
+  const source = await loadSource(process.cwd());
+  const prompt = replayPrompt(source, saved);
+  const routing = saved.turn.routing;
+  assert.ok(prompt.includes(`[Beeline · Room ${routing.roomName} · message ${routing.messageId} · from ${routing.fromName}]`));
+  assert.ok(prompt.includes(`member ID ${routing.memberId}; answer in this Room with replyTo ${routing.messageId}`));
+  const post = (address: string, replyTo?: string) => ({ calls: [{ name: 'post', args: { address, replyTo, text: '391' } }], text: '' });
+  assert.equal(evaluateRule(saved.pass, post(routing.roomId, routing.messageId)).pass, true);
+  assert.equal(evaluateRule(saved.pass, post(routing.roomId)).pass, false);
+  assert.equal(evaluateRule(saved.pass, post(routing.roomId, 'b'.repeat(64))).pass, false);
+  assert.equal(evaluateRule(saved.pass, post('22222222-2222-4222-8222-222222222222', routing.messageId)).pass, false);
+  assert.equal(evaluateRule(saved.pass, { calls: [], text: '391' }).pass, false);
+});
+
 test('repo-less Room case accepts header navigation and rejects referrals to another Room', () => {
   const saved = JSON.parse(readFileSync(join(__dirname, '../docs/prompts/cases/room-no-repo-guides-link.json'), 'utf8'));
   const guidance = 'This Room has no linked repository; use Room header → Repository → Link or Create.';

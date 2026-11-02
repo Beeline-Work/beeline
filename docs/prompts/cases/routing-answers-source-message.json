@@ -1,0 +1,71 @@
+{
+  "id": "routing-answers-source-message",
+  "section": "turn.routing",
+  "summary": "A delivered Room tag is answered at its source address with replyTo, rather than only in the app.",
+  "place": "room",
+  "turn": {
+    "routing": {
+      "roomId": "11111111-1111-4111-8111-111111111111",
+      "messageId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "memberId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "roomName": "Arithmetic",
+      "fromName": "Morgan"
+    },
+    "task": {
+      "body": "What is 17 times 23?",
+      "commandReason": "human_tag",
+      "fromName": "Morgan"
+    }
+  },
+  "pass": {
+    "call": "post",
+    "args": {
+      "address": "11111111-1111-4111-8111-111111111111",
+      "replyTo": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "text": {
+        "contains": "391"
+      }
+    }
+  },
+  "scenario": {
+    "results": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "procedure"
+        },
+        "result": {
+          "slug": "workspace-core",
+          "markdown": "No additional saved procedures."
+        }
+      },
+      {
+        "call": "read",
+        "args": {
+          "facet": "messages"
+        },
+        "result": {
+          "items": [
+            {
+              "id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "text": "What is 17 times 23?",
+              "authorName": "Morgan"
+            }
+          ],
+          "next": null
+        }
+      },
+      {
+        "call": "post",
+        "args": {
+          "address": "11111111-1111-4111-8111-111111111111",
+          "replyTo": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "result": {
+          "id": "simulated-reply",
+          "committed": true
+        }
+      }
+    ]
+  }
+}

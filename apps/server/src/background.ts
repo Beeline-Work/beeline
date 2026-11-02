@@ -1,3 +1,4 @@
+import { retryOwedMentions } from './owed-mentions.js';
 import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { captureServerError } from './sentry.js';
 import { deliverMcpMemberWebhooks, retryMcpMemberRoutes } from './rooms-mcp-members.js';
@@ -390,7 +391,7 @@ export class PushDeliveryLoop {
         JOIN push_message_context context ON context.message_id=m.id
         JOIN push_delivery_floors floor ON floor.id='message-delivery'
         JOIN push_devices d ON d.token=queued.device_token AND m.created_at>=d.registered_at
-        JOIN LATERAL (SELECT 1 FROM effective_memberships member
+        JOIN LATERAL (SELECT 1 FROM room_access member
           WHERE member.room_id=m.room_id AND member.identity_id=d.identity_id
             AND member.removed_at IS NULL AND member.identity_id<>m.author_id LIMIT 1) member ON true
         WHERE m.created_at>=floor.started_at
@@ -590,10 +591,10 @@ export class PushDeliveryLoop {
         FROM jsonb_to_recordset($1::jsonb) candidate(message_id text,token text,
           channel_id uuid,room_id uuid,identity_id text,direct_attention boolean)
         WHERE candidate.channel_id IS NOT NULL AND (
-          EXISTS (SELECT 1 FROM effective_memberships member
+          EXISTS (SELECT 1 FROM room_access member
             WHERE member.room_id=candidate.channel_id AND member.identity_id=candidate.identity_id
               AND member.removed_at IS NOT NULL)
-          OR EXISTS (SELECT 1 FROM effective_memberships member
+          OR EXISTS (SELECT 1 FROM room_access member
             WHERE member.room_id=candidate.room_id AND member.identity_id=candidate.identity_id
               AND member.push_muted AND (NOT candidate.direct_attention OR EXISTS (
                 SELECT 1 FROM rooms dm WHERE dm.id=candidate.channel_id AND dm.direct_participants IS NOT NULL)))
@@ -619,7 +620,7 @@ export class PushDeliveryLoop {
              WHERE EXISTS (SELECT 1 FROM push_devices WHERE token=$2 AND identity_id=$3)
                AND EXISTS (SELECT 1 FROM identities WHERE id=$3 AND push_level<>'off')
                AND ($6<>'message' OR EXISTS (
-                 SELECT 1 FROM messages m JOIN effective_memberships member ON member.room_id=m.room_id
+                 SELECT 1 FROM messages m JOIN room_access member ON member.room_id=m.room_id
                  WHERE m.id=$1 AND member.identity_id=$3 AND member.removed_at IS NULL))
                AND NOT EXISTS (
                  SELECT 1 FROM messages m WHERE m.id=$1 AND ${earlierTurnPushSql('m', '$2')}
@@ -964,6 +965,7 @@ export class MediaExpiryLoop {
 
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
   await cleanupUnfinishedAppSignIns(database, true);
+  await retryOwedMentions(database);
   // Outgoing MCP member webhooks leave the wake transaction here.
   try { await retryMcpMemberRoutes(database); } catch (error) { captureServerError(error); }
   try { await deliverMcpMemberWebhooks(database); } catch (error) { captureServerError(error); }

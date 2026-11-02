@@ -55,7 +55,7 @@ for (const width of footerOnly ? [390, 360] : [390])
             const shims = webProofShims(mobile);
             const captureName = `${section}-${state}${footerOnly ? `-${width}-${theme}` : ''}`;
             shims['react-native-reanimated'] +=
-              '\nexport const FadeOut=FadeInDown;export const FadeOutDown=FadeInDown;export const FadeIn=FadeInDown;export const FadeInUp=FadeInDown;export const FadeOutUp=FadeInDown;export const LinearTransition=FadeInDown;export const withSpring=v=>v;export const interpolateColor=(_v,_i,o)=>o[o.length-1];';
+              '\nexport const FadeOut=FadeInDown;export const FadeOutDown=FadeInDown;export const FadeIn=FadeInDown;export const FadeInUp=FadeInDown;export const FadeOutUp=FadeInDown;export const LinearTransition=FadeInDown;export const interpolateColor=(_v,_i,o)=>o[o.length-1];';
             shims['expo-router'] =
               'export const router={};export const useRouter=()=>({});export const useLocalSearchParams=()=>({repositoryPicker:"proof"});';
             shims['@/sync/transport/monolith-operation'] =

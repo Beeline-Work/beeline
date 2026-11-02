@@ -1948,6 +1948,10 @@ export class MonolithRoomTurnLoop {
                   corners: openCorners,
                   closedCorners,
                   onboarding,
+                  ...(['human_tag', 'direct_message', 'agent_tag'].includes(this.commandContext.current?.reason ?? '') ? {
+                    routing: { roomId: this.options.roomId, messageId: this.commandContext.current!.sourceMessageId,
+                      memberId: this.agent.publicKey, fromName: inboxItemAuthorName(item, names) },
+                  } : {}),
                   task: {
                     fromName: inboxItemAuthorName(item, names),
                     commandReason: this.commandContext.current?.reason,

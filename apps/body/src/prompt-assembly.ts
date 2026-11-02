@@ -619,6 +619,7 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
 }
 
 export interface TurnPromptContext {
+  readonly routing?: { readonly roomId: string; readonly messageId: string; readonly memberId: string; readonly roomName?: string; readonly fromName?: string };
   /** Present only for a confirmed Codex session with compaction notifications. */
   readonly delivery?: CodexPromptDelivery;
   /** Current server eligibility for onboarding, refreshed each turn. */
@@ -692,6 +693,16 @@ export function renderOpenCornerLine(corner: OpenCornerRow): string {
 }
 
 export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
+  {
+    id: 'turn.routing', topic: 'reply-destination',
+    why: { 'turn.routing': 'A delivered tag needs its routing before long or compacted instructions.' },
+    budgetBytes: 1400, layer: 'turn', surfaces: EVERYWHERE,
+    render: ({ routing }) => routing ? [
+      `[Beeline · Room ${routing.roomName ?? routing.roomId} · message ${routing.messageId} · from ${routing.fromName ?? 'member'}]`,
+      `Room ID ${routing.roomId}; message ID ${routing.messageId}; member ID ${routing.memberId}; answer in this Room with replyTo ${routing.messageId}.`,
+      'Answer where the message came from. Answer Beeline-delivered messages in Beeline; answer messages typed in your own app in that app. Never copy between them unless asked.',
+    ].join('\n') : '',
+  },
   {
     id: 'turn.session',
     topic: 'session-delivery',
@@ -951,7 +962,8 @@ export function assembleTurnPrompt(context: TurnPromptContext): {
     transcript: boundedContext.transcript ? { ...boundedContext.transcript, lines } : undefined,
   });
   const delivered = context.delivery
-    ? context.delivery.select(entries.map(({ section, text }) => ({ id: section.id, text })))
+    ? [...entries.filter(({ section }) => section.id === 'turn.routing').map(({ section, text }) => ({ id: section.id, text })),
+      ...context.delivery.select(entries.filter(({ section }) => section.id !== 'turn.routing').map(({ section, text }) => ({ id: section.id, text })))]
     : entries.map(({ section, text }) => ({ id: section.id, text }));
   return {
     text: delivered.map((entry) => entry.text).join('\n\n'),

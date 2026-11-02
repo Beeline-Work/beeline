@@ -147,7 +147,12 @@
     "prove:turn-replay": "npm run build && node scripts/prove-turn-replay.mjs",
     "prove:token-output": "npx turbo run build --filter=@beeline/body... && node scripts/prove-token-output.mjs",
     "prove:token-workflow": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-token-workflow.mjs",
-    "prove:turn-command-budget": "npm run build && node scripts/prove-turn-command-budget.mjs"
+    "prove:turn-command-budget": "npm run build && node scripts/prove-turn-command-budget.mjs",
+    "prove:fixed-context:baseline": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node --import tsx scripts/prove-fixed-context-baseline.mjs",
+    "prove:fixed-context": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node --import tsx scripts/prove-fixed-context-replay.mjs",
+    "prove:native-shell-claude": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node scripts/prove-native-shell-cap.mjs",
+    "prove:native-shell-codex": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node scripts/prove-codex-shell-cap.mjs",
+    "prove:native-shell-cursor": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node scripts/prove-cursor-shell-cap.mjs"
   },
   "devDependencies": {
     "@colbymchenry/codegraph": "^1.6.0",

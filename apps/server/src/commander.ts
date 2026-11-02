@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -267,9 +268,9 @@ export async function stopCommandedTurn(
   // Approved by lunchboxfortwo: "@commander stopped @worker's running turn".
   await systemLine(db, {
     id: createHash('sha256').update(`agent-stop-line:${command.id}:${running.id}`).digest('hex'),
-    roomId: address, authorId: worker.id, subject: { kind: 'agent', id: agentId, name: agentId }, verb: 'stopped',
-    object: `${systemIdentityMention({ ...worker, kind: 'agent' })}'s running turn`,
-    ...(dropped ? { consequence: `${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` } : {}),
+    roomId: address, authorId: worker.id, subject: { kind: 'agent', id: agentId, name: agentId }, verb: systemMessage("commander.stopped"),
+    object: systemMessage("commander.s-running-turn", systemIdentityMention({ ...worker, kind: 'agent' })),
+    ...(dropped ? { consequence: systemMessage("commander.queued-dropped", dropped, dropped === 1 ? systemMessage("commander.order") : systemMessage("commander.orders")) } : {}),
   });
   return { stopped: true, address, agent: worker.id, droppedOrders: dropped,
     receipt: 'Running turn stopped. Send a new order; it runs next.' };
@@ -292,7 +293,7 @@ async function recordAgentCommandCard(db: SqlDatabase, input: {
     roomId: input.cornerId,
     authorId: input.authorId,
     subject: { kind: 'agent', id: input.authorId, name: input.authorId },
-    verb: input.kind === 'order' ? 'ordered' : 'reported to',
+    verb: input.kind === 'order' ? systemMessage("commander.ordered") : systemMessage("commander.reported-to"),
     object: { text: recipient?.name ?? input.recipientId, id: input.recipientId },
     ...(input.status ? { consequence: input.status } : {}),
     presentation: 'card',

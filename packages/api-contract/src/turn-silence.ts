@@ -1,3 +1,4 @@
+import { systemMessage } from './system-message-catalog.js';
 /**
  * First-silence vocabulary for a turn that did not answer.
  *
@@ -131,7 +132,7 @@ export function isCheckoutBusyFault(text: string): boolean {
   return /corner checkout is in use/i.test(text);
 }
 
-const PROVIDER_OUTAGE_POINTER = "its provider is failing; switch its model in the agent's settings.";
+const PROVIDER_OUTAGE_POINTER = systemMessage("turn-silence.its-provider-is-failing-switch-its-model-in-the-agent-s-settings");
 
 /**
  * Classify a distilled helper reason. `reasonKind` from a current helper wins;
@@ -145,16 +146,16 @@ export function classifyTurnSilence(
   // harness path can hide the interpreter diagnostic behind the receipt cap.
   const missingInterpreter = (reason ?? '').match(/\benv:\s*[‘'"`]?([\w.+-]+)[’'"`]?\s*:\s*(?:No such file or directory|command not found)/i);
   if (missingInterpreter && /\bACP agent\b/.test(reason ?? '')) {
-    const dependency = missingInterpreter[1]?.toLowerCase() === 'node' ? 'Node' : 'its interpreter';
+    const dependency = missingInterpreter[1]?.toLowerCase() === 'node' ? systemMessage("turn-silence.node") : systemMessage("turn-silence.its-interpreter");
     return {
       kind: 'hiccup',
-      fault: `it couldn't start: the background service can't find ${dependency}. Install ${dependency === 'Node' ? 'Node' : 'the required interpreter'} on this computer, then run \`beeline connect\``,
+      fault: systemMessage("turn-silence.it-couldn-t-start-the-background-service-can-t-find-install-on-th", dependency, dependency === 'Node' ? systemMessage("turn-silence.node") : systemMessage("turn-silence.the-required-interpreter")),
     };
   }
   if (/\bACP agent\b[^\n]*\bspawn\b[^\n]*\bENOENT\b/i.test(reason ?? '')) {
     return {
       kind: 'hiccup',
-      fault: "it couldn't start: its program or interpreter is missing. Reinstall the agent on this computer with `beeline connect`",
+      fault: systemMessage("turn-silence.it-couldn-t-start-its-program-or-interpreter-is-missing-reinstall"),
     };
   }
   // JSON-RPC rejects the request shape before the model runs. Replaying it
@@ -164,7 +165,7 @@ export function classifyTurnSilence(
   if (isTurnReceiptReasonKind(reasonKind)) {
     const kind = receiptKindToSilenceKind(reasonKind);
     if (kind === 'hiccup') {
-      return { kind, fault: (reason ?? '').trim() || 'the turn stalled' };
+      return { kind, fault: (reason ?? '').trim() || systemMessage("turn-silence.the-turn-stalled") };
     }
     return {
       kind,
@@ -175,7 +176,7 @@ export function classifyTurnSilence(
     };
   }
   const text = (reason ?? '').trim();
-  if (!text) return { kind: 'hiccup', fault: 'the turn stalled' };
+  if (!text) return { kind: 'hiccup', fault: systemMessage("turn-silence.the-turn-stalled") };
 
   if (
     /model selection unavailable/i.test(text) ||
@@ -239,12 +240,12 @@ export function classifyTurnSilence(
     return { kind: 'offline' };
   }
 
-  const fault = text || 'the turn stalled';
+  const fault = text || systemMessage("turn-silence.the-turn-stalled");
   return { kind: 'hiccup', fault };
 }
 
 function repoFromReason(text: string): string {
-  return firstMatch(text, REPO_FROM_URL) ?? firstMatch(text, REPO_FROM_SLUG) ?? 'the repository';
+  return firstMatch(text, REPO_FROM_URL) ?? firstMatch(text, REPO_FROM_SLUG) ?? systemMessage("turn-silence.the-repository");
 }
 
 /** A hung harness gets one fresh attempt; ordinary transient faults keep their budget. */
@@ -312,10 +313,10 @@ function capLine(name: string, verb: string, consequence: string): TurnSilencePh
   const head = `${name} ${verb}${SYSTEM_LINE_SEPARATOR}`;
   const budget = Math.max(24, TURN_SILENCE_LINE_MAX - head.length);
   const clipped =
-    consequence.length > budget ? `${consequence.slice(0, Math.max(1, budget - 1))}…` : consequence;
+    consequence.length > budget ? systemMessage("turn-silence.clipped-consequence", consequence.slice(0, Math.max(1, budget - 1))) : consequence;
   const bounded =
     clipped.length > MAX_EVENT_CONSEQUENCE_LENGTH
-      ? `${clipped.slice(0, MAX_EVENT_CONSEQUENCE_LENGTH - 1)}…`
+      ? systemMessage("turn-silence.clipped-consequence", clipped.slice(0, MAX_EVENT_CONSEQUENCE_LENGTH - 1))
       : clipped;
   return { verb, consequence: bounded };
 }
@@ -335,87 +336,87 @@ export function phraseTurnSilence(
     case 'wrong-model':
       return capLine(
         agent,
-        'could not answer',
-        "the selected model isn't available. Pick another in the agent's settings.",
+        systemMessage("turn-silence.could-not-answer"),
+        systemMessage("turn-silence.the-selected-model-isn-t-available-pick-another-in-the-agent-s-se"),
       );
     case 'allowance-spent': {
       const until = classified.allowanceUntil?.trim();
       return capLine(
         agent,
-        'could not answer',
+        systemMessage("turn-silence.could-not-answer"),
         until
-          ? `the provider allowance is spent until ${until}. Top up, or move the agent to another provider.`
-          : 'the provider allowance is spent. Top up, or move the agent to another provider.',
+          ? systemMessage("turn-silence.the-provider-allowance-is-spent-until-top-up-or-move-the-agent-to", until)
+          : systemMessage("turn-silence.the-provider-allowance-is-spent-top-up-or-move-the-agent-to-anoth"),
       );
     }
     case 'not-signed-in': {
       if (!options.login)
         return capLine(
           agent,
-          'could not answer',
-          "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
+          systemMessage("turn-silence.could-not-answer"),
+          systemMessage("turn-silence.the-helper-could-not-authenticate-with-the-provider-check-its-log"),
         );
       // The action leads: a phone shows two lines before More, so the
       // command a person sends sits first and the machine fallback after it.
       // A long name or handle drops the fallback, never the command.
       const { handle, harness } = options.login;
       const verb = agentSignInUsesKey(harness)
-        ? 'needs a new provider key'
-        : `needs a ${AGENT_SIGN_IN_SERVICE_LABELS[harness]} sign-in`;
-      const command = `send @${handle} login here.`;
-      const full = `${command} If that fails, its owner can run \`beeline connect\` on its machine.`;
+        ? systemMessage("turn-silence.needs-a-new-provider-key")
+        : systemMessage("turn-silence.needs-a-sign-in", AGENT_SIGN_IN_SERVICE_LABELS[harness]);
+      const command = systemMessage("turn-silence.send-login-here", handle);
+      const full = systemMessage("turn-silence.if-that-fails-its-owner-can-run-beeline-connect-on-its-machine", command);
       return capLine(agent, verb, fitsSilenceLine(agent, verb, full) ? full : command);
     }
     case 'workspace-failure':
       return capLine(
         agent,
-        'could not answer',
-        `the helper couldn't get a working copy of ${classified.repo ?? 'the repository'}. Check the repository is reachable.`,
+        systemMessage("turn-silence.could-not-answer"),
+        systemMessage("turn-silence.the-helper-couldn-t-get-a-working-copy-of-check-the-repository-is", classified.repo ?? systemMessage("turn-silence.the-repository")),
       );
     case 'helper-out-of-date':
       return capLine(
         agent,
-        'could not answer',
-        "the helper is out of date. Run `beeline start` on the helper's machine.",
+        systemMessage("turn-silence.could-not-answer"),
+        systemMessage("turn-silence.the-helper-is-out-of-date-run-beeline-start-on-the-helper-s-machi"),
       );
     case 'update-interrupted':
-      return capLine(agent, 'was interrupted by an update', 'the request is queued to resume.');
+      return capLine(agent, systemMessage("turn-silence.was-interrupted-by-an-update"), systemMessage("turn-silence.the-request-is-queued-to-resume"));
     case 'offline':
       return capLine(
         agent,
-        'is offline',
-        "the helper is unreachable. If it stays offline, run `beeline start` on its machine.",
+        systemMessage("turn-silence.is-offline"),
+        systemMessage("turn-silence.the-helper-is-unreachable-if-it-stays-offline-run-beeline-start-o"),
       );
     case 'context-overflow':
       return capLine(
         agent,
-        'could not answer',
-        "the request no longer fits the model's context window. Start a new corner, or pick a model with a larger window.",
+        systemMessage("turn-silence.could-not-answer"),
+        systemMessage("turn-silence.the-request-no-longer-fits-the-model-s-context-window-start-a-new"),
       );
     case 'resource-limit':
       return capLine(
         agent,
-        'could not answer',
-        'the session likely hit its memory limit. Run fewer tools at once or split the task.',
+        systemMessage("turn-silence.could-not-answer"),
+        systemMessage("turn-silence.the-session-likely-hit-its-memory-limit-run-fewer-tools-at-once-o"),
       );
     case 'hiccup': {
-      const fault = (classified.fault ?? 'the turn stalled').replace(/\s+/g, ' ').trim();
-      if (isCheckoutBusyFault(fault)) return capLine(agent, 'is waiting', fault);
+      const fault = (classified.fault ?? systemMessage("turn-silence.the-turn-stalled")).replace(/\s+/g, systemMessage("turn-silence.space")).trim();
+      if (isCheckoutBusyFault(fault)) return capLine(agent, systemMessage("turn-silence.is-waiting"), fault);
       const remedy = options.givingUp
         ? (hiccupAttemptLimit(classified.fault) === 2
-          ? 'Stopped retrying after two tries.'
-          : 'Stopped retrying after three tries.')
+          ? systemMessage("turn-silence.stopped-retrying-after-two-tries")
+          : systemMessage("turn-silence.stopped-retrying-after-three-tries"))
         : options.restarting === false
           ? undefined
-          : 'Resending your message.';
-      const detail = remedy ? `${fault}. ${remedy}` : `${fault}.`;
+          : systemMessage("turn-silence.resending-your-message");
+      const detail = remedy ? systemMessage("turn-silence.fault-and-remedy", fault, remedy) : systemMessage("turn-silence.fault-sentence", fault);
       // The helper already moved the turn across the pinned providers; what is
       // left to the person is the model itself. The pointer leads, because a
       // phone shows only the first two lines of this row.
       if (isProviderOutageFault(fault)) {
-        return capLine(agent, 'could not answer', `${PROVIDER_OUTAGE_POINTER} ${detail}`);
+        return capLine(agent, systemMessage("turn-silence.could-not-answer"), systemMessage("turn-silence.provider-fault", PROVIDER_OUTAGE_POINTER, detail));
       }
-      return capLine(agent, 'could not answer', detail);
+      return capLine(agent, systemMessage("turn-silence.could-not-answer"), detail);
     }
   }
 }

@@ -83,6 +83,11 @@
       "types": "./dist/x-attribution.d.ts",
       "import": "./dist/x-attribution.js",
       "default": "./dist/x-attribution.js"
+    },
+    "./system-message-catalog": {
+      "types": "./dist/system-message-catalog.d.ts",
+      "import": "./dist/system-message-catalog.js",
+      "default": "./dist/system-message-catalog.js"
     }
   },
   "scripts": {

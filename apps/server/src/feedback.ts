@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   FEEDBACK_AGENT_CATEGORIES,
@@ -21,7 +22,7 @@ import type { CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import { PROHIBITED_SECRET_PATTERNS } from './institutional-memory-shadow.js';
 import { hasSystemReportMention } from './message-mentions.js';
-import { ensureSystemDirectMessageRoom } from './system-line.js';
+import { sendSystemDirectMessage } from './system-line.js';
 
 /**
  * The Beeline feedback loop's one store. Two intake paths write it: an
@@ -584,7 +585,7 @@ export async function notifyFeedbackFixed(
   if (!pull || pull[1]!.toLowerCase() !== config.repository.toLowerCase())
     throw new Error(`pr_url must be a pull request in ${config.repository}`);
   const number = Number(pull[2]);
-  const url = `https://github.com/${config.repository}/pull/${number}`;
+  const url = systemMessage("feedback.https-github-com-pull", config.repository, number);
   if (!pullRequests)
     throw new Error('Fixed DMs are unavailable: the Beeline GitHub App is not configured');
   // Only a merged fix closes the loop; the agent's word that it merged is not enough.
@@ -648,13 +649,9 @@ async function sendFixedMessage(
   ).rows[0];
   // A deleted account has no Workspace left to read a DM in.
   if (!workspace) return false;
-  const roomId = await ensureSystemDirectMessageRoom(database, workspace.workspace_id, personId);
   const id = createHash('sha256')
     .update(`beeline-feedback-fixed:v2:${url.toLowerCase()}:${personId}`)
     .digest('hex');
-  const inserted = await database.query(
-    `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING`,
-    [id, roomId, SYSTEM_IDENTITY_ID, `Fixed: ${title} ${url}`],
-  );
-  return Boolean(inserted.rowCount);
+  return sendSystemDirectMessage(database, workspace.workspace_id, personId,
+    systemMessage("feedback.fixed", title, url), id);
 }

@@ -156,37 +156,53 @@ export async function queueMcpMentionEvents(db: SqlDatabase, member: string, roo
 }
 
 /**
- * One signed wake for each live wake subscription of the commanded member.
+ * One signed wake for each live wake subscription of the commanded member,
+ * folded into the `agent_commands` insert. `inserted` is that write's CTE.
  * A member who has only the mention subscription (today's webhook) receives
  * it there, so an existing subscriber starts without resubscribing. Once a
  * wake subscription is live, mention subscriptions are not also posted.
- * Retries of the same command conflict on (subscription, command).
- * Called inside the command insert transaction.
+ * Retries of the same command conflict on (subscription, command). A command
+ * with no live subscription inserts nothing and notifies nobody, so the
+ * command write stays one statement.
+ *
+ * Parameters, in order, starting at `first`:
+ * the live channel, the order hint, and the hint for every other wake.
  */
-export async function queueMcpWakeEvents(db: SqlDatabase, commandId: string): Promise<void> {
-  const queued = await db.query<{ room_id: string }>(`INSERT INTO rooms_mcp_event_deliveries(subscription_id,command_id,room_id,event_id,body)
-    SELECT s.id,command.id,command.room_id,'evt_'||s.id||'_cmd_'||command.id,
-      jsonb_build_object('eventId','evt_'||s.id||'_cmd_'||command.id,'name','wake','timestamp',command.created_at,
-        'data',jsonb_build_object(
-          'roomId',command.room_id,'address',command.room_id,'commandId',command.id,'id',command.id,
-          'reason',command.reason,'kind',command.private_payload->>'kind',
-          'text',left(COALESCE(command.private_payload->>'text',source.text),16000),
-          'next',CASE WHEN command.private_payload->>'kind'='order' THEN $2::text ELSE $3::text END),
-        'cursor',NULL)::text
-    FROM agent_commands command
-    LEFT JOIN messages source ON source.id=command.source_message_id
-    JOIN rooms_mcp_event_subscriptions s ON s.member_id=command.agent_id AND s.expires_at>now()
-      AND (s.event_name='wake' OR (s.event_name='mention' AND NOT EXISTS (
-        SELECT 1 FROM rooms_mcp_event_subscriptions wake
-        JOIN rooms_mcp_connections wake_connection ON wake_connection.client_id=wake.client_id
-          AND wake_connection.identity_id=wake.owner_id AND wake_connection.revoked_at IS NULL
-        WHERE wake.member_id=command.agent_id AND wake.event_name='wake' AND wake.expires_at>now())))
-    JOIN rooms_mcp_connections c ON c.client_id=s.client_id AND c.identity_id=s.owner_id AND c.revoked_at IS NULL
-    WHERE command.id=$1 AND command.action IN ('input','resume') AND command.reason<>'mcp_call'
-    ON CONFLICT(subscription_id,command_id) WHERE command_id IS NOT NULL DO NOTHING RETURNING room_id`,
-  [commandId, MCP_ORDER_WAKE_HINT, MCP_WAKE_HINT]);
-  if (queued.rowCount) await db.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL,
-    JSON.stringify({ table: MCP_WEBHOOK_TABLE, operation: 'INSERT', roomId: queued.rows[0]!.room_id })]);
+export function mcpCommandWakeSql(first: number): { cte: string; join: string; params: readonly string[] } {
+  const channel = `$${first}`;
+  const orderHint = `$${first + 1}`;
+  const wakeHint = `$${first + 2}`;
+  return {
+    params: [POSTGRES_LIVE_CHANNEL, MCP_ORDER_WAKE_HINT, MCP_WAKE_HINT],
+    cte: `queued_mcp_wakes AS (
+      INSERT INTO rooms_mcp_event_deliveries(subscription_id,command_id,room_id,event_id,body)
+      SELECT s.id,command.id,command.room_id,'evt_'||s.id||'_cmd_'||command.id,
+        jsonb_build_object('eventId','evt_'||s.id||'_cmd_'||command.id,'name','wake','timestamp',command.created_at,
+          'data',jsonb_build_object(
+            'roomId',command.room_id,'address',command.room_id,'commandId',command.id,'id',command.id,
+            'reason',command.reason,'kind',command.private_payload->>'kind',
+            'text',left(COALESCE(command.private_payload->>'text',source.text),16000),
+            'next',CASE WHEN command.private_payload->>'kind'='order' THEN ${orderHint}::text ELSE ${wakeHint}::text END),
+          'cursor',NULL)::text
+      FROM inserted command
+      LEFT JOIN messages source ON source.id=command.source_message_id
+      JOIN rooms_mcp_event_subscriptions s ON s.member_id=command.agent_id AND s.expires_at>now()
+        AND (s.event_name='wake' OR (s.event_name='mention' AND NOT EXISTS (
+          SELECT 1 FROM rooms_mcp_event_subscriptions wake
+          JOIN rooms_mcp_connections wake_connection ON wake_connection.client_id=wake.client_id
+            AND wake_connection.identity_id=wake.owner_id AND wake_connection.revoked_at IS NULL
+          WHERE wake.member_id=command.agent_id AND wake.event_name='wake' AND wake.expires_at>now())))
+      JOIN rooms_mcp_connections c ON c.client_id=s.client_id AND c.identity_id=s.owner_id AND c.revoked_at IS NULL
+      WHERE command.action IN ('input','resume') AND command.reason<>'mcp_call'
+      ON CONFLICT(subscription_id,command_id) WHERE command_id IS NOT NULL DO NOTHING
+      RETURNING room_id
+    )`,
+    join: `LEFT JOIN LATERAL (
+      SELECT count(pg_notify(${channel}, jsonb_build_object(
+        'table','${MCP_WEBHOOK_TABLE}','operation','INSERT','roomId',room_id::text)::text)) notified
+      FROM (SELECT DISTINCT room_id FROM queued_mcp_wakes) notices
+    ) mcp_wake_notice ON true`,
+  };
 }
 
 /** Drained by the existing webhook notification and maintenance loop; leases bound concurrent drains. */

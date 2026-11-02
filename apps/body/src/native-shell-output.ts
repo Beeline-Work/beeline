@@ -11,21 +11,20 @@ if (process.argv[2] === 'stream') {
   const fd = fs.openSync(file, 'w', 0o600);
   const notice = Buffer.from('\n[Shell output capped; full output: ' + file + '. Read a bounded range to recover omitted text.]\n');
   const size = 1024;
-  let first = true, total = 0, pending = Buffer.alloc(0), tail = Buffer.alloc(0), capped = false;
+  let shown = 0, tail = Buffer.alloc(0), capped = false;
   process.stdin.on('data', chunk => {
     fs.writeSync(fd, chunk);
-    total += chunk.length;
-    pending = Buffer.concat([pending, chunk]);
-    if (first && pending.length >= size) {
-      process.stdout.write(pending.subarray(0, size));
-      pending = pending.subarray(size); first = false;
+    const head = chunk.subarray(0, Math.max(0, size - shown));
+    if (head.length) { process.stdout.write(head); shown += head.length; }
+    const rest = chunk.subarray(head.length);
+    if (rest.length) {
+      if (!capped) { process.stdout.write(notice); capped = true; }
+      tail = Buffer.concat([tail, rest]).subarray(-size);
     }
-    if (!capped && total > 4096) { process.stdout.write(notice); capped = true; }
-    if (capped) { tail = Buffer.concat([tail, pending]).subarray(-size); pending = Buffer.alloc(0); }
   });
   process.stdin.on('end', () => {
     fs.closeSync(fd);
-    process.stdout.write(capped ? tail : pending);
+    if (capped) process.stdout.write(tail);
   });
   return;
 }

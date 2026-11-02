@@ -61,17 +61,87 @@ server suites, and both built MCP and HTTP workflow proofs are required before
 marking the PR ready. The corner completion report records their output and
 exact PR head.
 
-## Deferred items
+## Fixed context and native shell follow-up
 
-- Fixed context once per session and its Luna replay check. The follow-up must
-  first test whether the old prompt also duplicates answer objects. Removed
-  work is preserved at local branch `agent-context-once`, head
-  `634ddc4b408188e56e4a83caf760bb732807ef75`. The branch has not been pushed:
-  this session's standing developer instruction restricts pushes to
-  `feature/corner-f03a7bed9460`. The shipping PR contains none of its new
-  context-delivery changes or replay runner. No follow-up PR was opened.
-- Native shell output capping in Claude Code, Codex and Cursor. This PR caps
-  owned MCP text results only; it makes no native-harness output changes.
+CTX-ONCE is not a defect report: it is the approved prompt-cost optimization.
+Production sessions remain excluded because they run on other machines and would
+consume live account context. The replay uses the same saved cases, models,
+seeds and sample count as the supplied records: members and memory, Luna and
+Sol, three samples per case and arm (twelve samples per model).
+
+The old-prompt baseline at `a0726f8d09a24bef07e7c6966666f88e31ee944b`
+completed with no duplicate answers on either model. Its warm arms passed
+(six of six) on each model. This selects acceptance criterion (3); the parser
+remains strict and rejects multiple answer objects, including identical ones.
+
+The attached patch initially regressed Luna: its warm arm scored only
+(one of six), with five answer-format failures. Caching the `workspace-core`
+task-start action was incorrect: that instruction must remain on every task.
+The corrected implementation retains it on the current turn while caching the
+fixed rules, roster, memory and other unchanged context. The final replay
+completed with warm pass rates (six of six) on **both** Luna and Sol, matching
+the baseline. No parser tolerance, model change, or replay grading change ships.
+The original failed candidate result is retained alongside the baseline and
+passing result in the delivery attachments.
+
+Verified Claude ACP (`0.97.0`) now joins the existing verified Codex ACP
+(`2.3.0`, structured instructions) cache path. Pi checks its own compaction
+journal before assembly and conservatively re-sends context when the journal
+cannot be read. Native loads, new adapter processes, failed delivery and
+compaction restore context. Other adapter versions retain full delivery.
+`acp-codex-delivery.test.ts` checks new sessions, warm turns, native loads,
+failed resume, compaction and adapter restart; `codex-prompt-delivery.test.ts`
+keeps the per-task procedure action outside the cache.
+
+SHELL-CAP exercises a shell command producing (400,011 bytes), through each
+installed harness. Claude and Codex use local recorded model providers and
+inspect the actual next model request; Cursor uses a fresh native conversation
+and observes the native result through its post-tool hook. Full output is read
+back and compared byte for byte. The proof commands are:
+
+```sh
+npm run build -w @beeline/body
+node scripts/prove-native-shell-cap.mjs
+node scripts/prove-codex-shell-cap.mjs
+node scripts/prove-cursor-shell-cap.mjs
+```
+
+The generated Claude `PostToolUse` hook replaces successful Bash output, keeping
+native result metadata and native full-output files. Codex and Cursor capture
+output inside their native `PreToolUse`/`preToolUse` hooks before native
+truncation can discard it. The original shell language, stdin and exit status
+are preserved; combined output is archived under the isolated session's temp
+directory, then streamed as a bounded head and tail with its recovery path.
+The preview ceiling is (16,384 bytes); the capture path starts shortening at
+(1,024 bytes) to leave room for encoding and the recovery notice. Native shell
+invocations remain separate processes; this adds no shell-state persistence.
+The archive lives with the session's existing temporary storage retention.
+Hooks are provisioned on POSIX hosts; Windows capture is not enabled.
+
+Codex receives only the generated hook through its adapter's session flags.
+Before creating or loading a session, the built ACP client verifies the script
+against its shipped content, lists that exact command and matcher, and records
+trust for its current hash. It never trusts repository or plugin hooks. The
+Codex native proof exercises this production trust path without a global trust
+bypass. Cursor's proof uses the generated isolated user configuration from
+`prepareRoomAgentHome`.
+
+The native results received by the model were Claude (2,296 bytes), Codex
+(2,301 bytes), and Cursor (2,228 bytes), all with complete recovery. Exact byte
+counts include each harness's native framing and can vary with temporary paths.
+The latest native CLIs already have their own truncation: the historical claim
+that every native result reaches the model in full is not true on these
+installed versions. The missing guarantee was a Beeline-owned cap with recovery
+before lossy native truncation, particularly on Codex. The unhooked command and
+controlled native-provider observations are the stand-in, not a claim about
+production sessions or older harness binaries.
+
+Replay commands (the exchange directory is served by sealed OpenRouter calls):
+
+```sh
+node --import tsx scripts/prove-fixed-context-baseline.mjs <baseline-output-dir>
+node --import tsx scripts/prove-fixed-context-replay.mjs <candidate-output-dir>
+```
 
 ## Server CI repair
 

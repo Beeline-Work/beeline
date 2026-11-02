@@ -146,7 +146,9 @@
     "prove:turn-replay": "npm run build && node scripts/prove-turn-replay.mjs",
     "prove:token-output": "npx turbo run build --filter=@beeline/body... && node scripts/prove-token-output.mjs",
     "prove:token-workflow": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-token-workflow.mjs",
-    "prove:turn-command-budget": "npm run build && node scripts/prove-turn-command-budget.mjs"
+    "prove:turn-command-budget": "npm run build && node scripts/prove-turn-command-budget.mjs",
+    "lint:router": "node scripts/check-router-boundaries.mjs",
+    "test:router-boundaries": "node --test scripts/router-boundaries.test.mjs"
   },
   "devDependencies": {
     "@colbymchenry/codegraph": "^1.6.0",

@@ -8249,8 +8249,8 @@ export class PhoneService {
       // Everything erased by this deletion: the person and each agent it owned.
       const gone = [viewerId, ...owned.rows.map((row) => row.agent_id)];
       const plannedCorners = await database.query<{id:string}>(
-        `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
-           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1)) ORDER BY id`, [gone]);
+        `SELECT c.id FROM rooms c WHERE c.parent_id IS NOT NULL AND c.archived_at IS NULL
+           AND ${cornerOwnerSql('c.id')}=ANY($1) ORDER BY c.id`, [gone]);
       for (const corner of plannedCorners.rows) await lockCornerLifecycle(database, corner.id);
       await lockCornerArchivalAuthority(database);
       // Discovery takes no row locks. A newly acquired agent/corner changes
@@ -8263,8 +8263,8 @@ export class PhoneService {
       if (currentOwned.rows.length !== plannedAgents.size || currentOwned.rows.some(row => !plannedAgents.has(row.agent_id)))
         throw new Error('Account changed while deletion was being prepared; try again');
       const closingCorners = await database.query<{ id: string }>(
-        `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
-           AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1)) ORDER BY id FOR KEY SHARE`, [gone]);
+        `SELECT c.id FROM rooms c WHERE c.parent_id IS NOT NULL AND c.archived_at IS NULL
+           AND ${cornerOwnerSql('c.id')}=ANY($1) ORDER BY c.id FOR KEY SHARE OF c`, [gone]);
       const plannedIds = new Set(plannedCorners.rows.map(row => row.id));
       if (closingCorners.rows.some(row => !plannedIds.has(row.id)))
         throw new Error('Account changed while deletion was being prepared; try again');

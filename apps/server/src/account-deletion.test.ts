@@ -611,11 +611,10 @@ describe('deleteAccount', () => {
     // ordering is covered separately by the real PostgreSQL ownership proof.
     const wrap=(tx:SqlDatabase):SqlDatabase=>({transaction:work=>tx.transaction(inner=>work(wrap(inner))),query:async(sql,args)=>{
       const result=await tx.query(sql,args);
-      if(!inserted&&sql.includes('owner_agent_id=ANY($1)')&&sql.includes('ORDER BY id')&&!sql.includes('FOR KEY SHARE')){
+      if(!inserted&&sql.includes(cornerOwnerSql('c.id'))&&sql.includes('ORDER BY c.id')&&!sql.includes('FOR KEY SHARE')){
         inserted=true;
         await tx.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'New synthetic corner')`,[addedCorner,WORKSPACE,ROOM]);
-        await tx.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,commissioned_by,objective)
-          VALUES($1,$2,$2,$3,'Synthetic concurrent scope')`,[addedCorner,AGENT,OWNER]);
+        await insertCornerFacts(tx,{cornerId:addedCorner,ownerAgentId:AGENT,workerAgentId:AGENT,commissionedBy:OWNER});
       }
       return result;
     }});

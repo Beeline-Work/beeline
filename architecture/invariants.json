@@ -241,7 +241,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 19,
+      "total": 20,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -265,7 +265,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 22,
+      "total": 24,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {

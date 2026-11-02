@@ -1,3 +1,4 @@
+import {liveControlNotificationSchema} from './postgres-live-notifications.js';
 import { grantDecidedBySql } from './needs-you.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
@@ -40,6 +41,7 @@ const grantDecider = grantDecidedBySql('grant_row', 'surface.reader_id')
  * epoch writes roll back with the source. No provider/network work runs here.
  */
 export const TRAY_MUTABLE_SOURCE_SCHEMA = `
+${liveControlNotificationSchema()}
 CREATE OR REPLACE FUNCTION beeline_tray_room_readers(room_key uuid)
 RETURNS TABLE(workspace_id uuid,reader_id text) LANGUAGE sql STABLE AS $$
  SELECT DISTINCT room.workspace_id,member.identity_id FROM rooms room
@@ -286,7 +288,7 @@ BEGIN
    PERFORM beeline_journal('workspace:'||workspace_target,cause);
    -- One bounded notification per Workspace; no unbounded reader/stream list.
    IF workspace_target IS DISTINCT FROM notified_workspace THEN
-     PERFORM pg_notify('beeline_live_v1',jsonb_build_object('table','router_source','operation',TG_OP,
+     PERFORM beeline_notify_live_control(jsonb_build_object('table','router_source','operation',TG_OP,
        'roomId','','journalStreams',jsonb_build_array('workspace:'||workspace_target))::text);
      notified_workspace:=workspace_target;
    END IF;

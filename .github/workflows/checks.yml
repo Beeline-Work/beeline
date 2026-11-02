@@ -508,7 +508,8 @@ jobs:
           for suite in src/*.test.ts src/private/*.test.ts; do
             npx vitest run "$suite" --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
           done
-          node --test --test-concurrency=1 ../../scripts/network-codec-bundle.test.mjs
+          cd ../..
+          node --test --test-concurrency=1 scripts/network-codec-bundle.test.mjs
       - name: Run hermetic shared-package tests
         run: npm test -w @beeline/nostr -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 && npm test -w @beeline/api-contract -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1 && npm test -w @beeline/buzz-client -- --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
       - name: Protect Room navigation responsiveness

@@ -19,7 +19,7 @@ BEGIN
       UNION SELECT room.workspace_id::text FROM messages message JOIN rooms room ON room.id=message.room_id WHERE message.author_id=OLD.id
     ) scopes ORDER BY scope LOOP
       PERFORM beeline_journal('workspace:'||locked_workspace,jsonb_build_object('sourceTable','identities','recordId',OLD.id,'operation',TG_OP));
-      PERFORM pg_notify('beeline_live_v1',jsonb_build_object('table','router_source','operation',TG_OP,'roomId','',
+      PERFORM beeline_notify_live_control(jsonb_build_object('table','router_source','operation',TG_OP,'roomId','',
         'journalStreams',jsonb_build_array('workspace:'||locked_workspace))::text);
     END LOOP;
   END IF;
@@ -84,7 +84,7 @@ BEGIN
     ORDER BY value->>'workspace',value->>'room',value::text LOOP
     PERFORM beeline_journal('workspace:'||(target->>'workspace'),jsonb_build_object('sourceTable','scheduled-work-projection',
       'originTable',TG_TABLE_NAME,'operation',TG_OP,'sourceRoomId',target->>'room','scheduledWorkReaders',target->'readers'));
-    PERFORM pg_notify('beeline_live_v1',jsonb_build_object('table','router_source','operation',TG_OP,'roomId','',
+    PERFORM beeline_notify_live_control(jsonb_build_object('table','router_source','operation',TG_OP,'roomId','',
       'journalStreams',jsonb_build_array('workspace:'||(target->>'workspace')))::text);
   END LOOP;
   IF TG_OP='DELETE' THEN RETURN OLD;END IF;RETURN NEW;

@@ -1,6 +1,6 @@
 # Staged Saved live head and stable history proof
 
-This implementation remains unselected. It does not close F04, F08, F13 or T7.
+This implementation remains unselected. It does not close F04, F06, F13 or T7.
 The complete cohort/workload matrix and production clock/source composition are
 still required before negotiation.
 

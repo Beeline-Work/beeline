@@ -1,7 +1,9 @@
+import {liveControlNotificationSchema} from './postgres-live-notifications.js';
 /** One early owner of schedule/subscription Workspace causes. Dependency-free
  * so both the legacy live installer and isolated source schemas can install it
  * before any Room journal lock, without a runtime/module cycle. */
 export const SCHEDULED_WORK_ROW_SOURCE_SCHEMA=`
+${liveControlNotificationSchema()}
 CREATE OR REPLACE FUNCTION beeline_scheduled_work_row_source() RETURNS trigger AS $$
 DECLARE prior_item jsonb; next_item jsonb; item jsonb; source_room text; previous_room text; parent_room text;
   workspace text; workspace_target text; workspace_scopes text[]:=ARRAY[]::text[]; streams text[]:=ARRAY[]::text[];
@@ -59,7 +61,7 @@ BEGIN
       'sourceRemoved',false,'needsYouCandidate',NULL,'removed',NULL,'scheduledWorkSource',metadata));
     streams:=array_append(streams,'workspace:'||workspace_target);
   END LOOP;
-  IF cardinality(streams)>0 THEN PERFORM pg_notify('beeline_live_v1',jsonb_build_object(
+  IF cardinality(streams)>0 THEN PERFORM beeline_notify_live_control(jsonb_build_object(
     'table','router_source','operation',TG_OP,'roomId','','journalStreams',streams)::text);END IF;
   IF TG_OP='DELETE' THEN RETURN OLD;END IF;RETURN NEW;
 END;

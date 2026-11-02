@@ -404,8 +404,9 @@ jobs:
           if git cat-file -e "$ARCHITECTURE_BASE:scripts/check-architecture.mjs" 2>/dev/null; then
             runner="$RUNNER_TEMP/architecture-guard"
             mkdir -p "$runner"
-            git show "$ARCHITECTURE_BASE:scripts/check-architecture.mjs" > "$runner/check-architecture.mjs"
-            git show "$ARCHITECTURE_BASE:scripts/architecture-invariants.mjs" > "$runner/architecture-invariants.mjs"
+            for file in check-architecture.mjs architecture-invariants.mjs architecture-storage.mjs; do
+              git show "$ARCHITECTURE_BASE:scripts/$file" > "$runner/$file" 2>/dev/null || rm -f "$runner/$file"
+            done
           fi
           if [ -n "$ARCHITECTURE_PR" ]; then
             node "$runner/check-architecture.mjs" --root . --base "$ARCHITECTURE_BASE"

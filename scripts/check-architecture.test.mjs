@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { judgeTree, readInvariants, relaxations, validateRules } from './architecture-invariants.mjs';
 import { ownerApprovedRelaxation } from './check-architecture.mjs';
+import { BOOTSTRAP_REASON, judgeStorage, storageRelaxations } from './architecture-storage.mjs';
 
 const RULE = {
   id: 'work.command-creation', module: 'Work authority', invariant: 'Commands come from createAgentCommand.',
@@ -99,4 +100,59 @@ test('this repository meets its own invariants', () => {
   const invariants = readInvariants(root);
   assert.deepEqual(validateRules(invariants), []);
   assert.deepEqual(judgeTree(root, invariants), []);
+  assert.deepEqual(judgeStorage(root, invariants.storage), []);
+});
+
+test('a distinct rule counts different names, not uses', () => {
+  const rule = { ...RULE, id: 'settings.server-env', pattern: 'process\\.env\\.[A-Z_]+', flags: '', distinct: true, owners: [], total: 1 };
+  const root = tree({ 'src/a.ts': 'process.env.PORT; process.env.PORT;', 'src/b.ts': 'process.env.PORT' });
+  assert.deepEqual(judgeTree(root, { rules: [rule] }), []);
+  const [error] = judgeTree(tree({ 'src/a.ts': 'process.env.PORT', 'src/b.ts': 'process.env.NEW_FLAG' }), { rules: [rule] });
+  assert.match(error, /process\.env\.NEW_FLAG \(first at src\/b\.ts:1\)/);
+});
+
+const STORAGE = {
+  scope: ['src'], bootstrapTotal: 0, unusedTotal: 0,
+  tables: { notes: { module: 'Notes', reason: 'A note is what a person wrote.', columns: {
+    id: 'The note key.', body: 'What the person wrote.', created_at: 'When it was written.' } } },
+  jsonb: { meta: { tone: 'The tone the writer picked.' } },
+};
+const SCHEMA = 'CREATE TABLE IF NOT EXISTS notes (id text PRIMARY KEY, body text NOT NULL, created_at timestamptz NOT NULL DEFAULT now());';
+
+test('registered storage with a writer and a reader passes', () => {
+  const root = tree({
+    'src/schema.ts': `export const S = \`${SCHEMA}\`;`,
+    'src/notes.ts': "db.query(`INSERT INTO notes(id,body) VALUES($1,$2)`); db.query(`SELECT id,body,created_at FROM notes WHERE meta->>'tone'='x'`);",
+  });
+  assert.deepEqual(judgeStorage(root, STORAGE), []);
+});
+
+test('a column only written, or only read, fails with the fix', () => {
+  const root = tree({
+    'src/schema.ts': `export const S = \`${SCHEMA}\`;`,
+    'src/notes.ts': 'db.query(`INSERT INTO notes(id,body) VALUES($1,$2)`); db.query(`SELECT id FROM notes`);',
+    'src/notes.test.ts': 'db.query(`SELECT body,created_at FROM notes`);',
+  });
+  const [error] = judgeStorage(root, STORAGE);
+  assert.match(error, /notes\.body has no reader/);
+  assert.match(error, /notes\.created_at has no reader/);
+  assert.match(error, /Tests alone do not count/);
+});
+
+test('an unregistered jsonb key read and a bootstrap reason on a new entry fail', () => {
+  const root = tree({
+    'src/schema.ts': `export const S = \`${SCHEMA}\`;`,
+    'src/notes.ts': "db.query(`INSERT INTO notes(id,body) VALUES($1,$2)`); db.query(`SELECT id,body,created_at FROM notes WHERE meta->>'mood'='x'`);",
+  });
+  const storage = { ...STORAGE, tables: { notes: { ...STORAGE.tables.notes, columns: { ...STORAGE.tables.notes.columns, id: BOOTSTRAP_REASON } } } };
+  const errors = judgeStorage(root, storage);
+  assert.ok(errors.some((error) => /jsonb key meta\.mood is read at src\/notes\.ts:1 but not registered/.test(error)));
+  assert.ok(errors.some((error) => /1 new registry entr\(y\/ies\) use the bootstrap reason/.test(error)));
+});
+
+test('raising a storage total is a relaxation; adding entries is not', () => {
+  const base = { rules: [], storage: STORAGE };
+  assert.deepEqual(storageRelaxations(base, { rules: [], storage: { ...STORAGE, unusedTotal: 3 } }), ['storage unusedTotal raised from 0 to 3']);
+  const added = { ...STORAGE, tables: { ...STORAGE.tables, more: { module: 'Notes', reason: 'Another fact.', columns: {} } } };
+  assert.deepEqual(storageRelaxations(base, { rules: [], storage: added }), []);
 });

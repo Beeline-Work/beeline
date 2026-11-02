@@ -9,13 +9,33 @@ The check reads behaviour boundaries, never bytes: editing an owner file,
 renaming a function, or moving an existing site to another file passes. A
 failure names the rule, every site, and the one way to comply.
 
+## Storage registry (bloat inside a module)
+
+`storage` in `invariants.json` registers every table, column and jsonb key,
+each with its owner module and a one-line reason it cannot be derived:
+
+- `apps/server/src/storage-registry.test.ts` runs the real migrations and fails
+  on any table or column that is not registered, or registered but gone.
+- The guard fails on a jsonb key read in SQL (`col->>'key'`) that is not
+  registered under `storage.jsonb.<col>`, and on a registered column with no
+  writer or no reader in non-test code (`unusedTotal` ratchets today's 197).
+- Today's storage carries the reason `existing before the registry; weekly
+  audit reviews`, counted by `bootstrapTotal`; a new entry needs its own reason.
+
+Registering a new table, column or key is not gated. Fix a failure by
+registering with a reason, or by deriving the value instead of storing it.
+
+Rules `settings.*` (distinct environment variables: settings and feature
+flags) and `paths.*` (declared legacy, fallback or compat variants) ratchet
+each app so a module cannot grow a second path for the same job.
+
 ## Changing a rule
 
 | Change | Review |
 | --- | --- |
-| Lower a `total`, add a rule, reword `invariant`/`fix`/`module` | None. Merge it. |
+| Lower a `total`, add a rule, reword `invariant`/`fix`/`module`, register storage, lower `bootstrapTotal`/`unusedTotal` | None. Merge it. |
 | Remove a rule whose pattern matches nothing any more | None. |
-| Raise a `total`, remove a live rule, change `pattern`/`flags`/`scope`/`owners`, or change the guard scripts | The owner's yes on the exact PR head. |
+| Raise a `total`, `bootstrapTotal` or `unusedTotal`, remove a live rule, change `pattern`/`flags`/`scope`/`owners`/`distinct` or the storage `scope`, or change the guard scripts | The owner's yes on the exact PR head. |
 
 A relaxing PR fails the check until Beeline holds that yes. The owner answers
 in a normal Beeline Room message, replying to an ask that names the PR and its

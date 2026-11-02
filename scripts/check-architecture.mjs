@@ -8,9 +8,10 @@ import path from 'node:path';
 import {
   INVARIANTS_PATH, invariantsAtRef, judgeTree, readInvariants, relaxations, validateRules,
 } from './architecture-invariants.mjs';
+import { judgeStorage, storageRelaxations } from './architecture-storage.mjs';
 
 /** The guard itself. CI runs the base copy, so a change to it is a relaxation. */
-const RUNNER_FILES = ['scripts/check-architecture.mjs', 'scripts/architecture-invariants.mjs'];
+const RUNNER_FILES = ['scripts/check-architecture.mjs', 'scripts/architecture-invariants.mjs', 'scripts/architecture-storage.mjs'];
 
 function changedRunnerFiles(root, base) {
   return RUNNER_FILES.filter((file) => {
@@ -52,9 +53,10 @@ async function main() {
   const root = rootFlag === -1 ? path.resolve(fileURLToPath(new URL('..', import.meta.url))) : path.resolve(args[rootFlag + 1]);
   const head = readInvariants(root);
   const errors = validateRules(head);
-  if (!errors.length) errors.push(...judgeTree(root, head));
+  if (!errors.length) errors.push(...judgeTree(root, head), ...judgeStorage(root, head.storage));
   const relaxed = base ? [
     ...relaxations(root, invariantsAtRef(root, base), head),
+    ...storageRelaxations(invariantsAtRef(root, base), head),
     ...changedRunnerFiles(root, base).map((file) => `the guard ${file} changed`),
   ] : [];
   const pr = { repository: process.env.GITHUB_REPOSITORY, pullRequest: process.env.ARCHITECTURE_PR, head: process.env.ARCHITECTURE_HEAD };

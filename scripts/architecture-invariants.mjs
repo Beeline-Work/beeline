@@ -16,7 +16,7 @@ const SKIP_FILE = /\.(test|spec)\.[^.]+$|\.d\.ts$/;
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '__tests__', 'test-fixtures']);
 const RULE_KEYS = ['id', 'module', 'invariant', 'pattern', 'scope', 'owners', 'total', 'fix'];
 /** Fields whose change moves what a rule catches; any change to them is a relaxation. */
-const BOUNDARY_KEYS = ['pattern', 'flags', 'scope', 'owners'];
+const BOUNDARY_KEYS = ['pattern', 'flags', 'scope', 'owners', 'distinct'];
 
 export function readInvariants(root) {
   return JSON.parse(readFileSync(path.join(root, INVARIANTS_PATH), 'utf8'));
@@ -53,14 +53,19 @@ function findSites(root, rule) {
   for (const scope of rule.scope) walk(root, scope, files);
   const owners = new Set(rule.owners);
   const sites = [];
+  const named = new Map();
   for (const file of files.sort()) {
     if (owners.has(file)) continue;
     const source = readFileSync(path.join(root, file), 'utf8');
     const pattern = new RegExp(rule.pattern, `g${rule.flags ?? ''}`);
-    for (const match of source.matchAll(pattern))
-      sites.push(`${file}:${source.slice(0, match.index).split('\n').length}`);
+    for (const match of source.matchAll(pattern)) {
+      const site = `${file}:${source.slice(0, match.index).split('\n').length}`;
+      // A `distinct` rule counts different matches (say, setting names), not uses.
+      if (!rule.distinct) sites.push(site);
+      else if (!named.has(match[0])) named.set(match[0], `${match[0]} (first at ${site})`);
+    }
   }
-  return sites;
+  return rule.distinct ? [...named.values()] : sites;
 }
 
 export function validateRules(invariants) {

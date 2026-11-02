@@ -253,7 +253,7 @@ import {
 } from './wallet.js';
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
-import { cancelCornerAgentCommands, closeCornerPullRequestBestEffort, closeCornerState } from './corner-close.js';
+import { closeCornerPullRequestBestEffort, closeCornerState } from './corner-close.js';
 import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -8383,17 +8383,9 @@ export class PhoneService {
          ORDER BY id FOR KEY SHARE`,
         [gone],
       );
-      // Serialize lifecycle changes, then take command locks before the room
-      // archival write, matching closeCornerState and the merge webhook.
-      for (const corner of closingCorners.rows) {
-        await lockCornerLifecycle(database, corner.id);
-        await cancelCornerAgentCommands(database, corner.id);
-      }
-      await database.query(
-        `UPDATE rooms SET archived_at=now(),updated_at=now()
-         WHERE id=ANY($1::uuid[])`,
-        [closingCorners.rows.map((corner) => corner.id)],
-      );
+      // Each corner closes exactly as a human close does: its workflow run,
+      // wake sources and corner state end with the archival.
+      for (const corner of closingCorners.rows) await closeCornerState(database, corner.id);
       await database.query(
         `UPDATE corner_facts SET close_requested=true,owner_agent_id=NULL,
            lifecycle=lifecycle||$2::jsonb,updated_at=now()

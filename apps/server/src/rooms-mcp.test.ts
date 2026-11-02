@@ -398,6 +398,10 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       privatePayload: { text: 'done: the report reached the commander', authorId: AGENT, fromRoomId: ROOM, kind: 'report' },
     });
     expect(await queued(report!.id)).toHaveLength(1);
+    // Subscribed delivery must not make an unclaimed app appear to be running.
+    expect((await phone.readRoom(ROOM, USER))!.latestAgentTurns.filter(
+      turn => turn.agentPubkey === member && turn.status === 'working',
+    )).toEqual([]);
     expect(JSON.parse((await queued(report!.id))[0]!.body).data).toMatchObject({
       kind: 'report', reason: 'report', text: 'done: the report reached the commander',
       next: 'Handle it, then call no_reply_needed with this address if nothing needs posting.',

@@ -40,6 +40,18 @@ function trace(now: () => number, sink?: { write(record: TurnTraceRecord): Promi
 }
 
 describe('turn phase trace', () => {
+  it('records real wrapped tool names and UTF-8 result sizes', () => {
+    const turn = trace(clock().now);
+    turn.toolCalls([{ id: 'wrapped', title: 'Run a tool', name: 'GITHUB_LIST_ISSUES', kind: 'execute', status: 'completed', rawOutput: 'hello 🐝' }]);
+    expect(turn.snapshot('complete').attempts[0]!.tools![0]).toMatchObject({ name: 'GITHUB_LIST_ISSUES', outputBytes: Buffer.byteLength('hello 🐝') });
+  });
+
+  it('keeps the pre-cap size when an MCP transport supplies it', () => {
+    const turn = trace(clock().now);
+    turn.toolCalls([{ id: 'large', name: 'app_tool', status: 'completed', rawOutput: { content: [], _meta: { originalOutputBytes: 1_740_316 } } }]);
+    expect(turn.snapshot('complete').attempts[0]!.tools![0]!.outputBytes).toBe(1_740_316);
+  });
+
   it('records UTF-8 prompt bytes beside a known window and clears an unknown window', () => {
     const turn = trace(clock().now);
     turn.notePromptWindow('hello 🐝', 4096);

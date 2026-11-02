@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { boundToolResult } from './tool-output-budget.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { resolveGrantCommand, isNativeGrantExecutable, resolveGrantScriptExecutable } from './grant-script.js';
 import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
@@ -3138,7 +3139,7 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
         }) });
         const operation = routes[String(args.tool)];
         if (!operation) throw new Error('unknown capability operation; discover its schema first');
-        const input = { ...asObject(args.args) };
+        const input = { ...asObject(args.args ?? args.arguments) };
         const definition = CAPABILITY_TOOLS[capability]![String(args.tool)]!;
         validateToolInput(definition, input);
         if (capability === 'workflow' && args.tool === 'rebind') { input.agentId = input.agent; delete input.agent; }
@@ -3146,7 +3147,7 @@ async function executeAgentTool(name: string, args: JsonObject, toolCallId: stri
       }
       return args.tool === undefined
         ? execute('list_app_tools', { appId: app, query: args.query })
-        : execute('execute_app_tool', { appId: app, tool: args.tool, arguments: args.args });
+        : execute('execute_app_tool', { appId: app, tool: args.tool, arguments: args.args ?? args.arguments });
     }
     case 'scratch_io': {
       if (process.env.BEELINE_NATIVE_IO_PROVEN === '1') throw new Error('native IO is available');
@@ -4162,7 +4163,7 @@ async function handleLine(line: string): Promise<void> {
         try { result = { content: [{ type: 'text', text: await work() }] }; }
         catch (error) { result = { isError: true, content: [{ type: 'text', text: error instanceof Error ? error.message : String(error) }] }; }
       }
-      success(request.id, result);
+      success(request.id, await boundToolResult(result));
       return;
     }
     failure(request.id, -32601, `method not found: ${request.method ?? ''}`);

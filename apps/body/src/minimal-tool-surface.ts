@@ -13,6 +13,7 @@ export const CAPABILITY_ROUTES: Record<string, Record<string, string>> = {
   "onboarding": {"welcome": "post_starter_welcome", "video_preview": "post_starter_video_preview", "invite": "post_room_invite", "repository": "post_repository_card", "starters": "post_starters_card"},
   "workflow": {
     "save": "save_workflow",
+    "describe": "load_workspace_skill",
     "start": "start_workflow",
     "read": "get_workflow_run",
     "advance": "handoff",
@@ -64,6 +65,11 @@ export const CAPABILITY_TOOLS: Record<string, Record<string, ToolDefinition>> = 
     starters: { name: 'starters', description: 'Read recent commits, CI and open issues in the linked repository and post 3–4 one-tap tasks. Empty repositories get useful starting tasks. A selection starts work through the normal corner flow.', inputSchema: { type: 'object', properties: {}, additionalProperties: false } },
   },
   "workflow": {
+    "describe": {
+      "name": "load_workspace_skill",
+      "description": "Read a saved workflow contract and all its named roles before starting a run.",
+      "inputSchema": { "type": "object", "properties": { "slug": { "type": "string" } }, "required": ["slug"], "additionalProperties": false }
+    },
     "save": {
       "name": "save",
       "description": "Save a versioned Workspace workflow from the whole JSON \"contract\"; runs keep their pinned version. Require a nonempty summary and a does sentence for every state, each one line and at most 140 characters; hint is agent-facing. A rejection returns the rule that failed and where. Procedure: https://github.com/Beeline-Work/beeline/blob/main/docs/workflows/README.md",
@@ -76,7 +82,7 @@ export const CAPABILITY_TOOLS: Record<string, Record<string, ToolDefinition>> = 
     },
     "start": {
       "name": "start",
-      "description": "Start a run of a saved workflow, binding its named roles to current members of this Room (by agent id, or by a handle from your member list - a word matching a member's handle binds that member, with or without the @). Starting dispatches the first state. Posts one message whose id is the run id and pins the contract version; read the current run before you call app_tool(app:beeline:workflow, tool:advance, args:...) with that runId to move the run forward. Every declared role needs a binding: one current Room member agent, or an ordered list of up to 16 agents. A list role goes to the first healthy agent on the list when it is first dispatched, skipping offline/recently-failed/out-of-credit agents, and stays with that agent for the rest of the run unless it later fails or goes silent, in which case it moves to the next healthy agent on the list automatically. If nobody on the list is healthy, the run names this in the Room and waits for a human (see app_tool(app:beeline:workflow, tool:rebind, args:...)). Refused while another run of the same workflow is live in this Room; the refusal names that run and its state. How to write and run workflows: https://github.com/Beeline-Work/beeline/blob/main/docs/workflows/README.md",
+      "description": "Read tool:describe with the workflow slug before starting. Start a run of a saved workflow, binding its named roles to current members of this Room (by agent id, or by a handle from your member list - a word matching a member's handle binds that member, with or without the @). Starting dispatches the first state. Posts one message whose id is the run id and pins the contract version; read the current run before you call app_tool(app:beeline:workflow, tool:advance, args:...) with that runId to move the run forward. Every declared role needs a binding: one current Room member agent, or an ordered list of up to 16 agents. A list role goes to the first healthy agent on the list when it is first dispatched, skipping offline/recently-failed/out-of-credit agents, and stays with that agent for the rest of the run unless it later fails or goes silent, in which case it moves to the next healthy agent on the list automatically. If nobody on the list is healthy, the run names this in the Room and waits for a human (see app_tool(app:beeline:workflow, tool:rebind, args:...)). Refused while another run of the same workflow is live in this Room; the refusal names that run and its state. How to write and run workflows: https://github.com/Beeline-Work/beeline/blob/main/docs/workflows/README.md",
       "inputSchema": {
         "type": "object",
         "required": ["name", "roleBindings"],
@@ -1147,18 +1153,19 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "app_tool",
-    "description": "Discover operation schemas with app and no tool; execute with tool and args. app is a connected app id or key from connect status, or BEELINE_APPS. First-party routes preserve each operation’s original authority. Discover before use.",
+    "description": "Connected apps: app alone lists compact tools; add query to get matching input schemas, then execute with tool and args. First-party apps: app alone returns operation schemas. app is an id or key from connect status, or BEELINE_APPS. Discover before use.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "app": {"type": "string"},
         "tool": {"type": "string"},
         "args": {"type": "object", "additionalProperties": true},
+        "arguments": {"type": "object", "additionalProperties": true, "description": "Alias for args; prefer args."},
         "query": {"type": "string"}
       },
       "required": ["app"],
       "additionalProperties": false,
-      "anyOf": [{"not": {"anyOf": [{"required": ["tool"]}, {"required": ["args"]}]}}, {"required": ["tool", "args"]}]
+      "anyOf": [{"not": {"anyOf": [{"required": ["tool"]}, {"required": ["args"]}, {"required": ["arguments"]}]}}, {"required": ["tool", "args"]}, {"required": ["tool", "arguments"]}]
     }
   },
   {

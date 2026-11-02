@@ -1934,6 +1934,45 @@ export async function activeRunIdsForSchedule(
   return active.rows.map((row) => row.id);
 }
 
+/** Collect caller errors before constructing the unchanged workflow start card. */
+async function validateWorkflowBindings(
+  db: SqlDatabase,
+  roomId: string,
+  contract: WorkflowReadContract,
+  input: { roleBindings: Readonly<Record<string, WorkflowRoleBinding>> },
+): Promise<void> {
+  const members = (await db.query<{ identity_id: string; handle: string | null; kind: string }>(
+    `SELECT member.identity_id,identity.handle,identity.kind FROM effective_memberships member
+     JOIN identities identity ON identity.id=member.identity_id
+     WHERE member.room_id=$1 AND member.removed_at IS NULL`, [roomId],
+  )).rows;
+  const agentMembers = members.filter(member => member.kind === 'agent');
+  const allowed = agentMembers.map(member => member.handle ? `@${member.handle} (${member.identity_id})` : member.identity_id);
+  const memberIds = new Set(agentMembers.map(member => member.identity_id));
+  const errors: string[] = [];
+  for (const role of contract.roles) {
+    const raw = input.roleBindings[role];
+    const entries = typeof raw === 'string' ? [raw] : Array.isArray(raw) ? raw : [];
+    const resolved = entries.map(entry => {
+      if (typeof entry !== 'string') return entry;
+      return members.find(member => member.handle?.toLowerCase() === entry.replace(/^@/, '').toLowerCase())?.identity_id ?? entry;
+    });
+    const agents = roleAgentList(resolved.length === 1 ? resolved[0] : resolved);
+    if (!agents || agents.some(id => !memberIds.has(id))) {
+      const outsiders = agents?.filter(id => !memberIds.has(id)) ?? [];
+      const reason = raw === undefined ? `role binding is missing for ${role}` : outsiders.length
+        ? `${outsiders.join(', ')} ${outsiders.length === 1 ? 'is' : 'are'} not a current agent member of this Room`
+        : `must be an agent id or a member handle, or a list of 1-${WORKFLOW_ROLE_AGENTS_MAX} distinct ones`;
+      errors.push(`${role}: given ${JSON.stringify(raw) ?? 'missing'}; ${reason}; allowed members: ${allowed.join(', ') || '(none)'}`);
+      continue;
+    }
+  }
+  for (const role of Object.keys(input.roleBindings)) {
+    if (!contract.roles.includes(role)) errors.push(`${role}: given ${JSON.stringify(input.roleBindings[role])}; unknown role; allowed roles: ${contract.roles.join(', ')}`);
+  }
+  if (errors.length) throw new CommandRefusalError(`Invalid workflow bindings:\n${errors.join('\n')}`, 400);
+}
+
 export async function startWorkflow(
   database: SqlDatabase,
   command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string; source_message_id?: string | null; root_source_message_id?: string },
@@ -1979,6 +2018,7 @@ export async function startWorkflow(
     const trigger = command.source_message_id
       ? await scheduleTriggerPeriod(db, command.source_message_id)
       : undefined;
+    await validateWorkflowBindings(db, command.room_id, contract, input);
     const missingRole = contract.roles.find((role) => !input.roleBindings[role]);
     if (missingRole) throw new ExpectedRefusalError(`role binding is missing for ${missingRole}`);
     const roleBindings: Record<string, string> = {};
@@ -1995,8 +2035,9 @@ export async function startWorkflow(
             : raw,
       );
       if (!agents) {
-        throw new Error(
+        throw new CommandRefusalError(
           `role binding for ${role} must be an agent id or a member handle, or a list of 1-${WORKFLOW_ROLE_AGENTS_MAX} distinct ones`,
+          400,
         );
       }
       if (agents.length === 1) roleBindings[role] = agents[0]!;
@@ -2015,7 +2056,7 @@ export async function startWorkflow(
       const agentSet = new Set(agents.rows.map((row) => row.identity_id));
       const notAgent = boundIds.find((id) => !agentSet.has(id));
       if (notAgent) {
-        throw new Error(`${notAgent} is not a current agent member of this Room`);
+        throw new CommandRefusalError(`${notAgent} is not a current agent member of this Room`, 400);
       }
     }
     const starter = await loadIdentityRow(db, command.agent_id);
@@ -2129,11 +2170,6 @@ export async function reassignFailedWorkflowRole(
   });
 }
 
-/**
- * A binding entry resolved to a Room member's id: an agent id is kept, and a
- * word matching a current member's handle (with or without the @) binds that
- * member. Any other word is returned unchanged and refused by `roleAgentList`.
- */
 async function resolveHandleBinding(db: SqlDatabase, roomId: string, entry: string): Promise<string> {
   if (typeof (entry as unknown) !== 'string') return entry;
   if (entry.startsWith('@')) return memberIdForHandle(db, roomId, entry);
@@ -2162,7 +2198,7 @@ async function roomMemberIdForHandle(
 async function memberIdForHandle(db: SqlDatabase, roomId: string, raw: string): Promise<string> {
   const handle = raw.replace(/^@/, '');
   const id = await roomMemberIdForHandle(db, roomId, handle);
-  if (!id) throw new Error(`@${handle} is not a current member of this Room`);
+  if (!id) throw new CommandRefusalError(`@${handle} is not a current member of this Room`, 400);
   return id;
 }
 

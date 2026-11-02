@@ -644,7 +644,7 @@ export type DaemonOperationMap = {
   listAppTools: Operation<TurnOutputAuthority & AgentInput & RoomInput & { readonly appId: string;
     readonly query?: string }, { readonly tools: readonly {
       readonly slug: string; readonly name: string; readonly description: string;
-      readonly inputParameters: unknown;
+      readonly inputParameters?: unknown;
     }[];
     readonly transport?: AppTransport;
     readonly next?: string;

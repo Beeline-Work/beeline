@@ -631,7 +631,7 @@ export class ComposioApps {
   }
 
   async listTools(toolkit: string, query?: string): Promise<readonly {
-    slug: string; name: string; description: string; inputParameters: unknown;
+    slug: string; name: string; description: string; inputParameters?: unknown;
   }[]> {
     const params = new URLSearchParams({ toolkit_slug: toolkit, toolkit_versions: 'latest',
       include_deprecated: 'false', limit: '1000' });
@@ -646,7 +646,31 @@ export class ComposioApps {
       description: typeof row.description === 'string' ? row.description : '',
       inputParameters: stripSecrets(row.input_parameters ?? {}),
     }));
-    return toolkit === 'youtube' ? [youtubeAnalyticsTool, ...tools] : tools;
+    const catalog = toolkit === 'youtube' ? [youtubeAnalyticsTool, ...tools] : tools;
+    if (query?.trim()) {
+      const search = query.trim().toLowerCase();
+      const exact = catalog.filter(tool => tool.slug.toLowerCase() === search || tool.name.toLowerCase() === search);
+      if (exact.length) return exact;
+      const terms = search.split(/\s+/);
+      return catalog.filter(tool => {
+        const text = `${tool.slug} ${tool.name} ${tool.description}`.toLowerCase();
+        return terms.every(term => text.includes(term));
+      });
+    }
+    // Discovery stays cheap even for providers with thousands of schemas.
+    const compact = catalog.map(({ slug, name, description }) => ({
+      slug: slug.slice(0, 160), name: name.slice(0, 120),
+      description: description.replace(/\s+/g, ' ').slice(0, 160),
+    }));
+    const bounded: typeof compact = [];
+    let bytes = 2;
+    for (const tool of compact) {
+      const size = Buffer.byteLength(JSON.stringify(tool)) + 1;
+      if (bytes + size > 24_000) break;
+      bounded.push(tool);
+      bytes += size;
+    }
+    return bounded;
   }
 
   /** Uploads one Room file through Composio's Files API and returns the descriptor its tools take. */

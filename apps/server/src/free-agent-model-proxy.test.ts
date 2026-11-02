@@ -1,3 +1,4 @@
+import { readAgentCommands, claimAgentCommand } from './agent-command.js';
 import { freeAgentModelTakesImages, IMAGE_TOKEN_RESERVATION } from './free-agent-image-input.js';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -94,6 +95,27 @@ describe('free agent model proxy', () => {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
+
+  it('Reproduction TOKEN-PAUSE: shows real usage and parks new and existing wakes until reset', async () => {
+    config = { ...CONFIG, dailyTokenCap: 3_000_000, firstDayTokenCap: 3_000_000, lifetimeTokenCap: 0 };
+    await db.query(`INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,current_date,1410000)`, [OWNER]);
+    const enqueue = (id: string) => db.query(`INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth)
+      VALUES($1,$2,$3,$1,'input','schedule',$1,'source',0)`, [id, ROOM, AGENT]);
+    await enqueue('before');
+    const response = await call({ messages: [{ role: 'user', content: 'x'.repeat(5_000_000) }], max_tokens: 1024 });
+    expect((await response.json()).choices[0].message.content).toContain('1.41M of 3M');
+    await enqueue('after');
+    expect((await readAgentCommands(db, ROOM, AGENT)).commands).toHaveLength(0);
+    await expect(claimAgentCommand(db, ROOM, AGENT, 'after', 'generation')).rejects.toThrow();
+    const paused = (await db.query<{ allowance_paused_until: Date }>(`SELECT allowance_paused_until FROM free_agents WHERE agent_id=$1`, [AGENT])).rows[0]!.allowance_paused_until;
+    expect(paused.getUTCHours()).toBe(0);
+    await db.query(`UPDATE free_agents SET allowance_paused_until=now()-interval '1 second'`);
+    // Move the persisted deadline into the past to simulate crossing reset.
+    await db.query(`UPDATE agent_commands SET startup_wake_after=now()-interval '1 second' WHERE state='pending'`);
+    expect((await readAgentCommands(db, ROOM, AGENT)).commands.length).toBeGreaterThan(0);
+    await expect(claimAgentCommand(db, ROOM, AGENT, 'after', 'generation')).resolves.toBeDefined();
+    expect(upstream).toHaveLength(0);
+  });
 
   it('pins each teammate to its stored model and charges the same owner allowance', async () => {
     const luna = 'c'.repeat(64);
@@ -377,7 +399,7 @@ describe('free agent model proxy', () => {
       } } },
     };
     const bodies = await Promise.all(Array.from({ length: parallel }, async () => (await call(request)).json()));
-    const expected = limit === 'daily' ? allowanceMessage('daily', config) : FREE_AGENT_BUDGET_MESSAGE;
+    const expected = limit === 'daily' ? allowanceMessage('daily', config, 0) : FREE_AGENT_BUDGET_MESSAGE;
     expect(bodies.map(body => body.choices[0].message.content)).toEqual(Array(parallel).fill(expected));
     expect(upstream).toEqual([]);
     expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 0, lifetime: 0 });
@@ -616,7 +638,7 @@ describe('free agent model proxy', () => {
     // Past the first-day cap the owner is refused, naming the first-day size.
     await db.query(`UPDATE free_agent_usage SET tokens=9999999 WHERE owner_id=$1`, [OWNER]);
     expect((await (await call({ messages: [{ role: 'user', content: 'more' }] })).json()).choices[0].message.content)
-      .toBe(allowanceMessage('daily', { ...config, dailyTokenCap: 10_000_000 }));
+      .toBe(allowanceMessage('daily', { ...config, dailyTokenCap: 10_000_000 }, 9_999_999));
     // A model call from 25 hours ago ends the window; the daily cap applies again.
     await db.query(`INSERT INTO free_agent_events(agent_id,kind,detail,at) VALUES($1,'model_usage','{"day":"x","tokens":0}'::jsonb, now()-interval '25 hours')`, [AGENT]);
     expect((await (await call({ messages: [{ role: 'user', content: 'more' }] })).json()).choices[0].message.content)

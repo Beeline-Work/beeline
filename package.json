@@ -144,6 +144,8 @@
     "backfill:luna": "node scripts/backfill-luna.mjs",
     "prove:onboarding:welcome": "npm run build && node --import tsx scripts/prove-onboarding-welcome.mjs",
     "prove:turn-replay": "npm run build && node scripts/prove-turn-replay.mjs",
+    "prove:token-output": "npx turbo run build --filter=@beeline/body... && node scripts/prove-token-output.mjs",
+    "prove:token-workflow": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-token-workflow.mjs",
     "prove:turn-command-budget": "npm run build && node scripts/prove-turn-command-budget.mjs"
   },
   "devDependencies": {

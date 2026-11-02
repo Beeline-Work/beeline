@@ -15,8 +15,8 @@ it('records ordered calls, terminal durations and unfinished calls without argum
   trace.toolCalls([{ id: 'c', title: `shell ${privateText}`, status: 'in_progress' }]);
   const replay = trace.replay()!;
   expect(replay.attempts[0]?.tools).toEqual([
-    { name: 'read', outcome: 'ok', durationMs: 12 },
-    { name: 'post', outcome: 'refused', durationMs: 13, error: 'permission denied [EMAIL] [TOKEN] [URL]' },
+    { name: 'read', outcome: 'ok', durationMs: 12, outputBytes: Buffer.byteLength(privateText) },
+    { name: 'post', outcome: 'refused', durationMs: 13, outputBytes: Buffer.byteLength(`permission denied ${privateText}`), error: 'permission denied [EMAIL] [TOKEN] [URL]' },
     { name: 'unknown', outcome: 'unfinished', durationMs: 0 },
   ]);
   const stored = JSON.stringify(trace.snapshot('failed', privateText));

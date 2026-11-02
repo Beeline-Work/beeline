@@ -188,6 +188,7 @@ export interface SessionUpdate {
 
 export interface ToolCallEntry {
   id?: string;
+  name?: string;
   title?: string;
   kind?: string;
   status?: string;
@@ -748,6 +749,7 @@ export function toolCallEntries(updates: readonly SessionUpdate[]): ToolCallEntr
     calls.set(key, {
       ...previous,
       id: key,
+      ...(typeof update.name === 'string' ? { name: update.name } : {}),
       ...(typeof update.title === 'string' ? { title: update.title } : {}),
       ...(typeof update.kind === 'string' ? { kind: update.kind } : {}),
       ...(typeof update.status === 'string' ? { status: update.status } : {}),
@@ -1808,6 +1810,7 @@ export class AcpClient extends EventEmitter {
             this.toolCallMetadata.set(metadataKey, {
               ...existing,
               toolCallId,
+              ...(typeof params.update.name === 'string' ? { name: params.update.name } : {}),
               ...(typeof params.update.title === 'string' ? { title: params.update.title } : {}),
               ...(typeof params.update.kind === 'string' ? { kind: params.update.kind } : {}),
               ...('rawInput' in params.update ? { rawInput: params.update.rawInput } : {}),

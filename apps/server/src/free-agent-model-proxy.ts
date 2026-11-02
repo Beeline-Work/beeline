@@ -77,9 +77,12 @@ export function chargedTokens(usage: Usage | undefined, weight = 0.25): number {
 export function allowanceMessage(
   kind: 'daily' | 'lifetime',
   config: Pick<FreeAgentConfig, 'dailyTokenCap' | 'lifetimeTokenCap'>,
+  used?: number,
 ): string {
   const tokens = (value: number) =>
     value >= 1_000_000 ? `${value / 1_000_000}M` : `${Math.round(value / 1000)}K`;
+  const cap = kind === 'daily' ? config.dailyTokenCap : config.lifetimeTokenCap;
+  if (used !== undefined && used < cap) return `This request is too large for my remaining free allowance (${tokens(used)} of ${tokens(cap)} tokens used). I have to pause ${kind === 'daily' ? 'until it resets at midnight UTC' : 'until you connect your own agent from Members'}.`;
   return kind === 'daily'
     ? `I've used today's free allowance (${tokens(config.dailyTokenCap)} tokens), so I have to pause until it resets at midnight UTC. To keep going now, connect your own agent: open Members, tap Add agent, and follow the steps.`
     : `I've used all of my free allowance (${tokens(config.lifetimeTokenCap)} tokens in total), so I can't take on more work. To keep going, connect your own agent: open Members, tap Add agent, and follow the steps.`;
@@ -475,7 +478,16 @@ async function executeFreeAgentModel(response: ServerResponse, body: Record<stri
     await recordFreeAgentEvent(options.database, agent.agent_id, 'allowance_reached', {
       limit: reservation.limit, roomId: turn.room_id, requestId: turn.turn_request_id,
     });
-    sendAssistantText(response, stream, options.config.model, allowanceMessage(reservation.limit, config));
+    const used = await freeAgentAllowance(options.database, agent.owner_id, now);
+    const reset = reservation.limit === 'daily'
+      ? new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)) : null;
+    await options.database.transaction(async db => {
+      await db.query(`UPDATE free_agents SET allowance_paused_until=COALESCE($2::timestamptz,'infinity'::timestamptz) WHERE owner_id=$1`, [agent.owner_id, reset]);
+      await db.query(`UPDATE agent_commands command SET startup_wake_after=GREATEST(command.startup_wake_after,starter.allowance_paused_until)
+        FROM free_agents starter WHERE starter.owner_id=$1 AND starter.agent_id=command.agent_id
+        AND command.state='pending' AND command.action IN ('input','resume')`, [agent.owner_id]);
+    });
+    sendAssistantText(response, stream, options.config.model, allowanceMessage(reservation.limit, config, reservation.limit === 'daily' ? used.today : used.lifetime));
     return true;
   }
   const day = now.toISOString().slice(0, 10);

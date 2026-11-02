@@ -1,3 +1,4 @@
+import { boundToolResponse } from './tool-output-budget.js';
 import { squireApprovalAction, type SquireApprovalDetails } from '@beeline/api-contract/phone';
 /** Host MCP transport gate. Authorization belongs to each call, not the harness session. */
 import { existsSync } from 'node:fs';
@@ -625,7 +626,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
           const key = messageIdKey(message.id);
           if (!key || !authorizedResponseIds.delete(key)) return;
           await observeSquireResponse(message);
-          process.stdout.write(`${line}\n`);
+          process.stdout.write(`${await boundToolResponse(message)}\n`);
         } catch {
           // Personal-resource output is visible only as a correlated JSON-RPC response.
         }
@@ -713,7 +714,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
                 const result = JSON.parse(data) as { id?: unknown };
                 if (messageIdKey(result.id) !== expectedId) continue;
                 await observeSquireResponse(result as Record<string, unknown>);
-                process.stdout.write(`${data}\n`);
+                process.stdout.write(`${await boundToolResponse(result as Record<string, unknown>)}\n`);
                 return;
               }
             }
@@ -728,7 +729,7 @@ export function runResourceFacade(env: NodeJS.ProcessEnv = process.env): void {
             if (!expectedId || messageIdKey(result.id) !== expectedId)
               throw new Error('resource transport returned an unrelated response');
             await observeSquireResponse(result as Record<string, unknown>);
-            process.stdout.write(`${body}\n`);
+            process.stdout.write(`${await boundToolResponse(result as Record<string, unknown>)}\n`);
           }
         }
       } catch {

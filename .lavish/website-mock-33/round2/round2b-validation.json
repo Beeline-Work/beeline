@@ -1,0 +1,34 @@
+{
+  "round": "2b",
+  "newDirections": [
+    "D: full-bleed Room / graph with identity and download overlays",
+    "E: full-screen editorial scroll chapters"
+  ],
+  "existingDirectionsRetained": [
+    "A",
+    "B",
+    "C"
+  ],
+  "newViewportCases": 8,
+  "totalViewportCases": 20,
+  "widths": [
+    1440,
+    390
+  ],
+  "horizontalOverflow": false,
+  "desktopDStage": {
+    "x": 0,
+    "width": 1440,
+    "height": 1000
+  },
+  "phoneDStage": {
+    "x": 0,
+    "width": 390,
+    "height": 844
+  },
+  "EOption1": "four card/scroll chapters; video choice updates task and review",
+  "EOption2": "six full-screen chapters with verbatim supplied dialogue and connected cast",
+  "allBoardLocalAssetsExist": true,
+  "noPR": true,
+  "publicSession": "https://rides-analyses-ecommerce-gospel.trycloudflare.com/session/617a34f50233f5cc"
+}

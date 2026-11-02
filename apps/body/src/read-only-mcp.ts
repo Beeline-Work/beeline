@@ -3603,13 +3603,41 @@ async function executeAgentOperation(
       // The server authorizes each read against the target corner: a member of
       // the corner or of its parent Room reaches it; anyone else is refused.
       const itemLimit = Math.min(typeof args.limit === 'number' ? args.limit : 8, 8);
+      // Time-only cursors exclude the entire millisecond in either direction.
+      for (const direction of ['before', 'after'] as const) {
+        const value = args[direction];
+        if (typeof value === 'string' && /^\d+$/.test(value))
+          args[direction] = `${value},${(direction === 'before' ? '0' : 'f').repeat(64)}`;
+      }
+      const hasContent = (item: RoomConversationResult['items'][number]) =>
+        Boolean(item.body.trim() || item.attachments.length || item.systemEvent);
+      // Bound reads even when an entire stretch contains only activity. Keep
+      // the raw scan boundary so the next call can advance through that stretch.
+      const readMessagePage = async (newest: boolean) => {
+        const rows: RoomConversationResult['items'][number][] = [];
+        let boundary = (newest ? args.before : args.after) as string | undefined;
+        let more = false;
+        for (let scan = 0; scan < 16; scan++) {
+          const page = await daemonExecute('getRoomConversation', {
+            roomId: args.cornerId as string,
+            limit: itemLimit + 1,
+            ...(newest ? { window: 'recent' as const, ...(boundary ? { before: boundary } : {}) }
+              : boundary ? { after: boundary } : { window: 'earliest' as const }),
+          }) as unknown as RoomConversationResult;
+          const batch = page.items;
+          if (newest) rows.unshift(...batch);
+          else rows.push(...batch);
+          const nextBoundary = (newest ? batch[0] : batch.at(-1))?.cursor;
+          more = batch.length === itemLimit + 1;
+          if (!more || rows.filter(hasContent).length > itemLimit || !nextBoundary || nextBoundary === boundary) break;
+          boundary = nextBoundary;
+        }
+        return { items: rows.filter(hasContent).map(item => item.systemEvent && !item.body.trim()
+            ? { ...item, body: JSON.stringify(item.systemEvent) } : item), more,
+          boundary: (newest ? rows[0] : rows.at(-1))?.cursor };
+      };
       if (args.mode === 'transcript' && args.from === 'newest') {
-        const page = (await daemonExecute('getRoomConversation', {
-          roomId: args.cornerId,
-          limit: itemLimit + 1,
-          window: 'recent',
-          ...(args.before ? { before: args.before } : {}),
-        })) as unknown as RoomConversationResult;
+        const page = await readMessagePage(true);
         // Walk back from the newest message; return the kept rows in transcript order.
         const items: Record<string, unknown>[] = [];
         for (const item of page.items.slice(-itemLimit).reverse()) {
@@ -3635,16 +3663,13 @@ async function executeAgentOperation(
         return JSON.stringify({
           cornerId: args.cornerId,
           items,
-          ...(oldest && page.items.length > items.length ? { next: { before: oldest } } : {}),
+          ...((page.items.length > items.length || page.more) && (oldest || page.boundary)
+            ? { next: { before: page.items.length > items.length ? oldest : page.boundary } } : {}),
           limits: { items: itemLimit, bodyChars: 1000, responseChars: 12000 },
         });
       }
       if (args.mode === 'transcript') {
-        const page = (await daemonExecute('getRoomConversation', {
-          roomId: args.cornerId,
-          limit: itemLimit + 1,
-          ...(args.after ? { after: args.after } : { window: 'earliest' }),
-        })) as unknown as RoomConversationResult;
+        const page = await readMessagePage(false);
         const items: Record<string, unknown>[] = [];
         let nextAfter = args.after as string | undefined;
         let nextOffset = args.offset as number | undefined;
@@ -3682,7 +3707,10 @@ async function executeAgentOperation(
           nextAfter = item.cursor;
           nextOffset = undefined;
         }
-        if (!hasMore) hasMore = page.items.length > items.length;
+        if (!hasMore) {
+          hasMore = page.items.length > items.length || page.more;
+          if (page.items.length === items.length && nextOffset === undefined) nextAfter = page.boundary ?? nextAfter;
+        }
         return JSON.stringify({
           cornerId: args.cornerId,
           items,

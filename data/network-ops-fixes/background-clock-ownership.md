@@ -124,9 +124,12 @@ block remote health reads or drop a live control table.
 existing-Live listeners before baseline, coalesces hints, drains at most1024
 closed control causes, preserves loss even when a later healthy generation is
 already committed, and parks on unknown/gapped history. Only real feed recovery
-opens a new baseline. It owns no timer, socket, client inventory or data snapshot.
+opens a new baseline. A throwing socket listener cannot prevent later consumers
+from receiving loss; failed delivery or an owner callback exception parks the
+shared consumer until real recovery. It owns no timer, socket, client inventory
+or data snapshot.
 The actual two-pool PostgreSQL notification proof parks two simulated consumers
-with four shared control statements, independent of consumer count. Availability7,
+with four shared control statements, independent of consumer count. Availability9,
 PostgreSQL14 and the source/readiness/traversal proofs pass.
 
 Root's staged integration emits one `control:tray-clock` frame per socket and

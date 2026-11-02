@@ -148,6 +148,8 @@
     "prove:token-workflow": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-token-workflow.mjs",
     "prove:turn-command-budget": "npm run build && node scripts/prove-turn-command-budget.mjs",
     "lint:router": "node scripts/check-router-boundaries.mjs",
+    "codecs:generate": "node scripts/generate-network-codecs.mjs",
+    "codecs:check": "node scripts/generate-network-codecs.mjs --check",
     "test:router-boundaries": "node --test scripts/router-boundaries.test.mjs"
   },
   "devDependencies": {

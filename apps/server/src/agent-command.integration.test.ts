@@ -1829,10 +1829,12 @@ it('runs revised-brief refusal, repair, rereview, exact-head approval, and imple
       )
     ).rowCount,
   ).toBe(1);
-  // The PASS wakes the implementer to merge, alongside the reviewer's tag.
-  expect((await commands(B, C)).map((command) => command.source.body)).toEqual(
-    expect.arrayContaining(['@system handed off review', expect.stringContaining(`@goosy approved ${approvedHead}, merge\nCurrent handoff target: PR #7 at ${approvedHead}`)]),
+  // The server lands a PASS itself; the implementer hears only the reviewer's tag.
+  const implementerBodies = (await commands(B, C)).map((command) => command.source.body);
+  expect(implementerBodies).toEqual(
+    expect.arrayContaining([expect.stringContaining(`@goosy approved ${approvedHead}, merge\nCurrent handoff target: PR #7 at ${approvedHead}`)]),
   );
+  expect(implementerBodies).not.toContain('@system handed off review');
 });
 // The merge webhook writes the parent card, then reports the landing to the
 // corner workflow. Only the card's `merged` subscribers are woken by it.

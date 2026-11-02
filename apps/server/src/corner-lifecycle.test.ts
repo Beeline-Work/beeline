@@ -855,7 +855,7 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
     return cornerId;
   }
 
-  it("an approved review records review -> review and wakes the implementer to merge", async () => {
+  it("an approved review records review -> review and wakes nobody to merge", async () => {
     const cornerId = await toReview();
     const [review] = await commands(B, cornerId);
     await claim(review!);
@@ -865,7 +865,24 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
     expect(await cards(cornerId)).toContainEqual(
       expect.objectContaining({ fromState: 'review', outcome: 'approved', toState: 'review' }),
     );
-    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_land')).toHaveLength(1);
+    expect(await reasons(cornerId, A)).not.toContain('corner_land');
+  });
+
+  it('PASS-LANDS: a reviewer PASS on a green head lands the PR at once', async () => {
+    const cornerId = await toReview();
+    const [review] = await commands(B, cornerId);
+    await claim(review!);
+    githubHead = '7'.repeat(40);
+    githubRollupState = 'passed';
+    const landing = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, id => github.landCorner(id));
+    Object.assign(landing, { github: { assertCornerReviewerNotAuthor: async () => {} } });
+    await expect(landing.execute('approveCornerMerge', { cornerId, headSha: '7'.repeat(40) }, B))
+      .resolves.toMatchObject({ status: 'approved' });
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+    expect(await reasons(cornerId, A)).not.toContain('corner_land');
+    console.log('PASS-LANDS Demonstrated: the reviewer PASS reached landCorner with no implementer merge_corner turn.');
   });
 
   it('a review that ends without a PASS records nothing and stays in review', async () => {
@@ -888,7 +905,8 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
     expect((await commands(A, cornerId)).some(c => c.reason === 'order')).toBe(true);
     expect(await currentState(cornerId)).toBe('review');
     await daemon.execute('approveCornerMerge', { cornerId, headSha: '7'.repeat(40) }, B);
-    expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_land')).toHaveLength(1);
+    // The PASS is landed by the server, not handed to the implementer.
+    expect(await reasons(cornerId, A)).not.toContain('corner_land');
   });
 });
 
@@ -2373,7 +2391,8 @@ describe("the configured reviewer's verdict (AC-4)", () => {
     await expect(approve(cornerId)).resolves.toMatchObject({ headSha: SHA });
     await result(asked!, `approved ${SHA}`);
     expect(await currentState(cornerId)).toBe('review');
-    expect(await reasons(cornerId, A)).toContain('corner_land');
+    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true });
+    expect(await reasons(cornerId, A)).not.toContain('corner_land');
   });
 
   it('rejects a caller who is not the configured reviewer and a stale head by name; a brief revision does not stale it', async () => {
@@ -2462,7 +2481,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect(await implementersMerge()).toBe(0);
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
   });
-  it('wakes the implementer after green checks and PASS, merges the exact head on its merge_corner, then lands on the merge webhook', async () => {
+  it('after green checks and PASS, merge_corner merges the exact head, then lands on the merge webhook', async () => {
     const cornerId = await inReview();
     const implementerBefore = await reasons(cornerId, A);
     const [review] = await commands(B, cornerId);
@@ -2470,7 +2489,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await approve(cornerId);
     await result(review!, `approved ${SHA}`);
     expect(await currentState(cornerId)).toBe('review');
-    expect(await reasons(cornerId, A)).toEqual([...implementerBefore, 'corner_land']);
+    expect(await reasons(cornerId, A)).toEqual(implementerBefore);
     githubHead = SHA;
     githubRollupState = 'passed';
     // Nothing merges until the implementer asks.
@@ -2492,7 +2511,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect(await currentState(cornerId)).toBe('landed');
     expect(await projected(cornerId)).toBe('landed');
     expect((await reasons(cornerId, A)).filter(reason => reason !== 'corner_close'))
-      .toEqual([...implementerBefore, 'corner_land']);
+      .toEqual(implementerBefore);
     expect((await db.query(`SELECT 1 FROM agent_commands
       WHERE room_id=$1 AND agent_id=$2 AND action='stop' AND reason='corner_close'`, [cornerId, A])).rowCount)
       .toBe(assignmentsBefore);
@@ -3956,7 +3975,7 @@ describe('zero checks with no reviewer wait for the commander', () => {
         await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
         await expect(approve(cornerId, '8'.repeat(40), B)).rejects.toThrow('STALE_HEAD');
         await approve(cornerId, SHA, B);
-        expect((await reasons(cornerId, A))).toContain('corner_land');
+        expect((await reasons(cornerId, A))).not.toContain('corner_land');
         const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
         expect(await github.landCorner(cornerId)).toBe(false);
         await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, H);

@@ -51,10 +51,10 @@ import { workflowRunLockKey } from './workflow-runs.js';
  * The merge rule is one sentence: a pull request merges when its checks are
  * green on the current head (read live from GitHub) and a yes was said on
  * that head, unless a hold stands. The yes is a configured reviewer agent's
- * `approve_merge` PASS (it wakes the implementer, whose `merge_corner` runs
- * `GitHubOperations.landCorner`) or a Workspace owner or admin's order
- * (`order_corner_merge` or the phone's approve call), which the server lands
- * at once through the same `landCorner`. A new commit cancels the yes; a
+ * `approve_merge` PASS or a Workspace owner or admin's order
+ * (`order_corner_merge` or the phone's approve call); the server lands either
+ * at once through `GitHubOperations.landCorner`. A yes given while checks run
+ * wakes the implementer to call `merge_corner` once they pass. A new commit cancels the yes; a
  * brief edit does not. The server does not referee who a reviewer is allowed
  * to be — a reviewer that wrote the code it is PASSing is a prompt
  * discipline, not a server gate. With no reviewer configured, green checks go
@@ -109,8 +109,8 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
       on: { passing: 'review', no_reviewer: 'review', failing: 'implement', pr_closed: 'implement' },
     },
     // Waiting for a yes on the current head. A reviewer's PASS
-    // (`approve_merge`) takes `approved` and wakes the implementer to call
-    // `merge_corner`; a person's order lands at once. A reviewer turn that
+    // (`approve_merge`) or a person's order takes `approved`, and its caller
+    // lands the corner at once. A reviewer turn that
     // ends without a PASS changes nothing: the reviewer's own message carries
     // any requested change to the implementer, whose next push restarts
     // checks. The merge webhook takes the implicit edge to `landed`; GitHub
@@ -152,7 +152,7 @@ export type CornerEvent =
     }
   /** Checks started again on the same head (a re-run); the verdict that follows is reported as `checks`. */
   | { kind: 'checks-pending' }
-  /** A yes on this head: a reviewer's PASS wakes the implementer to merge; a person's order is landed by the caller. */
+  /** A yes on this head: a reviewer's PASS or a person's order, landed by the caller. */
   | { kind: 'approval'; headSha: string; by: 'reviewer' | 'person' }
   | { kind: 'merge-unconfirmed'; number: number; error: string }
   | { kind: 'merge-refused'; headSha: string; reason: string; confirmedUnmerged?: boolean }
@@ -1162,12 +1162,11 @@ async function approvalRecorded(
   if (corner.lifecycle.checks !== 'passing') return no('checks are not green yet');
   if (transition.state !== 'review') return no('not waiting for a yes');
   await transition.take('approved', { verdict: 'approved', headSha: event.headSha });
-  // A person's order is landed by its caller at once; nobody else is woken.
-  if (event.by === 'reviewer') await wakeToLand(db, cornerId, corner, transition);
+  // A reviewer's PASS and a person's order are landed by their callers at once.
   return OK;
 }
 
-/** A reviewer's PASS hands the merge to the implementer (`merge_corner`). */
+/** A yes given while checks ran hands the merge to the implementer (`merge_corner`) once they pass. */
 async function wakeToLand(
   db: SqlDatabase,
   cornerId: string,

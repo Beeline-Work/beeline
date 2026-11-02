@@ -28,29 +28,15 @@
  * MCP transport for the life of the process, speaking exactly the protocol
  * the broker's shared MCP socket expects (`bot/broker/mcp-socket.js`
  * `listenSharedMcp`: one identity line, then newline-delimited JSON-RPC) and
- * mirroring the vendor relay's own framing, pending-request bookkeeping, and
- * capped-exponential-backoff reconnect — minus the on-demand-launch call.
- * A connection that cannot be re-established within `giveUpMs` of cumulative
- * disconnection fails every pending and future call with an error naming the
- * broker unit and stops; it never calls anything resembling
- * `ensureSharedMcp` and never spawns a process, so there is nothing left for
- * a restart-looping or sandbox-unreachable systemd check to race.
+ * retaining framing and pending-request bookkeeping without timed retries.
+ * An established connection loss admits one immediate replacement for this
+ * facade. A refused initial connection, failed replacement or second loss
+ * stops it. Only MCP initialization is replayed; pending tool calls fail
+ * with an unknown outcome and are never replayed. No path launches a broker.
  */
 import { randomUUID } from 'node:crypto';
 import { createConnection, type Socket } from 'node:net';
 import { SQUIRE_BROKER_UNAVAILABLE, TRUSTY_SQUIRE_BROKER_UNIT_NAME } from './squire-host.js';
-
-const SQUIRE_RELAY_INITIAL_DELAY_MS = 100;
-const SQUIRE_RELAY_MAX_DELAY_MS = 1_000;
-/**
- * Bounds cumulative time spent disconnected (first connect or any later
- * reconnect) before giving up. Matches the installed package's own
- * `BROKER_CONNECT_TIMEOUT_MS` convention (`discovery.js`): long enough to
- * ride out one broker restart cycle (`trustySquireBrokerUnit`'s
- * `RestartSec=5s`), short enough that a genuinely gone broker fails the
- * call instead of hanging the turn.
- */
-export const SQUIRE_RELAY_GIVE_UP_MS = 10_000;
 
 type JsonRpcFrame = { id?: string | number; method?: string; error?: unknown };
 
@@ -71,7 +57,6 @@ function frameLines(
 export type SquireBrokerLinkOptions = {
   readonly agentId: string;
   readonly socketPath: string;
-  readonly giveUpMs?: number;
   readonly input?: NodeJS.ReadableStream;
   readonly output?: NodeJS.WritableStream;
   readonly logError?: (message: string) => void;
@@ -86,7 +71,6 @@ export async function runSquireBrokerLink(options: SquireBrokerLinkOptions): Pro
   const {
     agentId,
     socketPath,
-    giveUpMs = SQUIRE_RELAY_GIVE_UP_MS,
     input = process.stdin,
     output = process.stdout,
     logError = (message: string) => process.stderr.write(`${message}\n`),
@@ -99,14 +83,12 @@ export async function runSquireBrokerLink(options: SquireBrokerLinkOptions): Pro
   } = options;
 
   let socket: Socket | undefined;
-  let retryTimer: ReturnType<typeof setTimeout> | undefined;
-  let disconnectedSince: number | undefined;
+  let replacementUsed = false;
   let inBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   let outBuffer: Buffer<ArrayBufferLike> = Buffer.alloc(0);
   let initializeLine: string | undefined;
   let initializedLine: string | undefined;
   let replayId: string | undefined;
-  let delayMs = SQUIRE_RELAY_INITIAL_DELAY_MS;
   let stopped = false;
   let gaveUp = false;
   let connectedOnce = false;
@@ -119,11 +101,11 @@ export async function runSquireBrokerLink(options: SquireBrokerLinkOptions): Pro
     resolveDone = resolve;
   });
 
-  const failResponse = (id: string | number) =>
+  const failResponse = (id: string | number, outcome: 'unknown' | 'not-sent') =>
     `${JSON.stringify({
       jsonrpc: '2.0',
       id,
-      error: { code: -32000, message: 'Trusty Squire broker connection lost' },
+      error: { code: -32000, message: 'Trusty Squire broker connection lost', data: { outcome } },
     })}\n`;
 
   const flush = () => {
@@ -138,7 +120,6 @@ export async function runSquireBrokerLink(options: SquireBrokerLinkOptions): Pro
   function stop(ok: boolean): void {
     if (stopped) return;
     stopped = true;
-    if (retryTimer) clearTimeout(retryTimer);
     socket?.destroy();
     resolveDone(ok);
   }
@@ -147,30 +128,16 @@ export async function runSquireBrokerLink(options: SquireBrokerLinkOptions): Pro
     if (gaveUp) return;
     gaveUp = true;
     logError(`${SQUIRE_BROKER_UNAVAILABLE}: ${TRUSTY_SQUIRE_BROKER_UNIT_NAME} is not reachable at ${socketPath}`);
-    for (const id of pending.values()) output.write(failResponse(id));
+    for (const id of pending.values()) output.write(failResponse(id, 'unknown'));
     pending.clear();
     // A request that arrived before any successful connect was never
     // flushed, so it was never added to `pending` either — without this it
     // would hang silently instead of failing.
     for (const line of queued.splice(0)) {
       const frame = JSON.parse(line) as JsonRpcFrame;
-      if (frame.id !== undefined && frame.method) output.write(failResponse(frame.id));
+      if (frame.id !== undefined && frame.method) output.write(failResponse(frame.id, 'not-sent'));
     }
     stop(false);
-  };
-
-  const reconnect = () => {
-    if (stopped || retryTimer || gaveUp) return;
-    disconnectedSince ??= Date.now();
-    if (Date.now() - disconnectedSince >= giveUpMs) {
-      giveUp();
-      return;
-    }
-    retryTimer = setTimeout(() => {
-      retryTimer = undefined;
-      doConnect();
-    }, delayMs);
-    delayMs = Math.min(delayMs * 2, SQUIRE_RELAY_MAX_DELAY_MS);
   };
 
   const attach = (peer: Socket) => {
@@ -181,8 +148,7 @@ export async function runSquireBrokerLink(options: SquireBrokerLinkOptions): Pro
     socket = peer;
     outBuffer = Buffer.alloc(0);
     peer.once('connect', () => {
-      delayMs = SQUIRE_RELAY_INITIAL_DELAY_MS;
-      disconnectedSince = undefined;
+      if (socket !== peer || stopped) return;
       peer.write(`${agentId}\n`);
       if (connectedOnce && initializeLine) {
         replayId = `beeline-squire-relay-${randomUUID()}`;
@@ -195,6 +161,7 @@ export async function runSquireBrokerLink(options: SquireBrokerLinkOptions): Pro
       connectedOnce = true;
     });
     peer.on('data', (chunk: Buffer) => {
+      if (socket !== peer || stopped) return;
       outBuffer = frameLines(chunk, outBuffer, (line) => {
         const frame = JSON.parse(line) as JsonRpcFrame;
         // A server notification has no id; without the replay check it would
@@ -222,9 +189,14 @@ export async function runSquireBrokerLink(options: SquireBrokerLinkOptions): Pro
       socket = undefined;
       ready = false;
       replayId = undefined;
-      for (const id of pending.values()) output.write(failResponse(id));
+      for (const id of pending.values()) output.write(failResponse(id, 'unknown'));
       pending.clear();
-      reconnect();
+      if (connectedOnce && !replacementUsed) {
+        replacementUsed = true;
+        doConnect();
+      } else {
+        giveUp();
+      }
     });
   };
 
@@ -233,7 +205,7 @@ export async function runSquireBrokerLink(options: SquireBrokerLinkOptions): Pro
     try {
       attach(connect(socketPath));
     } catch {
-      reconnect();
+      giveUp();
     }
   };
 
@@ -244,7 +216,7 @@ export async function runSquireBrokerLink(options: SquireBrokerLinkOptions): Pro
         // Given up already stops the process in production, but a caller
         // that keeps writing after that (as the injected-stream tests do)
         // gets a clean, immediate failure rather than silence.
-        if (frame.id !== undefined && frame.method) output.write(failResponse(frame.id));
+        if (frame.id !== undefined && frame.method) output.write(failResponse(frame.id, 'not-sent'));
         return;
       }
       if (frame.method === 'initialize') initializeLine = line;

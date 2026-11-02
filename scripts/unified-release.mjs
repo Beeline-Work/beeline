@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { encodeReleaseOutput, decodeReleaseOutput } from './release-job-output.mjs';
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { runtimeVersionsFromConfig } from '../apps/mobile/scripts/native-fingerprint.mjs';
 import { nextDesktopVersion, normalizeDesktopVersion } from './desktop-update.mjs';
 
@@ -618,7 +618,7 @@ export function applyJobFacts(state, needs, { previous, runtimePins = {} } = {})
   return state;
 }
 
-/** The state without its changed-path lists, small enough for a job output. */
+/** Compact public previous-record metadata for observability job outputs. */
 export function compactState(state) {
   const compact = structuredClone(state);
   if (compact.plan) {
@@ -632,16 +632,74 @@ export function compactState(state) {
 export function planOutputs(state, previous) {
   const plan = state.plan;
   const lines = [
-    `release_state=${encodeReleaseOutput(compactState(state))}`,
+    `has_previous=${Boolean(previous)}`,
+    `previous_version=${previous?.version ?? ''}`,
+    `previous_sha=${previous?.sourceSha ?? ''}`,
     `ota_memory=${encodeReleaseOutput(otaMemory(previous))}`,
     `previous_record=${previous ? encodeReleaseOutput(compactState(previous)) : ''}`,
     `no_op=${state.state === 'delivered'}`,
     `runtime_pin_changed=${plan.runtimePinChanged ?? false}`,
+    `has_runtime_pin=${Boolean(plan.previousRuntimeVersion && plan.nextRuntimeVersion)}`,
+    ...['android', 'ios'].flatMap(platform => [
+      `previous_runtime_${platform}=${plan.previousRuntimeVersion?.[platform] ?? ''}`,
+      `next_runtime_${platform}=${plan.nextRuntimeVersion?.[platform] ?? ''}`,
+    ]),
+    `plan_selection=${plan.selection ?? 'auto'}`,
     `desktop_version=${state.components.desktop.desktopVersion}`,
     ...['android', 'ios'].map((platform) => `native_${platform}=${(plan.nativePlatforms ?? ['android', 'ios']).includes(platform)}`),
     ...Object.entries(pendingComponents(state)).map(([component, run]) => `run_${component.replace('-', '_')}=${run}`),
   ];
   return `${lines.join('\n')}\n`;
+}
+
+/** Rebuild finalization state from scalar intent and the published baseline.
+ * No encoded state blob crosses the runner's secret-filtered output boundary.
+ */
+export function restoreReleasePlan({ version, sourceSha, plan, previous, startedAt }) {
+  const flag = (key) => {
+    if (!['true', 'false'].includes(plan?.[key])) fail(`invalid or missing plan flag: ${key}`);
+    return plan[key] === 'true';
+  };
+  const hasPrevious = flag('has_previous');
+  if (hasPrevious) {
+    if (!previous) fail('previous-record:missing');
+    try {
+      currentRelease(previous);
+      if (previous.version !== plan.previous_version || previous.sourceSha !== plan.previous_sha) fail('identity mismatch');
+    } catch { fail('previous-record:invalid'); }
+  } else if (previous || plan.previous_version || plan.previous_sha) {
+    fail('previous-record:invalid');
+  }
+  const selectedComponents = RELEASE_COMPONENTS.filter((component) => flag(`run_${component.replace('-', '_')}`));
+  const nativePlatforms = ['android', 'ios'].filter((platform) => flag(`native_${platform}`));
+  if (selectedComponents.includes('mobile-native') && nativePlatforms.length === 0) fail('native release plan has no platform');
+  const runtimePinChanged = flag('runtime_pin_changed');
+  const hasRuntimePin = flag('has_runtime_pin');
+  if (runtimePinChanged && !hasRuntimePin) fail('changed runtime plan has no pins');
+  const runtimePin = hasRuntimePin ? { previous: {}, next: {} } : undefined;
+  if (runtimePin) for (const platform of ['android', 'ios']) {
+    for (const direction of ['previous', 'next']) {
+      const value = plan[`${direction}_runtime_${platform}`];
+      if (!/^\d+$/.test(value ?? '')) fail('invalid runtime pin in plan');
+      runtimePin[direction][platform] = value;
+    }
+  }
+  if (typeof plan.plan_selection !== 'string' || !plan.plan_selection) fail('missing plan selection');
+  selectReleaseComponents([], { selection: plan.plan_selection }); // Validate the original audit selection.
+  const noOp = flag('no_op');
+  const state = initializeRelease({ version, sourceSha, previous, selectedComponents, startedAt });
+  if ((state.state === 'delivered') !== noOp) fail('plan no-op identity mismatch');
+  if (state.components.desktop.desktopVersion !== plan.desktop_version) fail('plan desktop version mismatch');
+  if (!noOp) {
+    state.plan.nativePlatforms = nativePlatforms;
+    state.plan.runtimePinChanged = runtimePinChanged;
+    state.plan.selection = plan.plan_selection;
+    if (runtimePin) {
+      state.plan.previousRuntimeVersion = runtimePin.previous;
+      state.plan.nextRuntimeVersion = runtimePin.next;
+    }
+  }
+  return state;
 }
 
 /** What the OTA leg needs from the previous release: no file, a job output. */
@@ -742,30 +800,21 @@ async function main(argv) {
     return;
   }
   if (command === 'restore-job-state') {
-    let label = 'release-state';
     try {
-      const state = decodeReleaseOutput(process.env.RELEASE_STATE, label);
-      currentRelease(state);
-      if (state.version !== process.env.RELEASE_VERSION || state.sourceSha !== process.env.RELEASE_SHA) fail('identity mismatch');
-      for (const component of RELEASE_COMPONENTS) componentEntry(state, component);
-      if (!Array.isArray(state.plan?.selected) || !Array.isArray(state.plan?.carried)) fail('invalid plan');
-      if (!state.delivery || typeof state.delivery !== 'object') fail('invalid delivery');
-      releasePlanSummary(state);
-      label = 'previous-record';
-      const previous = process.env.PREVIOUS_RECORD?.trim()
-        ? decodeReleaseOutput(process.env.PREVIOUS_RECORD, label) : undefined;
-      if (state.supersedes && state.state !== 'delivered' && !previous) fail(`${label}:missing`);
-      if (previous) {
-        currentRelease(previous);
-        const alreadyPublished = state.state === 'delivered' && previous.version === state.version && previous.sourceSha === state.sourceSha;
-        if (!alreadyPublished && state.supersedes && (previous.version !== state.supersedes.version || previous.sourceSha !== state.supersedes.sourceSha)) fail('identity mismatch');
-        writeJson(args.previous, previous);
-      }
+      const needs = JSON.parse(process.env.NEEDS);
+      let previous;
+      try { previous = existsSync(args.previous) ? readJson(args.previous) : undefined; } catch { fail('previous-record:invalid'); }
+      const epoch = Number(process.env.TRIGGER_EPOCH);
+      if (!Number.isSafeInteger(epoch) || epoch <= 0) fail('invalid dispatch clock');
+      const state = restoreReleasePlan({
+        version: process.env.RELEASE_VERSION, sourceSha: process.env.RELEASE_SHA,
+        plan: needs.initialize?.outputs, previous, startedAt: new Date(epoch * 1000).toISOString(),
+      });
       writeJson(args.state, state);
     } catch (error) {
-      const failureClass = error.message === `${label}:missing` ? error.message : `${label}:invalid`;
+      const failureClass = /^previous-record:(missing|invalid)$/.test(error.message) ? error.message : 'release-plan:invalid';
       appendFileSync(process.env.GITHUB_OUTPUT, `outcome=failure\nfailure_class=${failureClass}\nno_op=false\nstate_ready=false\n`);
-      const detail = `Release metadata unavailable (${failureClass}); initialize job outputs may have been suppressed by GitHub secret masking. No release record will be published.`;
+      const detail = `Release metadata unavailable (${failureClass}): ${error.message}. No release record will be published.`;
       console.error(`::error::${detail}`);
       if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${detail}\n`);
       process.exitCode = 1;

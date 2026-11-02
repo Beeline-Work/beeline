@@ -64,3 +64,9 @@ packages/buzz-client/*
 !packages/buzz-client/tsconfig.json
 !packages/buzz-client/src
 !packages/buzz-client/src/**
+!packages/net
+packages/net/*
+!packages/net/package.json
+!packages/net/tsconfig.json
+!packages/net/src
+!packages/net/src/**

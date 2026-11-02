@@ -782,7 +782,8 @@ jobs:
         run: |
           set -euo pipefail
           # Metro transforms inline EXPO_PUBLIC_* values. Never reuse a rig's cache.
-          export TMPDIR="$(mktemp -d "$RUNNER_TEMP/native-metro-XXXXXX")"
+          TMPDIR="$(mktemp -d "$RUNNER_TEMP/native-metro-XXXXXX")"
+          export TMPDIR
           # Each pooled runner keeps its SDK in a different place; take the runner's
           # own ANDROID_HOME when it is set, else the first known layout that exists.
           for candidate in "${ANDROID_HOME:-}" /home/lunchbox/android-sdk "$HOME/Android/Sdk" /opt/android-sdk; do

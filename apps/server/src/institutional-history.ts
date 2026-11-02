@@ -1,4 +1,3 @@
-import { createHash, randomUUID } from 'node:crypto';
 import { Check } from 'typebox/value';
 import {
   INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX,
@@ -126,7 +125,6 @@ export async function searchInstitutionalHistory(
 ): Promise<SearchInstitutionalHistoryResult> {
   const query = boundedQuery(input.query);
   const limit = boundedLimit(input.limit);
-  const started = performance.now();
   return database.transaction(async (db) => {
     // The root message's author is this turn's requester whether human or
     // agent (a schedule, event, or agent-to-agent wake); only its Room needs
@@ -260,7 +258,6 @@ export async function searchInstitutionalHistory(
         INSTITUTIONAL_HISTORY_MAX_AGE_DAYS,
       ],
     );
-    const authorizedRoomCount = Number(rows.rows[0]?.authorized_room_count ?? 0);
     const matched = Number(rows.rows[0]?.matched_count ?? 0);
     const capped = matched >= INSTITUTIONAL_HISTORY_MATCH_SCAN_MAX;
     const result = rows.rows
@@ -274,27 +271,6 @@ export async function searchInstitutionalHistory(
         snippet: snippet(row.text, query),
         rank: row.rank,
       }));
-    await db.query(
-      `INSERT INTO institutional_history_searches
-       (id,workspace_id,output_room_id,request_id,requester_identity_id,agent_id,
-        query_hash,authorized_room_count,result_count,omitted_count,
-        matches_capped,latency_ms)
-       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
-      [
-        randomUUID(),
-        authority.workspace_id,
-        command.room_id,
-        command.turn_request_id,
-        authority.requester_identity_id,
-        command.agent_id,
-        createHash('sha256').update(query).digest('hex'),
-        authorizedRoomCount,
-        result.length,
-        Math.max(0, matched - result.length),
-        capped,
-        Math.max(0, Math.round(performance.now() - started)),
-      ],
-    );
     return {
       results: result,
       omitted: Math.max(0, matched - result.length),

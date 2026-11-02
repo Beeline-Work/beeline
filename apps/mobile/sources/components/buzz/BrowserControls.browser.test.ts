@@ -19,10 +19,12 @@ it.skipIf(!process.env.BROWSER_CONTROLS_CHROME_DRIVER).each(['bone', 'obsidian']
   writeFileSync(entry, `import React from 'react'; import {createRoot} from 'react-dom/client';
 import {ComputerSessionCard,ComputerSessionViewer} from '@/components/buzz/ComputerSession';
 import {publishViewerConversation} from '@/buzz/viewer-conversation';
+import {observeArtifactRows,setArtifactViewportActive} from '@/buzz/artifact-viewport';
 const query=new URLSearchParams(location.search); const state=query.get('state');
 const session={id:'proof',title:'Shared browser',url:'https://example.test/',status:'live',access:'fixture'};
+observeArtifactRows('proof',['proof-message']);setArtifactViewportActive('proof',true);
 publishViewerConversation({roomId:'proof',messages:[],send:async()=>true});
-createRoot(document.getElementById('root')).render(state==='card'?<ComputerSessionCard session={session}/>:<ComputerSessionViewer session={session} roomId="proof" onClose={()=>{}}/>);
+createRoot(document.getElementById('root')).render(state==='card'?<ComputerSessionCard messageId="proof-message" roomId="proof" session={session}/>:<ComputerSessionViewer session={session} roomId="proof" onClose={()=>{}}/>);
 const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 (async()=>{await document.fonts.ready; await wait(500);
 const find=id=>document.querySelector('[data-testid="'+id+'"]');

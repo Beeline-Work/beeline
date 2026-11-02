@@ -278,7 +278,7 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     await flush();
     const webview = renderer.root.findByType('WebView');
     expect(webview.props.javaScriptEnabled).toBe(false);
-    expect(webview.props.originWhitelist).toEqual([]);
+    expect(webview.props.originWhitelist).toEqual(['*']);
     expect(webview.props.setSupportMultipleWindows).toBe(false);
     expect(webview.props.allowFileAccess).toBe(false);
     expect(Object.hasOwn(webview.props, 'onMessage')).toBe(false);
@@ -286,6 +286,8 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     // The wrapped source carries the CSP meta ahead of the page.
     const html = (webview.props.source as { html: string }).html;
     expect(html.indexOf('Content-Security-Policy')).toBeLessThan(html.indexOf('<body>'));
+    expect(html).toContain('<iframe sandbox="" srcdoc="');
+    expect(html).toContain('&lt;p&gt;mock&lt;/p&gt;');
     // Closing is the header affordance only.
     await act(async () => {
       renderer.root.findByProps({ testID: 'artifact-viewer-close' }).props.onPress();
@@ -326,7 +328,7 @@ describe('the full-screen artifact viewer (mock 1c)', () => {
     );
     await flush();
     const html = (renderer.root.findByType('WebView').props.source as { html: string }).html;
-    expect(html).toContain(ARTIFACT_DEFAULT_CANVAS);
+    expect(html).toContain(ARTIFACT_DEFAULT_CANVAS.replaceAll('<', '&lt;').replaceAll('>', '&gt;'));
     // The transparent-page regression painted the SVG over the app ink plate.
     expect(html.includes('background:transparent')).toBe(false);
   });

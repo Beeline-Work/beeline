@@ -113,7 +113,7 @@ it.each([
   expect(captureException).not.toHaveBeenCalled();
 });
 
-it('Reproduction SENTRY-R: start workflow with missing starter returns unchanged refusal without capture', async () => {
+it('Reproduction SENTRY-R: start workflow with missing starter returns aggregated refusal without capture', async () => {
   const source = '5'.repeat(64);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Prove workflow refusal')`, [source, parent, owner]);
   const command = await createAgentCommand(db, { roomId: parent, agentId: agent, sourceMessageId: source, reason: 'human_tag' });
@@ -128,8 +128,10 @@ it('Reproduction SENTRY-R: start workflow with missing starter returns unchanged
     method: 'POST', headers: { authorization: 'Bearer bdt_refusal_fixture_123456789', 'content-type': 'application/json' },
     body: JSON.stringify({ ...turn, name: 'refusal-proof', roleBindings: {} }),
   });
-  expect(await response.json()).toEqual({ error: 'role binding is missing for starter' });
-  expect(response.status).toBe(503);
+  expect(await response.json()).toEqual({
+    error: `Invalid workflow bindings:\nstarter: given missing; role binding is missing for starter; allowed members: ${agent}`,
+  });
+  expect(response.status).toBe(400);
   expect(captureException).not.toHaveBeenCalled();
 });
 

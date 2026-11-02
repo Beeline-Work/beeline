@@ -1382,7 +1382,10 @@ describe('connect_app', () => {
       const result = await response.json();
       console.log(`Reproduction tool-input-limits: no-match query → HTTP ${response.status} ${JSON.stringify(result)}`);
       expect(response.status).toBe(200);
-      expect(result).toEqual({ tools: [] });
+      expect(result).toEqual({
+        tools: [],
+        next: expect.stringContaining('query set to a tool slug or search phrase for matching input schemas'),
+      });
       expect(provider.listTools).toHaveBeenCalledWith('slack', 'nonexistent-tool');
     } finally {
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));

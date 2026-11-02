@@ -4597,11 +4597,11 @@ export class DaemonService {
              RETURNING 1
            ), recovered AS (
              UPDATE messages failure SET
-               text=COALESCE($15::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name')||$13::text,
+               text=COALESCE($14::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name')||$12::text,
                system_event=jsonb_set(
                  jsonb_set(failure.system_event,'{subject,name}',
-                   to_jsonb(COALESCE($15::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name'))),
-                 '{verb}',to_jsonb($14::text)
+                   to_jsonb(COALESCE($14::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name'))),
+                 '{verb}',to_jsonb($13::text)
                ),
                card=jsonb_set(failure.card,'{state}',to_jsonb('recovered'::text))
              FROM settled,identities agent

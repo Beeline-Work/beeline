@@ -6411,7 +6411,7 @@ export class DaemonService {
       const corner = (await database.query<{ worker: string; merged: boolean; has_pr: boolean }>(
         `SELECT ${cornerImplementerSql('fact', 'room')} worker,
           fact.lifecycle->'pr'->>'number' IS NOT NULL has_pr,
-          (fact.lifecycle->>'lifecycle'='landed' OR fact.lifecycle->'pr'->>'mergeCommitSha' IS NOT NULL) merged
+          fact.lifecycle->'pr'->>'mergeCommitSha' IS NOT NULL merged
          FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
         [command.room_id])).rows[0];
       if (corner?.worker === agentId && !corner.merged) {

@@ -1,0 +1,3 @@
+PASS: Copy clipboard equals MCP_STARTER_ROUTINE exactly
+PASS: Clipboard denial selects every instruction on readable separate lines
+PASS: after numbered list captured in Bone and Obsidian, desktop and phone

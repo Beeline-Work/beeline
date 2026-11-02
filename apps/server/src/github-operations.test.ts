@@ -250,8 +250,8 @@ describe('GitHub phone operations', () => {
           });
         } catch (error) {
           if (attempt === 1) await database.query(guard === 'head'
-            ? `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"new-head"') WHERE corner_id=$1`
-            : `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}','{"fetchStartedAt":9000000000000,"total":99}') WHERE corner_id=$1`, [corner]);
+            ? `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"new-head"') WHERE corner_id=$1`
+            : `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary}','{"fetchStartedAt":9000000000000,"total":99}') WHERE corner_id=$1`, [corner]);
           throw error;
         }
       });
@@ -383,7 +383,7 @@ describe('GitHub phone operations', () => {
     'CHECK-HEADER-1: %s replaces the stale rerun summary seen by the phone', async trigger => {
       const { corners, app, payload, headSha } = await checksFixture();
       const corner = corners[0]!;
-      await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle,
+      await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(jsonb_set(lifecycle,
         '{pr,title}','"Fix checks"'),'{pr,targetBranch}','"main"') WHERE corner_id=$1`, [corner]);
       await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
         SELECT workspace_id,id,$2,'member' FROM rooms WHERE id=$1`, [
@@ -428,7 +428,7 @@ describe('GitHub phone operations', () => {
     await operations.processWebhook('check_run',payload);
     const stamp = await read();
     expect(stamp).toBeGreaterThan(0);
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,
       '{checksSummary,statusChangedAt}',to_jsonb($2::double precision)) WHERE corner_id=$1`,[corner,stamp-120]);
     await operations.prChecksStatus({cornerId:corner});
     expect(await read()).toBe(stamp-120);
@@ -455,7 +455,7 @@ describe('GitHub phone operations', () => {
     const { corners, app } = await checksFixture();
     const corner = corners[0]!;
     const newer = { status: 'passing', total: 34, failing: [], checks: [], fetchStartedAt: 9e12 };
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',$2::jsonb)
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',$2::jsonb)
       WHERE corner_id=$1`, [corner, JSON.stringify(newer)]);
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
       app as unknown as GitHubAppClient, 'secret');
@@ -464,7 +464,7 @@ describe('GitHub phone operations', () => {
     const before = await lifecycle();
     await operations.prChecksStatus({ cornerId: corner });
     expect(await lifecycle()).toEqual(before);
-    await database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'checksSummary' WHERE corner_id=$1`, [corner]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=lifecycle-'checksSummary' WHERE corner_id=$1`, [corner]);
     const otherPr = await lifecycle();
     await operations.prChecksStatus({ cornerId: corner, pullRequest: 2 });
     expect(await lifecycle()).toEqual(otherPr);
@@ -480,7 +480,7 @@ describe('GitHub phone operations', () => {
       '22222222-2222-4222-8222-222222222222', HUMAN]);
     await database.query(`INSERT INTO memberships(workspace_id,identity_id,role)
       VALUES('11111111-1111-4111-8111-111111111111',$1,'owner')`, [HUMAN]);
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle,
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(jsonb_set(lifecycle,
       '{pr,title}','"Fix checks"'),'{pr,targetBranch}','"main"') WHERE corner_id=$1`, [corner]);
     const phone = new PhoneService(database, 'http://local.test');
     const readLine = async () => {
@@ -517,7 +517,7 @@ describe('GitHub phone operations', () => {
 
   it('Reproduction stale-green: a pending webhook that reads a green rollup sends a passing review wake', async () => {
     const {corners,app,payload}=await checksFixture();
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,[corners[0]]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,[corners[0]]);
     app.readCommitCheckRollup.mockResolvedValue({state:'passed',total:1,failing:[],checks:[{name:'SERVER INTEGRATION',status:'passed'}]} as never);
     const operations=new GitHubOperations(database,{} as GitHubOAuthClient,app as unknown as GitHubAppClient,'secret');
     await operations.processWebhook('check_run',{...payload,action:'in_progress',check_run:{...payload.check_run,status:'in_progress',conclusion:null}});
@@ -555,7 +555,7 @@ describe('GitHub phone operations', () => {
     const { corners } = await checksFixture();
     const cornerId = corners[0]!;
     await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
-    if (!hasPr) await database.query(`UPDATE corner_facts SET lifecycle='{}'::jsonb WHERE corner_id=$1`, [cornerId]);
+    if (!hasPr) await database.query(`UPDATE corner_github_cache SET lifecycle='{}'::jsonb WHERE corner_id=$1`, [cornerId]);
     const daemon = new DaemonService(database, new LiveHub());
     expect(await daemon.execute('mergeCorner', { cornerId }, REVIEWER)).toEqual({
       status: 'blocked', blocker: 'the corner is closed',
@@ -581,7 +581,7 @@ describe('GitHub phone operations', () => {
     expect(app.readPullRequest).toHaveBeenCalledTimes(1);
     app.readPullRequest.mockResolvedValue({ number: 1, headSha, url: 'https://github.com/owner/widgets/pull/1', mergeability: 'clean' });
     // Advance only this fixture's durable deadline, without a second webhook.
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
     await operations.refreshQueuedChecks();
     expect(app.readPullRequest).toHaveBeenCalledTimes(2);
     const recovered = (await database.query<{ lifecycle: Record<string, unknown> }>(
@@ -633,11 +633,11 @@ describe('GitHub phone operations', () => {
     vi.mocked(captureServerError).mockClear();
     await operations.refreshQueuedChecks();
     expect(captureServerError).not.toHaveBeenCalled();
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
     await operations.refreshQueuedChecks();
     expect(captureServerError).not.toHaveBeenCalled();
     app.readCommitCheckRollup.mockResolvedValue({ state: 'passed', total: 1, failing: [], checks: [] });
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
     await operations.refreshQueuedChecks();
     const recovered = (await database.query<{ lifecycle: Record<string, unknown> }>(
       `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]],
@@ -677,7 +677,7 @@ describe('GitHub phone operations', () => {
     const restarted = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
     await restarted.refreshQueuedChecks();
     expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(8);
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
     await restarted.refreshQueuedChecks();
     const recovered = (await database.query<{ lifecycle: Record<string, unknown> }>(
       `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]],
@@ -701,13 +701,13 @@ describe('GitHub phone operations', () => {
     app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 429, '120'));
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
     await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 429 });
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
     vi.mocked(captureServerError).mockClear();
     app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 502));
     await operations.refreshQueuedChecks();
     expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(5);
     expect(captureServerError).toHaveBeenCalledTimes(1);
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
     app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 403));
     await operations.refreshQueuedChecks();
     await operations.refreshQueuedChecks();
@@ -734,7 +734,7 @@ describe('GitHub phone operations', () => {
     app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 429, '120'));
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
     await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 429 });
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(
       jsonb_set(lifecycle,'{checkRefreshRetry,after}','0'),'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
       [corners[0], '2'.repeat(40)]);
     await operations.refreshQueuedChecks();
@@ -972,7 +972,7 @@ describe('GitHub phone operations', () => {
   it('gives a check suite a browser card URL even when GitHub sends only its API URL', async () => {
     const { corners, headSha, app, payload } = await checksFixture();
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
     await operations.processWebhook('check_suite', {
       ...payload,
       check_suite: {
@@ -995,7 +995,7 @@ describe('GitHub phone operations', () => {
   it.each([4, 5])('Reproduction F1-%s: push/open records checks without another event', async n => {
     const { corners, headSha, app, payload } = await checksFixture();
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
     const realNow = Date.now.bind(Date);
     const clock = vi.spyOn(Date, 'now').mockImplementation(() => realNow() + (new Error().stack?.includes('@electric-sql/pglite') ? 0 : 86_400_000));
     try {
@@ -1030,7 +1030,7 @@ describe('GitHub phone operations', () => {
     const {corners,app}=await checksFixture();
     const operations=new GitHubOperations(database,{} as GitHubOAuthClient,app as unknown as GitHubAppClient,'secret');
     await setCornerOwner(database, corners[0]!, null);
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`,[corners[0]]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`,[corners[0]]);
     expect((await operations.prChecksStatus({cornerId:corners[0]!})).reviewerWake.status).toBe('dispatched');
     await database.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE room_id=$1`,[corners[0]]);
     await database.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`,[corners[0]]);
@@ -1051,7 +1051,7 @@ describe('GitHub phone operations', () => {
     expect(self).not.toHaveProperty('rule');
     expect(self).not.toHaveProperty('reviewerIsAuthor');
     await setCornerOwner(database, corners[0]!, null);
-    await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
+    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"') WHERE corner_id=$1`, [corners[0]]);
     const result = await operations.prChecksStatus({ cornerId: corners[0]! });
     // Repairing the unknown snapshot commits the green transition; the wake
     // reports the resulting dispatch, without a self-review special case.
@@ -1108,7 +1108,7 @@ describe('GitHub phone operations', () => {
         installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
         ref: 'refs/heads/feature/corner-333333330001', after: '2'.repeat(40), commits: [],
       });
-      else await database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'pr' WHERE corner_id=$1`, [corners[0]]);
+      else await database.query(`UPDATE corner_github_cache SET lifecycle=lifecycle-'pr' WHERE corner_id=$1`, [corners[0]]);
       const before = await database.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]]);
       const messages = await database.query(`SELECT id FROM messages WHERE room_id=$1 ORDER BY id`, [corners[0]]);
       release(); await delivery;
@@ -1188,7 +1188,7 @@ describe('GitHub phone operations', () => {
     );
     await insertCornerFacts(database, { cornerId: collision, lifecycle: '{"checks":"unknown"}' });
     await database.query(
-      `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle='{"checks":"unknown"}'::jsonb WHERE corner_id=$1`,
       [corner],
     );
     await operations.processWebhook('pull_request', {
@@ -1619,7 +1619,7 @@ describe('GitHub phone operations', () => {
         if (!recorded && sql.includes(`fact.lifecycle->'pr'->>'number' pr_number`)) {
           recorded = true;
           await super.query(
-            `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr}',$2::jsonb)
+            `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr}',$2::jsonb)
              WHERE corner_id=$1`,
             [
               corner,
@@ -3125,7 +3125,7 @@ describe('GitHub phone operations', () => {
     const { corners, headSha, app } = await checksFixture();
     const corner = corners[0]!;
     await database.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,mergeability}','"dirty"') WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,mergeability}','"dirty"') WHERE corner_id=$1`,
       [corner],
     );
     const readPullRequest = app.readPullRequest as unknown as ReturnType<typeof vi.fn>;
@@ -3162,7 +3162,7 @@ describe('GitHub phone operations', () => {
     // The agent must be a corner member (not just a parent-Room member) for
     // the conflict wake's agent_commands row to be dispatchable.
     await database.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,mergeability}','"dirty"') WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,mergeability}','"dirty"') WHERE corner_id=$1`,
       [corner],
     );
     const readPullRequest = app.readPullRequest as unknown as ReturnType<typeof vi.fn>;

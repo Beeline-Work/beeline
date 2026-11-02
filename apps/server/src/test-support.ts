@@ -1,4 +1,4 @@
-import { assignCornerWorker, seedCornerOpening } from './test-fixtures/corner-commands.js';
+import { assignCornerWorker, seedCornerOpening, seedCornerFactsRow } from './test-fixtures/corner-commands.js';
 export { assignCornerWorker, seedCornerOpening };
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { ensureSystemIdentity, systemLine } from './system-line.js';
@@ -280,11 +280,7 @@ export async function insertCornerFacts(db: SqlDatabase, input: {
 }): Promise<void> {
   const lifecycle = input.lifecycle === undefined || input.lifecycle === null ? null
     : typeof input.lifecycle === 'string' ? input.lifecycle : JSON.stringify(input.lifecycle);
-  await db.query(
-    `INSERT INTO corner_facts(corner_id,lifecycle,locked,reviewer_agent_id)
-     VALUES($1,COALESCE($2::jsonb,'{"lifecycle":"unknown","checks":"unknown"}'::jsonb),$3,$4)`,
-    [input.cornerId, lifecycle, input.locked ?? false, input.reviewerAgentId ?? null],
-  );
+  await seedCornerFactsRow(db, input.cornerId, lifecycle, input.locked ?? false, input.reviewerAgentId ?? null);
   if (input.ownerAgentId && input.commissionedBy && !input.human) {
     await seedCornerOpening(db, { cornerId: input.cornerId, agentId: input.ownerAgentId, commissionedBy: input.commissionedBy });
   } else {

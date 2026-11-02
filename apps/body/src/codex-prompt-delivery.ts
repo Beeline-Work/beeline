@@ -6,7 +6,7 @@ const CACHED = new Set(['turn.session', 'turn.members', 'turn.memory', 'turn.cor
 export interface DeliveryEntry { readonly id: string; readonly text: string }
 const hash = (text: string): string => createHash('sha256').update(text).digest('hex');
 
-/** One confirmed Codex conversation, never persisted across an uncertain load.
+/** One confirmed harness conversation, never persisted across an uncertain load.
  * Assembly stages hashes; only a successful delivery commits them. Compaction
  * invalidates even an in-flight stage, so the next turn restores every block. */
 export class CodexPromptDelivery {

@@ -141,7 +141,7 @@ it.each([['40P01', 3], ['XX000', 1]] as const)('bounds archival retries for %s',
 
 it.skipIf(!postgresUrl).each(['merge webhook', 'agent close', 'phone close'] as const)(
   'Reproduction MERGE-DEADLOCK-1: tagged final reply and %s both commit', async path => {
-  if (path !== 'merge webhook') await db.query(`UPDATE corner_facts SET lifecycle=lifecycle-'pr' WHERE corner_id=$1`, [C]);
+  if (path !== 'merge webhook') await db.query(`UPDATE corner_github_cache SET lifecycle=lifecycle-'pr' WHERE corner_id=$1`, [C]);
   await createAgentCommand(db, { roomId: C, agentId: B, sourceMessageId: null, reason: 'system' });
   let releaseReply!: () => void, replyLocked!: () => void, cancellationStarted!: () => void;
   const resume = new Promise<void>(resolve => { releaseReply = resolve; });

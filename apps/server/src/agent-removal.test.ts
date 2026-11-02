@@ -204,7 +204,7 @@ describe('PhoneService agent removal', () => {
     // The opener is the corner's initial agent (its opening order, `cornerOwnerSql`).
     // Removal retires the helper; it must never close the shared corner.
     await database.query(
-      `UPDATE corner_facts SET lifecycle=lifecycle||$2::jsonb WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=lifecycle||$2::jsonb WHERE corner_id=$1`,
       [
         CORNER,
         JSON.stringify({

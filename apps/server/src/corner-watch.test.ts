@@ -49,7 +49,7 @@ beforeEach(async () => {
   await db.query(`UPDATE rooms SET archived_at=NULL`);
   await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [B, P]);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"lifecycle":"working","checks":"unknown"}'`,
+    `UPDATE corner_github_cache SET lifecycle='{"lifecycle":"working","checks":"unknown"}'`,
   );
   for (const corner of [A, B]) await recordCornerRun(db, corner, 'implement');
 });
@@ -118,7 +118,7 @@ it.each(['non-member', 'self', 'room', 'invalid kind', 'closed kind'])(
 
 it('returns all merged PR snapshot fields from corner facts', async () => {
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       B,
       JSON.stringify({

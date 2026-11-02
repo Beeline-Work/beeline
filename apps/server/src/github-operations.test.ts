@@ -141,8 +141,9 @@ describe('GitHub phone operations', () => {
       AND state IN ('pending','claimed')`, [corner])).rows).toHaveLength(0);
   });
 
-  it.each(['before writes', 'after writes'] as const)(
-    'CHECK-DEADLOCK-1: rolls back and retries %s without refetching or duplicate wakes', async boundary => {
+  it.each(['40P01', '55P03'].flatMap(code =>
+    ['before writes', 'after writes'].map(boundary => ({ code, boundary }))))(
+    'CHECK-LOCK-1: rolls back and retries $code $boundary without refetching or duplicate wakes', async ({ code, boundary }) => {
       const { corners, app, payload } = await checksFixture();
       const corner = corners[0]!;
       app.readCommitCheckRollup.mockResolvedValue({ state: 'failed', total: 1,
@@ -160,9 +161,9 @@ describe('GitHub phone operations', () => {
           expect(changed).not.toHaveBeenCalled();
         }
         if (attempt === 1 && boundary === 'before writes')
-          throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
+          throw Object.assign(new Error('lock conflict'), { code });
         const result = await work(tx);
-        if (attempt === 1) throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
+        if (attempt === 1) throw Object.assign(new Error('lock conflict'), { code });
         return result;
       }));
       await operations.processWebhook('check_run', payload);
@@ -177,8 +178,8 @@ describe('GitHub phone operations', () => {
       expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'kind'='check-failed'`, [corner])).rows).toHaveLength(1);
     });
 
-  it.each(['40P01', '23514'])(
-    'CHECK-DEADLOCK-1: propagates exhausted or nonretryable %s failures with no partial writes', async code => {
+  it.each(['40P01', '55P03', '23514'])(
+    'CHECK-LOCK-1: propagates exhausted or nonretryable %s failures with no partial writes', async code => {
       const { corners, app, payload } = await checksFixture();
       const corner = corners[0]!;
       const changed = vi.fn();
@@ -191,17 +192,17 @@ describe('GitHub phone operations', () => {
         throw failure;
       }));
       await expect(operations.processWebhook('check_run', payload)).rejects.toBe(failure);
-      expect(spy).toHaveBeenCalledTimes(code === '40P01' ? 3 : 1);
+      expect(spy).toHaveBeenCalledTimes(code === '23514' ? 1 : 3);
       expect(changed).not.toHaveBeenCalled();
       expect((await database.query(`SELECT lifecycle->'checksSummary' summary FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.summary).toBeNull();
       expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1`, [corner])).rows).toHaveLength(0);
     });
 
-  it('CHECK-DEADLOCK-1: leaves rollback and replay to the supplied transaction owner', async () => {
+  it.each(['40P01', '55P03'])('CHECK-LOCK-1: leaves %s rollback and replay to the supplied transaction owner', async code => {
     const { corners, headSha, app } = await checksFixture();
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
       app as unknown as GitHubAppClient, 'secret');
-    const failure = Object.assign(new Error('deadlock detected'), { code: '40P01' });
+    const failure = Object.assign(new Error('lock conflict'), { code });
     let nestedCalls = 0;
     await expect(database.transaction(async tx => {
       const supplied: SqlDatabase = {
@@ -222,8 +223,9 @@ describe('GitHub phone operations', () => {
     expect((await database.query(`SELECT lifecycle->'checksSummary' summary FROM corner_facts WHERE corner_id=$1`, [corners[0]])).rows[0]?.summary).toBeNull();
   });
 
-  it.each(['head', 'fetch'])(
-    'CHECK-DEADLOCK-1: revalidates a changed %s after rollback', async guard => {
+  it.each(['40P01', '55P03'].flatMap(code =>
+    ['head', 'fetch'].map(guard => ({ code, guard }))))(
+    'CHECK-LOCK-1: revalidates a changed $guard after $code rollback', async ({ code, guard }) => {
       const { corners, app, payload } = await checksFixture();
       const corner = corners[0]!;
       const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
@@ -235,7 +237,7 @@ describe('GitHub phone operations', () => {
         try {
           return await transaction(async tx => {
             const result = await work(tx);
-            if (attempt === 1) throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
+            if (attempt === 1) throw Object.assign(new Error('lock conflict'), { code });
             return result;
           });
         } catch (error) {

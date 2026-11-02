@@ -60,6 +60,8 @@ jobs:
               - 'scripts/prompt-case-rules.test.ts'
               - 'scripts/prompt-nightly.mjs'
               - 'scripts/prompt-nightly.test.mjs'
+              - 'scripts/prompt-pr-replay.mjs'
+              - 'scripts/prompt-pr-replay.test.mjs'
               - 'scripts/discovery-*.mjs'
               - 'docs/prompts/discovery.md'
               - '.github/workflows/prompt-cases.yml'
@@ -85,5 +87,7 @@ jobs:
         run: npm run test:prompt-cases
       - name: Check nightly replay controls without spending model tokens
         run: npm run test:prompt-nightly
+      - name: Check PR subscription replay controls without model calls
+        run: node --import tsx --test scripts/prompt-pr-replay.test.mjs
       - name: Check capability discovery controls and real local service paths
         run: npm run test:prompt-discovery

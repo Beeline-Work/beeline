@@ -37,6 +37,26 @@
   independently. It checks Android; the fast static native-import gate covers
   both platforms. An OTA promoted without the optional proof is recorded UNPROVEN.
 
+## Production origin checks
+
+Production native release jobs and OTA exports pin `EXPO_PUBLIC_BUZZY_MONOLITH_URL`
+to `https://server.usebeeline.app`. Native release builds use a fresh Metro temp
+cache; each OTA platform's first export clears Metro's cache. A rig's inlined
+URL must never survive into a production artifact.
+
+Before uploading an Android AAB, `scripts/assert-mobile-release-origin.mjs`
+checks both its native `assets/app.config` and the Hermes `loadAppConfig`
+override. A native production URL alone is insufficient: an inlined
+`EXPO_PUBLIC_*` value overrides it at runtime. The check fails closed if it
+cannot verify the embedded function. It adds no app runtime behavior.
+
+Locally built store binaries also need a build-number/runtime identity in
+`apps/mobile/store/native-runtime-builds.json` or the release record. EAS's
+cloud-build inventory does not contain local builds. Publication is still
+verified against Play/App Store Connect; adding an identity does not admit an
+unpublished runtime. The next release rereads live store state before choosing
+OTA targets.
+
 ## Routine release
 
 Firstmate calls the first-party `dispatch_release` agent tool with `{}`, without

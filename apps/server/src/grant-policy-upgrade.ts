@@ -1,3 +1,4 @@
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHash } from 'node:crypto';
 import {
   commandRuleEscalations,
@@ -108,10 +109,10 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
             id: policyLineId('resume', grant.grant_id),
             roomId: grant.room_id,
             authorId: SYSTEM_IDENTITY_ID,
-            subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: '@system' },
-            verb: 'revoked a legacy grant for',
-            object: `${grant.kind} ${grant.target}`,
-            consequence: 'permission policy upgraded',
+            subject: { kind: 'system', id: SYSTEM_IDENTITY_ID, name: systemMessage("grant-policy-upgrade.system") },
+            verb: systemMessage("grant-policy-upgrade.revoked-a-legacy-grant-for"),
+            object: systemMessage("grant-policy-upgrade.grant-target", grant.kind, grant.target),
+            consequence: systemMessage("grant-policy-upgrade.permission-policy-upgraded"),
             kind: 'grant-decided',
             commandId: command.id,
             wakes: [grant.agent_id],

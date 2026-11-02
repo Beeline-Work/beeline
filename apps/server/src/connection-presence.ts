@@ -1,4 +1,5 @@
 import { ServerLeaseDeadlines } from './server-lease-deadlines.js';
+import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { recoverAdapterReviewsOnHelperChange } from './helper-review-recovery.js';
 import { CommanderWakeDeadlines } from './commander-wakes.js';
 import { CornerAttentionDeadlines } from './corner-attention.js';
@@ -908,9 +909,9 @@ async function writeAgentAnnouncement(
       subject: {
         kind: 'agent',
         id: agentId,
-        name: restart.handle ? `@${restart.handle}` : restart.name,
+        name: restart.handle ? systemMessage("connection-presence.agent-mention", restart.handle) : restart.name,
       },
-      verb: 'reconnected after restart',
+      verb: systemMessage("connection-presence.reconnected-after-restart"),
       afterMessageId: restart.source_message_id,
     });
   // Presence is an agent fact. Change one durable row; the PostgreSQL

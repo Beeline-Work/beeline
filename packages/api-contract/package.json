@@ -113,6 +113,11 @@
       "types": "./dist/helper-activation.d.ts",
       "import": "./dist/helper-activation.js",
       "default": "./dist/helper-activation.js"
+    },
+    "./system-message-catalog": {
+      "types": "./dist/system-message-catalog.d.ts",
+      "import": "./dist/system-message-catalog.js",
+      "default": "./dist/system-message-catalog.js"
     }
   },
   "scripts": {

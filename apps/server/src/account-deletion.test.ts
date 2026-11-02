@@ -326,6 +326,13 @@ describe('deleteAccount', () => {
       [CORNER],
       1,
     );
+    // It closes through closeCornerState, as a human close does: the corner
+    // state machine reaches `closed` with the archival.
+    await expectRowCount(
+      `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND workflow_state='closed'`,
+      [CORNER],
+      1,
+    );
     // R-1983-1: the current-implementer pointer clears with the identity it
     // named. A surviving `worker_agent_id` would trip its foreign key on the
     // `DELETE FROM identities` below and fail the whole deletion with a 503.

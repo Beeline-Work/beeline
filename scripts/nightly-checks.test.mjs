@@ -7,7 +7,8 @@ import { classify, easternSlot, runNightly, finishNightly, publishIssues } from 
 const job = (name, conclusion, attempt) => ({ name, conclusion, id: attempt, html_url: `https://example/jobs/${attempt}`, started_at: `2026-01-01T08:0${attempt}:00Z`, completed_at: `2026-01-01T08:0${attempt + 1}:00Z` });
 test('nightly schedule selects 03 Eastern in winter and summer and dispatches all on main', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/nightly-checks.yml', import.meta.url), 'utf8'));
-  assert.equal(workflow.on.schedule[0].cron, '0 7,8 * * *');
+  assert.deepEqual(workflow.on.schedule.map(s => s.cron), ['7 7 * * *', '7 8 * * *']);
+  assert.equal(workflow.jobs.nightly.steps[2].env.SCHEDULE, '${{ github.event.schedule }}');
   assert.equal(workflow.permissions.actions, 'write');
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
   for (const [yes, no] of [['2026-01-01T08:00Z', '2026-01-01T07:00Z'], ['2026-07-01T07:00Z', '2026-07-01T08:00Z']]) {
@@ -120,4 +121,35 @@ test('dispatch and pending rerun do not publish premature failure issues', async
   assert.deepEqual(await publishIssues({api,result:{rerunRequested:true,failures:[{name:'body'}]},runUrl:'https://example/run'}),[]);
   const workflow=parse(readFileSync(new URL('../.github/workflows/nightly-checks-result.yml',import.meta.url),'utf8'));
   assert.equal(workflow.permissions.issues,'write');
+});
+test('scheduled starts reject missed slots and quietly ignore DST twins, including delayed twins', async () => {
+  for (const [date, schedule, late] of [
+    ['2026-01-01T07:07Z', '7 7 * * *', false],
+    ['2026-01-01T08:17Z', '7 7 * * *', false],
+    ['2026-01-01T09:07Z', '7 8 * * *', true],
+    ['2026-07-01T08:07Z', '7 8 * * *', false],
+    ['2026-07-01T09:07Z', '7 8 * * *', false],
+    ['2026-07-01T08:07Z', '7 7 * * *', true],
+    ['2026-11-01T09:07Z', '7 8 * * *', true],
+    ['2026-03-08T08:07Z', '7 7 * * *', true],
+  ]) {
+    const run = runNightly({ schedule, now: () => new Date(date), api: () => assert.fail('must not dispatch'), save: () => assert.fail('must not classify'), pause: () => {} });
+    if (late) await assert.rejects(run, /missed the 03:00 America\/New_York slot/);
+    else assert.equal(await run, undefined);
+  }
+});
+test('correct scheduled trigger enters nightly controller in winter, summer and on DST transition dates', async () => {
+  for (const [date, schedule] of [
+    ['2026-01-01T08:07Z', '7 8 * * *'],
+    ['2026-07-01T07:07Z', '7 7 * * *'],
+    ['2026-03-08T07:07Z', '7 7 * * *'],
+    ['2026-11-01T08:07Z', '7 8 * * *'],
+  ]) {
+    let calls = 0;
+    await runNightly({ schedule, now: () => new Date(date), save: () => {}, api: async () => {
+      calls++;
+      return { workflow_runs: [{ status: 'in_progress' }] };
+    } });
+    assert.equal(calls, 1);
+  }
 });

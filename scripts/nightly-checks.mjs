@@ -27,8 +27,18 @@ export function classify(attempts) {
     runnerMinutes: jobs.reduce((n, j) => n + Math.max(0, (Date.parse(j.completed_at) - Date.parse(j.started_at)) / 60000 || 0), 0) };
 }
 
-export async function runNightly({ api, save, now = () => new Date(), manual = false, requestId = String(Date.now()) }) {
-  if (!manual && !easternSlot(now())) return;
+export async function runNightly({ api, save, now = () => new Date(), manual = false, schedule, requestId = String(Date.now()) }) {
+  if (!manual) {
+    const started = now();
+    const hour = { '7 7 * * *': 7, '7 8 * * *': 8 }[schedule];
+    if (hour === undefined) throw new Error(`Unknown Nightly Checks schedule: ${schedule}`);
+    const intended = new Date(started);
+    intended.setUTCHours(hour, 7, 0, 0);
+    // Select by the trigger, not the start hour: a delayed twin must never
+    // dispatch a second Checks run or raise a false late-start alarm.
+    if (!easternSlot(intended)) return;
+    if (!easternSlot(started)) throw new Error(`Nightly Checks missed the 03:00 America/New_York slot: schedule ${schedule} started at ${started.toISOString()}`);
+  }
   if (!/^\d+$/.test(requestId)) throw new Error('Invalid nightly request identity');
   const releases = await api('GET', 'actions/workflows/unified-release.yml/runs?branch=main&per_page=100');
   if (releases.workflow_runs.some(r => r.status !== 'completed')) {
@@ -138,7 +148,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   try {
     const result = process.env.EVENT_NAME === 'workflow_run'
       ? await finishNightly({ api, save, run: JSON.parse(readFileSync(process.env.GITHUB_EVENT_PATH, 'utf8')).workflow_run })
-      : await runNightly({ api, save, manual: process.env.EVENT_NAME === 'workflow_dispatch', requestId: process.env.GITHUB_RUN_ID });
+      : await runNightly({ api, save, manual: process.env.EVENT_NAME === 'workflow_dispatch', requestId: process.env.GITHUB_RUN_ID, schedule: process.env.SCHEDULE });
     if (result && process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, result.skipped ? `${result.reason}\n` : result.dispatched ? `Nightly Checks dispatched for ${result.requestedSha}; completion follows its workflow event.\n` : `## Nightly Checks\nCommit: ${result.sha}\n\nFailures: ${result.failures.length}; flaky jobs: ${result.flakyJobs.length}\n\nWall clock: ${result.wallClockMinutes.toFixed(2)} minutes; runner time: ${result.runnerMinutes.toFixed(2)} minutes\n\n${result.attempts.map(a => `[Attempt ${a.attempt}](${a.url})`).join(' · ')}\n\n${[...result.failures, ...result.flakyJobs].map(j => `- ${j.name}: ${j.attempts.map(a => `[${a.conclusion}](${a.html_url || a.url})`).join(' → ')}`).join('\n')}\n`);
     await publishIssues({ api, result, runUrl: runLink });
     if (result?.failures?.length) process.exitCode = 1;

@@ -371,11 +371,12 @@ function publish(options) {
     const result = runEas([
       'update', '--branch', branch, '--environment', 'production', '--platform', target.platform,
       '--message', updateMessage(options.sha, target), '--input-dir', join(exportRoot, target.platform),
-      '--source-maps', ...(reuse ? ['--skip-bundler'] : []), '--json', '--non-interactive',
+      '--source-maps', ...(reuse ? ['--skip-bundler'] : ['--clear-cache']), '--json', '--non-interactive',
     ], {
       dryRun: options.dryRun,
       env: {
         EXPO_RUNTIME_OVERRIDE: target.runtimeVersion,
+        EXPO_PUBLIC_BUZZY_MONOLITH_URL: 'https://server.usebeeline.app',
         EXPO_PUBLIC_BEELINE_RELEASE_SHA: options.sha,
         ...(options.releaseVersion ? { EXPO_PUBLIC_BEELINE_RELEASE_VERSION: options.releaseVersion } : {}),
       },

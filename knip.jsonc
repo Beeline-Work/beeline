@@ -335,6 +335,8 @@
         "scripts/wallet-dm-proof.tsx",
         "scripts/connector-switch-proof.tsx",
         "scripts/scheduled-work-proof.tsx",
+        // The inert Room deck frame builder passes this entry to esbuild by path.
+        "scripts/room-deck-unavailable-proof.tsx",
         "scripts/workflow-run-proof.tsx",
         "scripts/member-picker-nav-inset-proof.tsx",
         "scripts/new-room-nav-gap-proof.tsx",

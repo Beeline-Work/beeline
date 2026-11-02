@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {TRAY_CLOCK_HEALTH_SCHEMA,TRAY_CLOCK_HEALTH_PREDICATE_SQL} from './tray-clock-health.js';
 import type {SqlDatabase} from './database.js';
 
 export {readTrayClockBasisCause,type TrayClockBasisCause} from './tray-clock-protocol.js';
@@ -8,6 +9,7 @@ const WORKSPACE_BIRTH=`CREATE TRIGGER beeline_tray_clock_workspace_birth AFTER I
  * routines remain uninstalled/unselected in production until root's migration
  * floor and rollout proofs pass. No per-reader migration state exists. */
 export const TRAY_CLOCK_READINESS_SCHEMA=`
+${TRAY_CLOCK_HEALTH_SCHEMA}
 CREATE TABLE IF NOT EXISTS tray_clock_readiness_floor(
  id integer PRIMARY KEY CHECK(id=1),contract_digest text NOT NULL,fingerprint text NOT NULL,
  seed_cursor uuid,seeding_done boolean NOT NULL DEFAULT false
@@ -132,7 +134,7 @@ const DESCRIPTORS=`SELECT jsonb_build_object(
  'indexes',(SELECT jsonb_agg(jsonb_build_object('name',c.relname,'valid',i.indisvalid,'ready',i.indisready,'definition',pg_get_indexdef(c.oid)) ORDER BY c.relname)
   FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid JOIN pg_namespace ns ON ns.oid=c.relnamespace
   WHERE ns.nspname=current_schema() AND c.relname IN('tray_clock_readiness_rooms_idx','tray_clock_readiness_messages_idx',
-    'tray_clock_readiness_marks_idx','tray_clock_readiness_choices_idx','tray_clock_readiness_source_idx','tray_clock_readiness_pending_idx'))
+    'tray_clock_readiness_marks_idx','tray_clock_readiness_choices_idx','tray_clock_readiness_source_idx','tray_clock_readiness_pending_idx','tray_clock_workspace_due_idx'))
 ) value`;
 const fingerprint=async(db:SqlDatabase)=>(await db.query<{fingerprint:string}>(`SELECT md5(value::text) fingerprint FROM(${DESCRIPTORS}) observed`)).rows[0]!.fingerprint;
 
@@ -150,6 +152,9 @@ export const TRAY_CLOCK_READINESS_PREDICATE_SQL=`COALESCE(clock.ready AND EXISTS
     AND clock_progress.fingerprint=clock_floor.fingerprint
     AND clock_floor.fingerprint=clock_observed.fingerprint
 ),false)`;
+
+/** Read admission requires both complete capture and current drained owner. */
+export const TRAY_CLOCK_READ_PREDICATE_SQL=`(${TRAY_CLOCK_READINESS_PREDICATE_SQL}) AND (${TRAY_CLOCK_HEALTH_PREDICATE_SQL})`;
 
 /** Trusted lifecycle owner only. No route/read accessor invokes this class.
  * Each call processes <=100 existing keys under one real transaction; failure
@@ -189,6 +194,7 @@ export class TrayClockReadiness{
           throw new TrayClockReadinessUnavailable('Tray capture trigger differs from installed source');
       }
       const indexes:Array<{name:string;table:string;columns:string[];predicate?:string}>=[
+        {name:'tray_clock_workspace_due_idx',table:'tray_clock_deadlines',columns:['workspace_id','due_at','id'],predicate:"(state = 'pending'::text)"},
         {name:'tray_clock_readiness_rooms_idx',table:'rooms',columns:['workspace_id','id']},
         {name:'tray_clock_readiness_messages_idx',table:'messages',columns:['room_id','id']},
         {name:'tray_clock_readiness_marks_idx',table:'needs_you_marks',columns:['message_id','identity_id']},

@@ -1,3 +1,4 @@
+import {BACKGROUND_OWNERSHIP_SCHEMA} from './background-ownership.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -39,6 +40,8 @@ describe('uninstalled durable Tray clock source',()=>{
   const consume=(input:TrayClockClaim)=>clock.transaction(tx=>consumeTrayClockInTransaction(tx,input));
   beforeEach(async()=>{
     db=new PgliteDatabase();await db.query(schema);await db.query(DURABLE_LIVE_SCHEMA);
+    await db.query(`CREATE TABLE live_server_instances(instance_id text PRIMARY KEY,renewed_at timestamptz NOT NULL)`);
+    await db.query(BACKGROUND_OWNERSHIP_SCHEMA);
     await db.query(TRAY_CLOCK_SOURCE_SCHEMA.replaceAll('clock_timestamp()','tray_clock_test_now()'));clock=observedClock(db);
     await db.query(`INSERT INTO identities VALUES($1,'human','reader'),($2,'human','other'),($3,'agent','writer')`,[viewer,other,author]);
     await db.query(`INSERT INTO rooms(id,workspace_id) VALUES($1,$2),($3,$4)`,[room,workspace,otherRoom,elsewhere]);

@@ -1,3 +1,4 @@
+import {BACKGROUND_OWNERSHIP_SCHEMA} from './background-ownership.js';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { describe, expect, it } from 'vitest';
@@ -32,6 +33,8 @@ async function rig(run:(reader:SqlDatabase,writer:SqlDatabase)=>Promise<void>){
         PRIMARY KEY(identity_id,message_id));
       CREATE TABLE room_choices(id uuid PRIMARY KEY,workspace_id uuid,room_id uuid,status text,closes_at timestamptz);`);
     await reader.query(DURABLE_LIVE_SCHEMA);
+    await reader.query(`CREATE TABLE live_server_instances(instance_id text PRIMARY KEY,renewed_at timestamptz NOT NULL)`);
+    await reader.query(BACKGROUND_OWNERSHIP_SCHEMA);
     // Controlled DB time makes boundary/race proofs deterministic. This does
     // not claim production owner/timer scheduling proof or install any schema.
     await reader.query(TRAY_CLOCK_SOURCE_SCHEMA.replaceAll('clock_timestamp()','tray_clock_test_now()'));

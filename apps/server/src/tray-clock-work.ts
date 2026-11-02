@@ -5,6 +5,7 @@ import {BackgroundOwnership,type BackgroundEpoch} from './background-ownership.j
 import {TrayClockOwner,type TrayClockDrain,type TrayDeadline} from './tray-clock-owner.js';
 import {TrayChoiceClockOwner,type TrayChoiceDrain} from './tray-choice-clock-owner.js';
 import {readTrayClockWake} from './tray-clock-source.js';
+import {TrayClockHealth} from './tray-clock-health.js';
 import {TrayClockReadinessOwner} from './tray-clock-readiness-owner.js';
 
 /** Migration only, after durable/source schemas. No read path initializes a
@@ -44,6 +45,7 @@ export class TrayClockWork{
   private readonly display:TrayClockOwner;
   private readonly choice:TrayChoiceClockOwner;
   private readonly readiness:TrayClockReadinessOwner;
+  private readonly health:TrayClockHealth;private healthPublished=false;
   private readonly releases:Array<()=>void>=[];
   private readonly now:()=>number;
   private state:State='inactive';private version=0;
@@ -58,7 +60,7 @@ export class TrayClockWork{
     private readonly options:TrayClockWorkOptions){
     this.now=options.now??(()=>performance.now());
     this.display=new TrayClockOwner(ownership);this.choice=new TrayChoiceClockOwner(ownership);
-    this.readiness=new TrayClockReadinessOwner(ownership);
+    this.readiness=new TrayClockReadinessOwner(ownership);this.health=new TrayClockHealth(ownership);
     this.leadership={acquired:async(connection,signal)=>{
       this.retireConnection();this.connection=connection;this.connectionSignal=signal;
       const lost=()=>{if(this.connection===connection)this.retireConnection();};
@@ -105,7 +107,7 @@ export class TrayClockWork{
     if(this.state==='closed')return;
     const already=this.state==='parked'||this.state==='inactive';
     this.state='parked';this.version++;this.recoveryPending=false;this.sourceDirty=false;this.position=undefined;
-    this.readinessDirty=false;this.readinessPending=false;this.readinessPosition=undefined;this.readiness.clear();
+    this.readinessDirty=false;this.readinessPending=false;this.readinessPosition=undefined;this.readiness.clear();this.healthPublished=false;
     this.displayJob={pending:false};this.choiceJob={pending:false};this.dropEpoch();
     if(!already)this.options.unavailable(reason);
     // Cancel an already armed leader deadline without admitting any DB read.
@@ -131,7 +133,7 @@ export class TrayClockWork{
   private async acquire():Promise<void>{
     if(!this.connection||this.connectionSignal?.aborted||this.state==='closed')return;
     this.dropEpoch();const version=++this.version;this.state='opening';this.recoveryPending=false;
-    this.sourceDirty=false;this.readinessDirty=false;this.readinessPending=false;this.readiness.clear();
+    this.sourceDirty=false;this.readinessDirty=false;this.readinessPending=false;this.readiness.clear();this.healthPublished=false;
     this.displayJob={pending:false};this.choiceJob={pending:false};
     if(!this.options.listenerReady()){this.park('listener',false);return;}
     let epoch:BackgroundEpoch|undefined;
@@ -204,6 +206,10 @@ export class TrayClockWork{
         if(!this.current(version,epoch))return Infinity;this.adopt(job,result);
       }
       if(this.sourceDirty||this.readinessDirty||this.readinessPending)return 0;
+      if(!this.healthPublished&&[this.displayJob,this.choiceJob].every(job=>!job.pending&&(!job.next||job.next.claim.remainingMs>0))){
+        await this.health.publish(epoch);
+        if(!this.current(version,epoch))return Infinity;this.healthPublished=true;
+      }
       return Math.max(0,Math.min(this.displayJob.next?.at??Infinity,this.choiceJob.next?.at??Infinity)-this.now());
     }catch(error){
       // A failed pass supplies neither a deadline nor a synthetic wake. Only

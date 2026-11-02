@@ -6,6 +6,7 @@ import {TRAY_CLOCK_OWNER_SCHEMA} from './tray-clock-owner.js';
 import {TRAY_CLOCK_SOURCE_SCHEMA} from './tray-clock-source.js';
 import {TrayClockReadiness,readTrayClockReadiness} from './tray-clock-readiness.js';
 import {TrayClockWork,TRAY_CLOCK_WORK_SCHEMA} from './tray-clock-work.js';
+import {readTrayClockHealth} from './tray-clock-health.js';
 import {LiveHub} from './live.js';
 import {installBackgroundOwnerTestProof,backgroundOwnerTestLock} from './test-fixtures/background-owner-test-support.js';
 
@@ -44,7 +45,8 @@ describe('actual-schema aggregate-owned Tray readiness composition',()=>{
 
   it('backfills205 pre-feature sources and an empty Workspace under one epoch, then becomes read-idle',async()=>{
     const step=vi.spyOn(TrayClockReadiness.prototype,'step'),init=vi.spyOn(TrayClockReadiness.prototype,'initialize'),owned=vi.spyOn(ownership,'withTransaction');
-    await attach();expect(await finish()).toBeGreaterThan(0);
+    await attach();expect(await readTrayClockHealth(db,WS)).toBe(false);expect(await finish()).toBeGreaterThan(0);
+    expect(await readTrayClockHealth(db,WS)).toBe(true);
     expect((await readTrayClockReadiness(db,WS))?.ready).toBe(true);expect((await readTrayClockReadiness(db,OTHER))?.ready).toBe(true);
     expect((await db.query(`SELECT count(*)::int n FROM tray_clock_deadlines WHERE kind='question-age'`)).rows).toEqual([{n:205}]);
     expect(init).toHaveBeenCalledOnce();expect(owned.mock.calls.filter(call=>call[1]==='tray.readiness').length).toBeGreaterThan(5);

@@ -60,7 +60,11 @@ import { backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, closeStal
 import { retireAgentClasses } from './agent-class-retirement.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
-import { syncTopLevelSharedRoomRoles } from './membership-join.js';
+import {
+  retireWorkspaceBansSql,
+  perItemMembershipSubscriptionCleanupSql,
+  syncTopLevelSharedRoomRoles,
+} from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
@@ -888,15 +892,7 @@ CREATE TABLE IF NOT EXISTS memberships (
 -- person simply needs a fresh invite to rejoin (the invite itself is now
 -- single-use). Existing ban rows become plain removals before the table goes,
 -- so no banned person is restored by the drop.
-DO $$
-BEGIN
-  IF to_regclass('workspace_bans') IS NOT NULL THEN
-    UPDATE memberships m SET removed_at=now()
-    FROM workspace_bans b
-    WHERE m.workspace_id=b.workspace_id AND m.identity_id=b.identity_id AND m.removed_at IS NULL;
-  END IF;
-END;
-$$;
+${retireWorkspaceBansSql()}
 DROP TRIGGER IF EXISTS membership_workspace_ban ON memberships;
 DROP FUNCTION IF EXISTS enforce_workspace_ban();
 DROP TABLE IF EXISTS workspace_bans;
@@ -4103,12 +4099,7 @@ export async function backfillSystemEventKinds(database: SqlDatabase): Promise<v
  */
 export async function backfillPerItemEventSubscriptions(database: SqlDatabase): Promise<number> {
   return boundedMigrationUpdate(database, 'per-item event subscriptions',
-    `UPDATE memberships SET event_subscriptions=COALESCE(
-       (SELECT jsonb_agg(elem) FROM jsonb_array_elements_text(event_subscriptions) elem
-        WHERE NOT (elem=ANY($1::text[]))),
-       '[]'::jsonb
-     )
-     WHERE id IN (SELECT id FROM memberships WHERE event_subscriptions ?| $1::text[] ORDER BY id LIMIT $2)`,
+    perItemMembershipSubscriptionCleanupSql(),
     [PER_ITEM_EVENT_KINDS],
   );
 }

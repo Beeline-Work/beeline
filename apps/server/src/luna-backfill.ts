@@ -1,3 +1,4 @@
+import { writeActiveRoomMembersEventSubscriptions } from './membership-join.js';
 import { createHash } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import { createFreeAgentInWorkspace, FREE_AGENT_EVENT_SUBSCRIPTIONS, LUNA_BACKFILL_HELLO, type FreeAgentConfig } from './free-agents.js';
@@ -75,9 +76,7 @@ export async function backfillLuna(database: SqlDatabase, config: FreeAgentConfi
       }, { workspaceId: current.workspace_id, creatorId: current.owner_id, roomId: current.room_id,
         name: 'Luna', silent: true, team: true });
       if (!luna) return 'owner at agent limit';
-      await db.query(`UPDATE memberships SET event_subscriptions=$3::jsonb
-        WHERE identity_id=ANY($1::text[]) AND room_id=$2 AND removed_at IS NULL`,
-        [[current.beebee_id, luna], current.room_id, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
+      await writeActiveRoomMembersEventSubscriptions(db, [[current.beebee_id, luna], current.room_id, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
       await db.query(`UPDATE free_agents SET starter_role='beebee' WHERE agent_id=$1 AND starter_role IS NULL`, [current.beebee_id]);
       await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) ON CONFLICT(id) DO NOTHING`, [
         createHash('sha256').update(`luna-backfill-intro:${current.workspace_id}`).digest('hex'),

@@ -1,3 +1,4 @@
+import { BackgroundWork, startBackgroundWork } from './background-work.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { isIP } from 'node:net';
@@ -296,20 +297,15 @@ export async function expireComputerSessions(database: SqlDatabase, live: LiveHu
 
 const COMPUTER_EXPIRY_SWEEP_MS = 15_000;
 
-/** Sweeps once now, then on an interval. The returned function stops it. */
+/** Local channel cleanup runs at startup and on its work queue deadline. */
 export function startComputerExpirySweep(database: SqlDatabase, live: LiveHub, intervalMs = COMPUTER_EXPIRY_SWEEP_MS): () => void {
-  let running = false;
-  const sweep = () => {
-    if (running) return;
-    running = true;
-    void expireComputerSessions(database, live)
-      .catch((error: unknown) => console.warn('[computer-share] expiry sweep failed', error instanceof Error ? error.message : error))
-      .finally(() => { running = false; });
-  };
-  sweep();
-  const timer = setInterval(sweep, intervalMs);
-  timer.unref?.();
-  return () => clearInterval(timer);
+  const work = new BackgroundWork();
+  work.add('computer-expiry', intervalMs, async () => {
+    await expireComputerSessions(database, live)
+      .catch((error: unknown) => console.warn('[computer-share] expiry sweep failed', error instanceof Error ? error.message : error));
+  });
+  const stop = startBackgroundWork(work);
+  return () => { void stop(); };
 }
 
 /** One authoritative read when a live viewer's socket reconnects. */

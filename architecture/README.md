@@ -9,6 +9,15 @@ The check reads behaviour boundaries, never bytes: editing an owner file,
 renaming a function, or moving an existing site to another file passes. A
 failure names the rule, every site, and the one way to comply.
 
+The command-creation, live-notify, membership-write and server-interval rules
+have zero exceptions. Command creation lives in `agent-command.ts`, including
+explicit connected-app calls that start claimed. `membership-join.ts` owns
+membership SQL and its conflict policies; callers pass their current transaction
+and retain access checks. `postgres-live.ts` owns named notifiers and SQL
+expressions for atomic CTE/trigger notifications. `background-work.ts` drives
+instance-local jobs by their queue deadlines and owns cancellable timeout chains
+for live connections. Their close handlers cancel the chain.
+
 ## Storage registry (bloat inside a module)
 
 `storage` in `invariants.json` registers every table, column and jsonb key,

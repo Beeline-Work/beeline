@@ -1,3 +1,4 @@
+import { notifyUsageRefreshRequest, publishUsageRefreshResult } from './postgres-live.js';
 import { randomUUID } from 'node:crypto';
 import {
   readAgentUsage,
@@ -11,7 +12,6 @@ import { agentHelperOnline } from './agent-sign-in.js';
 import type { SqlDatabase } from './database.js';
 import { freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentLimitsFromEnv } from './free-agent-limits.js';
 import type { LiveEvent, LiveHub } from './live.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 /**
  * Plan usage belongs to an account, not an agent. A helper's quota-axi read
@@ -279,13 +279,7 @@ export async function notifyUsageRefreshResult(
   requestId?: string,
 ): Promise<void> {
   if (requestId !== undefined && !REQUEST_ID.test(requestId)) throw new Error('invalid usage refresh request');
-  await database.query(`SELECT pg_notify($1, $2)`, [
-    POSTGRES_LIVE_CHANNEL,
-    JSON.stringify({
-      table: USAGE_REFRESH_RESULT_TABLE, operation: 'UPDATE', roomId: '', agentId, outcome,
-      ...(requestId ? { requestId } : {}),
-    }),
-  ]);
+  await publishUsageRefreshResult(database, agentId, outcome, requestId);
 }
 
 /** What a posted read found, for a refresh that waits on it. Context-only and in-turn updates say nothing. */
@@ -328,10 +322,7 @@ export async function requestUsageRefresh(
       })
     : Promise.resolve<UsageRefreshOutcome>({ status: 'no_answer' });
   try {
-    await database.query(`SELECT pg_notify($1, $2)`, [
-      POSTGRES_LIVE_CHANNEL,
-      JSON.stringify({ table: USAGE_REFRESH_TABLE, operation: 'UPDATE', roomId: '', agentId, requestId }),
-    ]);
+    await notifyUsageRefreshRequest(database, agentId, requestId);
     return await answer;
   } finally {
     release();

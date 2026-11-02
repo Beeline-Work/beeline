@@ -1,3 +1,4 @@
+import { restoreRoomMembership, ensureRoomMembership } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql, readCornerObjective, writeCornerObjective } from './corner-objective.js';
 import { owedMentions, clearOwedMention, mentionReplyKey, mentionReplyId } from './owed-mentions.js';
@@ -6200,11 +6201,7 @@ export class DaemonService {
         [roomId, request.workspace_id, request.author_id, JSON.stringify(participants)],
       );
       for (const participant of participants)
-        await this.database.query(
-          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')
-         ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL DO UPDATE SET removed_at=NULL`,
-          [request.workspace_id, roomId, participant],
-        );
+        await restoreRoomMembership(this.database, [request.workspace_id, roomId, participant]);
       await systemLine(this.database, {
         roomId,
         subject: { kind: 'agent', id: agentId, name: systemMessage("daemon-service.your-agent") },
@@ -8937,10 +8934,7 @@ export class DaemonService {
       [room.workspace_id, agentId],
     );
     if (!workspaceMember.rowCount) throw new Error('daemon workspace access denied');
-    await this.database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,
-      [room.workspace_id, input.roomId, agentId],
-    );
+    await ensureRoomMembership(this.database, [room.workspace_id, input.roomId, agentId]);
     return this.writeResult();
   }
   private async identity(agentId: string) {

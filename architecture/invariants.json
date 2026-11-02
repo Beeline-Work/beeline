@@ -3,7 +3,7 @@
     {
       "id": "work.command-creation",
       "module": "Work authority",
-      "invariant": "Agent commands are created only by createAgentCommand; only a command authorizes a turn.",
+      "invariant": "Agent commands are created only by agent-command.ts creation functions; only a command authorizes a turn.",
       "pattern": "INSERT\\s+INTO\\s+agent_commands\\b",
       "flags": "i",
       "scope": [
@@ -12,8 +12,8 @@
       "owners": [
         "apps/server/src/agent-command.ts"
       ],
-      "total": 1,
-      "fix": "Call createAgentCommand(db, {...}) from apps/server/src/agent-command.ts instead of inserting the row; it owns depth, dedupe and wake routing."
+      "total": 0,
+      "fix": "Call createAgentCommand(db, {...}) or createClaimedMcpAgentCommand for an explicit connected-app call in apps/server/src/agent-command.ts instead of inserting the row; it owns depth, dedupe and wake routing."
     },
     {
       "id": "corner.state-writes",
@@ -74,20 +74,20 @@
       "owners": [
         "apps/server/src/postgres-live.ts"
       ],
-      "total": 15,
+      "total": 0,
       "fix": "Publish through a named notifier in apps/server/src/postgres-live.ts (add one beside notifyConnectorAssignment) and call it, so LiveNotification and its decoder cover the event."
     },
     {
       "id": "timers.server-interval",
       "module": "Background work and timers",
-      "invariant": "Server background work runs on the leader's work queue, not on free-running intervals.",
+      "invariant": "Server background work runs on owned work queues or connection timeout chains, not on free-running intervals.",
       "pattern": "\\bsetInterval\\s*\\(",
       "scope": [
         "apps/server/src"
       ],
       "owners": [],
-      "total": 7,
-      "fix": "Use one of three shapes: a global job via the leader's work.add in apps/server/src/background.ts; a timeout chain owned by one connection and cleared in its close handler; or a due-time wake (agent_schedules/work_schedules). Do not add a setInterval."
+      "total": 0,
+      "fix": "Use leader work.add for shared jobs; startBackgroundWork in apps/server/src/background-work.ts for instance-local memory flushes/channel cleanup; startConnectionWork there for a connection-owned timeout chain cancelled on close; or a due-time wake (agent_schedules/work_schedules). Do not add a setInterval."
     },
     {
       "id": "access.membership-writes",
@@ -101,7 +101,7 @@
       "owners": [
         "apps/server/src/membership-join.ts"
       ],
-      "total": 40,
+      "total": 0,
       "fix": "Change membership through a named helper in apps/server/src/membership-join.ts (add one there if needed) and call it."
     },
     {

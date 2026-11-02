@@ -1,3 +1,4 @@
+import { notifySentryWake } from './postgres-live.js';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { quoteOutsideData } from '@beeline/api-contract/phone';
 import { redactDiagnostic } from '@beeline/api-contract/error-reporting';
@@ -5,7 +6,6 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import { createAgentCommand } from './agent-command.js';
 import { ensureSystemIdentity } from './system-line.js';
-import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
 export function sentryWakeAgentFromEnv(env: NodeJS.ProcessEnv = process.env): string {
   const agentId = env.BEELINE_SENTRY_TRIAGE_AGENT_ID ?? '7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877';
@@ -104,8 +104,7 @@ export async function receiveSentryWake(db: SqlDatabase, raw: Buffer,
       (Array.isArray(event.tags) && event.tags.some(tag => Array.isArray(tag) && tag[0] === 'handled' && tag[1] === 'no')) ||
       (Array.isArray(object(event.exception).values) && (object(event.exception).values as unknown[]).some(
         value => object(object(value).mechanism).handled === false)),pending]);
-    await tx.query(`SELECT pg_notify($1,$2)`, [POSTGRES_LIVE_CHANNEL,
-      JSON.stringify({ table: 'sentry_wake_state', operation: 'UPDATE', roomId: '' })]);
+    await notifySentryWake(tx);
   });
   await flushSentryWakes(db, agentId);
   return 200;

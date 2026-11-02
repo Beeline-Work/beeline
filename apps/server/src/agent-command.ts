@@ -1,3 +1,4 @@
+import { subscribeConfiguredReviewers } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
@@ -615,6 +616,25 @@ export async function supersededReview(db: SqlDatabase, command: CommandRow): Pr
       OR fact.lifecycle->'pr'->'number' IS DISTINCT FROM $3::jsonb)`,
     [command.review_context.cornerId ?? command.room_id, command.review_context.headSha,
       JSON.stringify(command.review_context.pullRequest)])).rowCount);
+}
+
+/** An explicit connected-app call starts claimed, without queueing a second wake.
+ * Its clamped depth and root provenance match the connected-app call contract. */
+export async function createClaimedMcpAgentCommand(db: SqlDatabase, input: {
+  roomId: string; agentId: string; generationId: string;
+  parent?: Pick<CommandRow, 'root_command_id' | 'root_source_message_id' | 'agent_depth'>;
+  requesterMessageId?: string;
+}): Promise<string> {
+  const id = randomBytes(32).toString('hex');
+  const chain = input.parent;
+  await db.query(
+    `INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,
+       root_source_message_id,agent_depth,state,generation_id,lease_expires_at,claimed_at)
+     VALUES($1,$2,$3,NULL,$1,'input','mcp_call',$4,$5,$6,'claimed',$7,now()+interval '90 seconds',now())`,
+    [id, input.roomId, input.agentId, chain?.root_command_id ?? id,
+      chain?.root_source_message_id ?? input.requesterMessageId ?? id,
+      chain ? Math.min(chain.agent_depth + 1, COMMAND_MAX_DEPTH) : 0, input.generationId]);
+  return id;
 }
 
 export async function createAgentCommand(
@@ -2515,18 +2535,7 @@ export async function reconcileConfiguredCornerReviewers(
   refreshHead?: (cornerId: string) => Promise<void>,
 ): Promise<{ subscriptions: number; commands: number }> {
     db = new CornerAccessDatabase(db);
-  const subscriptions = await db.query(
-    `UPDATE memberships reviewer_membership
-     SET event_subscriptions=reviewer_membership.event_subscriptions||'["check-passed"]'::jsonb
-     FROM rooms surface
-     JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
-     WHERE surface.parent_id IS NULL AND reviewer_membership.room_id=surface.id
-       AND reviewer_membership.identity_id=parent.reviewer_agent_id
-       AND reviewer_membership.removed_at IS NULL
-       AND NOT reviewer_membership.event_subscriptions @> '["check-passed"]'::jsonb
-       AND ($1::uuid IS NULL OR parent.id=$1)`,
-    [parentRoomId ?? null],
-  );
+  const subscriptions = await subscribeConfiguredReviewers(db, [parentRoomId ?? null]);
   // Older webhook deliveries could persist a green lifecycle while their
   // deduplicated GitHub note never created a check-passed fact. Give those
   // heads a durable source for both review dispatch and reviewer handback.

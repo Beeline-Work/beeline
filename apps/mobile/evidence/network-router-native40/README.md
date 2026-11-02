@@ -1,0 +1,31 @@
+# Historical native40 network and renderer probes
+
+2026-11-02. The scoped native checks passed; the 25 MiB responsiveness check remains **OPEN** because it measured a multi-second synchronous JS stall.
+
+The unchanged historical-source local APK has SHA256 `00eb69f56cce366a72e6b2631a473626e60050a69f12e7e2f5e2f35f927644be`, native source `62a2695724540f2a300bb2f06fd9994fd72ab713`, Android runtime resource `40`, versionCode `27` and versionName `0.2.22`. This is the authorized walkthrough's local historical build, not the Play-distributed build. The fresh API35 x86_64 emulator used two cores, 2048 MiB, software graphics and Android WebView `124.0.6367.219`.
+
+Candidate JS was loaded through a synthetic update in this disposable installation's Expo cache. The APK, DEX and native libraries were unchanged. The final synthetic update recorded two successful launches and zero failures; the fixture reported runtime40, non-embedded launch and no emergency fallback. [Provenance](provenance.json) records each bundle SHA256 and the exact imported production source hashes. The original `878cfa8a` text was a fixture/build-base stamp, not an exact candidate-commit assertion. Containment source is recorded separately from commit `93e34e6dc`; the index guard is `dc3ad2c32`.
+
+| Probe | Observed result |
+| --- | --- |
+| Script-off markup while JS is stalled for 1.5 seconds | The top-level CSP control made one refresh request. The production inert srcdoc sandbox painted its content and made zero image/style/frame/refresh/poll requests to the test sink. [Control](control.png), [sandbox](sandbox.png). |
+| Generated PDF | The production vendored pdf.js document painted `NATIVE40 PDF RENDERED`; its completion signal arrived. [Frame](pdf.png). |
+| Shared immutable bytes and native file URI | Three concurrent consumers shared one 177-byte HTTP download. A fresh cache instance restored the authorized disk entry without another download; the native image decoded the local file. Purge removed the stored URI. |
+| Download bound | Eight HTTP bodies reached a measured maximum of four concurrent downloads. |
+| Existing browser card and full viewer | Actual FlatList overscan for 74.8 seconds caused zero metadata/browser requests. A real swipe admitted one metadata read and one preview stream. Existing Open replaced it with one full stream. Native Home closed the stream; resume reopened it without another metadata read. Existing Close restored only the card; scrolling away closed it. Maximum active streams stayed at one. Another 57.3 seconds hidden caused zero metadata/browser requests. [Card](computer-card.png), [viewer](computer-open.png), [hidden](computer-hidden.png). |
+| Native disk bound | Five actual 25 MiB writes, same-key replacement and a 4 MiB write reached at most 131,072,576 resident bytes, below 128 MiB. Oversized input was rejected, the oldest entry was evicted and clear succeeded. This samples completed writes; atomic temporary-file peak has separate source regression coverage. |
+| Responsiveness — OPEN | Pure production base64 encoding of 25 MiB took 2,841.6 ms synchronously. Actual 25 MiB store writes took 2,776–3,030 ms wall time; the bounded animation-frame sampler saw a 2,959.8 ms maximum gap. These emulator measurements do not establish a phone performance pass. |
+
+[Measurements](measurements.json) retain the scoped counts, timings and stream transitions. The byte-cache probe explicitly supplies an authorization stand-in. The browser probe replaces only metadata, modal fallback and the authenticated conversation dock; its metadata and page stream are synthetic loopback services. These checks exercise the production cache, renderer and browser visibility code, not real account authority, the main phone socket, membership removal, clipboard, command delivery or the full Room UI.
+
+The emulator and ADB server ran inside a new network and PID namespace, with loopback only and all writable fixture state under the owning worktree. No account was created or signed in; no shared device, owner state, production endpoint or walkthrough session was used. OS/background traffic is outside the scoped sink counts; zero total network traffic is not claimed. APKs, databases, keys, raw device logs and packet captures are excluded from this portable evidence.
+
+## Repeating the probe
+
+[Fixture source](fixture-source.md) preserves the disposable entry and narrow adapters. Restore those files into a temporary mobile `scripts/network-native40-proof` directory, use a task-owned `NATIVE40_PROOF_ROOT`, and select its Metro configuration with `EXPO_OVERRIDE_METRO_CONFIG`. `expo export:embed` accepts `--entry-file scripts/network-native40-proof/entry.tsx --platform android --dev false --bytecode --max-workers 2`; its `--config` argument did not select the Metro override in this installed CLI. Keep Metro cache, TMPDIR, HOME, AVD and ADB state private. Do not replace the normal app entry or Metro configuration.
+
+Install only an explicitly supplied authorized historical APK into a fresh rootable AVD in a new isolated network/PID namespace. The synthetic Expo update must match runtime40 and the actual fresh database schema; embedded-style null origin/header fields let the offline launcher select it. Never alter another installation, production OTA/channel state or credential storage. Verify exact APK/bundle hashes, native runtime, selected update, successful launches and absence of emergency fallback before counting results. Stop the private emulator/server after capture.
+
+## Remaining cohort evidence
+
+This proves one historical native40 emulator cohort with local candidate JS. Physical phones, iOS, Tauri, real authorization/removal delivery, private admission integration and OTA adoption remain separate gates. The authorized walkthrough report's 07:40Z snapshot independently records runtime40 production OTA `01a19b15-2d1c-7d92-b89e-762a4ec16f2f`, source `e1c802fad`, with two successful launches and zero failures. That separate walkthrough result is not inferred from these fixtures.

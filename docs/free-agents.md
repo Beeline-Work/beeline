@@ -412,3 +412,13 @@ Connect then failed because the persisted marker's parent inode was 218 while
 the directory's inode was 81. Reanchoring that metadata, preserving the account
 binding, advanced connect to `needs-sign-in` with a sign-in page. Account sign-in
 and the post-release fresh-signup proof remain outstanding.
+
+The hosted broker unit also reconciles its marker in `ExecStartPre`, so a service
+restart repairs the anchor without another VM boot. `broker-image-proof.mjs`
+connects a real pinned Squire broker, replaces its persisted parent directory,
+demonstrates rejection of the stale marker, and reconnects after starting the
+same unit. It preserves a fixture account binding and profile data. This Docker
+directory-replacement proof does not claim a real signed-in account survived a
+Fly image update; that production acceptance check remains separate. Mahesh's
+never-signed-in account correctly reaches `needs-sign-in` and needs no operator
+sign-in or outward message.

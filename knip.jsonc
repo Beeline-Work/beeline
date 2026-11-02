@@ -151,6 +151,8 @@
         "scripts/render-card-buttons.mjs",
         "scripts/card-button-gallery.tsx",
         "scripts/card-buttons-native-proof.tsx",
+        // The Room deck recovery evidence builder selects this standalone renderer by path.
+        "scripts/room-deck-unavailable-proof.tsx",
         // evidence/trusty-squire-connect/README.md selects this native entry and Metro adapter by path.
         "scripts/trusty-squire-native-proof.tsx",
         "scripts/proof-shims/*.{ts,tsx,cjs}",

@@ -1,0 +1,1 @@
+11-02 09:36:50.024  4545  4585 I HermesVM: Compiling JS failed: Buffer is smaller than the size stated in the file header. Expected at least 13057588 bytes but got 5390336 bytes, sourceURL: /data/user/0/app.usebeeline/files/.expo-internal/476c58244eee1d476b04526cdcedbd89

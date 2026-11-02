@@ -1,0 +1,149 @@
+// FILE: android-context.kt
+package android.content
+import java.io.File
+open class Context {
+  val filesDir = File(".")
+  fun getSystemService(name: String): Any? = null
+  companion object { const val CONNECTIVITY_SERVICE = "connectivity" }
+}
+// FILE: android-net.kt
+package android.net
+import java.io.File
+class Uri { companion object { fun fromFile(file: File) = file.toURI() } }
+class ConnectivityManager { val isActiveNetworkMetered = false }
+// FILE: android-util.kt
+package android.util
+object Base64 {
+  const val URL_SAFE = 1; const val NO_PADDING = 2; const val NO_WRAP = 4
+  fun encodeToString(bytes: ByteArray, flags: Int) = java.util.Base64.getUrlEncoder().withoutPadding().encodeToString(bytes)
+}
+object Log { fun e(tag: String, message: String, error: Throwable) = 0 }
+// FILE: annotations.kt
+package androidx.annotation
+annotation class VisibleForTesting(val otherwise: Int = 0) { companion object { const val PRIVATE = 1 } }
+// FILE: json.kt
+package org.json
+class JSONObject(source: String = "{}") {
+  fun keys() = emptyList<String>().iterator()
+  operator fun get(key: String): Any = ""
+}
+class JSONArray(source: String) { fun length() = 0; fun getString(index: Int) = "" }
+// FILE: config.kt
+package expo.modules.updates
+object BuildConfig { const val EX_UPDATES_COPY_EMBEDDED_ASSETS = false }
+class UpdatesConfiguration {
+  val scopeKey = "proof"; val hasEmbeddedUpdate = true
+  val checkOnLaunch = CheckAutomaticallyConfiguration.ALWAYS
+  enum class CheckAutomaticallyConfiguration { NEVER, ERROR_RECOVERY_ONLY, WIFI_ONLY, ALWAYS }
+}
+// FILE: enums.kt
+package expo.modules.updates.db.enums
+enum class UpdateStatus { READY, EMBEDDED, DEVELOPMENT, PENDING }
+// FILE: entities.kt
+package expo.modules.updates.db.entity
+import java.util.Date
+import java.util.UUID
+import expo.modules.updates.db.enums.UpdateStatus
+class AssetEntity(val key: String?, val type: String?) {
+  var id = 0L; var relativePath: String? = null; var hash: ByteArray? = null
+  var expectedHash: String? = null; var isLaunchAsset = true
+  var embeddedAssetFilename: String? = null; var downloadTime: Date? = null
+  fun getFileExtension() = ".hbc"
+}
+class UpdateEntity(val sequence: Int, var status: UpdateStatus = UpdateStatus.READY) {
+  val id = UUID.randomUUID(); var scopeKey = "proof"; var failedLaunchCount = 0
+  fun debugInfo() = id.toString()
+}
+// FILE: database.kt
+package expo.modules.updates.db
+import expo.modules.updates.db.entity.*
+import expo.modules.updates.db.enums.UpdateStatus
+import java.util.UUID
+class UpdatesDatabase(val updates: MutableList<UpdateEntity>, val assets: MutableMap<UUID, AssetEntity>) {
+  fun updateDao() = UpdateDao(this)
+  fun assetDao() = AssetDao(this)
+}
+class UpdateDao(val db: UpdatesDatabase) {
+  fun loadLaunchableUpdatesForScope(scope: String) = db.updates.filter { it.status != UpdateStatus.PENDING }
+  fun loadLaunchAssetForUpdate(id: UUID) = db.assets[id]
+  fun markUpdateAccessed(update: UpdateEntity) {}
+  fun markUpdatesWithMissingAssets(assets: List<AssetEntity>) {
+    db.updates.filter { db.assets[it.id] in assets }.forEach { it.status = UpdateStatus.PENDING }
+  }
+  fun loadUpdateWithId(id: UUID) = db.updates.find { it.id == id }
+  fun insertUpdate(update: UpdateEntity) { db.updates.add(update) }
+  fun markUpdateFinished(update: UpdateEntity) { update.status = UpdateStatus.READY }
+  fun setUpdateScopeKey(update: UpdateEntity, scope: String) { update.scopeKey = scope }
+}
+class AssetDao(val db: UpdatesDatabase) {
+  fun loadAssetsForUpdate(id: UUID) = listOfNotNull(db.assets[id])
+  fun updateAsset(asset: AssetEntity) {}
+  fun loadAssetWithKey(key: String?) = db.assets.values.find { it.key == key }
+  fun mergeAndUpdateAsset(existing: AssetEntity, asset: AssetEntity) {}
+  fun addExistingAssetToUpdate(update: UpdateEntity, asset: AssetEntity, isLaunch: Boolean) = true
+  fun insertAssets(assets: List<AssetEntity>, update: UpdateEntity) { assets.firstOrNull()?.let { db.assets[update.id] = it } }
+}
+// FILE: logging.kt
+package expo.modules.updates.logging
+enum class UpdatesErrorCode { AssetsFailedToLoad, UpdateFailedToLoad, Unknown }
+class UpdatesLogger {
+  fun info(message: String) {}
+  fun warn(message: String, code: UpdatesErrorCode = UpdatesErrorCode.Unknown) {}
+  fun error(message: String, error: Throwable, code: UpdatesErrorCode) {}
+}
+// FILE: manifest.kt
+package expo.modules.updates.manifest
+import android.content.Context
+import expo.modules.updates.UpdatesConfiguration
+import expo.modules.updates.db.UpdatesDatabase
+import expo.modules.updates.db.entity.*
+open class Update(val updateEntity: UpdateEntity?, val assetEntityList: List<AssetEntity>) { val isDevelopmentMode = false }
+class EmbeddedUpdate(update: UpdateEntity, assets: List<AssetEntity>) : Update(update, assets)
+object EmbeddedManifestUtils {
+  var embedded: EmbeddedUpdate? = null
+  fun getEmbeddedUpdate(context: Context, config: UpdatesConfiguration) = embedded
+  fun getOriginalEmbeddedUpdate(context: Context, config: UpdatesConfiguration) = embedded
+}
+object ManifestMetadata {
+  fun getManifestFilters(db: UpdatesDatabase, config: UpdatesConfiguration) = org.json.JSONObject()
+  fun saveMetadata(data: Any, db: UpdatesDatabase, config: UpdatesConfiguration) {}
+}
+// FILE: selection.kt
+package expo.modules.updates.selectionpolicy
+import expo.modules.updates.db.entity.UpdateEntity
+class SelectionPolicy {
+  fun selectUpdateToLaunch(updates: List<UpdateEntity>, filters: org.json.JSONObject) = updates.maxByOrNull { it.sequence }
+}
+// FILE: resource.kt
+package expo.modules.updates.utils
+import expo.modules.updates.db.entity.AssetEntity
+object AndroidResourceAssetUtils {
+  fun isAndroidResourceAsset(filename: String) = false
+  fun createEmbeddedFilenameForAsset(asset: AssetEntity): String? = null
+}
+// FILE: loader-platform.kt
+package expo.modules.updates.loader
+import android.content.Context
+import expo.modules.updates.UpdatesConfiguration
+import expo.modules.updates.db.entity.*
+import expo.modules.updates.manifest.*
+import expo.modules.updates.UpdatesUtils
+import java.io.File
+class LoaderFiles {
+  fun fileExists(context: Context, directory: File?, path: String?) = path != null && File(directory, path).exists()
+  fun readEmbeddedUpdate(context: Context, config: UpdatesConfiguration) = EmbeddedManifestUtils.embedded
+  fun copyAssetAndGetHash(asset: AssetEntity, file: File, context: Context): ByteArray = error("No embedded copy in this proof")
+}
+class FileDownloader {
+  data class AssetDownloadResult(val assetEntity: AssetEntity, val isNew: Boolean)
+  fun downloadAsset(asset: AssetEntity, directory: File, headers: org.json.JSONObject, update: UpdateEntity?, requested: UpdateEntity?): AssetDownloadResult = error("Unexpected launch-time download")
+  companion object {
+    fun getExtraHeadersForRemoteAssetRequest(update: UpdateEntity?, embedded: UpdateEntity?, unused: Any?) = org.json.JSONObject()
+  }
+}
+class UpdateDirective
+class UpdateResponse(val manifestUpdateResponsePart: ManifestPart?) {
+  val responseHeaderData: Any? = null; val directiveUpdateResponsePart: DirectivePart? = null
+}
+class ManifestPart(val update: Update)
+class DirectivePart(val updateDirective: UpdateDirective)

@@ -1373,9 +1373,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       if (result.delta.type === 'message-delta' &&
                           typeof options.phone.liveStarPrompt === 'function') {
                         const message = result.delta.message;
-                        if ((message.author.kind === 'agent' && ((message.attachments?.length ?? 0) > 0 ||
-                            message.reactions?.some(reaction => reaction.emoji === '👍' && reaction.reacted))) ||
-                            message.systemEvent?.kind === 'workflow-handoff') {
+                        if (message.author.kind === 'agent' && message.presentation === 'message') {
                           try { starPrompt = await options.phone.liveStarPrompt(principal.identityId); }
                           catch { /* Keep the committed message available when optional eligibility fails. */ }
                         }

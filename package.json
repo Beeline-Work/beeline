@@ -50,6 +50,7 @@
     "prove:review-capacity": "npm run build -w @beeline/server && node --import tsx scripts/prove-review-capacity.mjs",
     "prove:answered-report": "npm run build -w @beeline/server && node --import tsx scripts/prove-answered-report.mjs",
     "prove:connected-app-activity": "npm run build -w @beeline/server && node --import tsx scripts/prove-connected-app-activity.mjs",
+    "prove:star-prompt": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-star-prompt.mjs",
     "prove:failed-review-handoff": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-failed-review-handoff.mjs",
     "prove:review-recovery": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-review-recovery.mjs",
     "prove:next-day-checkin": "npm run build -w @beeline/server && node --import tsx scripts/prove-next-day-checkin.mjs",

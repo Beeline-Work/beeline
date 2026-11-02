@@ -4654,7 +4654,6 @@ export class DaemonService {
            ), star_count AS (
              ${starPromptReplySql(
                `(SELECT writable.root_source_message_id FROM writable,completed WHERE $5='message')`,
-               '(SELECT jsonb_array_length(attachments)>0 FROM attachment_payload)',
                '$11::int[]',
              )}
            ), cleared AS (
@@ -4818,7 +4817,6 @@ export class DaemonService {
         agentId,
         requestId: input.requestId,
         messageId: saved.id,
-        artifact: saved.attachments.length > 0,
       };
       const count = (database: SqlDatabase) => recordStarPromptReply(database, reply);
       if (this.afterCommit) this.afterCommit(count);

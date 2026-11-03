@@ -58,7 +58,7 @@ function holderIsGone(): boolean {
   }
 }
 
-async function withOneBrowser<T>(run: () => T): Promise<T> {
+export async function withOneBrowser<T>(run: () => T): Promise<T> {
   const deadline = Date.now() + 180_000;
   let held: number | undefined;
   while (held === undefined) {

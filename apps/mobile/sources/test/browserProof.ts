@@ -18,6 +18,11 @@ import { build } from 'esbuild';
 
 export const CHROME = process.env.CHROME_BIN ?? '/usr/bin/google-chrome';
 
+/** Generated entries must stay outside TypeScript's source globs. */
+export function createBrowserProofDirectory(prefix: string): Promise<string> {
+  return mkdtemp(path.join(tmpdir(), prefix));
+}
+
 /**
  * Chrome builds its process-singleton socket under TMPDIR, and a UNIX socket
  * path caps at 108 bytes — far shorter than the directory a CI agent usually
@@ -152,6 +157,9 @@ export async function runBrowserProof(options: {
   try {
     await build({
       entryPoints: [entry],
+      // Entries live in the OS temporary directory, while their dependencies
+      // belong to the app and its hoisted workspace packages.
+      nodePaths: [path.join(mobile, 'node_modules'), path.resolve(mobile, '../../node_modules')],
       outfile: path.join(directory, 'bundle.js'),
       bundle: true,
       platform: 'browser',

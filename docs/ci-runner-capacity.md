@@ -11,9 +11,9 @@ and runs the full suite. Required check names stay stable.
 All ten listeners are active. Instance `01` has one CPU and the
 `beeline-ci-control` role for detection, cache preparation, shared tests and
 verdicts. Instances `02`–`09` have the `beeline-ci-heavy` role for eight server
-shards, each capped at two CPUs / 8 GiB. Instance `10` has only the
+shards and sequential workspace checks, each capped at two CPUs / 8 GiB. Instance `10` has only the
 `beeline-ci-workspace` role, capped at three CPUs / 12 GiB with CPUWeight 300.
-It combines two mobile workers and one sequential check lane. The **parent
+It runs the mobile suite with two workers in its own job and checkout. The **parent
 slice shares a ten-CPU hard quota across every listener and PR**, with
 MemoryHigh 48 GiB / MemoryMax 60 GiB; per-service maxima are not additive
 capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
@@ -21,8 +21,8 @@ capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
 
 | Checks work | Pull requests | Merge groups / manual dispatch |
 | --- | --- | --- |
-| Eight server shards | `beeline-ci, beeline-ci-heavy` (02–09) | `ubuntu-latest` |
-| Typecheck, mobile, dead-code, fingerprint and export execution | `beeline-ci, beeline-ci-workspace` (10) | `ubuntu-latest` |
+| Eight server shards and TYPECHECK execution | `beeline-ci, beeline-ci-heavy` (02–09) | `ubuntu-latest` |
+| Mobile suite execution | `beeline-ci, beeline-ci-workspace` (10) | `ubuntu-latest` |
 | Detection, preparation, shared tests, selection, required verdicts, README, app associations | `beeline-ci, beeline-ci-control` (01) | `ubuntu-latest` |
 | Privileged Body setup, PostgreSQL timing, Docker build/lint, corpus replay | `ubuntu-latest` | `ubuntu-latest` |
 
@@ -71,26 +71,32 @@ time are recorded with the weights. The balancer reserves each
 shard's isolated-suite and integration-batch cost before assigning its
 ordinary files.
 
-The required TYPECHECK job executes two workspace lanes through
+The required TYPECHECK job runs root typecheck and conditional dead-code,
+fingerprint and export checks sequentially through
 `scripts/run-ci-workspace-checks.mjs` and `scripts/ci-workspace-tasks.sh`.
-Mobile occupies one lane with two isolated workers; root typecheck and the
-conditional dead-code/fingerprint/export tasks run sequentially in the other.
-The root typecheck already generates mobile routes and checks the mobile
-project, so the lane does not repeat that compiler invocation. All previous
-policy checks, including the trusted-base architecture guard,
-remain in the task script. Required mobile/dead-code/fingerprint/export
-contexts keep their original conditions and take individual, fail-closed
-verdicts from the recorded task outputs. A failing task does not hide later
-checks. The job emits a timing artifact and forwards cancellation only to its
-own child process groups. The task script is included in workflow path lint.
+MOBILE SUITE executes in a separate job with its own checkout; no concurrent
+checks mutate a shared working tree. Browser proofs create generated entries
+in the operating-system temporary directory, outside TypeScript's source
+globs, and resolve dependencies from the mobile workspace. The root typecheck
+already generates mobile routes and checks the mobile project, so mobile does
+not repeat that compiler invocation. All previous policy checks, including
+the trusted-base architecture guard, remain in the task script. Required
+dead-code/fingerprint/export contexts keep their original conditions and take
+individual, fail-closed verdicts from recorded outputs. A failing task does
+not hide later checks. TYPECHECK emits a timing artifact and forwards
+cancellation only to its own child process groups. The task script is included
+in workflow path lint.
 
 Detection precedes a cache-only producer on the reserved control listener.
 Preparation installs/builds once and publishes verified exact-commit builds
 before shared tests start. Linux consumers wait for preparation rather than
-independent shared-test completion, and the workspace lane restores its
-root/mobile/build caches once for all five checks. Consumers require those
+independent shared-test completion, and TYPECHECK restores its
+root/mobile/build caches once for its sequential checks. MOBILE SUITE restores
+its own checkout from the same caches. Consumers require those
 lockfile/manifest-keyed root/mobile and exact-commit build caches; a failed
-producer cannot fan out cold installs/builds. Compiled outputs never fall back
+producer cannot fan out cold installs. A vanished exact-commit build cache
+triggers a bounded workspace build; verified compiled outputs remain tied to
+the current commit. Compiled outputs never fall back
 to another commit. Build cache v2 uses explicit dist globs and validates API
 exports. TYPECHECK already runs the isolated mobile typecheck, so mobile does
 not repeat it. Required check names and platform routes remain unchanged.

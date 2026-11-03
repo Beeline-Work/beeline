@@ -6,8 +6,9 @@ release/production services. There is no new service or workflow gate.
 
 The pool has ten active listeners and one job per listener. Instance 01 has
 one CPU for control work. Instances 02–09 have two CPUs / 8 GiB for server
-shards. Instance 10 has three CPUs / 12 GiB and CPUWeight 300 for the bounded
-workspace lanes. The slice shares `CPUQuota=1000%` / `MemoryMax=60G` across all
+shards and sequential TYPECHECK tasks. Instance 10 has three CPUs / 12 GiB
+and CPUWeight 300 for MOBILE SUITE. Each job owns its checkout; mobile tests
+never run concurrently with a compiler in the same working tree. The slice shares `CPUQuota=1000%` / `MemoryMax=60G` across all
 listeners; individual maxima are not additive capacity. Limits cover every
 child process. Existing credential isolation and production/release services
 are preserved. The cache tar wrapper uses a shared file lock; no service is added.

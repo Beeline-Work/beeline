@@ -1,9 +1,9 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { it, expect } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 it.each(['bone', 'obsidian'])('CONNECTORS-1: %s removes a disconnected row despite an older read', async palette => {
-  const mobile=process.cwd(),dir=await mkdtemp(path.join(mobile,'sources/test/cleanup-'));
+  const mobile=process.cwd(),dir=await createBrowserProofDirectory("cleanup-");
   try {
     const entry=path.join(dir,'proof.jsx');
     await writeFile(entry, `import React from'react';import{createRoot}from'react-dom/client';import Workbench from'@/app/(app)/beeline/settings/workbench';

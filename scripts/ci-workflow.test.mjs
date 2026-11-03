@@ -101,11 +101,12 @@ test('excluding the fingerprint regression from the mobile suite always has isol
   const file = 'sources/config/nativeFingerprint.test.ts';
   const tasks = readFileSync(new URL('./ci-workspace-tasks.sh', import.meta.url), 'utf8');
   assert.match(tasks, new RegExp(`--exclude ${file.replaceAll('.', '\\.')}`));
-  assert.ok(mobile.needs.includes('typecheck'));
-  assert.match(JSON.stringify(mobile.steps), /needs.typecheck.outputs/);
+  assert.ok(mobile.needs.includes('prepare-workspace'));
+  assert.equal(mobile.steps[0].uses, 'actions/checkout@v4');
+  assert.match(JSON.stringify(mobile.steps), /timeout 20m bash scripts\/ci-workspace-tasks.sh mobile-suite/);
   assert.match(isolated['runs-on'], /beeline-ci/);
   assert.equal(isolated['timeout-minutes'], 5);
-  assert.equal(mobile['timeout-minutes'], 5);
+  assert.equal(mobile['timeout-minutes'], 25);
   assert.ok(tasks.includes(`npx vitest run ${file} --maxWorkers=1 --minWorkers=1`));
   assert.match(JSON.stringify(isolated.steps), /needs.typecheck.outputs/);
   assert.equal(isolated['continue-on-error'], undefined);
@@ -139,10 +140,10 @@ test('excluding the fingerprint regression from the mobile suite always has isol
   assert.ok(selected(isolated, 'workflow_dispatch', 'native-fingerprint', false, false, false));
 });
 
-const heavyJobs = ['server-suite-shard'];
-const workspaceJobs = ['typecheck'];
+const heavyJobs = ['server-suite-shard', 'typecheck'];
+const workspaceJobs = ['mobile-suite'];
 const controlJobs = ['changes', 'prepare-workspace', 'shared-package-tests', 'server-test-selection',
-  'mobile-suite', 'dead-code', 'mobile-export-reachability', 'native-fingerprint',
+  'dead-code', 'mobile-export-reachability', 'native-fingerprint',
   'server-suite', 'server-integration', 'frame-budget', 'state-upgrade',
   'readme-parity', 'app-link-associations'];
 const squireJobs = [...heavyJobs, ...workspaceJobs, ...controlJobs];

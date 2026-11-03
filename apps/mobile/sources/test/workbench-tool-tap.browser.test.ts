@@ -1,7 +1,7 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 /**
  * The real Connectors and Wallet screens in the desktop web renderer. One tap
@@ -11,7 +11,7 @@ import { runBrowserProof, webProofShims } from './browserProof';
 describe('workbench tool tap in the desktop web renderer', () => {
   it('opens the wallet in one tap and shows agent permissions on it', async () => {
     const mobile = process.cwd();
-    const directory = await mkdtemp(path.join(mobile, 'sources/test/tool-tap-proof-'));
+    const directory = await createBrowserProofDirectory("tool-tap-proof-");
     try {
       const entry = path.join(directory, 'proof.jsx');
       await writeFile(

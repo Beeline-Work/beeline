@@ -1,0 +1,37 @@
+{
+  "findingScope": [
+    "F07",
+    "F10",
+    "F11",
+    "F18",
+    "F21",
+    "F23"
+  ],
+  "authorization": "firstmate instruction 006; exact built source SHA approved as native provenance",
+  "status": "blocked before dependency installation or simulator creation",
+  "host": {
+    "os": "Darwin",
+    "architecture": "x86_64",
+    "xcode": "26.4.1",
+    "xcodeBuild": "17E202",
+    "availableIOSRuntime": "26.4.1 (23E254a), x86_64/arm64",
+    "node": "25.9.0",
+    "npm": "11.12.1",
+    "cocoapods": "1.17.0"
+  },
+  "capacity": {
+    "availableKiB": 4142576,
+    "volume": "/System/Volumes/Data",
+    "localObservedMobileNodeModulesKiB": 4434960,
+    "comparisonLimit": "Observed dependencies are from Linux; exact Darwin footprint not measured. Pods and DerivedData require additional capacity."
+  },
+  "isolation": {
+    "remoteTaskDirectory": "/private/tmp/beeline-router-group-c.tRkxKHti",
+    "existingWorkspaceAccessed": false,
+    "dependenciesInstalled": false,
+    "simulatorCreated": false,
+    "appBuilt": false,
+    "productionAccess": false
+  },
+  "required": "Free sufficient capacity or supply a writable build volume for the isolated mobile dependencies, Pods and DerivedData; existing local dependency tree alone is approximately 4.23 GiB."
+}

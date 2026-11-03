@@ -1,0 +1,145 @@
+{
+  "finding": "F13",
+  "proof": "P11 equal-workload initial Room statement/WAL/bytes gate",
+  "tools": 200,
+  "toolOutputBytes": 32768,
+  "walRelations": [
+    {
+      "relname": "live_journal",
+      "relfilenode": "87128"
+    },
+    {
+      "relname": "live_streams",
+      "relfilenode": "87119"
+    },
+    {
+      "relname": "messages",
+      "relfilenode": "83775"
+    },
+    {
+      "relname": "router_authority",
+      "relfilenode": "87217"
+    }
+  ],
+  "readWorkload": {
+    "samples": [
+      {
+        "legacy": {
+          "statements": 2,
+          "queryResultBytes": 6753492,
+          "wireBytes": 6626506,
+          "elapsedMs": 158.3257169999997,
+          "nodeCpuMicros": 62068,
+          "walFrom": "0/C369210",
+          "walTo": "0/C369210",
+          "walBytes": 0
+        },
+        "candidate": {
+          "statements": 2,
+          "queryResultBytes": 2586,
+          "wireBytes": 2733,
+          "elapsedMs": 44.42131800000061,
+          "nodeCpuMicros": 8834,
+          "walFrom": "0/C369210",
+          "walTo": "0/C369210",
+          "walBytes": 0
+        }
+      },
+      {
+        "legacy": {
+          "statements": 2,
+          "queryResultBytes": 6753492,
+          "wireBytes": 6626506,
+          "elapsedMs": 125.25645000000077,
+          "nodeCpuMicros": 56120,
+          "walFrom": "0/C369210",
+          "walTo": "0/C369210",
+          "walBytes": 0
+        },
+        "candidate": {
+          "statements": 2,
+          "queryResultBytes": 2586,
+          "wireBytes": 2733,
+          "elapsedMs": 34.9536769999977,
+          "nodeCpuMicros": 4399,
+          "walFrom": "0/C369210",
+          "walTo": "0/C369210",
+          "walBytes": 0
+        }
+      },
+      {
+        "legacy": {
+          "statements": 2,
+          "queryResultBytes": 6753492,
+          "wireBytes": 6626506,
+          "elapsedMs": 168.89230000000316,
+          "nodeCpuMicros": 159586,
+          "walFrom": "0/C369210",
+          "walTo": "0/C369210",
+          "walBytes": 0
+        },
+        "candidate": {
+          "statements": 2,
+          "queryResultBytes": 2586,
+          "wireBytes": 2733,
+          "elapsedMs": 36.5078960000028,
+          "nodeCpuMicros": 4930,
+          "walFrom": "0/C369210",
+          "walTo": "0/C369210",
+          "walBytes": 0
+        }
+      },
+      {
+        "legacy": {
+          "statements": 2,
+          "queryResultBytes": 6753492,
+          "wireBytes": 6626506,
+          "elapsedMs": 118.78533700000116,
+          "nodeCpuMicros": 96471,
+          "walFrom": "0/C369210",
+          "walTo": "0/C369210",
+          "walBytes": 0
+        },
+        "candidate": {
+          "statements": 2,
+          "queryResultBytes": 2586,
+          "wireBytes": 2733,
+          "elapsedMs": 40.31309300000066,
+          "nodeCpuMicros": 4313,
+          "walFrom": "0/C369210",
+          "walTo": "0/C369210",
+          "walBytes": 0
+        }
+      },
+      {
+        "legacy": {
+          "statements": 2,
+          "queryResultBytes": 6753492,
+          "wireBytes": 6626506,
+          "elapsedMs": 96.42324999999983,
+          "nodeCpuMicros": 42433,
+          "walFrom": "0/C369210",
+          "walTo": "0/C369210",
+          "walBytes": 0
+        },
+        "candidate": {
+          "statements": 2,
+          "queryResultBytes": 2586,
+          "wireBytes": 2733,
+          "elapsedMs": 24.007572000002256,
+          "nodeCpuMicros": 4268,
+          "walFrom": "0/C369210",
+          "walTo": "0/C369210",
+          "walBytes": 0
+        }
+      }
+    ],
+    "scope": "Same authorized 200-tool collapsed Room open; local Node CPU/elapsed, not production PostgreSQL CPU or native paint"
+  },
+  "initialToolRows": 0,
+  "initialValueBytes": 1970,
+  "expandedToolRows": 200,
+  "fullOutputBytes": 32768,
+  "revokeEnqueues": 0,
+  "status": "PASS"
+}

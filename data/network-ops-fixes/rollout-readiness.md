@@ -97,21 +97,20 @@ failure restoring only the first machine and failing the release. They do not
 prove the separate final expansion image, deployed floor or real Fly transition.
 Repeat those image-specific proofs for the actual release artifacts.
 
-## Exactly one justified retained red-guard exception
+## Base architecture restored (instruction050)
 
-`live.notify` is the one explicitly retained owner exception (instruction045).
-Its fixed-channel notifier leaf avoids initialization cycles involving
-`NEEDS_YOU_TRIGGER_WORDS` and `ROUTER_AUTHORITY_LOCK`; decoding stays in
-`postgres-live.ts`. Both cold-import consolidation attempts failed and were
-reverted. This is individually documented owner disposition, not a blanket
-network allowance or permission to weaken the guard.
+The earlier retain-leaf disposition is superseded. All publishers now belong to
+`postgres-live.ts`; wire identities and synchronous decoders remain separate.
+Deferred schema assembly breaks the import cycles without changing migration SQL.
+Four cold-process regressions cover the former initialization failures.
 
-There are also **temporary code debts, not additional accepted exceptions**:
-the combined source still has server environment count60→61 and phone parallel
-paths19→24. The held removal branch restores phone19, with server18/helper29
-already at main's counts. The environment addition must disappear with the
-post-switch removal. Until then, the main-relative guard reports all three
-relaxations; do not call it green or say only one current failure remains.
+The existing configuration reader keeps server environment count60. Negotiated
+phone owners now select their supported old-server adapters internally, restoring
+phone parallel count19 without activating the router or dropping native40
+compatibility. Server18/helper29 remain at main's counts. The unchanged
+base-aware architecture guard passes all20 rules; no exception is required.
+This is owner consolidation, not the held post-switch implementation removal.
+See [CI repair evidence](ci-repair.md).
 
 The router inventory still contains158 boundary keys and the phone manifest72.
 Those are source keys, not request counts or an empty ownership sweep. Existing

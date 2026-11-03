@@ -76,3 +76,13 @@ The additional validation record records **207 passing checks across 14 serial
 suite selections** and distinguishes this repair from the earlier 349-case
 selection. Root typechecking, all eight builds and dead-code checking also pass. Remote CI completion is still required; local passes are
 not a green remote-CI claim.
+
+## Group E composition
+
+Group E https://github.com/Beeline-Work/beeline/pull/3411 is integrated at
+`93e8f3c08`. The composed head passes **48 checks across seven serial suites**,
+including all10 real PostgreSQL phone cases and all3 physical leader-lock cases.
+Full root typecheck and the20-rule base-aware architecture check pass.
+[Selections and log hashes](group-e-integration-validation.json) retain the exact
+scope. Its [proof report](group-e-proof-report.md) preserves the remaining
+provider/installed-adapter/workload boundaries; no additional finding closes.

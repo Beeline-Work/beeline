@@ -232,3 +232,9 @@ Real loopback PostgreSQL rollback3 and concurrency3 pass. Tagged final replies a
 ObjectService no longer immediately retries a failed delete three times. Each owned key gets one attempt in the existing eight-item batches, and all in-flight batch results settle before refusal. Failed storage deletion preserves the account and durable object keys; a separate explicit deletion can finish idempotently.
 
 Account-deletion18 and server types pass. The failure proof checks one dispatch for the refused key, no more work over 24 hours, retained account/object rows and successful later explicit deletion. Synthetic storage only; no real account is deleted. Route ownership remains open.
+
+## D083 — Return attachment fetch failure without immediate replay
+
+Helper attachment preparation now makes one bounded fetch for each uncached file. HTTP408/429/5xx and network failures return the existing per-file failure; expiry, size limits, cache reuse and sibling delivery retain their behavior. Only a separate admitted delivery can fetch again.
+
+Attachment19 and Body types pass. Refusal/network cases observe one fetch, no dispatch over an idle day and success on a separate delivery. Media owner/routing and released-cohort gates remain open.

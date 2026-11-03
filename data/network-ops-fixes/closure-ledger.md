@@ -115,3 +115,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F12/F18 archival proof refresh passes real PostgreSQL rollback3 and concurrent final-reply/merge-webhook/agent-close/phone-close3. Fixtures use current authority ordering and an actually claimed peer; first failures never replay and a new webhook performs fresh reconciliation. This adds proof without closing the remaining ownership/cohort gates.
 
 - F18 account object deletion removes immediate retries. Account-deletion18 passes, including one attempt for the failed key, an idle day with no dispatch, durable account/key preservation and a later explicit deletion. Server types pass; full route ownership remains open.
+
+- F18 helper attachment preparation removes immediate three-attempt fetch retries. Attachment19 and Body types pass, including HTTP408/429/503/network first failure, idle-day silence, a separate successful delivery, expiry/size/cache/sibling behavior. Complete media ownership and cohort gates remain open.

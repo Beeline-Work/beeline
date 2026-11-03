@@ -116,23 +116,26 @@ describe('attachment delivery', () => {
     expect(await readFile(delivered[1]!.path!, 'utf8')).toBe('%PDF');
   });
 
-  it.each(['503', 'network'])(
-    'bounds temporary %s failures to three attempts; a later delivery retries',
+  it.each(['503', '429', '408', 'network'])(
+    'returns the first %s failure; only a separate delivery attempts again',
     async (failure) => {
       const dir = await mkdtemp(join(tmpdir(), 'beeline-attachments-'));
       roots.push(dir);
       let failing = true;
       const fetchImpl = vi.fn(async () => {
         if (failing && failure === 'network') throw new TypeError('temporary network failure');
-        return new Response(failing ? '' : '%PDF', { status: failing ? 503 : 200 });
+        return new Response(failing ? '' : '%PDF', { status: failing ? Number(failure) : 200 });
       }) as unknown as typeof fetch;
       expect((await deliverAttachments([PDF], dir, fetchImpl))[0]?.reason).toContain(
         'download failed:',
       );
-      expect(fetchImpl).toHaveBeenCalledTimes(3);
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      vi.useFakeTimers();
+      try { await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000); } finally { vi.useRealTimers(); }
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
       failing = false;
       const delivered = await deliverAttachments([PDF], dir, fetchImpl);
-      expect(fetchImpl).toHaveBeenCalledTimes(4);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
       expect(await readFile(delivered[0]!.path!, 'utf8')).toBe('%PDF');
     },
   );

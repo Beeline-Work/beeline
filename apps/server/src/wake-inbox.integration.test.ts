@@ -381,6 +381,9 @@ it('re-arms durable commander windows at startup and flushes through one timeout
     await db.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE id=$1`,[delayed!.id]);
     await vi.advanceTimersByTimeAsync(61000);await db.query('SELECT 1');
     expect((await inbox()).some(command=>command.id===delayed!.id)).toBe(true);
-    expect(vi.getTimerCount()).toBe(0);expect(errors).toEqual([]);
+    // The timeout starts asynchronous database work; inbox visibility can precede
+    // its final deadline refresh, especially on a busy CI database.
+    await vi.waitFor(() => expect(vi.getTimerCount()).toBe(0));
+    expect(errors).toEqual([]);
   }finally{deadlines.stop();vi.useRealTimers();}
 });

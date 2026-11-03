@@ -147,7 +147,9 @@ export async function readWallet(
   const view = await readWalletView(database, identityId, workspaceId);
   try {
     const solanaAddress = await ensureSolanaAddress(database, identityId);
-    return { ...view, solanaAddress };
+    const complete={ ...view, solanaAddress };
+    if(solanaAddress!==view.solanaAddress)await recordWalletProjection(database,identityId,complete);
+    return complete;
   } catch {
     return view;
   }
@@ -186,7 +188,7 @@ export async function readWalletView(
   const holdings = await readHoldings(source, binding.eoaAddress);
   await reconcileBalancesSafely(database, { ownerIdentityId: identityId, workspaceId, binding }, holdings);
   const sponsorship = await source.sponsorshipAllowance();
-  return {
+  const view:WalletView={
     address: binding.eoaAddress,
     solanaAddress: binding.solanaAddress,
     totalUsd: formatUsd(holdingsUsd(holdings.coins)),
@@ -200,6 +202,26 @@ export async function readWalletView(
       : null,
     delegation: await delegationView(database, identityId),
   };
+  await recordWalletProjection(database,identityId,view);
+  return view;
+}
+
+/** Persist only an actual provider observation made by explicit wallet work.
+ * No provider observation is synthesized by a projection snapshot. */
+export async function recordWalletProjection(database:SqlDatabase,owner:string,value:WalletView):Promise<void>{
+  await database.query(`INSERT INTO owner_wallet_projections(owner_id,value) VALUES($1,$2::jsonb)
+    ON CONFLICT(owner_id) DO UPDATE SET value=EXCLUDED.value,observed_at=now()
+    WHERE owner_wallet_projections.value IS DISTINCT FROM EXCLUDED.value`,[owner,JSON.stringify(value)]);
+}
+export async function readWalletProjection(database:SqlDatabase,owner:string):Promise<import('@beeline/api-contract/router-protocol').RouterValues['owner-wallet']>{
+  const row=(await database.query<{value:WalletView|null;observed_at:Date|null;created_at:Date;delegation_expires_at:Date|null;delegation_standing:boolean}>(
+    `SELECT observed.value,observed.observed_at,binding.created_at,binding.delegation_expires_at,binding.delegation_standing
+     FROM wallet_bindings binding LEFT JOIN owner_wallet_projections observed ON observed.owner_id=binding.identity_id
+     WHERE binding.identity_id=$1`,[owner])).rows[0];
+  if(!row)return {wallet:null,summary:null,observedAt:null};
+  const expiresAt=row.delegation_expires_at?.getTime()??null,active=row.delegation_standing||expiresAt!==null&&expiresAt>Date.now();
+  return {wallet:row.value?{...row.value,delegation:{active,expiresAt}}:null,observedAt:row.observed_at?.getTime()??null,
+    summary:{createdAt:row.created_at.getTime()/1000,delegationActive:active,delegationExpiresAt:expiresAt===null?null:expiresAt/1000}};
 }
 
 export async function delegationView(

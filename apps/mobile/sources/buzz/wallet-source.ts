@@ -18,6 +18,7 @@ export interface WalletSource {
   /** One tap creates the wallet bound to the signed-in identity. */
   createWallet(input: { workspaceId: string }): Promise<WalletView>;
   readWallet(input: { workspaceId: string }): Promise<WalletView>;
+  refreshWallet?():Promise<WalletView>;
   sendFromWallet(input: {
     workspaceId: string;
     chain: WalletChainView['id'];
@@ -39,6 +40,7 @@ type WalletViewDto = WalletView;
 /** Chain-view passthrough: the server projection is already paint-ready. */
 
 export class MonolithWalletSource implements WalletSource {
+  refreshWallet():Promise<WalletView>{return monolithPhoneOperation('refreshWallet',{});}
   async createWallet(input: { workspaceId: string }): Promise<WalletView> {
     return monolithPhoneOperation('createWallet', { workspaceId: input.workspaceId });
   }

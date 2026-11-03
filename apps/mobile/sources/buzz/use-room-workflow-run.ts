@@ -6,6 +6,7 @@ import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { subscribeRoomCornerFacts } from '@/buzz/room-corner-store';
+import { useRoutedResource } from './router-resource';
 
 const reportedFailures = new Set<string>();
 
@@ -65,8 +66,9 @@ function observeWorkflowRuns(roomId: string) {
 /** The one read of a Room's workflow runs, shared by every screen that shows them. */
 function useRoomWorkflowList(roomId: string | undefined) {
   const focused = useSurfaceFocus();
+  const routed = useRoutedResource('room-workflows', roomId ? { family: 'room-workflows', roomId } : undefined, focused);
   const observed = useObservedResource<readonly WorkflowRunSummaryView[]>(
-    focused && roomId ? `room-workflows:${roomId}` : undefined,
+    routed.mode === 'legacy' && focused && roomId ? `room-workflows:${roomId}` : undefined,
     {
       retryOnChange: false,
       load: async () =>
@@ -80,7 +82,7 @@ function useRoomWorkflowList(roomId: string | undefined) {
       subscribe: roomId ? observeWorkflowRuns(roomId) : undefined,
     },
   );
-  return observed;
+  return routed.mode==='legacy'?observed:{data:routed.value?.workflows,loading:routed.loading,error:routed.error,retry:routed.retry};
 }
 
 /** Every saved-workflow run in a Room and its corners, for a list that names each corner's live run. */

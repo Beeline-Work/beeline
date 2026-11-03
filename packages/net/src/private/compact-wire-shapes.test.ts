@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { operationShapes, wireShapes } from '../generated-wire-shapes.js';
 import { jsonCodec, type WireShape } from '../wire-codec.js';
-import { expandWireShapes, type CompactWireShape } from './compact-wire-shapes.js';
+import { expandWireShapes, type CompactWireShape } from '../compact-wire-shapes.js';
 import { ownerInputs, ownerInputShapes, ownerResults } from './generated-owner-input-shapes.js';
 
 const original: readonly WireShape[] = [

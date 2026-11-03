@@ -108,8 +108,8 @@ const OWNER_CALLERS = {
   routerOwnerNegotiated: ['sync/transport/live-connection.ts'],
   routerOwnerDisconnected: ['sync/transport/live-connection.ts'],
   routerOwnerReceive: ['sync/transport/live-connection.ts'],
-  retryRouterLane: ['buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/channels.tsx', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts'],
-  acquireRouterLane: ['buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts', 'buzz/router-chat-list.ts', 'buzz/needs-you-store.ts'],
+  retryRouterLane: ['buzz/router-resource.ts', 'buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/channels.tsx', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts'],
+  acquireRouterLane: ['buzz/router-resource.ts', 'buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts', 'buzz/router-chat-list.ts', 'buzz/needs-you-store.ts'],
 };
 const OWNER_READS = new Set(['routerFamilyMode', 'routerLaneSnapshot', 'subscribeRouterOwner']);
 function inspectOwnerAccess(file, source, errors) {
@@ -146,6 +146,7 @@ function inspectOwnerAccess(file, source, errors) {
 // Observing a hook cannot be used to re-export its command/paint authority.
 function inspectGestureWrappers(file,source,errors){
   const modules={
+    'buzz/router-resource': {'useRoutedResource': ['buzz/use-room-workflow-run.ts', 'buzz/workbench-surface.ts', 'buzz/wallet-surface.ts', 'app/(app)/beeline/members.tsx']},
     'buzz/router-tray':{'useRoutedTray':['app/(app)/beeline/tray.tsx'],
       'prepareTrayCommand':['app/(app)/beeline/tray.tsx'],'acknowledgeRoutedTrayPaint':['app/(app)/beeline/tray.tsx']},
     'buzz/router-scheduled-work':{'useRoutedScheduledWork':['buzz/scheduled-work.ts'],'prepareScheduledStop':['buzz/scheduled-work.ts']},

@@ -221,3 +221,22 @@ test('tool page admission belongs only to the existing explicit disclosure bound
   assert.ok(inspectSource('apps/mobile/sources/components/Feature.tsx',
     'import { readRouterToolPage } from "@/buzz/router-owner";').errors.length);
 });
+
+
+test('display resource authority stays within its four declared consumer adapters', () => {
+  const source = 'import { useRoutedResource } from "./router-resource";';
+  for (const name of ['use-room-workflow-run', 'workbench-surface', 'wallet-surface'])
+    assert.deepEqual(inspectSource(`apps/mobile/sources/buzz/${name}.ts`, source).errors, []);
+  for (const source of [
+    'import { useRoutedResource as escape } from "./router-resource";',
+    'export { useRoutedResource } from "./router-resource";',
+    'import * as resource from "./router-resource";',
+    'import("./router-resource");',
+  ]) assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts', source).errors.length);
+  assert.deepEqual(inspectSource('apps/mobile/sources/app/(app)/beeline/members.tsx',
+    'import { useRoutedResource } from "@/buzz/router-resource";').errors, []);
+  const owner = 'import { acquireRouterLane, retryRouterLane } from "./router-owner";';
+  assert.deepEqual(inspectSource('apps/mobile/sources/buzz/router-resource.ts', owner).errors, []);
+  for (const name of ['use-room-workflow-run', 'workbench-surface', 'wallet-surface'])
+    assert.ok(inspectSource(`apps/mobile/sources/buzz/${name}.ts`, owner).errors.length);
+});

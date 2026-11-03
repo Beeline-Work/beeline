@@ -123,9 +123,9 @@ describe('real mobile router owner', () => {
     fixture.authorityReady = false;
     expect(routerOwnerCapabilities()).toEqual({ families: [], authorityFencesV1: false, scheduledWorkCoverageV1:false });
     fixture.authorityReady = true;
-    expect(routerOwnerCapabilities()).toEqual({ families: ['room-list', 'needs-you-count', 'room-head','room-scheduled-work'], authorityFencesV1: true,scheduledWorkCoverageV1:true });
+    expect(routerOwnerCapabilities()).toEqual({ families: ['room-list', 'needs-you-count', 'room-head','room-workflows','agent-profile','owner-workbench','owner-wallet','room-scheduled-work'], authorityFencesV1: true,scheduledWorkCoverageV1:true });
     fixture.commandsReady=false;
-    expect(routerOwnerCapabilities()).toEqual({families:['room-list','needs-you-count','room-head'],authorityFencesV1:true,scheduledWorkCoverageV1:false});
+    expect(routerOwnerCapabilities()).toEqual({families:['room-list','needs-you-count','room-head','room-workflows','agent-profile','owner-workbench','owner-wallet'],authorityFencesV1:true,scheduledWorkCoverageV1:false});
   });
   it('mount alone creates no pass; committed navigation admits one count-only read', async () => {
     const execute = vi.fn(async (_input: RouterSnapshotInput) => snapshot());

@@ -54,6 +54,7 @@ import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
+import { useRoutedResource } from '@/buzz/router-resource';
 import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { navigateToRoom } from '@/buzz/corner-navigation';
@@ -266,8 +267,13 @@ export default function BuzzMembers({
     [identity?.publicKey, relayUrl, workspaceId, agentId],
   );
   const surface = useSurfaceSnapshot(workspaceAddress, isWorkspaceView);
-  const selectedAgent = useSurfaceSnapshot(agentAddress, isAgentDetailView);
+  const routedAgent = useRoutedResource('agent-profile', workspaceId && profileAgentId
+    ? {family:'agent-profile',workspaceId,agentId:profileAgentId} : undefined, focused&&!!profileAgentId);
+  const cachedAgent = useSurfaceSnapshot(profileAgentId&&routedAgent.mode!=='legacy'?null:agentAddress, isAgentDetailView);
+  const profileMode=profileAgentId?routedAgent.mode:'legacy';
+  const selectedAgent = profileAgentId&&routedAgent.mode!=='legacy' ? routedAgent.value : cachedAgent;
   const setSelectedAgent = (value: AgentDetailView | null) => {
+    if(profileAgentId&&routedAgent.mode!=='legacy')return;
     if (!value) {
       setLocalAgentId(null);
       return;
@@ -328,7 +334,8 @@ export default function BuzzMembers({
   const queuedConfigVersionRef = useRef<string | undefined>(undefined);
   latestConfigVersionRef.current = selectedAgent?.configVersion;
   const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
-  const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
+  const canRemoveSelectedAgent = profileMode==='router'?routedAgent.value?.canRemove===true:
+    ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
   const recordScope =
     identity && relayUrl && workspaceId
       ? workspaceRecordScope(relayUrl, identity.publicKey, workspaceId)
@@ -359,7 +366,7 @@ export default function BuzzMembers({
     latestConfigVersionRef.current = value.configVersion;
     const queued = queuedConfigVersionRef.current;
     queuedConfigVersionRef.current = undefined;
-    if (queued && newerConfigVersion(queued, value.configVersion))
+    if (profileMode==='legacy'&&queued && newerConfigVersion(queued, value.configVersion))
       void readAgent(value.agent.identity.pubkey).catch(() => undefined);
     // The one write: the Workspace records hear it and update the roster row.
     setSelectedAgent(value);
@@ -369,12 +376,12 @@ export default function BuzzMembers({
     pendingConfigWriteRef.current = false;
     const queued = queuedConfigVersionRef.current;
     queuedConfigVersionRef.current = undefined;
-    if (queued && newerConfigVersion(queued, latestConfigVersionRef.current))
+    if (profileMode==='legacy'&&queued && newerConfigVersion(queued, latestConfigVersionRef.current))
       void readAgent(agentId).catch(() => undefined);
   };
 
   useEffect(() => {
-    if (!focused || !selectedAgent || !identity || !relayUrl) return;
+    if (profileMode!=='legacy'||!focused || !selectedAgent || !identity || !relayUrl) return;
     let cancelled = false;
     let stop: (() => void) | undefined;
     const agentId = selectedAgent.agent.identity.pubkey;
@@ -426,7 +433,7 @@ export default function BuzzMembers({
       cancelled = true;
       stop?.();
     };
-  }, [focused, identity, relayUrl, selectedAgent?.agent.identity.pubkey]);
+  }, [profileMode,focused, identity, relayUrl, selectedAgent?.agent.identity.pubkey]);
 
   const writeClient = async () => {
     if (!identity || !relayUrl) throw new Error('Workspace connection unavailable');
@@ -485,7 +492,7 @@ export default function BuzzMembers({
       });
       const cached = await mobileSurfaceCache.read(address, isWorkspaceView);
       if (cancelled) return;
-      if (profileAgentId && !cached) {
+      if (profileAgentId && !cached && routedAgent.mode==='legacy') {
         // A direct profile open needs both authority and detail, but one wire
         // response writes the two existing keyed entries for later visits.
         const profile = await monolithPhoneOperation('readAgentProfile', {
@@ -510,6 +517,7 @@ export default function BuzzMembers({
         current?.publicKey === nextIdentity.publicKey ? current : nextIdentity,
       );
       setRelayUrl(nextRelayUrl);
+      if(profileAgentId&&routedAgent.mode!=='legacy')return;
       // Every Members instance (the list under an agent profile included)
       // paints the one shared entry; rows and totals read the shared records,
       // which hear every write of this entry.
@@ -536,7 +544,7 @@ export default function BuzzMembers({
       stopWatch = watch.release;
       await watch.ready;
       if (cancelled) return;
-      if (!profileAgentId) await scheduler.startAfter(Promise.resolve());
+      if (!profileAgentId||routedAgent.mode==='router') await scheduler.startAfter(Promise.resolve());
     })().catch((reason) => {
       if (!cancelled) setWorkspaceError(appErrorCopy(reason));
     });
@@ -548,7 +556,7 @@ export default function BuzzMembers({
       schedulerRef.current = null;
       setRosterQuery('');
     };
-  }, [focused, retryGeneration, workspaceId, profileAgentId]);
+  }, [focused, retryGeneration, workspaceId, profileAgentId,routedAgent.mode]);
 
   const closeAgentSettings = () => {
     agentRequestGenerationRef.current += 1;
@@ -590,12 +598,12 @@ export default function BuzzMembers({
   };
 
   useEffect(() => {
-    if (!focused || !profileAgentId || !identity || !relayUrl || !workspaceId) return;
+    if (routedAgent.mode!=='legacy'||!focused || !profileAgentId || !identity || !relayUrl || !workspaceId) return;
     void openAgent(profileAgentId);
     return () => {
       agentRequestGenerationRef.current += 1;
     };
-  }, [focused, profileAgentId, identity, relayUrl, workspaceId, profileRetryGeneration]);
+  }, [routedAgent.mode,focused, profileAgentId, identity, relayUrl, workspaceId, profileRetryGeneration]);
 
   const invitePerson = async () => {
     if (!surface?.viewer.permissions.manage || !workspaceId || !relayUrl) return;
@@ -1050,7 +1058,7 @@ export default function BuzzMembers({
     };
   }, [selectedAgent]);
 
-  const displayedError = error ?? workspaceError;
+  const displayedError = (profileAgentId&&routedAgent.mode!=='legacy'?routedAgent.error:null) ?? error ?? workspaceError;
   const busy = working !== null;
   if (profileAgentId) {
     return (
@@ -1059,6 +1067,7 @@ export default function BuzzMembers({
         loading={!selectedAgent && !displayedError}
         error={displayedError}
         onRetry={() => {
+          if(routedAgent.mode==='router'){routedAgent.retry();return;}
           setError(null);
           if (workspaceError) schedulerRef.current?.force();
           setWorkspaceError(null);
@@ -1132,6 +1141,7 @@ export default function BuzzMembers({
               }
             : undefined
         }
+        voiceRevision={profileMode==='router'?routedAgent.value?.voiceRevision:undefined}
         modelManagement={
           selectedAgent ? (
             <>

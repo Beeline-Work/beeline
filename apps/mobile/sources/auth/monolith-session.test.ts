@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const secure = vi.hoisted(() => new Map<string, string>());
-vi.mock('expo-secure-store', () => ({
+vi.mock('@/auth/monolith-secure-storage', () => ({ monolithSecureStorage: async () => ({
   getItemAsync: vi.fn(async (key: string) => secure.get(key) ?? null),
   setItemAsync: vi.fn(async (key: string, value: string) => {
     secure.set(key, value);
@@ -9,7 +9,7 @@ vi.mock('expo-secure-store', () => ({
   deleteItemAsync: vi.fn(async (key: string) => {
     secure.delete(key);
   }),
-}));
+}) }));
 vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }),
 }));
@@ -412,6 +412,20 @@ describe('monolith phone session', () => {
     expect(fetcher.mock.calls[1]?.[0]).toBe('https://server.example/v1/auth/refresh');
   });
 
+  it('renews the token rejected by a live handshake without discarding a newer credential', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(2))));
+    secure.set('buzzy.monolith.identity.v1', 'identity-1');
+    secure.set('buzzy.monolith.refresh.v1', 'refresh-1');
+    secure.set('buzzy.monolith.access.v1', JSON.stringify({ token: 'cached', expiresAt: Date.now() + 60_000, identityId: 'identity-1' }));
+    const session = new MonolithSession('https://server.example', fetcher);
+    expect(await session.authorization()).toBe('cached');
+    session.invalidateAuthorization('cached');
+    expect(await session.authorization()).toBe('access-2');
+    session.invalidateAuthorization('cached');
+    expect(await session.authorization()).toBe('access-2');
+    expect(fetcher).toHaveBeenCalledOnce();
+  });
+
   it('refreshes after a revoked cached access token returns 401', async () => {
     const fetcher = vi.fn(async (url: string, init?: RequestInit) => {
       if (url.endsWith('/v1/auth/review/exchange'))
@@ -600,6 +614,47 @@ describe('monolith phone session', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it('bounds a stalled secure access restore and lets Retry restore it again', async () => {
+    vi.useFakeTimers();
+    let stalled = true;
+    const storage = {
+      getItemAsync: vi.fn((key: string): Promise<string | null> => {
+        if (stalled) return new Promise(() => {});
+        return Promise.resolve(key.endsWith('access.v1') ? JSON.stringify({ token: 'saved-access',
+          expiresAt: Date.now() + 60_000, identityId: 'identity' }) : 'identity');
+      }), setItemAsync: vi.fn(), deleteItemAsync: vi.fn(),
+    };
+    const session = new MonolithSession('https://server.example', vi.fn(), async () => storage);
+    try {
+      const first = session.authorization().catch(error => error);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await first).toBeInstanceOf(MonolithRequestTimeoutError);
+      stalled = false;
+      expect(await session.authorization()).toBe('saved-access');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('bounds the shared refresh credential read before HTTP starts and permits Retry', async () => {
+    vi.useFakeTimers();
+    let stalled = true;
+    const storage = {
+      getItemAsync: vi.fn((key: string): Promise<string | null> => {
+        if (key.endsWith('refresh.v1') && stalled) return new Promise(() => {});
+        return Promise.resolve(key.endsWith('refresh.v1') ? 'saved-refresh' : null);
+      }), setItemAsync: vi.fn(), deleteItemAsync: vi.fn(),
+    };
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(3))));
+    const session = new MonolithSession('https://server.example', fetcher, async () => storage);
+    try {
+      const first = session.authorization().catch(error => error);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await first).toBeInstanceOf(MonolithRequestTimeoutError);
+      expect(fetcher).not.toHaveBeenCalled();
+      stalled = false;
+      expect(await session.authorization()).toBe('access-3');
+    } finally { vi.useRealTimers(); }
   });
 
   it('bounds a phone read whose shared token refresh hangs, and lets the next read refresh again', async () => {

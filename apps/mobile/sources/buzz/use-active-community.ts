@@ -4,7 +4,7 @@ import { watchActiveCommunityId } from '@/buzz/community-storage';
 import { subscribeClientReset } from '@/sync/client-reset';
 
 /** Current Workspace for the signed-in viewer; `undefined` until the first value is known. */
-export function useActiveCommunityId(): string | null | undefined {
+export function useActiveCommunityId(retryGeneration = 0): string | null | undefined {
   const [communityId, setCommunityId] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     let cancelled = false;
@@ -31,6 +31,6 @@ export function useActiveCommunityId(): string | null | undefined {
       stopReset();
       stop?.();
     };
-  }, []);
+  }, [retryGeneration]);
   return communityId;
 }

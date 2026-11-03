@@ -1,4 +1,5 @@
-import { Stack } from 'expo-router';
+import { watchSessionRequired } from '@/auth/session-required';
+import { router, Stack } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -13,6 +14,7 @@ export const unstable_settings = {
 };
 
 export default function RootLayout() {
+  React.useEffect(() => watchSessionRequired(() => router.replace('/beeline/onboarding')), []);
   React.useEffect(() => {
     // Delivery is required on every signed-in route, including a stale web tab.
     void startMessageOutbox();

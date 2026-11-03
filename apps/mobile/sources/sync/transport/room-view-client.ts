@@ -146,7 +146,8 @@ class MonolithRoomViewClient {
   }
   private async request<Name extends keyof PhoneOperationMap>(name: Name, input: PhoneOperationMap[Name]['input'], signal?: AbortSignal): Promise<PhoneOperationMap[Name]['output']> {
     try {
-      const result = await sharedLiveConnection().request(name, input, { signal, timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS });
+      const result = await sharedLiveConnection().request(name, input, { signal, timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+        ...(name === 'readChats' ? { afterRoomDraw: false } : {}) });
       if (name === 'readRoom') markRoomOpen('wire-headers');
       return result;
     } catch (error) {

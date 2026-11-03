@@ -345,12 +345,28 @@ export class MonolithSession {
     const current = this.validAccessToken();
     if (current) return current;
     if (!this.access) {
-      if (!this.accessRestoreAttempted) this.accessRestoreInFlight ??= this.restoreAccess();
+      if (!this.accessRestoreAttempted && !this.accessRestoreInFlight) {
+        const restore = this.restoreAccess().catch((error) => {
+          this.accessRestoreAttempted = false;
+          throw error;
+        }).finally(() => {
+          if (this.accessRestoreInFlight === restore) this.accessRestoreInFlight = undefined;
+        });
+        this.accessRestoreInFlight = restore;
+      }
       if (this.accessRestoreInFlight) await this.accessRestoreInFlight;
       const restored = this.validAccessToken();
       if (restored) return restored;
     }
     return this.refresh(fetchImpl);
+  }
+
+  /** A failed live handshake may have presented access the server no longer accepts.
+   * Keep the device session, and never evict a newer token accepted meanwhile. */
+  invalidateAuthorization(rejectedToken: string): void {
+    if (this.access?.token !== rejectedToken) return;
+    this.access = undefined;
+    this.accessRestoreAttempted = true;
   }
 
   private validAccessToken(): string | undefined {
@@ -362,11 +378,20 @@ export class MonolithSession {
   private async restoreAccess(): Promise<void> {
     this.accessRestoreAttempted = true;
     const revision = this.credentialRevision;
-    const storage = await this.secureStorage();
-    const [raw, identityId] = await Promise.all([
-      storage.getItemAsync(ACCESS_KEY),
-      storage.getItemAsync(IDENTITY_KEY),
-    ]);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), MONOLITH_REFRESH_TIMEOUT_MS);
+    let raw: string | null;
+    let identityId: string | null;
+    try {
+      [raw, identityId] = await untilAborted(this.secureStorage().then(storage => Promise.all([
+        storage.getItemAsync(ACCESS_KEY), storage.getItemAsync(IDENTITY_KEY),
+      ])), controller.signal);
+    } catch (error) {
+      if (controller.signal.aborted) throw new MonolithRequestTimeoutError();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!raw || this.access || revision !== this.credentialRevision) return;
     try {
       const value: unknown = JSON.parse(raw);
@@ -497,9 +522,6 @@ export class MonolithSession {
 
   private async performRefresh(fetchImpl: typeof fetch): Promise<string> {
     const revision = this.credentialRevision;
-    const refreshToken =
-      this.refreshToken ?? (await (await this.secureStorage()).getItemAsync(REFRESH_KEY));
-    if (!refreshToken) throw new MonolithSessionRequiredError();
     // Every caller shares this refresh, so a stalled one must still settle.
     const controller = new AbortController();
     let timedOut = false;
@@ -509,6 +531,13 @@ export class MonolithSession {
     }, MONOLITH_REFRESH_TIMEOUT_MS);
     let response: Response;
     try {
+      const refreshToken = this.refreshToken ?? await untilAborted(
+        this.secureStorage().then(storage => storage.getItemAsync(REFRESH_KEY)), controller.signal);
+      if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
+      if (!refreshToken) {
+        await untilAborted(this.clear(), controller.signal);
+        throw new MonolithSessionRequiredError();
+      }
       response = await untilAborted(
         fetchImpl(`${this.baseUrl}/v1/auth/refresh`, {
           method: 'POST',
@@ -529,7 +558,7 @@ export class MonolithSession {
         response.json() as Promise<MonolithTokens>,
         controller.signal,
       );
-      await this.accept(tokens, false, revision, refreshToken);
+      await untilAborted(this.accept(tokens, false, revision, refreshToken), controller.signal);
       return tokens.accessToken;
     } catch (error) {
       if (timedOut) {

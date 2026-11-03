@@ -382,3 +382,9 @@ Current production viewer/store/digest/cache code was exported into that unchang
 A separate minimal native fixture now bundles and executes the actual artifact byte admission owner, metadata validator, immutable cache, digest and native store. Synthetic identity/config and metadata/byte-leaf adapters are explicit. One native runtime40 launch passes shared demand/completion, preview bounds, capable disconnect, legacy non-reuse, cancellation before byte admission, and authority-removal fencing. The successful launch receipt, source-map inclusion, hashes, events, fixture source and screenshot are archived under `apps/mobile/evidence/network-router-native40/admission-owner/`.
 
 This closes the narrower missing-module coverage in D100, not a whole audit finding. Authenticated socket negotiation, real network leaf/UI integration, complete family/cohort/rollback and physical-phone workload acceptance remain open. Local updates-database delivery is not an OTA proof. Temporary Metro/entry files were removed and all private native processes stopped. No production source changed.
+
+## D102 — Detached check-in work drains before pool shutdown
+
+The next-day check-in previously kept only a boolean while its provider/database work ran outside the leader cycle. Stopping the leader therefore did not wait for the email-result receipt before closing pools. The existing independent flight now retains its promise; shutdown first ends leader admission and then awaits that promise. Scheduling, provider attempt identity and unrelated leader-job concurrency are unchanged.
+
+The controlled pending-email regression and production wiring assertion pass with the full background shutdown suite11. This is a shutdown ownership correction only: check-in calendar admission, exact committed reply/outcome sources, generation fencing and remaining periodic discovery are still open. No whole finding closes.

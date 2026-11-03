@@ -21,6 +21,39 @@ function connection() {
 }
 
 describe('background shutdown', () => {
+  it('drains the detached check-in receipt after leader admissions stop and before pool close', async () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const registration = source.slice(source.indexOf('let nextDayCheckinRunning:'),
+      source.indexOf("if (push) work.add('push'"));
+    expect(registration).toContain("nextDayCheckinRunning = backgroundJobs.run('next-day-checkin'");
+    expect(registration).not.toContain("void backgroundJobs.run");
+    const shutdown = source.slice(source.indexOf('const stop = async () =>'));
+    const drain = shutdown.indexOf('await nextDayCheckinRunning');
+    expect(drain).toBeGreaterThan(shutdown.indexOf('await leader.stop()'));
+    expect(drain).toBeLessThan(shutdown.indexOf('jobsDatabase.close()'));
+
+    const email = deferred();
+    const runner = new BackgroundJobRunner();
+    const order: string[] = [];
+    let poolsClosed = false;
+    const receipt = runner.run('next-day-checkin', async () => {
+      await email.promise;
+      expect(poolsClosed).toBe(false);
+      order.push('email-receipt');
+    });
+    const stop = (async () => {
+      order.push('leader-stopped');
+      await receipt;
+      poolsClosed = true;
+      order.push('pools-closed');
+    })();
+    await Promise.resolve();
+    expect(poolsClosed).toBe(false);
+    email.resolve();
+    await stop;
+    expect(order).toEqual(['leader-stopped', 'email-receipt', 'pools-closed']);
+  });
+
   it('AC-3: drains every job before closing pools without waiting for another cycle', async () => {
     const entered = deferred();
     const resume = deferred();

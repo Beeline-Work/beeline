@@ -464,12 +464,11 @@ async function main() {
   const reconciliationMs = 60_000;
   const work = new BackgroundWork();
   const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app', undefined, undefined, publicOrigin);
-  let nextDayCheckinRunning = false;
+  let nextDayCheckinRunning: Promise<unknown> | undefined;
   work.add('next-day-checkin', reconciliationMs, async () => {
     if (nextDayCheckinRunning) return;
-    nextDayCheckinRunning = true;
-    void backgroundJobs.run('next-day-checkin', () => nextDayCheckin.runOnce())
-      .finally(() => { nextDayCheckinRunning = false; });
+    nextDayCheckinRunning = backgroundJobs.run('next-day-checkin', () => nextDayCheckin.runOnce())
+      .finally(() => { nextDayCheckinRunning = undefined; });
   });
   if (push) work.add('push', reconciliationMs, async () => {
     await backgroundJobs.run('push', () => push.runOnce());
@@ -614,6 +613,9 @@ async function main() {
     stopAttachmentRecovery();stopAttachmentResync();stopAttachmentWake();
     stopScheduleRecovery();stopScheduleResync();stopScheduleWake();
     await leader.stop();
+    // The provider flight intentionally does not block unrelated leader jobs.
+    // Once leadership admissions stop, drain its final receipt before pools close.
+    await nextDayCheckinRunning;
     await mcpStopped;
     stopComputerExpiry();
     stopDisplayDeadline();stopDisplayRecovery();stopDisplayResync();

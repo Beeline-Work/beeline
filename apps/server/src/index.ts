@@ -3,7 +3,7 @@ import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { NextDayCheckin } from './next-day-checkin.js';
 import { RoomsMcp } from './rooms-mcp.js';
 import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
-import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
+import { runMcpWebhookDelivery } from './rooms-mcp-members.js';
 import { deliverXSignups, nextXSignupDeliveryAt } from './x-ads.js';
 import { deliverOperatorSystemDmBatch,subscribeOperatorSystemDmDeliveries } from './operator-system-dm.js';
 import { captureServerError, flushServerErrors } from './sentry.js';
@@ -34,7 +34,7 @@ import {
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { PendingAttachmentCleanupLoop } from './pending-attachment-cleanup.js';
 import { BackgroundLeader } from './background-leader.js';
-import { BackgroundWork } from './background-work.js';
+import { startBackgroundWork, BackgroundWork } from './background-work.js';
 import { OperationOutcomes, startOperationOutcomeFlush } from './operation-outcomes.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
@@ -544,17 +544,20 @@ async function main() {
   if (push) liveListener.setPushWake(() => wakeWork('push'));
   liveListener.setXSignupDeliveryWake(()=>wakeWork('x-conversions','signup-delivery'));
   liveListener.setOwedWake((source) => wakeWork(source === 'sentry' ? 'sentry' : 'deadlines', source));
-  // An AI client's tag is POSTed the moment it commits. Each delivery is
-  // claimed atomically, so every instance may drain; maintenance retries.
-  let mcpWebhooks: Promise<void> | undefined, mcpWebhooksAgain = false;
-  liveListener.setMcpWebhookWake(() => {
-    if (mcpWebhooks) { mcpWebhooksAgain = true; return; }
-    mcpWebhooks = (async () => {
-      do {
-        mcpWebhooksAgain = false;
-        try { await deliverMcpMemberWebhooks(jobsDatabase); } catch (error) { captureServerError(error); }
-      } while (mcpWebhooksAgain);
-    })().finally(() => { mcpWebhooks = undefined; });
+  // Receiver latency must not block unrelated leader jobs. Existing atomic
+  // per-delivery claims serialize overlapping instances and rolling versions.
+  const mcpWork = new BackgroundWork();
+  const mcpStop = new AbortController();
+  mcpWork.addDeadline('mcp-webhooks', async () => {
+    const result = await backgroundJobs.run('mcp-webhooks', () => runMcpWebhookDelivery(jobsDatabase, undefined, 50, mcpStop.signal));
+    if (result.ok) return result.value;
+  });
+  const stopMcpWebhooks = startBackgroundWork(mcpWork, run => {
+    const wake = () => { mcpWork.wake('mcp-webhooks'); run(); };
+    liveListener.setMcpWebhookWake(wake);
+    const recovery = jobsDatabase.onRecovery(wake);
+    const resync = live.subscribeResync(wake);
+    return () => { recovery(); resync(); liveListener.setMcpWebhookWake(() => {}); };
   });
   // A committed wake for a sleeping free agent starts its Machine at once;
   // the leader sweep retries anything this misses.
@@ -578,9 +581,12 @@ async function main() {
   const stopComputerExpiry = startComputerExpirySweep(database, live);
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
+    mcpStop.abort();
+    const mcpStopped = stopMcpWebhooks();
     stopSystemDmWake();stopSystemDmRecovery();
     stopChoiceWake();stopChoiceRecovery();
     await leader.stop();
+    await mcpStopped;
     stopComputerExpiry();
     stopBackgroundWake();
     stopFreeAgentWake?.();

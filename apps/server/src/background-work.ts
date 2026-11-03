@@ -76,18 +76,37 @@ export function startConnectionWork(run: () => void, intervalMs: number): () => 
 
 /** Drive instance-local jobs from their queue's next deadline, including startup.
  * Instances must retain their own memory flushes and local channel cleanup. */
-export function startBackgroundWork(work: BackgroundWork): () => Promise<void> {
-  let stopped = false;
+export function startBackgroundWork(
+  work: BackgroundWork,
+  subscribe?: (wake: () => void) => () => void,
+): () => Promise<void> {
+  let stopped = false, pending = false, failed = false;
+  let failure: unknown;
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let running: Promise<void>;
+  let running: Promise<void> | undefined;
   const tick = () => {
-    running = work.run(false).then((delay) => {
-      if (!stopped) {
-        timer = setTimeout(tick, delay);
+    if (stopped) return;
+    clearTimeout(timer); timer = undefined;
+    if (running) { pending = true; return; }
+    pending = false; failed = false; failure = undefined;
+    running = work.run(false).then(delay => {
+      running = undefined;
+      if (stopped) return;
+      if (pending) { tick(); return; }
+      if (Number.isFinite(delay)) {
+        timer = setTimeout(tick, Math.max(0, delay));
         timer.unref?.();
       }
+    }, error => {
+      running = undefined; failed = true; failure = error;
+      if (pending && !stopped) tick();
     });
   };
+  const unsubscribe = subscribe?.(tick);
   tick();
-  return async () => { stopped = true; clearTimeout(timer); await running; };
+  return async () => {
+    if (!stopped) { stopped = true; unsubscribe?.(); clearTimeout(timer); }
+    await running;
+    if (failed) throw failure;
+  };
 }

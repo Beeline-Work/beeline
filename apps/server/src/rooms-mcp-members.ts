@@ -321,9 +321,11 @@ export async function deliverMcpMemberWebhooks(
   db: SqlDatabase,
   transport: (url: string, init: { headers: Record<string, string>; body: string }) => Promise<Response> = postMcpWebhook,
   limit = 50,
+  signal?: AbortSignal,
 ): Promise<number> {
   let delivered = 0;
   for (let index = 0; index < limit; index++) {
+    if (signal?.aborted) break;
     const claimed = await db.query<{
       call_id: string; member_id: string; room_id: string; message_id: string;
       body: string; callback_url: string | null; callback_secret: string | null; deliverable: boolean;
@@ -364,7 +366,7 @@ export async function deliverMcpMemberWebhooks(
        LEFT JOIN messages source ON source.id=command.source_message_id`,
     );
     const row = claimed.rows[0];
-    if (!row) break;
+    if (!row || signal?.aborted) break;
     if (!row.deliverable || !row.callback_url) {
       await db.query('UPDATE rooms_mcp_webhook_outbox SET delivered_at=now() WHERE call_id=$1', [row.call_id]);
       await db.query(
@@ -392,7 +394,34 @@ export async function deliverMcpMemberWebhooks(
       await db.query(`UPDATE subscription_webhook_calls SET outcome='refused',reason='delivery failed' WHERE id=$1`, [row.call_id]);
     else delivered++;
   }
-  return delivered + await deliverMcpEvents(db, transport, limit);
+  return delivered + await deliverMcpEvents(db, transport, limit, signal);
+}
+
+/** One admitted drain. Only a persisted delivery or abandoned claim supplies
+ * another deadline; no empty-queue reconciliation interval is returned. */
+export async function runMcpWebhookDelivery(
+  db: SqlDatabase,
+  transport: typeof postMcpWebhook = postMcpWebhook,
+  limit = 50,
+  signal?: AbortSignal,
+): Promise<number | undefined> {
+  await deliverMcpMemberWebhooks(db, transport, limit, signal);
+  if (signal?.aborted) return;
+  const row = (await db.query<{ delay_ms: number | null }>(`
+    SELECT ceil(extract(epoch FROM ((min(due_at) AT TIME ZONE 'UTC')-clock_timestamp()))*1000)::float8 delay_ms
+    FROM (
+      (SELECT GREATEST(created_at AT TIME ZONE 'UTC',(claimed_at AT TIME ZONE 'UTC')+interval '1 minute') due_at
+       FROM rooms_mcp_webhook_outbox WHERE delivered_at IS NULL AND attempts<3
+       ORDER BY due_at LIMIT 1)
+      UNION ALL
+      (SELECT GREATEST(next_attempt_at AT TIME ZONE 'UTC',(claimed_at AT TIME ZONE 'UTC')+interval '1 minute') due_at
+       FROM rooms_mcp_event_deliveries WHERE delivered_at IS NULL AND attempts<5
+       ORDER BY due_at LIMIT 1)
+    ) pending`)).rows[0];
+  if (row?.delay_ms == null) return;
+  if (!Number.isFinite(row.delay_ms)) throw new Error('MCP delivery deadline unavailable');
+  // Claims become eligible strictly after their existing one-minute lease.
+  return Math.max(1, row.delay_ms);
 }
 
 /**

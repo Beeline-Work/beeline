@@ -109,6 +109,63 @@ describe('owned timer chains', () => {
     } finally { vi.useRealTimers(); }
   });
 
+  it('parks an empty instance owner with no timer and resumes once on an actual wake', async () => {
+    vi.useFakeTimers();
+    let stop!: () => Promise<void>;
+    try {
+      const work = new BackgroundWork();
+      const run = vi.fn(async () => {});
+      const release = vi.fn();
+      let wake!: () => void;
+      work.addDeadline('delivery', run);
+      stop = startBackgroundWork(work, tick => {
+        wake = () => { work.wake('delivery'); tick(); }; return release;
+      });
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+      expect(run).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+      wake(); await vi.advanceTimersByTimeAsync(0);
+      expect(run).toHaveBeenCalledTimes(2); expect(vi.getTimerCount()).toBe(0);
+      await stop(); expect(release).toHaveBeenCalledOnce();
+      wake(); await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+      expect(run).toHaveBeenCalledTimes(2);
+    } finally { await stop?.(); vi.useRealTimers(); }
+  });
+
+  it('coalesces committed wakes during a slow instance drain without overlap', async () => {
+    vi.useFakeTimers();
+    let finish!: () => void, wake!: () => void;
+    const work = new BackgroundWork();
+    const run = vi.fn().mockImplementationOnce(() => new Promise<void>(resolve => { finish = resolve; }))
+      .mockResolvedValue(undefined);
+    work.addDeadline('delivery', run);
+    const stop = startBackgroundWork(work, tick => {
+      wake = () => { work.wake('delivery'); tick(); }; return () => {};
+    });
+    try {
+      wake(); wake();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(run).toHaveBeenCalledOnce();
+      finish(); await vi.advanceTimersByTimeAsync(0);
+      expect(run).toHaveBeenCalledTimes(2); expect(vi.getTimerCount()).toBe(0);
+    } finally { finish(); await stop(); vi.useRealTimers(); }
+  });
+
+  it('does not schedule a failed instance job and accepts a distinct recovery wake', async () => {
+    vi.useFakeTimers();
+    const work = new BackgroundWork(); let wake!: () => void;
+    const run = vi.fn().mockRejectedValueOnce(new Error('unavailable')).mockResolvedValue(undefined);
+    work.addDeadline('delivery', run);
+    const stop = startBackgroundWork(work, tick => {
+      wake = () => { work.wake('delivery'); tick(); }; return () => {};
+    });
+    try {
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+      expect(run).toHaveBeenCalledOnce(); expect(vi.getTimerCount()).toBe(0);
+      wake(); await vi.advanceTimersByTimeAsync(0);
+      expect(run).toHaveBeenCalledTimes(2);
+    } finally { await stop(); vi.useRealTimers(); }
+  });
+
   it('drains an active job on close without scheduling another tick', async () => {
     vi.useFakeTimers();
     try {

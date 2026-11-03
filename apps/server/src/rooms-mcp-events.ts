@@ -211,10 +211,11 @@ export function mcpCommandWakeSql(first: number): { cte: string; join: string; p
   };
 }
 
-/** Drained by the existing webhook notification and maintenance loop; leases bound concurrent drains. */
-export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, limit: number): Promise<number> {
+/** Drained by committed webhook notifications and persisted due/claim deadlines. */
+export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, limit: number, signal?: AbortSignal): Promise<number> {
   let delivered = 0;
   for (let index = 0; index < limit; index++) {
+    if (signal?.aborted) break;
     const row = (await db.query<Subscription & { event_id: string; body: string; attempts: number; deliverable: boolean }>(`
       WITH claimed AS (
         UPDATE rooms_mcp_event_deliveries d SET attempts=d.attempts+1,claimed_at=now()
@@ -237,7 +238,7 @@ export async function deliverMcpEvents(db: SqlDatabase, transport: Transport, li
       LEFT JOIN rooms_mcp_connections c ON c.client_id=s.client_id AND c.identity_id=s.owner_id
       LEFT JOIN rooms r ON r.id=d.room_id LEFT JOIN messages m ON m.id=d.message_id
       LEFT JOIN agent_commands command ON command.id=d.command_id`)).rows[0];
-    if (!row) break;
+    if (!row || signal?.aborted) break;
     let finished = !row.deliverable;
     if (row.deliverable) {
       try {

@@ -44,6 +44,10 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_webhook_outbox (
 ALTER TABLE rooms_mcp_webhook_outbox ADD COLUMN IF NOT EXISTS claimed_at timestamptz;
 CREATE INDEX IF NOT EXISTS rooms_mcp_webhook_outbox_pending
  ON rooms_mcp_webhook_outbox(created_at) WHERE delivered_at IS NULL;
+-- UTC keeps the claim-duration expression immutable and independent of session timezone.
+CREATE INDEX IF NOT EXISTS rooms_mcp_webhook_outbox_due ON rooms_mcp_webhook_outbox
+ ((GREATEST(created_at AT TIME ZONE 'UTC',(claimed_at AT TIME ZONE 'UTC')+interval '1 minute')))
+ WHERE delivered_at IS NULL AND attempts<3;
 CREATE INDEX IF NOT EXISTS rooms_mcp_webhook_outbox_room ON rooms_mcp_webhook_outbox(room_id);
 CREATE INDEX IF NOT EXISTS rooms_mcp_webhook_outbox_member ON rooms_mcp_webhook_outbox(member_id);
 CREATE TABLE IF NOT EXISTS subscription_webhook_deliveries (

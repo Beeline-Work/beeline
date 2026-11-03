@@ -256,3 +256,12 @@ Hook25, native/browser adapter7, older-iOS guard6, mobile types and phone/router
 An active call no longer recounts participants and rereads command reports for every same-Room invalidation. Participant counts/reconciliation use voice-participant and exact call-card changes; work refresh uses message, command and turn changes. Speaking-speed refresh uses identity changes only. Existing membership/Room/Workspace authority revalidation remains independent.
 
 Voice integration30 and server types pass. The exact-source proof asserts zero participant/work refresh for read marks, bookmarks, push devices and another Room, while call-card and command changes reach their owners. This removes broad invalidation work but does not retire startup/minute voice discovery or complete voice ownership/accounting/cohort gates.
+
+
+## D087 — MCP delivery deadlines belong to persisted queue rows
+
+MCP webhook delivery leaves the maintenance sweep. An independent instance-local owner drains at startup, committed delivery notification, LISTEN resynchronization or actual database recovery. Atomic per-delivery claims retain rolling-version concurrency protection. Only a pending row's due time or abandoned claim expiry arms a timeout; an empty or failed queue parks. Receiver latency does not block aggregate leader jobs. Shutdown detaches wakes, prevents further claims and drains the active request before pool closure.
+
+The existing finite signed-delivery attempts and stable event identity remain, as explicitly permitted for persisted webhook dispatch by spec §10. Each next-deadline lookup reads one indexed candidate per queue using an immutable UTC claim-expiry expression. Legacy member routing repair remains separate and open.
+
+MCP delivery24, worker11, shutdown9 and server types pass. A real isolated PostgreSQL proof with 10,000 pending rows per queue in a non-UTC session uses both due indexes, no sequential scan/sort and fewer than 20 shared blocks. Empty/failed owners stay silent over an idle day; shutdown leaves the next delivery unclaimed. These proofs do not close the full background, route, provider or cohort findings.

@@ -205,6 +205,10 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_event_deliveries (
   PRIMARY KEY(subscription_id,message_id)
 );
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_done ON rooms_mcp_event_deliveries(delivered_at) WHERE delivered_at IS NOT NULL;
+-- UTC keeps the claim-duration expression immutable and independent of session timezone.
+CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_due ON rooms_mcp_event_deliveries
+ ((GREATEST(next_attempt_at AT TIME ZONE 'UTC',(claimed_at AT TIME ZONE 'UTC')+interval '1 minute')))
+ WHERE delivered_at IS NULL AND attempts<5;
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_room ON rooms_mcp_event_deliveries(room_id);
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_pending ON rooms_mcp_event_deliveries(next_attempt_at)
   WHERE delivered_at IS NULL;

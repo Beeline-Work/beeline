@@ -149,6 +149,23 @@ describe('background shutdown', () => {
     expect(refresh).toHaveBeenCalledTimes(2);
   });
 
+  it('owns MCP delivery through deadline work and committed/recovery wakes, never maintenance', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const maintenance = readFileSync(new URL('./background.ts', import.meta.url), 'utf8');
+    expect(source).toContain("mcpWork.addDeadline('mcp-webhooks'");
+    expect(source).toContain('runMcpWebhookDelivery(jobsDatabase, undefined, 50, mcpStop.signal)');
+    expect(source).toContain('setMcpWebhookWake(wake)');
+    expect(source).toContain('startBackgroundWork(mcpWork, run =>');
+    expect(source).toContain('onRecovery(wake)');
+    expect(source).toContain('subscribeResync(wake)');
+    expect(maintenance).not.toContain('deliverMcpMemberWebhooks');
+    const shutdown = source.slice(source.indexOf('const stop = async () =>'));
+    expect(shutdown.indexOf('await mcpStopped')).toBeLessThan(shutdown.indexOf('database.close()'));
+    expect(shutdown.indexOf('await mcpStopped')).toBeGreaterThan(-1);
+    expect(shutdown.indexOf('mcpStop.abort()')).toBeLessThan(shutdown.indexOf('await leader.stop()'));
+    expect(shutdown.indexOf('stopMcpWebhooks()')).toBeLessThan(shutdown.indexOf('await leader.stop()'));
+  });
+
   it('does not admit GitHub pending-check or failed-read discovery on the repair clock', () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     const operations = readFileSync(new URL('./github-operations.ts', import.meta.url), 'utf8');

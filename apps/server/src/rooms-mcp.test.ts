@@ -1,3 +1,4 @@
+import { BackgroundWork } from './background-work.js';
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
 import { cornerOwnerSql } from './corner-worker.js';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -23,7 +24,7 @@ import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, MCP_APP_ROUTE_OPERATIONS, pendin
 import { claimAgentCommand, createAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
 import { cornerWorkSql } from './chat-corner-counts.js';
 import { openSecrets } from './free-agents.js';
-import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
+import { deliverMcpMemberWebhooks, runMcpWebhookDelivery } from './rooms-mcp-members.js';
 import { runMaintenance } from './background.js';
 import { PREREGISTERED_MCP_CLIENTS } from './rooms-mcp-preregistered.js';
 import { readFileSync } from 'node:fs';
@@ -216,6 +217,97 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await eventCall(token, 'events/unsubscribe', { name: 'mention', arguments: {}, delivery })).result).toEqual({});
     expect((await db.query('SELECT id FROM rooms_mcp_event_subscriptions WHERE member_id=$1', [member])).rowCount).toBe(0);
   });
+  it('MCP-WEBHOOK-DEADLINE: an empty owner stays idle for a day, then a committed delivery wakes it once', async () => {
+    await db.query('DELETE FROM rooms_mcp_webhook_outbox');
+    const { token, params, member } = await eventFixture();
+    await eventCall(token, 'events/subscribe', params);
+    const transport = vi.fn(async () => new Response(null, { status: 204 }));
+    let now = 0;
+    const work = new BackgroundWork(() => now, () => {});
+    const drain = vi.fn(() => runMcpWebhookDelivery(db, transport));
+    work.addDeadline('mcp-webhooks', drain);
+    await work.run(true);
+    for (now = 60_000; now <= 24 * 60 * 60_000; now += 60_000) await work.run(false);
+    expect(drain).toHaveBeenCalledOnce(); expect(transport).not.toHaveBeenCalled();
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' committed delivery' }, USER);
+    work.wake('mcp-webhooks'); await work.run(false);
+    expect(transport).toHaveBeenCalledOnce(); expect(drain).toHaveBeenCalledTimes(2);
+    now += 24 * 60 * 60_000; await work.run(false);
+    expect(drain).toHaveBeenCalledTimes(2);
+  });
+
+  it('MCP-WEBHOOK-DEADLINE: a bounded legacy bearer batch continues only for remaining rows', async () => {
+    await db.query('DELETE FROM rooms_mcp_webhook_outbox');
+    const { client, member } = await eventFixture();
+    await client.callTool({ name: 'set_webhook', arguments: { url: 'https://hooks.example/bearer', secret: 'legacy-bearer' } });
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    for (const text of ['first', 'second'])
+      await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' ' + text }, USER);
+    const transport = vi.fn(async () => new Response(null, { status: 204 }));
+    expect(await runMcpWebhookDelivery(db, transport, 1)).toBe(1);
+    expect(transport).toHaveBeenCalledOnce();
+    expect(await runMcpWebhookDelivery(db, transport, 1)).toBeUndefined();
+    expect(transport).toHaveBeenCalledTimes(2);
+  });
+
+  it('MCP-WEBHOOK-DEADLINE: shutdown drains its active delivery and leaves the next row unclaimed', async () => {
+    await db.query('DELETE FROM rooms_mcp_webhook_outbox');
+    const { token, params, member } = await eventFixture();
+    await eventCall(token, 'events/subscribe', params);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    for (const text of ['active', 'queued'])
+      await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' ' + text }, USER);
+    let entered!: () => void, release!: () => void;
+    const ready = new Promise<void>(resolve => { entered = resolve; });
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const transport = vi.fn(async () => { entered(); await held; return new Response(null, { status: 204 }); });
+    const controller = new AbortController();
+    const flight = runMcpWebhookDelivery(db, transport, 50, controller.signal);
+    await ready; controller.abort(); release();
+    expect(await flight).toBeUndefined(); expect(transport).toHaveBeenCalledOnce();
+    expect((await db.query('SELECT attempts,claimed_at FROM rooms_mcp_event_deliveries WHERE delivered_at IS NULL')).rows)
+      .toEqual([{ attempts: 0, claimed_at: null }]);
+    expect(await runMcpWebhookDelivery(db, transport)).toBeUndefined(); expect(transport).toHaveBeenCalledTimes(2);
+  });
+
+  it('MCP-WEBHOOK-DEADLINE: persisted finite delivery attempts keep identity and terminate', async () => {
+    await db.query('DELETE FROM rooms_mcp_webhook_outbox');
+    const { token, params, member } = await eventFixture();
+    await eventCall(token, 'events/subscribe', params);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' finite dispatch' }, USER);
+    const bodies: string[] = [], ids: string[] = [];
+    const transport: typeof postMcpWebhook = async (_url, init) => {
+      bodies.push(init.body); ids.push(init.headers['webhook-id']!);
+      return new Response(null, { status: 503 });
+    };
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      await db.query("UPDATE rooms_mcp_event_deliveries SET next_attempt_at=now()-interval '1 second' WHERE delivered_at IS NULL");
+      const delay = await runMcpWebhookDelivery(db, transport);
+      expect(bodies).toHaveLength(attempt);
+      if (attempt < 5) { expect(delay).toBeGreaterThan(25_000); expect(delay).toBeLessThanOrEqual(240_000); }
+      else expect(delay).toBeUndefined();
+    }
+    expect(new Set(bodies).size).toBe(1); expect(new Set(ids).size).toBe(1);
+    expect(await runMcpWebhookDelivery(db, transport)).toBeUndefined(); expect(bodies).toHaveLength(5);
+  });
+
+  it('MCP-WEBHOOK-DEADLINE: an in-flight persisted claim supplies its actual expiry', async () => {
+    await db.query('DELETE FROM rooms_mcp_webhook_outbox');
+    const { token, params, member } = await eventFixture();
+    await eventCall(token, 'events/subscribe', params);
+    const handle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [member])).rows[0]!.handle;
+    await phone.execute('sendRoomMessage', { roomId: ROOM, text: '@' + handle + ' abandoned claim' }, USER);
+    await db.query('UPDATE rooms_mcp_event_deliveries SET claimed_at=now(),attempts=1 WHERE delivered_at IS NULL');
+    const transport = vi.fn(async () => new Response(null, { status: 204 }));
+    const delay = await runMcpWebhookDelivery(db, transport);
+    expect(delay).toBeGreaterThan(50_000); expect(delay).toBeLessThanOrEqual(60_000);
+    expect(transport).not.toHaveBeenCalled();
+    await db.query("UPDATE rooms_mcp_event_deliveries SET claimed_at=now()-interval '61 seconds' WHERE delivered_at IS NULL");
+    expect(await runMcpWebhookDelivery(db, transport)).toBeUndefined(); expect(transport).toHaveBeenCalledOnce();
+  });
+
   it('MCP-EVENTS-1: a human tag reaches a local receiver once, and the connected member replies under its own byline', async () => {
     const fixture = await eventFixture();
     const { token, params, member, secret, url, client } = fixture;

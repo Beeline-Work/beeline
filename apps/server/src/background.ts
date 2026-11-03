@@ -1,7 +1,7 @@
 import { retryOwedMentions } from './owed-mentions.js';
 import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { captureServerError } from './sentry.js';
-import { deliverMcpMemberWebhooks, retryMcpMemberRoutes } from './rooms-mcp-members.js';
+import { retryMcpMemberRoutes } from './rooms-mcp-members.js';
 import { DatabaseTransactionStartError, type SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
@@ -965,9 +965,8 @@ export class MediaExpiryLoop {
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
   await cleanupUnfinishedAppSignIns(database, true);
   await retryOwedMentions(database);
-  // Outgoing MCP member webhooks leave the wake transaction here.
+  // Legacy routing repair remains separate from committed delivery ownership.
   try { await retryMcpMemberRoutes(database); } catch (error) { captureServerError(error); }
-  try { await deliverMcpMemberWebhooks(database); } catch (error) { captureServerError(error); }
   // Each autocommitted batch fits the jobs pool budget; later cycles finish backlogs.
   const expired = [
     ['agent_turn_traces', "created_at<now()-interval '30 days'"],

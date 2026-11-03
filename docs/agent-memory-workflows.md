@@ -6,6 +6,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 - Institutional memory stays optional to every turn and is maintained by the answering agent, never background review. Only explicit `false` disables its flags. Keep context within `INSTITUTIONAL_CONTEXT_HARD_MAX_BYTES`; fetch alongside harness activation, report a miss, and bind writes to the active command. Workspace facts alone expire; code-anchored procedures stale when their blob changes, fail-open. Authority: `packages/api-contract/src/institutional-memory.ts`, `institutional-context.ts`, `institutional-curator.ts`, `institutional-skill-anchors.ts`.
 
+- Save-time document embeddings make one attempt for the exact memory item or skill version. Failure leaves missing embedding evidence intact; a later save can admit another attempt. Conditional version writes reject a result made stale by an edit. `institutional-memory-embeddings.ts` and its tests own this contract; startup backfill admission remains a separate migration concern.
+
 ## Workflow runtime
 
 - Saved workflow format, required descriptions/timeouts, gates, failover and tools: [workflow reference](workflows/README.md), `readWorkflowContract`, `validateSavedWorkflow`. Do not duplicate that contract here.

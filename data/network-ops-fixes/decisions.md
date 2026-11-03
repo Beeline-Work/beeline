@@ -184,3 +184,9 @@ Regression coverage routes prior sweep scenarios through explicit check commands
 Remove the listener retry delay and its configurable test override. A failed initial acquisition parks with no timer. An established connection loss consumes one immediate replacement, coalescing error/end; merely opening that replacement does not replenish admission. A committed live cause or independent database recovery provides new evidence. Stop unsubscribes recovery, interrupts parked waits and drains initialization. Late retired notifications and LISTEN completions cannot publish readiness.
 
 The restored-feed proof holds the replacement's actual connection promise while committing missed work, rather than relying on a 50ms retry gap. Existing session, source and command-completion recovery behavior remains; no extra connection or database probe is introduced. Full F18/source/cohort closure remains open.
+
+## D075 — Save-time embeddings never create retry timers
+
+Delete the per-row retry map, 5/15/60-second policy and retry-test inspection export. Each actual save schedules one best-effort embedding attempt; provider refusal or throw ends it. The original row/version conditions still guard the write, and missing embedding evidence remains on the durable item/skill. A later save can admit a new attempt without reviving the failed one. Disabled configuration still performs no row read. Startup backfill admission, durable route ownership and full F18/F22 closure remain open.
+
+All 36 embedding tests pass, including idle-day provider failure, separately admitted edits, stale-version guards, disabled configuration, deadlines and existing backfill behavior. No real provider is called.

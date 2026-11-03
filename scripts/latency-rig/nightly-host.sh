@@ -97,6 +97,9 @@ fi
 phase="emulator lease"
 check_lane
 before="$(device_list)"
+# Create the log before the background child can be delayed by host contention.
+# The parent reads it immediately while identifying the leased serial.
+: >"$state/host-emulator.log"
 setsid beeline emulator -avd se_api35 -no-window -gpu swiftshader_indirect \
   -no-snapshot -memory 2560 -cores 4 >"$state/host-emulator.log" 2>&1 9>&- &
 emulator_pid=$!

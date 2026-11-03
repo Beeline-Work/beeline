@@ -8,7 +8,7 @@
     "F23"
   ],
   "authorization": "firstmate instruction 006; exact built source SHA approved as native provenance",
-  "status": "blocked before dependency installation or simulator creation",
+  "status": "native captures deferred to rollout by firstmate instruction 007",
   "host": {
     "os": "Darwin",
     "architecture": "x86_64",
@@ -33,5 +33,10 @@
     "appBuilt": false,
     "productionAccess": false
   },
-  "required": "Free sufficient capacity or supply a writable build volume for the isolated mobile dependencies, Pods and DerivedData; existing local dependency tree alone is approximately 4.23 GiB."
+  "required": "During rollout, provision adequate native build capacity and execute the exact deferred capture list. No space cleanup or further Mac action is authorized by this delivery.",
+  "rolloutDecision": {
+    "instruction": "007",
+    "macDeletionsAllowed": false,
+    "captureList": "group-c-followup-report.md#deferred-rollout-capture-gate"
+  }
 }

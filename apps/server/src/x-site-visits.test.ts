@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { dashboardXAds } from './x-ads.js';
 import { syncXSiteVisits } from './x-site-visits.js';
 import recorded from './x-site-visits.recorded.json';
@@ -13,7 +12,7 @@ const group = (refererHost: string, requestPath: string, visits: number, date = 
 
 describe('daily X site visits (feature, not a defect report)', () => {
   let db: PgliteDatabase;
-  beforeEach(async () => { db = new PgliteDatabase(); await migrate(db); });
+  beforeEach(async () => { db = await migratedDatabase(); });
   afterEach(async () => { await db.close(); vi.unstubAllEnvs(); });
   const send = (payload: unknown) => vi.fn<typeof fetch>(async () => new Response(JSON.stringify(payload)));
   async function retry() { await db.query(`UPDATE x_ad_sync SET next_attempt_at=$1 WHERE id='site-visits'`, [now]); }

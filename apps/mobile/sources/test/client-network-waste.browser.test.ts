@@ -1,11 +1,11 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof } from './browserProof';
 
 it('Reproduction NET-WASTE-1: built browser navigation keeps hidden reads quiet', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/network-waste-'));
+  const directory = await createBrowserProofDirectory("network-waste-");
   try {
     const entry = path.join(directory, 'proof.jsx');
     await writeFile(entry, `

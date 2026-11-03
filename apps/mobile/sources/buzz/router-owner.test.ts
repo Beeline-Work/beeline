@@ -18,7 +18,7 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
 vi.mock('./surface-storage', () => ({ routerLaneStorage: () => fixture.storage, routerAuthorityStorageReady: () => fixture.authorityReady,routerCommandStorageReady:()=>fixture.commandsReady }));
 import { resetClientState } from '@/sync/client-reset';
 import { acquireRouterLane, acquireRouterSavedContinuation, routerOwnerNegotiated, routerOwnerNavigation, routerOwnerDisconnected,
-  admitRouterTrayCommand, admitRouterTrayPaint, routerOwnerListPanel, routerOwnerCapabilities, routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport, routerOwnerUsageProfile } from './router-owner';
+  readRouterToolPage, admitRouterTrayCommand, admitRouterTrayPaint, routerOwnerListPanel, routerOwnerCapabilities, routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport, routerOwnerUsageProfile } from './router-owner';
 const request = { family: 'needs-you-count' as const, workspaceId: 'w' };
 const hash = (value: unknown) => bytesToHex(sha256(utf8ToBytes(JSON.stringify(value))));
 const scopes = [{ authorityScope: 'reader:ada:workspace:w', epoch: '1' }];
@@ -481,4 +481,26 @@ it('admits only the exact three DB decision actions offered in the held canonica
   expect(()=>admitRouterTrayCommand('w',{operation:'skipChoice',input:{choiceId,extra:true} as never})).toThrow();
   expect(()=>admitRouterTrayCommand('w',{operation:'answerChoice',input:{choiceId,optionId:'option'}})).toThrow('unavailable');
   expect(execute).toHaveBeenCalledTimes(1);lane.release();
+});
+
+
+it('F07: actual focused owner coalesces tool demand and refuses a completion after navigation',async()=>{
+  const roomId='22222222-2222-4222-8222-222222222222',workspaceId='11111111-1111-4111-8111-111111111111';
+  const request={family:'room-head' as const,roomId,workspaceId};
+  const execute=vi.fn(async()=>({...snapshot(),family:'room-head',scope:roomId,value:{room:{id:roomId},messages:[]},
+    cut:{...snapshot().cut,stream:`workspace:${workspaceId}`},atomicGroup:`room-head:${roomId}:ada`,
+    authority:{scopes:[{authorityScope:`reader:ada:workspace:${workspaceId}`,epoch:'1'},{authorityScope:`room:${roomId}`,epoch:'1'}],digest:hash([{authorityScope:`reader:ada:workspace:${workspaceId}`,epoch:'1'},{authorityScope:`room:${roomId}`,epoch:'1'}])},
+  } as RouterSnapshot));
+  let finish!:(value:unknown)=>void;
+  const executeTools=vi.fn(()=>new Promise<any>(resolve=>{finish=resolve;}));
+  routerOwnerNavigation({routes:[{key:'room',name:'beeline/chat/[channelId]',params:{channelId:roomId,communityId:workspaceId}}]});
+  const head=acquireRouterLane(request,()=>true,()=>{});
+  await routerOwnerNegotiated({generation:1,families:['room-head'],execute,executeTools});await settle();
+  expect(head.current().state).toBe('LIVE');
+  const input={roomId,anchor:'a'.repeat(64)};
+  const first=readRouterToolPage(input),second=readRouterToolPage(input);
+  const results=Promise.allSettled([first,second]);expect(executeTools).toHaveBeenCalledTimes(1);
+  routerOwnerNavigation(navigation());
+  finish({roomId,messages:[]});expect((await results).every(result=>result.status==='rejected')).toBe(true);
+  await expect(readRouterToolPage(input)).rejects.toThrow('unavailable');expect(executeTools).toHaveBeenCalledTimes(1);head.release();
 });

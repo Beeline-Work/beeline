@@ -10,23 +10,15 @@ const authorized = `SELECT room.id,room.workspace_id FROM rooms room
 const isTool = `message.presentation='activity' AND message.deleted_at IS NULL AND message.durable_fact IS NULL
   AND EXISTS(SELECT 1 FROM jsonb_array_elements(message.activity) item WHERE item->>'kind'='tool')`;
 
-/** Aggregate IDs/counts only: never transfer 200 full JSONB tool bodies into
- * Node just to discard them. These are actual source row IDs, not new events. */
-export async function roomToolSummaries(db: SqlDatabase, roomId: string, reader: string): Promise<RoomViewMessage[]> {
-  const rows = (await db.query<Summary>(`WITH authorized AS (${authorized}), grouped AS (
-    SELECT message.id,message.author_id,message.created_at,message.request_id,message.turn_id,
-      count(*) OVER(PARTITION BY message.author_id,message.request_id,message.turn_id)::int count,
-      row_number() OVER(PARTITION BY message.author_id,message.request_id,message.turn_id ORDER BY message.created_at DESC,message.id DESC) ordinal
-    FROM authorized JOIN messages message ON message.room_id=authorized.id WHERE ${isTool}
-  ) SELECT grouped.id,grouped.author_id,grouped.created_at,grouped.request_id,grouped.count,
-    left(person.name,128) name,person.kind FROM grouped JOIN identities person ON person.id=grouped.author_id
-    WHERE ordinal=1 ORDER BY grouped.created_at DESC,grouped.id DESC LIMIT 30`, [roomId, reader])).rows;
-  return rows.map(row => ({ id: row.id, text: '', createdAt: Math.floor(row.created_at.getTime() / 1000), createdAtMs: row.created_at.getTime(),
-    author: { pubkey: row.author_id, kind: row.kind, name: row.name }, presentation: 'activity',
+/** Projection of the bounded aggregate returned by the Room's single query. */
+export function projectRoomToolSummaries(rows:readonly Summary[],roomId:string):RoomViewMessage[]{
+  return rows.map(row=>{const created=new Date(row.created_at);return{ id: row.id, text: '', createdAt: Math.floor(created.getTime() / 1000), createdAtMs: created.getTime(),
+    author: { pubkey: row.author_id, kind: row.kind, name: row.name }, presentation: 'activity' as const,
     ...(row.request_id ? { requestId: row.request_id } : {}),
-    activity: [{ kind: 'tool', title: `${row.count} steps`, toolGroup: { roomId, anchor: row.id, count: row.count } }],
-  }));
+    activity: [{ kind: 'tool' as const, title: `${row.count} steps`, toolGroup: { roomId, anchor: row.id, count: row.count } }],
+  };});
 }
+export type RoomToolSummaryRow=Summary;
 
 /** Existing disclosure/Open actions own each bounded page. The optional
  * message target loads one full stored tool result, never a Room refetch. */

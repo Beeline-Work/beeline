@@ -1,12 +1,12 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 it.skipIf(!process.env.CORNER_ROOM_PROOF_INPUT)('Reproduction CORNER-ROOM-2: service-projected Room openings and PR destinations in both themes', async () => {
   const mobile = process.cwd();
   const snapshots = JSON.parse(await readFile(process.env.CORNER_ROOM_PROOF_INPUT!, 'utf8'));
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/corner-room-proof-'));
+  const directory = await createBrowserProofDirectory("corner-room-proof-");
   try {
     const entry = path.join(directory, 'proof.tsx');
     await writeFile(entry, `import React from 'react';

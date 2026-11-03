@@ -2,41 +2,45 @@
 
 No whole finding is closed until all consumers and the specified executable proofs pass. Capability-disabled infrastructure is staged implementation, not closure. The reviewed specification remains authoritative.
 
-| Finding | Status | Required executable closure |
-| --- | --- | --- |
-| F01 offscreen overlays | Open | P12 helper A/phone B: zero viewers→zero text stream; entry one baseline; terminal/reset correct. |
-| F02 global replay/refetch | Open | P5 affected list updates once on both servers; unrelated reads/queries0. |
-| F03 Members/profile | Open | P3 1,000 draft/turn/presence frames→reads0; relevant membership exact fact. |
-| F04 Needs-you work/seen | Open | P3 snapshot writes0/unaffected scans0, painted IDs only, count/cells same-cut. |
-| F05 hidden schedule/workflow | Open | P2/P3 16 unmounted Rooms plus changes→reads0; return ≤1/key. |
-| F06 full tray/global gaps | Open | P3 badge ≤1KiB; 10 Workspaces one change→other reads0/full tray0. |
-| F07 payload/previews | Open | P8/P11 200 large tools absent initial DTO; excerpt bounds; view/save share flight. |
-| F08 Workbench/wallet | Open | P3 connector change→wallet reads0; snapshot provider/queue0; exact cell update. |
-| F09 portrait duplicate | Open | P2/P3 two consumers one commit→one update/no event read. |
-| F10 foreground | Open | P4 healthy callbacks reads/replacements0; half-open one replacement/≤1/key. |
-| F11 auth/OTA | Open | P9/P10 pending 10min timed reads0; repeated active no repeated update check. |
-| F12 receipts | Open | P12 idle-progress10min turn deltas/noop writes0; owner death still fenced/expires. |
-| F13 replay work | Open | P5/P6/P11 equal-load DB/WAL/CPU no regression; sockets do not multiply base reads. |
-| F14 helper inbox | Open | P12 unrelated turn/activity getRoomInbox0; new command to correct agent once. |
-| F15 MCP double poll | Open | P12 idle>25s/day empty calls0; inbox durable before cursor. |
-| F16 minute repairs/checks | Open | P12 idle day provider/repair reads0; only due family runs, leader recovery works. |
-| F17 sweeps/leases/voice | Open | P12 no-work scans0; session expires once; two owners fenced/no lost-double meter. |
-| F18 backoff | Open | P4/P7 24h repeated failure→one attempt/boundary, flapping no loop. |
-| F19 draft/context | Open | P12 N appends final L cost O(L+bounded reset); duplicate command context1; revoke blocks effect. |
-| F20 account usage | Open | P12/P3 same account revision/two machines one update; profile/Workbench refetch0. |
-| F21 payment/OAuth/share | Open | P7/P12 pending10min observations0; completion correct waiter; lost result UNKNOWN; renewal failure stops. |
-| F22 hosting/cron/vendors | Open | P11/P12 classify every audit Appendix D1/D2 entry by exact route/due record/test; readyz DB probe0; no scheduler blanket exemption. |
-| F23 files/link/favicon | Open | P8/P10/P11 preview→view→save one flight; expiry refresh only demand; Google favicon0/native bytes bounded. |
-| F24 write refetch | Open | P7/P3 each send/reaction/delete/decision effect1/post-read0/correct other reader; legacy hints stay. |
-| F25 hidden roster | Open | P3/P8 picker closed Workspace reads0; open ≤1 snapshot; grants current server authority. |
-| F26 wait polls | Closed: committed completion capture, 85-second no-poll and existing connector/MCP integration proofs pass | P7/P12 completion before/during listen never lost; pending85s one initial read/no repeats; duplicate effect1. |
+Instruction043 separates **Proven pre-rollout** candidate paths from **Closed (cohort-measured)** findings. Group B has no known failing local candidate-path gate after its final follow-up; its full released-cohort, provider ownership and workload obligations are still explicit in its [proof report](group-b-proof-report.md). This label does not erase retained legacy adapters or assert the router-only sweep is complete. F26 retains its previously accepted closure; this update makes no new full-cohort claim for it. See [remaining local work versus rollout gates](rollout-readiness.md).
+
+| Finding | Pre-rollout executable proof | Closed (cohort-measured) | Required executable closure |
+| --- | --- | --- | --- |
+| F01 offscreen overlays | Proven pre-rollout: candidate P12 paths | Open: complete cohort/workload acceptance | P12 helper A/phone B: zero viewers→zero text stream; entry one baseline; terminal/reset correct. |
+| F02 global replay/refetch | Scoped candidate proofs pass; full consumer coverage unproved | Open: complete cohort/workload acceptance | P5 affected list updates once on both servers; unrelated reads/queries0. |
+| F03 Members/profile | Local work remains: Missing committed roster fact | Open | P3 1,000 draft/turn/presence frames→reads0; relevant membership exact fact. |
+| F04 Needs-you work/seen | Local work remains: Unaffected Room cell reread | Open | P3 snapshot writes0/unaffected scans0, painted IDs only, count/cells same-cut. |
+| F05 hidden schedule/workflow | Local work remains: Missing workflow-start fact | Open | P2/P3 16 unmounted Rooms plus changes→reads0; return ≤1/key. |
+| F06 full tray/global gaps | Scoped candidate proofs pass; full consumer coverage unproved | Open: complete cohort/workload acceptance | P3 badge ≤1KiB; 10 Workspaces one change→other reads0/full tray0. |
+| F07 payload/previews | Scoped candidate proofs pass; full consumer coverage unproved | Open: complete cohort/workload acceptance | P8/P11 200 large tools absent initial DTO; excerpt bounds; view/save share flight. |
+| F08 Workbench/wallet | Local work remains: Missing Workbench connector fact | Open | P3 connector change→wallet reads0; snapshot provider/queue0; exact cell update. |
+| F09 portrait duplicate | Local work remains: Missing portrait parent fact | Open | P2/P3 two consumers one commit→one update/no event read. |
+| F10 foreground | Scoped candidate proofs pass; full consumer coverage unproved | Open: complete cohort/workload acceptance | P4 healthy callbacks reads/replacements0; half-open one replacement/≤1/key. |
+| F11 auth/OTA | Scoped candidate proofs pass; full consumer coverage unproved | Open: complete cohort/workload acceptance | P9/P10 pending 10min timed reads0; repeated active no repeated update check. |
+| F12 receipts | Proven pre-rollout: candidate P12 paths | Open: complete cohort/workload acceptance | P12 idle-progress10min turn deltas/noop writes0; owner death still fenced/expires. |
+| F13 replay work | Local work remains: first-read WAL and legacy Room latency gates | Open | P5/P6/P11 equal-load DB/WAL/CPU no regression; sockets do not multiply base reads. |
+| F14 helper inbox | Proven pre-rollout: candidate P12 paths | Open: complete cohort/workload acceptance | P12 unrelated turn/activity getRoomInbox0; new command to correct agent once. |
+| F15 MCP double poll | Proven pre-rollout: candidate P12 paths | Open: complete cohort/workload acceptance | P12 idle>25s/day empty calls0; inbox durable before cursor. |
+| F16 minute repairs/checks | Proven pre-rollout: candidate P12 paths | Open: complete cohort/workload acceptance | P12 idle day provider/repair reads0; only due family runs, leader recovery works. |
+| F17 sweeps/leases/voice | Proven pre-rollout: candidate P12 paths | Open: complete cohort/workload acceptance | P12 no-work scans0; session expires once; two owners fenced/no lost-double meter. |
+| F18 backoff | Scoped candidate proofs pass; full consumer coverage unproved | Open: complete cohort/workload acceptance | P4/P7 24h repeated failure→one attempt/boundary, flapping no loop. |
+| F19 draft/context | Proven pre-rollout: candidate P12 paths | Open: complete cohort/workload acceptance | P12 N appends final L cost O(L+bounded reset); duplicate command context1; revoke blocks effect. |
+| F20 account usage | Scoped candidate proofs pass; full consumer coverage unproved | Open: complete cohort/workload acceptance | P12/P3 same account revision/two machines one update; profile/Workbench refetch0. |
+| F21 payment/OAuth/share | Scoped candidate proofs pass; full consumer coverage unproved | Open: complete cohort/workload acceptance | P7/P12 pending10min observations0; completion correct waiter; lost result UNKNOWN; renewal failure stops. |
+| F22 hosting/cron/vendors | Proven pre-rollout: candidate P12 paths | Open: complete cohort/workload acceptance | P11/P12 classify every audit Appendix D1/D2 entry by exact route/due record/test; readyz DB probe0; no scheduler blanket exemption. |
+| F23 files/link/favicon | Scoped candidate proofs pass; full consumer coverage unproved | Open: complete cohort/workload acceptance | P8/P10/P11 preview→view→save one flight; expiry refresh only demand; Google favicon0/native bytes bounded. |
+| F24 write refetch | Scoped candidate proofs pass; full consumer coverage unproved | Open: complete cohort/workload acceptance | P7/P3 each send/reaction/delete/decision effect1/post-read0/correct other reader; legacy hints stay. |
+| F25 hidden roster | Scoped candidate proofs pass; full consumer coverage unproved | Open: complete cohort/workload acceptance | P3/P8 picker closed Workspace reads0; open ≤1 snapshot; grants current server authority. |
+| F26 wait polls | Proven: committed completion capture and 85-second no-poll gate | Existing closure retained; broader cohort measurement not newly claimed | P7/P12 completion before/during listen never lost; pending85s one initial read/no repeats; duplicate effect1. |
 
 ## Integrated group drafts (whole findings remain Open)
 
 - Group A: https://github.com/Beeline-Work/beeline/pull/3376 at `8fe42a0a5`; seven scoped PostgreSQL scenarios pass on the integrated source. Five strict closure assertions still identify missing facts/unaffected-cell work; see [report](group-a-proof-report.md).
-- Group B: https://github.com/Beeline-Work/beeline/pull/3375 at `c63418f27`; source/deadline composition and P12 proofs integrated. Whole inventory/cohort reconciliation remains open.
-- Group C: https://github.com/Beeline-Work/beeline/pull/3374 at `df154c8e1`; bounded tool disclosure and PostgreSQL proofs integrated. The strict full Room workload still reports eight candidate statements against two legacy statements; F13 remains open. Other complete-cohort requirements also remain open.
+- Group B: initial https://github.com/Beeline-Work/beeline/pull/3375 plus final https://github.com/Beeline-Work/beeline/pull/3377 at `43c54acd9`; reviewed and integrated. Exact microsecond deadline admission and the shared production repair composition replace the earlier draft. Candidate P12 proofs pass; all 61 mechanisms and 18 repair suboperations are classified. The [final report](group-b-proof-report.md) names complete cohort/ownership/workload gates separately.
+- Group C: initial https://github.com/Beeline-Work/beeline/pull/3374 plus https://github.com/Beeline-Work/beeline/pull/3378 at `44552ac7c`; bounded tool disclosure and same-statement Room cut/enrichment are integrated. The retained strict workload now reports two statements on both paths, but first-read WAL remains 1,144 candidate bytes versus 0 legacy; the legacy Room latency gate also fails. F13 remains open; [exact evidence](group-c-followup-report.md).
 - No group finding is marked closed merely because its draft is integrated. Router activation remains off. [T7 release sequence](t7-compatibility.md) requires a separate additive expansion release before switching, preserving canary auto-revert to a ledger-aware image.
+
+- Historical-source expansion smoke passes:621 archived source files verified,1,508 old catalog columns preserved, old socket reads/writes and handler recreation work after migration, current legacy-wire equality and repeated migration pass. Actual mobile transport also parks a lost command on that historical server and reuses its identity on recovery with one effect and zero HTTP fallback. [Scope and evidence](t7-compatibility.md) explicitly exclude historical dependencies/container images, full startup and the deployed rollback floor.
 
 ## Validated staged infrastructure
 

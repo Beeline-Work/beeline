@@ -130,22 +130,28 @@ describe('delivery-driven presence', () => {
       .toEqual([{ status: 'working', generation_id: 'real-helper' }]);
   });
   it('uses one bounded query and never resolves tags in historical messages during recovery', async () => {
-    // Restore historical fixture rows without replaying today's write-time
-    // notifications and derived work. The recovery query, cardinality and text
-    // stay unchanged; all user triggers are restored before the code under test.
-    await database.query('ALTER TABLE messages DISABLE TRIGGER USER');
-    try {
-      await database.query(
-        `INSERT INTO messages(id,room_id,author_id,text,created_at)
-         SELECT lpad(n::text,64,'0'),$1,$2,repeat('@bee historical message ',100),
-           now()-interval '1 day'
-         FROM generate_series(1,21630) n`,
+    // This proof reads history; it does not exercise historical write fanout.
+    // Keep all 21,630 long rows and their search vectors, but compute the
+    // identical vectors once and avoid replaying unrelated user triggers.
+    // Foreign keys stay active; all hooks resume before the live operations.
+    await database.transaction(async fixture => {
+      await fixture.query('ALTER TABLE messages DISABLE TRIGGER USER');
+      await fixture.query(
+        `WITH history AS MATERIALIZED (
+           SELECT repeat('@bee historical message ',100) body,
+             to_tsvector('simple',repeat('@bee historical message ',100)) exact,
+             strip(to_tsvector('english',repeat('@bee historical message ',100))) stem
+         )
+         INSERT INTO messages(id,room_id,author_id,text,created_at,search_document,search_stem_document)
+         SELECT lpad(n::text,64,'0'),$1,$2,history.body,now()-interval '1 day',history.exact,history.stem
+         FROM generate_series(1,21630) n CROSS JOIN history`,
         [ROOM, HUMAN],
       );
-    } finally {
-      await database.query('ALTER TABLE messages ENABLE TRIGGER USER');
-    }
-    expect((await database.query('SELECT count(*)::int count FROM messages')).rows[0]?.count).toBe(21630);
+      await fixture.query('ALTER TABLE messages ENABLE TRIGGER USER');
+    });
+    expect((await database.query(`SELECT count(*)::int count FROM messages`)).rows[0]?.count).toBe(21630);
+    expect((await database.query(`SELECT tgname FROM pg_trigger WHERE tgrelid='messages'::regclass
+      AND NOT tgisinternal AND tgenabled='D'`)).rows).toEqual([]);
     await presence.announce(ROOM, AGENT, { lifecycleId: 'current' });
     const query = vi.spyOn(database, 'query');
     await presence.observe();

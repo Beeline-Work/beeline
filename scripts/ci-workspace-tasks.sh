@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# These commands run in two bounded lanes via run-ci-workspace-checks.mjs.
+# TYPECHECK runs its checks sequentially; MOBILE SUITE owns a separate checkout.
 # Keep trusted-base architecture and phone/UI policy checks equivalent to TYPECHECK.
 
 typecheck() {
@@ -34,12 +34,8 @@ typecheck() {
   else
     node "$runner/check-architecture.mjs" --root .
   fi
-  # npm run typecheck
+  # The root command also generates mobile routes and typechecks mobile.
   npm run typecheck
-  # Typecheck the mobile app as developers do
-  ( cd "apps/mobile"
-    npx tsc --noEmit
-  )
   # Check no workflow names a deleted test
   npm run lint:workflow-paths
   # Check path filters skip untouched suites

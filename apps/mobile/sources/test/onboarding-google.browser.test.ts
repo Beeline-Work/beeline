@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CHROME, runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, CHROME, runBrowserProof, webProofShims } from './browserProof';
 
 describe.skipIf(!existsSync(CHROME))('Google browser handoff recovery', () => {
   it.each([false, true])('R-signin-dismiss/R-signin-fallback: recovers through the browser (nativeFailure=%s)', async (nativeFailure) => {
     const mobile=process.cwd();
-    const directory=await mkdtemp(path.join(mobile,'sources/test/onboarding-google-proof-'));
+    const directory=await createBrowserProofDirectory("onboarding-google-proof-");
     const output=process.env.ONBOARDING_EVIDENCE_DIR??'/tmp/jellybean-onboarding';mkdirSync(output,{recursive:true});
     try {
       const entry=path.join(directory,'proof.jsx');

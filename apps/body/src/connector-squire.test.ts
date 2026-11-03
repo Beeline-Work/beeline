@@ -1235,7 +1235,7 @@ describe('vault reads through the Squire MCP', () => {
 });
 
 describe('awaitPublicPage', () => {
-  it('Reproduction tunnel-dns: waits for a fresh quick-tunnel page to answer before publishing it', async () => {
+  it('parks a failed tunnel observation for a day and requires separate actions for later observations', async () => {
     const answers = [new TypeError('fetch failed'), 530, 200];
     const fetch = vi.fn(async () => {
       const next = answers.shift();
@@ -1243,8 +1243,13 @@ describe('awaitPublicPage', () => {
       return new Response(null, { status: next });
     });
     vi.stubGlobal('fetch', fetch);
-    expect(await awaitPublicPage('https://fresh.trycloudflare.com/#p=x', 10_000)).toBe(true);
-    expect(fetch).toHaveBeenCalledTimes(3);
+    vi.useFakeTimers();
+    try{
+      expect(await awaitPublicPage('https://fresh.trycloudflare.com/#p=x', 10_000)).toBe(false);
+      await vi.advanceTimersByTimeAsync(86_400_000);expect(fetch).toHaveBeenCalledOnce();
+      expect(await awaitPublicPage('https://fresh.trycloudflare.com/#p=x',10_000)).toBe(false);expect(fetch).toHaveBeenCalledTimes(2);
+      expect(await awaitPublicPage('https://fresh.trycloudflare.com/#p=x',10_000)).toBe(true);expect(fetch).toHaveBeenCalledTimes(3);
+    }finally{vi.useRealTimers();}
   });
 
   it('gives up after its bound instead of holding the sign-in back', async () => {

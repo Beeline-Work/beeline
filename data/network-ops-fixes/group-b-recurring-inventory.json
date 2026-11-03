@@ -156,11 +156,11 @@
     {
       "id": "D1-16",
       "mechanism": "Squire public page ready",
-      "disposition": "open",
-      "owner": "waitForPublicPage",
+      "disposition": "control",
+      "owner": "awaitPublicPage one bounded admitted observation",
       "implementation": "apps/body/src/connector-squire.ts",
       "proof": "apps/body/src/connector-squire.test.ts",
-      "boundary": "One-second public-page GET discovery remains",
+      "boundary": "At most one GET <=5 seconds per actual setup/report action; failure parks for an idle day. Existing reported sign-in result still publishes. Shared F21 leaf; no cadence/retry or UI added.",
       "dueRecord": null,
       "dependentFinding": "F21 (parallel group C)"
     },
@@ -514,7 +514,7 @@
       "owner": "registerBackgroundDeadlineFamilies / maintenanceDeadlineFamilies",
       "implementation": "apps/server/src/index.ts",
       "proof": "apps/server/src/background-deadlines.postgres.test.ts",
-      "boundary": "No repair registration. Each of 20 retention tables and each reviewer/voice/media/claim/notice/curator/sign-in/owed/route family has its own committed source or stored deadline. P12 background-deadlines4 passes.",
+      "boundary": "No repair registration. Each of 20 retention tables and each reviewer/voice/media/claim/notice/curator/sign-in/owed/route family has its own committed source or stored deadline. P12 background-deadlines4 passes. Exact microsecond PostgreSQL admission cut retains deadlines crossing the scan/minimum-query gap without retrying old failed rows.",
       "dueRecord": null
     },
     {

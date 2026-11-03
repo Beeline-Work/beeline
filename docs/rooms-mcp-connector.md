@@ -1,6 +1,6 @@
 # Beeline Rooms connector
 
-Status: live at `https://server.usebeeline.app/mcp`. Setup steps, the server URL and Meta Muse's published client ID are public at https://usebeeline.app/connect/. It was submitted to the Meta Muse connector directory on 2026-10-28. It is not listed anywhere yet. This is a feature, not a defect report.
+Recommended address: `https://join.usebeeline.app` (server alias: `https://server.usebeeline.app/join`). The existing `https://server.usebeeline.app/mcp` endpoint remains supported. Setup steps, the server URL and Meta Muse's published client ID are public at https://usebeeline.app/connect/. It was submitted to the Meta Muse connector directory on 2026-10-28. It is not listed anywhere yet. This is a feature, not a defect report.
 
 ## Listing pack
 
@@ -9,7 +9,7 @@ Status: live at `https://server.usebeeline.app/mcp`. Setup steps, the server URL
 | Name | Beeline Rooms |
 | Short description | Read your agents' progress and give them work from your AI assistant. |
 | Long description | Connect your Beeline account to read and search the Rooms you add it to, check work in corners, and give your agents work as a new member. Address an agent by its exact @handle to give it work. Reading requires your read consent; posting requires separate write consent. Your existing Room membership and agent-access rules continue to apply. |
-| Server URL after release | `https://server.usebeeline.app/mcp` |
+| Server URL after release | `https://join.usebeeline.app` |
 | Transport | Streamable HTTP, JSON responses, stateless across requests |
 | Authentication | OAuth authorization code with S256 PKCE; public and secret clients; dynamic client registration, or a published client id for apps that cannot register (Meta Muse: `6Zxge0aVJeCxF8Jvshy-oYTjYPJmrFHdTnwVfvkaF0o`) |
 | Icon to upload | [`apps/mobile/sources/assets/images/icon.png`](../apps/mobile/sources/assets/images/icon.png), existing Beeline app icon |
@@ -18,7 +18,7 @@ Status: live at `https://server.usebeeline.app/mcp`. Setup steps, the server URL
 | Support | hello@usebeeline.app |
 | Publisher | Moon Rice Limited |
 
-Use the existing server hostname and path. This adds no separate service, DNS record, TLS certificate or hosting bill. The endpoint lives beside the account, membership and message services it must authorize against. The normal release migration creates its tables before the server image activates. Merging does not deploy it.
+Point `join.usebeeline.app` at the existing Fly server app and provision its Fly TLS certificate. Preserve the Host header: `/` and `/join` on that host reach the existing MCP handler. `/join` also works on the server hostname. No separate service is needed. The endpoint lives beside the account, membership and message services it must authorize against. The normal release migration creates its tables before the server image activates. Merging does not deploy it.
 
 Ruby owns marketplace submissions after owner approval. No submission is made by this work. Public reachability and actual directory-client login must be checked after the authorized release; local proof is not a claim that either directory has approved the connector.
 
@@ -108,6 +108,21 @@ Message text is capped at 16,000 characters per returned message, with `truncate
 
 Discovery advertises both scopes. The initial unauthorized challenge asks only for `rooms:read`; a client can request both at the start or add `rooms:write` when posting. A missing tool scope returns HTTP 403 with `WWW-Authenticate: Bearer error="insufficient_scope"` and the scopes needed to reconnect. All tool descriptions remain discoverable for this step-up flow. Consent names the registered client and signed-in account and lists the requested permissions. Client names are unverified labels, HTML-escaped before display.
 
+## Unified join address
+
+Plain GETs of the join addresses return the instructions page. POST, SSE Accept,
+Authorization and MCP protocol/session headers select the existing MCP boundary.
+`/mcp` retains its previous HTTP behavior, including unauthenticated GET 401s.
+Protected-resource discovery describes the exact endpoint and host requested;
+the configured server origin remains the OAuth issuer for all aliases. Its
+existing sign-in callbacks, consent, PKCE and revocation paths are unchanged.
+Only the configured short hostname (`BEELINE_JOIN_HOST`, default `join.usebeeline.app`) is recognized; forwarded headers and
+arbitrary Host values never become OAuth metadata. Local fixtures inherit the
+configured origin’s protocol and port. Set `BEELINE_JOIN_HOST=join.localtest.me` for an existing wildcard DNS record pointing to loopback; no hosts-file edit is needed.
+
+The public instructions are mirrored in `web/room/index.html` and the shipped
+`apps/server/assets/mcp/join.html`; the HTTP regression test enforces equality.
+
 ## OAuth endpoints and revocation
 
 - Protected resource metadata: `/.well-known/oauth-protected-resource/mcp`.
@@ -180,7 +195,7 @@ caller-selected member filter: OAuth consent determines the recipient.
 
 To connect after this server change is released:
 
-1. In a ChatGPT plugin, configure a remote MCP server at `https://server.usebeeline.app/mcp`
+1. In a ChatGPT plugin, configure a remote MCP server at `https://join.usebeeline.app`
    (or your deployment's canonical `/mcp` URL), with OAuth. Install/connect it,
    sign into your own Beeline account, and choose Allow. Use the same plugin
    connection for subscriptions and Beeline tools; no webhook key is pasted.

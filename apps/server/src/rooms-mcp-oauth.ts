@@ -1,5 +1,6 @@
 import { renderMcpWorkspaceSelection, MCP_WORKSPACE_SCRIPT, MCP_WORKSPACE_STYLE } from './rooms-mcp-consent-ui.js';
 import { readFileSync } from 'node:fs';
+import { joinOrigin } from './rooms-mcp-endpoints.js';
 import { fetchMcpLogo, bundledMcpLogo, mcpClientName } from './rooms-mcp-logos.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -100,8 +101,8 @@ class Refusal extends Error {
   // params carries body parameter names when the body is refused before it can be read as input.
   constructor(error: string, readonly reason: string, readonly params?: string[]) { super(error); }
 }
-const RESOURCE_PATHS = ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp'];
-const ISSUER_PATHS = ['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/mcp'];
+const RESOURCE_PATHS = ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource/join'];
+const ISSUER_PATHS = ['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/mcp', '/.well-known/oauth-authorization-server/join'];
 // Schemes a browser runs or reads locally instead of handing to an app.
 const BLOCKED_SCHEMES = ['javascript:', 'data:', 'file:', 'vbscript:', 'blob:', 'about:', 'filesystem:', 'ftp:', 'ftps:', 'ws:', 'wss:', 'mailto:', 'tel:', 'intent:'];
 function redirectUri(value: unknown): string {
@@ -158,7 +159,8 @@ export interface McpPrincipal { hash: string; client_id: string; identity_id: st
 export class RoomsMcpOAuth {
   readonly origin: string;
   readonly resource: string;
-  constructor(readonly database: SqlDatabase, origin: string, readonly auth: TokenAuth) {
+  constructor(readonly database: SqlDatabase, origin: string, readonly auth: TokenAuth, readonly joinHost = 'join.usebeeline.app') {
+    joinOrigin(origin, joinHost); // Validate the configured alias at startup.
     this.origin = new URL(origin).origin;
     this.resource = `${this.origin}/mcp`;
   }
@@ -229,12 +231,13 @@ export class RoomsMcpOAuth {
     } else if (secret !== undefined || basic) throw new Refusal('invalid_client', 'client_secret_unexpected');
     return clientId;
   }
-  /** RFC 8707 resource: optional, and either this MCP URL or the server origin, with or without a trailing slash. */
+  /** RFC 8707: existing resource/origin and the configured aliases name the same MCP service. */
   private isResource(value: unknown): boolean {
     if (value === undefined) return true;
     if (typeof value !== 'string') return false;
     const trimmed = value.replace(/\/$/, '');
-    return trimmed === this.resource || trimmed === this.origin;
+    const short = joinOrigin(this.origin, this.joinHost);
+    return [this.resource, this.origin, `${this.origin}/join`, short, `${short}/join`, `${short}/mcp`].includes(trimmed);
   }
   async audit(principal: McpPrincipal, operation: string, outcome: string): Promise<void> {
     await this.database.query(`INSERT INTO rooms_mcp_audit(client_id,identity_id,operation,outcome) VALUES($1,$2,$3,$4)`,
@@ -275,7 +278,13 @@ export class RoomsMcpOAuth {
     let tokenInput: Record<string, unknown> | undefined;
     try {
       if (request.method === 'GET' && RESOURCE_PATHS.includes(path)) {
-        mcpJson(response, 200, { resource: this.resource, authorization_servers: [this.origin], scopes_supported: [MCP_READ, MCP_WRITE], bearer_methods_supported: ['header'] }); return true;
+        const short = joinOrigin(this.origin, this.joinHost);
+        const origin = request.headers.host?.toLowerCase() === new URL(short).host ? short : this.origin;
+        const suffix = path.slice('/.well-known/oauth-protected-resource'.length);
+        const resource = suffix ? `${origin}${suffix}` : origin === short ? `${origin}/` : this.resource;
+        // One existing issuer owns sign-in and consent for all aliases. Clients
+        // send the resource from this document unchanged to that issuer.
+        mcpJson(response, 200, { resource, authorization_servers: [this.origin], scopes_supported: [MCP_READ, MCP_WRITE], bearer_methods_supported: ['header'] }); return true;
       }
       if (request.method === 'GET' && ISSUER_PATHS.includes(path)) {
         mcpJson(response, 200, { issuer: this.origin, authorization_endpoint: `${this.origin}/mcp/oauth/authorize`,

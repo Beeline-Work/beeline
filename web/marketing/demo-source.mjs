@@ -2,7 +2,7 @@ import {entries as rendered,generic,status as statusHTML,toolExpanded,toolSheet,
 import {entries,scenes,responses} from './story.mjs';
 const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
 const still=new URLSearchParams(location.search).has('still');
-const command='join my beeline room at usebeeline.app/mcp';
+const command='Join my Beeline Room: join.usebeeline.app';
 const names={alan:'Alan',jimmy:'Jimmy',grok:'grok bot',claude:'Claude Code',codex:'Codex',hermes:'Hermes',you:'You'};
 const parse=html=>{const t=document.createElement('template');t.innerHTML=html;const node=t.content.firstElementChild;node.querySelectorAll('[data-testid=chat-byline-mark],[data-testid=codex-shared-mark]').forEach(e=>{e.removeAttribute('aria-label');e.setAttribute('aria-hidden','true');});return node;};
 const plain=text=>text.replace(/<[^>]*>/g,'');

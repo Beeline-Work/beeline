@@ -264,10 +264,25 @@ test('a PR runs only selected server tests, and anything without a selection run
   }
 });
 
-test('every main merge runs full checks and publishes one coverage map without cancelling earlier merges', () => {
+test('started main runs finish full coverage while newer main pushes share one pending slot', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8'));
   assert.deepEqual(workflow.on.push.branches, ['main']);
   assert.equal(workflow.concurrency['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}");
+  const groupExpression = workflow.concurrency.group.replace(/^checks-\$\{\{\s*|\s*\}\}$/g, '');
+  const group = github => new Function('github', `return (${groupExpression});`)(github);
+  const context = (event, run, pr = 7, ref = 'refs/heads/main') => ({ event_name: event, run_id: run,
+    ref, event: { pull_request: { number: pr } } });
+  assert.equal(group(context('push', 100)), 'main');
+  assert.equal(group(context('push', 101)), 'main', 'new main pushes must replace the pending main slot');
+  assert.equal(group(context('pull_request', 100, 7)), 7, 'retain existing PR cancellation group keys');
+  assert.equal(group(context('pull_request', 101, 7)), 7);
+  assert.notEqual(group(context('pull_request', 101, 8)), group(context('pull_request', 101, 7)));
+  for (const event of ['merge_group', 'workflow_dispatch']) {
+    assert.notEqual(group(context(event, 100)), group(context(event, 101)));
+  }
+  assert.equal(group(context('push', 100, 7, 'refs/heads/other')), 100);
+  assert.equal(workflow.concurrency.queue, undefined, 'retain GitHub default single pending slot');
+
   const main = jobs['main-coverage-map'];
   assert.equal(main.if, "github.event_name == 'push'");
   assert.deepEqual(main['runs-on'], ['self-hosted', 'Linux', 'X64', 'beeline-ci', 'beeline-ci-control']);

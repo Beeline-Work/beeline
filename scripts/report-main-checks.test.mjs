@@ -58,3 +58,80 @@ test('a manual successful rerun still reports the original main failure as flaky
   assert.equal(result.flakyJobs.length, 1);
   assert.equal(notes[0].title, 'Main Checks: SERVER SUITE is flaky');
 });
+
+
+test('superseded main cancellations with no runner assignment never publish or close issues', async () => {
+  for (const jobs of [[], [{ name: 'Detect changes', conclusion: 'cancelled', runner_id: 0, runner_name: '', steps: [] }]]) {
+    const calls = [];
+    const result = await reportMainChecks({ runId: 1, api: async (method, path) => {
+      calls.push([method, path]);
+      if (path === 'actions/runs/1') return { ...run, conclusion: 'cancelled', workflow_id: 9, run_number: 10 };
+      if (path.includes('/jobs?')) return { total_count: jobs.length, jobs };
+      if (path.startsWith('actions/workflows/9/runs?')) return { workflow_runs: [
+        { id: 2, workflow_id: 9, run_number: 11, event: 'push', head_branch: 'main', conclusion: null, html_url: 'https://example.invalid/runs/2' },
+      ] };
+      throw Error(`Unexpected issue mutation or read: ${method} ${path}`);
+    } });
+    assert.equal(result.skipped, true);
+    assert.equal(result.supersededBy, 'https://example.invalid/runs/2');
+    assert.ok(calls.every(([method]) => method === 'GET'));
+  }
+});
+
+test('assigned, failed, or unverified cancellations still report main failures', async () => {
+  const cases = [
+    [{ name: 'SERVER SUITE', conclusion: 'cancelled', runner_id: 1, runner_name: 'runner', steps: [] }],
+    [{ name: 'SERVER SUITE', conclusion: 'cancelled', runner_id: 0, runner_name: '', steps: [{ name: 'setup' }] }],
+    [{ name: 'SERVER SUITE', conclusion: 'failure', runner_id: 0, runner_name: '', steps: [] }],
+    [{ name: 'SERVER SUITE', conclusion: 'cancelled' }],
+  ];
+  for (const jobs of cases) {
+    const writes = [];
+    const result = await reportMainChecks({ runId: 1, api: async (method, path, body) => {
+      if (method !== 'GET') { writes.push(body); return {}; }
+      if (path === 'actions/runs/1') return { ...run, conclusion: 'cancelled', workflow_id: 9, run_number: 10 };
+      if (path.includes('/jobs?')) return { total_count: jobs.length, jobs };
+      if (path.startsWith('issues?')) return [];
+      throw Error(path);
+    } });
+    assert.ok(result.failures.length);
+    assert.equal(writes.length, 1);
+  }
+});
+
+test('an unstarted main cancellation without a newer main push remains a failure', async () => {
+  for (const successor of [undefined,
+    { workflow_id: 9, run_number: 9, event: 'push', head_branch: 'main' },
+    { workflow_id: 9, run_number: 11, event: 'pull_request', head_branch: 'main' },
+    { workflow_id: 9, run_number: 11, event: 'push', head_branch: 'feature' },
+    { workflow_id: 8, run_number: 11, event: 'push', head_branch: 'main' },
+  ]) {
+    const writes = [];
+    const result = await reportMainChecks({ runId: 1, api: async (method, path, body) => {
+      if (method !== 'GET') { writes.push(body); return {}; }
+      if (path === 'actions/runs/1') return { ...run, conclusion: 'cancelled', workflow_id: 9, run_number: 10 };
+      if (path.includes('/jobs?')) return { total_count: 0, jobs: [] };
+      if (path.startsWith('actions/workflows/9/runs?')) return { workflow_runs: successor ? [successor] : [] };
+      if (path.startsWith('issues?')) return [];
+      throw Error(path);
+    } });
+    assert.equal(result.skipped, undefined);
+    assert.equal(writes[0].title, 'Main Checks: Checks workflow failed');
+  }
+});
+
+
+test('a prior failed main attempt stays loud when its retry is cancelled before assignment', async () => {
+  const writes = [];
+  const result = await reportMainChecks({ runId: 1, api: async (method, path, body) => {
+    if (method !== 'GET') { writes.push(body); return {}; }
+    if (path === 'actions/runs/1') return { ...run, conclusion: 'cancelled', run_attempt: 2, workflow_id: 9, run_number: 10 };
+    if (path.includes('/jobs?')) return path.includes('/attempts/1/')
+      ? { total_count: 1, jobs: [{ name: 'SERVER SUITE', conclusion: 'failure' }] }
+      : { total_count: 0, jobs: [] };
+    if (path.startsWith('issues?')) return [];
+    throw Error(path);
+  } });
+  assert.equal(result.failures[0].name, 'SERVER SUITE');
+  assert.equal(writes[0].title, 'Main Checks: SERVER SUITE failed');
+});

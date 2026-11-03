@@ -130,13 +130,19 @@ TESTS still execute on every PR.
 
 The existing coverage-map server selector remains authoritative for server
 files and always-running source readers. Body and mobile use the workspace
-file graph. Every main push executes full suites without cancelling an older
-merge. Those same server and timing jobs produce the next complete coverage
-map; the on-demand workflow remains available without duplicating main's full
-server work. The existing Nightly Checks reporter also consumes completed
-main runs, reports failures immediately to the existing fix-loop issue label,
-and does not rerun them before reporting. Its existing hosted route and
-permissions are retained; PR/foreign-branch events cannot publish main issues.
+file graph. Main pushes share one active full run and one pending slot through
+[GitHub workflow concurrency](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency).
+New pending pushes replace older pending pushes; active runs finish their
+checks and coverage publication. Ordinary server jobs produce the next map
+after all server and corpus checks pass. Timing suites remain uninstrumented;
+the on-demand workflow does not duplicate automatic main work.
+
+The existing Nightly Checks reporter consumes completed main runs and reports
+failures immediately to the existing fix-loop label without rerunning them.
+It ignores a cancelled run only when no attempt acquired a runner and a newer
+main push of the same workflow exists. Started or unverified cancellations
+remain reportable. Its hosted route and permissions stay the same;
+PR/foreign-branch events cannot publish main issues.
 
 All CI-only workspace jobs prepend `.github/actions/ci-workspace/bin` to PATH.
 Its tar wrapper serializes only cache archives through the CI user's shared

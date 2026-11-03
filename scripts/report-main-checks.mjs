@@ -15,6 +15,18 @@ export async function reportMainChecks({ api, runId }) {
     assert.ok(response.total_count <= response.jobs.length, 'Refusing a truncated main check result');
     attempts.push({ attempt, sha: run.head_sha, url: `${run.html_url}/attempts/${attempt}`, jobs: response.jobs });
   }
+  // Workflow concurrency may replace a pending main push before any runner
+  // is assigned. Preserve failures from every started or unverified attempt.
+  const neverAssigned = attempts.every(({ jobs }) => jobs.every(job =>
+    ['cancelled', 'skipped'].includes(job.conclusion) && job.runner_id === 0
+      && !job.runner_name && Array.isArray(job.steps) && job.steps.length === 0));
+  if (run.conclusion === 'cancelled' && neverAssigned
+    && Number.isInteger(run.workflow_id) && Number.isInteger(run.run_number)) {
+    const newer = await api('GET', `actions/workflows/${run.workflow_id}/runs?event=push&branch=main&per_page=100`);
+    const successor = newer.workflow_runs.find(candidate => candidate.workflow_id === run.workflow_id
+      && candidate.event === 'push' && candidate.head_branch === 'main' && candidate.run_number > run.run_number);
+    if (successor) return { skipped: true, reason: 'Superseded main push cancelled before runner assignment', supersededBy: successor.html_url };
+  }
   const result = classify(attempts);
   if (run.conclusion !== 'success' && !result.failures.length) result.failures.push({ name: 'Checks workflow', attempts: [{ url: run.html_url, conclusion: run.conclusion }] });
   const actions = await publishIssues({ api, result, runUrl: run.html_url, scope: 'Main Checks' });
@@ -31,5 +43,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const result = await reportMainChecks({ api, runId: process.env.CHECKS_RUN_ID });
   console.log(JSON.stringify(result, null, 2));
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY,
-    `Main Checks: ${result.skipped ? 'not a completed main push' : `${result.failures.length} failed jobs; ${result.actions.length} issue updates`}\n`);
+    `Main Checks: ${result.skipped ? result.reason ?? 'not a completed main push' : `${result.failures.length} failed jobs; ${result.actions.length} issue updates`}\n`);
 }

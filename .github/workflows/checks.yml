@@ -45,8 +45,8 @@
 # main pushes, merge queue, dispatch and any change the map cannot describe run every
 # file. Root Markdown and docs/ no longer count as unmapped executable paths.
 # Dependencies are cached by lockfile/manifests; deterministic tasks by inputs;
-# final compiled outputs retain exact-commit file-hash provenance. Each main
-# merge runs full; main workflow concurrency never cancels an older merge.
+# final compiled outputs retain exact-commit file-hash provenance. Each
+# admitted main run stays full; newer pending main pushes replace older pending runs.
 #
 # `gh workflow run checks.yml -f suite=<name>` runs one gate on demand
 # (default `all`); the targeted `(on demand)` lanes run a single test on the
@@ -90,9 +90,10 @@ on:
 permissions:
   contents: read
 
-# Superseded PR heads cancel here; dispatch and merge-group runs stay independent.
+# Keep active main coverage running, with one replaceable pending main push.
+# Superseded PR heads still cancel; dispatch and merge-group runs stay independent.
 concurrency:
-  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
+  group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || (github.event_name == 'push' && github.ref == 'refs/heads/main') && 'main' || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Control uses one CPU, heavy listeners at most two, and mobile at most three.

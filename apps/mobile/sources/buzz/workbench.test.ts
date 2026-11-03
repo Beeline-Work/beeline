@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   appDetailLine,
+  connectorSetupErrorCopy,
   squirePairingStages,
   connectionCompany,
   connectionCreatedByLine,
@@ -561,4 +562,24 @@ describe('squirePairingStages', () => {
   it('treats a published sign-in page as past every earlier stage', () => {
     expect(statuses(squirePairingStages([pending('waiting for sign-in')], 'squire', true))).toEqual(['done', 'done', 'done', 'current']);
   });
+});
+
+
+it('keeps legacy setup error envelopes out of the connect screen', () => {
+  expect(connectorSetupErrorCopy('list_credentials failed: {"error":{"code":"reconnect_required","message":"Run the CLI"}}'))
+    .toBe('Trusty Squire needs account sign-in. Try again.');
+  expect(connectorSetupErrorCopy('list_credentials failed: {"error":{"message":"The vault is locked."}}'))
+    .toBe('The vault is locked.');
+  for (const reason of ['failed: {broken JSON', '[{"error":"opaque"}]', '{"error":{"message":"{nested}"}}'])
+    expect(connectorSetupErrorCopy(reason)).toBe('Could not connect. Try again.');
+  expect(connectorSetupErrorCopy('Squire broker unavailable')).toBe('Squire broker unavailable');
+});
+
+it('unlocks Google sign-in for a legacy install waiting for its account claim', () => {
+  const stages = squirePairingStages([
+    { label: 'helper reached', status: 'done' },
+    { label: 'trusty-squire 1.1.39 installed', status: 'done' },
+    { label: 'waiting for sign-in', status: 'pending' },
+  ], 'hosted fixture', true);
+  expect(stages.map(stage => stage.status)).toEqual(['done', 'done', 'done', 'current']);
 });

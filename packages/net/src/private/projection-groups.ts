@@ -16,7 +16,7 @@ export type GroupProposal<T extends GroupCell>=Readonly<{id:string;group?:Group;
   whole:readonly CellSnapshot<T>[];versions:readonly number[];cut?:LaneCut;clockVersion?:string}>;
 const REPLACE='scope-replace',UNAVAILABLE='Projection unavailable; Retry.';
 const room=(request:LaneRequest)=>request.family==='room-head'||request.family==='room-scheduled-work'||request.family==='room-workflows';
-const scope=(request:LaneRequest)=>room(request)?request.roomId!:request.workspaceId!;
+const scope=(request:LaneRequest)=>request.agentId??(room(request)?request.roomId!:request.workspaceId!);
 
 /** The single local member/receipt/interval/proposal owner. ReadLanes alone
  * dispatches admitted reads and serializes storage/publication. Legacy members

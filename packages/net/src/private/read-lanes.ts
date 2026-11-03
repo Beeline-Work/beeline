@@ -4,10 +4,11 @@ import { ProjectionGroups, type GroupCell, type GroupProposal } from './projecti
 import { jsonBytes as bytes, stagingWithinBudget } from './staging-bounds.js';
 import { LaneStaging, sameStream } from './lane-staging.js';
 /** Local state only. No transport, clock, scheduler, native module or server inventory. */
-export type LaneFamily = 'room-list' | 'needs-you' | 'needs-you-tray' | 'needs-you-count' | 'room-head'|'room-scheduled-work'|'needs-you-saved-page'|'workspace-roster'|'room-workflows';
-export type LaneRequest = Readonly<{ family: 'room-head'|'room-scheduled-work'|'room-workflows'; roomId: string; workspaceId?: string }> |
-  Readonly<{ family: Exclude<LaneFamily, 'room-head'|'room-scheduled-work'|'room-workflows'|'needs-you-saved-page'>; workspaceId: string; roomId?: never }>|
-  Readonly<{family:'needs-you-saved-page';workspaceId:string;before?:string;roomId?:never}>;
+export type LaneFamily = 'room-list' | 'needs-you' | 'needs-you-tray' | 'needs-you-count' | 'room-head'|'room-scheduled-work'|'needs-you-saved-page'|'workspace-roster'|'room-workflows'|'agent-profile';
+export type LaneRequest = Readonly<{ family: 'room-head'|'room-scheduled-work'|'room-workflows'; roomId: string; workspaceId?: string;agentId?:never }> |
+  Readonly<{ family: Exclude<LaneFamily, 'room-head'|'room-scheduled-work'|'room-workflows'|'needs-you-saved-page'|'agent-profile'>; workspaceId: string; roomId?: never;agentId?:never }>|
+  Readonly<{family:'needs-you-saved-page';workspaceId:string;before?:string;roomId?:never;agentId?:never}>|
+  Readonly<{family:'agent-profile';workspaceId:string;agentId:string;roomId?:never}>;
 export type LaneCut = Readonly<{ stream: string; epoch: string; through: number; protocol: 1 }>;
 export type LaneAuthority = Readonly<{ digest: string; scopes: readonly Readonly<{ authorityScope: string; epoch: string }>[] }>;
 export type LaneSnapshot = Readonly<{ kind: 'snapshot'; value: unknown; cut: LaneCut; atomicGroup: string; authority: LaneAuthority;clockVersion?:string }>;
@@ -45,6 +46,7 @@ const roomFamily=(family:LaneFamily):boolean=>family==='room-head'||family===SCH
 const CONTINUOUS_CACHE:Readonly<Record<LaneFamily,boolean>>={
   'workspace-roster':true,
   'room-workflows':true,
+  'agent-profile':true,
   'room-list':true,'needs-you':true,'needs-you-tray':true,'needs-you-count':true,'room-head':false,'room-scheduled-work':true,'needs-you-saved-page':true,
 };
 
@@ -80,7 +82,7 @@ export class ReadLanes {
   key(request: LaneRequest): string {
     return JSON.stringify([this.identity.origin, this.identity.principal, this.identity.sessionEpoch,
       request.family, roomFamily(request.family) ? '' : request.workspaceId,
-      request.family==='needs-you-saved-page'?request.before??'':request.roomId??'',1]);
+      request.family==='needs-you-saved-page'?request.before??'':request.agentId??request.roomId??'',1]);
   }
   /** Optional caller-known Workspace is a constraint on the canonical Room
    * identity, never another Room-head cache address or read budget.
@@ -247,7 +249,10 @@ export class ReadLanes {
           targetDomain===`scheduled-work-principal:${this.identity.principal}`&&logicalScope===this.identity.principal||
           targetDomain===`scheduled-work-manager:${this.identity.principal}:workspace:${logicalScope}`&&batch.to.stream===`workspace:${logicalScope}`||
           targetDomain===`scheduled-work-member:${this.identity.principal}:room:${logicalScope}`||targetDomain===`scheduled-work-room:${logicalScope}`);
-        const target = domainFits||scheduledFits ? fact.authority.scopes.find(scope => scope.authorityScope === targetDomain) : undefined;
+        const profileFits=!!streamWorkspace&&targetDomain===`profile:${streamWorkspace}:${logicalScope}`&&
+          fact.atomicGroup===`agent-profile:${streamWorkspace}:${logicalScope}:${this.identity.principal}`&&
+          fact.authority.scopes.some(scope=>scope.authorityScope===`reader:${this.identity.principal}:workspace:${streamWorkspace}`);
+        const target = domainFits||scheduledFits||profileFits ? fact.authority.scopes.find(scope => scope.authorityScope === targetDomain) : undefined;
         if (!target||!/^\d+$/.test(target.epoch)) {
           if(fact.payload.kind===AUTHORITY_FENCE_KIND){await this.unavailableGroup(batch.to.stream,fact.atomicGroup);continue;}
           for (const entry of this.entries.values()) if (entry.request.roomId === logicalScope ||
@@ -317,7 +322,7 @@ export class ReadLanes {
     for(const entry of this.entries.values()){
       const held=entry.snapshot??entry.baseline;
       const canonical=roomFamily(entry.request.family)?`${entry.request.family}:${entry.request.roomId}:${this.identity.principal}`:
-        `${entry.request.family.startsWith('needs-you')?'needs-you':entry.request.family}:${entry.request.workspaceId}:${this.identity.principal}`;
+        `${entry.request.family.startsWith('needs-you')?'needs-you':entry.request.family}:${entry.request.workspaceId}:${entry.request.agentId?entry.request.agentId+':':''}${this.identity.principal}`;
       if(held?held.atomicGroup!==group||held.cut.stream!==stream:
         canonical!==group||(entry.request.workspaceId?stream!==`workspace:${entry.request.workspaceId}`:!stream.startsWith('workspace:')))continue;
       this.transition(entry,{...absent(),state:'PARKED',error:UNAVAILABLE});changed.push(entry);

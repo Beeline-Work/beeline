@@ -15,6 +15,8 @@ import type { LiveHub } from './live.js';
 import type { PhoneService } from './phone-service.js';
 import { routerSourcePlan } from './router-source-plan.js';
 import {readRouterRoomAudience} from './router-room-audience.js';
+import {readRouterProfileAudience} from './router-profile-audience.js';
+import {profileDomain} from './router-profile-source.js';
 import {scheduledWorkAudience} from './scheduled-work-audience.js';
 import {scheduledRoomDomain} from './scheduled-work-authority.js';
 import type { SqlDatabase } from './database.js';
@@ -120,7 +122,8 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
         const release=await subscribeAuthorityFences(database,sources.live,viewer,frame=>{
           if(!stopped)send(JSON.stringify(frame));return undefined;
         },reason=>{if(!stopped)send(JSON.stringify({kind:'router-unavailable',stream:`authority:${viewer}`,families:[],reason}));},ready,
-          domain=>!domain.startsWith('scheduled-work-')||negotiated.includes('room-scheduled-work'));
+          domain=>(!domain.startsWith('scheduled-work-')||negotiated.includes('room-scheduled-work'))&&
+            (!domain.startsWith('profile:')||negotiated.includes('agent-profile')));
         if(stopped)release();else releases.push(release);
       }
       if (negotiated.length && sources) {
@@ -167,6 +170,27 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
             const roomAudience=negotiated.some(family=>family==='room-head'||family==='room-workflows')?await readRouterRoomAudience(db,workspace,viewer,plan):[];
             const scheduledAudience=negotiated.includes('room-scheduled-work')?await scheduledWorkAudience(db,workspace,viewer,plan,!!coverageOwner):[];
             for (const family of negotiated) {
+              if(family==='agent-profile'){
+                const audience=await readRouterProfileAudience(db,workspace,viewer,plan);
+                for(const profile of audience){
+                  const input={family,workspaceId:workspace,agentId:profile.agentId} as const,atomicGroup=routerAtomicGroup(input,viewer);
+                  try{
+                    if(!profile.changed){facts.push({atomicGroup,authority:profile.authority,payload:{kind:'authority-fence',scope:profile.agentId,
+                      authorityScope:profileDomain(workspace,profile.agentId),mode:'advance'}});continue;}
+                    await readRouterAuthority(db,input,viewer);
+                    const value=policy?.sharedBuilds
+                      ?(await policy.sharedBuilds.coordinator.build(await readRouterBuildTicket(db,input,viewer,policy.sharedBuilds.basis),
+                        (tx,args,reader)=>sources.phone.buildRouterValue(tx,args,reader))).value
+                      :await sources.phone.buildRouterValue(db,input,viewer);
+                    if(!value)throw new RouterProjectionUnavailable('authority');
+                    facts.push({atomicGroup,authority:profile.authority,payload:{kind:'scope-replace',family,scope:profile.agentId,value}} as RouterFact);
+                  }catch(error){
+                    if(!(error instanceof RouterProjectionUnavailable)||error.reason!=='authority')throw error;
+                    facts.push({atomicGroup,authority:profile.authority,payload:{kind:'authority',...await deniedRouterAuthorityScope(db,input,viewer),allowed:false}});
+                  }
+                }
+                continue;
+              }
               if(jointTray&&!clock?.ready&&family.startsWith('needs-you'))continue;
               if(family==='needs-you-saved-page'){
                 const input={family,workspaceId:workspace} as const,atomicGroup=routerAtomicGroup(input,viewer);

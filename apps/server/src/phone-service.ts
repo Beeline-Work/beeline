@@ -5,6 +5,7 @@ import { buildTraySavedFacts, type TraySavedTarget } from './tray-saved-projecti
 import { workingTurnFreshSql } from './turn-ownership.js';
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import { buildRouterSnapshot,RouterProjectionUnavailable } from './router-projections.js';
+import { profileDomain } from './router-profile-source.js';
 import { CommandScopedDatabase } from './command-scoped-database.js';
 import type { TrayDecisionOperation } from './tray-decision-command.js';
 import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
@@ -1189,6 +1190,17 @@ export class PhoneService {
     viewerId: string,options?:{readonly trayClock?:true}): Promise<RouterValues[RouterFamily] | null> {
     const reader = new PhoneService(database, this.publicOrigin);
     reader.pureProjection = true;
+    if(input.family==='agent-profile'){
+      const value=await reader.readAgent(input.workspaceId,input.agentId,viewerId);
+      if(!value)return null;
+      const {usage:_usage,configVersion:_version,...stable}=value;
+      const revision=(await database.query<{epoch:string}>('SELECT epoch::text FROM router_authority WHERE scope=$1',
+        [profileDomain(input.workspaceId,input.agentId)])).rows[0]?.epoch;
+      if(!revision)throw new RouterProjectionUnavailable('authority');
+      const result={...stable,configVersion:revision};
+      if(Buffer.byteLength(JSON.stringify(result))>32*1024)throw new RouterProjectionUnavailable('budget');
+      return result;
+    }
     if (input.family === 'room-workflows') {
       const value=await reader.listRoomWorkflowRuns(input.roomId, viewerId);
       if(value.workflows.length>30||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
@@ -3531,7 +3543,7 @@ export class PhoneService {
     );
     const config = core.rows[0];
     if (!config) return null;
-    const presence = await this.optionalEnrichment('member-presence',
+    const presence = this.pureProjection?undefined:await this.optionalEnrichment('member-presence',
       this.enrichmentDatabase.query<{
         presence_body: MemberRow['presence_body']; presence_updated_at: Date | null;
       }>(`SELECT live.body presence_body,live.updated_at presence_updated_at

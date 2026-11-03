@@ -169,11 +169,16 @@ const ownerOperations = Object.fromEntries(ownerRoutes.map(route => [route, sele
 // Closed complete display families use generated value codecs in the
 // trusted owner. Do not pull the complete legacy response registry into it.
 const ownerResults={'phone.readScheduledWork':selectInput(operations['phone.readScheduledWork'].output),
+  'phone.updateAgentSoul':selectInput(operations['phone.updateAgentSoul'].output),
   'phone.listRoomWorkflowRuns':selectInput(operations['phone.listRoomWorkflowRuns'].output),
   'phone.readWorkspace':selectInput(operations['phone.readWorkspace'].output),
   'phone.readTray':selectInput(operations['phone.readTray'].output)};
 // Private owner encoding only. Keep the authoritative full and phone-input
 // projections unchanged, and reconstruct their existing WireShape semantics.
+const ownerFieldCounts=new Map();
+for(const node of inputNodes)if(node.kind==='object')for(const key of Object.keys(node.properties))
+  ownerFieldCounts.set(key,(ownerFieldCounts.get(key)??0)+1);
+const ownerFields=[...ownerFieldCounts].filter(([key,count])=>key.length>=5&&count>=3).map(([key])=>key);
 function compactOwnerShape(node) {
   const primitive = ['json', 'never', 'undefined', 'string', 'number', 'boolean'].indexOf(node.kind);
   if (primitive !== -1) return primitive;
@@ -188,8 +193,8 @@ function compactOwnerShape(node) {
     case 'intersection': return [9, node.choices];
     case 'array': return [10, node.item];
     case 'tuple': return [11, node.items, node.min];
-    case 'object': return [12, Object.fromEntries(Object.entries(node.properties).map(([key, field]) =>
-      [key, field.optional ? -field.node - 1 : field.node])), ...(node.index === undefined ? [] : [node.index])];
+    case 'object': return [13, Object.entries(node.properties).flatMap(([key, field]) =>
+      [ownerFields.includes(key)?ownerFields.indexOf(key):key, field.optional ? -field.node - 1 : field.node]), ...(node.index === undefined ? [] : [node.index])];
     default: throw new Error(`Unsupported owner schema kind ${node.kind}`);
   }
 }
@@ -198,7 +203,7 @@ const ownerOutput = '// Generated from trusted owner policies by scripts/generat
   'import { expandWireShapes } from \'./compact-wire-shapes.js\';\n' +
   'export const ownerInputShapes: readonly WireShape[] = expandWireShapes([\n' + inputNodes.map(node =>
     // A generated field named __proto__ must remain an own schema key.
-    '  ' + JSON.stringify(compactOwnerShape(node)).replaceAll('"__proto__":', '["__proto__"]:')).join(',\n') + '\n]);\n' +
+    '  ' + JSON.stringify(compactOwnerShape(node)).replaceAll('"__proto__":', '["__proto__"]:')).join(',\n') + '\n],'+JSON.stringify(ownerFields)+');\n' +
   'export const ownerInputs = ' + JSON.stringify(ownerOperations, null, 2) + ' as const;\n'+
   'export const ownerResults = '+JSON.stringify(ownerResults,null,2)+' as const;\n';
 const ownerTarget = path.join(root, 'packages/net/src/private/generated-owner-input-shapes.ts');

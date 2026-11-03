@@ -107,6 +107,7 @@ export function createPhoneOperationDispatcher(
         const roomId = input.roomId === undefined ? undefined : uuid(input,'roomId');
         const roomScoped=family==='room-head'||family==='room-scheduled-work'||family==='room-workflows';
         if (roomScoped !== Boolean(roomId)) refuse(400,'invalid_router_scope');
+        if(family==='agent-profile')return phone.readRouterSnapshot({family,workspaceId:uuid(input,'workspaceId'),agentId:required(input,'agentId')},viewerId);
         return phone.readRouterSnapshot(roomScoped
           ? {family,roomId:roomId!,...(input.workspaceId ? {workspaceId:uuid(input,'workspaceId')} : {})}
           : {family,workspaceId:uuid(input,'workspaceId')},viewerId);

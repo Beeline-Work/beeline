@@ -44,13 +44,19 @@ describe('Group A unclosed executable obligations', () => {
     await fixture.a.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$3,$5,'@reader please review changed'),($2,$4,$5,'@reader please review untouched')`,
       [...ids, room(), room(11), peer]);
     const server = await fixture.server(fixture.a, ['needs-you', 'needs-you-count']);
-    await server.demand({ family: 'needs-you', workspaceId: workspace() });
+    const cells={family:'needs-you' as const,workspaceId:workspace()},badge={family:'needs-you-count' as const,workspaceId:workspace()};
+    await server.demand(cells);await server.demand(badge);
     await server.barrier(); server.observed.reset();
     await fixture.b.query(`UPDATE messages SET text='@reader please review committed edit' WHERE id=$1`, [ids[0]]);
     await server.barrier();
     const unrelatedCells = server.observed.statements.flatMap(statement => statement.rows ?? [])
       .filter(row => row.message_id === ids[1]);
     expect(unrelatedCells.map(row => row.message_id), 'F04 affected-Room emission must perform zero unaffected cell reads').toEqual([]);
+    expect(server.lanes.peek(cells).state).toBe('LIVE');
+    expect(server.lanes.peek(cells).value).toMatchObject({items:expect.arrayContaining([
+      expect.objectContaining({messageId:ids[0],text:expect.stringContaining('committed edit')}),
+      expect.objectContaining({messageId:ids[1]})])});
+    expect(server.lanes.peek(badge).cut).toEqual(server.lanes.peek(cells).cut);
   });
 
   it('F05: a committed saved-workflow start supplies the exact held workflow list without a covering read', async () => {

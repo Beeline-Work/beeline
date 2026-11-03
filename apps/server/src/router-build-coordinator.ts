@@ -55,7 +55,7 @@ export class RouterBuildCoordinator{
 
   async build(ticket:RouterBuildTicket,builder:RouterValueBuilder):Promise<RouterSnapshot>{
     const db=transactions.get(ticket);if(!db)throw new RouterProjectionUnavailable('dependency');
-    const key=JSON.stringify([ticket.reader,ticket.input.family,ticket.input.workspaceId,ticket.input.roomId??'',
+    const key=JSON.stringify([ticket.reader,ticket.input.family,ticket.input.workspaceId,ticket.input.agentId??ticket.input.roomId??'',
       ticket.input.family==='needs-you-saved-page'?ticket.input.before??null:null,
       ticket.trayClockVersion??null,
       ticket.cut.stream,ticket.cut.epoch,ticket.cut.through,ticket.cut.protocol,ticket.authority.digest,
@@ -77,11 +77,11 @@ export class RouterBuildCoordinator{
       const promise=Promise.resolve().then(async()=>{
         const value=await builder(db,ticket.input,ticket.reader);
         if(value===null)throw new RouterProjectionUnavailable('authority');
-        const snapshot={kind:'snapshot' as const,family:ticket.input.family,scope:ticket.input.roomId??ticket.input.workspaceId,
+        const snapshot={kind:'snapshot' as const,family:ticket.input.family,scope:ticket.input.agentId??ticket.input.roomId??ticket.input.workspaceId,
           value,cut:ticket.cut,authority:ticket.authority,atomicGroup:routerAtomicGroup(ticket.input,ticket.reader),
           ...(ticket.trayClockVersion?{clockVersion:ticket.trayClockVersion}:{})};
         const encoded=JSON.stringify(snapshot),wireBytes=Buffer.byteLength(encoded),bytes=wireBytes+Buffer.byteLength(key);
-        const maximum=ticket.input.family==='needs-you-count'?1024:['room-head','room-scheduled-work','needs-you-tray','needs-you-saved-page','workspace-roster','room-workflows'].includes(ticket.input.family)?64*1024:256*1024;
+        const maximum=ticket.input.family==='agent-profile'?32*1024:ticket.input.family==='needs-you-count'?1024:['room-head','room-scheduled-work','needs-you-tray','needs-you-saved-page','workspace-roster','room-workflows'].includes(ticket.input.family)?64*1024:256*1024;
         if(wireBytes>maximum||bytes>this.limits.bytes)throw new RouterProjectionUnavailable('budget');
         if(generation===this.generation&&this.flights.get(key)?.cacheable)this.remember(key,{encoded,bytes,authority:ticket.authority});
         return encoded;

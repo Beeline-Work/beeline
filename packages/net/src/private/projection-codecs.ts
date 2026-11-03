@@ -1,6 +1,10 @@
 import {ownerInputShapes,ownerResults} from './generated-owner-input-shapes.js';
 import {jsonCodec} from '../wire-codec.js';
 
+export function validateAgentProjection(value:unknown):boolean{
+  try{jsonCodec(ownerInputShapes,ownerResults['phone.updateAgentSoul'],32*1024).parse(value);return true;}catch{return false;}
+}
+
 export function validateScheduledWorkProjection(value:unknown):boolean{
   try{jsonCodec(ownerInputShapes,ownerResults['phone.readScheduledWork'],64*1024).parse(value);return true;}catch{return false;}
 }

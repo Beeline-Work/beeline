@@ -40,9 +40,11 @@ const dependencies: Readonly<Record<string, readonly RouterFamily[]>> = {
   'scheduled-work-projection':['room-scheduled-work'],
   'tray-saved-window':['needs-you-saved-page'],
   'tray-saved-source':['needs-you-saved-page'],
+  'profile-projection':['agent-profile','workspace-roster'],
 };
 export function routerSourcePlan(causes: readonly Record<string,unknown>[], viewer: string, workspaceId?:string) {
   const families = new Set<RouterFamily>(), rooms = new Set<string>(), removedRooms = new Set<string>();
+  const profiles=new Set<string>();let allProfiles=false;
   const authorityRooms=new Set<string>(),priorRooms:{id:string;oldParentId:string|null}[]=[];
   const scheduledWorkCauses:{roomId:string;readers:readonly string[]|null}[]=[];
   const scheduledWorkKeys=new Set<string>();
@@ -67,6 +69,13 @@ export function routerSourcePlan(causes: readonly Record<string,unknown>[], view
     const table = cause.sourceTable;
     if (typeof table !== 'string' || !Object.hasOwn(dependencies,table))
       throw new RouterProjectionUnavailable('dependency');
+    if(table==='profile-projection'){
+      if(typeof cause.profileAgentId!=='string'||!cause.profileAgentId||cause.profileAgentId.length>128)throw new RouterProjectionUnavailable('dependency');
+      profiles.add(cause.profileAgentId);for(const family of dependencies[table]!)families.add(family);continue;
+    }
+    if(table==='memberships'&&cause.identityId===viewer||table==='rooms'||table==='workspaces'||table==='corner_facts'||table==='corner_github_cache'){
+      allProfiles=true;families.add('agent-profile');
+    }
     if(table==='tray-clock-basis'||table==='tray-clock-readiness'){
       const source=readTrayClockBasisCause(cause);
       if(!source||!workspaceId||source.trayWorkspaceId!==workspaceId)throw new RouterProjectionUnavailable('dependency');
@@ -157,6 +166,6 @@ export function routerSourcePlan(causes: readonly Record<string,unknown>[], view
     }
     if(table==='identities'||dependencies[table]!.includes('room-head')&&!cause.sourceRoomId)allRooms=true;
   }
-  return {families,rooms,removedRooms,allRooms,authorityRooms,priorRooms,scheduledWorkCauses,
+  return {families,rooms,removedRooms,allRooms,authorityRooms,priorRooms,scheduledWorkCauses,profiles,allProfiles,
     savedTargets:[...savedKeys.values()].sort((a,b)=>a.bookmarkId.localeCompare(b.bookmarkId)),savedUnavailable,savedHeadChanged};
 }

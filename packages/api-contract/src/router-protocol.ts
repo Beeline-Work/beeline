@@ -1,5 +1,5 @@
 export const ROUTER_TRAY_CLOCK_STREAM='control:tray-clock' as const;
-import type { ChatListView, NeedsYouItemView, RoomView, MessageBookmarkView, WorkspaceView } from './phone-types.js';
+import type { ChatListView, NeedsYouItemView, RoomView, MessageBookmarkView, WorkspaceView, AgentDetailView } from './phone-types.js';
 import type {NeedsYouListResult, ScheduledWorkResult, WorkflowRunListResult} from './phone-operations.js';
 
 /** Data protocol only. Local admission passes never enter these envelopes. */
@@ -7,7 +7,7 @@ export const ROUTER_PROTOCOL = 1 as const;
 export const ROUTER_MAX_PART_BYTES = 64 * 1024;
 export const ROUTER_MAX_BATCH_BYTES = 1024 * 1024;
 export const ROUTER_MAX_PARTS = 16;
-export const ROUTER_FAMILIES = ['room-list', 'needs-you', 'needs-you-tray', 'needs-you-count', 'room-head','room-scheduled-work','needs-you-saved-page','workspace-roster','room-workflows'] as const;
+export const ROUTER_FAMILIES = ['room-list', 'needs-you', 'needs-you-tray', 'needs-you-count', 'room-head','room-scheduled-work','needs-you-saved-page','workspace-roster','room-workflows','agent-profile'] as const;
 export type RouterFamily = typeof ROUTER_FAMILIES[number];
 export type RouterCut = { readonly stream: string; readonly epoch: string; readonly through: number; readonly protocol: 1 };
 export type RouterAuthorityCertificate = {
@@ -82,6 +82,7 @@ export type ScheduledWorkAuthorityFrame={
 export type RouterValues = {
   readonly 'workspace-roster': WorkspaceView;
   readonly 'room-workflows': WorkflowRunListResult;
+  readonly 'agent-profile': AgentDetailView;
   readonly 'room-list': ChatListView;
   readonly 'needs-you': { readonly count: number; readonly items: readonly NeedsYouItemView[] };
   readonly 'needs-you-tray': { readonly needs: NeedsYouListResult; readonly saved: SavedWindow };
@@ -91,9 +92,10 @@ export type RouterValues = {
   readonly 'needs-you-saved-page':SavedWindow;
 };
 export type RouterSnapshotInput = {
-  readonly family: Exclude<RouterFamily,'room-head'|'room-scheduled-work'|'room-workflows'|'needs-you-saved-page'>; readonly workspaceId: string; readonly roomId?: never;
-} | { readonly family:'room-head'|'room-scheduled-work'|'room-workflows'; readonly roomId:string; readonly workspaceId?:string }
-  |{readonly family:'needs-you-saved-page';readonly workspaceId:string;readonly before?:string;readonly roomId?:never};
+  readonly family: Exclude<RouterFamily,'room-head'|'room-scheduled-work'|'room-workflows'|'needs-you-saved-page'|'agent-profile'>; readonly workspaceId: string; readonly roomId?: never;readonly agentId?:never;
+} | { readonly family:'room-head'|'room-scheduled-work'|'room-workflows'; readonly roomId:string; readonly workspaceId?:string;readonly agentId?:never }
+  |{readonly family:'needs-you-saved-page';readonly workspaceId:string;readonly before?:string;readonly roomId?:never;readonly agentId?:never}
+  |{readonly family:'agent-profile';readonly workspaceId:string;readonly agentId:string;readonly roomId?:never};
 export type RouterSnapshot<F extends RouterFamily = RouterFamily> = { [K in F]: {
   readonly kind: 'snapshot'; readonly family: K; readonly scope: string;
   readonly value: RouterValues[K]; readonly cut: RouterCut;

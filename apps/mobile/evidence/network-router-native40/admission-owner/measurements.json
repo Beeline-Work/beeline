@@ -1,0 +1,43 @@
+[
+  {
+    "kind": "start",
+    "runtime": "40",
+    "embedded": false,
+    "emergency": false
+  },
+  {
+    "kind": "shared",
+    "reads": 1,
+    "metadataReads": 1,
+    "caps": [
+      16384
+    ],
+    "nativeFile": true
+  },
+  {
+    "kind": "disconnect",
+    "reads": 1
+  },
+  {
+    "kind": "legacy",
+    "reads": 3,
+    "previewRejected": true
+  },
+  {
+    "kind": "metadata-bound",
+    "reads": 3
+  },
+  {
+    "kind": "metadata-cancel",
+    "reads": 3
+  },
+  {
+    "kind": "revocation",
+    "purges": 1,
+    "reads": 3,
+    "current": false
+  },
+  {
+    "kind": "complete"
+  }
+]

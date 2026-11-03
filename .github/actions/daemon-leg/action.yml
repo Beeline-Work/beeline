@@ -1,15 +1,16 @@
 # Daemon leg of the unified release (was .github/workflows/beeline-bundle.yml).
 # unified-release.yml calls it twice from the self-hosted production host:
-# phase=build combines the install-verified Linux and macOS native bundles,
+# phase=collect combines the install-verified Linux and macOS native bundles,
 # phase=promote publishes it to Pages and smoke-tests the exact manifest. Fleet
 # uptake is asynchronous observability and never holds a release open. The
-# caller installs Node 22, Rust, and the root `npm ci` once for both phases.
+# caller installs Node 22 and root dependencies; each native builder owns
+# its Rust toolchain.
 name: Beeline daemon release leg
-description: Build the exact daemon artifact or publish it and await updater READY proof
+description: Collect verified native artifacts or publish them and prove the deployed update
 
 inputs:
   phase:
-    description: build | promote
+    description: collect | promote
     required: true
   release_sha:
     required: true
@@ -17,6 +18,9 @@ inputs:
     required: true
   pages_manifest_url:
     default: https://beeline-work.github.io/beeline/dl/manifest.json
+  linux_bundle_dir:
+    description: Downloaded install-verified Linux artifact directory
+    default: ''
   darwin_arm64_bundle_dir:
     description: Downloaded native darwin-arm64 artifact directory
     default: ''
@@ -28,26 +32,20 @@ runs:
   using: composite
   steps:
     # ---- build -------------------------------------------------------------
-    - name: Build and verify the exact daemon bundle
-      if: inputs.phase == 'build'
-      shell: bash
-      run: npm run bundle:beeline -- --platform linux-x64
-      env:
-        BEELINE_BUNDLE_COMMIT: ${{ inputs.release_sha }}
-        BEELINE_BUNDLE_VERSION: ${{ inputs.release_version }}
     - name: Collect daemon artifact
-      if: inputs.phase == 'build'
+      if: inputs.phase == 'collect'
       shell: bash
       run: |
+        linux_dir="${{ inputs.linux_bundle_dir }}"
         arm64_dir="${{ inputs.darwin_arm64_bundle_dir }}"
         x64_dir="${{ inputs.darwin_x64_bundle_dir }}"
-        if [ -z "$arm64_dir" ] || [ -z "$x64_dir" ]; then
-          echo "A three-platform merge needs darwin_arm64_bundle_dir and darwin_x64_bundle_dir; the Mac bundles were never built this run." >&2
+        if [ -z "$linux_dir" ] || [ -z "$arm64_dir" ] || [ -z "$x64_dir" ]; then
+          echo "A three-platform merge needs linux_bundle_dir, darwin_arm64_bundle_dir and darwin_x64_bundle_dir; the Mac bundles were never built this run." >&2
           exit 1
         fi
         node scripts/merge-beeline-bundles.mjs \
           --output-dir "$RUNNER_TEMP/daemon-release" \
-          --input-dir web/dl \
+          --input-dir "$linux_dir" \
           --input-dir "$arm64_dir" \
           --input-dir "$x64_dir"
         if [ -f "$arm64_dir/mac-helper-inputs.json" ]; then

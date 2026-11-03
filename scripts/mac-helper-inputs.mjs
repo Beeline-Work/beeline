@@ -21,6 +21,7 @@ export const MAC_HELPER_INPUTS = [
   'package-lock.json',
   'tsconfig.base.json',
   'scripts/build-beeline-bundle.mjs',
+  'scripts/native-agent-cache.mjs',
   'scripts/beeline-archive.mjs',
   'scripts/mac-helper-inputs.mjs',
   'scripts/verify-beeline-install.mjs',

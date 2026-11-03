@@ -29,6 +29,7 @@ const VERSION_SHA = '\\$\\{\\{ (?:needs\\.initialize\\.outputs|inputs)\\.release
 
 // Every allowed name is a build output, named for the run that built it.
 export const ALLOWED = [
+  { category: 'Linux helper archive and compiled CLI', kind: 'artifact', pattern: new RegExp(`^helper-linux-${ID}$`) },
   { category: 'Mac helper binaries', kind: 'artifact', pattern: new RegExp(`^daemon-(?:darwin-arm64|darwin-x64|\\$\\{\\{ matrix\\.platform \\}\\})-${ID}$`) },
   { category: 'Android AAB for the emulator test', kind: 'artifact', pattern: new RegExp(`^mobile-native-android-build-${ID}$`) },
   { category: 'desktop installers', kind: 'artifact', pattern: new RegExp(`^beeline-desktop-release-${VERSION_SHA}-(?:\\*|\\$\\{\\{ matrix\\.label \\}\\})$`) },

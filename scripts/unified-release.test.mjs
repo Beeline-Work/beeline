@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,6 +44,7 @@ import {
 
 import { encodeReleaseOutput, decodeReleaseOutput } from './release-job-output.mjs';
 import { liveDelivery, recordDelivery } from './release-delivery.mjs';
+import { NATIVE_CARGO_BUILD_FLAGS, nativeCacheIdentity, restoreNativeBinaries, saveNativeBinaries } from './native-agent-cache.mjs';
 
 const OLD_SHA = '1'.repeat(40);
 const MID_SHA = '3'.repeat(40);
@@ -1101,7 +1102,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
     const cap = job['timeout-minutes'];
     if (cap === undefined) continue;
     if (slowLegs.has(name)) continue;
-    assert.ok(name === 'helper' ? cap <= jobCeilingMinutes : cap < jobCeilingMinutes, `${name} timeout-minutes ${cap} exceeds the job ceiling`);
+    assert.ok(['helper', 'helper_linux'].includes(name) ? cap <= jobCeilingMinutes : cap < jobCeilingMinutes, `${name} timeout-minutes ${cap} exceeds the job ceiling`);
   }
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
@@ -1139,7 +1140,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
     assert.deepEqual(running, [expected], `pin changed ${pinChanged}, proof ${proof}`);
   }
   assert.deepEqual(workflow.jobs.release_result.needs, [
-    'initialize', 'server', 'helper_macos', 'helper', 'mobile_ota', 'mobile_ota_after_proof',
+    'initialize', 'server', 'helper_linux', 'helper_macos', 'helper', 'mobile_ota', 'mobile_ota_after_proof',
     'mobile_native_android', 'mobile_native_ios', 'desktop_installers', 'website', 'release_proof', 'delivery_result',
   ]);
   assert.equal(workflow.jobs.desktop_checkpoint, undefined);
@@ -1880,18 +1881,17 @@ test('ios-review-node: App Review establishes the runner Node PATH before submis
 
 test('all helper builds pin compatible Rust before cache restore and keep locked builds', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
-  for (const name of ['helper', 'helper_macos']) {
+  for (const name of ['helper_linux', 'helper_macos']) {
     const steps = workflow.jobs[name].steps;
     const setupIndex = steps.findIndex((step) => /rust-toolchain/.test(step.uses ?? ''));
     assert.ok(setupIndex >= 0, `${name} must provision Rust even when old distro tools exist`);
     assert.equal(steps[setupIndex].uses, 'dtolnay/rust-toolchain@1.95.0');
     assert.ok(setupIndex < steps.findIndex((step) => step.uses === './.github/actions/buzz-agent-cache'));
-    assert.equal(steps[setupIndex].if, name === 'helper'
-      ? "needs.helper_macos.outputs.shipped != 'true'"
-      : "steps.shipped.outputs.shipped != 'true'");
+    assert.equal(steps[setupIndex].if, "steps.shipped.outputs.shipped != 'true'");
   }
   const builder = readFileSync(new URL('./build-beeline-bundle.mjs', import.meta.url), 'utf8');
-  assert.match(builder, /'--locked'/);
+  assert.ok(NATIVE_CARGO_BUILD_FLAGS.includes('--locked'));
+  assert.match(builder, /\.\.\.NATIVE_CARGO_BUILD_FLAGS/);
 });
 
 
@@ -2019,15 +2019,15 @@ test('the helper asks Pages what shipped; a Mac bundle is carried from the publi
     shipped: { outputs: { shipped: 'true' } }, previous_bundle: { outcome: 'skipped' }, carry_bundle: { outcome: 'skipped' },
   } };
   assert.equal(evaluateWorkflowCondition(cold.if, shippedContext), false);
-  for (const phase of ['build', 'promote']) {
+  for (const phase of ['collect', 'promote']) {
     const leg = helper.steps.find((step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === phase);
-    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_macos: { outputs: { shipped: 'true' } } } }), false);
-    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_macos: { outputs: { shipped: 'false' } } } }), true);
+    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_linux: { outputs: { shipped: 'true' } } } }), false);
+    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_linux: { outputs: { shipped: 'false' } } } }), true);
   }
   // A failed Mac build never promotes a helper with missing bytes.
   const initialize = { result: 'success', outputs: { run_helper: 'true' } };
-  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_macos: { result: 'failure' } } }), false);
-  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_macos: { result: 'success' } } }), true);
+  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_linux: { result: 'success' }, helper_macos: { result: 'failure' } } }), false);
+  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_linux: { result: 'success' }, helper_macos: { result: 'success' } } }), true);
   const upload = macos.steps.find((step) => step.uses === 'actions/upload-artifact@v4');
   assert.match(upload.with.path, /mac-helper-inputs\.json/);
   assert.match(upload.with.path, /beeline-bootstrap\.mjs\n/);
@@ -2355,6 +2355,158 @@ fi
       assert.match(calls, new RegExp(image));
       assert.doesNotMatch(calls, /synthetic-proof-value|synthetic-greeter/);
       if (mode === 'success') assert.equal(calls.trim().split('\n').length, 2);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('Linux helper compilation overlaps the Macs while one final job retains every publish gate', () => {
+  const { jobs } = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  assert.equal(jobs.helper_linux.needs, 'initialize');
+  assert.equal(jobs.helper_linux['runs-on'], 'ubuntu-22.04');
+  assert.ok(jobs.helper_linux.steps.some(step => step.run?.includes('bundle:beeline -- --platform linux-x64')));
+  assert.ok(jobs.helper_linux.steps.some(step => step.run?.includes('npm run build -w usebeeline')));
+  assert.deepEqual(jobs.helper.needs, ['initialize', 'helper_linux', 'helper_macos', 'delivery_result']);
+  for (const [linux, mac, allowed] of [['success', 'success', true], ['failure', 'success', false], ['success', 'failure', false], ['skipped', 'success', false]]) {
+    assert.equal(evaluateWorkflowCondition(jobs.helper.if, { inputs: {}, steps: {}, needs: {
+      initialize: { result: 'success', outputs: { run_helper: 'true' } },
+      helper_linux: { result: linux }, helper_macos: { result: mac },
+    } }), allowed);
+  }
+  for (const name of ['helper_linux', 'helper_macos']) {
+    const steps = jobs[name].steps;
+    const verified = steps.findIndex(step => step.name?.startsWith('Build and install-verify'));
+    const save = steps.findIndex(step => step.uses === './.github/actions/buzz-agent-cache' && step.with?.phase === 'save');
+    assert.ok(verified >= 0 && save > verified, `${name} must install-verify before publishing cache bytes`);
+    assert.equal(steps[save].with.durable, 'true');
+    assert.equal(steps[save]['continue-on-error'], true);
+    assert.equal(steps[save]['timeout-minutes'], 2);
+    assert.equal(steps[verified]['continue-on-error'], undefined);
+    assert.doesNotMatch(steps[save].if, /always|cancelled/);
+  }
+  assert.ok(!jobs.helper.steps.some(step => /rust-toolchain|buzz-agent-cache/.test(step.uses ?? '')));
+  const collect = jobs.helper.steps.find(step => step.with?.phase === 'collect');
+  assert.match(collect.with.linux_bundle_dir, /helper-linux\/bundle/);
+  const daemon = parse(readFileSync('.github/actions/daemon-leg/action.yml', 'utf8'));
+  assert.doesNotMatch(JSON.stringify(daemon), /bundle:beeline/);
+  assert.match(daemon.runs.steps.find(step => step.name === 'Collect daemon artifact').run, /-z "\$linux_dir"/);
+  const pack = jobs.helper.steps.find(step => step.id === 'helper_package');
+  const publish = jobs.helper.steps.find(step => step.name === 'Publish the exact helper CLI package');
+  assert.ok(jobs.helper.steps.indexOf(collect) < jobs.helper.steps.indexOf(pack));
+  assert.ok(jobs.helper.steps.indexOf(pack) < jobs.helper.steps.indexOf(publish));
+});
+
+test('native cache keys ignore release identity but bind platform, pinned source, toolchain and flags', () => {
+  const captureVersion = (command, args) => `${command} ${args.join(' ')} version-1`;
+  const key = env => nativeCacheIdentity('darwin-x64', { env, captureVersion }).key;
+  assert.equal(key({}), key({ BEELINE_BUNDLE_COMMIT: 'a'.repeat(40), BEELINE_BUNDLE_VERSION: 'v0.1.999' }));
+  assert.notEqual(key({}), key({ BEELINE_BUZZ_REF: 'b'.repeat(40) }));
+  assert.notEqual(key({}), key({ RUSTFLAGS: '-C target-cpu=native' }));
+  assert.notEqual(key({}), key({ CARGO_PROFILE_RELEASE_OPT_LEVEL: 's' }));
+  assert.notEqual(key({}), nativeCacheIdentity('darwin-arm64', { env: {}, captureVersion }).key);
+  assert.notEqual(key({}), nativeCacheIdentity('darwin-x64', { env: {}, captureVersion: () => 'version-2' }).key);
+  assert.throws(() => key({ BEELINE_BUZZ_REF: 'main' }), /pinned/);
+  assert.throws(() => nativeCacheIdentity('darwin-x64', { env: {}, captureVersion: () => '' }), /incomplete/);
+});
+
+function nativeCacheFixture() {
+  const releases = new Map(), assets = new Map(), uploads = [];
+  let nextId = 1;
+  const repos = {
+    async getReleaseByTag({ tag }) {
+      if (!releases.has(tag)) throw Object.assign(new Error('missing'), { status: 404 });
+      return { data: structuredClone(releases.get(tag)) };
+    },
+    async createRelease(input) {
+      assert.equal(input.prerelease, true);
+      assert.equal(input.make_latest, 'false');
+      const release = { id: nextId++, prerelease: true, draft: false, assets: [] };
+      releases.set(input.tag_name, release);
+      return { data: structuredClone(release) };
+    },
+    async uploadReleaseAsset({ release_id, name, data }) {
+      const release = [...releases.values()].find(release => release.id === release_id);
+      const id = nextId++;
+      release.assets.push({ id, name });
+      assets.set(id, Buffer.from(data)); uploads.push(name);
+    },
+    async deleteReleaseAsset({ asset_id }) {
+      for (const release of releases.values()) release.assets = release.assets.filter(asset => asset.id !== asset_id);
+      assets.delete(asset_id);
+    },
+    async getReleaseAsset({ asset_id, headers }) {
+      assert.equal(headers.accept, 'application/octet-stream');
+      return { data: Uint8Array.from(assets.get(asset_id)).buffer };
+    },
+  };
+  return { github: { rest: { repos } }, releases, assets, uploads };
+}
+
+test('durable native hits verify the complete binary pair and repair a corrupt or partial upload', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'native-cache-proof-'));
+  const identity = nativeCacheIdentity('darwin-x64', { env: {}, captureVersion: () => 'compiler-1' });
+  const source = join(directory, 'source'), output = join(directory, 'restored');
+  mkdirSync(source);
+  writeFileSync(join(source, 'buzz-agent'), 'verified native agent');
+  writeFileSync(join(source, 'buzz-dev-mcp'), 'verified native mcp');
+  const fixture = nativeCacheFixture();
+  const args = { github: fixture.github, repo: { owner: 'example', repo: 'beeline' }, identity, sourceSha: NEW_SHA };
+  try {
+    const upload = fixture.github.rest.repos.uploadReleaseAsset;
+    fixture.github.rest.repos.uploadReleaseAsset = async input => {
+      if (input.name === 'buzz-dev-mcp') throw new Error('interrupted');
+      return upload(input);
+    };
+    await assert.rejects(saveNativeBinaries({ ...args, directory: source }), /interrupted/);
+    await assert.rejects(restoreNativeBinaries({ ...args, directory: output }), /missing/);
+    assert.equal(existsSync(output), false);
+    fixture.github.rest.repos.uploadReleaseAsset = upload;
+    await saveNativeBinaries({ ...args, directory: source });
+    assert.equal(fixture.uploads.at(-1), 'native-agent-cache.json');
+    await restoreNativeBinaries({ ...args, directory: output });
+    assert.equal(readFileSync(join(output, 'buzz-agent'), 'utf8'), 'verified native agent');
+    assert.equal(readFileSync(join(output, 'buzz-dev-mcp'), 'utf8'), 'verified native mcp');
+    const before = fixture.uploads.length;
+    await saveNativeBinaries({ ...args, directory: source });
+    assert.equal(fixture.uploads.length, before); // A complete verified key is immutable.
+    const release = fixture.releases.get(identity.tag);
+    const binary = release.assets.find(asset => asset.name === 'buzz-agent');
+    fixture.assets.set(binary.id, Buffer.from('corrupt'));
+    const corruptOutput = join(directory, 'corrupt');
+    await assert.rejects(restoreNativeBinaries({ ...args, directory: corruptOutput }), /integrity/);
+    assert.equal(existsSync(corruptOutput), false);
+    await saveNativeBinaries({ ...args, directory: source });
+    await restoreNativeBinaries({ ...args, directory: corruptOutput });
+    const wrong = { ...identity, key: `${identity.key}-wrong` };
+    await assert.rejects(restoreNativeBinaries({ ...args, identity: wrong, directory: join(directory, 'wrong') }), /identity/);
+    release.prerelease = false;
+    await assert.rejects(saveNativeBinaries({ ...args, directory: source }), /non-cache/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('Linux build artifact has one stable layout on fresh builds and already-shipped reruns', () => {
+  const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  const stage = workflow.jobs.helper_linux.steps.find(step => step.name === 'Stage only the Linux archive and compiled CLI');
+  const files = ['beeline-linux-x64.tar.gz', 'beeline-linux-x64.tar.gz.sha256', 'manifest.json', 'beeline-bootstrap.mjs', 'beeline-bootstrap.mjs.sha256'];
+  const directory = mkdtempSync(join(tmpdir(), 'linux-helper-layout-'));
+  try {
+    for (const shipped of ['true', 'false']) {
+      const fixture = join(directory, shipped);
+      mkdirSync(join(fixture, 'packages/usebeeline/dist'), { recursive: true });
+      writeFileSync(join(fixture, 'packages/usebeeline/dist/usebeeline.mjs'), 'compiled CLI');
+      if (shipped === 'false') {
+        mkdirSync(join(fixture, 'web/dl'), { recursive: true });
+        for (const name of files) writeFileSync(join(fixture, 'web/dl', name), name);
+      }
+      const temp = join(fixture, 'temporary');
+      const result = spawnSync('bash', ['-c', stage.run], { cwd: fixture, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: temp, SHIPPED: shipped } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(readFileSync(join(temp, 'helper-linux/cli/usebeeline.mjs'), 'utf8'), 'compiled CLI');
+      for (const name of files) assert.equal(existsSync(join(temp, 'helper-linux/bundle', name)), shipped === 'false');
+      if (shipped === 'false') {
+        rmSync(join(fixture, 'web/dl/manifest.json'));
+        const missing = spawnSync('bash', ['-c', stage.run], { cwd: fixture, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: temp, SHIPPED: shipped } });
+        assert.notEqual(missing.status, 0); // Missing proof inputs cannot become a successful artifact upload.
+      }
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

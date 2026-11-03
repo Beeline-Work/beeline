@@ -208,10 +208,24 @@ Every self-hosted job first checks its runner has the tools it needs
 
 Jobs that compile source set up Node 22 once and install once with
 `scripts/npm-ci-timed.sh`, which prints the install's wall time, cache misses, and slowest registry
-fetches. The pinned eas-cli installs from `tools/eas-cli`'s lockfile. Helper
-builds cache `buzz-agent` and `buzz-dev-mcp` per pinned block/buzz commit,
-rustc, and platform. Typecheck and tests ran in CI and do not rerun inside the
-release.
+fetches. The pinned eas-cli installs from `tools/eas-cli`'s lockfile.
+
+Helper builds cache `buzz-agent` and `buzz-dev-mcp` by the pinned block/buzz
+commit, platform, Rust/C compiler, SDK and build flags. Actions cache is the
+first tier. A trusted release job also saves the install-verified binary pair
+as assets of an input-keyed `helper-native-*` prerelease, with byte counts and
+SHA-256 hashes in `native-agent-cache.json`. These are pure compiler outputs,
+never production release memory; they cannot become the latest stable release.
+Missing, partial, mismatched or corrupt cache entries fall back to compilation.
+A successful verified build repairs a partial cache. Final bundle installation
+and all-platform publication checks still run on a native-cache hit.
+`scripts/native-agent-cache.mjs` owns the shared Cargo recipe, key and integrity
+contract. Cache I/O is optional and bounded to two minutes per step; native
+build/install proofs and publication still fail normally. The job
+summary distinguishes `actions`, `release-cache` and `miss`; an invoked Cargo
+build reports its duration separately. A verified full Mac payload carry is a
+fourth path, distinct from an Actions native-binary cache hit. Typecheck and
+tests ran in CI and do not rerun inside the release.
 
 ### Server migration, canary, and rollback
 
@@ -310,8 +324,17 @@ in parallel → `delivery_result`. The checkpoint needs no helper, macOS,
 desktop or store build. The website always deploys its Pages content with the
 previous verified helper channel, even when a helper build is selected; the
 helper publishes its new channel later under the same Pages deployment lock.
-The helper promotion and Android store build wait for the live checkpoint to
-free the production runners. Mac and desktop builds can run concurrently.
+`helper_linux` starts directly after `initialize` on the existing standard
+`ubuntu-22.04` runner type, alongside both Mac builds. It builds and
+install-verifies Linux and compiles the CLI once, then hands only those build
+outputs to the final `helper` job through a same-run artifact. The final job
+requires Linux and both Mac jobs to succeed, verifies and merges the three
+platforms, runs the Pages update proof, packs and smoke-tests the exact compiled
+CLI tarball, and publishes once. It never recompiles a native bundle.
+
+The helper publication and Android store build still wait for the live
+checkpoint to free the production runners. Mac and desktop builds can run
+concurrently. No larger or reserved runner type is required.
 
 `delivery_result` measures dispatch to the last successful live-leg completion,
 using timestamps emitted after the server's two-Machine proof, OTA promotion,

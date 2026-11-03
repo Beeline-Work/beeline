@@ -16,11 +16,15 @@ for the entire website, including `/dl` and `.well-known`.
 When helper code or a shared helper contract is selected,
 `.github/actions/daemon-leg/action.yml` combines install-verified native
 `linux-x64`, `darwin-arm64`, and `darwin-x64` bundles under the release's exact
-version and source SHA. The macOS builds run natively: Apple silicon on GitHub's
-hosted macOS runner and Intel on the repository's self-hosted macOS runner. They
-run only while this release identity still owes merged bytes; a retry that
-already has that merged artifact promotes those exact bytes instead of
-rebuilding them (see [the release pipeline](./release-pipeline.md)).
+version and source SHA. Linux builds on the standard hosted `ubuntu-22.04` runner, alongside native
+Apple-silicon and Intel builds on the existing `macos-15` and `macos-15-intel`
+runner types. The Linux job also compiles the CLI. The final helper job waits
+for all three, combines their verified outputs and publishes once; it performs
+no native compilation. A retry whose exact identity already serves on Pages
+skips bundle rebuilding and promotion (see [the release pipeline](./release-pipeline.md)).
+Input-keyed native binaries may be restored from Actions cache or verified
+`helper-native-*` prerelease assets. Full-bundle install proof still runs;
+cache outputs never authorize a production release.
 Other selective releases carry the last successful helper version, SHA, and
 artifact reference.
 Its promote phase passes `daemon-artifact-<version>-<sha>` to
@@ -191,7 +195,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 - **Update restarts are silent.** `runMachineHelper` closes the machine link before agent teardown with `HELPER_UPDATE_CLOSE_CODE`/`HELPER_UPDATE_CLOSE_REASON`; `DaemonAgentSession` releases presence without an offline notice only for that signal. Unexpected loss still notices the owner (`machine-offline.test.ts`, `daemon-live.test.ts`, `machine-helper.test.ts`). Release delivery pushes helpers only (`release-notify.ts`).
 - **Linux handovers use a fixed one-second native restart delay.** `native-helper.ts` renders no escalating restart steps. The running helper refreshes the installed unit with `daemon-reload`, without restarting the service. `recovery.startup.test.ts` proves verified staged/active boot makes no publication request; `systemd.test.ts` covers unit convergence.
 - **Routine release notices preserve active turns.** `ReleaseNotifier` (`apps/server/src/release-notify.ts`) pushes published helper releases; `MachineLink` (`apps/body/src/machine-link.ts`) reconciles the manifest once after first registration, with no periodic update check. `ReleaseTransaction` (`managed-update.ts`) and `quiesceHostedAgents` (`machine-helper.ts`) keep intake open until idle or the five-minute admission deadline. At the deadline new turns pause while active turns finish; only an idle helper hands over. Pending wakes reach the successor. `machine-helper.test.ts` proves push, reconnect, child survival during drain and queued delivery over isolated HTTP/WebSocket (WAKE-UPDATE-1). Installation remains checksum verification plus atomic activation. Server minimums (426 / `force-update`) still interrupt immediately, using `force-update-journal.ts` to replay interrupted commands.
-- `.github/actions/daemon-leg/` builds linux-x64 and darwin bundles; `launchd.ts` supervises macOS (no bwrap). `https://usebeeline.app/dl/manifest.json` stays pinned; runbook `docs/cli-bundle-channel.md`.
+- `unified-release.yml` builds Linux and Mac bundles in parallel; `.github/actions/daemon-leg/` collects and promotes their verified outputs; `launchd.ts` supervises macOS (no bwrap). `https://usebeeline.app/dl/manifest.json` stays pinned; runbook `docs/cli-bundle-channel.md`.
 
 ### Installed bundle retention
 

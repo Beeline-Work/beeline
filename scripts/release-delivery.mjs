@@ -49,7 +49,7 @@ export function recordDelivery(state, needs) {
   if (!['success', 'failure'].includes(live.state)) throw new Error('invalid live delivery report');
   state.delivery.live = live;
   state.delivery.background = Object.fromEntries(
-    ['helper_macos', 'helper', 'desktop_installers', 'mobile_native_android', 'mobile_native_ios']
+    ['helper_linux', 'helper_macos', 'helper', 'desktop_installers', 'mobile_native_android', 'mobile_native_ios']
       .map((name) => [name, needs[name]?.result ?? 'missing']),
   );
   return state;

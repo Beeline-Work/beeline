@@ -46,10 +46,14 @@ export class BackgroundWork {
     if (job) job.nextAt = delay === undefined ? Infinity : this.now() + Math.max(0,delay);
   }
 
-  async run(newLeader: boolean): Promise<number> {
+  async run(newLeader: boolean, signal?: AbortSignal): Promise<number> {
+    if (signal?.aborted) return Infinity;
     this.cycles++;
     if (newLeader) for (const job of this.jobs.values()) job.nextAt = -Infinity;
     for (const [name, job] of this.jobs) {
+      // Loss ends admission immediately. The active job drains, but cannot
+      // hand the retired generation to another family after its await.
+      if (signal?.aborted) return Infinity;
       if (!job.pending && this.now() < job.nextAt) continue;
       // Consume before awaiting so a notification during work survives.
       job.pending = false;

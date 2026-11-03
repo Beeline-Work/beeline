@@ -36,7 +36,7 @@ export class BackgroundLeader {
   constructor(private readonly database: {
     connectDedicated(): Promise<LeaderConnection>;
     onRecovery?(listener: () => void): () => void;
-  }, private readonly cycle: (newLeader: boolean) => Promise<number | void>,
+  }, private readonly cycle: (newLeader: boolean, signal: AbortSignal) => Promise<number | void>,
   private readonly hooks?: BackgroundLeaderHooks) {}
 
   run(): Promise<void> {
@@ -95,7 +95,7 @@ export class BackgroundLeader {
         let initial = true;
         while (!this.stopped && !this.lost) {
           this.wakePending = false;
-          const delay = await this.cycle(initial); initial = false;
+          const delay = await this.cycle(initial, controller.signal); initial = false;
           if (this.stopped || this.lost) break;
           this.replacementAllowed = true;
           await this.wait(typeof delay === 'number' ? delay : Infinity);

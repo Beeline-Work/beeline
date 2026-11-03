@@ -40,6 +40,7 @@ import { routeHumanMessage, claimAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { ConnectionPresence } from './connection-presence.js';
+import { groupBPostgresDatabase } from './test-fixtures/test-support-router-group-b-postgres.js';
 
 it.each([1,2].flatMap(humans => ['stop', 'End conversation.', 'leave conversation'].map(phrase => ({humans,phrase}))))('call-wide-end-3: %s interrupts without leaving or closing input', async ({humans,phrase}) => {
   let onSpeech!: (event: any) => void;
@@ -3544,4 +3545,47 @@ it('F17: authority sources select only the exact Workspace or inherited parent R
     await second.resume('human');expect((second as any).authorityPaused.has('human')).toBe(false);
     expect((first as any).authorityPaused.has('human')).toBe(true);
   }finally{leave.mockRestore();await service.close();}
+});
+
+
+const inputOwnerPostgresUrl = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
+it.each(['local', ...(inputOwnerPostgresUrl ? ['postgres'] : [])].flatMap(backend =>
+  ['authorization', 'membership'].map(boundary => ({ backend, boundary }))))(
+  'F17: replaced input cannot continue from a held $boundary read into provider setup or stop its successor ($backend)', async ({ backend, boundary }) => {
+  const { service } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  let release!: () => void;
+  let entered!: () => void;
+  const paused = new Promise<void>(resolve => { entered = resolve; });
+  const held = new Promise<void>(resolve => { release = resolve; });
+  const original = service.db.query.getMockImplementation()!;
+  const postgres = backend === 'postgres' ? await groupBPostgresDatabase(inputOwnerPostgresUrl!, false) : undefined;
+  if (postgres) {
+    await postgres.database.query('CREATE TABLE voice_participants(call_id text,identity_id text,left_at timestamptz)');
+    if (boundary === 'authorization') await postgres.database.query("INSERT INTO voice_participants VALUES('call','human',NULL)");
+    service.db.query.mockImplementation((sql, args) => sql.includes('SELECT 1 FROM voice_participants')
+      ? postgres.database.query(sql, args) as any : original(sql, args));
+  }
+  if (boundary === 'authorization') service.access.mockImplementationOnce(async () => { entered(); await held; });
+  else service.db.query.mockImplementationOnce(async (sql, args) => {
+    if (!sql.includes('SELECT 1 FROM voice_participants')) throw new Error('Expected participant admission');
+    const result = postgres ? await postgres.database.query(sql, args) : { rowCount: 0, rows: [] };
+    entered(); await held; return result as any;
+  });
+  service.config.stt.mockResolvedValue({ send: vi.fn(), close: vi.fn() });
+  state.streams = [new ReadableStream(), new ReadableStream()];
+  const oldTrack = { kind: 1 }, newTrack = { kind: 1 }, participant = { identity: 'human' };
+  try {
+    const old = (runtime as any).listen(oldTrack, participant); await paused;
+    if (postgres && boundary === 'membership') await postgres.database.query("INSERT INTO voice_participants VALUES('call','human',NULL)");
+    void (runtime as any).listen(newTrack, participant);
+    await vi.waitFor(() => expect(service.config.stt).toHaveBeenCalledOnce());
+    const queries = service.db.query.mock.calls.length;
+    release(); await old;
+    expect((runtime as any).inputs.get('human')?.track).toBe(newTrack);
+    expect(service.config.stt).toHaveBeenCalledOnce();
+    expect(service.db.query.mock.calls).toHaveLength(queries);
+    expect(service.agents).toHaveBeenCalledOnce();
+    service.db.query.mockImplementation(original);
+  } finally { release(); await runtime.close(); await postgres?.close(); }
 });

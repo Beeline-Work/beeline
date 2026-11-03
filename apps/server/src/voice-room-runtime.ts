@@ -327,7 +327,8 @@ export class VoiceRoomRuntime {
     const releaseBuffered = () => { for (const frame of buffered) frame.release(); buffered.length = 0; };
     this.inputs.set(human, { reader, track, participant, releaseBuffered, buffered });
     let stt: VoiceStt | undefined;
-    const current = () => !track.muted && !this.closed && !this.authorityPaused.has(human) && this.inputVersions.get(human) === version;
+    const ownsInput = () => !this.closed && this.inputVersions.get(human) === version;
+    const current = () => ownsInput() && !track.muted && !this.authorityPaused.has(human);
     const deliver = (admitted: Int16Array) => {
       if (!current() || performance.now() >= this.leaseValidUntil) return;
       try { stt!.send(admitted); } catch (error) { void this.failure(error, human); }
@@ -339,7 +340,7 @@ export class VoiceRoomRuntime {
     const pump = (async () => {
       while (!this.closed && this.inputVersions.get(human) === version) {
         const frame = await reader.read();
-        if (frame.done) break;
+        if (frame.done || !ownsInput()) break;
         if (stt) send(frame.value.data, Date.now());
         else {
           if (track.muted) continue;
@@ -348,14 +349,19 @@ export class VoiceRoomRuntime {
         }
       }
     })();
-    void pump.catch(error => this.failure(error, human));
+    void pump.catch(error => { if (ownsInput()) return this.failure(error, human); });
     try {
       const authorityVersion = ++this.authorityRevision; this.authorityVersions.set(human, authorityVersion);
       await this.retry(() => this.service.access(this.roomId, human));
+      if (!ownsInput()) { releaseBuffered(); return; }
       if (this.authorityVersions.get(human) === authorityVersion && this.inputVersions.get(human) === version)
         this.authorityPaused.delete(human);
-      if (!(await this.retry(() => this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL`,
-        [this.callId, human]))).rowCount) { this.stopInput(human); return; }
+      const member = await this.retry(() => this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL`,
+        [this.callId, human]));
+      // A completed read belongs to its original track generation. In
+      // particular an old denial cannot stop the replacement microphone.
+      if (!ownsInput()) { releaseBuffered(); return; }
+      if (!member.rowCount) { this.stopInput(human); return; }
       const [agents, budget, contacts] = await Promise.all([
         this.retry(() => this.service.agents(this.roomId, human)), this.retry(() => this.service.budget.read(this.workspaceId)),
         this.retry(() => this.service.db.query<{ name: string }>(
@@ -371,6 +377,7 @@ export class VoiceRoomRuntime {
       this.externalContacts.set(human, externalContacts);
       const hints = [...new Set([...agents.flatMap(agent => [agent.name, agent.handle]), ...externalContacts])].slice(0, 80);
       stt = await this.service.config.stt(event => {
+      if (!ownsInput()) return;
       const receivedAt = performance.now();
       this.task(async () => {
       if (this.inputVersions.get(human) === version && event.turn_index >= (this.turnIndices.get(human) ?? -1))
@@ -444,6 +451,7 @@ export class VoiceRoomRuntime {
       if (event.event !== 'EndOfTurn') {
         if (activeRequest?.state === 'playing') {
           if (!voiceInterrupt(event)) liveHumans = await this.retry(() => this.service.humanCount(this.callId));
+          if (!ownsInput()) return;
           // A final can arrive while live membership resolves. Never cancel its newer request.
           if ((liveHumans === 1 || voiceInterrupt(event)) && this.assembler.current(human) === activeRequest) {
             this.interruptPlayback(); this.assembler.pause(human); pausedReply = true;

@@ -74,10 +74,13 @@ export const COMPONENT_PATH_RULES = [
   { prefix: 'scripts/desktop-update.', components: ['desktop'] },
   { exact: '.github/workflows/desktop.yml', components: ['desktop'] },
   { exact: '.github/workflows/server-rollback.yml', components: ['server'] },
+  { exact: '.github/workflows/server-image.yml', components: ['server'] },
+  { exact: 'scripts/server-release-image.sh', components: ['server'] },
   // Pipeline edits exercise the fast legs only; they never change the helper
   // or desktop artifacts.
   { exact: '.github/workflows/unified-release.yml', components: ['server', 'mobile-ota', 'website'] },
   { exact: 'scripts/unified-release.mjs', components: ['server', 'mobile-ota', 'website'] },
+  { exact: 'scripts/release-delivery.mjs', components: ['server', 'mobile-ota', 'website'] },
   { exact: 'scripts/release-job-output.mjs', components: ['server', 'mobile-ota', 'website'] },
   { exact: 'scripts/release-record.mjs', components: ['server', 'mobile-ota', 'website'] },
 ];

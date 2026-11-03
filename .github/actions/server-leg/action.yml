@@ -1,7 +1,7 @@
 # Server leg of the unified release. unified-release.yml calls it once from the
 # self-hosted production host: it builds and pushes the one Fly image, migrates
 # once, and canaries the exact release SHA across the two Fly Machines. The
-# caller checks out the release SHA, installs the migration CLI, and owns
+# caller checks out the release SHA and owns
 # runner, timeout, and concurrency.
 #
 # Fly is the only memory: a rerun whose Machines already all run this release's
@@ -11,7 +11,7 @@
 # replaced leave through step outputs; the release record keeps the previous
 # published release's image as the rollback target.
 name: Server release leg
-description: Build the exact server image once and deploy it to Fly.io behind a canary
+description: Promote the exact server image and deploy it to Fly.io behind a canary
 
 inputs:
   release_sha:
@@ -75,14 +75,7 @@ runs:
         image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
         image_ref="registry.fly.io/beeline-server:$image_label"
         build_started=$SECONDS
-        flyctl deploy . \
-          --local-only \
-          --config fly.beeline-server.toml \
-          --dockerfile apps/server/Dockerfile \
-          --app beeline-server \
-          --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
-          --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
-          --image-label "$image_label" --build-only --push --yes
+        bash scripts/server-release-image.sh release "$RELEASE_SHA" "$RELEASE_VERSION"
         echo "Server image built and pushed in $((SECONDS - build_started))s"
         node scripts/unified-release.mjs server-deploy-plan \
           --machines "$RUNNER_TEMP/server-release/machines-before.json" \
@@ -99,7 +92,8 @@ runs:
         set -euo pipefail
         test -n "${MIGRATION_DATABASE_URL:-}" || { echo 'MIGRATION_DATABASE_URL is required' >&2; exit 1; }
 
-        node <<'NODE'
+        image_ref="${{ steps.fleet.outputs.image_ref }}"
+        docker run --rm -i --env MIGRATION_DATABASE_URL --entrypoint node "$image_ref" <<'NODE'
         const { Client } = require('pg');
 
         const client = new Client({ connectionString: process.env.MIGRATION_DATABASE_URL });
@@ -123,7 +117,8 @@ runs:
         })();
         NODE
 
-        npm run migrate -w @beeline/server
+        docker run --rm --env MIGRATION_DATABASE_URL --env BEELINE_RETIRE_WELCOME_GREETER_ID \
+          --entrypoint npm "$image_ref" run migrate -w @beeline/server
 
     - name: Canary one Machine for ninety seconds, then update its peer
       if: steps.fleet.outputs.shipped != 'true'

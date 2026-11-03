@@ -263,10 +263,10 @@ test('documentation does not fan out Checks suites', () => {
 });
 
 test('representative PRs request fewer hosted runners without hiding check contexts', () => {
-  const commonJobs = ['changes', 'prepare-workspace', 'typecheck', 'shared-package-tests', 'dead-code', 'server-test-selection'];
+  const commonJobs = ['changes', 'prepare-workspace', 'typecheck', 'shared-package-tests', 'dead-code'];
   const mobileJobs = ['mobile-suite', 'mobile-export-reachability', 'native-fingerprint'];
   const serverJobs = ['server-suite-shard', 'server-claim-latency', 'server-suite',
-    'server-integration', 'production-corpus-replay', 'auth-image'];
+    'server-integration', 'production-corpus-replay', 'auth-image', 'server-test-selection'];
   const expectedJobs = {
     'mobile-only': [...commonJobs, ...mobileJobs, 'frame-budget', 'state-upgrade'],
     mixed: [...commonJobs, ...mobileJobs, ...serverJobs, 'frame-budget', 'state-upgrade'],
@@ -274,14 +274,15 @@ test('representative PRs request fewer hosted runners without hiding check conte
   };
   const examples = [
     { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 19 },
-    { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 11 },
+    { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 10 },
     { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 24 },
     { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 22 },
-    { name: 'docs-only', files: ['docs/foo.md'], before: 34, after: 5 },
+    { name: 'docs-only', files: ['docs/foo.md'], before: 34, after: 4 },
   ];
   for (const example of examples) {
     const { gates } = evaluate(example.files).checks;
     const needs = Object.fromEntries(Object.keys(checksWorkflow.jobs).map((name) => [name, { result: 'success', outputs: gates }]));
+    needs['prepare-workspace'].outputs = { ...gates, mode: 'subset' };
     let runners = 0;
     const selectedJobs = [];
     for (const [name, job] of Object.entries(checksWorkflow.jobs)) {

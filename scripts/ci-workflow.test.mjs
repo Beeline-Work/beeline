@@ -467,3 +467,15 @@ test('independent companion checks own their checkout without changing execution
   assert.equal(jobs.typecheck.env.RUN_NATIVE_FINGERPRINT, 'false');
   assert.equal(jobs.typecheck.env.RUN_MOBILE_EXPORT, 'false');
 });
+
+test('known-full and quiet PRs skip coverage-map lookup while the full shard fallback remains available', () => {
+  const selection = jobs['server-test-selection'];
+  const evaluate = new Function('github', 'needs', `return (${selection.if.replace(/needs\.([a-z][a-z0-9-]*)/g, "needs['$1']")});`);
+  for (const mode of ['full', 'subset']) for (const server of ['true', 'false']) {
+    const needs = { changes: { outputs: { serverSuite: server } }, 'prepare-workspace': { outputs: { mode, server } } };
+    assert.equal(evaluate({ event_name: 'pull_request' }, needs), mode === 'subset' && server === 'true');
+  }
+  assert.match(jobs['server-suite-shard'].if, /!cancelled\(\)/);
+  assert.equal(jobs['server-suite-shard'].steps.find(step => step.name === "Use this PR's server test selection").if,
+    "needs.server-test-selection.outputs.selection != ''");
+});

@@ -634,7 +634,9 @@ jobs:
   server-test-selection:
     name: SELECT SERVER TESTS
     needs: [changes, prepare-workspace]
-    if: github.event_name == 'pull_request'
+    if: >-
+      github.event_name == 'pull_request' && needs.prepare-workspace.outputs.mode == 'subset' &&
+      (needs.changes.outputs.serverSuite == 'true' || needs.prepare-workspace.outputs.server == 'true')
     runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
     env:
       CI_TEST_WORKERS: '1'

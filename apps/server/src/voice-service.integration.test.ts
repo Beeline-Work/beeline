@@ -732,10 +732,29 @@ it('F17: a committed exact call-card source reaches the held runtime participant
   try{
     const call=(await db.query<{message_id:string}>('SELECT message_id FROM voice_calls WHERE id=$1',[joined.call.id])).rows[0]!;
     const runtime=await vi.mocked(VoiceRoomRuntime.connect).mock.results.at(-1)!.value;
-    await Promise.resolve();vi.mocked(runtime.reconcileParticipants).mockClear();
+    await Promise.resolve();
+    vi.mocked(runtime.reconcileParticipants).mockClear();
+    vi.mocked(runtime.countHumans).mockClear();
+    vi.mocked(runtime.refresh).mockClear();
+    for (const reason of ['postgres:room_read_marks', 'postgres:message_bookmarks', 'postgres:push_devices'])
+      live.publish({type:'invalidate',roomId:room,reason});
+    live.publish({type:'invalidate',roomId:R,reason:'voice-participants'});
+    await new Promise(resolve=>setImmediate(resolve));
+    expect(runtime.countHumans).not.toHaveBeenCalled();
+    expect(runtime.refresh).not.toHaveBeenCalled();
+    expect(runtime.reconcileParticipants).not.toHaveBeenCalled();
     live.publish({type:'invalidate',roomId:room,reason:'postgres:messages',messageId:'unrelated'});
-    await new Promise(resolve=>setImmediate(resolve));expect(runtime.reconcileParticipants).not.toHaveBeenCalled();
+    await new Promise(resolve=>setImmediate(resolve));
+    expect(runtime.reconcileParticipants).not.toHaveBeenCalled();
+    expect(runtime.countHumans).not.toHaveBeenCalled();
+    expect(runtime.refresh).toHaveBeenCalledOnce();
     live.publish({type:'invalidate',roomId:room,reason:'postgres:messages',messageId:call.message_id});
-    await new Promise(resolve=>setImmediate(resolve));expect(runtime.reconcileParticipants).toHaveBeenCalledOnce();
+    await new Promise(resolve=>setImmediate(resolve));
+    expect(runtime.reconcileParticipants).toHaveBeenCalledOnce();
+    expect(runtime.countHumans).toHaveBeenCalledOnce();
+    live.publish({type:'invalidate',roomId:room,reason:'postgres:agent_commands'});
+    await new Promise(resolve=>setImmediate(resolve));
+    expect(runtime.refresh).toHaveBeenCalledTimes(3);
+    expect(runtime.countHumans).toHaveBeenCalledOnce();
   }finally{await service.leave(joined.call.id,H);await db.query('DELETE FROM rooms WHERE id=$1',[room]);}
 });

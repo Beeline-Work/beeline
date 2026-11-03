@@ -121,3 +121,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F18 helper GitHub token lookup removes blocking 250/500ms retries and automatic authentication-refresh command replay. Generated-wrapper84 and Body types pass, preserving exact Room credentials, local command behavior, exit status and separately invoked recovery. Host/REST adapter migration and full provider ownership remain open.
 
 - F18/F21 voice call actions remove transient backoff; adapter scheduled reconnects are disabled and the hook admits at most one replacement per call lifetime. Hook25/adapter7/older-iOS6, mobile types and scanners pass. Initial refusal and replacement loss remain idle for 24 hours. Installed LiveKit region/protocol fallback, full voice ownership/usage and actual released cohorts remain open.
+
+- F17/F22 voice runtime listeners stop blanket same-Room participant/work refresh. Voice integration30 and server types pass with exact call-card/command routing and zero work for unrelated read-mark/bookmark/device/other-Room events. Authority revalidation remains separate; recurring recovery and whole-finding gates stay open.

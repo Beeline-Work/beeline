@@ -250,3 +250,9 @@ Wrapper84 and Body types pass. Actual generated child launchers prove one refuse
 The hook no longer repeats transient voice requests after 1/2/4/8-second sleeps. Both transport adapters disable scheduled SDK reconnects. The existing call owner may replace its RTC connection once with the same expected call identity, preserving mute and generation fencing; another disconnect ends it without renewing admission from a brief open. A separate explicit join can act again.
 
 Hook25, native/browser adapter7, older-iOS guard6, mobile types and phone/router scanners pass. Tests cover an idle day after initial refusal and after replacement loss, current-session cancellation and mute preservation. This is not a full SDK or device proof: the installed LiveKit Room still has cloud-region failover and RTCEngine service-not-found protocol fallback outside the configured reconnect policy. Those and the voice route/usage/cohort gates remain open. No native module or UI control is added.
+
+## D086 — Scope voice runtime refreshes to their committed dependencies
+
+An active call no longer recounts participants and rereads command reports for every same-Room invalidation. Participant counts/reconciliation use voice-participant and exact call-card changes; work refresh uses message, command and turn changes. Speaking-speed refresh uses identity changes only. Existing membership/Room/Workspace authority revalidation remains independent.
+
+Voice integration30 and server types pass. The exact-source proof asserts zero participant/work refresh for read marks, bookmarks, push devices and another Room, while call-card and command changes reach their owners. This removes broad invalidation work but does not retire startup/minute voice discovery or complete voice ownership/accounting/cohort gates.

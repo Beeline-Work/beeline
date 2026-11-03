@@ -42,7 +42,7 @@ export class VoiceService {
     this.profiles = new AgentVoiceService(db, () => this.speech());
     this.rooms = new RoomServiceClient(config.url.replace(/^ws/, 'http'), config.apiKey, config.apiSecret);
     this.unsubscribe = live.subscribeAll(event => {
-      if (event.type === 'invalidate' && event.personId) {
+      if (event.type === 'invalidate' && event.reason === 'postgres:identities' && event.personId) {
         const human = event.personId;
         for (const runtime of this.runtimes.values()) void runtime.then(r => r?.refreshSpeakingSpeed(human)).catch(() => {});
       }
@@ -51,9 +51,14 @@ export class VoiceService {
       }
       if (event.type === 'invalidate') {
         for (const runtime of this.runtimes.values()) void runtime.then(r => {
-          if (r?.roomId === event.roomId) return Promise.all([r.countHumans(), r.refresh(),
-            ...(event.reason === 'voice-participants' || event.reason === 'postgres:messages' && !!r.callCardId && event.messageId === r.callCardId
-              ? [r.reconcileParticipants()] : [])]);
+          if (!r || r.roomId !== event.roomId) return;
+          const participantsChanged = event.reason === 'voice-participants' ||
+            event.reason === 'postgres:messages' && !!r.callCardId && event.messageId === r.callCardId;
+          const workChanged = ['message', 'postgres:messages', 'turn', 'postgres:agent_turns', 'postgres:agent_commands'].includes(event.reason);
+          return Promise.all([
+            ...(participantsChanged ? [r.countHumans(), r.reconcileParticipants()] : []),
+            ...(workChanged ? [r.refresh()] : []),
+          ]);
         }).catch(() => {});
       }
     });

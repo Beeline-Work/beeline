@@ -59,10 +59,11 @@ Cross-cutting T7 work remains:
   baseline increases have individual dispositions in that document and the PR
   body; they are not scanner exemptions or closed findings.
 - [Compatibility and rollback](t7-compatibility.md): historical source and
-  actual mobile recovery pass, but the exact separate expansion image,
-  ledger-preserving image floor, full startup and isolated image auto-revert
-  sequence are not yet proved. A full combined draft must not be described as
-  a schema-only prerequisite release.
+  actual mobile recovery pass. The full local historical/current image smoke
+  now also passes startup, migration, reads/writes, image swap/revert and graceful
+  shutdown. The exact separate expansion image, deployed ledger-preserving
+  floor and real canary watcher remain unproved. A full combined draft must
+  not be described as a schema-only prerequisite release.
 - The full native40/current Android/iOS/web/Tauri, old/new helper, mixed-server
   and every-family matrix remains incomplete. Historical native proofs are
   labeled; they are not store-binary or deployed-OTA claims.

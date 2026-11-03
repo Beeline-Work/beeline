@@ -218,9 +218,10 @@ release.
 Server boot never runs migrations or backfills. The release job builds the
 server packages and runs `npm run migrate -w @beeline/server` once with the
 owner-scoped `MIGRATION_DATABASE_URL`, before either Fly Machine is changed.
-The migration writes `beeline_schema_state` only after both the server and auth
-schemas and all backfills finish. Normal boot uses `DATABASE_URL` only to read
-that marker and exits with an explicit release-migration error when the schema
+The migration writes the base `beeline_schema_state` and additive
+`beeline_router_schema_state` only after both the server and auth schemas and
+all backfills finish. Current boot uses `DATABASE_URL` only to read those
+markers and exits with an explicit release-migration error when the schema
 is absent or stale. A Machine restart therefore cannot rerun or queue a
 migration behind live traffic. Each release-owned SQL step runs once. Lock
 timeout/deadlock returns the original failure with bounded lock diagnostics;
@@ -228,11 +229,17 @@ there is no timed backoff or automatic statement replay. A new authorized
 release invocation can resume the existing idempotent steps. Proof:
 `apps/server/src/migration-steps.test.ts` (including isolated PostgreSQL).
 
-Every schema statement and data step, including optional release retirement,
-uses the bounded lock retry in `apps/server/src/migration-retry.ts` for both
-`40P01` and `55P03`. Completed steps keep their transaction boundaries.
-`migration-retry.test.ts` exercises transient and persistent contention against
-isolated loopback PostgreSQL via `BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL`.
+The same single-attempt rule covers optional release retirement, archived
+corner holds, hold-message backfills, welcome-video backfills and agent-handle
+candidate reads. Completed steps keep their transaction boundaries. The
+PostgreSQL lock tests use `BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL` and require
+a new explicit invocation after releasing the conflicting lock.
+
+Router rollout uses a separate additive expansion release before any switch.
+It preserves base marker 46 for old-image boot and establishes the ledger-aware
+image recovery floor before enabling commands. The combined router draft is
+not a schema-only prerequisite release. See the [T7 release sequence and proof
+limits](../data/network-ops-fixes/t7-compatibility.md).
 
 The promotion records the two current Machine image refs, builds and pushes one
 tagged Fly image (the image that ships; there is no separate build), and

@@ -61,6 +61,10 @@ test('builds every public Pages path and preserves association and helper bytes'
     for (const file of [
       'index.html',
       'desktop-download.mjs',
+      'marketing/boot.mjs',
+      'marketing/demo.js',
+      'marketing/site.css',
+      'marketing/native.css',
       'privacy/index.html',
       'privacy/2026-10-16.html',
       'subprocessors/index.html',
@@ -85,6 +89,7 @@ test('builds every public Pages path and preserves association and helper bytes'
     ]) {
       assert.equal(fs.statSync(path.join(outputRoot, file)).isFile(), true, file);
     }
+    assert.equal(fs.existsSync(path.join(outputRoot, 'mock')), false, 'review-only mocks must not ship on Pages');
     for (const file of ['apple-app-site-association', 'assetlinks.json']) {
       assert.deepEqual(
         fs.readFileSync(path.join(outputRoot, '.well-known', file)),

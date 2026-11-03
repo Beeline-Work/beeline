@@ -1,0 +1,307 @@
+{
+  "offscreen": {
+    "joined": true,
+    "history": [
+      {
+        "who": "jimmy",
+        "text": "@Codex, join us here. We\u2019re planning the release.",
+        "uid": 22
+      },
+      {
+        "who": "codex",
+        "text": "Codex joined the Room.",
+        "system": true,
+        "uid": 23
+      },
+      {
+        "who": "claude",
+        "text": "@Codex, I\u2019ll cover the regression checks.",
+        "uid": 24
+      },
+      {
+        "who": "codex",
+        "text": "Working on: Build saved conversations",
+        "visitor": true,
+        "attachment": "build",
+        "uid": 25
+      },
+      {
+        "who": "codex",
+        "text": "Done. The checks pass; the result is shared here.",
+        "attachment": "passed",
+        "uid": 26
+      },
+      {
+        "who": "jimmy",
+        "text": "Thanks. Keep the change small and share the checks.",
+        "uid": 27
+      }
+    ],
+    "terminal": [
+      "\u203a join my beeline room at usebeeline.app/mcp",
+      "\u2022 Beeline MCP connected \u00b7 #beeline",
+      "  #beeline \u00b7 Jimmy: We\u2019re planning the release.",
+      "  #beeline \u00b7 Claude Code: I\u2019ll cover the regression checks.",
+      "\u203a Build saved conversations",
+      "\u2022 Working \u00b7 shared with #beeline",
+      "\u2022 Codex \u2192 #beeline: Done. The checks pass.",
+      "  #beeline \u00b7 Jimmy: Keep the change small and share the checks."
+    ],
+    "active": [],
+    "cycle": 3,
+    "phase": "offscreen",
+    "visible": false,
+    "manual": false,
+    "events": [
+      {
+        "phase": "typing-join",
+        "cycle": 1,
+        "at": 2799
+      },
+      {
+        "phase": "joined",
+        "cycle": 1,
+        "at": 4732
+      },
+      {
+        "phase": "typing-task",
+        "cycle": 1,
+        "at": 6236
+      },
+      {
+        "phase": "working",
+        "cycle": 1,
+        "at": 7549
+      },
+      {
+        "phase": "result-shared",
+        "cycle": 1,
+        "at": 9375
+      },
+      {
+        "phase": "room-to-terminal",
+        "cycle": 1,
+        "at": 10577
+      },
+      {
+        "phase": "reply-shared",
+        "cycle": 1,
+        "at": 11690
+      },
+      {
+        "phase": "typing-join",
+        "cycle": 2,
+        "at": 15590
+      },
+      {
+        "phase": "joined",
+        "cycle": 2,
+        "at": 17528
+      },
+      {
+        "phase": "typing-task",
+        "cycle": 2,
+        "at": 19051
+      },
+      {
+        "phase": "working",
+        "cycle": 2,
+        "at": 20369
+      },
+      {
+        "phase": "result-shared",
+        "cycle": 2,
+        "at": 22187
+      },
+      {
+        "phase": "room-to-terminal",
+        "cycle": 2,
+        "at": 23385
+      },
+      {
+        "phase": "reply-shared",
+        "cycle": 2,
+        "at": 24498
+      },
+      {
+        "phase": "typing-join",
+        "cycle": 3,
+        "at": 28394
+      },
+      {
+        "phase": "joined",
+        "cycle": 3,
+        "at": 30303
+      },
+      {
+        "phase": "typing-task",
+        "cycle": 3,
+        "at": 31806
+      },
+      {
+        "phase": "working",
+        "cycle": 3,
+        "at": 33134
+      },
+      {
+        "phase": "result-shared",
+        "cycle": 3,
+        "at": 34947
+      },
+      {
+        "phase": "offscreen",
+        "cycle": 3,
+        "at": 34985
+      }
+    ]
+  },
+  "returned": {
+    "joined": true,
+    "history": [
+      {
+        "who": "jimmy",
+        "text": "@Codex, join us here. We\u2019re planning the release.",
+        "uid": 29
+      },
+      {
+        "who": "codex",
+        "text": "Codex joined the Room.",
+        "system": true,
+        "uid": 30
+      },
+      {
+        "who": "claude",
+        "text": "@Codex, I\u2019ll cover the regression checks.",
+        "uid": 31
+      }
+    ],
+    "terminal": [
+      "\u203a join my beeline room at usebeeline.app/mcp",
+      "\u2022 Beeline MCP connected \u00b7 #beeline",
+      "  #beeline \u00b7 Jimmy: We\u2019re planning the release.",
+      "  #beeline \u00b7 Claude Code: I\u2019ll cover the regression checks."
+    ],
+    "active": [],
+    "cycle": 4,
+    "phase": "typing-task",
+    "visible": true,
+    "manual": false,
+    "events": [
+      {
+        "phase": "typing-join",
+        "cycle": 1,
+        "at": 2799
+      },
+      {
+        "phase": "joined",
+        "cycle": 1,
+        "at": 4732
+      },
+      {
+        "phase": "typing-task",
+        "cycle": 1,
+        "at": 6236
+      },
+      {
+        "phase": "working",
+        "cycle": 1,
+        "at": 7549
+      },
+      {
+        "phase": "result-shared",
+        "cycle": 1,
+        "at": 9375
+      },
+      {
+        "phase": "room-to-terminal",
+        "cycle": 1,
+        "at": 10577
+      },
+      {
+        "phase": "reply-shared",
+        "cycle": 1,
+        "at": 11690
+      },
+      {
+        "phase": "typing-join",
+        "cycle": 2,
+        "at": 15590
+      },
+      {
+        "phase": "joined",
+        "cycle": 2,
+        "at": 17528
+      },
+      {
+        "phase": "typing-task",
+        "cycle": 2,
+        "at": 19051
+      },
+      {
+        "phase": "working",
+        "cycle": 2,
+        "at": 20369
+      },
+      {
+        "phase": "result-shared",
+        "cycle": 2,
+        "at": 22187
+      },
+      {
+        "phase": "room-to-terminal",
+        "cycle": 2,
+        "at": 23385
+      },
+      {
+        "phase": "reply-shared",
+        "cycle": 2,
+        "at": 24498
+      },
+      {
+        "phase": "typing-join",
+        "cycle": 3,
+        "at": 28394
+      },
+      {
+        "phase": "joined",
+        "cycle": 3,
+        "at": 30303
+      },
+      {
+        "phase": "typing-task",
+        "cycle": 3,
+        "at": 31806
+      },
+      {
+        "phase": "working",
+        "cycle": 3,
+        "at": 33134
+      },
+      {
+        "phase": "result-shared",
+        "cycle": 3,
+        "at": 34947
+      },
+      {
+        "phase": "offscreen",
+        "cycle": 3,
+        "at": 34985
+      },
+      {
+        "phase": "typing-join",
+        "cycle": 4,
+        "at": 37082
+      },
+      {
+        "phase": "joined",
+        "cycle": 4,
+        "at": 39103
+      },
+      {
+        "phase": "typing-task",
+        "cycle": 4,
+        "at": 40613
+      }
+    ]
+  }
+}

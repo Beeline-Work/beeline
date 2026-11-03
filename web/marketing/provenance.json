@@ -1,0 +1,68 @@
+{
+  "approvedMock": "da5eb80dd",
+  "sharedComponents": [
+    {
+      "path": "apps/mobile/sources/components/buzz/Ledger.tsx",
+      "sha256": "6f2ee4b68433d8132a1e93f767a5239504e25572cb8c5658b5c54a43d8b215a8"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/TranscriptCard.tsx",
+      "sha256": "ca669af29f7a8f2ac3ab0286c1f9eaf3007c5a602d5583efd4a525f4b5a3ac7f"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/PrLifecycleCard.tsx",
+      "sha256": "bbcec91e296ed533508a66a2e6483f16bb0f863dbac5331b4bf1b8d6346799d1"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/IdentityMark.tsx",
+      "sha256": "8895c5f4205067d7d62a6a5aa06244bdb230eef569c5d546b0cc981f6e49370f"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/ChannelHeaderTitle.tsx",
+      "sha256": "24c85ace1e999ca40122cfcd82cf3e8c7e7c5477a5f6b391061f1d645a944546"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/ConversationComposer.tsx",
+      "sha256": "168ddbda2c575e7babe73d10cf62d4ea3a649f0e18c550ef64cdce8c5e9aa4dc"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/ActivityTimeline.tsx",
+      "sha256": "2eeb340646fe42f87bd5167e7a04feb55d5704302ddc68b4c8a4737f53aea56c"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/ToolOutputSheet.tsx",
+      "sha256": "cfa6b1c1f0f0c228f968c977321ca71eb02443fd2432623863b104968c2d322e"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/CodeHighlighter.tsx",
+      "sha256": "c31fe75a22fbfb24a02fa9a8aeca724f591318133f93d2ee20e04ebfb7ff6509"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/TurnProgressLine.tsx",
+      "sha256": "e362f79c7e74637c2f93fc9af136d8fd20492337a13a37145798e9366774cc05"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/LedgerDisclosure.tsx",
+      "sha256": "6945affe99e971080ec05e6e5afb474bb576af56610e9c64ddc52f11f907c831"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/IndexRow.tsx",
+      "sha256": "849ea000c6711ac0c0a79731427d35dd0eb0ef12a840c5cb8238638aff48abd5"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/MonoMarkdown.tsx",
+      "sha256": "f0b7271a7efc9b20608a6dd4723d96b02fde04501085c88d74c659fe0c5a4f0f"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/MonoHull.tsx",
+      "sha256": "dcd21559137532b47404e3ed2565681f1ed4ba1bdf2a8d455d39380d6beff12e"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/BeelineMarkSpinner.tsx",
+      "sha256": "ee1b710bfb5bd40416e27b415835b3671cd28ce8b5adc8e58f69c786ced918c5"
+    }
+  ],
+  "renderer": "scripts/marketing/export-ui.py",
+  "runtime": "dependency-free DOM controller",
+  "fontBytes": 353852
+}

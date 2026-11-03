@@ -33,6 +33,7 @@ Keep shared safety rules here; read the area guide below before editing that sub
 | Institutional memory and saved workflow runtime | [Memory and workflow invariants](docs/agent-memory-workflows.md); [workflow format and tools](docs/workflows/README.md) |
 | Helper, harness, sandbox, ACP, models, sign-in, connectors | [Body agent invariants](docs/agent-body.md) |
 | System/card grammar, subscriptions, causes, approval resume | [System lines and events](docs/agent-system-events.md) |
+| Marketing website, shared UI export, local demo and responsive proof | [Marketing guide](web/marketing/README.md) |
 | Mobile identity, storage, transcript, push, components and UI | [Mobile client and UI invariants](docs/agent-mobile.md); [DESIGN.md](DESIGN.md) |
 | Signing, community, key succession, transport, links | [Client protocol](docs/agent-client-protocol.md) |
 | Helper bundle activation and updates | [CLI bundle runbook](docs/cli-bundle-channel.md) |

@@ -51,7 +51,7 @@ async function copyStaticTree(sourceRoot, outputRoot, current = sourceRoot) {
   for (const entry of await readdir(current, { withFileTypes: true })) {
     const sourcePath = join(current, entry.name);
     const sourceRelative = relative(sourceRoot, sourcePath);
-    if (sourceRelative === 'dl' || sourceRelative.startsWith('dl/')) continue;
+    if (sourceRelative === 'dl' || sourceRelative.startsWith('dl/') || sourceRelative === 'mock' || sourceRelative.startsWith('mock/')) continue;
     const outputPath = join(outputRoot, sourceRelative);
     if (entry.isSymbolicLink()) fail(`Pages source may not contain symlinks: ${sourceRelative}`);
     if (entry.isDirectory()) {

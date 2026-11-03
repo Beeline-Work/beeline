@@ -1,0 +1,17 @@
+/* The same shared graphic, scaled in its existing rail seat. */
+.native-codex-mark [data-testid="codex-shared-mark"],.native-codex-mark [data-testid="identity-face-plate"]{width:100%!important;height:100%!important}
+[data-message-body]>div{overflow-wrap:anywhere}.native-ledger{scroll-behavior:auto}.native-ledger [data-entry-actor]{flex-shrink:0}.native-ledger .latest{opacity:1}
+.native-composer-stack textarea:focus-visible,.tui-prompt input:focus-visible{outline:1px solid var(--brass);outline-offset:2px}
+.native-composer-stack [aria-label="Send message"]{cursor:pointer}.native-composer-stack textarea{resize:none}
+.working-slot[hidden]{display:none!important}
+.tool-output{position:fixed;inset:0;margin:auto;width:min(672px,calc(100vw - 32px));max-height:80svh;overflow:auto;color:var(--content);background:#190e21;border:1px solid #3b3048;border-radius:3px;padding:0 0 12px;box-shadow:0 18px 48px #0009}.tool-output::backdrop{background:#14091acc}.tool-output pre{white-space:pre-wrap;overflow-wrap:anywhere}.tool-output [role=button]{cursor:pointer}
+.no-script{padding:20px;text-align:center;color:var(--quiet)}footer a{display:inline-flex;align-items:center;min-height:44px}.other-platforms{min-height:24px}
+@media(max-width:760px){.stage:not(.phone){width:100%;max-width:380px;height:calc(clamp(320px,calc(100svh - 344px),500px) + 198px);transform:none}.stage:not(.phone) .screen{top:96px;left:50%;transform:translateX(-50%);width:min(334px,calc(100% - 12px));height:clamp(320px,calc(100svh - 344px),500px)}.stage:not(.phone) .app-sidebar{display:none}}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
+
+/* Use the existing quiet-text token for small labels at web contrast ratios. */
+.private-chat>small{color:#90909b}
+
+/* Reserve the final graph positions before its lightweight router runs. */
+.node{left:var(--node-x);top:var(--node-y)}
+@media(max-width:760px){.node{left:var(--phone-x)}.stage:not(.phone) .node{gap:6px}.stage:not(.phone) .node.agent{top:44px}.stage:not(.phone) .node.human{top:auto;bottom:16px;transform:translateX(-50%)}.stage:not(.phone) .node .tile{width:36px;height:36px}.stage:not(.phone) .node .name{font-size:9px;line-height:14px}.stage:not(.phone) .node .tile>svg,.stage:not(.phone) .node .tile>img{width:24px;height:24px;max-width:28px;max-height:28px}.stage:not(.phone) .node.human .tile>svg{width:28px;height:28px}}

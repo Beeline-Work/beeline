@@ -9,3 +9,6 @@
 
 /* Codex has the same shared cat mark and seed in the rail and transcript. */
 .native-codex-mark{overflow:visible}.native-codex-mark svg{width:100%!important;height:100%!important;max-width:none!important;max-height:none!important}
+
+/* Keep scrolled terminal output below its fixed welcome box. */
+.codex-tui{gap:10px}.codex-welcome{position:relative;z-index:1}.tui-output{padding:0}.tui-prompt{margin-top:0}.tui-footer{padding-top:0}

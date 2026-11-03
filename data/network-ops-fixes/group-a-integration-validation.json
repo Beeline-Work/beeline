@@ -1,0 +1,150 @@
+{
+  "capturedAt": "2026-11-03T06:42:05.316292+00:00",
+  "composition": {
+    "combinedBase": "6bf820def",
+    "groupAFollowup": "d4ceadbe4",
+    "integrationRepairs": [
+      "Exact router capability expectations",
+      "Complete typed workflow fixture",
+      "Storage registry for owner projections, owner ends and failed schedule occurrences",
+      "Two existing expansion-proof CLI entrypoints in Knip",
+      "Pure display validator uses the guarded public barrel; bounded display resource has four exact declared consumers in the existing scanner",
+      "Shared pure schema decoder moved outside the private-owner directory; five parity cases pass"
+    ]
+  },
+  "scope": "Isolated synthetic local validation, capability off. Candidate paths only; no production or installed-cohort closure.",
+  "environment": {
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "vitestMaxWorkers": 2,
+    "vitestMinWorkers": 1,
+    "scheduling": "One Vitest suite at a time",
+    "postgres": "Task-owned local PostgreSQL via BEELINE_COMMAND_TEST_POSTGRES_URL"
+  },
+  "vitest": [
+    {
+      "suite": "postgres-source-gates",
+      "command": "npm test -w @beeline/server -- --config vitest.router-group-a.config.ts --maxWorkers=2 --minWorkers=1",
+      "passed": 5
+    },
+    {
+      "suite": "postgres-scenarios",
+      "command": "npm test -w @beeline/server -- src/router-phone-group-a.postgres.test.ts --maxWorkers=2 --minWorkers=1",
+      "passed": 10
+    },
+    {
+      "suite": "storage",
+      "command": "npm test -w @beeline/server -- src/storage-registry.test.ts --maxWorkers=2 --minWorkers=1",
+      "passed": 2
+    },
+    {
+      "suite": "owner-resources.router.test.tsx",
+      "command": "npm test --prefix apps/mobile -- \"sources/buzz/owner-resources.router.test.tsx\" --maxWorkers=2 --minWorkers=1",
+      "passed": 3
+    },
+    {
+      "suite": "use-room-workflow-run.router.test.tsx",
+      "command": "npm test --prefix apps/mobile -- \"sources/buzz/use-room-workflow-run.router.test.tsx\" --maxWorkers=2 --minWorkers=1",
+      "passed": 3
+    },
+    {
+      "suite": "router-owner.test.ts",
+      "command": "npm test --prefix apps/mobile -- \"sources/buzz/router-owner.test.ts\" --maxWorkers=2 --minWorkers=1",
+      "passed": 29
+    },
+    {
+      "suite": "members.management.test.tsx",
+      "command": "npm test --prefix apps/mobile -- \"sources/app/(app)/beeline/members.management.test.tsx\" --maxWorkers=2 --minWorkers=1",
+      "passed": 82
+    },
+    {
+      "suite": "wallet.test.tsx",
+      "command": "npm test --prefix apps/mobile -- \"sources/app/(app)/beeline/settings/workbench/wallet.test.tsx\" --maxWorkers=2 --minWorkers=1",
+      "passed": 15
+    },
+    {
+      "suite": "needs-you-rooms",
+      "command": "npm test -w @beeline/net -- src/needs-you-rooms.test.ts",
+      "passed": 9
+    },
+    {
+      "suite": "display-projections",
+      "command": "npm test -w @beeline/net -- src/display-projections.test.ts",
+      "passed": 2
+    },
+    {
+      "suite": "read-lanes",
+      "command": "npm test -w @beeline/net -- src/read-lanes.test.ts",
+      "passed": 34
+    },
+    {
+      "suite": "read-lanes.groups",
+      "command": "npm test -w @beeline/net -- src/read-lanes.groups.test.ts",
+      "passed": 11
+    },
+    {
+      "suite": "compact-wire-shapes",
+      "command": "npm test -w @beeline/net -- src/private/compact-wire-shapes.test.ts",
+      "passed": 5
+    }
+  ],
+  "otherChecks": [
+    {
+      "command": "npm exec turbo -- run build --concurrency=1",
+      "result": "8 of 8 workspace builds passed"
+    },
+    {
+      "command": "npm run typecheck",
+      "result": "Passed root workspaces, mobile and scripts"
+    },
+    {
+      "command": "node --test scripts/network-codec-bundle.test.mjs",
+      "result": "3 of 3 passed"
+    },
+    {
+      "command": "node scripts/generate-network-codecs.mjs --check",
+      "result": "Passed"
+    },
+    {
+      "command": "node scripts/check-phone-network-channels.mjs",
+      "result": "Passed; 72 existing keys"
+    },
+    {
+      "command": "node scripts/check-router-boundaries.mjs",
+      "result": "Passed; 158 existing keys, no production opt-in"
+    },
+    {
+      "command": "node scripts/check-dead-code.mjs",
+      "result": "5 existing findings, 0 introduced"
+    },
+    {
+      "command": "node scripts/check-architecture.mjs --base origin/main",
+      "result": "3 documented relaxations: live.notify, server environment 60 to 61, phone parallel paths 19 to 24; no other errors"
+    },
+    {
+      "command": "node --test scripts/router-boundaries.test.mjs",
+      "result": "28 of 28 passed, including four exact display consumer boundaries"
+    }
+  ],
+  "bundle": {
+    "measurement": "Same esbuild browser/esm/minify and gzipSync options as network-codec-bundle.test.mjs",
+    "owner": {
+      "raw": 86453,
+      "gzip": 24495,
+      "rawLimit": 90112,
+      "gzipLimit": 24576,
+      "inputs": 21
+    },
+    "shadow": {
+      "raw": 28070,
+      "gzip": 5962,
+      "rawLimit": 32768,
+      "gzipLimit": 8192,
+      "inputs": 3
+    }
+  },
+  "limits": [
+    "Architecture main-relative guard remains red for the documented notifier exception and two temporary staged code debts.",
+    "Remote CI must run on the final pushed head; local results are not a green-CI claim.",
+    "Exact final expansion images, ledger-aware deployed floor and installed-cohort workloads remain required."
+  ]
+}

@@ -475,7 +475,9 @@
           "last_reported_blocking_run_id": "existing before the registry; weekly audit reviews",
           "updated_by": "existing before the registry; weekly audit reviews",
           "workflow_run": "existing before the registry; weekly audit reviews",
-          "owner_id": "existing before the registry; weekly audit reviews"
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "failed_due_at": "Records the exact failed scheduled occurrence so the same due work cannot retry on a timer.",
+          "failed_revision": "Records the exact failed schedule revision; a committed edit or advance permits new work without altering the authorized due time."
         }
       },
       "agent_startup_backoff": {
@@ -2893,6 +2895,35 @@
           "command_id": "Identifies the actual command authorizing the effect and prevents mixing commands in one registration transaction.",
           "generation_id": "Pins the effect to its immutable execution generation even if that command is requeued before COMMIT."
         }
+      },
+      "owner_projection_cells": {
+        "module": "Owner display projections (apps/server/src/router-owner-source.ts)",
+        "reason": "Committed owner summary cells separate pure Workbench display from wallet/provider observation and share one owner authority stream.",
+        "columns": {
+          "owner_id": "Partitions committed display cells by authenticated owner, independent of Workspace selection.",
+          "cell": "Names the bounded server-authored summary within an owner projection.",
+          "value": "Captures the transactional summary used by pure display snapshots without invoking the wallet/provider reader."
+        }
+      },
+      "owner_wallet_projections": {
+        "module": "Wallet observations (apps/server/src/wallet.ts)",
+        "reason": "A retained actual provider observation lets pure snapshots report measured balances and their age without observing the provider again.",
+        "columns": {
+          "owner_id": "Partitions the retained observation by the wallet owner.",
+          "value": "Preserves the last actual provider result, never a fabricated fresh balance.",
+          "observed_at": "Records when the retained provider observation changed, independently of display reads."
+        }
+      },
+      "agent_command_owner_ends": {
+        "module": "Owned model parking (apps/server/src/owned-model-parking.ts)",
+        "reason": "Immutable causal evidence fences a generation after its owner ends without inventing a provider outcome or allowing a second claim.",
+        "columns": {
+          "command_id": "Identifies the durable command whose generation can no longer claim or perform effects.",
+          "generation_id": "Scopes the immutable end to the exact issued command generation.",
+          "model_request_id": "Records the actual model attempt when known; NULL preserves missing-journal uncertainty.",
+          "ended_at": "Preserves the database time of the causal owner end for durable evidence.",
+          "transaction_id": "Binds owner-end evidence to the transaction that committed its authority change."
+        }
       }
     },
     "jsonb": {
@@ -3108,6 +3139,14 @@
         "authority": "Stores the original certificate for current-permission validation before replaying private convenience data.",
         "workspaceId": "Binds the original command convenience projection to its canonical Workspace scope.",
         "roomId": "Binds optional Room convenience data to the exact scope whose authority must still match."
+      },
+      "value": {
+        "createdAt": "Committed binding creation time in the owner Workbench summary.",
+        "expiresAt": "Committed delegation expiry in the owner Workbench summary.",
+        "standing": "Committed standing-delegation flag in the owner Workbench summary.",
+        "workspace": "Existing source-capture JSON alias retains the changed Workspace identifier for committed scheduling causes.",
+        "room": "Existing source-capture JSON alias retains the changed Room identifier for committed scheduling causes.",
+        "roomId": "Existing scheduled-row source JSON alias preserves the Room scope across old/new capture."
       }
     }
   }

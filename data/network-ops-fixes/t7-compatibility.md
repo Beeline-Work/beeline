@@ -235,8 +235,11 @@ containers. It neither builds/pushes images nor contacts Fly.
    retaining tables or passing the old boot check is insufficient. This is an
    owner-operated release prerequisite; no production state was inspected or
    changed by these proofs.
-3. **Switch release.** Only after F01–F26 and the remaining T7 cohort/budget
-   proofs close, select the unified router using the existing rollout setting.
+3. **Switch release.** Only after the pre-rollout code, compatibility and budget
+   gates pass and the owner authorizes the staged rollout, select the unified
+   router using the existing rollout setting. Record the exact post-switch cohort
+   measurements in [readiness](rollout-readiness.md) before claiming whole-finding
+   closure; enabling the switch does not itself close F01–F26.
    Its migration must leave the expansion image's base and router markers valid;
    no destructive DDL or old-wire removal belongs here. The release planner
    already remembers each machine's prior image: canary auto-revert now targets

@@ -23,7 +23,7 @@ describe('closed canonical Scheduled Work row-source planning',()=>{
   });
   it('accepts explicit complete-empty projection changes while retaining independent family causes',()=>{
     const plan=routerSourcePlan([cause(complete([])),{sourceTable:'workspaces'}],VIEWER);
-    expect(plan.scheduledWorkCauses).toEqual([]);expect([...plan.families]).toEqual(['room-list']);
+    expect(plan.scheduledWorkCauses).toEqual([]);expect([...plan.families]).toEqual(['agent-profile','room-list','workspace-roster']);
   });
   it.each(['dependency','budget'])('never interprets explicit %s unavailability as complete-empty coverage',reason=>{
     expect(()=>routerSourcePlan([cause({version:1,classification:'unavailable',reason})],VIEWER)).toThrow(reason);

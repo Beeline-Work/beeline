@@ -5,8 +5,8 @@ import type { AgentUsage } from '@beeline/api-contract/daemon';
 import { publishUsageAccount, readAgentUsageCell } from './helper-usage.js';
 import { postRoomChoice } from './room-choice.js';
 import { SurfaceResponseCache, isWorkspaceView } from '@beeline/buzz-client';
-import { SurfaceRegistry } from '../../mobile/sources/buzz/surface-registry.js';
-import { shouldReadWorkspaceRoster } from '../../mobile/sources/buzz/room-participants.js';
+let SurfaceRegistry: typeof import('../../mobile/sources/buzz/surface-registry.js').SurfaceRegistry;
+let shouldReadWorkspaceRoster: typeof import('../../mobile/sources/buzz/room-participants.js').shouldReadWorkspaceRoster;
 import { groupAFixture, ObservedDatabase, reader, peer, workspace, room } from '../proofs/router-group-a-postgres.js';
 import {createWallet,readWalletView,fakeCdpWalletSource} from './wallet.js';
 import {PhoneService} from './phone-service.js';
@@ -17,7 +17,13 @@ const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 describe.skipIf(!url)('P3/P5 Group A phone read closure', () => {
   let fixture: Awaited<ReturnType<typeof groupAFixture>>;
   // A cold full migration is setup, independently of each 20s proof budget.
-  beforeAll(async () => { fixture = await groupAFixture(url!); }, 120_000);
+  beforeAll(async () => {
+    // The server-only CI install has no Expo toolchain. Load the actual pure
+    // phone consumers only when this opt-in PostgreSQL proof will execute.
+    ({SurfaceRegistry} = await import('../../mobile/sources/buzz/surface-registry.js'));
+    ({shouldReadWorkspaceRoster} = await import('../../mobile/sources/buzz/room-participants.js'));
+    fixture = await groupAFixture(url!);
+  }, 120_000);
   afterEach(async () => { await fixture?.closeServers(); });
   afterAll(async () => { await fixture?.close(); });
 

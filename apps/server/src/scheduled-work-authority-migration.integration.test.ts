@@ -13,10 +13,16 @@ describe('existing-reader Scheduled Work authority stream installation',()=>{
     db=await migratedDatabase();
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Already live reader')`,[CURRENT]);
     // Model genuine pre-feature records: no Scheduled Work identity trigger
-    // has observed their insertion. Keep every other production trigger live.
+    // or newer owner-projection trigger has observed their insertion. All other
+    // production triggers remain live; restore the owner trigger before the proof.
     await db.query(`DROP TRIGGER beeline_scheduled_work_authority ON identities`);
-    await db.query(`INSERT INTO identities(id,kind,name,hidden_from_roster) VALUES
-      ($1,'human','Existing reader',false),($2,'agent','Existing helper',false),($3,'human','Existing hidden reader',true)`,[EXISTING,AGENT,HIDDEN]);
+    await db.query(`ALTER TABLE identities DISABLE TRIGGER beeline_owner_projection_source`);
+    try {
+      await db.query(`INSERT INTO identities(id,kind,name,hidden_from_roster) VALUES
+        ($1,'human','Existing reader',false),($2,'agent','Existing helper',false),($3,'human','Existing hidden reader',true)`,[EXISTING,AGENT,HIDDEN]);
+    } finally {
+      await db.query(`ALTER TABLE identities ENABLE TRIGGER beeline_owner_projection_source`);
+    }
   });
   afterEach(async()=>{await db.close();});
   const heads=async()=>(await db.query(`SELECT id,epoch,sequence::text,byte_total::text FROM live_streams ORDER BY id`)).rows;

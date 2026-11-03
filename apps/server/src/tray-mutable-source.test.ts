@@ -53,7 +53,11 @@ describe('uninstalled mutable Tray source',()=>{
     expect(changed.every(cause=>cause.trayWorkspaceId===w1&&readTrayMutableCause(cause))).toBe(true);
     expect((await read()).value.needs.items).toHaveLength(0);expect((await read(b)).value.needs.items).toHaveLength(1);
     await expect(fenceRouterEnqueue(db,input(),a,before.authority,()=>undefined)).rejects.toThrow('authority');
-    expect((await db.query(`SELECT sequence::text FROM live_streams WHERE id=$1`,[`workspace:${w2}`])).rows).toEqual(untouched);
+    // The shared agent also has a profile in Workspace two. Its ownership fact
+    // must advance that family, without adding a Tray cause there.
+    expect((await db.query(`SELECT event->>'sourceTable' family FROM live_journal
+      WHERE stream_id=$1 AND sequence>$2 ORDER BY sequence`,[`workspace:${w2}`,untouched[0]!.sequence])).rows)
+      .toEqual([{family:'profile-projection'}]);
   });
 
   it('uses the referencing grant Workspace for app ownership and retains cascade tombstones',async()=>{
@@ -137,9 +141,9 @@ describe('uninstalled mutable Tray source',()=>{
   it('captures JSON-only actor rename and pre-delete audience without treating display updates as authority',async()=>{
     await card('sign-in-card','agent-sign-in',{ownerId:a,agentId:actor,harness:'claude',status:'pending',expiresAt:Date.now()+60_000});
     expect((await read()).value.needs.items[0]!.approval?.actor).toBe('Actor');
-    const authority=await epochs();await resetCauses();await db.query(`UPDATE identities SET name='Renamed actor' WHERE id=$1`,[actor]);
+    const authority=(await read()).authority;await resetCauses();await db.query(`UPDATE identities SET name='Renamed actor' WHERE id=$1`,[actor]);
     expect((await causes()).map(cause=>[cause.trayWorkspaceId,cause.trayReaderId])).toEqual([[w1,a]]);
-    expect((await read()).value.needs.items[0]!.approval?.actor).toBe('Renamed actor');expect(await epochs()).toEqual(authority);
+    expect((await read()).value.needs.items[0]!.approval?.actor).toBe('Renamed actor');expect((await read()).authority).toEqual(authority);
     await resetCauses();await db.query(`DELETE FROM identities WHERE id=$1`,[actor]);
     expect((await causes()).some(cause=>cause.table==='identities'&&cause.oldSourceId===actor&&cause.operation==='DELETE')).toBe(true);
     expect((await read()).value.needs.items[0]!.approval?.actor).toBe('Agent');
@@ -196,10 +200,10 @@ describe('uninstalled mutable Tray source',()=>{
     await pendingGrant();await card('offer-card','connector-offer',{connectorName:'Synthetic wallet'});
     await db.query(`INSERT INTO connector_offers(id,agent_id,workspace_id,room_id,addressee_id,connector_type,reason,machine_id,message_id)
       VALUES($1,$2,$3,$4,$5,'wallet','Synthetic','synthetic-machine','offer-card')`,[offer,agent,w1,r1,a]);
-    const before=await read(),authority=await epochs();await resetCauses();
+    const before=await read(),authority=before.authority;await resetCauses();
     await db.query(`UPDATE agent_grants SET room_id=$2 WHERE id=$1`,[grant,r2]);
     await db.query(`UPDATE connector_offers SET workspace_id=$2 WHERE id=$1`,[offer,w2]);
-    expect(await causes()).toEqual([]);expect(await epochs()).toEqual(authority);
+    expect(await causes()).toEqual([]);expect((await read()).authority).toEqual(authority);
     expect((await read()).value).toEqual(before.value);
   });
 

@@ -181,8 +181,13 @@ describe('R-DURABLE-REPLAY: database writes → reconnect → phone socket', () 
     resumed.send({ type: 'sync', workspaceCursors: {
       [WORKSPACE]: { epoch: ack.epoch, base: ack.sequence, seen: [] } } });
     await resumed.wait(frames => frames.some(f => f.type === 'sync-ok'));
-    expect(resumed.frames.filter(f => f.type === 'invalidate' && f.reason === 'workspace-replay'))
-      .toHaveLength(5);
+    const committed = (await database.query<{sequence: string; event: Frame}>(
+      `SELECT sequence::text,event FROM live_journal WHERE stream_id=$1 AND sequence>$2 ORDER BY sequence::bigint`,
+      [`workspace:${WORKSPACE}`, ack.sequence])).rows;
+    // Five legacy mutations still replay, alongside committed projection causes.
+    expect(committed.filter(row => row.event.reason === 'workspace-replay')).toHaveLength(5);
+    expect(resumed.frames.filter(f => f.type === 'invalidate' && f.reason === 'workspace-replay')
+      .map(frame => frame.sequence)).toEqual(committed.map(row => Number(row.sequence)));
     expect(resumed.frames.find(f => f.type === 'workspace-cursor')).toMatchObject({ reload: false });
   });
 

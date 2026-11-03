@@ -2,6 +2,8 @@
 -- beeline_room_schedules_capture. Other table cases are intentionally omitted;
 -- this fixture mutates only these two tables. Preserve the original bodies,
 -- payload fields and journal lock order when testing mixed/older migration.
+-- Source: apps/server/src/postgres-live.ts at f43bd3f86. The source Room
+-- body has no operation field; workspace and previous-Room bodies do.
 CREATE OR REPLACE FUNCTION beeline_notify_live() RETURNS trigger AS $$
 DECLARE payload jsonb;workspace text;workspace_target text;workspace_scopes text[];
   previous_room text;source_room text;parent_room text;body jsonb;streams text[]:=ARRAY[]::text[];
@@ -29,7 +31,7 @@ BEGIN
       END LOOP;
       IF source_room IS NOT NULL THEN
         body:=jsonb_strip_nulls(jsonb_build_object('type','invalidate','roomId',source_room,'reason','postgres:'||TG_TABLE_NAME,
-          'messageId',payload->>'messageId','agentId',payload->>'agentId','requestId',payload->>'requestId','operation',TG_OP,
+          'messageId',payload->>'messageId','agentId',payload->>'agentId','requestId',payload->>'requestId',
           'trace',jsonb_build_object('id',payload->>'traceId','databaseAt',payload->'databaseAt','emittedAt',payload->'databaseAt'),'readerId',NULL));
         PERFORM beeline_journal('room:'||source_room,body);streams:=array_append(streams,'room:'||source_room);
       END IF;

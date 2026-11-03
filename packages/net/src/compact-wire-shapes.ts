@@ -1,4 +1,4 @@
-import type { WireShape } from '../wire-codec.js';
+import type { WireShape } from './wire-codec.js';
 
 /** Build-time-owned schema data, never a network payload or route authority.
  * References remain numeric IDs, including cycles and forward references. */

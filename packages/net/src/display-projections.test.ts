@@ -1,4 +1,5 @@
 import {describe,it,expect} from 'vitest';
+import type {WorkflowRunSummaryView} from '@beeline/api-contract/phone';
 import {displayShapes,displayResults} from './generated-display-shapes.js';
 import {wireShapes,operationShapes} from './generated-wire-shapes.js';
 import type {WireShape} from './wire-codec.js';
@@ -24,7 +25,8 @@ describe('screen result codec projection',()=>{
     expect(displayShapes).toEqual(expected);
   });
   it('retains exact schema and row limits',()=>{
-    const row={runId:'run',roomId:'room',status:'live',updatedAt:1};
+    const row={runId:'run',workflowSlug:'review',description:'Review changes',roomId:'room',
+      roomName:'Room',state:'review',status:'live',viewerHolds:false,startedAt:1,updatedAt:1} satisfies WorkflowRunSummaryView;
     expect(validateWorkflowProjection({workflows:[row]})).toBe(true);
     expect(validateWorkflowProjection({workflows:[{...row,status:'invented'}]})).toBe(false);
     expect(validateWorkflowProjection({workflows:Array(31).fill(row)})).toBe(false);

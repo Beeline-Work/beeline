@@ -8,7 +8,7 @@ const job = (name, conclusion, attempt) => ({ name, conclusion, id: attempt, htm
 test('nightly schedule selects 03 Eastern in winter and summer and dispatches all on main', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/nightly-checks.yml', import.meta.url), 'utf8'));
   assert.deepEqual(workflow.on.schedule.map(s => s.cron), ['7 7 * * *', '7 8 * * *']);
-  assert.equal(workflow.jobs.nightly.steps[2].env.SCHEDULE, '${{ github.event.schedule }}');
+  assert.equal(workflow.jobs.nightly.steps.find(step => step.run === 'node scripts/nightly-checks.mjs').env.SCHEDULE, '${{ github.event.schedule }}');
   assert.equal(workflow.permissions.actions, 'write');
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
   for (const [yes, no] of [['2026-01-01T08:00Z', '2026-01-01T07:00Z'], ['2026-07-01T07:00Z', '2026-07-01T08:00Z']]) {
@@ -151,5 +151,26 @@ test('correct scheduled trigger enters nightly controller in winter, summer and 
       return { workflow_runs: [{ status: 'in_progress' }] };
     } });
     assert.equal(calls, 1);
+  }
+});
+
+
+test('completed runner timeout reruns once; a human cancellation is terminal', async () => {
+  for (const timeout of [true, false]) {
+    const run = { id:7,event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/checks.yml',
+      display_title:'Nightly Checks 42',status:'completed',run_attempt:1,head_sha:'abc',html_url:'https://example/runs/7',conclusion:'cancelled' };
+    const calls = [];
+    const result = await finishNightly({run,save:()=>{},api:async(method,endpoint)=>{
+      calls.push([method,endpoint]);
+      if(endpoint === 'actions/runs/7') return run;
+      if(endpoint.includes('/jobs?')) return {total_count:1,jobs:[job('suite','cancelled',1)]};
+      if(endpoint.endsWith('/logs')) return '';
+      if(endpoint.includes('/annotations?')) return timeout ? [{annotation_level:'failure',message:'The job has exceeded the maximum execution time of 1h30m0s'}] : [];
+      if(endpoint.endsWith('/rerun-failed-jobs')) return;
+      assert.fail(endpoint);
+    }});
+    assert.equal(result.rerunRequested === true,timeout);
+    assert.equal(calls.filter(([,endpoint])=>endpoint === 'actions/runs/7').length,1);
+    assert.equal(calls.filter(([method])=>method === 'POST').length,timeout ? 1 : 0);
   }
 });

@@ -490,8 +490,8 @@ describe('engine step expiry', () => {
   it('survives a restart: a new scheduler loop finds and fires the stored timer', async () => {
     const { runId } = await startedListRun();
     const loop = new AgentScheduleLoop(database);
-    const due = await loop.nextDueAt();
-    expect(due!.getTime()).toBeGreaterThan(Date.now() + 3_500_000);
+    const delay = await loop.nextDelayMs();
+    expect(delay).toBeGreaterThan(3_500_000);
     expect(await new AgentScheduleLoop(database).runOnce(new Date(Date.now() + 3_700_000))).toBe(1);
     expect((await listRunCard(runId)).roleBindings.worker).toBe(WORKER_B);
   });
@@ -876,7 +876,7 @@ describe('Reproduction workflow-stalls', () => {
     const wrap = (inner: SqlDatabase): SqlDatabase => ({
       async query(sql, values) {
         const result = await inner.query(sql, values);
-        if (sql === 'DELETE FROM agent_schedules WHERE id=$1 RETURNING id' && values?.[0] === poisonId) {
+        if (/^DELETE FROM agent_schedules schedule\s+WHERE schedule.id=\$1/.test(sql) && values?.[0] === poisonId) {
           throws++;
           throw new Error('injected timer failure after claim');
         }
@@ -892,9 +892,11 @@ describe('Reproduction workflow-stalls', () => {
     expect(await loop.runOnce(now)).toBe(0);
     expect(throws).toBe(1);
     expect(await loop.runOnce(new Date(now.getTime() + 61_000))).toBe(1);
-    expect(throws).toBe(2);
+    expect(throws).toBe(1);
+    expect((await database.query(`SELECT failed_due_at=next_run_at AND failed_revision=updated_at parked
+      FROM agent_schedules WHERE id=$1`,[poisonId])).rows).toEqual([{parked:true}]);
     expect((await database.query(`SELECT id FROM messages WHERE text='ordinary tick'`)).rowCount).toBe(2);
-    console.log('Demonstrated workflow-stalls-1: poisoned timer backed off; healthy deadline and ordinary schedules fired across ticks');
+    console.log('Demonstrated workflow-stalls-1: poisoned occurrence stays parked; healthy deadlines and ordinary schedules fire');
   });
 
   it('opens gates beside an ask_choice and another workflow gate while preserving the ordinary choice limit', async () => {

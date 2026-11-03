@@ -3981,7 +3981,7 @@ export async function compactPushClaims(database: SqlDatabase): Promise<void> {
  */
 export async function backfillAgentHandles(database: SqlDatabase): Promise<number> {
   let agents!: QueryResult<{ id: string; created_at: Date }>;
-  await retryMigrationStep('agent handle candidates', async () => {
+  await runMigrationStep('agent handle candidates', async () => {
     agents = await database.query(
       `SELECT id,created_at FROM identities WHERE kind='agent' ORDER BY created_at,id`,
     );

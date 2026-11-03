@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
-import type { RouterFamily, RouterSnapshotInput, RouterValues } from '@beeline/api-contract/router-protocol';
+import type { RouterSnapshotInput, RouterValues } from '@beeline/api-contract/router-protocol';
 import { acquireRouterLane, retryRouterLane } from './router-owner';
 import { useRouterFamily } from './router-family';
 
@@ -8,10 +8,14 @@ const empty = Object.freeze({ state: 'ABSENT' as const, value: null, error: null
 const noop = () => {};
 const detached = () => noop;
 
+type DisplayResourceFamily = 'room-workflows' | 'owner-workbench' | 'owner-wallet' | 'agent-profile';
+
 /** The existing navigation owner spends the route-bound opportunity. Effects
  * attach consumers only; no invalidation, elapsed time or response opens it. */
-export function useRoutedResource<F extends RouterFamily>(family: F, input: RouterSnapshotInput | undefined, focused: boolean,
+export function useRoutedResource<F extends DisplayResourceFamily>(family: F, input: (RouterSnapshotInput & { family: F }) | undefined, focused: boolean,
   validate?:(value:unknown)=>boolean) {
+  if (!['room-workflows', 'owner-workbench', 'owner-wallet', 'agent-profile'].includes(family) || input && input.family !== family)
+    throw new Error('Display resource must match its declared family');
   const mode = useRouterFamily(family), visible = useRef(focused); visible.current = focused;
   const key = input ? JSON.stringify(input) : '';
   const request = useMemo(() => input, [key]);

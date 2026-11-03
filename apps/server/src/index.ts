@@ -106,7 +106,7 @@ async function runReleaseMigration(): Promise<void> {
     // live on every supported client (docs/welcome-retirement.md).
     const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();
     if (greeterAgentId) {
-      await retryMigrationStep('welcome retirement', async () => {
+      await runMigrationStep('welcome retirement', async () => {
         const retirement = await retireWelcomeWorkspace(database, { greeterAgentId });
         console.log(`[migration] welcome retirement: ${JSON.stringify(retirement)}`);
       });

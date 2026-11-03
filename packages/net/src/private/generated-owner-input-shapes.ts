@@ -1,6 +1,6 @@
 // Generated from trusted owner policies by scripts/generate-network-codecs.mjs.
 import type { WireShape } from '../wire-codec.js';
-import { expandWireShapes } from './compact-wire-shapes.js';
+import { expandWireShapes } from '../compact-wire-shapes.js';
 export const ownerInputShapes: readonly WireShape[] = expandWireShapes([
   [12,{"workspaceId":1}],
   3,

@@ -1,4 +1,4 @@
-# Group A proof work in progress
+# Group A integrated candidate proof report
 
 The draft adds real PostgreSQL closure workloads for F02/F03/F04/F05/F06/F08/F09/F20/F24/F25. It does not activate the router or close a whole finding based on a supported subset. The integrator owns the live closure ledger.
 
@@ -11,7 +11,7 @@ npm test -w @beeline/server -- src/router-phone-group-a.postgres.test.ts --maxWo
 npm test -w @beeline/server -- --config vitest.router-group-a.config.ts --maxWorkers=2 --minWorkers=1
 ```
 
-The second command is an explicit closure gate, separate from regression discovery. It refuses a missing PostgreSQL URL, and its open assertions remain red. It is not an xfail suite or an approval to skip the unmet work. Every scenario retains the existing 20-second deadline; a cold full migration has its own explicitly authorized 120-second setup deadline.
+The second command is an explicit closure gate, separate from regression discovery. It refuses a missing PostgreSQL URL, and its formerly red assertions now pass on the integrated candidate. It is not an xfail suite or an approval to skip the unmet work. Every scenario retains the existing 20-second deadline; a cold full migration has its own explicitly authorized 120-second setup deadline.
 
 Initial measured run: PostgreSQL 16.15, integrator base `0a864c56f`, seven scoped regressions pass; five closure gates reproduce implementation gaps:
 
@@ -48,4 +48,37 @@ The negotiated profile paints the parent detail directly, passes that same objec
 
 Measured validation before the final profile revision increment: `router-phone-group-a.postgres.test.ts` passes 10 real PostgreSQL scenarios, including the two new F08 owner/purity tests and the F09 delayed-private-grant test. `owner-resources.router.test.tsx` passes three mounted consumer scenarios (shared facts, 1,000 legacy changes, owner key across Workspaces, pending/blur, explicit provider work). The phone network-channel check retains all 72 existing entries, architecture retains its existing limits, and the owner bundle gate passes after moving the workflow display-result graph outside the admission/fold entry. No assertion, byte limit, scenario deadline, or architecture allowance was raised.
 
-The F08 source gate now uses a supported Tailscale connector and asserts its complete canonical display cell. The original Google-calendar fixture is absent from the current connector catalog; treating its legacy wire row as a rendered catalog row was an incorrect fixture assumption. Final source/consumer/cohort revalidation is still in progress. These scoped results do not close the full native/browser/legacy matrix or the remaining Members/picker consumer obligations.
+The F08 source gate now uses a supported Tailscale connector and asserts its complete canonical display cell. The original Google-calendar fixture is absent from the current connector catalog; treating its legacy wire row as a rendered catalog row was an incorrect fixture assumption. The integrator reran all five source gates and ten PostgreSQL scenarios on the composed source; they pass. Complete consumer/cohort acceptance remains open. These scoped results do not close the full native/browser/legacy matrix or the remaining Members/picker consumer obligations.
+
+## Integrator follow-up
+
+Follow-up `d4ceadbe4` is composed with combined `6bf820def`. All five strict
+source gates pass, including the exact supported Tailscale Workbench cell and
+shared portrait revision; all ten broader PostgreSQL scenarios pass. No gate,
+scenario deadline or byte budget changed. Mounted owner3/workflow3, actual router
+owner29, Members management82 and wallet15 cases pass; the owner capability
+expectation now names the four added families while retaining the empty-family
+assertion without durable authority storage.
+
+The integration also declares the two new owner projection tables and exact
+JSON keys in the existing storage registry. Full removal and installed-cohort
+acceptance remain as listed in [readiness](rollout-readiness.md).
+
+Final composed validation: 210 Vitest cases across 13 serial suites, all eight
+workspace builds, full root typecheck, three bundle gates, codec generation,
+phone/router scanners and dead-code checks pass. The migrated storage registry
+also exposed older undeclared owner-end and failed-schedule columns; these now
+have explicit ownership and durable-evidence reasons. The workflow schema test
+uses a complete typed authoritative row and retains rejection checks. Exact
+commands, counts, bundle bytes and limitations are in
+[integration evidence](group-a-integration-validation.json). The main-relative
+architecture guard retains only the three individually documented staged
+relaxations; remote CI and full rollout acceptance are not claimed green.
+
+The router boundary follow-up corrects three errors found in the initial scanner
+log. Pure workflow display validation is exported through the guarded public
+barrel, not a new private package entry. The existing scanner declares the
+bounded display adapter and permits its hook only from workflow, Workbench, Wallet and
+Members profile consumers; 28 scanner regressions include rejection of aliases,
+forwarding, dynamic imports and direct consumer lane authority. The inventory
+and CI gate are unchanged. Affected owner/workflow consumer tests were rerun.

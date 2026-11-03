@@ -19,11 +19,6 @@
       "import": "./dist/private/phone-owner.js",
       "default": "./dist/private/phone-owner.js"
     },
-    "./display": {
-      "types":"./dist/display-projections.d.ts",
-      "import":"./dist/display-projections.js",
-      "default":"./dist/display-projections.js"
-    },
     "./helper-codecs": {
       "types": "./dist/helper-codecs.d.ts",
       "import": "./dist/helper-codecs.js",

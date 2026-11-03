@@ -1,5 +1,5 @@
 import {ROUTER_TRAY_CLOCK_STREAM} from '@beeline/api-contract/router-protocol';
-import {validateWorkflowProjection} from '@beeline/net/display';
+import {validateWorkflowProjection} from '@beeline/net';
 import { validateNeedsRoomsPayload } from '@beeline/net/owner';
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import { installUsageCellConnection, suspendUsageCellConnection, receiveUsageCell, setUsageCellProfile } from './agent-usage-cell';

@@ -824,3 +824,32 @@ describe('managed app provider boundary', () => {
     expect((error as Error).message).toBe('App tool execution failed');
   });
 });
+
+it.each([200, 403, 404])('Reproduction gh-personal-502: forwards personal GitHub REST reads with upstream status %s', async status => {
+  const transport = vi.fn(async (url: URL | string, init?: RequestInit) => {
+    const path = new URL(String(url)).pathname;
+    if (path.endsWith('/connected_accounts/' + ACCOUNT)) return json({ id: ACCOUNT, user_id: PERSON,
+      status: 'ACTIVE', toolkit: { slug: 'github' } });
+    if (path === '/api/v3.1/tools/execute/proxy') {
+      expect(JSON.parse(String(init?.body))).toEqual({ connected_account_id: ACCOUNT,
+        endpoint: 'https://api.github.com/repos/Beeline-Work/beeline-insights/contents/problems', method: 'GET',
+        parameters: [{ name: 'ref', value: 'f47c43d', type: 'query' }] });
+      return json({ status, headers: { 'content-type': 'application/json', link: '<next>; rel="next"' },
+        data: status === 200 ? [{ name: 'personal-github-proxy-502.json' }] : { message: 'Not accessible' } });
+    }
+    throw new Error('Unexpected provider request');
+  });
+  const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+  const result = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'github',
+    tool: 'BEELINE_GITHUB_REST_READ', arguments: { path: '/repos/Beeline-Work/beeline-insights/contents/problems?ref=f47c43d' } });
+  expect(result).toEqual({ status, headers: { 'content-type': 'application/json', link: '<next>; rel="next"' },
+    body: JSON.stringify(status === 200 ? [{ name: 'personal-github-proxy-502.json' }] : { message: 'Not accessible' }) });
+});
+
+it.each(['https://evil.test/repos/a/b', '//evil.test/repos/a/b', '/user', '/repos/a/b/../../user'])('rejects non-repository GitHub proxy paths: %s', async path => {
+  const transport = vi.fn(async () => json({ id: ACCOUNT, user_id: PERSON, status: 'ACTIVE', toolkit: { slug: 'github' } }));
+  const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+  await expect(provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'github',
+    tool: 'BEELINE_GITHUB_REST_READ', arguments: { path } })).rejects.toThrow('GitHub read requires a repository API path');
+  expect(transport).toHaveBeenCalledTimes(1);
+});

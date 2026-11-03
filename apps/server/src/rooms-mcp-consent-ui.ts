@@ -8,7 +8,9 @@ export interface McpConsentWorkspace {
 }
 const escape = (text: string) => text.replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch]!);
 
-export function renderMcpWorkspaceSelection(workspaces: readonly McpConsentWorkspace[]): string {
+export function renderMcpWorkspaceSelection(workspaces: readonly McpConsentWorkspace[], newWorkspaceName?: string): string {
+  if (!workspaces.length && newWorkspaceName)
+    return `<input type="hidden" name="workspace_selection" value="1" form="mcp-consent-form"><p class="fine">Allow will create your Workspace, ${escape(newWorkspaceName)}, with a public #general Room.</p>`;
   return `<fieldset class="workspace-section" aria-labelledby="workspace-heading"><input type="hidden" name="workspace_selection" value="1" form="mcp-consent-form"><div class="workspace-heading"><p class="fine" id="workspace-heading">Workspaces</p><button id="select-all-workspaces" class="edit text-button" type="button" hidden>Select all</button></div><div class="workspace-list">${workspaces.map(workspace => `<label class="workspace"><input type="checkbox" name="workspace_ids" value="${escape(workspace.id)}" form="mcp-consent-form"${workspace.alreadyConnected || workspace.selected !== false ? ' checked' : ''}${workspace.alreadyConnected ? ' disabled' : ''}><span class="workspace-copy"><span>${escape(workspace.name)}</span><span class="meta">${workspace.alreadyConnected ? 'already connected · ' : ''}${workspace.publicRoomCount} public ${workspace.publicRoomCount === 1 ? 'Room' : 'Rooms'}</span></span>${workspace.alreadyConnected ? `<input type="hidden" name="workspace_ids" value="${escape(workspace.id)}" form="mcp-consent-form">` : ''}</label>`).join('')}</div><p class="workspace-help fine">Choose the Workspaces this member can join. New connections start with all selected.</p><p class="fine" id="selection-error" role="status"${workspaces.some(workspace => workspace.alreadyConnected || workspace.selected !== false) ? ' hidden' : ''}>Select at least one Workspace to continue.</p></fieldset>`;
 }
 

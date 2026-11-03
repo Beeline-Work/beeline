@@ -170,21 +170,17 @@ restart and needs no image rebuild.
 OpenRouter holds each running call's prompt plus `max_tokens` cost against an
 account in-flight budget. A call that does not fit gets HTTP 402 with
 `error.metadata.reason` `in_flight_budget_exhausted` and a `Retry-After`. The
-proxy waits for `Retry-After` (5 s when absent) and tries again, for up to 3
-minutes from the first such refusal and never past the turn cap. When the
-wait would not end inside that time, the proxy does not wait: the 402 passes
-through and the reservation is refunded. The call's
-reservation stays in place and settles once, whatever the number of attempts.
-Retries happen before any byte reaches the Machine. Other 402 reasons and other
-errors pass through and are refunded.
+proxy returns that first refusal and its `Retry-After` metadata immediately,
+refunds the reservation once, and releases its call slot. It never waits and
+resubmits. A separately admitted model call can obtain a fresh result. Other
+402 reasons and other errors retain their existing refusal/refund behavior.
 
 Each server process runs at most `BEELINE_FREE_AGENT_MAX_CONCURRENT_CALLS`
 (default 8) upstream calls at once, across all free agents. Further calls wait
-in arrival order. A call keeps its slot while it waits out a `Retry-After`.
-Time in this queue does not count toward the 3-minute retry window. A queued
-call gives up when its caller disconnects or its turn reaches the 15-minute
-cap, refunds its reservation and gets HTTP 503. The limit is per process:
-production runs two machines, so the real ceiling is twice the setting.
+in arrival order. A queued call gives up when its caller disconnects or its
+turn reaches the 15-minute cap, refunds its reservation and gets HTTP 503.
+The limit is per process: production runs two machines, so the real ceiling
+is twice the setting.
 
 Helper model calls require a claimed `input`/`resume` command with a live lease and a
 claim younger than the hard turn cap. Pending and completed commands do not

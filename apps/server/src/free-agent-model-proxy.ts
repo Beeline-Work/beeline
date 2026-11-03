@@ -346,41 +346,6 @@ function callGate(limit: number): FreeAgentCallGate {
   return gate;
 }
 
-/**
- * How long OpenRouter retries an in-flight budget refusal. Only the waits after
- * a refusal count; time queued at the call gate does not.
- */
-const IN_FLIGHT_RETRY_WINDOW_MS = 3 * 60_000;
-/** Wait used when a refusal names no usable `Retry-After`. */
-const DEFAULT_RETRY_AFTER_MS = 5_000;
-
-/** A `Retry-After` header (seconds or an HTTP date) in milliseconds. */
-export function retryAfterMs(header: string | null, now = Date.now()): number {
-  if (header) {
-    const seconds = Number(header);
-    if (header.trim() && Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
-    const at = Date.parse(header);
-    if (Number.isFinite(at)) return Math.max(0, at - now);
-  }
-  return DEFAULT_RETRY_AFTER_MS;
-}
-
-/** Wait, unless the signal aborts first. Returns false on abort. */
-function pause(ms: number, signal: AbortSignal): Promise<boolean> {
-  if (signal.aborted) return Promise.resolve(false);
-  return new Promise((resolve) => {
-    const stop = () => {
-      clearTimeout(timer);
-      resolve(false);
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', stop);
-      resolve(true);
-    }, Math.max(0, ms));
-    signal.addEventListener('abort', stop, { once: true });
-  });
-}
-
 /** Find the last `usage` object in an OpenAI-style SSE stream. */
 export class StreamUsageReader {
   #buffer = '';
@@ -748,50 +713,25 @@ async function executeFreeAgentModel(response: ServerResponse, body: Record<stri
   const turnDeadline = new Date(turn.started).getTime() + limits.maxTurnMs;
   const forwardUpstream = async (): Promise<void> => {
     let upstream: Response;
-    let retryUntil: number | undefined;
-    for (;;) {
-      try {
-        upstream = await requestModelUpstream(options, JSON.stringify(upstreamBody), abort.signal);
-      } catch (error) {
-        await settle(0, 0);
-        if (!response.headersSent)
-          sendJson(response, 502, { error: { message: `model upstream unavailable: ${String(error)}` } });
-        return;
-      }
-      if (upstream.status !== 402) break;
-      // OpenRouter refuses a call that does not fit the account's in-flight
-      // budget; it fits once running calls finish. Nothing has reached the
-      // caller yet, so retry within the window. Other refusals pass through.
+    try {
+      upstream = await requestModelUpstream(options, JSON.stringify(upstreamBody), abort.signal);
+    } catch (error) {
+      await settle(0, 0);
+      if (!response.headersSent)
+        sendJson(response, 502, { error: { message: `model upstream unavailable: ${String(error)}` } });
+      return;
+    }
+    if (upstream.status === 402) {
       const refusal = await upstream.text().catch(() => '');
-      let reason: unknown;
-      try {
-        reason = (JSON.parse(refusal) as { error?: { metadata?: { reason?: unknown } } }).error?.metadata?.reason;
-      } catch {
-        reason = undefined;
-      }
-      const passThrough = async () => {
-        await settle(0, 0);
-        response.writeHead(402, {
-          'content-type': upstream.headers.get('content-type') ?? 'application/json',
-          'cache-control': 'no-store',
-        });
-        response.end(refusal);
-      };
-      retryUntil ??= Math.min(Date.now() + IN_FLIGHT_RETRY_WINDOW_MS, turnDeadline);
-      const wait = retryAfterMs(upstream.headers.get('retry-after'));
-      // Retry only when the wait ends inside the window and the turn.
-      if (reason !== 'in_flight_budget_exhausted' || wait >= retryUntil - Date.now()) {
-        await passThrough();
-        return;
-      }
-      if (!await pause(wait, abort.signal)) {
-        await settle(0, 0);
-        return;
-      }
-      if (Date.now() >= retryUntil) {
-        await passThrough();
-        return;
-      }
+      await settle(0, 0);
+      const retryAfter = upstream.headers.get('retry-after');
+      response.writeHead(402, {
+        'content-type': upstream.headers.get('content-type') ?? 'application/json',
+        'cache-control': 'no-store',
+        ...(retryAfter ? { 'retry-after': retryAfter } : {}),
+      });
+      response.end(refusal);
+      return;
     }
     const contentType = upstream.headers.get('content-type') ?? 'application/json';
     response.writeHead(upstream.status, { 'content-type': contentType, 'cache-control': 'no-store' });

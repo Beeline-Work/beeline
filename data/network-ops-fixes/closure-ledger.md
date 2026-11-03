@@ -103,3 +103,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F18 save-time embeddings remove the per-row retry timers/map and retry policy export. Embedding36 passes, including an idle day after refusal/throw, one fresh attempt on an actual edited save, existing version fences and no read while disabled. Full workspace build passes. Startup backfill and final durable route ownership remain open.
 
 - F18 Fly start removes the timed HTTP412 retry loop. Fake-provider10 passes, preserving image/configuration checks, caller-visible refusal/uncertainty and zero autonomous request over 24 hours. Higher-level free-agent sweep/recovery remains open; no live lifecycle proof is performed.
+
+- F18/F22 legacy model capacity refusals now return once with Retry-After metadata and one reservation refund; no three-minute retry window remains. Model proxy63 and server types pass. The 20-call proof observes20 attempts, peak8 and zero charges for refusal. Full harness ownership and cohort/removal gates remain open.

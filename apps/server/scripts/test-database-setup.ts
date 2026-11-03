@@ -15,8 +15,10 @@ export default async function setup({ provide }: GlobalSetupContext) {
   const template = new PgliteDatabase();
   try {
     await migrate(template);
-    const path = join(directory, 'migrated.tar.gz');
-    await writeFile(path, Buffer.from(await (await template.snapshot()).arrayBuffer()));
+    // Workers repeatedly clone this local template. Avoid decompressing the
+    // same schema for every test database; this is never a published artifact.
+    const path = join(directory, 'migrated.tar');
+    await writeFile(path, Buffer.from(await (await template.snapshot('none')).arrayBuffer()));
     provide('serverTestDatabaseSnapshot', path);
   } finally {
     await template.close();

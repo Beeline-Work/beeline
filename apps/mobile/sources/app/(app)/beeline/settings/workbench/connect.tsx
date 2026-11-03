@@ -21,6 +21,7 @@ import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import {
   squirePairingStages,
+  connectorSetupErrorCopy,
   type ConnectorInstallState,
   type ConnectorInstallStep,
 } from '@/buzz/workbench';
@@ -86,7 +87,7 @@ function clock(ms: number): string {
 /** The helper's own wording for an ended sign-in page never reaches the person. */
 function stepReason(reason: string | undefined): string | undefined {
   if (!reason) return undefined;
-  return /expired/i.test(reason) ? 'Sign-in closed before it finished. Try again.' : reason;
+  return /expired/i.test(reason) ? 'Sign-in closed before it finished. Try again.' : connectorSetupErrorCopy(reason);
 }
 
 /** The four Trusty Squire stages in the mock's words (Trusty Squire mock v3). */
@@ -132,7 +133,7 @@ function genericSteps(steps: readonly ConnectorInstallStep[], signInOpen: boolea
     const state: ConnectStepState = step.status === 'done' ? 'done' : step.status === 'failed' ? 'failed'
       : step.status === 'active' || pendingCurrent ? (signInOpen && index === steps.length - 1 ? 'waiting' : 'current') : 'todo';
     return { key: `${index}`, title: step.label, state,
-      ...(step.reason ? { detail: step.reason } : {}) };
+      ...(step.reason ? { detail: stepReason(step.reason) } : {}) };
   });
 }
 
@@ -161,7 +162,8 @@ function ConnectToolFlow() {
   const helpers = workbench?.helpers ?? null;
   const [install, setInstall] = useState<ConnectorInstallState | null>(null);
   const [selectedHelperName, setSelectedHelperName] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorCause, setError] = useState<string | null>(null);
+  const error = errorCause ? connectorSetupErrorCopy(errorCause) : null;
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
   const { theme } = useUnistyles();
@@ -269,7 +271,7 @@ function ConnectToolFlow() {
   // A failed request or read stops the step it was on and says why there.
   const stoppedAt = counted.findIndex((step) => step.state !== 'done');
   const shown = error && !counted.some((step) => step.state === 'failed') && stoppedAt >= 0
-    ? counted.map((step, index) => index === stoppedAt ? { ...step, state: 'failed' as const, detail: error, error: true } : step)
+    ? counted.map((step, index) => index === stoppedAt ? { ...step, state: 'failed' as const, detail: connectorSetupErrorCopy(error), error: true } : step)
     : counted;
   // Step 1 counts its own minute, then stops; nothing on this page spins forever.
   useEffect(() => {

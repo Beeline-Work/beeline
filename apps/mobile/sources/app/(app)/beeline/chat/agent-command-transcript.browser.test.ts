@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
+import { createBrowserProofDirectory, CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 
 /**
  * Paints an agent's order and report through the ordinary ledger in both
@@ -30,7 +30,7 @@ it.skipIf(!existsSync(CHROME)).each(['bone', 'obsidian'])(
   'Reproduction agent-command-transcript-1: orders and reports render as ordinary ledger messages (%s)',
   async (theme) => {
     const mobile = process.cwd();
-    const directory = await mkdtemp(path.join(mobile, 'sources/app/(app)/beeline/chat/agent-command-proof-'));
+    const directory = await createBrowserProofDirectory("agent-command-proof-");
     try {
       const entry = path.join(directory, 'proof.tsx');
       await writeFile(entry, `import React from 'react';

@@ -8,8 +8,9 @@ const job = (name, conclusion, attempt) => ({ name, conclusion, id: attempt, htm
 test('nightly schedule selects 03 Eastern in winter and summer and dispatches all on main', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/nightly-checks.yml', import.meta.url), 'utf8'));
   assert.deepEqual(workflow.on.schedule.map(s => s.cron), ['7 7 * * *', '7 8 * * *']);
-  assert.equal(workflow.jobs.nightly.steps[2].env.SCHEDULE, '${{ github.event.schedule }}');
+  assert.equal(workflow.jobs.nightly.steps.find(step => step.run === 'node scripts/nightly-checks.mjs').env.SCHEDULE, '${{ github.event.schedule }}');
   assert.equal(workflow.permissions.actions, 'write');
+  assert.equal(workflow.permissions.checks, 'read');
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
   for (const [yes, no] of [['2026-01-01T08:00Z', '2026-01-01T07:00Z'], ['2026-07-01T07:00Z', '2026-07-01T08:00Z']]) {
     assert.equal(easternSlot(new Date(yes)), true);
@@ -27,7 +28,9 @@ test('same SHA failures become flaky only when the retry succeeds, with both lin
   assert.equal(result.runnerMinutes, 4);
   assert.throws(() => classify([{ sha: 'a', jobs: [] }, { sha: 'b', jobs: [] }]), /SHA/);
 });
-test('controller dispatch → failure → rerun → artifact exercises the exact nightly path', async () => {
+for (const initial of ['failure', 'timeout', 'timeout-twice', 'person', 'concurrency']) test(`controller dispatch → ${initial} → bounded retry → artifact`, async () => {
+  const reruns = ['failure', 'timeout', 'timeout-twice'].includes(initial);
+  const conclusion = initial === 'failure' ? 'failure' : 'cancelled';
   const calls = [], artifacts = [];
   let dispatched = false, attempt = 1;
   const api = async (method, endpoint, body) => {
@@ -37,17 +40,18 @@ test('controller dispatch → failure → rerun → artifact exercises the exact
     if (endpoint.endsWith('dispatches')) { assert.deepEqual(body, { ref: 'main', inputs: { suite: 'all' } }); dispatched = true; return; }
     if (endpoint.includes('checks.yml/runs')) return { workflow_runs: dispatched ? [{ id: 7, html_url: 'https://example/runs/7' }] : [] };
     if (endpoint.endsWith('rerun-failed-jobs')) { attempt++; return; }
+    if (endpoint.includes('/annotations?')) return initial.startsWith('timeout') ? [{ annotation_level: 'failure', message: 'The job has exceeded the maximum execution time of 30m0s' }] : [{ annotation_level: 'failure', message: initial === 'person' ? 'The operation was canceled.' : 'Canceling since a higher priority waiting request exists' }];
     if (endpoint.endsWith('/logs')) return 'not ok 1 - failing test';
-    if (endpoint.includes('/jobs?')) return { total_count: 1, jobs: [job('suite', attempt === 1 ? 'failure' : 'success', attempt)] };
-    return { run_attempt: attempt, status: 'completed', conclusion: attempt === 1 ? 'failure' : 'success', head_sha: 'abc' };
+    if (endpoint.includes('/jobs?')) return { total_count: 1, jobs: [job('suite', attempt === 1 || initial === 'timeout-twice' ? conclusion : 'success', attempt)] };
+    return { run_attempt: attempt, status: 'completed', conclusion: attempt === 1 || initial === 'timeout-twice' ? conclusion : 'success', head_sha: 'abc' };
   };
   const result = await runNightly({ api, pause: () => assert.fail('unexpected wait'), schedule: '7 8 * * *', now: () => new Date('2026-11-02T08:17Z'), save: a => artifacts.push(a) });
-  assert.equal(result.failures.length, 0);
-  assert.equal(result.flakyJobs.length, 1);
-  assert.deepEqual(result.flakyJobs[0].attempts[0].failingTests, ['not ok 1 - failing test']);
-  assert.equal(calls.filter(c => c[1].endsWith('rerun-failed-jobs')).length, 1);
-  assert.equal(artifacts.at(-1).attempts.length, 2);
-  assert.match(result.attempts[1].url, /attempts\/2$/);
+  assert.equal(result.failures.length, reruns && initial !== 'timeout-twice' ? 0 : 1);
+  assert.equal(result.flakyJobs.length, reruns && initial !== 'timeout-twice' ? 1 : 0);
+  assert.deepEqual((result.flakyJobs[0] ?? result.failures[0]).attempts[0].failingTests, ['not ok 1 - failing test']);
+  assert.equal(calls.filter(c => c[1].endsWith('rerun-failed-jobs')).length, reruns ? 1 : 0);
+  assert.equal(artifacts.at(-1).attempts.length, reruns ? 2 : 1);
+  if (reruns) assert.match(result.attempts[1].url, /attempts\/2$/);
 });
 test('active release publishes an explicit skip without dispatching checks', async () => {
   const calls = [];

@@ -18,6 +18,7 @@ export const RELEASE_WORKFLOWS = [
   '.github/workflows/desktop.yml',
   '.github/workflows/mobile-ota-rollback.yml',
   '.github/workflows/server-rollback.yml',
+  '.github/workflows/server-image.yml',
   '.github/workflows/free-agent-image.yml',
   '.github/workflows/release-preflight.yml',
   '.github/workflows/release-failure.yml',
@@ -28,6 +29,7 @@ const VERSION_SHA = '\\$\\{\\{ (?:needs\\.initialize\\.outputs|inputs)\\.release
 
 // Every allowed name is a build output, named for the run that built it.
 export const ALLOWED = [
+  { category: 'Linux helper archive and compiled CLI', kind: 'artifact', pattern: new RegExp(`^helper-linux-${ID}$`) },
   { category: 'Mac helper binaries', kind: 'artifact', pattern: new RegExp(`^daemon-(?:darwin-arm64|darwin-x64|\\$\\{\\{ matrix\\.platform \\}\\})-${ID}$`) },
   { category: 'Android AAB for the emulator test', kind: 'artifact', pattern: new RegExp(`^mobile-native-android-build-${ID}$`) },
   { category: 'desktop installers', kind: 'artifact', pattern: new RegExp(`^beeline-desktop-release-${VERSION_SHA}-(?:\\*|\\$\\{\\{ matrix\\.label \\}\\})$`) },
@@ -35,7 +37,7 @@ export const ALLOWED = [
   { category: 'Android crash-decoding (R8 mapping) file', kind: 'artifact', pattern: /^android-mapping-\$\{\{ steps\.play-upload\.outputs\.version_code \}\}$/ },
   { category: 'test screenshots and evidence', kind: 'artifact', pattern: new RegExp(`^release-proof-${ID}$`) },
   { category: 'test screenshots and evidence', kind: 'artifact', pattern: /^desktop-native-notification-\$\{\{ matrix\.label \}\}$/ },
-  { category: 'website build', kind: 'pages', pattern: /^$/ },
+  { category: 'website build', kind: 'pages', pattern: /^(?:|github-pages-\$\{\{ github\.job \}\}-\$\{\{ github\.run_attempt \}\})$/ },
   { category: 'compiler cache', kind: 'cache', pattern: /^desktop-cargo-\$\{\{ matrix\.label \}\}-\$\{\{ hashFiles\('apps\/mobile\/src-tauri\/Cargo\.lock'\) \}\}$/ },
   { category: 'compiler cache', kind: 'cache', file: '.github/actions/buzz-agent-cache/action.yml', pattern: /^\$\{\{ steps\.key\.outputs\.key \}\}$/ },
 ];

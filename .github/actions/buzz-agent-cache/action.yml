@@ -1,13 +1,15 @@
-# buzz-agent and buzz-dev-mcp depend only on the pinned block/buzz commit, the
-# Rust toolchain, and the platform. A cache hit hands build-beeline-bundle.mjs
-# the exact binaries a cold cargo build would produce; a miss builds them in
-# place and the cache saves them when the job ends.
+# Compiler outputs live only in Actions cache. A miss compiles the pinned
+# upstream; every restored binary still goes through bundle install proof.
 name: Restore the native agent binaries
-description: Cache buzz-agent and buzz-dev-mcp per pinned upstream commit, rustc, and platform
+description: Cache native binaries by upstream, platform, compiler and build flags
 inputs:
   platform:
     description: linux-x64 | darwin-arm64 | darwin-x64
     required: true
+outputs:
+  source:
+    description: actions | miss
+    value: ${{ steps.export.outputs.source }}
 runs:
   using: composite
   steps:
@@ -15,25 +17,26 @@ runs:
       shell: bash
       env:
         PLATFORM: ${{ inputs.platform }}
-      run: |
-        set -euo pipefail
-        ref="${BEELINE_BUZZ_REF:-$(sed -n "s/.*BEELINE_BUZZ_REF ?? '\([0-9a-f]\{40\}\)'.*/\1/p" scripts/build-beeline-bundle.mjs | head -n 1)}"
-        test -n "$ref" || { echo 'could not read the pinned block/buzz commit' >&2; exit 1; }
-        rustc_id=$(rustc -vV | git hash-object --stdin)
-        dir=".beeline-tools/target/$PLATFORM/release"
-        echo "key=buzz-agent-$PLATFORM-$ref-${rustc_id:0:16}" >> "$GITHUB_OUTPUT"
-        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+      run: node scripts/native-agent-cache.mjs "$PLATFORM"
     - id: cache
       uses: actions/cache@v4
       with:
         path: |
-          ${{ steps.key.outputs.dir }}/buzz-agent
-          ${{ steps.key.outputs.dir }}/buzz-dev-mcp
+          ${{ steps.key.outputs.directory }}/buzz-agent
+          ${{ steps.key.outputs.directory }}/buzz-dev-mcp
         key: ${{ steps.key.outputs.key }}
-    - if: steps.cache.outputs.cache-hit == 'true'
+    - id: export
       shell: bash
       env:
-        DIR: ${{ steps.key.outputs.dir }}
+        DIRECTORY: ${{ steps.key.outputs.directory }}
+        ACTIONS_HIT: ${{ steps.cache.outputs.cache-hit }}
       run: |
-        echo "BUZZ_AGENT_BIN=$GITHUB_WORKSPACE/$DIR/buzz-agent" >> "$GITHUB_ENV"
-        echo "BUZZ_DEV_MCP_BIN=$GITHUB_WORKSPACE/$DIR/buzz-dev-mcp" >> "$GITHUB_ENV"
+        cache_source=miss
+        if [ "$ACTIONS_HIT" = true ]; then cache_source=actions; fi
+        echo "source=$cache_source" >> "$GITHUB_OUTPUT"
+        echo "BEELINE_NATIVE_CACHE_SOURCE=$cache_source" >> "$GITHUB_ENV"
+        echo "Native binary cache: $cache_source" | tee -a "$GITHUB_STEP_SUMMARY"
+        if [ "$cache_source" = actions ]; then
+          echo "BUZZ_AGENT_BIN=$GITHUB_WORKSPACE/$DIRECTORY/buzz-agent" >> "$GITHUB_ENV"
+          echo "BUZZ_DEV_MCP_BIN=$GITHUB_WORKSPACE/$DIRECTORY/buzz-dev-mcp" >> "$GITHUB_ENV"
+        fi

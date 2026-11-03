@@ -28,6 +28,16 @@ test('empty timing data falls back safely and duplicate discovery fails closed',
   assert.throws(() => balanceFiles(['a'], {}, 0), /positive/);
 });
 
+test('ordinary files balance around isolated and integration work without changing coverage', () => {
+  const shards = balanceFiles(['slow', 'medium', 'small'], { slow: 300, medium: 100, small: 50 }, 2, [200, 0]);
+  assert.deepEqual(shards, [
+    { files: ['medium', 'small'], milliseconds: 350 },
+    { files: ['slow'], milliseconds: 300 },
+  ]);
+  assert.throws(() => balanceFiles(['a'], {}, 2, [0]), /shard count/);
+  assert.throws(() => balanceFiles(['a'], {}, 2, [-1, 0]), /nonnegative/);
+});
+
 test('isolated latency and voice suites remain covered exactly once outside parallel workers', () => {
   const shards = Array.from({ length: 8 }, (_, index) => index + 1).map(position => {
     const result = spawnSync(process.execPath, ['apps/server/scripts/run-ci-shard.mjs', `${position}/8`, '--list'], {

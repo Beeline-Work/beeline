@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
+import { backfillAgentHandles, migrate, migrateData, MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
+import * as migrationRetry from './migration-retry.js';
 import { isDeadlock, lockedTables, logLockHolders, retryMigrationStep, retryOnDeadlock, splitMigrationStatements } from './migration-retry.js';
 
 // Optional real PostgreSQL proof: loopback only, unique schema, never a shared account.
@@ -121,6 +122,84 @@ describe('retryMigrationStep', () => {
       await admin.end();
     }
   });
+
+  it.skipIf(!postgresUrl)('R-MIGRATION-DATA retries uncovered backfills and bounds persistent lock timeouts', async () => {
+    const schema = `backfill_proof_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: postgresUrl, max: 1 });
+    const holder = await admin.connect();
+    const database = new PostgresDatabase('', 1, { mode: 'migration', pool: new Pool({
+      connectionString: postgresUrl, max: 1,
+      options: `-c search_path=${schema},public -c lock_timeout=30ms`,
+    }) });
+    const originalRetry = migrationRetry.retryMigrationStep;
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await holder.query(`CREATE SCHEMA ${schema}`);
+      await migrate(database);
+      // Lock acquisition happens only when the targeted step starts, so earlier
+      // completed steps cannot accidentally consume its retry budget.
+      const steps = [
+        { name: 'archived corner holds', table: 'corner_merge_holds',
+          matches: (sql: string, _values: unknown[]) => sql.startsWith('SELECT 1 FROM corner_merge_holds hold JOIN rooms corner'),
+          run: () => migrateData(database) },
+        { name: 'corner hold messages', table: 'corner_merge_holds',
+          matches: (sql: string, _values: unknown[]) => sql.includes('SELECT hold.corner_id,hold.id,COALESCE'),
+          run: () => migrateData(database) },
+        { name: 'welcome video workflow', table: 'workflow_backfills',
+          matches: (sql: string, values: unknown[]) => sql.startsWith('SELECT name FROM workflow_backfills') && values[0] === 'welcome-video-v1',
+          run: () => migrateData(database) },
+        { name: 'agent handle candidates', table: 'identities',
+          matches: (sql: string, _values: unknown[]) => sql.startsWith('SELECT id,created_at FROM identities'),
+          run: () => backfillAgentHandles(database) },
+      ];
+      for (const step of steps) {
+        for (const release of [true, false]) {
+          let calls = 0;
+          let waits = 0;
+          const query = database.query.bind(database);
+          const querySpy = vi.spyOn(database, 'query').mockImplementation(async (sql, values = []) => {
+            if (step.matches(sql, values)) {
+              if (++calls === 1)
+                await holder.query(`BEGIN; LOCK TABLE ${schema}.${step.table} IN ACCESS EXCLUSIVE MODE`);
+            }
+            return query(sql, values);
+          });
+          // Compress backoff only; real PostgreSQL still raises every 55P03.
+          // Leave attempts unset to prove the production 20-attempt budget.
+          const retrySpy = vi.spyOn(migrationRetry, 'retryMigrationStep').mockImplementation((name, run, options) =>
+            originalRetry(name, run, name === step.name ? {
+              ...options,
+              sleep: async () => {
+                waits++;
+                if (release) await holder.query('COMMIT');
+              },
+            } : options));
+          try {
+            if (release) {
+              await step.run();
+            } else {
+              await expect(step.run()).rejects.toMatchObject({ code: '55P03' });
+            }
+            expect(calls, step.name).toBe(release ? 2 : 20);
+            expect(waits, step.name).toBe(release ? 1 : 19);
+          } finally {
+            querySpy.mockRestore();
+            retrySpy.mockRestore();
+            await holder.query('ROLLBACK');
+          }
+          // Exhaustion must leave no aborted transaction or stranded pool slot.
+          await expect(database.query('SELECT 1')).resolves.toMatchObject({ rowCount: 1 });
+        }
+      }
+    } finally {
+      vi.restoreAllMocks();
+      await holder.query('ROLLBACK');
+      await database.close();
+      await holder.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      holder.release();
+      await admin.end();
+    }
+  }, 60_000);
 
   it('keeps semicolons inside quoted strings, comments, and trigger bodies', () => {
     const script = `-- first; comment

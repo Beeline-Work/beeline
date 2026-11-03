@@ -292,6 +292,7 @@ jobs:
     outputs:
       image_ref: ${{ steps.leg.outputs.image_ref }}
       previous_image_ref: ${{ steps.leg.outputs.previous_image_ref }}
+      completed_at: ${{ steps.complete.outputs.completed_at }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -299,7 +300,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - uses: ./.github/actions/require-tools
         with:
           tools: flyctl docker git curl
@@ -309,16 +309,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Prepare the server migration CLI once
-        run: |
-          set -euo pipefail
-          bash scripts/npm-ci-timed.sh
-          npm run build -w @beeline/nostr
-          npm run build -w @beeline/api-contract
-          npm run build -w @beeline/buzz-client
-          npm run build -w @beeline/body
-          npm run build -w @beeline/auth
-          npm run build -w @beeline/server
       - uses: ./.github/actions/server-leg
         id: leg
         env:
@@ -334,11 +324,102 @@ jobs:
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
 
+      - name: Record live server completion after both Machines passed
+        id: complete
+        run: echo "completed_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+  # Standard hosted Linux overlaps both Macs without taking a production
+  # runner away from server/OTA. Only build outputs cross to publication.
+  helper_linux:
+    needs: initialize
+    if: needs.initialize.outputs.run_helper == 'true'
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: read
+    timeout-minutes: 20
+    outputs:
+      shipped: ${{ steps.shipped.outputs.shipped }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: ./.github/actions/require-tools
+        with:
+          tools: git curl tar
+      - name: Ask Pages whether this helper already shipped
+        id: shipped
+        env:
+          MANIFEST_URL: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
+          RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+          RELEASE_VERSION: ${{ needs.initialize.outputs.release_version }}
+        run: |
+          shipped=false
+          if manifest=$(curl -fsSL --max-time 15 "$MANIFEST_URL"); then
+            shipped=$(printf '%s' "$manifest" | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const m=JSON.parse(s);process.stdout.write(String(m.version===process.env.RELEASE_VERSION&&m.sourceCommit===process.env.RELEASE_SHA))})' || echo false)
+          fi
+          echo "shipped=$shipped" | tee -a "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@1.95.0
+        if: steps.shipped.outputs.shipped != 'true'
+      - run: bash scripts/npm-ci-timed.sh
+      - uses: ./.github/actions/buzz-agent-cache
+        timeout-minutes: 2
+        continue-on-error: true
+        if: steps.shipped.outputs.shipped != 'true'
+        with:
+          platform: linux-x64
+      - name: Build and install-verify the Linux helper
+        if: steps.shipped.outputs.shipped != 'true'
+        run: npm run bundle:beeline -- --platform linux-x64
+        env:
+          BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
+          BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
+      - name: Build the helper CLI packages
+        env:
+          SHIPPED: ${{ steps.shipped.outputs.shipped }}
+        run: |
+          set -euo pipefail
+          # A fresh bundle already compiled these. A shipped rerun still
+          # needs them once to build the CLI package.
+          if [ "$SHIPPED" = true ]; then
+            npm run build -w @beeline/nostr
+            npm run build -w @beeline/api-contract
+            npm run build -w @beeline/buzz-client
+            npm run build -w @beeline/body
+          fi
+          npm run build -w usebeeline
+      - name: Stage only the Linux archive and compiled CLI
+        env:
+          SHIPPED: ${{ steps.shipped.outputs.shipped }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/helper-linux/cli"
+          cp -a packages/usebeeline/dist/. "$RUNNER_TEMP/helper-linux/cli/"
+          if [ "$SHIPPED" != true ]; then
+            mkdir -p "$RUNNER_TEMP/helper-linux/bundle"
+            cp web/dl/beeline-linux-x64.tar.gz web/dl/beeline-linux-x64.tar.gz.sha256 \
+              web/dl/manifest.json web/dl/beeline-bootstrap.mjs web/dl/beeline-bootstrap.mjs.sha256 \
+              "$RUNNER_TEMP/helper-linux/bundle/"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: helper-linux-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/helper-linux
+          if-no-files-found: error
+          retention-days: 1
+
   helper_macos:
     name: HELPER BUILD (${{ matrix.platform }})
     needs: initialize
     if: needs.initialize.outputs.run_helper == 'true'
     runs-on: ${{ matrix.runs_on }}
+    permissions:
+      contents: read
+      packages: read
     # An unchanged Mac bundle is carried from the published helper channel;
     # every failed lookup, download or verification falls through to the cold
     # build.
@@ -406,6 +487,9 @@ jobs:
           BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
           BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
       - uses: ./.github/actions/buzz-agent-cache
+        timeout-minutes: 2
+        continue-on-error: true
+        id: native_cache
         if: steps.shipped.outputs.shipped != 'true' && steps.carry_bundle.outcome != 'success'
         with:
           platform: ${{ matrix.platform }}
@@ -415,7 +499,6 @@ jobs:
         env:
           BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
           BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
-      # Build output handed to the helper job in this same run.
       - uses: actions/upload-artifact@v4
         if: steps.shipped.outputs.shipped != 'true'
         with:
@@ -431,10 +514,10 @@ jobs:
           retention-days: 1
 
   helper:
-    needs: [initialize, helper_macos]
+    needs: [initialize, helper_linux, helper_macos, delivery_result]
     if: >-
       !cancelled() && needs.initialize.outputs.run_helper == 'true' &&
-      needs.helper_macos.result == 'success'
+      needs.helper_linux.result == 'success' && needs.helper_macos.result == 'success'
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 20
     permissions:
@@ -458,42 +541,43 @@ jobs:
       - uses: ./.github/actions/require-tools
         with:
           tools: git curl tar
-      - uses: dtolnay/rust-toolchain@1.95.0
-        if: needs.helper_macos.outputs.shipped != 'true'
       - run: bash scripts/npm-ci-timed.sh
-      - uses: ./.github/actions/buzz-agent-cache
-        if: needs.helper_macos.outputs.shipped != 'true'
-        with:
-          platform: linux-x64
       - uses: actions/download-artifact@v4
-        if: needs.helper_macos.outputs.shipped != 'true'
+        with:
+          name: helper-linux-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/helper-linux
+      - name: Restore the Linux-built CLI bytes
+        run: |
+          mkdir -p packages/usebeeline/dist
+          cp -a "$RUNNER_TEMP/helper-linux/cli/." packages/usebeeline/dist/
+      - uses: actions/download-artifact@v4
+        if: needs.helper_linux.outputs.shipped != 'true'
         with:
           name: daemon-darwin-arm64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-arm64
       - uses: actions/download-artifact@v4
-        if: needs.helper_macos.outputs.shipped != 'true'
+        if: needs.helper_linux.outputs.shipped != 'true'
         with:
           name: daemon-darwin-x64-${{ needs.initialize.outputs.release_id }}
           path: ${{ runner.temp }}/daemon-darwin-x64
       - uses: ./.github/actions/daemon-leg
-        if: needs.helper_macos.outputs.shipped != 'true'
+        if: needs.helper_linux.outputs.shipped != 'true'
         with:
-          phase: build
+          phase: collect
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
+          linux_bundle_dir: ${{ format('{0}/helper-linux/bundle', runner.temp) }}
           darwin_arm64_bundle_dir: ${{ format('{0}/daemon-darwin-arm64', runner.temp) }}
           darwin_x64_bundle_dir: ${{ format('{0}/daemon-darwin-x64', runner.temp) }}
-      # The Pages update proof and the CLI package both build from these.
-      - name: Build the helper CLI packages
+      # The update proof bundles source that resolves these workspace exports.
+      - name: Prepare packages for the Pages update proof
         run: |
           set -euo pipefail
           npm run build -w @beeline/nostr
           npm run build -w @beeline/api-contract
           npm run build -w @beeline/buzz-client
-          npm run build -w @beeline/body
-          npm run build -w usebeeline
       - uses: ./.github/actions/daemon-leg
-        if: needs.helper_macos.outputs.shipped != 'true'
+        if: needs.helper_linux.outputs.shipped != 'true'
         with:
           phase: promote
           release_sha: ${{ needs.initialize.outputs.release_sha }}
@@ -696,6 +780,8 @@ jobs:
     if: needs.initialize.outputs.run_website == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      completed_at: ${{ steps.complete.outputs.completed_at }}
     permissions:
       actions: read
       contents: read
@@ -703,7 +789,7 @@ jobs:
       id-token: write
     environment: github-pages
     concurrency:
-      group: usebeeline-pages-${{ needs.initialize.outputs.run_helper == 'true' && github.run_id || 'deploy' }}
+      group: usebeeline-pages
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -723,7 +809,6 @@ jobs:
           npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
       - uses: ./.github/actions/eas-cli
       - uses: ./.github/actions/pages-leg
-        if: needs.initialize.outputs.run_helper != 'true'
         with:
           manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
       - uses: ./.github/actions/web-app-leg
@@ -733,9 +818,15 @@ jobs:
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
 
+      - name: Record live website completion after both origins passed
+        id: complete
+        run: echo "completed_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
   mobile_native_android:
-    needs: initialize
+    # Reserve the two production runners for server and OTA first.
+    needs: [initialize, delivery_result]
     if: >-
+      !cancelled() && needs.initialize.result == 'success' &&
       needs.initialize.outputs.run_mobile_native == 'true' &&
       ((inputs.store_track != '' && inputs.store_track != 'none') ||
        (inputs.selection != '' && inputs.selection != 'auto')) &&
@@ -1046,11 +1137,34 @@ jobs:
           xargs security default-keychain -d user -s < "$RUNNER_TEMP/user-default-keychain.txt"
 
 
+  # This checkpoint can finish while any Mac/desktop/helper build is queued.
+  # Native jobs still attach their checked artifacts in release_result below.
+  delivery_result:
+    needs: [initialize, server, mobile_ota, mobile_ota_after_proof, website, release_proof]
+    if: "!cancelled() && needs.initialize.result == 'success'"
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 3
+    outputs:
+      report: ${{ steps.live.outputs.report }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Measure dispatch to all user-visible legs
+        id: live
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
+        run: node scripts/release-delivery.mjs measure
+
   release_result:
     # !cancelled(), not always(): a run superseded by cancel-in-progress must not
     # classify itself as a failed attempt.
     if: "!cancelled() && needs.initialize.result == 'success'"
-    needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_ota_after_proof, mobile_native_android, mobile_native_ios, desktop_installers, website, release_proof]
+    needs: [initialize, server, helper_linux, helper_macos, helper, mobile_ota, mobile_ota_after_proof, mobile_native_android, mobile_native_ios, desktop_installers, website, release_proof, delivery_result]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1078,6 +1192,7 @@ jobs:
       - name: Record each component job's result and classify the attempt
         id: result
         env:
+          DELIVERY_REPORT: ${{ needs.delivery_result.outputs.report }}
           TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
           NEEDS: ${{ toJSON(needs) }}
           NO_OP: ${{ needs.initialize.outputs.no_op }}
@@ -1116,6 +1231,7 @@ jobs:
           soft_limit_seconds=$(node -e 'process.stdout.write(String(require(process.argv[1]).softLimitSeconds))' "$RUNNER_TEMP/release-classification.json")
           if [ -n "$failure_class" ]; then
             node scripts/unified-release.mjs finalize --state "$state" --outcome failure --failure-class "$failure_class"
+            if [ -n "${DELIVERY_REPORT:-}" ]; then node scripts/release-delivery.mjs record "$state"; fi
             {
               echo "outcome=failure"
               echo "failure_class=$failure_class"
@@ -1182,6 +1298,7 @@ jobs:
       - name: Finalize the release record
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         env:
+          NEEDS: ${{ toJSON(needs) }}
           RELEASE_PROOF_UNPROVEN: ${{ needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof != true }}
         run: |
           state="$RUNNER_TEMP/release/release.json"
@@ -1190,6 +1307,7 @@ jobs:
             args+=(--unproven "mobile OTA promoted without a device proof; proof is opt-in and was not requested")
           fi
           node scripts/unified-release.mjs finalize "${args[@]}"
+          node scripts/release-delivery.mjs record "$state"
           node -e 'const fs=require("node:fs");const p=process.argv[1];const r=JSON.parse(fs.readFileSync(p,"utf8"));r.runId=Number(process.env.GITHUB_RUN_ID);fs.writeFileSync(p,JSON.stringify(r,null,2)+"\n")' "$state"
       - name: Publish the one GitHub release record with its release.json and stable desktop downloads
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
@@ -1331,6 +1449,8 @@ jobs:
           const release = JSON.parse(fs.readFileSync(process.argv[2]));
           console.log(`## Release ${release.delivery.state}: ${release.version}`);
           if (release.delivery.durationSeconds !== undefined) console.log(`- Duration: ${release.delivery.durationSeconds}s`);
+          if (release.delivery.live) console.log(`- Dispatch to live (server, OTA, website): ${release.delivery.live.elapsedSeconds}s; target <${release.delivery.live.targetSeconds}s`);
+          if (release.delivery.background) console.log(`- Native/helper completion: ${JSON.stringify(release.delivery.background)}`);
           console.log(`- Fix to phone: ${process.env.OTA_ELAPSED_SECONDS}s`);
           if (process.env.SLOW === 'true') console.log(`- Slow: whole run reached ${process.env.WHOLE_RUN_ELAPSED_SECONDS}s (soft limit ${process.env.SOFT_LIMIT_SECONDS}s); release record still published.`);
           console.log(`- Selected: ${release.plan.selected.join(', ') || 'none'}`);

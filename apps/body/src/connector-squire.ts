@@ -50,6 +50,7 @@
  */
 import { execFile, spawn } from 'node:child_process';
 import { homedir } from 'node:os';
+import { squireReachCause } from './squire-status.js';
 import { squireBrokerSocketReady, squireHostPaths, squireHostRewriteEnv } from './squire-host.js';
 import type {
   ConnectionDetail,
@@ -716,6 +717,13 @@ export async function prepareHostedSquire(
  * it stays pending.
  */
 export async function installSquire(options: InstallSquireOptions): Promise<InstallSquireResult> {
+  return installSquireAttempt(options, true);
+}
+
+async function installSquireAttempt(
+  options: InstallSquireOptions,
+  retryReconnect: boolean,
+): Promise<InstallSquireResult> {
   const profileDir = options.profileDir ?? squireChromeProfileDir();
   const run = options.run ?? defaultShellRunner;
   const streamRun = options.streamRun ?? defaultStreamedRunner;
@@ -853,7 +861,22 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   }
   const pair = await pairSquire(options.mcp, options.workspaceId);
   if (!pair.ok) {
+    // Connect may need the person to claim the account before the vault can
+    // answer. Keep that ordinary step-4 ceremony usable; its process exit
+    // wakes the assignment and the next attempt probes the published binding.
+    if (pair.reconnectRequired && signIn) {
+      return { status: 'installing', steps, signIn,
+        ...(version ? { squireVersion: version } : {}) };
+    }
+    // A legacy store can survive a completed connect. Give Squire's supported
+    // connect path one fresh attempt to publish/rebind it, then probe again.
+    if (pair.reconnectRequired && retryReconnect) {
+      log('trusty-squire account binding missing after connect; retrying connect once');
+      return installSquireAttempt(options, false);
+    }
     push(step('paired to workspace', 'failed', pair.reason));
+    if (pair.reconnectRequired) return { status: 'error', steps, errorMessage: pair.reason,
+      ...(version ? { squireVersion: version } : {}) };
     return {
       status: 'installing',
       steps,
@@ -909,17 +932,40 @@ export async function awaitPublicPage(url: string, timeoutMs = PAGE_READY_TIMEOU
 export async function pairSquire(
   mcp: SquireMcpClient | undefined,
   _workspaceId: string,
-): Promise<{ ok: true } | { ok: false; reason: string }> {
+): Promise<{ ok: true } | { ok: false; reason: string; reconnectRequired?: true }> {
   if (!mcp) return { ok: false, reason: 'the Squire MCP surface is not mounted on this helper' };
   try {
     const result = await mcp.call('list_credentials', { fields: 'summary' });
-    if (isRecord(result) && result.isError === true) {
-      return { ok: false, reason: 'The authenticated Squire vault check failed' };
+    if (isRecord(result) && (result.isError === true || result.error)) {
+      return pairingFailure(result);
     }
     return { ok: true };
   } catch (error) {
-    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
+    return pairingFailure(error);
   }
+}
+
+/** Decode MCP error envelopes for recovery, and publish only a plain cause. */
+function pairingFailure(error: unknown): { ok: false; reason: string; reconnectRequired?: true } {
+  let payload: unknown = error;
+  if (isRecord(payload) && Array.isArray(payload.content)) {
+    payload = payload.content.find((entry: unknown) => isRecord(entry) && entry.type === 'text')?.text;
+  }
+  const text = payload instanceof Error ? payload.message : typeof payload === 'string' ? payload : '';
+  if (text) {
+    const start = text.indexOf('{');
+    if (start >= 0) {
+      try { payload = JSON.parse(text.slice(start)); } catch { /* unstructured tool failure */ }
+    }
+  }
+  const cause = isRecord(payload) && isRecord(payload.error) ? payload.error : undefined;
+  if (cause?.code === 'reconnect_required') {
+    return { ok: false, reason: 'Trusty Squire needs account sign-in', reconnectRequired: true };
+  }
+  const plain = (typeof cause?.message === 'string' ? cause.message : text)
+    .replace(/^list_credentials failed:\s*/, '').trim();
+  return { ok: false, reason: plain && !/[{}\[\]]/.test(plain)
+    ? plain : squireReachCause(new Error(text)) };
 }
 
 function asRecord(value: unknown): Record<string, unknown> {

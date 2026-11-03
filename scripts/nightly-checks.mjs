@@ -74,9 +74,22 @@ export async function runNightly({ api, pause, save, now = () => new Date(), man
         job.failingTests = [...new Set(log.split('\n').filter(l => /(?:not ok \d+|FAIL\s|✕|×)/.test(l)).map(l => l.replace(/\u001b\[[0-9;]*m/g, '').slice(0, 1000)))].slice(0, 100);
       } catch (error) { job.logError = error.message; }
     }
+    let timedOut = false;
+    if (state.conclusion === 'cancelled') {
+      for (const job of jobs.jobs.filter(j => j.conclusion === 'cancelled')) {
+        // Cancellation alone also covers people and concurrency. Only GitHub's
+        // explicit runner annotation establishes a job execution timeout.
+        for (let page = 1; ; page++) {
+          const annotations = await api('GET', `check-runs/${job.id}/annotations?per_page=100&page=${page}`);
+          if (annotations.some(a => a.annotation_level === 'failure'
+            && /^The job has exceeded the maximum execution time of \d+(?:h\d+)?m\d+s$/.test(a.message))) timedOut = true;
+          if (annotations.length < 100) break;
+        }
+      }
+    }
     attempts.push({ attempt, sha: state.head_sha, url: `${run.html_url}/attempts/${attempt}`, conclusion: state.conclusion, jobs: jobs.jobs });
     save(classify(attempts));
-    if (attempt === 1 && state.conclusion === 'failure') await api('POST', `actions/runs/${run.id}/rerun-failed-jobs`);
+    if (attempt === 1 && (state.conclusion === 'failure' || timedOut)) await api('POST', `actions/runs/${run.id}/rerun-failed-jobs`);
     else break;
   }
   const result = { ...classify(attempts), requestedSha: sha };
@@ -91,10 +104,10 @@ export async function runNightly({ api, pause, save, now = () => new Date(), man
 // rerun; each flaky night adds a comment), or a night that did not finish. An
 // issue closes when its job next passes on the first attempt.
 export const NIGHTLY_LABEL = 'nightly-checks';
-const failedTitle = name => `Nightly Checks: ${name} failed twice`;
-const flakyTitle = name => `Nightly Checks: ${name} is flaky`;
+const failedTitle = (name, scope = 'Nightly Checks') => `${scope}: ${name} ${scope === 'Nightly Checks' ? 'failed twice' : 'failed'}`;
+const flakyTitle = (name, scope = 'Nightly Checks') => `${scope}: ${name} is flaky`;
 const UNFINISHED = 'Nightly Checks: the nightly run did not finish';
-export async function publishIssues({ api, result, runUrl }) {
+export async function publishIssues({ api, result, runUrl, scope = 'Nightly Checks' }) {
   if (!result || result.skipped) return [];
   const open = (await api('GET', `issues?labels=${NIGHTLY_LABEL}&state=open&per_page=100`)).filter(issue => !issue.pull_request);
   const actions = [];
@@ -116,13 +129,13 @@ export async function publishIssues({ api, result, runUrl }) {
   const links = job => job.attempts.map(a => `[${a.conclusion}](${a.html_url || a.url})`).join(' → ');
   for (const job of result.failures) {
     const tests = job.attempts.flatMap(a => a.failingTests ?? []).slice(0, 20).map(t => `- \`${t.slice(0, 200)}\``).join('\n');
-    await note(failedTitle(job.name), `Commit ${result.sha}, run ${runUrl}: ${links(job)}\n\n${tests || 'No failing test names were found in the job log.'}`);
+    await note(failedTitle(job.name, scope), `Commit ${result.sha}, run ${runUrl}: ${links(job)}\n\n${tests || 'No failing test names were found in the job log.'}`);
   }
-  for (const job of result.flakyJobs) await note(flakyTitle(job.name), `Flaky on commit ${result.sha}, run ${runUrl}: ${links(job)}`);
+  for (const job of result.flakyJobs) await note(flakyTitle(job.name, scope), `Flaky on commit ${result.sha}, run ${runUrl}: ${links(job)}`);
   const first = result.attempts[0]?.jobs ?? [];
   for (const issue of open) {
-    if (issue.title === UNFINISHED) { await close(issue, `Run ${runUrl} finished.`); continue; }
-    const name = [...first.map(j => j.name)].find(n => issue.title === failedTitle(n) || issue.title === flakyTitle(n));
+    if (scope === 'Nightly Checks' && issue.title === UNFINISHED) { await close(issue, `Run ${runUrl} finished.`); continue; }
+    const name = [...first.map(j => j.name)].find(n => issue.title === failedTitle(n, scope) || issue.title === flakyTitle(n, scope));
     if (name && first.find(j => j.name === name).conclusion === 'success') await close(issue, `${name} passed on the first attempt on commit ${result.sha}, run ${runUrl}.`);
   }
   return actions;

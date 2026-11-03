@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# These commands run in two bounded lanes via run-ci-workspace-checks.mjs.
+# TYPECHECK runs its checks sequentially; MOBILE SUITE owns a separate checkout.
 # Keep trusted-base architecture and phone/UI policy checks equivalent to TYPECHECK.
 
 typecheck() {
@@ -34,16 +34,13 @@ typecheck() {
   else
     node "$runner/check-architecture.mjs" --root .
   fi
-  # npm run typecheck
+  # The root command also generates mobile routes and typechecks mobile.
   npm run typecheck
-  # Typecheck the mobile app as developers do
-  ( cd "apps/mobile"
-    npx tsc --noEmit
-  )
   # Check no workflow names a deleted test
   npm run lint:workflow-paths
   # Check path filters skip untouched suites
   node --test --test-concurrency=1 scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs scripts/ci-baseline.test.mjs scripts/ci-workspace-lanes.test.mjs
+  node --test --test-concurrency=1 scripts/ci-build-provenance.test.mjs scripts/ci-task-cache.test.mjs scripts/workspace-test-selection.test.mjs scripts/run-workspace-tests.test.mjs scripts/report-main-checks.test.mjs
   # Test nightly Checks orchestration
   node --test --test-concurrency=1 scripts/nightly-checks.test.mjs
 }
@@ -51,9 +48,7 @@ typecheck() {
 
 mobile_suite() {
   # Run the mobile vitest suite
-  ( cd "apps/mobile"
-    npx vitest run --maxWorkers=2 --minWorkers=1 --exclude sources/config/nativeFingerprint.test.ts
-  )
+  node scripts/run-workspace-tests.mjs mobile
   # Verify Android release shrinking mods
   node --test --test-concurrency=1 scripts/android-shrinking.test.mjs
   # Prove Android cached update integrity and retry

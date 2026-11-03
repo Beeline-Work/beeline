@@ -13,13 +13,13 @@ const jobs = parse(readFileSync(new URL('../.github/workflows/checks.yml', impor
 test('PR wall-clock suites leave the quota only when the required hosted replay runs them', () => {
   const shard = jobs['server-suite-shard'].steps.find(step => /run-ci-shard/.test(step.run));
   assert.equal(shard.env.SERVER_HOSTED_TIMING,
-    "${{ github.event_name == 'pull_request' && needs.changes.outputs.productionCorpusReplay == 'true' }}");
+    "${{ (github.event_name == 'pull_request' || github.event_name == 'push') && needs.changes.outputs.productionCorpusReplay == 'true' }}");
   const replay = jobs['production-corpus-replay'];
   assert.equal(replay.name, 'PRODUCTION-CORPUS REPLAY');
   assert.equal(replay['runs-on'], 'ubuntu-latest');
   assert.match(replay.if, /needs.changes.outputs.productionCorpusReplay == 'true'/);
   const timing = replay.steps.find(step => /Run server wall-clock budgets/.test(step.name));
-  assert.equal(timing.if, "github.event_name == 'pull_request'");
+  assert.equal(timing.if, "github.event_name == 'pull_request' || github.event_name == 'push'");
   assert.match(timing.run, /src\/production-corpus-width.test.ts src\/phone-service.read-room-latency.test.ts src\/daemon-service.completion-latency.test.ts --maxWorkers=1 --minWorkers=1/);
   assert.equal(timing['continue-on-error'], undefined);
 });
@@ -100,14 +100,19 @@ test('excluding the fingerprint regression from the mobile suite always has isol
   const isolated = jobs['native-fingerprint'];
   const file = 'sources/config/nativeFingerprint.test.ts';
   const tasks = readFileSync(new URL('./ci-workspace-tasks.sh', import.meta.url), 'utf8');
-  assert.match(tasks, new RegExp(`--exclude ${file.replaceAll('.', '\\.')}`));
-  assert.ok(mobile.needs.includes('typecheck'));
-  assert.match(JSON.stringify(mobile.steps), /needs.typecheck.outputs/);
-  assert.match(isolated['runs-on'], /beeline-ci/);
-  assert.equal(isolated['timeout-minutes'], 5);
-  assert.equal(mobile['timeout-minutes'], 5);
+  const runner = readFileSync(new URL('./run-workspace-tests.mjs', import.meta.url), 'utf8');
+  assert.match(runner, /args.push\('--exclude', 'sources\/config\/nativeFingerprint.test.ts'\)/);
+  assert.match(tasks, /node scripts\/run-workspace-tests.mjs mobile/);
+  assert.ok(mobile.needs.includes('prepare-workspace'));
+  assert.equal(mobile.steps[0].uses, 'actions/checkout@v4');
+  assert.match(JSON.stringify(mobile.steps), /timeout 20m bash scripts\/ci-workspace-tasks.sh mobile-suite/);
+  assert.ok(isolated['runs-on'].includes('beeline-ci'));
+  assert.equal(isolated['timeout-minutes'], 20);
+  assert.match(JSON.stringify(isolated.steps), /timeout 15m bash scripts\/ci-workspace-tasks.sh native-fingerprint/);
+  assert.equal(mobile['timeout-minutes'], 25);
   assert.ok(tasks.includes(`npx vitest run ${file} --maxWorkers=1 --minWorkers=1`));
-  assert.match(JSON.stringify(isolated.steps), /needs.typecheck.outputs/);
+  assert.ok(isolated.needs.includes('prepare-workspace'));
+  assert.equal(isolated.steps[0].uses, 'actions/checkout@v4');
   assert.equal(isolated['continue-on-error'], undefined);
   assert.match(tasks, /npm run fingerprint:check/);
 
@@ -119,10 +124,11 @@ test('excluding the fingerprint regression from the mobile suite always has isol
       .replaceAll('inputs.suite', JSON.stringify(suite))
       .replaceAll('needs.changes.outputs.mobileSuite', JSON.stringify(String(mobileSuite)))
       .replaceAll('needs.changes.outputs.nativeFingerprint', JSON.stringify(String(nativeFingerprint)))
+      .replaceAll('needs.prepare-workspace.outputs.mobile', 'false')
       .replaceAll('cancelled()', String(cancelled));
     return Function(`return (${expression});`)();
   }
-  for (const event of ['pull_request', 'merge_group', 'workflow_dispatch']) {
+  for (const event of ['pull_request', 'merge_group', 'push', 'workflow_dispatch']) {
     for (const suite of ['all', 'mobile-suite', 'native-fingerprint', 'typecheck']) {
       for (const mobileSuite of [false, true]) {
         for (const nativeFingerprint of [false, true]) {
@@ -139,14 +145,13 @@ test('excluding the fingerprint regression from the mobile suite always has isol
   assert.ok(selected(isolated, 'workflow_dispatch', 'native-fingerprint', false, false, false));
 });
 
-const heavyJobs = ['server-suite-shard'];
-const workspaceJobs = ['typecheck'];
-const controlJobs = ['changes', 'prepare-workspace', 'shared-package-tests', 'server-test-selection',
-  'mobile-suite', 'dead-code', 'mobile-export-reachability', 'native-fingerprint',
+const heavyJobs = ['server-suite-shard', 'typecheck', 'shared-package-tests', 'dead-code', 'mobile-export-reachability', 'native-fingerprint'];
+const workspaceJobs = ['mobile-suite'];
+const controlJobs = ['changes', 'prepare-workspace', 'server-test-selection',
   'server-suite', 'server-integration', 'frame-budget', 'state-upgrade',
   'readme-parity', 'app-link-associations'];
 const squireJobs = [...heavyJobs, ...workspaceJobs, ...controlJobs];
-const preparedConsumers = [...heavyJobs, ...workspaceJobs, 'shared-package-tests', 'production-corpus-replay', 'app-link-associations'];
+const preparedConsumers = [...heavyJobs, ...workspaceJobs, 'production-corpus-replay', 'app-link-associations'];
 
 test('privileged setup and isolated PostgreSQL stay hosted', () => {
   for (const name of ['server-claim-latency', 'production-corpus-replay', 'body-suite', 'auth-image', 'actionlint']) {
@@ -158,13 +163,17 @@ test('privileged setup and isolated PostgreSQL stay hosted', () => {
 test('only credential-free PR Linux jobs use the bounded CI-only pool', () => {
   for (const name of squireJobs) {
     const routing = jobs[name]['runs-on'];
-    assert.match(routing, /github.event_name == 'pull_request'/, name);
-    const labels = JSON.parse(routing.match(/fromJSON\('([^']+)'\)/)[1]);
+    const standalone = ['dead-code', 'native-fingerprint', 'mobile-export-reachability'].includes(name);
+    if (!standalone) assert.match(routing, /github.event_name == 'pull_request'/, name);
+    const labels = standalone ? routing : JSON.parse(routing.match(/fromJSON\('([^']+)'\)/)[1]);
     assert.deepEqual(labels, ['self-hosted', 'Linux', 'X64', 'beeline-ci', `beeline-ci-${controlJobs.includes(name) ? 'control' : workspaceJobs.includes(name) ? 'workspace' : 'heavy'}`], name);
-    assert.match(routing, /\|\| 'ubuntu-latest'/, name);
+    if (!standalone) assert.match(routing, /\|\| 'ubuntu-latest'/, name);
   }
   const tasks = readFileSync(new URL('./ci-workspace-tasks.sh', import.meta.url), 'utf8');
-  assert.match(tasks, /--maxWorkers=2 --minWorkers=1 --exclude sources\/config\/nativeFingerprint.test.ts/);
+  const runner = readFileSync(new URL('./run-workspace-tests.mjs', import.meta.url), 'utf8');
+  assert.match(runner, /workers <= 2/);
+  assert.ok(runner.includes('`--maxWorkers=${workers}`'));
+  assert.ok(runner.includes("'--minWorkers=1'"));
   const workflow = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8'));
   assert.equal(workflow.env.CI_TEST_WORKERS, '2');
   assert.equal(workflow.env.UV_THREADPOOL_SIZE, '1');
@@ -190,7 +199,7 @@ test('no other workflow or job gains access to CI-only capacity', () => {
   for (const file of readdirSync(directory).filter((file) => /\.ya?ml$/.test(file))) {
     const workflow = parse(readFileSync(new URL(file, directory), 'utf8'));
     for (const [name, job] of Object.entries(workflow.jobs ?? {})) {
-      if (file === 'checks.yml' && squireJobs.includes(name)) continue;
+      if (file === 'checks.yml' && (squireJobs.includes(name) || name === 'main-coverage-map')) continue;
       const routing = JSON.stringify([job['runs-on'], job.strategy?.matrix]);
       assert.ok(!routing.includes('beeline-ci'), `${file}:${name} uses CI-only capacity`);
     }
@@ -255,17 +264,26 @@ test('a PR runs only selected server tests, and anything without a selection run
   }
 });
 
-test('the coverage map follows main pushes without a schedule and checks source-text tests', () => {
-  const workflow = parse(readFileSync(new URL('../.github/workflows/server-coverage-map.yml', import.meta.url), 'utf8'));
+test('every main merge runs full checks and publishes one coverage map without cancelling earlier merges', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8'));
   assert.deepEqual(workflow.on.push.branches, ['main']);
-  assert.equal(workflow.on.schedule, undefined);
-  assert.equal(workflow.concurrency['cancel-in-progress'], true);
-  const steps = JSON.stringify(workflow.jobs.map.steps);
-  assert.match(steps, /test-selection.mjs check-map/);
-  assert.match(steps, /"name":"server-coverage-map"/);
-  const shard = workflow.jobs.shard;
-  assert.deepEqual(shard.strategy.matrix.shard, [1, 2, 3, 4]);
-  const run = shard.steps.find((step) => step.env?.SERVER_COVERAGE_MAP_DIR);
+  assert.equal(workflow.concurrency['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}");
+  const main = jobs['main-coverage-map'];
+  assert.equal(main.if, "github.event_name == 'push'");
+  assert.deepEqual(main['runs-on'], ['self-hosted', 'Linux', 'X64', 'beeline-ci', 'beeline-ci-control']);
+  assert.ok(main.needs.includes('server-suite-shard'));
+  assert.ok(main.needs.includes('production-corpus-replay'));
+  assert.match(JSON.stringify(main.steps), /test-selection.mjs check-map/);
+  assert.match(JSON.stringify(main.steps), /"name":"server-coverage-map"/);
+  for (const name of ['server-suite-shard', 'production-corpus-replay']) {
+    assert.ok(jobs[name].steps.some(step => /SERVER_COVERAGE_MAP_DIR=/.test(step.run ?? '')));
+    assert.ok(jobs[name].steps.some(step => step.uses === 'actions/upload-artifact@v4' && /server-coverage-records/.test(step.with?.name)));
+  }
+  const legacy = parse(readFileSync(new URL('../.github/workflows/server-coverage-map.yml', import.meta.url), 'utf8'));
+  assert.equal(legacy.on.push, undefined, 'main must not execute a duplicate full server suite');
+  assert.equal(legacy.on.schedule, undefined);
+  assert.deepEqual(legacy.jobs.shard.strategy.matrix.shard, [1, 2, 3, 4]);
+  const run = legacy.jobs.shard.steps.find(step => step.env?.SERVER_COVERAGE_MAP_DIR);
   assert.match(run.run, /"\$SHARD\/8"/);
   assert.match(run.run, /"\$\(\(SHARD \+ 4\)\)\/8"/);
   assert.equal(jobs['coverage-map'].uses, './.github/workflows/server-coverage-map.yml');
@@ -280,30 +298,87 @@ test('the network admission CI command runs without duplicate package-script wor
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
-test('prepared consumers cannot fan out cold dependency installs after a preparation failure', () => {
+test('cache eviction recovers dependencies only after successful preparation and propagates install failures', () => {
   const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
   const directory = mkdtempSync(join(tmpdir(), 'ci-preparation-'));
   try {
     const marker = join(directory, 'npm-called');
-    writeFileSync(join(directory, 'npm'), '#!/bin/sh\nprintf "%s\\n" "$*" > "$NPM_MARKER"\n', { mode: 0o755 });
+    writeFileSync(join(directory, 'npm'), '#!/bin/sh\nprintf "%s\\n" "$*" > "$NPM_MARKER"\nexit "${NPM_RESULT:-0}"\n', { mode: 0o755 });
+    const guard = action.runs.steps.find(step => step.name === 'Require successful shared preparation');
+    assert.ok(guard, 'failed preparation must still stop consumers before recovery');
+    assert.equal(guard.if, "inputs.prepared == 'true'");
+    assert.equal(guard.env.CI_PREPARATION_RESULT, '${{ inputs.preparation-result }}');
     const steps = action.runs.steps.filter(step => /\bnpm ci\b/.test(step.run ?? ''));
     assert.equal(steps.length, 2, 'root and mobile dependency fallbacks must be covered');
     for (const step of steps) {
-      const env = { ...process.env, PATH: `${directory}:${process.env.PATH}`, NPM_MARKER: marker, CI_PREPARED: 'true' };
-      const missing = spawnSync('bash', ['-c', step.run], { env, encoding: 'utf8' });
-      assert.equal(missing.status, 1, `prepared consumer must fail before ${step.run}`);
-      assert.equal(existsSync(marker), false, 'a consumer must never install dependencies');
+      const env = { ...process.env, HOME: directory, PATH: `${directory}:${process.env.PATH}`,
+        RUNNER_NAME: process.platform === 'linux' ? 'beeline-ci-squire-fixture' : 'hosted-fixture',
+        NPM_MARKER: marker, CI_PREPARED: 'true', NPM_RESULT: '0' };
       assert.equal(step.env.CI_PREPARED, '${{ inputs.prepared }}');
-      const producer = spawnSync('bash', ['-c', step.run], { env: { ...env, CI_PREPARED: 'false' }, encoding: 'utf8' });
+      assert.equal(step.env.npm_config_jobs, '1');
+      for (const result of ['', 'failure', 'cancelled', 'skipped']) {
+        const failed = spawnSync('bash', ['-e', '-c', `${guard.run}\n${step.run}`], {
+          env: { ...env, CI_PREPARATION_RESULT: result }, encoding: 'utf8' });
+        assert.equal(failed.status, 1, `preparation ${result} must prevent installation`);
+        assert.equal(existsSync(marker), false);
+      }
+      const recovery = spawnSync('bash', ['-e', '-c', `${guard.run}\n${step.run}`], {
+        env: { ...env, CI_PREPARATION_RESULT: 'success' }, encoding: 'utf8' });
+      assert.equal(recovery.status, 0, recovery.stderr);
+      assert.match(recovery.stdout, /::warning::/);
+      assert.match(readFileSync(marker, 'utf8'), /^ci .*--prefer-offline/);
+      assert.equal(spawnSync('bash', ['-c', step.run], {
+        env: { ...env, NPM_RESULT: '23' }, encoding: 'utf8' }).status, 23,
+      'a failed recovery must fail setup');
+      rmSync(marker);
+      const producer = spawnSync('bash', ['-c', step.run], {
+        env: { ...env, CI_PREPARED: 'false', RUNNER_NAME: 'hosted-fixture' }, encoding: 'utf8' });
       assert.equal(producer.status, 0, producer.stderr);
-      assert.ok(existsSync(marker), 'the producer must still prepare a cold cache');
+      assert.ok(existsSync(marker), 'cold producer and hosted installs remain supported');
       rmSync(marker);
     }
     for (const name of preparedConsumers) {
       const setup = jobs[name].steps.find(step => step.uses === './.github/actions/ci-workspace');
-      assert.equal(setup.with.prepared, "${{ github.event_name == 'pull_request' }}", name);
+      assert.equal(setup.with.prepared, ['dead-code', 'native-fingerprint', 'mobile-export-reachability'].includes(name) ? 'true' : "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}", name);
+      assert.equal(setup.with['preparation-result'], '${{ needs.prepare-workspace.result }}', name);
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+
+test('simultaneous dependency cache misses serialize cold installs on squire', { skip: process.platform !== 'linux' }, async () => {
+  const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
+  const install = action.runs.steps.find(step => /npm ci --no-audit/.test(step.run ?? ''));
+  const directory = mkdtempSync(join(tmpdir(), 'ci-install-lock-'));
+  const children = [];
+  try {
+    const marker = join(directory, 'installs');
+    const release = join(directory, 'release');
+    writeFileSync(join(directory, 'npm'), `#!/bin/sh
+set -eu
+printf 'started\\n' >> "$NPM_MARKER"
+printf 'started\\n'
+while [ ! -f "$INSTALL_RELEASE" ]; do sleep 0.02; done
+`, { mode: 0o755 });
+    const env = { ...process.env, HOME: directory, PATH: `${directory}:${process.env.PATH}`,
+      RUNNER_NAME: 'beeline-ci-squire-fixture', CI_PREPARED: 'true', NPM_MARKER: marker, INSTALL_RELEASE: release };
+    const first = spawn('bash', ['-e', '-c', install.run], { env }); children.push(first);
+    // The warning is printed before locking; wait for the stub's marker too.
+    for (let i = 0; i < 200 && !existsSync(marker); i++) await delay(10);
+    assert.ok(existsSync(marker), 'first install must acquire its lock');
+    const firstExit = once(first, 'exit');
+    const second = spawn('bash', ['-e', '-c', install.run], { env }); children.push(second);
+    const secondExit = once(second, 'exit');
+    await delay(100);
+    assert.equal(readFileSync(marker, 'utf8'), 'started\n', 'a second consumer must wait outside npm');
+    writeFileSync(release, 'release');
+    assert.equal((await firstExit)[0], 0);
+    assert.equal((await secondExit)[0], 0);
+    assert.equal(readFileSync(marker, 'utf8'), 'started\nstarted\n');
+  } finally {
+    for (const child of children) if (child.exitCode === null) child.kill();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 
@@ -417,4 +492,60 @@ test('integration survives an ordinary test failure but never runs against faile
   assert.equal(evaluate(() => true, { event_name: 'pull_request' }, {}, {
     workspace: { outcome: 'success' },
   }), false, 'cancellation still stops integration');
+});
+
+test('cross-commit task caches never replace exact-head final artifact provenance', () => {
+  const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
+  const taskCache = action.runs.steps.find(step => step.with?.path === '.turbo/cache');
+  assert.ok(taskCache.with['restore-keys']);
+  assert.match(taskCache.with.key, /github.job/);
+  const final = action.runs.steps.find(step => step.id === 'builds');
+  assert.equal(final.with['restore-keys'], undefined);
+  assert.match(final.with.key, /github.sha/);
+  assert.match(final.with.path, /\.beeline-ci-build.json/);
+  assert.doesNotMatch(final.with.path, /\.turbo/);
+  const verify = action.runs.steps.findIndex(step => /ci-build-provenance.mjs verify/.test(step.run ?? ''));
+  const publish = action.runs.steps.findIndex(step => step.uses === 'actions/cache/save@v4');
+  assert.ok(verify > 0 && verify < publish, 'all consumers verify exact output hashes before use/publication');
+  assert.equal(action.runs.steps[verify]['continue-on-error'], undefined);
+  const turbo = JSON.parse(readFileSync(new URL('../turbo.json', import.meta.url), 'utf8'));
+  assert.equal(turbo.tasks.test.cache, false, 'database/performance/test verdicts must execute');
+});
+
+test('independent companion checks own their checkout without changing execution caps', () => {
+  for (const [name, minutes] of [['dead-code', 15], ['native-fingerprint', 15], ['mobile-export-reachability', 30]]) {
+    const job = jobs[name];
+    assert.ok(job.needs.includes('prepare-workspace'));
+    assert.equal(job.needs.includes('typecheck'), false);
+    assert.equal(job.steps[0].uses, 'actions/checkout@v4');
+    assert.ok(job.steps.some(step => step.run === `timeout ${minutes}m bash scripts/ci-workspace-tasks.sh ${name}`));
+  }
+  assert.equal(jobs.typecheck.env.RUN_DEAD_CODE, 'false');
+  assert.equal(jobs.typecheck.env.RUN_NATIVE_FINGERPRINT, 'false');
+  assert.equal(jobs.typecheck.env.RUN_MOBILE_EXPORT, 'false');
+});
+
+test('known-full and quiet PRs skip coverage-map lookup while the full shard fallback remains available', () => {
+  const selection = jobs['server-test-selection'];
+  const evaluate = new Function('github', 'needs', `return (${selection.if.replace(/needs\.([a-z][a-z0-9-]*)/g, "needs['$1']")});`);
+  for (const mode of ['full', 'subset']) for (const server of ['true', 'false']) {
+    const needs = { changes: { outputs: { serverSuite: server } }, 'prepare-workspace': { outputs: { mode, server } } };
+    assert.equal(evaluate({ event_name: 'pull_request' }, needs), mode === 'subset' && server === 'true');
+  }
+  assert.match(jobs['server-suite-shard'].if, /!cancelled\(\)/);
+  assert.equal(jobs['server-suite-shard'].steps.find(step => step.name === "Use this PR's server test selection").if,
+    "needs.server-test-selection.outputs.selection != ''");
+});
+
+test('warm test-only jobs avoid unused task archives, but every missing build can reuse tasks', () => {
+  const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
+  const task = action.runs.steps.find(step => step.with?.path === '.turbo/cache');
+  const evaluate = new Function('steps', 'github', 'contains', 'fromJSON', `return (${task.if.replaceAll('.cache-hit', "['cache-hit']")});`);
+  for (const hit of ['true', 'false']) for (const job of ['prepare-workspace', 'typecheck', 'dead-code', 'mac-helper-acceptance', 'server-suite-shard', 'mobile-suite', 'production-corpus-replay']) {
+    assert.equal(evaluate({ builds: { outputs: { 'cache-hit': hit } } }, { job }, (values, value) => values.includes(value), JSON.parse),
+      hit !== 'true' || ['typecheck', 'dead-code', 'mac-helper-acceptance'].includes(job));
+  }
+  const state = action.runs.steps.find(step => step.with?.path === 'apps/mobile/tsconfig.tsbuildinfo');
+  assert.equal(state.if, "inputs.mobile == 'true' && github.job == 'typecheck'");
+  assert.ok(action.runs.steps.findIndex(step => step.id === 'builds') < action.runs.steps.indexOf(task));
 });

@@ -1,7 +1,7 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 /**
  * The real Connectors and info screens in the mobile web renderer. One tap on
@@ -11,7 +11,7 @@ import { runBrowserProof, webProofShims } from './browserProof';
 describe('connected app with no frontend in the mobile web renderer', () => {
   it('opens one info page with its actions, and one Back returns to Connectors', async () => {
     const mobile = process.cwd();
-    const directory = await mkdtemp(path.join(mobile, 'sources/test/info-page-proof-'));
+    const directory = await createBrowserProofDirectory("info-page-proof-");
     try {
       const entry = path.join(directory, 'proof.jsx');
       await writeFile(

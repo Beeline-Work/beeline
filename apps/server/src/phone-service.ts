@@ -1686,6 +1686,9 @@ export class PhoneService {
     )).rows[0];
     if (!scope) return null;
     const order=await readNeedsYouOrder(database,scope.workspace_id,viewerId,'wall',false);
+    // This snapshot proves there are no cells to project. Legacy replay still
+    // sends the empty delta, without repeating the expensive cell query.
+    if(order.count===0)return {workspaceId:scope.workspace_id,count:0,items:[]};
     const { items } = await needsYouItems(database, scope.workspace_id, viewerId,
       (row) => identity(row, this.publicOrigin), false,'wall',[roomId]);
     const selected=new Map(items.map(item=>[item.messageId,item]));

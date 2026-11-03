@@ -1,0 +1,317 @@
+{
+  "scope": "CI repair after rebase onto main 14abf2995; capability remains off; no new whole-finding closure",
+  "runner": {
+    "nodeOptions": "--max-old-space-size=4096",
+    "vitestArgs": [
+      "--maxWorkers=2",
+      "--minWorkers=1"
+    ],
+    "execution": "one suite at a time"
+  },
+  "passed": 349,
+  "suiteSelections": 47,
+  "vitest": [
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/chat/corner-workflow-line.design.test.ts",
+      "passed": 2,
+      "logSha256": "c53c9297f1b735b71f3565ce17df3d3932707e0016f50c6faeee9866b6e1ec1b"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/identity.workbench-row.test.ts",
+      "passed": 11,
+      "logSha256": "a4981ced0d3f470d9e5046b88d7f6a37da54f17f1221847654f5206530004f67"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/schedules.identity-regression.test.tsx",
+      "passed": 2,
+      "logSha256": "41347c0ccdac760471ee544aa41835b755730806e35d6b8aa088adf23e7a5e67"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/schedules.test.tsx",
+      "passed": 14,
+      "logSha256": "259873ff4a6bd74d86d9f58c61204af36a98720b464fa5af57fb5a2920a0267e"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/workbench.test.tsx",
+      "passed": 14,
+      "logSha256": "d41ecbfb94974a4191727eb7e21ab3b4efc631638cdfdeaa0534e1adb888d302"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/workbench/app.test.tsx",
+      "passed": 5,
+      "logSha256": "3a2794ad4b5e5b59d87ed4d0b3f443cf3979936615da27e12c42374f2122cf05"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/workbench/connect-app.test.tsx",
+      "passed": 6,
+      "logSha256": "f27666f42553cd8956d5254fa31ace4cc2adec4b5892f149d11f8fa82cdd7989"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/workbench/connect.test.tsx",
+      "passed": 25,
+      "logSha256": "71d55e3ecab6d0530478d122dbc72672db80b59fed2d1fd2ecf6f53e4459fca4"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/workbench/connection.test.tsx",
+      "passed": 12,
+      "logSha256": "8d91e43f7d9048d608eda74edc956a83a710bd600578fc5c3a5b066205c80c7c"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/workbench/service.test.tsx",
+      "passed": 17,
+      "logSha256": "36e911364ce8d16eb3175cee943f85b85dc44326e7b08ab10f414bad4a5b3ee1"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/buzz/identity-live.test.ts",
+      "passed": 6,
+      "logSha256": "b0015ec849f4e2a8aabd05f9c5da7d3c3a295e5ac850f3c635922834edf2893e"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/components/buzz/Ledger.provisional.test.tsx",
+      "passed": 10,
+      "logSha256": "cc81de2569f6606549b73e2a74b8ad38684188e42b3531b1cb20184b074b294f"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/chat/notification-landing.browser.test.ts",
+      "passed": 18,
+      "logSha256": "a8f49b59b1b7b517456c463f42f34a58b8e1b1ca33df67c2ffa5659750837c2b"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/corners/corner-overview.browser.test.ts",
+      "passed": 1,
+      "logSha256": "bb2fb553c793b22584c0a8938ed9c4c0afbd4bc1cf765f993877126b04b31da1"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/needs-you-badge.browser.test.ts",
+      "passed": 1,
+      "logSha256": "da8b2a2ec67725b0521b7bc486c299dd7931a477756c21b89c015da7fd2609d0"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/schedules.browser.test.ts",
+      "passed": 31,
+      "logSha256": "af3814374d606671fa75e5b77c0bcb913b374f18526dc24aed77cfffbffc592e"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/workbench-nav-inset.browser.test.ts",
+      "passed": 1,
+      "logSha256": "f15e86cff827cdaaa2f461e5072611d951886bb3fe10d13be89d6cc94ba2bf7e"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/settings/workbench/connect-app-nav-inset.browser.test.ts",
+      "passed": 1,
+      "logSha256": "1615808d13cb663c6e46c4e8177a3c54c8e6949024eec9c9d4bd1dcdfca3fa59"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/tray-empty.browser.test.ts",
+      "passed": 6,
+      "logSha256": "d2210abf4da06da28c8b29b5c7c68be7f955b9c1bbe6262d96f8293b69f498b1"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/workflow-run.browser.test.ts",
+      "passed": 16,
+      "logSha256": "6eb4ef737737f59187bce4065f4074b675a9149429c7d5ee50d2460f603de5df"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/buzz/error-rows.browser.test.ts",
+      "passed": 3,
+      "logSha256": "b8df8bdf3fd065320680062c43b2f924109ae727f94fe9a72a43ddbb99fa0ea3"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/components/buzz/disclosure-rows.browser.test.ts",
+      "passed": 8,
+      "logSha256": "09387a04b5ec1e111f245db004d1a25bb38d0e846018c2fac64be6fbd861a7a4"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/components/buzz/page-headers.browser.test.ts",
+      "passed": 1,
+      "logSha256": "b47a28952291ca9fa81014f9ddf4662c9b05e6c111cadafdd695fbc4ede3cc38"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/components/buzz/transcript-dividers.browser.test.ts",
+      "passed": 4,
+      "logSha256": "f3dae8a2a56e3986fea8165b653ce41b16af02bdfcec0c052a4757efbab02e11"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/test/client-network-waste.browser.test.ts",
+      "passed": 1,
+      "logSha256": "194118f0884cfc406baff09d2ad53ad945791dd046e83f7e57dbf062ea3b7502"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/test/connector-info-page.browser.test.ts",
+      "passed": 1,
+      "logSha256": "2a5ef2bfeef315c221815fdd9ebe49e4a7cd6080f669b872e4a2b66d6fb1f9f2"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/test/connector-removal.browser.test.ts",
+      "passed": 1,
+      "logSha256": "fcb25e52a5a35cb5cfdbbed131143c5db23477d5f7f6f95cb9293d4fa4a68038"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/test/connectors-cleanup.browser.test.ts",
+      "passed": 2,
+      "logSha256": "7e4ed4b6bdf231039fb36af9fcb3bb4629c3c943bb3ef73f851aa1ffac477dc1"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/test/squire-computers-r1.browser.test.ts",
+      "passed": 1,
+      "logSha256": "f4d7f0020ebc6b5a167a47c020a037de733a10a3d133488e29bcfab76b1ba9ab"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/test/squire-machine-status.browser.test.ts",
+      "passed": 2,
+      "logSha256": "4e3f74503b5263f973c46b2a1419be57f47be024e1d31fa65f8aac77cba87bd5"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/test/wallet-connect.browser.test.ts",
+      "passed": 2,
+      "logSha256": "d0659dcc331ef7619dcb10963a8fc6bd69d62fd1921e8295cd3f7f3dbaed06f7"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/test/workbench-tool-tap.browser.test.ts",
+      "passed": 1,
+      "logSha256": "a5bca1cc49795a9076fb086959bfdbc6f2ea7a5441106fd5353d685553d7d362"
+    },
+    {
+      "workspace": "packages/net",
+      "file": "src/router-pass.test.ts",
+      "passed": 14,
+      "logSha256": "eb2e41c494f5aaeb2d42e88d1fb303698773648945e1cc15e9fc1a16fa65e11e"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/scheduled-work-row-source-plan.test.ts",
+      "passed": 17,
+      "logSha256": "2cac1164238c198a0a3612a466ba832f1ebf3bd771f6d413006e7f5b0f84dc1e"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/tray-mutable-source.test.ts",
+      "passed": 16,
+      "logSha256": "b99219c76c63ce7fcb4a5b23b1f2b9db65cbb0e610f98e9b8f7726307f3bb22f"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/tray-projection.test.ts",
+      "passed": 7,
+      "logSha256": "3c71ee7ad3f6cf50f1c5421743a1a02f48dc4230adf97f9c99458447f3309f81"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/workflow-runs.recovery.test.ts",
+      "passed": 2,
+      "logSha256": "c20598473f7b5332b710e8275156061dda30865e78e0a05e42024544c1b44734",
+      "scope": "Two affected due-time/failure-fencing cases; remaining cases skipped"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/scheduled-work-authority-migration.integration.test.ts",
+      "passed": 2,
+      "logSha256": "b87f003e358b5d3a8e266dedb4440a0dc55fa03bd21b119142d8406da655ba2c"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/scheduled-work-row-source.integration.test.ts",
+      "passed": 15,
+      "logSha256": "44946f5cfdf5f4285329df9256c6a2feb7bd6227b252d5516a78de4fa378ea43"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/agent-command.integration.test.ts",
+      "filter": "R-ACTIVITY-DEADLOCK",
+      "passed": 5,
+      "logSha256": "0045cc1a9759f1f35a6144473ef5094b694798be8f3b679161b8de1ca627786b"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/corner-review-dispatch.test.ts",
+      "filter": "REVIEW-CYCLE-1",
+      "passed": 1,
+      "logSha256": "ac4678b0b980e367a5b9ad7d8261c855dac8d9c88cf65d828e70392a2ef22350"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/rooms-mcp.test.ts",
+      "filter": "MCP-WORKSPACE-1|R-MCP-LIMITS",
+      "passed": 6,
+      "logSha256": "23b4aa99fa1ed2985daf3353b950c597b66747f7923a388358d1b1920917ea72"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/migration-steps.test.ts",
+      "passed": 8,
+      "logSha256": "c5aa43241713c873f286c06745b61d917696798d4d8c98cbb0afb9a0f7012f51"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/needs-you.test.ts",
+      "filter": "F04",
+      "passed": 2,
+      "logSha256": "7e5885f2fedc87bfff52dc4e4c51e1f26388c1f7560d3dc0bd44c77e0011342d"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/durable-live.integration.test.ts",
+      "passed": 9,
+      "logSha256": "a9855b4e0314a4bb1e4d9eabb4d9435cd0951832fe9f828e3d199893a2997e41"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/needs-you-expiry.test.ts",
+      "passed": 9,
+      "logSha256": "745ca00acbd8f83aa7ee5bf0db929308f95a72e232546c9b1fef1d95bbd8f8ee"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/router-phone-group-a.postgres.test.ts",
+      "passed": 10,
+      "logSha256": "b29578248deaf52847fe81c6def467e277ebb285bc17bd86a80393be87b424a7",
+      "database": "Isolated local PostgreSQL; fresh synthetic schema, no production or owner Workspace"
+    }
+  ],
+  "otherValidation": [
+    "all 8 workspace builds",
+    "root typecheck including mobile and scripts",
+    "dead-code: 5 existing, 0 introduced",
+    "3 network codec bundle tests",
+    "phone inventory: 72 sites/72 entries",
+    "router inventory: 158 legacy boundaries",
+    "15 nightly/main-report Node tests"
+  ],
+  "unresolvedRequiredGate": [
+    "live.notify owners change",
+    "settings.server-env budget 60 to 61",
+    "paths.phone-parallel budget 19 to 24"
+  ]
+}

@@ -13,7 +13,9 @@ import WebSocket from 'ws';
 import * as candidateDatabase from '../apps/server/src/database.ts';
 import { PhoneService } from '../apps/server/src/phone-service.ts';
 import { LiveHub } from '../apps/server/src/live.ts';
+import { DurableLiveReplay } from '../apps/server/src/durable-live.ts';
 import { createBeelineServer } from '../apps/server/src/server.ts';
+import { proveMobileHistoricalRecovery } from './proofs/router-mobile-historical.mjs';
 
 const historicalRoot = process.argv[2];
 assert.ok(historicalRoot, 'Historical source root is required');
@@ -35,8 +37,8 @@ for (const entry of sourceTree.split('\0').filter(Boolean)) {
   historicalFiles++;
 }
 const load = name => import(pathToFileURL(path.resolve(historicalRoot, `apps/server/src/${name}.ts`)).href);
-const [historicalDatabase, historicalPhone, historicalLive, historicalServer] = await Promise.all([
-  load('database'), load('phone-service'), load('live'), load('server'),
+const [historicalDatabase, historicalPhone, historicalLive, historicalServer, historicalReplay] = await Promise.all([
+  load('database'), load('phone-service'), load('live'), load('server'), load('durable-live'),
 ]);
 assert.equal(historicalDatabase.REQUIRED_SCHEMA_VERSION, 46);
 const schema = `router_expansion_${randomUUID().replaceAll('-', '')}`;
@@ -49,14 +51,19 @@ const database = new candidateDatabase.PostgresDatabase('', 3, {
 const viewer = 'a'.repeat(64), message = 'c'.repeat(64);
 const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-4222-8222-222222222222';
 const handles = [];
-async function serve(old) {
+async function serve(old, selected = false) {
   const Hub = old ? historicalLive.LiveHub : LiveHub;
   const Phone = old ? historicalPhone.PhoneService : PhoneService;
   const factory = old ? historicalServer.createBeelineServer : createBeelineServer;
+  const Replay = old ? historicalReplay.DurableLiveReplay : DurableLiveReplay;
   const live = new Hub(), phone = new Phone(database, 'https://synthetic.invalid', undefined, undefined, live);
-  const server = factory({ database, live, phone, auth: { authenticatePhone: async token => token === 'synthetic' ? viewer : null }, daemon: {}, mediaMaximumBytes: 1 });
+  const server = factory({ database, live, phone, replay: new Replay(database, live),
+    auth: { authenticatePhone: async token => token === 'synthetic' ? viewer : null }, daemon: {}, mediaMaximumBytes: 1,
+    ...(selected ? { routerProjections: { families: ['needs-you-count'], commandDedupV1: true, listenerReady: () => true } } : {}),
+  });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
-  const socket = new WebSocket(`ws://127.0.0.1:${server.address().port}/v1/phone/live`, ['bearer.synthetic']);
+  const origin = `ws://127.0.0.1:${server.address().port}`;
+  const socket = new WebSocket(`${origin}/v1/phone/live`, ['bearer.synthetic']);
   await once(socket, 'open');
   let sequence = 0;
   const pending = new Map();
@@ -66,6 +73,7 @@ async function serve(old) {
     const resolve = pending.get(frame.id); pending.delete(frame.id); resolve?.(frame);
   });
   const handle = {
+    origin,
     request: async (op, args) => {
       const id = String(++sequence);
       let deadline;
@@ -122,6 +130,9 @@ try {
   await candidateDatabase.markSchemaCurrent(database);
   await historicalDatabase.assertSchemaCurrent(database);
   assert.deepEqual(await restarted.request('readRoom', { roomId: room }), beforeRepeat, 'Repeated expansion changed historical Room wire');
+  const selected = await serve(false, true);
+  const mobileRecovery = await proveMobileHistoricalRecovery({ selectedOrigin: selected.origin,
+    historicalOrigin: restarted.origin, database, viewer, workspace, room, message });
   const hash = file => createHash('sha256').update(readFileSync(file)).digest('hex');
   console.log(JSON.stringify({ status: 'PASS', historicalRevision, historicalFiles,
     productionBaseHead: execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim(),
@@ -131,6 +142,7 @@ try {
     legacyColumnsPreserved: baseline.length, additiveColumns: expanded.length - baseline.length,
     oldBootAfterExpansion: true, oldSocketReadAfterExpansion: true, oldWriteAfterExpansion: true,
     oldHandlerRestart: true, currentLegacyWireEqual: true, currentWrite: true, repeatedExpansion: true,
+    mobileRecovery,
   }));
 } finally {
   for (const handle of [...handles]) await handle.close();

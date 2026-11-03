@@ -2,7 +2,7 @@
   "status": "PASS",
   "historicalRevision": "f43bd3f86e4c7a30aa75378df82fcbda10027c72",
   "historicalFiles": 621,
-  "productionBaseHead": "73a6c477dae238c4f1f8101abdd5d826bcd389f0",
+  "productionBaseHead": "fb9b71fe43a3e26c0d673f02746235ff352f2d4a",
   "scope": "Historical source with current installed dependencies, synthetic auth, real loopback sockets/PostgreSQL; no image/startup background/native/deployed floor claim",
   "installedDependencyLockSha256": "1a36b9a09a3df51414365470f038b2725363515d6e2d82661f294f117a35bdc8",
   "node": "v24.16.0",
@@ -20,5 +20,15 @@
   "oldHandlerRestart": true,
   "currentLegacyWireEqual": true,
   "currentWrite": true,
-  "repeatedExpansion": true
+  "repeatedExpansion": true,
+  "mobileRecovery": {
+    "committedEffects": 1,
+    "durableRows": 1,
+    "snapshotReads": 1,
+    "incidentReplacements": 1,
+    "historicalSelectedRequests": 0,
+    "recoveryReusesIdentity": true,
+    "httpFallbacks": 0,
+    "scope": "Actual mobile transport with supplied owner and platform/auth/UI seams; actual historical-source socket handler, current dependencies; no native/image claim"
+  }
 }

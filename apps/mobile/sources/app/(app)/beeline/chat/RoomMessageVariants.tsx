@@ -990,24 +990,24 @@ function SwipeToReply({
               style={[styles.reactionPicker, pickerPosition ?? { opacity: 0 }]}
               testID={`reaction-picker-${messageId}`}
             >
-              {MESSAGE_REACTION_EMOJIS.map((emoji) => (
-                <Pressable
-                  accessibilityLabel={`React with ${emoji}`}
-                  accessibilityRole="button"
-                  key={emoji}
-                  onPress={() => {
-                    onReact(emoji);
-                    setReactionPickerVisible(false);
-                  }}
-                  style={({ pressed }) => [
-                    styles.reactionPickerChoice,
-                    pressed && styles.replyDesktopPressed,
-                  ]}
-                  testID={`reaction-choice-${messageId}-${emoji}`}
-                >
-                  <Text style={styles.reactionEmoji}>{emoji}</Text>
-                </Pressable>
-              ))}
+            {MESSAGE_REACTION_EMOJIS.map((emoji) => (
+              <Pressable
+                accessibilityLabel={`React with ${emoji}`}
+                accessibilityRole="button"
+                key={emoji}
+                onPress={() => {
+                  onReact(emoji);
+                  setReactionPickerVisible(false);
+                }}
+                style={({ pressed }) => [
+                  styles.reactionPickerChoice,
+                  pressed && styles.replyDesktopPressed,
+                ]}
+                testID={`reaction-choice-${messageId}-${emoji}`}
+              >
+                <Text style={styles.reactionEmoji}>{emoji}</Text>
+              </Pressable>
+            ))}
             </ButtonRowFrame>
           </DesktopWorkspacePortal>
         ) : null}

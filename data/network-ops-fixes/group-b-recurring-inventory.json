@@ -86,11 +86,11 @@
     {
       "id": "D1-09",
       "mechanism": "Helper working receipt",
-      "disposition": "open",
-      "owner": "startTurnReceiptHeartbeat legacy / owned turn-operation",
+      "disposition": "legacy-compatibility",
+      "owner": "withTurnReceiptHeartbeat legacy / owned turn-operation",
       "implementation": "apps/body/src/turn-receipt-heartbeat.ts",
       "proof": "apps/server/src/turn-ownership-socket.test.ts",
-      "boundary": "Legacy working heartbeat remains; owned source and effect floors remain open",
+      "boundary": "Legacy receipts remain the explicit old-helper liveness floor; selected owned PostgreSQL ten-minute freshness writes0. Whole F12 requires the legacy/cohort floor.",
       "dueRecord": null
     },
     {
@@ -146,22 +146,23 @@
     {
       "id": "D1-15",
       "mechanism": "Free idle tick",
-      "disposition": "open",
-      "owner": "FreeAgentIdle.tick / sleep",
+      "disposition": "local-control",
+      "owner": "FreeAgentIdle.tick resume detection / one sleep admission per idle episode",
       "implementation": "apps/body/src/free-agent-idle.ts",
       "proof": "apps/body/src/free-agent-idle.test.ts",
-      "boundary": "One-second local tick remains; failed sleep starts a new idle window",
+      "boundary": "Local wall/monotonic resume detection remains. Refused/uncertain sleep parks until actual activity/resume; idle-day request1 proof replaces elapsed retry.",
       "dueRecord": null
     },
     {
       "id": "D1-16",
       "mechanism": "Squire public page ready",
-      "disposition": "open",
-      "owner": "waitForPublicPage",
+      "disposition": "control",
+      "owner": "awaitPublicPage one bounded admitted observation",
       "implementation": "apps/body/src/connector-squire.ts",
       "proof": "apps/body/src/connector-squire.test.ts",
-      "boundary": "One-second public-page GET discovery remains",
-      "dueRecord": null
+      "boundary": "At most one GET <=5 seconds per actual setup/report action; failure parks for an idle day. Existing reported sign-in result still publishes. Shared F21 leaf; no cadence/retry or UI added.",
+      "dueRecord": null,
+      "dependentFinding": "F21 (parallel group C)"
     },
     {
       "id": "D1-17",
@@ -216,11 +217,11 @@
     {
       "id": "D1-22",
       "mechanism": "Session list_mentions",
-      "disposition": "open",
-      "owner": "memberStream / acceptMemberDelivery / retained pollOnce",
+      "disposition": "legacy-compatibility",
+      "owner": "memberStream / acceptMemberDelivery; retained explicit pollOnce",
       "implementation": "apps/body/src/session-join/bridge.ts",
       "proof": "apps/server/src/rooms-mcp-stream.test.ts",
-      "boundary": "Selected real PostgreSQL idle and durability pass; old Body cohort and retained pollOnce remain",
+      "boundary": "Current bridge uses the persistent member stream; real PostgreSQL idle/durability and crash recovery pass. Legacy installed Body/cohort floor remains.",
       "dueRecord": null
     },
     {
@@ -231,7 +232,8 @@
       "implementation": "apps/body/src/session-join/beeline-api.ts",
       "proof": "apps/body/src/session-join/oauth-completion.test.ts",
       "boundary": "F21 owns complete ceremony proof",
-      "dueRecord": null
+      "dueRecord": null,
+      "dependentFinding": "F21 (parallel group C)"
     },
     {
       "id": "D1-24",
@@ -241,7 +243,8 @@
       "implementation": "apps/body/src/read-only-mcp.ts",
       "proof": "apps/body/src/wallet-tools.test.ts",
       "boundary": "F21 owns payment/uncertainty coverage",
-      "dueRecord": null
+      "dueRecord": null,
+      "dependentFinding": "F21 (parallel group C)"
     },
     {
       "id": "D1-25",
@@ -306,11 +309,11 @@
     {
       "id": "D1-31",
       "mechanism": "Push delivery",
-      "disposition": "open",
-      "owner": "PushDeliveryLoop / work.add push",
+      "disposition": "deadline",
+      "owner": "PushDeliveryLoop.nextDelayMs / committed push family source",
       "implementation": "apps/server/src/index.ts",
-      "proof": "apps/server/src/background-work.test.ts",
-      "boundary": "push_outbox.not_before exists but 60-second fallback registration remains",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts",
+      "boundary": "push_outbox.not_before plus eligible push_read_clears.sent_at+30s. No 60-second fallback; only a full actual batch admits immediate continuation.",
       "dueRecord": "push_outbox.not_before / push_delivery_claims"
     },
     {
@@ -336,11 +339,11 @@
     {
       "id": "D1-34",
       "mechanism": "Free-agent sweep",
-      "disposition": "open",
-      "owner": "work.add free-agents / FreeAgentService.sweep",
+      "disposition": "deadline",
+      "owner": "FreeAgentService.nextDelayMs / committed free-agent family source",
       "implementation": "apps/server/src/index.ts",
-      "proof": "apps/server/src/free-agents.test.ts",
-      "boundary": "15-second unconditional sweep registration remains; no live lifecycle proof",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts",
+      "boundary": "Stored command eligibility, hard-turn+grace, idle and retention deadlines. No 15-second scan. Actual failed-stop stand-in1 and no retry deadline; no live lifecycle action.",
       "dueRecord": null
     },
     {
@@ -360,7 +363,7 @@
       "owner": "VoiceRoomRuntime lease",
       "implementation": "apps/server/src/voice-room-runtime.ts",
       "proof": "apps/server/src/voice-room-runtime.test.ts",
-      "boundary": "voice_calls.runtime_until; current-owner lease max one/5 seconds while call held; full call/cohort gates",
+      "boundary": "voice_calls.runtime_until; actual PG lease notifications move local deadlines without recovery SELECTs; owner-only write <=1/5s, 15s expiry; real budget/takeover proofs retained.",
       "dueRecord": "voice_calls.runtime_until (15s lease)"
     },
     {
@@ -476,12 +479,13 @@
     {
       "id": "D1-48",
       "mechanism": "Chain receipt polling",
-      "disposition": "open",
-      "owner": "waitForTransactionReceipt",
+      "disposition": "legacy-compatibility",
+      "owner": "inspectReceipt selected / waitForLegacyReceipt old JS",
       "implementation": "apps/server/src/cdp-client.ts",
       "proof": "apps/server/src/cdp-client.test.ts",
-      "boundary": "Two-second chain receipt poll remains",
-      "dueRecord": null
+      "boundary": "F21 group owns the explicit legacy chain-receipt adapter and selected UNKNOWN/completion compatibility.",
+      "dueRecord": null,
+      "dependentFinding": "F21 (parallel group C)"
     },
     {
       "id": "D1-49",
@@ -506,21 +510,21 @@
     {
       "id": "D1-51",
       "mechanism": "Repair/background maintenance",
-      "disposition": "open",
-      "owner": "work.add repair / runMaintenance",
+      "disposition": "split-deadlines",
+      "owner": "registerBackgroundDeadlineFamilies / maintenanceDeadlineFamilies",
       "implementation": "apps/server/src/index.ts",
-      "proof": "apps/server/src/background-shutdown.test.ts",
-      "boundary": "60-second repair registration, retention and reviewer/provider discovery remain",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts",
+      "boundary": "No repair registration. Each of 20 retention tables and each reviewer/voice/media/claim/notice/curator/sign-in/owed/route family has its own committed source or stored deadline. P12 background-deadlines4 passes. Exact microsecond PostgreSQL admission cut retains deadlines crossing the scan/minimum-query gap without retrying old failed rows.",
       "dueRecord": null
     },
     {
       "id": "D1-52",
       "mechanism": "Next-day checkin",
-      "disposition": "open",
-      "owner": "work.add next-day-checkin / NextDayCheckin.runOnce",
+      "disposition": "calendar",
+      "owner": "NextDayCheckin.nextDelayMs / committed candidate/result family",
       "implementation": "apps/server/src/index.ts",
-      "proof": "apps/server/src/next-day-checkin.test.ts",
-      "boundary": "next_day_checkin_candidates.due_at exists but 60-second fallback scan remains",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts",
+      "boundary": "Candidate due_at, waiting-turn due_at+24h and sent_at+1h terminal measurement. Detached business flight is drained on stop. No minute fallback.",
       "dueRecord": "next_day_checkin_candidates.due_at; next_day_checkins terminal state"
     },
     {
@@ -629,9 +633,9 @@
     },
     {
       "mechanism": "voice recovery",
-      "owner": "voice.recover inside work.add repair",
-      "disposition": "open",
-      "proof": "apps/server/src/voice-room-runtime.test.ts"
+      "owner": "voice.recover / independent committed family",
+      "disposition": "deadline",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts"
     },
     {
       "mechanism": "operator System-DM outbox",
@@ -641,9 +645,9 @@
     },
     {
       "mechanism": "reviewer reconciliation",
-      "owner": "reconcileConfiguredCornerReviewers inside work.add repair",
-      "disposition": "open",
-      "proof": "apps/server/src/corner-reviewer-list.test.ts"
+      "owner": "reconcileConfiguredCornerReviewers / independent committed family",
+      "disposition": "event",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts"
     },
     {
       "mechanism": "branch deletion retries",
@@ -677,9 +681,9 @@
     },
     {
       "mechanism": "media expiry",
-      "owner": "mediaExpiry.runOnce inside work.add repair",
-      "disposition": "open",
-      "proof": "apps/server/src/background.test.ts"
+      "owner": "mediaExpiry.runOnce / independent committed family",
+      "disposition": "deadline",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts"
     },
     {
       "mechanism": "pending attachments",
@@ -689,15 +693,15 @@
     },
     {
       "mechanism": "retention maintenance",
-      "owner": "runMaintenance inside work.add repair",
-      "disposition": "open",
-      "proof": "apps/server/src/background.test.ts"
+      "owner": "20 independent retention table minima / no repair bucket",
+      "disposition": "deadline",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts"
     },
     {
       "mechanism": "blocked-check notices",
-      "owner": "noteBlockedCornerChecks inside work.add repair",
-      "disposition": "open",
-      "proof": "apps/server/src/github-operations.test.ts"
+      "owner": "noteBlockedCornerChecks / independent committed family",
+      "disposition": "deadline",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts"
     },
     {
       "mechanism": "pending-command renudge",
@@ -707,21 +711,21 @@
     },
     {
       "mechanism": "expired command leases",
-      "owner": "reclaimExpiredCommandLeases inside work.add repair",
-      "disposition": "open",
-      "proof": "apps/server/src/agent-command.integration.test.ts"
+      "owner": "reclaimExpiredCommandLeases / independent committed family",
+      "disposition": "deadline",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts"
     },
     {
       "mechanism": "pending mention notices",
-      "owner": "flushPendingMentionNotices inside work.add repair",
-      "disposition": "open",
-      "proof": "apps/server/src/channel-mention.test.ts"
+      "owner": "flushPendingMentionNotices / independent committed family",
+      "disposition": "deadline",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts"
     },
     {
       "mechanism": "institutional curator",
-      "owner": "runInstitutionalCuratorCycle inside work.add repair",
-      "disposition": "open",
-      "proof": "apps/server/src/institutional-curator.test.ts"
+      "owner": "runInstitutionalCuratorCycle / independent committed family",
+      "disposition": "event",
+      "proof": "apps/server/src/background-deadlines.postgres.test.ts"
     }
   ]
 }

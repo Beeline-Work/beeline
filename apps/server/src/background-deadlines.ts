@@ -1,3 +1,6 @@
+import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
+import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
+import { runInstitutionalCuratorCycle } from './institutional-curator.js';
 import type { SqlDatabase } from './database.js';
 import { BackgroundWork } from './background-work.js';
 import { BACKGROUND_SOURCES, RETENTION_RULES, backgroundDueKey } from './background-due-source.js';
@@ -6,7 +9,7 @@ import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { retryOwedMentions } from './owed-mentions.js';
 import { retryMcpMemberRoutes } from './rooms-mcp-members.js';
 import type { LiveHub } from './live.js';
-import { backgroundNextDelay } from './background-deadline-clock.js';
+import { backgroundDatabaseCut, backgroundDatabaseNow, backgroundNextDelay } from './background-deadline-clock.js';
 
 /** Time comes from the persisted obligation's database clock. Past eligibility
  * left after a refused/locked attempt is parked; it is never a failure retry. */
@@ -15,7 +18,7 @@ type DueCallback = () => Promise<number | void>;
 export interface BackgroundDeadlineFamily {
   name: string;
   run: DueCallback;
-  next?: () => Promise<number | undefined>;
+  next?: (admittedAt?:string) => Promise<number | undefined>;
 }
 
 /** Shared by the real entrypoint and P12. One startup/recovery admission,
@@ -23,10 +26,12 @@ export interface BackgroundDeadlineFamily {
 export function registerBackgroundDeadlineFamilies(work: BackgroundWork,
   families: readonly BackgroundDeadlineFamily[],
   execute: (name: string, run: DueCallback) => Promise<{ ok: boolean; value?: number | void }>,
+  db:SqlDatabase,
 ): void {
   for (const family of families) work.addDeadline(family.name, async () => {
     const outcome = await execute(family.name, async()=>{
-      await family.run();return family.next ? family.next() : undefined;
+      const cut=await backgroundDatabaseCut(db);
+      await family.run();return family.next ? family.next(cut) : undefined;
     });
     if (outcome.ok) return outcome.value;
   });
@@ -53,7 +58,7 @@ export function retentionDeadlineFamilies(db: SqlDatabase): BackgroundDeadlineFa
           LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
         full = result.rowCount === 1000;
       },
-      next: async () => full ? 0 : backgroundNextDelay(db, `SELECT (${due}) due_at FROM ${table} WHERE ${predicate}`),
+      next: async cut => full ? 0 : backgroundNextDelay(db, `SELECT (${due}) due_at FROM ${table} WHERE ${predicate}`,cut),
     };
   });
 }
@@ -61,19 +66,53 @@ export function retentionDeadlineFamilies(db: SqlDatabase): BackgroundDeadlineFa
 export function maintenanceDeadlineFamilies(db: SqlDatabase): BackgroundDeadlineFamily[] {
   return [
     ...retentionDeadlineFamilies(db),
-    { name: 'unfinished-app-sign-ins', run: async () => { await cleanupUnfinishedAppSignIns(db, true); }, next: () => backgroundNextDelay(db,
+    { name: 'unfinished-app-sign-ins', run: async () => { await cleanupUnfinishedAppSignIns(db, true); }, next: cut => backgroundNextDelay(db,
       `SELECT LEAST(composio_link_expires_at,CASE WHEN composio_account_id IS NULL THEN created_at+interval '10 minutes' END) due_at
-       FROM workspace_apps WHERE transport='composio' AND authorised_at IS NULL AND sign_in_error IS NULL`) },
-    { name: 'owed-mentions', run: async () => { await retryOwedMentions(db); }, next: () => backgroundNextDelay(db,
+       FROM workspace_apps WHERE transport='composio' AND authorised_at IS NULL AND sign_in_error IS NULL`,cut) },
+    { name: 'owed-mentions', run: async () => { await retryOwedMentions(db); }, next: cut => backgroundNextDelay(db,
       `SELECT created_at+(CASE rewakes WHEN 0 THEN 5 WHEN 1 THEN 15 ELSE 45 END)*interval '1 minute' due_at
-       FROM rooms_mcp_mentions WHERE cleared_at IS NULL AND rewakes<3`) },
+       FROM rooms_mcp_mentions WHERE cleared_at IS NULL AND rewakes<3`,cut) },
     // Routing failure does not manufacture another thirty-second deadline.
-    { name: 'mcp-member-routes', run: async () => { await retryMcpMemberRoutes(db); }, next:()=>backgroundNextDelay(db,
-      `SELECT created_at+interval '30 seconds' due_at FROM rooms_mcp_pending_routes WHERE attempts=0`) },
+    { name: 'mcp-member-routes', run: async () => { await retryMcpMemberRoutes(db); }, next:cut=>backgroundNextDelay(db,
+      `SELECT created_at+interval '30 seconds' due_at FROM rooms_mcp_pending_routes WHERE attempts=0`,cut) },
   ];
 }
 
-export const backgroundSourceFamilies = () => [...new Set(BACKGROUND_SOURCES.map(([name]) => name)), ...RETENTION_RULES.map(([table]) => `retention:${table}`)];
+/** Actual former repair composition, shared verbatim with the PostgreSQL proof. */
+export function repairDeadlineFamilies(db:SqlDatabase,options:{
+  live:LiveHub;
+  phone:Pick<import('./phone-service.js').PhoneService,'flushPendingMentionNotices'>;
+  mediaExpiry:Pick<import('./background.js').MediaExpiryLoop,'runDeadline'|'nextDelayMs'>;
+  institutionalMemory:import('./institutional-memory-shadow.js').InstitutionalMemoryShadowConfig;
+  institutionalAnchors?:import('./institutional-skill-anchors.js').InstitutionalSkillAnchorSource;
+  voice?:{recover():Promise<void>};
+  voiceDeadlines:BackgroundRecordDeadlines;
+}):BackgroundDeadlineFamily[]{
+  const {live,phone,mediaExpiry,institutionalMemory,institutionalAnchors,voice,voiceDeadlines}=options;
+  return [
+    ...maintenanceDeadlineFamilies(db),
+    ...(voice?[{name:'voice-call-recovery',run:async()=>{
+      voiceDeadlines.consume();await voice.recover();
+      await voiceDeadlines.capture(async()=>(await db.query<{id:string;due:number|null}>(
+        `SELECT id,(extract(epoch FROM runtime_until)*1000)::float8 due FROM voice_calls WHERE ended_at IS NULL`)).rows);
+    },next:async()=>voiceDeadlines.next()}]:[]),
+    {name:'corner-reviewers',run:async()=>{await reconcileConfiguredCornerReviewers(db);}},
+    {name:'media-expiry',run:()=>mediaExpiry.runDeadline(),next:cut=>mediaExpiry.nextDelayMs(cut)},
+    {name:'corner-checks-blocked',run:async()=>{await noteBlockedCornerChecks(db);},next:cut=>backgroundNextDelay(db,
+      `SELECT created_at+interval '2 minutes' due_at FROM agent_commands WHERE state='pending' AND action='input'
+       UNION ALL SELECT to_timestamp((lifecycle->'checksSummary'->>'updatedAt')::double precision)+interval '1 hour'
+       FROM corner_github_cache WHERE lifecycle->>'checks'='failing' AND lifecycle->'checksSummary'->>'updatedAt' IS NOT NULL`,cut)},
+    {name:'expired-command-leases',run:async()=>{await reclaimExpiredCommandLeases(db,live);},next:cut=>backgroundNextDelay(db,
+      `SELECT lease_expires_at+interval '5 minutes' due_at FROM agent_commands WHERE state='claimed' AND turn_owner_connection_id IS NULL`,cut)},
+    {name:'mention-notices',run:async()=>{await phone.flushPendingMentionNotices();},next:cut=>backgroundNextDelay(db,
+      `SELECT due_at FROM pending_mention_notices WHERE notified_at IS NULL`,cut)},
+    {name:'institutional-curator',run:async()=>{await runInstitutionalCuratorCycle(db,institutionalMemory,await backgroundDatabaseNow(db),{
+      ...(institutionalAnchors?{anchors:institutionalAnchors}:{}),
+    });}},
+  ];
+}
+
+export const backgroundSourceFamilies = () => [...new Set([...BACKGROUND_SOURCES.map(([name]) => name), ...RETENTION_RULES.map(([table]) => `retention:${table}`)])];
 
 /** Lease extensions move a local known expiry directly, without a recovery
  * SELECT on each renewal. The database remains the final effect fence. */

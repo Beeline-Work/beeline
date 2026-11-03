@@ -11,6 +11,7 @@
     "migrate": "node dist/index.js --migrate",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
+    "prove:router-group-a-open-gates": "vitest run --config vitest.router-group-a.config.ts --maxWorkers=2 --minWorkers=1",
     "measure": "node --import tsx src/measure-cli.ts",
     "memory:audit": "node --import tsx src/institutional-memory-audit.ts",
     "repro:shared-browser": "node --import tsx scripts/shared-browser-repro.ts",

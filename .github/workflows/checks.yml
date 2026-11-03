@@ -743,6 +743,7 @@ jobs:
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || inputs.suite != 'server-integration'
         working-directory: apps/server
         env:
+          SERVER_TIMER_DIAGNOSTICS: '1'
           # Move wall-clock budgets only when their existing hosted gate runs.
           SERVER_HOSTED_TIMING: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && needs.changes.outputs.productionCorpusReplay == 'true' }}
         run: node scripts/run-ci-shard.mjs ${{ matrix.shard }}/8

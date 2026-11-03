@@ -173,14 +173,30 @@ owner Workspace is used. It verifies:
   candidate contains neither. This extends the earlier source-graph/TypeScript
   exclusion evidence to an actual server Docker artifact.
 
-The test follows the production canary planner's migration/image/revert order
-and injects failure after candidate startup. It does **not** run the 90-second
-watcher, Fly commands, an actual provider or a release. Its planner registry
-references are synthetic aliases for the local Docker IDs, never published
-registry manifests. This is not the separate prerequisite expansion release or
-its deployed ledger-aware recovery floor; no router-selected command exists
-in this image smoke. The earlier selected-command/source/mobile proofs remain
-separate evidence. Full old-operation/native/provider coverage is still open.
+The initial smoke follows the production canary planner's image order and
+injects failure after startup. A subsequent [actual canary-shell proof](t7-image-canary-proof.json)
+repeats the full image smoke and executes the checked-in promotion shell from
+`.github/actions/server-leg/action.yml` unchanged. Its seven samples span
+96.568 real seconds; neither the sleeps nor verdict logic is replaced. Every
+sample first makes a successful authenticated Room read on the candidate, then
+the local transport adapter injects 503. The actual verdict rejects promotion;
+the actual ERR trap restores only the first server to its historical image,
+confirms both images, and exits 1. The second server is never promoted. Room
+state and markers 46/61 survive, and all six image stops exit 0 without OOM.
+The artifact retains shell/action hashes, all timestamps/verdicts, actual and
+injected HTTP statuses, and the exact update sequence.
+
+Only `flyctl` and `curl` are replaced by closed local adapters: image updates
+start/stop the task's Docker containers, and reads execute against their real
+loopback servers. The adapters accept only those two synthetic machines and
+known paths; unexpected arguments fail the proof. No real Fly API, registry,
+provider or production HTTP call occurs. Planner registry references are
+synthetic aliases for local Docker IDs, never published registry manifests.
+
+This is not the separate prerequisite expansion release or its deployed
+ledger-aware recovery floor; no router-selected command exists in this image
+smoke. The earlier selected-command/source/mobile proofs remain separate
+evidence. Full old-operation/native/provider coverage is still open.
 
 Reproduce after building both exact source archives with their own
 `apps/server/Dockerfile`, the recorded release SHA build argument and
@@ -242,7 +258,7 @@ retained-outcome rollback. The historical image remains a boot-compatible
 **expansion** fallback, not a safe **post-switch** recovery floor: its dispatcher
 has no router ledger interpretation. The local full-image smoke above proves
 the tested policy-off image swap. The separate expansion release, deployed
-recovery floor, actual canary watcher and full old-application corpus remain
+recovery floor, real Fly execution and full old-application corpus remain
 unproved.
 
 ## Native runtime 40

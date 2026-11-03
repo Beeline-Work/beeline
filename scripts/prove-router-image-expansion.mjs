@@ -7,6 +7,8 @@ import { statSync } from 'node:fs';
 import { promisify } from 'node:util';
 import { Pool } from 'pg';
 import { planServerCanaryDeployment } from './unified-release.mjs';
+import { proveImageCanaryAutoRevert } from './proofs/router-image-canary.mjs';
+import path from 'node:path';
 
 const execute = promisify(execFile);
 const [historicalTag, candidateTag, socketPath] = process.argv.slice(2);
@@ -168,9 +170,10 @@ try {
   await request(b, 'reactToMessage', reaction);
   assert.deepEqual((await database.query('SELECT reactions FROM messages WHERE id=$1', [message])).rows[0].reactions, { '👍': [identity] });
   // Follow the production plan's image order locally. No Fly API or registry is
-  // contacted. Injected failure is after startup, not a real 90-second canary.
-  const oldRef = `registry.fly.io/beeline-server@${historical.id}`;
-  const nextRef = `registry.fly.io/beeline-server@${candidate.id}`;
+  // contacted. This first swap injects failure after startup; the unchanged
+  // 90-second shell runs after repeated migration below.
+  const oldRef = `registry.fly.io/beeline-server:${historical.version}@${historical.id}`;
+  const nextRef = `registry.fly.io/beeline-server:${candidate.version}@${candidate.id}`;
   const plan = planServerCanaryDeployment([{ id: 'a', imageRef: oldRef }, { id: 'b', imageRef: oldRef }], nextRef);
   assert.equal(plan.steps[0], 'migrate');
   await stop(a); await start(a, candidate);
@@ -186,13 +189,17 @@ try {
   assert.deepEqual(await request(a, 'readRoom', { roomId: room }), afterRollback);
   assert.equal((await database.query('SELECT count(*)::int count FROM router_commands')).rows[0].count, 0,
     'Pre-switch image rollback proof must have no router-selected command');
+  const canaryAutoRevert = await proveImageCanaryAutoRevert({ plan, historical, candidate,
+    machineNames: { a, b }, socketDirectory: path.dirname(socketPath), token, room, docker, start, stop });
+  assert.deepEqual(await state(), afterExpansion);
+  assert.deepEqual(await request(a, 'readRoom', { roomId: room }), afterRollback);
   await stop(a); await stop(b);
   console.log(JSON.stringify({ status: 'PASS', historical, candidate, startup, shutdown,
     fullEntrypoints: true, productionAuthSyntheticToken: true, runtimeNetwork: 'none; task-owned PG Unix socket only',
     oldImagesSurviveFullMigration: true, oldNewLegacyWireEqual: true, writesBeforeAndAfterSwitch: true,
     rollbackWithoutSchemaRestore: true, repeatedMigration: true, markers: afterExpansion,
-    plan, injectedCanaryFailure: 'after startup; watcher/Fly execution not exercised',
-    scope: 'Local full-image policy-off expansion smoke; not a separate expansion release, deployed ledger-aware floor, real canary watcher, native or production proof' }, null, 2));
+    plan, canaryAutoRevert,
+    scope: 'Local full-image policy-off expansion and actual canary-shell smoke; not a separate expansion release, deployed ledger-aware floor, Fly/provider/native or production proof' }, null, 2));
 } finally {
   for (const name of containers) await docker('rm', '-f', name).catch(error => console.error(`Cleanup ${name}: ${error.message}`));
   await database?.end();

@@ -44,6 +44,8 @@ Instruction043 separates **Proven pre-rollout** candidate paths from **Closed (c
 
 - Separate full-image follow-up passes with exact historical `f43bd3f86` and candidate `4e51e0327` Docker builds and their own locked dependencies: production startup/authentication, two old servers surviving complete release migration, mixed-image reads/writes, image-only revert, repeated migration and four graceful exits. Runtime egress is disabled; both test socket fixtures are absent from the candidate artifact. [Evidence](t7-image-expansion-proof.json) does not claim the real canary watcher, separate expansion release or deployed ledger-aware recovery floor. No additional finding closes.
 
+- The [actual canary-shell follow-up](t7-image-canary-proof.json) passes with seven unchanged-clock samples over 96.568 seconds. All actual authenticated reads succeed before the local adapter injects 503; the checked-in watcher/ERR trap restores only the first image, confirms the fleet and fails the release. All six image stops exit 0. This closes the local watcher/auto-revert proof gap, not real Fly execution or the deployed ledger floor.
+
 ## Validated staged infrastructure
 
 - F04 live projection read-purity regression shipped separately; same-cut count/cells and source coverage remain required.

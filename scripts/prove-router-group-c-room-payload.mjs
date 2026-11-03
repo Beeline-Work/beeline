@@ -35,6 +35,7 @@ try {
       'output',repeat('x',$3::int))),now()-interval '1 second'*n FROM generate_series(1,200)n`, [corner, agent, result.toolOutputBytes]);
   const phone = new PhoneService(db, 'https://synthetic.test'), input = { family: 'room-head', workspaceId: workspace, roomId: corner };
   if(process.env.BEELINE_GROUP_C_COST_PROOF==='1'){
+    result.walRelations=(await admin.query(`SELECT c.relname,c.relfilenode::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=$1 AND c.relname IN ('live_streams','router_authority','messages','live_journal')`,[schema])).rows;
     const measure=async(candidate)=>{
       let statements=0,queryResultBytes=0;
       const wrap=database=>({transaction:work=>database.transaction(tx=>work(wrap(tx))),query:async(sql,args)=>{
@@ -47,7 +48,7 @@ try {
       const elapsedMs=performance.now()-start,used=process.cpuUsage(cpu);
       const walAfter=(await admin.query('SELECT pg_current_wal_insert_lsn()::text position')).rows[0].position;
       return {statements,queryResultBytes,wireBytes:Buffer.byteLength(JSON.stringify(value)),elapsedMs,
-        nodeCpuMicros:used.user+used.system,walBytes:Number((await admin.query('SELECT pg_wal_lsn_diff($1,$2)::text bytes',[walAfter,walBefore])).rows[0].bytes)};
+        nodeCpuMicros:used.user+used.system,walFrom:walBefore,walTo:walAfter,walBytes:Number((await admin.query('SELECT pg_wal_lsn_diff($1,$2)::text bytes',[walAfter,walBefore])).rows[0].bytes)};
     };
     const samples=[];for(let n=0;n<5;n++)samples.push({legacy:await measure(false),candidate:await measure(true)});
     result.readWorkload={samples,scope:'Same authorized 200-tool collapsed Room open; local Node CPU/elapsed, not production PostgreSQL CPU or native paint'};

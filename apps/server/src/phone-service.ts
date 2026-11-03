@@ -1,14 +1,15 @@
-import { roomToolSummaries } from './room-tool-projection.js';
+import { ROOM_ROUTER_CTES,roomRouterColumnsSql } from './room-router-read.js';
+import { projectRoomToolSummaries,type RoomToolSummaryRow } from './room-tool-projection.js';
 import { buildTrayProjection, readMessageBookmarks } from './tray-projection.js';
 import { readTraySavedWindow } from './tray-saved-window.js';
 import { buildTraySavedFacts, type TraySavedTarget } from './tray-saved-projection.js';
 import { workingTurnFreshSql } from './turn-ownership.js';
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
-import { buildRouterSnapshot,RouterProjectionUnavailable } from './router-projections.js';
+import { buildRouterSnapshot,RouterProjectionUnavailable,routerAuthority,routerAtomicGroup } from './router-projections.js';
 import { CommandScopedDatabase } from './command-scoped-database.js';
 import type { TrayDecisionOperation } from './tray-decision-command.js';
 import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
-import type { RouterSnapshotInput, RouterValues, RouterFamily } from '@beeline/api-contract/router-protocol';
+import type { RouterSnapshotInput, RouterValues, RouterFamily,RouterSnapshot,RouterAuthorityCertificate } from '@beeline/api-contract/router-protocol';
 import { withdrawMergeApprovalsBy } from './corner-merge-approval.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerLifecycleSql } from './corner-github-cache.js';
@@ -540,7 +541,19 @@ function deckCornerSummary(roomId: string, deck: DeckCornerFacts): ChatCornerSum
     cornerCount: 0, waitingCornerCount: 0, mineCornerCount: 0, openCorners: [],
   };
 }
+interface RoomReadEnrichment {
+  presence: Array<{ id: string; presence_body: MemberRow['presence_body']; presence_updated_at: Date | null }>;
+  tags: Array<{ id: string; tagged_ids: string[] }>;
+  bookmarks: Array<{ message_id: string }>;
+  reports: Array<{ trigger_message_id: string }>;
+  expired: Array<{ id: string }>;
+  objects: Array<{ id: string; title: string; mime: string; size: string; author: string }>;
+  allow_auto_merge: boolean | null;
+}
 interface RoomReadRow {
+  router_metadata?:{epoch:string|null;sequence:string|null;scopes:RouterAuthorityCertificate['scopes']};
+  router_tools?:RoomToolSummaryRow[];
+  router_enrichment?:RoomReadEnrichment;
   starter_onboarding_pending: boolean;
   room: RoomRow & {
     viewer_push_muted: boolean;
@@ -1061,6 +1074,8 @@ export class PhoneService {
   private readonly outlineCache?: HistoryOutlineCache;
 
   private pureProjection = false;
+  private routerRoomRows?:RoomReadRow;
+  private expectedRouterWorkspace?:string;
   private starterOnboarding?: StarterOnboardingService;
   setStarterOnboarding(service: StarterOnboardingService): void { this.starterOnboarding = service; }
 
@@ -1179,6 +1194,7 @@ export class PhoneService {
   }
 
   readRouterSnapshot(input: RouterSnapshotInput, viewerId: string,options?:{readonly trayClock?:true}) {
+    if(input.family==='room-head')return this.readRoomRouterSnapshot({...input,family:'room-head'},viewerId);
     if (input.family === 'needs-you-count') return readNeedsYouCountSnapshot(this.database,input.workspaceId,viewerId,options?.trayClock?'committed':'wall');
     return buildRouterSnapshot(this.database, input, viewerId, (db, args, viewer) => this.buildRouterValue(db, args, viewer,options),options);
   }
@@ -1192,10 +1208,8 @@ export class PhoneService {
     if (input.family === 'room-list') return reader.readChats(input.workspaceId, viewerId);
     if (input.family === 'room-head') {
       if (!input.roomId) throw new Error('roomId is required for room-head');
-      const view = await reader.readRoom(input.roomId, viewerId);
-      if (!view) return null;
-      const summaries = await roomToolSummaries(database,input.roomId,viewerId);
-      return {...view,toolRows:undefined,messages:[...view.messages,...summaries].sort(messageOrder).slice(-30)};
+      reader.expectedRouterWorkspace=input.workspaceId;
+      return reader.readRoom(input.roomId,viewerId);
     }
     if(input.family==='room-scheduled-work')return buildRoomSchedulesProjection(reader.database,input.roomId,viewerId,this.publicOrigin);
     if(input.family==='needs-you-tray')return buildTrayProjection(reader.database,input.workspaceId,viewerId,row=>identity(row,reader.publicOrigin),options?.trayClock?'committed':'wall');
@@ -1206,6 +1220,44 @@ export class PhoneService {
     const { items } = await needsYouItems(reader.database, input.workspaceId, viewerId,
       (row) => identity(row, reader.publicOrigin), false,options?.trayClock?'committed':'wall');
     return { count: items.length, items };
+  }
+
+  /** Room data, certificate, canonical head and enrichment are one SELECT
+   * after the read-only isolation statement. No authority read is removed:
+   * the existing final READ COMMITTED enqueue fence still runs separately. */
+  private readRoomRouterSnapshot(
+    input: { family: 'room-head'; roomId: string; workspaceId?: string },
+    viewer: string,
+  ): Promise<RouterSnapshot> {
+    return this.database.transaction(async db => {
+      await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const reader = new PhoneService(db, this.publicOrigin);
+      reader.pureProjection = true;
+      reader.expectedRouterWorkspace = input.workspaceId;
+      const value = await reader.readRoom(input.roomId, viewer);
+      const rows = reader.routerRoomRows, meta = rows?.router_metadata;
+      if (!value || !rows || !meta || (input.workspaceId && input.workspaceId !== rows.room.workspace_id))
+        throw new RouterProjectionUnavailable('authority');
+      const domains = [
+        `reader:${viewer}:workspace:${rows.room.workspace_id}`, `room:${input.roomId}`,
+        ...(rows.room.parent_id ? [`room:${rows.room.parent_id}`] : []),
+      ];
+      if (meta.scopes.length !== domains.length || domains.some(domain => !meta.scopes.some(
+        scope => scope.authorityScope === domain && /^[1-9][0-9]*$/.test(scope.epoch ?? ''),
+      )))
+        throw new RouterProjectionUnavailable('authority');
+      const through = Number(meta.sequence);
+      if (!meta.epoch || meta.sequence === null || !Number.isSafeInteger(through) || through < 0)
+        throw new RouterProjectionUnavailable('dependency');
+      const result: RouterSnapshot = {
+        kind: 'snapshot', family: 'room-head', scope: input.roomId, value,
+        cut: { stream: `workspace:${rows.room.workspace_id}`, epoch: meta.epoch, through, protocol: 1 },
+        authority: routerAuthority(meta.scopes.map(scope => ({ authorityScope: scope.authorityScope, epoch: scope.epoch }))),
+        atomicGroup: routerAtomicGroup(input, viewer),
+      };
+      if (Buffer.byteLength(JSON.stringify(result)) > 64 * 1024) throw new RouterProjectionUnavailable('budget');
+      return result;
+    });
   }
 
   /** Source-key row facts, never a window/top-N reread or a cache inventory. */
@@ -2294,7 +2346,7 @@ export class PhoneService {
       Boolean(corner),
       viewerId,
     );
-    const enrichment = corner
+    const enrichment = rows.router_enrichment?this.projectRoomEnrichment(rows.router_enrichment):corner
       ? await measured(
           'enrichment',
           this.cornerRoomEnrichment(room, rows, initialMessageResult, viewerId),
@@ -2328,7 +2380,7 @@ export class PhoneService {
           rows.activity,
           corner?.tools ?? [],
           latestAgentTurns,
-          true,
+          Boolean(corner),
           viewerId,
         )
       : initialMessageResult;
@@ -2342,7 +2394,7 @@ export class PhoneService {
       briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
     ));
     const [attachmentFacts, appMessages] = await Promise.all([
-      corner
+      corner||this.pureProjection
         ? Promise.resolve(
             enrichment?.attachmentFacts ?? { expired: new Set<string>(), artifacts: new Map() },
           )
@@ -2462,6 +2514,7 @@ export class PhoneService {
         }),
       );
     }
+    if(this.pureProjection)return {...view,toolRows:undefined,messages:[...view.messages,...projectRoomToolSummaries(rows.router_tools??[],roomId)].sort(messageOrder).slice(-30)};
     return view;
   }
 
@@ -2919,6 +2972,7 @@ export class PhoneService {
   }
 
   private async roomRows(roomId: string, viewerId: string): Promise<RoomReadRow | undefined> {
+    if(this.pureProjection)this.routerRoomRows=undefined;
     const row = (
       await this.database.query<RoomReadRow>(
         `WITH authorized_room AS (
@@ -2937,14 +2991,14 @@ export class PhoneService {
                WHERE other_room.room_id=COALESCE(room.parent_id,room.id) AND other_room.removed_at IS NULL
                  AND other_room.identity_id<>$2
              )) leave_deletes_room,
-             NULL::jsonb read_cursor
+             ${this.pureProjection?`CASE WHEN room.parent_id IS NULL THEN ${viewerReadCursorSql()} END`:'NULL::jsonb'} read_cursor
            FROM rooms room
            JOIN memberships membership ON membership.room_id=COALESCE(room.parent_id,room.id)
              AND membership.identity_id=$2 AND membership.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
              AND workspace_member.removed_at IS NULL
-           WHERE room.id=$1
+           WHERE room.id=$1 ${this.pureProjection?'AND ($3::uuid IS NULL OR room.workspace_id=$3)':''}
          ), member_rows AS (
            SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,
              COALESCE(roster_workspace.role,roster_member.role) role,NULL::jsonb presence_body,
@@ -3041,6 +3095,7 @@ export class PhoneService {
            WHERE room.parent_id IS NOT NULL AND m.created_at<=room.created_at
            ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}
          )
+         ${this.pureProjection?ROOM_ROUTER_CTES:''}
          SELECT
            EXISTS(SELECT 1 FROM starter_onboarding_runs onboarding
              WHERE onboarding.room_id=authorized_room.id AND onboarding.user_id=$2
@@ -3079,14 +3134,16 @@ export class PhoneService {
                ORDER BY corner_tool_rows.created_at DESC,corner_tool_rows.id DESC)
                FROM corner_tool_rows),'[]'::jsonb)
            ) END corner
-         FROM authorized_room`,
-        [roomId, viewerId],
+           ${this.pureProjection?roomRouterColumnsSql():''}
+         FROM authorized_room ${this.pureProjection?`LEFT JOIN live_streams stream ON stream.id='workspace:'||authorized_room.workspace_id::text`:''}`,
+        this.pureProjection?[roomId,viewerId,this.expectedRouterWorkspace??null]:[roomId, viewerId],
       )
     ).rows[0];
     if (!row) return undefined;
-    if (row.corner) {
+    if(this.pureProjection)this.routerRoomRows=row;
+    if (row.corner||this.pureProjection) {
       reviveDates(row.room, ['archived_at', 'repository_updated_at', 'created_at', 'updated_at']);
-      if (row.corner.parent)
+      if (row.corner?.parent)
         reviveDates(row.corner.parent, [
           'archived_at',
           'repository_updated_at',
@@ -3097,8 +3154,8 @@ export class PhoneService {
       for (const message of [
         ...row.transcript,
         ...row.activity,
-        ...row.corner.briefing,
-        ...row.corner.tools,
+        ...(row.corner?.briefing??[]),
+        ...(row.corner?.tools??[]),
       ])
         reviveDates(message, ['created_at']);
       return row;
@@ -3268,6 +3325,10 @@ export class PhoneService {
     );
     const value = result?.rows[0];
     if (!value) return undefined;
+    return this.projectRoomEnrichment(value);
+  }
+
+  private projectRoomEnrichment(value:RoomReadEnrichment){
     for (const member of value.presence) reviveDates(member, ['presence_updated_at']);
     return {
       ...value,

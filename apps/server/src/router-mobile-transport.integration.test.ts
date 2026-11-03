@@ -1,11 +1,11 @@
 import { once } from 'node:events';
-import type { Server } from 'node:http';
+import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import WebSocket from 'ws';
+import WebSocket, { WebSocketServer } from 'ws';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import type { RouterCommandReceipt } from '@beeline/api-contract/router-command';
 import type { RouterFamily, RouterSnapshot, RouterSnapshotInput } from '@beeline/api-contract/router-protocol';
@@ -76,10 +76,12 @@ function capabilities(connection: Connection, matches: (state: ReturnType<Connec
   });
 }
 
-it('P10: actual mobile transport parks a lost command on an incapable replacement and preserves identity on explicit recovery', async () => {
+it.each(['policy-off', 'legacy-sync'] as const)(
+  'P10: actual mobile transport parks a lost command on %s and preserves identity on explicit recovery', async replacementWire => {
   const viewer = 'a'.repeat(64), workspace = '11111111-1111-4111-8111-111111111111';
   const room = '22222222-2222-4222-8222-222222222222', message = 'c'.repeat(64);
   const db = await migratedDatabase(), servers: Server[] = [], sockets: WebSocket[] = [];
+  const legacyServers: WebSocketServer[] = [];
   const sent: Record<string, any>[] = [];
   let connection: Connection | undefined, dropReceipt = false, dropped = 0;
   let snapshot: ((input: RouterSnapshotInput) => Promise<RouterSnapshot>) | undefined;
@@ -95,7 +97,18 @@ it('P10: actual mobile transport parks a lost command on an incapable replacemen
     const origins: string[] = [];
     for (const selected of [true, false]) {
       const live = new LiveHub(), phone = new PhoneService(db, 'http://proof.invalid', undefined, undefined, live);
-      const server = createBeelineServer({ database: db, live, phone,
+      let server: Server;
+      if (!selected && replacementWire === 'legacy-sync') {
+        // Exact pre-router sync acknowledgement from main f43bd3f86,
+        // server.ts:1095-1140. This is a wire fixture, not the historical image:
+        // it ignores negotiation and has no application operation handler.
+        server = createServer((_request, response) => { response.writeHead(404); response.end(); });
+        const legacy = new WebSocketServer({ server, path: '/v1/phone/live' });
+        legacyServers.push(legacy);
+        legacy.on('connection', client => client.on('message', raw => {
+          if (JSON.parse(raw.toString()).type === 'sync') client.send('{"type":"sync-ok"}');
+        }));
+      } else server = createBeelineServer({ database: db, live, phone,
         auth: { authenticatePhone: async () => viewer } as unknown as TokenAuth,
         daemon: {} as DaemonService, mediaMaximumBytes: 1,
         ...(selected ? { routerProjections: { families: ['needs-you-count' as const], commandDedupV1: true, listenerReady: () => true } } : {}),
@@ -172,6 +185,7 @@ it('P10: actual mobile transport parks a lost command on an incapable replacemen
   } finally {
     connection?.dispose();
     for (const socket of sockets) socket.terminate();
+    for (const legacy of legacyServers) await new Promise<void>(resolve => legacy.close(() => resolve()));
     for (const server of servers) await new Promise<void>(resolve => server.close(() => resolve()));
     await db.close(); vi.unstubAllGlobals();
   }

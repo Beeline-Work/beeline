@@ -49,6 +49,15 @@ admission, persistent phone storage or a pre-router server image. The server
 database is isolated PGlite, and every client socket is restricted to the two
 loopback fixture origins.
 
+The second transport case uses a legacy wire fixture that ignores negotiation
+and returns only main `f43bd3f86`'s `sync-ok` acknowledgement for workspace sync.
+Both transport cases pass. This covers absence of a capability frame, separately
+from a modern server's explicit disabled capabilities. The legacy fixture has
+no application operation handler and is not a historical server build; the
+test asserts that no command or stale snapshot reaches it. Its first failed
+run acknowledged only the short sync frame; the fixture was corrected to
+match the historical workspace-cursor sync path before retaining the result.
+
 The current main image at `f43bd3f86e4c7a30aa75378df82fcbda10027c72`
 requires schema 46; this candidate requires schema 61. Both boot checks require
 an exact marker. A previous image therefore cannot simply restart after the

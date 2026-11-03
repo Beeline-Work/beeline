@@ -6,6 +6,8 @@ All Room data and Beeline credentials belong to the ephemeral local PGlite fixtu
 
 Firstmate directed the final proof through a Cloudflare quick tunnel, with both public origin and short hostname set to the assigned tunnel host. This provides publicly trusted HTTPS while every application/database operation runs in the local fixture. No hosts-file edits, production DNS/certificate changes or production deployment were made. The tunnel is temporary; the captured artifacts are the durable evidence.
 
+The fixture and client are also available as `npm run prove:unified-join` (builds and starts the local fixture) and `npm run prove:unified-join-client` (runs discovery and optional authenticated checks against it).
+
 ## Start the isolated fixture
 
 ```sh
@@ -110,6 +112,7 @@ Separate HTTP tests use the literal production Host header `join.usebeeline.app`
 ## Validation
 
 - `npm run build` — PASS.
+- `npm run dead-code` — PASS (`5 existing findings, 0 introduced`); both proof tools are referenced by package scripts.
 - `npm run typecheck` — PASS after temporarily setting aside ignored local screenshot-source `.tsx` archives under `apps/mobile/evidence/composer-hint-center/local/selectall`; archives restored afterwards. Those files are absent from a clean checkout and CI. Workspace, mobile source and scripts checks also pass independently.
 - `npm run test -w @beeline/server -- src/rooms-mcp.test.ts --maxWorkers=2 --minWorkers=1` — 147 passed.
 - `npm run test -w @beeline/server -- src/rooms-mcp-join.test.ts --maxWorkers=2 --minWorkers=1` — 7 passed.

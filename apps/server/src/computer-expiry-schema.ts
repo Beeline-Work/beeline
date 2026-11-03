@@ -1,4 +1,4 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 /** Existing computer-session owner, existing completion feed. Only committed
  * lease/state changes can recompute its next actual expiry. */
 export const COMPUTER_EXPIRY_SCHEMA=`

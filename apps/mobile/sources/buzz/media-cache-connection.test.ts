@@ -3,7 +3,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import type { MediaMetadata } from '@beeline/api-contract/media-metadata';
 import { resetClientState } from '@/sync/client-reset';
-import { installLegacyMediaCacheConnection, installMediaCacheConnection, mediaCertificateCurrent, mediaMetadataFor, receiveMediaAuthorityRemoval,
+import { installMediaCacheConnection, mediaCertificateCurrent, mediaMetadataFor, receiveMediaAuthorityRemoval,
   invalidateMediaCacheDemand, requestMediaLink, requestMediaPlayback, subscribeMediaCacheBoundary, suspendMediaCacheConnection } from './media-cache-connection';
 const id = '11111111-1111-4111-8111-111111111111';
 const thumbId = '22222222-2222-4222-8222-222222222222';
@@ -31,7 +31,7 @@ describe('independently negotiated current media authority', () => {
     await mediaMetadataFor(origin, 'ada', id); suspendMediaCacheConnection();
     await expect(mediaMetadataFor(origin, 'ada', id)).rejects.toThrow('awaiting connection');
     expect(executeMetadata).toHaveBeenCalledTimes(1);
-    installLegacyMediaCacheConnection(2);
+    installMediaCacheConnection({ generation: 2, mediaMetadataV1: false });
     expect(await mediaMetadataFor(origin, 'ada', id)).toBeUndefined();
   });
   it('shares explicit metadata demand, partitions principal/origin and suspends held certificates', async () => {

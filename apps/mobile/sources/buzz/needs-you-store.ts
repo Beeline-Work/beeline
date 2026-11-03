@@ -338,58 +338,52 @@ function refreshProjection(slot: Slot): Promise<readonly NeedsYouItemView[]> {
     return items;
   }, (error) => { slot.projectionRead = undefined; throw error; });
 }
-function useLegacyNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown, enabled: boolean) {
-  useEffect(() => { if (enabled) void resolveViewer(); }, [enabled]);
+/** One subscription owner selects the negotiated count source. Pending or
+ * disconnected router generations never acquire the old-server reader. */
+export function useNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown, visible?: () => boolean) {
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  const mode = useRouterFamily('needs-you-count');
+  const subscribeCount = useCallback((listener: () => void) => {
+    if (!workspaceId || refreshKey === undefined) return () => {};
+    if (mode === 'legacy') return subscribe(listener);
+    if (mode !== 'router') return () => {};
+    const lane = acquireRouterLane({ family: 'needs-you-count', workspaceId }, () => visibleRef.current?.() ?? true, listener);
+    return lane.release;
+  }, [mode, workspaceId, refreshKey === undefined]);
+  const snapshot = useCallback(() => {
+    if (!workspaceId) return 0;
+    if (mode === 'legacy') {
+      const entry = current(workspaceId)?.entry;
+      return entry ? visibleNeeds(entry)?.length ?? 0 : 0;
+    }
+    if (mode !== 'router') return 0;
+    const value = routerLaneSnapshot({ family: 'needs-you-count', workspaceId }).value as { count?: number } | null;
+    return value?.count ?? 0;
+  }, [mode, workspaceId]);
+  const count = useSyncExternalStore(subscribeCount, snapshot, () => 0);
+  const generation = useSyncExternalStore(subscribeClientReset, clientResetGeneration);
+  useEffect(() => { if (mode === 'legacy') void resolveViewer(); }, [mode]);
   useEffect(() => {
-    if (!enabled || !workspaceId || refreshKey === undefined) return;
+    if (mode !== 'legacy' || !workspaceId || refreshKey === undefined) return;
     badgeReaders.set(workspaceId, (badgeReaders.get(workspaceId) ?? 0) + 1);
     return () => {
       const remaining = (badgeReaders.get(workspaceId) ?? 1) - 1;
       if (remaining) badgeReaders.set(workspaceId, remaining);
       else badgeReaders.delete(workspaceId);
     };
-  }, [workspaceId, refreshKey, enabled]);
-  // A badge observes its number, not every replacement of the Tray's rows.
-  const count = useSyncExternalStore(subscribe, () => {
-    const entry = workspaceId ? current(workspaceId)?.entry : undefined;
-    return entry ? visibleNeeds(entry)?.length ?? null : null;
-  });
-  const generation = useSyncExternalStore(subscribeClientReset, clientResetGeneration);
+  }, [workspaceId, refreshKey, mode]);
   useEffect(() => {
-    if (!enabled || !workspaceId || refreshKey === undefined) return;
+    if (mode !== 'legacy' || !workspaceId || refreshKey === undefined) return;
     let cancelled = false;
     void (async () => {
       const slot = slotFor(await resolveViewer(), workspaceId);
       if (cancelled || !active(slot) || (slot.entry.needs && !slot.needsStale)) return;
-      try {
-        // The existing badge read seeds complete rows. Concurrent badges share
-        // it; loadNeedsYouList replays deltas received while it was in flight.
-        await refreshProjection(slot);
-      } catch { /* Keep the previous projection. */ }
+      try { await refreshProjection(slot); } catch { /* Keep the previous projection. */ }
     })();
     return () => { cancelled = true; };
-  }, [workspaceId, refreshKey, count, generation, enabled]);
-  return count ?? 0;
-}
-
-
-export function useNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown, visible?: () => boolean) {
-  const visibleRef = useRef(visible);
-  visibleRef.current = visible;
-  const mode = useRouterFamily('needs-you-count');
-  const legacy = useLegacyNeedsYouCount(workspaceId, refreshKey, mode === 'legacy');
-  const subscribeCount = useCallback((listener: () => void) => {
-    if (!workspaceId || refreshKey === undefined) return () => {};
-    const lane = acquireRouterLane({ family: 'needs-you-count', workspaceId }, () => visibleRef.current?.() ?? true, listener);
-    return lane.release;
-  }, [workspaceId, refreshKey === undefined]);
-  const snapshot = useCallback(() => {
-    if (!workspaceId || mode !== 'router') return 0;
-    const value = routerLaneSnapshot({ family: 'needs-you-count', workspaceId }).value as { count?: number } | null;
-    return value?.count ?? 0;
-  }, [mode, workspaceId]);
-  const count = useSyncExternalStore(subscribeCount, snapshot, () => 0);
-  return mode === 'router' ? count : mode === 'legacy' ? legacy : 0;
+  }, [workspaceId, refreshKey, count, generation, mode]);
+  return count;
 }
 
 /** Called only for viewable question cells in the focused Tray, after paint. */

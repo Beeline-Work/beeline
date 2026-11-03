@@ -1,10 +1,10 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 import type { ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import type { McpPrincipal } from './rooms-mcp-oauth.js';
 import { subscribeCommandCompletion } from './command-completion.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import type { WorkTimers } from './background-work.js';
 
 /** Separate rollout floor; enable only after real-PG source/authority proofs. */

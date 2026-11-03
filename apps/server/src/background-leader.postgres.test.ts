@@ -1,6 +1,7 @@
 import { Pool } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { BackgroundLeader } from './background-leader.js';
+import { BackgroundWork } from './background-work.js';
 const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if(url&&!['127.0.0.1','localhost','[::1]'].includes(new URL(url).hostname))throw new Error('Leadership proof requires isolated loopback PostgreSQL');
 function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {promise,resolve};}
@@ -58,11 +59,51 @@ describe.skipIf(!url)('real PostgreSQL blocking leader ownership',()=>{
       await entered.promise;
       expect((await old.query('SELECT pg_try_advisory_lock($1) locked', [key])).rows[0].locked).toBe(false);
       await leader.stop();
+      // Pool release destroys the socket synchronously; PostgreSQL may process
+      // EOF after another connection's next query. Wait on the same real lock.
+      await old.query("SET lock_timeout='2s'");
+      await old.query('SELECT pg_advisory_lock($1)', [key]);
       expect((await old.query('SELECT pg_try_advisory_lock($1) locked', [key])).rows[0].locked).toBe(true);
     } finally {
       await leader.stop();
       old.release(true);
       await Promise.all([oldPool.end(), newPool.end()]);
+    }
+  });
+
+  it('ends admission for the rest of a repair cycle when its physical backend is lost', async () => {
+    const pool = new Pool({ connectionString: url, max: 1 });
+    const admin = new Pool({ connectionString: url, max: 1 });
+    const entered = deferred(), finish = deferred(), lost = deferred(), drained = deferred();
+    const work = new BackgroundWork(() => 0, () => {});
+    const calls: string[] = [];
+    let backend = 0;
+    let attempts = 0;
+    work.addDeadline('held-provider', async () => {
+      calls.push('held-provider'); entered.resolve(); await finish.promise;
+    });
+    work.addDeadline('later-repair', async () => { calls.push('later-repair'); });
+    const leader = new BackgroundLeader({ connectDedicated: async () => {
+      // Refuse the one incident replacement: loss cannot become a test-only
+      // success path that runs the abandoned old owner's pending families.
+      if (++attempts > 1) throw new Error('Synthetic replacement unavailable');
+      const client = await pool.connect();
+      backend = (await client.query('SELECT pg_backend_pid() id')).rows[0].id;
+      return client;
+    } }, async (initial, signal) => {
+      const delay = await work.run(initial, signal); drained.resolve(); return delay;
+    }, { acquired: async () => {}, lost: () => { lost.resolve(); } });
+    try {
+      void leader.run(); await entered.promise;
+      await admin.query('SELECT pg_terminate_backend($1)', [backend]);
+      await lost.promise;
+      finish.resolve(); await drained.promise;
+      expect(calls).toEqual(['held-provider']);
+      // A separately acquired epoch still gets its one initial family pass.
+      expect(await work.run(true, new AbortController().signal)).toBe(Infinity);
+      expect(calls).toEqual(['held-provider', 'held-provider', 'later-repair']);
+    } finally {
+      finish.resolve(); await leader.stop(); await Promise.all([pool.end(), admin.end()]);
     }
   });
 

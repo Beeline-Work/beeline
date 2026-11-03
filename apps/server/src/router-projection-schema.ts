@@ -1,9 +1,9 @@
-import { liveControlNotificationSchema } from './postgres-live-notifications.js';
-/** Schema is installed after POSTGRES_LIVE_SCHEMA. No read path creates rows.
+import { liveControlNotificationSchema } from './postgres-live.js';
+/** Schema is installed after postgresLiveSchema(). No read path creates rows.
  * Authority writers and final enqueue fences share one lock until scope-lock
  * concurrency has its own real PostgreSQL proof. This conservative lock never
  * covers DTO construction, providers, or socket backpressure waits. */
-export const ROUTER_AUTHORITY_LOCK = 'beeline:router-authority-v1';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 export const ROUTER_PROJECTION_SCHEMA = `
 ${liveControlNotificationSchema()}
 CREATE TABLE IF NOT EXISTS router_authority (

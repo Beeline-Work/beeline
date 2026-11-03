@@ -11,6 +11,7 @@ const fixture = vi.hoisted(() => ({
   listeners: new Set<() => void>(), release: vi.fn(), acquire: vi.fn(), retry: vi.fn(),
   prepare: vi.fn(), deliver: vi.fn(), cancel: vi.fn(), admit: vi.fn(), paint: vi.fn(), capable: true,
 }));
+vi.mock('@/buzz/needs-you-store', () => ({ useTrayList: (_workspace: string, enabled: boolean) => ({ needs: enabled ? [{ messageId: 'old-server' }] : null, bookmarks: [], next: undefined }) }));
 vi.mock('react-native', () => ({ AppState: { currentState: 'active' } }));
 vi.mock('./router-family', () => ({ useRouterFamily: () => fixture.mode }));
 vi.mock('./router-owner', () => ({
@@ -112,6 +113,10 @@ describe('Tray canonical observation', () => {
   it('attaches no canonical lane in explicit legacy mode', () => {
     fixture.mode = 'legacy'; act(() => { tree = create(React.createElement(Probe)); });
     expect(fixture.acquire).not.toHaveBeenCalled(); expect(latest.value).toBe(null);
+    expect(latest.needs).toEqual([{ messageId: 'old-server' }]);
+    expect(latest.bookmarks).toEqual([]);
+    fixture.mode = 'pending'; act(() => { tree.update(React.createElement(Probe)); });
+    expect(latest.needs).toBeNull(); expect(latest.bookmarks).toEqual([]);
   });
 });
 

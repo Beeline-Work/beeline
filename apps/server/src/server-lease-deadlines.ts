@@ -1,9 +1,10 @@
-import { liveControlNotificationSchema } from './postgres-live-notifications.js';
+import { SERVER_LEASE_EVIDENCE_TABLE } from './postgres-live-notifications.js';
+import { liveControlNotificationSchema } from './postgres-live.js';
 import type { SqlDatabase } from './database.js';
 
 /** Committed lease evidence is infrastructure control, never a user-state
  * invalidation. The existing PostgreSQL LISTEN session carries this hint. */
-export const SERVER_LEASE_EVIDENCE_TABLE = 'server_lease_evidence';
+export { SERVER_LEASE_EVIDENCE_TABLE } from './postgres-live-notifications.js';
 export const SERVER_LEASE_DEADLINE_SCHEMA = `
 ${liveControlNotificationSchema()}
 CREATE OR REPLACE FUNCTION beeline_notify_server_lease() RETURNS trigger AS $$

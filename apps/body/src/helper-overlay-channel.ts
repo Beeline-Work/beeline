@@ -6,12 +6,14 @@ import type { HelperOverlayTransport } from './helper-overlay.js';
  * It never opens a socket, retries a frame, or performs an application read. */
 export class HelperOverlayChannel implements HelperOverlayTransport {
   private supported=false;
+  private wasSelected=false;
   private readonly demands=new Map<string,HelperOverlayDemand>();
   private readonly listeners=new Map<string,Set<(demand:HelperOverlayDemand)=>void>>();
   private readonly pending=new Map<string,{revision:number;resolve:(ack:HelperOverlayAck)=>void;deadline:ReturnType<typeof setTimeout>}>();
   constructor(private readonly write:(frame:Record<string,unknown>)=>boolean,private readonly isOpen:()=>boolean){}
   enabled():boolean{return this.supported&&this.isOpen();}
-  negotiate(enabled:boolean):void{this.supported=enabled;}
+  selected():boolean{return this.wasSelected;}
+  negotiate(enabled:boolean):void{this.supported=enabled;if(enabled)this.wasSelected=true;}
   suspend():void{
     this.supported=false;
     for(const pending of this.pending.values()){clearTimeout(pending.deadline);pending.resolve({accepted:false,reason:'unavailable'});}this.pending.clear();

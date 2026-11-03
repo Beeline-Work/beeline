@@ -1,6 +1,6 @@
 import type { SqlDatabase } from './database.js';
 import { failConnectingOffers } from './connector-offer-completion.js';
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 
 export const CONNECTOR_OFFER_DUE_KEY = { principal: 'connector-offer', operation: 'expiry', commandId: 'pending' } as const;
 export const CONNECTOR_OFFER_EXPIRY_SCHEMA = `

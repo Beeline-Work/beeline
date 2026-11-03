@@ -5,7 +5,7 @@ import { performance } from 'node:perf_hooks';
 import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
 import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE, type AuthenticatedOwnedModel, type OwnedModelBinding } from './owned-model-credential.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { assertCurrentTurnOwner } from './turn-ownership.js';
 
 /** Same body bound as the existing model HTTP endpoint, never a larger escape. */

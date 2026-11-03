@@ -1,3 +1,4 @@
+import { requiredServerSetting as required } from './server-configuration.js';
 import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
 import { backgroundDatabaseCut } from './background-deadline-clock.js';
 import { BackgroundRecordDeadlines, backgroundSourceFamilies, repairDeadlineFamilies, registerBackgroundDeadlineFamilies, subscribeBackgroundFamilies } from './background-deadlines.js';
@@ -86,11 +87,6 @@ import {
 } from './free-agents.js';
 import { FlyMachines } from './fly-machines.js';
 
-function required(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required`);
-  return value;
-}
 
 async function runReleaseMigration(): Promise<void> {
   const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {
@@ -546,7 +542,7 @@ async function main() {
   registerBackgroundDeadlineFamilies(work,repairDeadlineFamilies(jobsDatabase,{
     live,phone,mediaExpiry,institutionalMemory,institutionalAnchors,voice,voiceDeadlines,
   }),(name,run)=>backgroundJobs.run(name,run),jobsDatabase);
-  const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader));
+  const leader = new BackgroundLeader(jobsDatabase, (newLeader, signal) => work.run(newLeader, signal));
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   const stopBackgroundSources=subscribeBackgroundFamilies(jobsDatabase,live,backgroundSourceFamilies(),name=>wakeWork(name,'committed-family-source'));
   const wakeSystemDms=()=>wakeWork('operator-system-dms','committed-system-dm');

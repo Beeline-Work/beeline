@@ -1,6 +1,6 @@
 import type {RouterAuthorityCertificate,RouterAuthorityFence} from '@beeline/api-contract/router-protocol';
 import type {SqlDatabase} from './database.js';
-import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
+import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
 import {routerAuthority,RouterProjectionUnavailable} from './router-projections.js';
 
 export const scheduledPrincipalDomain=(viewer:string)=>`scheduled-work-principal:${viewer}`;

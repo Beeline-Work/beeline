@@ -6,7 +6,7 @@ import type {
 } from '@beeline/api-contract/router-protocol';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import {scheduledWorkAuthority,scheduledWorkAuthorities,scheduledRoomDomain} from './scheduled-work-authority.js';
 import {readTrayClockBasis} from './tray-clock-basis.js';
 import {profileDomain} from './router-profile-source.js';

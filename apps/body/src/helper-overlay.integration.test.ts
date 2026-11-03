@@ -38,6 +38,22 @@ describe('actual streamed-turn negotiated helper socket adapter',()=>{
     expect(execute).toHaveBeenCalledTimes(1);expect(execute).toHaveBeenCalledWith('postRoomMessage',expect.objectContaining({text:'durable final'}));
     stream.onChunk('late','late','late');expect(execute).toHaveBeenCalledTimes(1);
   });
+  it('keeps newly constructed streams on the selected overlay path during registration loss', async () => {
+    const { socket, machine, channel, execute } = fixture(true);
+    machine.stop();
+    const stream = new AgentTurnStream({ api: { channel, execute } as unknown as DaemonApiClient,
+      agentId: 'agent', roomId: 'room', requestId: 'turn', commandId: 'command', turnGeneration: 'generation', label: 'synthetic' });
+    stream.onChunk('late', 'late', 'late'); await settle(); await stream.retract();
+    expect(execute).not.toHaveBeenCalled();
+    expect(socket.frames.filter(frame => frame.type === 'overlay-update')).toHaveLength(0);
+  });
+  it.each(['commandId', 'turnGeneration'] as const)('refuses a selected stream without %s before growing-snapshot transport', missing => {
+    const { channel, execute } = fixture(true);
+    expect(() => new AgentTurnStream({ api: { channel, execute } as unknown as DaemonApiClient,
+      agentId: 'agent', roomId: 'room', requestId: 'turn', commandId: 'command', turnGeneration: 'generation',
+      [missing]: undefined, label: 'synthetic' })).toThrow('Overlay requires a claimed command generation');
+    expect(execute).not.toHaveBeenCalled();
+  });
   it('preserves old-server draft transport while never downgrading a selected capable stream after drop',async()=>{
     const legacy=fixture(false);legacy.stream.onChunk('old','old','old');await settle();
     expect(legacy.execute).toHaveBeenCalledWith('postAgentDraft',expect.objectContaining({text:'old'}));

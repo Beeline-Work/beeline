@@ -313,5 +313,106 @@
     "live.notify owners change",
     "settings.server-env budget 60 to 61",
     "paths.phone-parallel budget 19 to 24"
-  ]
+  ],
+  "architectureRepair": {
+    "scope": "Instruction 050: restore base budgets and notification owner without changing guard code; capability remains off",
+    "passed": 207,
+    "suiteSelections": 14,
+    "vitest": [
+      {
+        "workspace": "apps/mobile",
+        "file": "sources/buzz/needs-you-store.test.ts",
+        "passed": 18,
+        "logSha256": "40d0bb1084aa0b051a6ba75b275d87b1d3b96086c4e290f7b09a233189d51151"
+      },
+      {
+        "workspace": "apps/mobile",
+        "file": "sources/buzz/router-tray.test.ts",
+        "passed": 10,
+        "logSha256": "d05c9a7c6e2e912d0c86bf6c5d16481a385ad84d305396c145de77f9e9b1bae5"
+      },
+      {
+        "workspace": "apps/mobile",
+        "file": "sources/buzz/media-cache-connection.test.ts",
+        "passed": 16,
+        "logSha256": "746d727cdebe2553abed476526b28f8b393ee384e555c61e66f1cc7c14f9667f"
+      },
+      {
+        "workspace": "apps/mobile",
+        "file": "sources/buzz/artifact-byte-owner.test.ts",
+        "passed": 7,
+        "logSha256": "5b51d11cc5efcbf8035d266ad21d48c3bbec8878169b7ee8f73fc0c4a05e5000"
+      },
+      {
+        "workspace": "apps/mobile",
+        "file": "sources/buzz/chat-list-store.test.ts",
+        "passed": 24,
+        "logSha256": "7cc31b43258c85dd43422a00e3ca7bfccd838a0d0c8faaefce2d409559acdf17"
+      },
+      {
+        "workspace": "apps/mobile",
+        "file": "sources/buzz/chat-list-store.registry.test.ts",
+        "passed": 4,
+        "logSha256": "7b53c2497d7239a61a0fa23223e94b09bd963cb38f83f054d2034c3321219d1f"
+      },
+      {
+        "workspace": "apps/mobile",
+        "file": "sources/buzz/router-owner.test.ts",
+        "passed": 29,
+        "logSha256": "8ed47e0a2f28e6a36ad845783910599d4164b393e95769d477653d5a9a3cf182"
+      },
+      {
+        "workspace": "apps/mobile",
+        "file": "sources/app/(app)/beeline/tray-empty.browser.test.ts",
+        "passed": 6,
+        "logSha256": "1b6f0e197d04d0961d7389a56f715c9b69ecc399452de519b9c4a6e86292607b"
+      },
+      {
+        "workspace": "apps/mobile",
+        "file": "sources/app/(app)/beeline/needs-you-badge.browser.test.ts",
+        "passed": 1,
+        "logSha256": "14bcaaa508de4ffeed1205787348378f72067e8caa2ca6fbf9861d04f6b81341"
+      },
+      {
+        "workspace": "apps/server",
+        "file": "src/postgres-live.test.ts",
+        "passed": 46,
+        "logSha256": "a7f6542d5519e8ec94938a724cb4c750c29c557eee19f59ab09605b3317cc83e"
+      },
+      {
+        "workspace": "apps/server",
+        "file": "src/command-completion.integration.test.ts",
+        "passed": 3,
+        "logSha256": "fe901ffec6c91f596234dc3c0ab44250a7bf5a613327c3cb12a4d105b385ae5e"
+      },
+      {
+        "workspace": "apps/server",
+        "file": "src/scheduled-work-row-source.integration.test.ts",
+        "passed": 15,
+        "logSha256": "d9e17be3d5f6fd12a3fd52bf3a0f08ded99d631b0489e9de02393ebf0d973a1c"
+      },
+      {
+        "workspace": "apps/server",
+        "file": "src/agent-sign-in.test.ts",
+        "passed": 24,
+        "logSha256": "2abb8f05f5eb22bb451cc68cdf13371ce7ffcad2290bb964bc0472d80eb33930"
+      },
+      {
+        "workspace": "apps/server",
+        "file": "src/postgres-live-imports.test.ts",
+        "passed": 4,
+        "logSha256": "7e3a676ffcaff287b60d889e871dc42af526f1b828875798ebf2ca8c2830dfb8"
+      }
+    ],
+    "checks": [
+      "full root typecheck",
+      "8 workspace builds",
+      "dead-code: 5 existing, 0 introduced",
+      "architecture: 20 rules, base origin/main",
+      "phone network: 72 sites, 72 entries",
+      "router boundaries: 158, no production opt-in",
+      "3 bundle-budget checks"
+    ],
+    "liveSchemaSha256": "4a981927f6b0481293c59c6faf13fb0ba31e958976987bd952678e498d4af513"
+  }
 }

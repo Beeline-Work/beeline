@@ -4,7 +4,7 @@ import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 
 /** Archival writers take lifecycle first, then authority before command or
  * Room/member locks. Acquiring only at the archival trigger is too late. */

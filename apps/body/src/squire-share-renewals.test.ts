@@ -78,3 +78,18 @@ it('ignores a renewal response that arrives after the helper stops', async () =>
   await vi.advanceTimersByTimeAsync(3_000);
   expect(persist).not.toHaveBeenCalled();
 });
+
+it.each([false, true])('F21: a held old persistence result (%s) cannot retire a replacement share', async persisted => {
+  const { renewals, client, call, persist, reaped } = fixture();
+  let finish!: (value: boolean) => void;
+  persist.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  try {
+    await vi.advanceTimersByTimeAsync(500);
+    expect(persist).toHaveBeenCalledOnce();
+    renewals.track('session', client, result());
+    finish(persisted); await vi.advanceTimersByTimeAsync(500);
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(reaped).not.toHaveBeenCalled();
+  } finally { renewals.close(); }
+});

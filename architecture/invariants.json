@@ -113,18 +113,17 @@
     {
       "id": "live.notify",
       "module": "Live fanout",
-      "invariant": "Live notifications are published only by the Live fanout listener and its dependency-free notifier leaf, so its decoder sees every event.",
+      "invariant": "Live notifications are published only by postgres-live.ts, so its decoder sees every event.",
       "pattern": "pg_notify\\s*\\(",
       "flags": "i",
       "scope": [
         "apps/server/src"
       ],
       "owners": [
-        "apps/server/src/postgres-live.ts",
-        "apps/server/src/postgres-live-notifications.ts"
+        "apps/server/src/postgres-live.ts"
       ],
       "total": 0,
-      "fix": "Publish through a named notifier in apps/server/src/postgres-live-notifications.ts (or the listener owner postgres-live.ts) and call it, so LiveNotification and its decoder cover the event."
+      "fix": "Publish through a named notifier in apps/server/src/postgres-live.ts (add one beside notifyConnectorAssignment) and call it, so LiveNotification and its decoder cover the event."
     },
     {
       "id": "timers.server-interval",
@@ -190,7 +189,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 61,
+      "total": 60,
       "fix": "Do not add a setting or flag. Derive the value, reuse an existing setting, or delete the old one it replaces in the same PR."
     },
     {
@@ -265,7 +264,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 24,
+      "total": 19,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {

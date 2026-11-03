@@ -14,7 +14,7 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import { AppState } from 'react-native';
 import { routerLaneStorage, routerAuthorityStorageReady,routerCommandStorageReady } from './surface-storage';
-import { installMediaCacheConnection, installLegacyMediaCacheConnection, suspendMediaCacheConnection, receiveMediaAuthorityRemoval, invalidateMediaCacheDemand, activeMediaObjectIds } from './media-cache-connection';
+import { installMediaCacheConnection, suspendMediaCacheConnection, receiveMediaAuthorityRemoval, invalidateMediaCacheDemand, activeMediaObjectIds } from './media-cache-connection';
 
 export type RouterFamilyMode = 'pending' | 'legacy' | 'router';
 type Negotiation = { generation: number; families: readonly LaneFamily[];
@@ -288,7 +288,7 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
   } else {
     media?.disconnected();
     if (next.mediaMetadataV1) suspendMediaCacheConnection();
-    else installLegacyMediaCacheConnection(next.generation);
+    else installMediaCacheConnection({ generation: next.generation, mediaMetadataV1: false });
   }
   if (!lanes || !admission) { notify(); return; }
   // Connection recovery authority replaces expired screen authority exactly once

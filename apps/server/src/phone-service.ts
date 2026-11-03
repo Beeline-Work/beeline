@@ -12,7 +12,7 @@ import {readWalletProjection} from './wallet.js';
 import {projectWorkbenchDisplay} from '@beeline/api-contract/workbench';
 import { CommandScopedDatabase } from './command-scoped-database.js';
 import type { TrayDecisionOperation } from './tray-decision-command.js';
-import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
+import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
 import type { RouterSnapshotInput, RouterValues, RouterFamily,RouterSnapshot,RouterAuthorityCertificate } from '@beeline/api-contract/router-protocol';
 import { withdrawMergeApprovalsBy } from './corner-merge-approval.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';

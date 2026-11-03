@@ -1,4 +1,4 @@
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 
 /** Object bytes/version and committed references are authority dependencies.
  * All changes share the existing short final-fence lock; ordinary text-only

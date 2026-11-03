@@ -1,7 +1,7 @@
 import type {RouterFamily,RouterFact,RouterSnapshot,RouterSnapshotInput} from '@beeline/api-contract/router-protocol';
 import type {SqlDatabase} from './database.js';
 import type {PhoneService} from './phone-service.js';
-import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
+import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
 import {readRouterStreamCut,routerAuthority,routerAtomicGroup,RouterProjectionUnavailable} from './router-projections.js';
 
 export const ownerFamily=(family:string):family is 'owner-workbench'|'owner-wallet'=>family==='owner-workbench'||family==='owner-wallet';

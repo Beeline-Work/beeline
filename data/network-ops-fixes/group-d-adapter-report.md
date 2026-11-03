@@ -2,7 +2,7 @@
 
 The router capability remains off. This is a pre-rollout adapter follow-up, not
 whole-finding closure or an installed-native acceptance claim. The integration
-base for this report is `5ac0dcb45`. Existing rollout-readiness and closure-ledger
+base for this report is `93e8f3c08`. Existing rollout-readiness and closure-ledger
 rows retain their authority; held compatibility removals stay held.
 
 ## Per-finding disposition

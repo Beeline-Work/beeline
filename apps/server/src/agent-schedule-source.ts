@@ -1,4 +1,4 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 /** Fixed private queue hint on the existing completion channel. No phone fact. */
 export const AGENT_SCHEDULE_DUE_KEY = { principal: 'schedule', operation: 'due', commandId: 'pending' } as const;
 export const AGENT_SCHEDULE_SOURCE_SCHEMA = `

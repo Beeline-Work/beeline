@@ -36,7 +36,6 @@ import {
   removeNeedsYou,
   subscribeTrayGap,
   updateSavedList,
-  useTrayList,
 } from '@/buzz/needs-you-store';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
@@ -153,11 +152,7 @@ export default function TrayScreen() {
   const [trayFocused, setTrayFocused] = useState(false);
   const routed = useRoutedTray(workspaceId, trayFocused);
   const legacy = routed.mode === 'legacy';
-  // The badge reads this same slot, so its count follows the visible list.
-  const legacyTray = useTrayList(workspaceId, legacy);
-  const needs = legacy ? legacyTray.needs : routed.value?.needs.items ?? null;
-  const bookmarks = legacy ? legacyTray.bookmarks : routed.savedRows.map(row=>row.value);
-  const savedNext = legacy ? legacyTray.next : routed.savedNext;
+  const { needs, bookmarks, savedNext } = routed;
   const loadingSaved = useRef(false);
   const savedScroll = useRef(false);
   const [selectedTarget, setSelected] = useState<Target | null>(null);

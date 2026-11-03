@@ -1,7 +1,7 @@
 import type { SqlDatabase } from './database.js';
 import { askingMessageSql, cardExpiresAtSql, questionForSql } from './needs-you.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
-import { liveControlNotificationSchema } from './postgres-live-notifications.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
+import { liveControlNotificationSchema } from './postgres-live.js';
 import {TRAY_CLOCK_READINESS_SCHEMA} from './tray-clock-readiness.js';
 
 import {TRAY_CLOCK_KINDS,type TrayClockClaim} from './tray-clock-protocol.js';

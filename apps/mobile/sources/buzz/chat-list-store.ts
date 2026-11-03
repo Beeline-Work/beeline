@@ -237,27 +237,27 @@ function resetStores(): void {
 }
 subscribeClientReset(resetStores);
 
-function acquireLegacyChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
-  const id = idOf(key);
-  let store = stores.get(id);
-  if (!store) {
-    const created = new ChatListStore(key, () => { if (stores.get(id) === created) stores.delete(id); });
-    store = created;
-    stores.set(id, store);
-  }
-  const held = store;
-  const member = { ...consumer };
-  held.attach(member);
-  let released = false;
-  return {
-    current: () => held.current(), confirmed: () => held.confirmed(),
-    subscribe: (listener) => held.subscribe(listener), force: () => held.force(), catchUp: () => held.catchUp(),
-    release: () => { if (!released) { released = true; held.detach(member); } },
-    remove: () => { released = true; return held.remove(); },
-  };
-}
 export function acquireChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
-  return acquireRoutedChatList(key, consumer, () => acquireLegacyChatList(key, consumer));
+  // The negotiated router owner creates and retires the old-server store.
+  return acquireRoutedChatList(key, consumer, () => {
+    const id = idOf(key);
+    let store = stores.get(id);
+    if (!store) {
+      const created = new ChatListStore(key, () => { if (stores.get(id) === created) stores.delete(id); });
+      store = created;
+      stores.set(id, store);
+    }
+    const held = store;
+    const member = { ...consumer };
+    held.attach(member);
+    let released = false;
+    return {
+      current: () => held.current(), confirmed: () => held.confirmed(),
+      subscribe: (listener) => held.subscribe(listener), force: () => held.force(), catchUp: () => held.catchUp(),
+      release: () => { if (!released) { released = true; held.detach(member); } },
+      remove: () => { released = true; return held.remove(); },
+    };
+  });
 }
 
 export function liveChatList(key: ChatListKey): ChatListView | null {

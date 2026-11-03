@@ -1,4 +1,4 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 /** A notification is only a wake hint. Every wake checks the durable row again.
  * The process's existing PostgreSQL listener calls notifyCommandCompletion;
  * reconnect calls recoverCommandCompletions after LISTEN has committed. */
@@ -84,7 +84,7 @@ export async function waitForCommittedChange<T>(
 
 /** ID-only committed notifications reuse the existing server listener. These
  * contain no provider tokens, ceremony URL or personalized read payload. */
-export const COMMAND_COMPLETION_SCHEMA = `
+export function commandCompletionSchema(): string { return `
 ${committedCommandNotificationSchema()}
 CREATE OR REPLACE FUNCTION beeline_completion_changed() RETURNS trigger AS $$
 DECLARE item jsonb; previous jsonb; command_key jsonb;
@@ -119,3 +119,4 @@ DROP TRIGGER IF EXISTS beeline_mcp_send_completion ON rooms_mcp_idempotency;
 CREATE TRIGGER beeline_mcp_send_completion AFTER INSERT OR UPDATE OR DELETE ON rooms_mcp_idempotency
  FOR EACH ROW EXECUTE FUNCTION beeline_completion_changed();
 `;
+}

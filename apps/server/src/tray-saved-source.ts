@@ -1,4 +1,4 @@
-import { liveControlNotificationSchema } from './postgres-live-notifications.js';
+import { liveControlNotificationSchema } from './postgres-live.js';
 import { readTraySavedTargets, type TraySavedTarget } from './tray-saved-projection.js';
 
 const TABLES=['messages','identities','rooms','memberships'] as const;

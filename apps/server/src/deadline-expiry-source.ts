@@ -1,5 +1,5 @@
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 
 /** Legacy display compatibility: only changed stored deadline inputs admit work. */
 export const DISPLAY_DEADLINE_KEY = { principal: 'display', operation: 'expiry', commandId: 'stored' } as const;

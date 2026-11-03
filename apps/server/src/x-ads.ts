@@ -1,4 +1,5 @@
-import { liveControlNotificationSchema } from './postgres-live-notifications.js';
+import { X_SIGNUP_DELIVERY_TABLE } from './postgres-live-notifications.js';
+import { liveControlNotificationSchema } from './postgres-live.js';
 import { dashboardSiteDownloadTaps } from './site-download-taps.js';
 import { dashboardXSiteVisits } from './x-site-visits.js';
 import { createHash } from 'node:crypto';
@@ -42,7 +43,7 @@ export async function recordXSignup(
   return context.twclid && eventId ? { eventId, conversionId } : undefined;
 }
 
-export const X_SIGNUP_DELIVERY_TABLE = 'x_signup_delivery';
+export { X_SIGNUP_DELIVERY_TABLE } from './postgres-live-notifications.js';
 export const X_SIGNUP_DELIVERY_SCHEMA = `
 ${liveControlNotificationSchema()}
 CREATE OR REPLACE FUNCTION beeline_notify_x_signup_delivery() RETURNS trigger AS $$

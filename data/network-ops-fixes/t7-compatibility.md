@@ -93,6 +93,55 @@ DDL statement twice and requires unique, non-null final identities. Existing
 old columns and wire fields remain. This module is staged/uninstalled; changing
 it does not establish that the complete migration graph is backward-compatible.
 
+### Historical-source expansion smoke
+
+`scripts/prove-router-expansion-source.mjs` passes on isolated PostgreSQL16 and
+actual loopback WebSockets. It checks all 621 archived `apps/server` files against
+Git blobs at `f43bd3f86e4c7a30aa75378df82fcbda10027c72` before loading historical
+migration/PhoneService/live/server modules. The [result artifact](t7-expansion-source-proof.json)
+records entry hashes, the installed dependency lock and production base head.
+
+After historical migration and a synthetic Room fixture, the current migration
+preserves all 1,508 existing catalog columns (name, type and nullability) and adds
+54 catalog columns. The already-running old handler returns the identical Room
+DTO after expansion and commits a reaction. Stopping/recreating that old socket
+server still works; its Room wire equals the current policy-off handler's wire.
+A current-handler reaction removes the reaction once. Repeating migration
+preserves the complete then-current old DTO and both exact readiness checks.
+
+This is a **historical-source smoke with current installed dependencies**.
+Auth is synthetic, the server startup/background lifecycle is not executed,
+auth-service migrations and every old operation/cohort are not covered, and
+catalog comparison does not prove all constraints/index semantics. It is not a
+historical container image, canary deployment or complete rollback proof. The
+first run's final assertion compared against revision0 from before two intended
+reaction writes; it was corrected to assert revision2 before repeated migration
+and compare that exact current DTO afterwards. No production behavior/assertion
+budget was changed to obtain the passing result.
+
+Reproduce from this checkout with an isolated loopback URL in
+`BEELINE_COMMAND_TEST_POSTGRES_URL`:
+
+```sh
+mkdir -p .beeline-proof/historical-server46
+git archive f43bd3f86e4c7a30aa75378df82fcbda10027c72 apps/server package.json tsconfig.base.json | tar -x -C .beeline-proof/historical-server46
+ln -s "$PWD/node_modules" .beeline-proof/historical-server46/node_modules
+NODE_OPTIONS=--max-old-space-size=4096 node --import tsx scripts/prove-router-expansion-source.mjs .beeline-proof/historical-server46
+```
+
+The same source smoke now also runs the actual bundled mobile `LiveConnection`
+against a selected current server and the historical source server with its
+real `DurableLiveReplay` composition. A committed reply is dropped at the socket;
+the client opens one replacement, sends no selected command/stale snapshot to
+the historical server, and reuses its exact command identity after explicit
+recovery. Assertions require one effect, one durable row, one snapshot and zero
+HTTP fallback. Platform/auth/UI seams and the supplied owner bridge remain
+explicit; this is not full navigation, installed-native or historical-image
+coverage. The first mobile extension omitted the historical replay owner and
+therefore never received workspace sync acknowledgement. The fixture now uses
+the actual owner from historical `index.ts`; no synthetic acknowledgement or
+weaker readiness assertion was substituted.
+
 ### Required release sequence
 
 1. **Expansion release, router off.** Cut the prerequisite release from the
@@ -153,13 +202,13 @@ full-family integration, physical-phone latency, iOS or Tauri proofs.
 ## Bundle and boundary snapshot
 
 [Machine-readable snapshot](t7-boundary-snapshot.json) records the production
-base head, manifest hashes and hashes of every bundled input. The test-only
-change accompanying the snapshot does not change those inputs.
+head `73a6c477d`, manifest hashes and hashes of every bundled input after the
+group draft integration. Bundle inputs differ from the earlier staged snapshot.
 
 | Measurement | Observed | Hard limit / meaning |
 | --- | --- | --- |
-| Complete private phone owner | 82,592 raw / 23,589 gzip bytes | 90,112 / 24,576; passes |
-| Phone shadow input entry | 27,146 raw / 5,838 gzip bytes | 32,768 / 8,192; passes |
+| Complete private phone owner | 83,222 raw / 23,714 gzip bytes | 90,112 / 24,576; passes |
+| Phone shadow input entry | 27,388 raw / 5,872 gzip bytes | 32,768 / 8,192; passes |
 | Router boundary inventory | 158 keys / 218 occurrences | All declared, but still legacy migration debt |
 | Phone channel inventory | 72 keys / 89 occurrences | Matches the existing manifest; zero scanner errors |
 
@@ -188,3 +237,36 @@ tightened enforcement gate is authorized. The added base-scanner driver was
 reverted; the existing phone/router scanners and CI hooks remain as specified.
 No live repository settings were changed. These observations do not establish
 the specification's enforceable-review proof or close T7.
+
+## Integrated verification checkpoint
+
+On the composed group source: Group A's seven scoped PostgreSQL scenarios and
+Group B's four background-composition PostgreSQL cases pass, using one suite at
+a time on an isolated loopback PostgreSQL16 cluster in this worktree. Schema
+readiness passes the historical-source marker proof plus all three existing
+release-readiness cases; Saved-window tests pass all 20 cases, including legacy
+inserts between each DDL statement twice. Server types, all three existing
+bundle gates and the unchanged inventory checks pass. These results do not
+replace each group's outstanding strict closure/cohort obligations.
+
+The integrated Group C payload script passes: 200 tools produce zero initial
+tool rows and a 1,866-byte initial value; explicit pages recover all 200 tools,
+one requested output retains 32,768 bytes, and revocation enqueues zero results.
+Its four PostgreSQL completion cases also pass. The separate strict F13
+statement/CPU/WAL workload obligation remains open.
+
+The current trusted-base architecture check **fails** on five inherited
+relaxations in `architecture/invariants.json`: `live.notify` owner additions,
+`settings.server-env`60→61, `paths.server-parallel`18→20,
+`paths.helper-parallel`29→30 and `paths.phone-parallel`19→24. No baseline or guard
+was changed during integration to silence them. These are not a green
+architecture result; the existing owner-only disposition/removal obligation
+remains. Workflow-path validation passes 132 references.
+
+The integrated source also passes all 21 phone socket/HTTP compatibility tests,
+both actual mobile transport recovery cases, and the normal mobile typecheck.
+
+Group C's final follow-up (`062dff0c2`) is integrated: its stricter payload proof
+uses valid source IDs and the actual client DTO guard (1,970-byte initial value),
+and all 29 actual-owner tests pass. The earlier 1,866-byte result used shorter
+synthetic IDs and remains historical evidence, not the latest measurement.

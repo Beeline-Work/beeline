@@ -5,6 +5,7 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
+import { readRoomView } from '@beeline/api-contract/phone';
 import { migrate, PostgresDatabase } from '../apps/server/src/database.ts';
 import { readRoomTools } from '../apps/server/src/room-tool-projection.ts';
 import { fenceRouterEnqueue } from '../apps/server/src/router-projections.ts';
@@ -30,7 +31,7 @@ try {
   await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$3,'Parent',NULL),($2,$3,'Corner',$1)`, [parent, corner, workspace]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'owner'),($1,$2,$3,'owner')`, [workspace, parent, viewer]);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,activity,created_at)
-    SELECT 'large-tool-'||n,$1,$2,'','activity',jsonb_build_array(jsonb_build_object('kind','tool','title','Synthetic tool',
+    SELECT md5('large-tool-'||n)||md5('large-tool-'||n),$1,$2,'','activity',jsonb_build_array(jsonb_build_object('kind','tool','title','Synthetic tool',
       'output',repeat('x',$3::int))),now()-interval '1 second'*n FROM generate_series(1,200)n`, [corner, agent, result.toolOutputBytes]);
   const phone = new PhoneService(db, 'https://synthetic.test'), input = { family: 'room-head', workspaceId: workspace, roomId: corner };
   if(process.env.BEELINE_GROUP_C_COST_PROOF==='1'){
@@ -67,7 +68,10 @@ try {
   const snapshot = await phone.readRouterSnapshot(input, viewer);
   assert.ok(Buffer.byteLength(JSON.stringify(snapshot)) <= 64 * 1024, 'initial Room envelope exceeds 64 KiB');
   assert.equal(snapshot.value.toolRows?.length ?? 0, 0, 'collapsed tool groups leaked their full rows into initial DTO');
-  const reference=snapshot.value.messages.flatMap(message=>message.activity??[]).find(item=>item.toolGroup)?.toolGroup;
+  const parsed=readRoomView(snapshot.value);
+  assert.ok(parsed,'the bounded baseline must pass the actual client DTO guard');
+  assert.equal(parsed.messages.length,snapshot.value.messages.length,'the client guard must not discard a malformed source ID');
+  const reference=parsed.messages.flatMap(message=>message.activity??[]).find(item=>item.toolGroup)?.toolGroup;
   assert.equal(reference?.count,200,'aggregate must preserve the exact count of deferred tools');
   const ids=[];let before;
   do{
@@ -80,7 +84,7 @@ try {
     }
     before=page.next;
     if(ids.length===50)await db.query(`INSERT INTO messages(id,room_id,author_id,text)
-      SELECT 'new-head-'||n,$1,$2,'Unrelated head arrival' FROM generate_series(1,100)n`,[corner,viewer]);
+      SELECT md5('new-head-'||n)||md5('new-head-'||n),$1,$2,'Unrelated head arrival' FROM generate_series(1,100)n`,[corner,viewer]);
   }while(before);
   assert.equal(ids.length,200);assert.equal(new Set(ids).size,200,'stable continuation cannot duplicate or omit tools');
   const full=await readRoomTools(db,{...reference,messageId:ids[0]},viewer);

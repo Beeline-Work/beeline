@@ -34,9 +34,11 @@ No whole finding is closed until all consumers and the specified executable proo
 ## Integrated group drafts (whole findings remain Open)
 
 - Group A: https://github.com/Beeline-Work/beeline/pull/3376 at `8fe42a0a5`; seven scoped PostgreSQL scenarios pass on the integrated source. Five strict closure assertions still identify missing facts/unaffected-cell work; see [report](group-a-proof-report.md).
-- Group B: https://github.com/Beeline-Work/beeline/pull/3375 at `c63418f27`; source/deadline composition and P12 proofs integrated. Whole inventory/cohort reconciliation remains open.
-- Group C: https://github.com/Beeline-Work/beeline/pull/3374 at `df154c8e1`; bounded tool disclosure and PostgreSQL proofs integrated. The strict full Room workload still reports eight candidate statements against two legacy statements; F13 remains open. Other complete-cohort requirements also remain open.
+- Group B: https://github.com/Beeline-Work/beeline/pull/3375 at `c63418f27`; source/deadline composition and P12 proofs integrated; four composed PostgreSQL background cases pass. Whole inventory/cohort reconciliation remains open.
+- Group C: https://github.com/Beeline-Work/beeline/pull/3374 at `062dff0c2`; bounded tool disclosure and PostgreSQL proofs integrated. The strict full Room workload still reports eight candidate statements against two legacy statements; F13 remains open. Other complete-cohort requirements also remain open.
 - No group finding is marked closed merely because its draft is integrated. Router activation remains off. [T7 release sequence](t7-compatibility.md) requires a separate additive expansion release before switching, preserving canary auto-revert to a ledger-aware image.
+
+- Historical-source expansion smoke passes:621 archived source files verified,1,508 old catalog columns preserved, old socket reads/writes and handler recreation work after migration, current legacy-wire equality and repeated migration pass. Actual mobile transport also parks a lost command on that historical server and reuses its identity on recovery with one effect and zero HTTP fallback. [Scope and evidence](t7-compatibility.md) explicitly exclude historical dependencies/container images, full startup and the deployed rollback floor.
 
 ## Validated staged infrastructure
 

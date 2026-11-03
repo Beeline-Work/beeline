@@ -795,6 +795,7 @@ jobs:
           npm test -w @beeline/server -- src/agent-schedule-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/pending-attachment-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/connector-offer-expiry.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          BEELINE_SENTRY_TEST_POSTGRES_URL="$BEELINE_COMMAND_TEST_POSTGRES_URL" npm test -w @beeline/server -- src/sentry-wake.test.ts -t 'SENTRY-CLOCK|SENTRY-DEADLINE' --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/background-leader.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-command.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-projections.postgres.test.ts --maxWorkers=2 --minWorkers=1

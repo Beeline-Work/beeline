@@ -1,12 +1,13 @@
+import { BackgroundWork } from './background-work.js';
 import { createHmac, randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import type { AddressInfo } from 'node:net';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { migrate, PostgresDatabase, type ClosableDatabase } from './database.js';
 import { migratedDatabase } from './test-support.js';
 import { createBeelineServer, type ServerOptions } from './server.js';
 import { LiveHub } from './live.js';
-import { flushSentryWakes, nextSentryWakeAt, sentryWakeAgentFromEnv } from './sentry-wake.js';
+import { flushSentryWakes, nextSentryWakeDelayMs, runSentryWakeDeadline, sentryWakeAgentFromEnv } from './sentry-wake.js';
 
 const OWNER = 'a'.repeat(64);
 const JELLYBEAN = '7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877';
@@ -100,7 +101,7 @@ it('Reproduction sentry-no-wake: signed non-regression unresolved delivery queue
   expect((await post(issue('123','unresolved','ongoing'))).status).toBe(200);
   for (let n=0;n<9;n++) expect((await post(issue(String(200+n)))).status).toBe(200);
   expect((await commands()).rowCount).toBe(1);
-  expect(await nextSentryWakeAt(db)).toBeInstanceOf(Date);
+  expect(await nextSentryWakeDelayMs(db)).toBeGreaterThan(0);
   expect((await db.query(`SELECT 1 FROM sentry_wake_issues WHERE pending`)).rowCount).toBe(9);
   // A new service instance sees the durable window, with no process-local timer state.
   await flushSentryWakes(db);
@@ -111,7 +112,7 @@ it('Reproduction sentry-no-wake: signed non-regression unresolved delivery queue
   expect(rows).toHaveLength(2);
   expect(rows[1]!.private_payload.text).toContain('9 Sentry issue events');
   expect(rows.every(row => row.agent_id === JELLYBEAN && row.room_id === TRIAGE)).toBe(true);
-  expect(await nextSentryWakeAt(db)).toBeNull();
+  expect(await nextSentryWakeDelayMs(db)).toBeNull();
   expect((await db.query(`SELECT id FROM messages`)).rowCount).toBe(messagesBefore);
   const stored = (await db.query(`SELECT * FROM sentry_wake_issues WHERE issue_id='123'`)).rows[0]!;
   expect(stored).toMatchObject({event_type:'issue.unresolved',culprit:'fixture',pending:false});
@@ -157,7 +158,7 @@ it('keeps handled arrivals pending until the recipient has current membership', 
   await db.query(`UPDATE memberships SET removed_at=NULL WHERE identity_id=$1 AND room_id=$2`,[JELLYBEAN,ROOM]);
   await flushSentryWakes(db);
   expect((await commands()).rowCount).toBe(1);
-  expect(await nextSentryWakeAt(db)).toBeNull();
+  expect(await nextSentryWakeDelayMs(db)).toBeNull();
 });
 
 it('updates a later occurrence of the same issue without waking again for retries or older events', async () => {
@@ -180,7 +181,7 @@ it('updates a later occurrence of the same issue without waking again for retrie
   expect((await commands()).rowCount).toBe(2);
   expect((await commands()).rows[1]!.private_payload.text).toContain('(12 events)');
   await post(later);
-  expect(await nextSentryWakeAt(db)).toBeNull();
+  expect(await nextSentryWakeDelayMs(db)).toBeNull();
 });
 
 it('Reproduction SENTRY-ARRIVAL-1: handled issue.created wakes privately on arrival and coalesces mixed bursts', async () => {
@@ -196,16 +197,16 @@ it('Reproduction SENTRY-ARRIVAL-1: handled issue.created wakes privately on arri
   expect(first[0]!.private_payload.text).toContain('error: Issue 7805731896');
   expect((await db.query(`SELECT urgent,pending FROM sentry_wake_issues`)).rows)
     .toEqual([{urgent:false,pending:false}]);
-  expect(await nextSentryWakeAt(db)).toBeNull();
+  expect(await nextSentryWakeDelayMs(db)).toBeNull();
   expect((await post(handled)).status).toBe(200);
   const next = issue('702');
   next.data.issue.level = 'error';
   expect((await post(next)).status).toBe(200);
   expect((await post(issue('703'))).status).toBe(200);
   expect((await commands()).rowCount).toBe(1);
-  const deadline = (await nextSentryWakeAt(db))!;
-  expect(deadline.getTime()).toBeGreaterThan(Date.now());
-  expect(deadline.getTime()).toBeLessThanOrEqual(Date.now()+5*60*1000);
+  const deadline = (await nextSentryWakeDelayMs(db))!;
+  expect(deadline).toBeGreaterThan(0);
+  expect(deadline).toBeLessThanOrEqual(5*60*1000);
   // Even an expired legacy daily clock cannot bypass burst coalescing.
   await db.query(`UPDATE sentry_wake_state SET last_daily_wake_at=now()-interval '25 hours'`);
   await flushSentryWakes(db);
@@ -220,7 +221,7 @@ it('Reproduction SENTRY-ARRIVAL-1: handled issue.created wakes privately on arri
   expect(rows[1]!.private_payload.text).not.toContain('/7805731896/');
   await post(next);
   expect((await commands()).rowCount).toBe(2);
-  expect(await nextSentryWakeAt(db)).toBeNull();
+  expect(await nextSentryWakeDelayMs(db)).toBeNull();
   expect((await db.query(`SELECT id FROM messages`)).rowCount).toBe(messagesBefore);
 });
 
@@ -232,11 +233,11 @@ it('releases handled backlog from the old daily policy on restart without a new 
   await post(handled);
   await db.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`,[TRIAGE]);
   await db.query(`UPDATE sentry_wake_state SET last_wake_at=NULL,last_daily_wake_at=now()`);
-  expect((await nextSentryWakeAt(db))!.getTime()).toBeLessThanOrEqual(Date.now());
+  expect(await nextSentryWakeDelayMs(db)).toBe(0);
   await Promise.all([flushSentryWakes(db),flushSentryWakes(db)]);
   expect((await commands()).rowCount).toBe(1);
   expect((await commands()).rows[0]!.private_payload.text).toContain('/700/');
-  expect(await nextSentryWakeAt(db)).toBeNull();
+  expect(await nextSentryWakeDelayMs(db)).toBeNull();
 });
 
 it('recognizes issue flags and both Sentry handled-tag encodings without treating handled exceptions as urgent', async () => {
@@ -286,7 +287,7 @@ it('Reproduction SENTRY-ALERT-WAKE: signed alerts suppress repeats across event 
   await post(unresolved);
   await flushSentryWakes(db);
   expect((await commands()).rowCount).toBe(1);
-  expect(await nextSentryWakeAt(db)).toBeNull();
+  expect(await nextSentryWakeDelayMs(db)).toBeNull();
   const regression = issue('7797705387','regressed');
   regression.data.issue.level = 'error';
   regression.data.issue.lastSeen = '2026-10-22T16:04:00Z';
@@ -303,4 +304,43 @@ it('Reproduction SENTRY-ALERT-WAKE: signed alerts suppress repeats across event 
   await db.query(`UPDATE sentry_wake_issues SET last_digested_at=now()-interval '6 hours'`);
   await post(alert(7,'fatal'),'event_alert');
   expect((await commands()).rowCount).toBe(4);
+});
+
+it('SENTRY-DEADLINE: empty and unauthorized batches stay idle until an actual admission', async () => {
+  await fixture();
+  let now=0;
+  const work=new BackgroundWork(()=>now,()=>{}),run=vi.fn(()=>runSentryWakeDeadline(db));
+  work.addDeadline('sentry',run);
+  expect(await work.run(true)).toBe(Infinity);
+  now+=86_400_000;expect(await work.run(false)).toBe(Infinity);expect(run).toHaveBeenCalledOnce();
+  await db.query('UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2',[JELLYBEAN,ROOM]);
+  await post(issue('901'));
+  work.wake('sentry');expect(await work.run(false)).toBe(Infinity);
+  expect((await commands()).rowCount).toBe(0);
+  now+=86_400_000;expect(await work.run(false)).toBe(Infinity);expect(run).toHaveBeenCalledTimes(2);
+  await db.query('UPDATE memberships SET removed_at=NULL WHERE identity_id=$1 AND room_id=$2',[JELLYBEAN,ROOM]);
+  work.wake('sentry');expect(await work.run(false)).toBe(Infinity);
+  expect((await commands()).rowCount).toBe(1);
+});
+
+it('SENTRY-DEADLINE: failed observation parks without another query or timer', async () => {
+  let now=0;
+  const transaction=vi.fn().mockRejectedValue(new Error('database unavailable'));
+  const work=new BackgroundWork(()=>now,()=>{});
+  work.addDeadline('sentry',async()=>{try{return await runSentryWakeDeadline({query:vi.fn(),transaction});}catch{return;}});
+  expect(await work.run(true)).toBe(Infinity);
+  now=86_400_000;expect(await work.run(false)).toBe(Infinity);expect(transaction).toHaveBeenCalledOnce();
+  work.wake('sentry','real-recovery');await work.run(false);expect(transaction).toHaveBeenCalledTimes(2);
+});
+
+// PGlite shares JavaScript's clock; only a separate PostgreSQL process can
+// prove host/database clock independence. The isolated CI lane always runs it.
+it.runIf(Boolean(postgresUrl))('SENTRY-CLOCK: host clock skew cannot advance or extend the persisted batch window', async () => {
+  await fixture();await post(issue('910'));await post(issue('911'));
+  vi.useFakeTimers({toFake:['Date']});vi.setSystemTime(new Date('2099-01-01'));
+  try {
+    const delay=await runSentryWakeDeadline(db);
+    expect(delay).toBeGreaterThan(240_000);expect(delay).toBeLessThanOrEqual(300_000);
+    expect((await commands()).rowCount).toBe(1);
+  } finally {vi.useRealTimers();}
 });

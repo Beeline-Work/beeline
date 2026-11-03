@@ -1,3 +1,4 @@
+import { SENTRY_WAKE_SOURCE_SCHEMA } from './sentry-wake-source.js';
 import { CONNECTOR_OFFER_EXPIRY_SCHEMA } from './connector-offer-expiry.js';
 import { PENDING_ATTACHMENT_SOURCE_SCHEMA } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_SOURCE_SCHEMA } from './agent-schedule-source.js';
@@ -3528,6 +3529,7 @@ export async function migrate(
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
+  await ddlScript('sentry eligibility source', SENTRY_WAKE_SOURCE_SCHEMA);
   await ddlScript('agent schedule due source', AGENT_SCHEDULE_SOURCE_SCHEMA);
   await ddlScript('pending attachment due source', PENDING_ATTACHMENT_SOURCE_SCHEMA);
   await ddlScript('computer expiry source', COMPUTER_EXPIRY_SCHEMA);

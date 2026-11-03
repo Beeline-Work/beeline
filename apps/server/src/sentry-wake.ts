@@ -1,3 +1,4 @@
+import { SENTRY_TRIAGE_ROOM } from './sentry-wake-source.js';
 import { notifySentryWake } from './postgres-live.js';
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto';
 import { quoteOutsideData } from '@beeline/api-contract/phone';
@@ -12,7 +13,7 @@ export function sentryWakeAgentFromEnv(env: NodeJS.ProcessEnv = process.env): st
   if (!/^[0-9a-f]{64}$/.test(agentId)) throw new Error('BEELINE_SENTRY_TRIAGE_AGENT_ID must be an agent public key');
   return agentId;
 }
-const TRIAGE = 'a914716f-cd6c-4663-b42a-6e1044dc2bb9';
+const TRIAGE = SENTRY_TRIAGE_ROOM;
 export const SENTRY_WAKE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS sentry_wake_state (
  singleton boolean PRIMARY KEY DEFAULT true CHECK(singleton),
@@ -110,17 +111,19 @@ export async function receiveSentryWake(db: SqlDatabase, raw: Buffer,
   return 200;
 }
 
-/** The command and batch acknowledgement commit together under a cross-machine row lock. */
-export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgentFromEnv()): Promise<void> {
-  await db.transaction(async tx => {
+/** The command and batch acknowledgement commit together under a cross-machine row lock.
+ * False parks an empty or currently unauthorized batch; it creates no retry deadline. */
+export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgentFromEnv()): Promise<boolean> {
+  return db.transaction(async tx => {
     const state = await tx.query<{ wake_due: boolean }>(`SELECT
       (last_wake_at IS NULL OR last_wake_at<=now()-interval '5 minutes') wake_due
       FROM sentry_wake_state WHERE singleton FOR UPDATE`);
-    if (!state.rows[0]?.wake_due) return;
+    if (!state.rows[0]) return false;
+    if (!state.rows[0].wake_due) return true;
     const issues = await tx.query<{ issue_id: string; level: string; title: string; permalink: string; event_count: string }>(
       `SELECT issue_id,level,title,permalink,event_count FROM sentry_wake_issues
        WHERE pending ORDER BY last_seen,issue_id,event_type`);
-    if (!issues.rowCount) return;
+    if (!issues.rowCount) return false;
     await ensureSystemIdentity(tx);
     const digest = `${issues.rowCount} Sentry issue events\n` + issues.rows.map(row =>
       `${row.level}: ${row.title} ${row.permalink} (${row.event_count} events)`).join('\n');
@@ -129,14 +132,23 @@ export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgen
       privatePayload: { kind: 'lifecycle', authorId: SYSTEM_IDENTITY_ID, fromRoomId: TRIAGE,
         text: `${quoteOutsideData('Sentry digest', digest)}\n\nInvestigate these Sentry issues. Post one short visible summary line in this triage corner for every digest, naming each Sentry short ID (look it up from the linked issue if needed) and its action: dismissed, existing corner, or new corner. When a code fix is warranted, open and own a fix corner with yourself as implementer and Speedy as reviewer, linking the Sentry issue id and URL in its brief. Follow existing corner authority and merge rules. When a fix corner you opened from a digest reports blocked: or needs-decision:, handle the report here as its commander: try other vault keys, tools, or a narrower scope; decide, re-order the fix corner, or close it with evidence. Do not forward the report to your own Room session. Only when a human must act (sign-in, payment, approval, or a product decision), post the exact blocker in the issues-triage corner (a914716f-cd6c-4663-b42a-6e1044dc2bb9) and tag the Workspace owner @lunchboxfortwo.` },
     });
-    if (!command) return;
+    if (!command) return false;
     await tx.query(`UPDATE sentry_wake_issues SET pending=false,last_digested_at=clock_timestamp(),last_digested_level=level WHERE pending`);
     await tx.query(`UPDATE sentry_wake_state SET last_wake_at=clock_timestamp() WHERE singleton`);
+    return true;
   });
 }
 
-export async function nextSentryWakeAt(db: SqlDatabase): Promise<Date | null> {
-  const row = (await db.query<{ due: Date }>(`SELECT COALESCE(last_wake_at+interval '5 minutes',now()) due
+/** Remaining duration comes from the same database clock as batch admission. */
+export async function nextSentryWakeDelayMs(db: SqlDatabase): Promise<number | null> {
+  const row = (await db.query<{ delay_ms: number }>(`SELECT greatest(0,ceil(extract(epoch FROM
+    (COALESCE(last_wake_at+interval '5 minutes',clock_timestamp())-clock_timestamp()))*1000))::float8 delay_ms
     FROM sentry_wake_state WHERE singleton AND EXISTS(SELECT 1 FROM sentry_wake_issues WHERE pending)`)).rows[0];
-  return row?.due ? new Date(row.due) : null;
+  return row?.delay_ms ?? null;
+}
+
+/** One admitted owner pass; refused/failed work never supplies a retry clock. */
+export async function runSentryWakeDeadline(db: SqlDatabase, agentId = sentryWakeAgentFromEnv()): Promise<number | undefined> {
+  if (!await flushSentryWakes(db, agentId)) return undefined;
+  return (await nextSentryWakeDelayMs(db)) ?? undefined;
 }

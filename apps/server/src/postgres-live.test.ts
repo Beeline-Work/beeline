@@ -1,3 +1,4 @@
+import { SENTRY_TRIAGE_ROOM, sentryEligibilityKey } from './sentry-wake-source.js';
 import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
 import { COMMAND_COMPLETION_CHANNEL, subscribeCommandCompletion } from './command-completion.js';
@@ -120,6 +121,45 @@ describe('Postgres live fanout', () => {
     await Promise.all(listeners.map((listener) => listener.stop()));
     await database.close();
     vi.restoreAllMocks();
+  });
+
+  it('SENTRY-ELIGIBILITY: only committed recipient or triage authority changes wake a pending digest', async () => {
+    const agent='b'.repeat(64);
+    await database.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Recipient')",[agent]);
+    await database.query("INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Triage')",[SENTRY_TRIAGE_ROOM,WORKSPACE,ROOM]);
+    await database.query(`INSERT INTO sentry_wake_issues(issue_id,event_type,title,level,culprit,permalink,
+      first_seen,last_seen,event_count,delivery_hash) VALUES('1','issue.created','Synthetic','error','','',now(),now(),1,'hash')`);
+    const live=new LiveHub(),events:LiveEvent[]=[];live.subscribeAll(event=>events.push(event));
+    const client=new PgliteListenClient(database),listener=new PostgresLiveListener(database,live,()=>client),wake=vi.fn();
+    completionReleases.push(subscribeCommandCompletion(sentryEligibilityKey(agent),wake));
+    completionReleases.push(subscribeCommandCompletion(sentryEligibilityKey('sentry'),wake));listeners.push(listener);
+    void listener.run();
+    // Each exact subscription receives one recovery hint after both LISTENs.
+    await eventually(()=>wake.mock.calls.length===2);wake.mockClear();
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WORKSPACE,ROOM,agent]);
+    await eventually(()=>wake.mock.calls.length===1);wake.mockClear();
+    await database.query("UPDATE identities SET name='Renamed' WHERE id=$1",[agent]);
+    await database.query("UPDATE rooms SET name='Renamed' WHERE id=$1",[SENTRY_TRIAGE_ROOM]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,[WORKSPACE,ROOM,AUTHOR]);
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await expect(database.transaction(async db=>{
+      await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2',[ROOM,agent]);
+      throw new Error('rollback');
+    })).rejects.toThrow('rollback');
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await database.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2',[ROOM,agent]);
+    await eventually(()=>wake.mock.calls.length===1);wake.mockClear();
+    await database.query('UPDATE rooms SET archived_at=now() WHERE id=$1',[SENTRY_TRIAGE_ROOM]);
+    await eventually(()=>wake.mock.calls.length===1);wake.mockClear();
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('sentry-wait',$1,$2,'fixture')`,[SENTRY_TRIAGE_ROOM,AUTHOR]);
+    await database.query(`INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,answerable,blocking)
+      VALUES($1,$2,'sentry-wait',now(),true,true)`,[SENTRY_TRIAGE_ROOM,AUTHOR]);
+    await eventually(()=>wake.mock.calls.length===1);wake.mockClear();
+    await database.query("DELETE FROM corner_owed WHERE message_id='sentry-wait'");
+    await eventually(()=>wake.mock.calls.length===1);wake.mockClear();
+    await database.query('UPDATE sentry_wake_issues SET pending=false');
+    await database.query('UPDATE rooms SET archived_at=NULL WHERE id=$1',[SENTRY_TRIAGE_ROOM]);
+    await settle(events);expect(wake).not.toHaveBeenCalled();
   });
 
   it('ATTACHMENT-DUE-SOURCE: committed queue and eligibility changes wake privately; progress and rollback do not', async () => {

@@ -1,3 +1,4 @@
+import { sentryEligibilityKey } from './sentry-wake-source.js';
 import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
 import { ConnectorOfferExpiryLoop, CONNECTOR_OFFER_DUE_KEY } from './connector-offer-expiry.js';
@@ -16,7 +17,7 @@ process.on('unhandledRejection', error => {
   console.error('[unhandled-rejection]', error instanceof Error ? error.name : 'Unknown rejection');
 });
 import { sentryTelegramFromEnv } from './sentry-telegram.js';
-import { flushSentryWakes, nextSentryWakeAt, sentryWakeAgentFromEnv } from './sentry-wake.js';
+import { runSentryWakeDeadline, sentryWakeAgentFromEnv } from './sentry-wake.js';
 import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { runMigrationStep } from './migration-steps.js';
@@ -486,10 +487,9 @@ async function main() {
     const due = await backgroundJobs.run('schedule-next-due', () => schedules.nextDelayMs());
     if (due.ok) return due.value;
   });
-  work.add('sentry', reconciliationMs, async () => {
-    await backgroundJobs.run('sentry-wakes', () => flushSentryWakes(jobsDatabase, sentryWakeAgentId));
-    const due = await backgroundJobs.run('sentry-next-due', () => nextSentryWakeAt(jobsDatabase));
-    if (due.ok && due.value) return Math.max(1000, due.value.getTime() - Date.now());
+  work.addDeadline('sentry', async () => {
+    const due = await backgroundJobs.run('sentry-wakes', () => runSentryWakeDeadline(jobsDatabase, sentryWakeAgentId));
+    if (due.ok) return due.value;
   });
   work.addDeadline('connector-offer-expiry', async () => {
     const due = await backgroundJobs.run('connector-offer-expiry', () => connectorOfferExpiry.runOnce());
@@ -550,6 +550,11 @@ async function main() {
   const stopConnectorOfferWake = subscribeCommandCompletion(CONNECTOR_OFFER_DUE_KEY, wakeConnectorOffers);
   const stopConnectorOfferRecovery = jobsDatabase.onRecovery(wakeConnectorOffers);
   const stopConnectorOfferResync = live.subscribeResync(wakeConnectorOffers);
+  const wakeSentry = () => wakeWork('sentry', 'sentry-eligibility');
+  const stopSentryRecipient = subscribeCommandCompletion(sentryEligibilityKey(sentryWakeAgentId), wakeSentry);
+  const stopSentryRoom = subscribeCommandCompletion(sentryEligibilityKey('sentry'), wakeSentry);
+  const stopSentryRecovery = jobsDatabase.onRecovery(wakeSentry);
+  const stopSentryResync = live.subscribeResync(wakeSentry);
   const wakeChoices = () => wakeWork('choices', 'choice-expiry');
   const wakeAttachments = () => wakeWork('pending-attachment-cleanup', 'attachment-source');
   const stopAttachmentWake = subscribeCommandCompletion(PENDING_ATTACHMENT_DUE_KEY, wakeAttachments);
@@ -606,6 +611,7 @@ async function main() {
     const mcpStopped = stopMcpWebhooks();
     stopSystemDmWake();stopSystemDmRecovery();
     stopConnectorOfferWake();stopConnectorOfferRecovery();stopConnectorOfferResync();
+    stopSentryRecipient();stopSentryRoom();stopSentryRecovery();stopSentryResync();
     stopChoiceWake();stopChoiceRecovery();
     stopAttachmentRecovery();stopAttachmentResync();stopAttachmentWake();
     stopScheduleRecovery();stopScheduleResync();stopScheduleWake();

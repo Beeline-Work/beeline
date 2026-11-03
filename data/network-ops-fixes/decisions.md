@@ -344,3 +344,12 @@ The await point was the fixture's `database.query(INSERT ... generate_series(1,2
 The tiny fix restores historical rows with user triggers disabled only during fixture loading, then reenables them in `finally` before the actual recovery code. Foreign keys stay enforced. The complete21,630-row count, repeated historical text, one-query assertion and materialization/index/zero-tag-subplan execution checks are preserved; an explicit cardinality assertion is added. No timeout is raised and no test is skipped.
 
 Full clean-main presence28 passes in44.01s, and full router-branch presence30 passes in46.62s. The history case itself takes3.686s/3.723s. Logs remain under task-root `.beeline-proof/network-ops/`: `presence-origin-main.log`, `presence-main-seed-plan.log`, `presence-main-seed-plan-5000.log`, `presence-main-fixture-fixed.log`, `presence-branch-fixture-fixed.log`. This resolves D095's validation block. Production source-write performance and whole-router workload/cohort gates remain open; fixture loading is not an ingestion benchmark.
+
+
+## D097 — Sentry batching follows stored deadlines and committed eligibility
+
+The Sentry owner no longer runs a minute reconciliation sweep. It returns only the remaining database-clock batching duration; empty, unauthorized and failed observations park without another timer or query. Signed arrivals, exact recipient membership/kind changes, triage authority and blocking-report changes, and actual database/listener recovery admit another observation. Command insertion and digest acknowledgement remain atomic. Shutdown detaches the new subscriptions before draining leadership.
+
+The eligibility fixture waits for both subscription recovery hints before counting committed writes. Renames, unrelated membership, rollback and an empty queue do not wake it. The clock-skew assertion runs only against separate loopback PostgreSQL because PGlite shares JavaScript's clock; the isolated CI lane explicitly runs that assertion and deadline tests. No production Workspace or provider was used.
+
+Validation: local Sentry13, isolated PostgreSQL deadline/clock3, committed eligibility1, the other listener43, shutdown10, server types, workspace build8, dead-code (five existing/zero introduced), router inventory158, phone inventory72 and workflow paths120 pass. Full route ownership/generations, bounded digest ingestion, source costs and released-cohort gates remain open. No whole finding is newly closed.

@@ -139,3 +139,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F16/F21/F22 connector-offer timeouts use exact committed source and persisted 15-minute deadlines instead of a shared minute scan. Empty/failure observations park; bounded candidate cleanup retains the existing lock order and current eligibility checks. Complete background/ceremony ownership and cohort proofs remain open.
 
 - F14/F16/F18 pending-command renudge no longer runs from the minute sweep or exposes an unscoped30/90-second retry mode. Actual helper connection/pickup events retain bounded recipient-specific hints; bootstrap and stored wake deadlines remain separate recovery paths. Complete route/ownership/cohort gates remain open.
+
+- F16/F18/F22 Sentry batching removes the minute fallback in favor of database-clock deadlines and exact committed eligibility/recovery hints. Local behavior13, isolated PostgreSQL clock/deadline3, source1 and shutdown10 pass. Empty/refused/failed work parks across an idle day. Complete route ownership, bounded ingestion and cohort gates remain open.

@@ -60,7 +60,8 @@ describe('R-BACKGROUND-WASTE', () => {
 
 describe('owned timer chains', () => {
   it('keeps connection cadence and cancels the next tick when its owner closes', async () => {
-    vi.useFakeTimers();
+    // Only own the clock and timeout chain; runtime immediates are unrelated work.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     try {
       const run = vi.fn();
       const stop = startConnectionWork(() => { run(); if (run.mock.calls.length === 2) stop(); }, 1000);
@@ -68,12 +69,15 @@ describe('owned timer chains', () => {
       expect(run).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(2001);
       expect(run).toHaveBeenCalledTimes(2);
+      // Runtime immediates must not count as timers owned by this connection.
+      setImmediate(() => {});
       expect(vi.getTimerCount()).toBe(0);
     } finally { vi.useRealTimers(); }
   });
 
   it('runs startup work immediately and uses the next queue deadline', async () => {
-    vi.useFakeTimers();
+    // Only own the clock and timeout chain; runtime immediates are unrelated work.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     try {
       const work = new BackgroundWork();
       const fast = vi.fn(async () => {}), slow = vi.fn(async () => {});
@@ -92,7 +96,8 @@ describe('owned timer chains', () => {
   });
 
   it('drains an active job on close without scheduling another tick', async () => {
-    vi.useFakeTimers();
+    // Only own the clock and timeout chain; runtime immediates are unrelated work.
+    vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
     try {
       let finish!: () => void;
       const work = new BackgroundWork();

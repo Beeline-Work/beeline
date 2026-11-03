@@ -165,6 +165,8 @@ export function beelineWakesSkillMarkdown(releaseId: string): string {
 
 Every wait below ends the turn. Something already wakes you; no reminder loops.
 
+If a background job's process id is missing after a wake, check the job's output before restarting. If its output is still updating, the job is alive; do not restart it.
+
 | Waiting for | What wakes you |
 | --- | --- |
 | An agent you ordered | Its report |

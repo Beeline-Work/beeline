@@ -63,5 +63,15 @@
     }
   ],
   "runtime": "dependency-free DOM controller",
-  "fontBytes": 327392
+  "fontBytes": 327392,
+  "assets": [
+    {
+      "path": "web/marketing/codex-logo.png",
+      "source": "https://openai.gallery.vsassets.io/_apis/public/gallery/publisher/openai/extension/chatgpt/latest/assetbyname/Microsoft.VisualStudio.Services.Icons.Default",
+      "publisher": "OpenAI",
+      "description": "Unmodified official OpenAI mark published with the Codex IDE extension. Used to identify Codex in the marketing demo.",
+      "retrieved": "2026-11-03",
+      "sha256": "2ce1c57dd3b312417106a487815ab1235bddce17e1fa9b32a2f048bd71ee25d3"
+    }
+  ]
 }

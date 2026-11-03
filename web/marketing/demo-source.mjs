@@ -88,7 +88,7 @@ function createSync(){
  const room=new Room(host.querySelector('.native-room'),text=>{takeControl();sendRoom(text);},takeControl);
  const record=name=>{phase=name;events.push({phase,cycle,at:Math.round(performance.now())});events=events.slice(-96);};
  const add=e=>{history.push(withID(e));history=history.slice(-50);render();};const log=text=>{terminal.push(text);terminal=terminal.slice(-50);render();};
- function render(){room.render(history,active);output.replaceChildren(...terminal.map(text=>{const div=document.createElement('div');div.textContent=text;return div;}));if(!terminal.length){const hint=document.createElement('span');hint.className='tui-hint';hint.textContent=command;output.append(hint);}output.scrollTop=output.scrollHeight;input.placeholder=joined?'Ask Codex to build something':command;}
+ function render(){room.render(history,active);output.replaceChildren(...terminal.map(text=>{const div=document.createElement('div');div.className=text.startsWith('› ')?'tui-human':'tui-agent';div.textContent=text;return div;}));if(!terminal.length){const hint=document.createElement('span');hint.className='tui-hint';hint.textContent=command;output.append(hint);}output.scrollTop=output.scrollHeight;input.placeholder=joined?'Ask Codex to build something':command;}
  function cancel(){pending.forEach(clearTimeout);pending=[];}
  function takeControl(){manual=true;cancel();record('interactive');}
  function later(ms,fn){pending.push(setTimeout(()=>{if(visible&&!manual&&!document.hidden)fn();},ms));}

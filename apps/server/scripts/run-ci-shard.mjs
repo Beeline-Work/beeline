@@ -24,8 +24,9 @@ const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime
 const timingFiles = [isolated[0], isolated[2], isolated[3]];
 const hostedTiming = process.env.SERVER_HOSTED_TIMING || 'false';
 assert.ok(['true', 'false'].includes(hostedTiming), 'SERVER_HOSTED_TIMING must be true or false');
-assert.ok(hostedTiming === 'false' || process.env.GITHUB_EVENT_NAME === 'pull_request',
-  'only PRs can move timing coverage to the required hosted replay gate');
+assert.ok(hostedTiming === 'false' || process.env.GITHUB_EVENT_NAME === 'pull_request'
+  || (process.env.GITHUB_EVENT_NAME === 'push' && process.env.GITHUB_REF === 'refs/heads/main'),
+  'only PRs and main pushes can move timing coverage to the required hosted replay gate');
 const exclusions = ['src/production-corpus-hot-reads.test.ts', 'src/integration.test.ts', 'src/agent-command.scaling.test.ts', ...isolated]
   .flatMap((file) => ['--exclude', file]);
 function list(files = [], exclude = exclusions) {

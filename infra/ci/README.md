@@ -6,9 +6,9 @@ release/production services. There is no new service or workflow gate.
 
 The pool has ten active listeners and one job per listener. Instance 01 has
 one CPU for control work. Instances 02–09 have two CPUs / 8 GiB for server
-shards and sequential TYPECHECK tasks. Instance 10 has three CPUs / 12 GiB
-and CPUWeight 300 for MOBILE SUITE. Each job owns its checkout; mobile tests
-never run concurrently with a compiler in the same working tree. The slice shares `CPUQuota=1000%` / `MemoryMax=60G` across all
+shards, shared-package tests, TYPECHECK and independent companion checks. Instance 10 has three CPUs / 12 GiB
+and CPUWeight 300 for MOBILE SUITE. Each job owns its checkout; parallel checks
+never share a mutable working tree. The slice shares `CPUQuota=1000%` / `MemoryMax=60G` across all
 listeners; individual maxima are not additive capacity. Limits cover every
 child process. Existing credential isolation and production/release services
 are preserved. The cache tar wrapper uses a shared file lock; no service is added.
@@ -74,8 +74,8 @@ minimum available memory, peak pool memory and OOM/throttling deltas.
 
 The follow-up targets each server shard at or below twenty minutes, with CI
 pool usage inside ten CPUs and 60 GiB and no OOM kills. Report measured per-PR
-wall time, remaining unexplained failures and concurrent workload. The overall
-twelve-minute target is deferred. Host load is context; it is not the CI CPU
+wall time, remaining unexplained failures and concurrent workload. The captain now targets as close to ten minutes per PR as possible through
+selection and cache/setup reuse, with no additional paid runners. Host load is context; it is not the CI CPU
 budget. A ten-CPU quota alone does not prove wall-time capacity.
 Confirm required check names against the base workflow and verify main's
 required checks remain green. Record actual after measurements in the PR;

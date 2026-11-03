@@ -115,7 +115,7 @@ describe('native fingerprint gate', () => {
     expect(checksWorkflow).toContain('name: NATIVE FINGERPRINT');
     expect(workspaceTasks).toMatch(/native_fingerprint\(\)\s*\{[^}]*npm run fingerprint:check/);
     expect(checksWorkflow).toContain('run: node scripts/run-ci-workspace-checks.mjs');
-    expect(checksWorkflow).toContain("needs.typecheck.outputs['native-fingerprint']");
+    expect(checksWorkflow).toContain('run: timeout 15m bash scripts/ci-workspace-tasks.sh native-fingerprint');
     for (const path of [
       'apps/mobile/package.json',
       'apps/mobile/package-lock.json',

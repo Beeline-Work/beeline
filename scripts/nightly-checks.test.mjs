@@ -8,7 +8,7 @@ const job = (name, conclusion, attempt) => ({ name, conclusion, id: attempt, htm
 test('nightly schedule selects 03 Eastern in winter and summer and dispatches all on main', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/nightly-checks.yml', import.meta.url), 'utf8'));
   assert.deepEqual(workflow.on.schedule.map(s => s.cron), ['7 7 * * *', '7 8 * * *']);
-  assert.equal(workflow.jobs.nightly.steps[2].env.SCHEDULE, '${{ github.event.schedule }}');
+  assert.equal(workflow.jobs.nightly.steps.find(step => step.run === 'node scripts/nightly-checks.mjs').env.SCHEDULE, '${{ github.event.schedule }}');
   assert.equal(workflow.permissions.actions, 'write');
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
   for (const [yes, no] of [['2026-01-01T08:00Z', '2026-01-01T07:00Z'], ['2026-07-01T07:00Z', '2026-07-01T08:00Z']]) {

@@ -33,7 +33,7 @@ async function main() {
     assert.ok(['true', 'false'].includes(value), `${flag} must be true or false`);
     return [name, value === 'true'];
   }));
-  if (['pull_request', 'merge_group'].includes(process.env.GITHUB_EVENT_NAME)) {
+  if (['pull_request', 'merge_group', 'push'].includes(process.env.GITHUB_EVENT_NAME)) {
     assert.equal(enabled.typecheck, true, 'TYPECHECK must execute on every PR and merge group');
   }
   const children = new Set();

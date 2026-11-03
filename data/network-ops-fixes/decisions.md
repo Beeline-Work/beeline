@@ -313,3 +313,14 @@ Validation: cleanup7, live listener43 plus the extended focused command-source c
 The isolated overlay proof installs the production live schema prefix, which now also installs the corner cache UPDATE trigger. Its minimal fixture lacked that relation. Adding the unused fixture table preserves the actual listener, UTF8 generation, missed revision, viewer demand and terminal resurrection assertions; isolated PostgreSQL1 passes.
 
 The published shared suite also returned exit2 from the nightly-host fixture's first mocked run without surfacing stderr. The assertion now includes stderr. All11 isolated mocked host cases pass locally; the CI-only cause is not established and this diagnostic change is not claimed as a fix. No real emulator, host lifecycle or production operation was invoked. Full CI on the next head remains required.
+
+
+## D094 — Connector-offer expiry follows the stored ceremony deadline
+
+Connector offer expiry leaves the shared minute repair loop. The existing aggregate owner now admits startup, actual committed connecting-status/deadline changes, feed/database recovery or the earliest persisted accepted/created timestamp plus15 minutes. Pending proposal/content-only/rolled-back changes do not wake it. Empty and failed observations park; failure supplies no retry time.
+
+Timeout candidate discovery is capped100 and uses the partial connecting-deadline index. Installation cleanup is restricted to those candidates and rechecks their current connecting/deadline predicate; the final offer transition rechecks it under row lock. The existing agent→connector→offer lock order is preserved. Reported completion and a separate explicit connection retry retain their semantics; no new provider observation or UI is introduced.
+
+Whole background ownership, complete provider/ceremony migration and released-cohort gates remain open. The isolated PostgreSQL fixture checks actual candidate/deadline SQL over20,001 minimal rows, database-clock admission under host time2099 and indexed lookups under40 shared blocks each; it is not a complete transition or workload proof. Actual transitions are covered by migrated integration fixtures.
+
+Validation: connector source/idle/failure3, real HTTP/card/command integration4, isolated PostgreSQL clock/index1, shutdown10, server types, workspace build8, dead-code (five existing/zero new), router inventory158 and workflow paths119 pass. No whole finding is newly closed.

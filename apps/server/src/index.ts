@@ -1,6 +1,6 @@
 import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
-import { failConnectingOffers } from './connector-offer-completion.js';
+import { ConnectorOfferExpiryLoop, CONNECTOR_OFFER_DUE_KEY } from './connector-offer-expiry.js';
 import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { NextDayCheckin } from './next-day-checkin.js';
 import { RoomsMcp } from './rooms-mcp.js';
@@ -311,6 +311,7 @@ async function main() {
       })
     : new MediaExpiryLoop(jobsDatabase);
   const choiceExpiry = new ChoiceExpiryLoop(jobsDatabase);
+  const connectorOfferExpiry = new ConnectorOfferExpiryLoop(jobsDatabase);
   const pendingAttachmentCleanup = new PendingAttachmentCleanupLoop(jobsDatabase);
   const deadlineExpiry = new DeadlineExpiry(jobsDatabase);
   const sendPushTest = pushSender || webPushSender
@@ -490,6 +491,10 @@ async function main() {
     const due = await backgroundJobs.run('sentry-next-due', () => nextSentryWakeAt(jobsDatabase));
     if (due.ok && due.value) return Math.max(1000, due.value.getTime() - Date.now());
   });
+  work.addDeadline('connector-offer-expiry', async () => {
+    const due = await backgroundJobs.run('connector-offer-expiry', () => connectorOfferExpiry.runOnce());
+    if (due.ok) return due.value;
+  });
   work.addDeadline('choices', async () => {
     const due = await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
     if (due.ok) return due.value;
@@ -527,7 +532,6 @@ async function main() {
         githubJobs ? id => githubJobs.refreshCornerReviewHead(id) : undefined));
     const now = Date.now();
     await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
-    await backgroundJobs.run('connector-offer-expiry', () => jobsDatabase.transaction(db => failConnectingOffers(db, { expired: true })));
     await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
     await backgroundJobs.run('corner-checks-blocked', () =>
       noteBlockedCornerChecks(jobsDatabase));
@@ -544,6 +548,10 @@ async function main() {
   const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader));
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   const wakeSystemDms=()=>wakeWork('operator-system-dms','committed-system-dm');
+  const wakeConnectorOffers = () => wakeWork('connector-offer-expiry', 'connector-offer-source');
+  const stopConnectorOfferWake = subscribeCommandCompletion(CONNECTOR_OFFER_DUE_KEY, wakeConnectorOffers);
+  const stopConnectorOfferRecovery = jobsDatabase.onRecovery(wakeConnectorOffers);
+  const stopConnectorOfferResync = live.subscribeResync(wakeConnectorOffers);
   const wakeChoices = () => wakeWork('choices', 'choice-expiry');
   const wakeAttachments = () => wakeWork('pending-attachment-cleanup', 'attachment-source');
   const stopAttachmentWake = subscribeCommandCompletion(PENDING_ATTACHMENT_DUE_KEY, wakeAttachments);
@@ -599,6 +607,7 @@ async function main() {
     mcpStop.abort();
     const mcpStopped = stopMcpWebhooks();
     stopSystemDmWake();stopSystemDmRecovery();
+    stopConnectorOfferWake();stopConnectorOfferRecovery();stopConnectorOfferResync();
     stopChoiceWake();stopChoiceRecovery();
     stopAttachmentRecovery();stopAttachmentResync();stopAttachmentWake();
     stopScheduleRecovery();stopScheduleResync();stopScheduleWake();

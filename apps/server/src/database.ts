@@ -1,3 +1,4 @@
+import { CONNECTOR_OFFER_EXPIRY_SCHEMA } from './connector-offer-expiry.js';
 import { PENDING_ATTACHMENT_SOURCE_SCHEMA } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_SOURCE_SCHEMA } from './agent-schedule-source.js';
 import { HELPER_ACTIVATION_SCHEMA } from './helper-activation-schema.js';
@@ -3531,6 +3532,7 @@ export async function migrate(
   await ddlScript('pending attachment due source', PENDING_ATTACHMENT_SOURCE_SCHEMA);
   await ddlScript('computer expiry source', COMPUTER_EXPIRY_SCHEMA);
   await ddlScript('choice expiry source', CHOICE_EXPIRY_SCHEMA);
+  await ddlScript('connector offer expiry source', CONNECTOR_OFFER_EXPIRY_SCHEMA);
   await ddlScript('router projection authority', ROUTER_PROJECTION_SCHEMA);
   await ddlScript('router projection extra sources', ROUTER_EXTRA_CAPTURE_SCHEMA);
   await ddlScript('scheduled work authority', SCHEDULED_WORK_AUTHORITY_SCHEMA);

@@ -412,7 +412,7 @@ async function main() {
   const server = createBeelineServer({
     operationOutcomes,
     replay: new DurableLiveReplay(database, live),
-    roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth, process.env.BEELINE_JOIN_HOST), phone, live, daemon, objectService),
+    roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth), phone, live, daemon, objectService),
     sentryWakeAgentId,
     database,
     sentryTelegram: sentryTelegramFromEnv(),

@@ -116,9 +116,9 @@ Authorization and MCP protocol/session headers select the existing MCP boundary.
 Protected-resource discovery describes the exact endpoint and host requested;
 the configured server origin remains the OAuth issuer for all aliases. Its
 existing sign-in callbacks, consent, PKCE and revocation paths are unchanged.
-Only the configured short hostname (`BEELINE_JOIN_HOST`, default `join.usebeeline.app`) is recognized; forwarded headers and
+Only the configured short hostname (the `RoomsMcpOAuth` constructor option, default `join.usebeeline.app`) is recognized; forwarded headers and
 arbitrary Host values never become OAuth metadata. Local fixtures inherit the
-configured origin’s protocol and port. Set `BEELINE_JOIN_HOST=join.localtest.me` for an existing wildcard DNS record pointing to loopback; no hosts-file edit is needed.
+configured origin’s protocol and port. The proof fixture accepts `BEELINE_JOIN_HOST=join.localtest.me` for an existing wildcard DNS record pointing to loopback; no hosts-file edit is needed. Production adds no environment setting.
 
 The public instructions are mirrored in `web/room/index.html` and the shipped
 `apps/server/assets/mcp/join.html`; the HTTP regression test enforces equality.

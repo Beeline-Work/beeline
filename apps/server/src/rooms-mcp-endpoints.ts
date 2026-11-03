@@ -6,7 +6,7 @@ export function joinOrigin(origin: string, hostname = 'join.usebeeline.app'): st
   const alias = new URL(`https://${hostname}`);
   if (alias.hostname !== hostname.toLowerCase() || alias.port || alias.pathname !== '/' ||
       alias.username || alias.password || alias.search || alias.hash)
-    throw new Error('Invalid BEELINE_JOIN_HOST hostname');
+    throw new Error('Invalid MCP join hostname');
   return `${url.protocol}//${alias.hostname}${url.port ? `:${url.port}` : ''}`;
 }
 

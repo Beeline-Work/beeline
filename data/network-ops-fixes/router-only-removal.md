@@ -32,6 +32,13 @@ inventory entries. Existing local incremental `dist/` files are not shipping
 proof; use a fresh build for packaging. The router inventory remains **158 keys**
 and every real runtime ownership/removal obligation remains open.
 
+The later [full image proof](t7-image-expansion-proof.json) verifies the fresh
+server Docker artifact at `4e51e0327`: neither fixture is packaged, whereas both
+are present in the historical `f43bd3f86` image. The candidate boots, serves
+authenticated legacy reads/writes and drains its production entrypoint. This
+closes the packaging-evidence gap for these two fixtures only; it does not
+establish a clean mobile/native bundle or remove any migration inventory row.
+
 
 ## Individual architecture relaxation disposition (instruction042)
 

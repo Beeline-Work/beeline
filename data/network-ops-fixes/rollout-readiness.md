@@ -16,11 +16,11 @@ measurements. Their assertions remain strict.
 | F05 | Publish the saved-workflow start fact. | Group A closure suite: zero workflow-list facts, expected one. |
 | F08 | Publish the committed connector's Workbench cell. | Group A closure suite: zero cells, expected one. |
 | F09 | Deliver the portrait parent revision to both held consumers. | Group A closure suite: updates `[0,0]`, expected `[1,1]`. |
-| F13 | Remove the initial full Room statement regression. | Strict Group C cost mode: eight candidate statements versus two legacy; raw CPU/WAL/bytes samples remain in `group-c-room-cost.json`. |
+| F13 | Resolve the strict first-read WAL and legacy Room latency failures. | Group C follow-up fixes statements to 2/2, but retains 1,144 candidate WAL bytes versus 0 legacy and latency 702/1,021 ms versus 650 ms. [Report](group-c-followup-report.md); original and after-repair samples remain. |
 
 Group A reproduction and exact names: [proof report](group-a-proof-report.md),
 `npm run prove:router-group-a-open-gates -w @beeline/server` with the isolated
-PostgreSQL URL. Group C: `BEELINE_GROUP_C_COST_PROOF=1` on
+PostgreSQL URL. Group C follow-up https://github.com/Beeline-Work/beeline/pull/3378 is integrated. Its same-cut and enqueue fences retain strict assertions. Reproduce cost with `BEELINE_GROUP_C_COST_PROOF=1` on
 `scripts/prove-router-group-c-room-payload.mjs`. The dedicated closure commands
 are additional evidence, not replacements for normal regression/CI gates.
 
@@ -59,10 +59,11 @@ Cross-cutting T7 work remains:
   baseline increases have individual dispositions in that document and the PR
   body; they are not scanner exemptions or closed findings.
 - [Compatibility and rollback](t7-compatibility.md): historical source and
-  actual mobile recovery pass, but the exact separate expansion image,
-  ledger-preserving image floor, full startup and isolated image auto-revert
-  sequence are not yet proved. A full combined draft must not be described as
-  a schema-only prerequisite release.
+  actual mobile recovery pass. The full local historical/current image smoke
+  now also passes startup, migration, reads/writes, image swap/revert and graceful
+  shutdown. The exact separate expansion image, deployed ledger-preserving
+  floor and real canary watcher remain unproved. A full combined draft must
+  not be described as a schema-only prerequisite release.
 - The full native40/current Android/iOS/web/Tauri, old/new helper, mixed-server
   and every-family matrix remains incomplete. Historical native proofs are
   labeled; they are not store-binary or deployed-OTA claims.

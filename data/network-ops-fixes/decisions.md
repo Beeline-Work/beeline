@@ -220,3 +220,9 @@ Agent-home59 and pinned Pi10 pass. The generated JSON is interpreted by the actu
 Legacy postAgentActivity, failed receipts and brief revisions previously replayed up to three whole transactions after a randomized delay. Every daemon operation now returns its first transaction failure. Rollback still buffers live events and protects revision/command rows; a separate explicit action rechecks current authority and revision before making another attempt.
 
 Commander206, owned/legacy idle-day2 and server types pass. Brief fault injection proves full rollback, one later explicit success, refusal after membership removal and refusal after concurrent revision. This does not complete durable ownership adapters or any whole audit finding.
+
+## D081 — Refresh archival proof for authority ordering and one-attempt transactions
+
+The archival fixture now admits a new webhook explicitly after a rolled-back transaction. Its concurrency barrier observes the authority lock before command rows; the peer claims its command before asserting a stop, because pending commands are cancelled without a helper stop. Isolated schema migration setup has a bounded 60-second hook window.
+
+Real loopback PostgreSQL rollback3 and concurrency3 pass. Tagged final replies and merge-webhook/agent-close/phone-close archival all commit with zero SQL errors, one stop for the active peer and no pending/working leftovers. Synthetic providers only; no real merge or lifecycle operation.

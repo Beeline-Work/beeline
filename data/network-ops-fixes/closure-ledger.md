@@ -111,3 +111,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F18 Pi generated homes now disable both conversation and provider SDK retries through the same pure policy as owned-model sessions. Agent-home59 and pinned Pi10 pass, including actual SDK refusal/disconnect and idle-day evidence. No whole finding changes status; final harness routing/isolation remains open.
 
 - F18 daemon deadlock replay is removed for legacy and owned effects. Commander206 and focused owned/legacy idle-day2 pass; brief failures roll back without delivery and new explicit actions recheck membership/revision. Server types pass. Durable route/cohort gates remain open.
+
+- F12/F18 archival proof refresh passes real PostgreSQL rollback3 and concurrent final-reply/merge-webhook/agent-close/phone-close3. Fixtures use current authority ordering and an actually claimed peer; first failures never replay and a new webhook performs fresh reconciliation. This adds proof without closing the remaining ownership/cohort gates.

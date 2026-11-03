@@ -9,6 +9,7 @@ import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
 
 const H = 'a'.repeat(64), A = 'b'.repeat(64), B = 'c'.repeat(64);
 const W = '11111111-1111-4111-8111-111111111111';
@@ -75,7 +76,7 @@ beforeEach(async () => {
   const command = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null, reason: 'system' });
   requestId = command!.turn_request_id;
   await db.transaction(tx => claimAgentCommand(tx, C, A, command!.id, 'generation'));
-});
+}, 60_000);
 afterEach(async () => { await close?.(); });
 
 function operations(database = db) {
@@ -96,19 +97,23 @@ async function assertArchived(stoppedAgent = A, merged = true) {
   expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'kind'='merged'`, [C])).rowCount).toBe(1);
 }
 
-it('Reproduction MERGE-DEADLOCK-1: rolls back a deadlocked archival and commits cleanup once', async () => {
+it('Reproduction MERGE-DEADLOCK-1: rolls back a deadlocked archival and commits cleanup only on a new webhook', async () => {
   let attempts = 0;
   const retryDatabase: SqlDatabase = {
     query: db.query.bind(db),
     transaction: work => db.transaction(async tx => {
       const result = await work(tx);
-      // Fail after all writes: the retry must reconstruct the entire transaction.
+      // Fail after all writes: rollback must leave the next event fresh authority.
       const archived = await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [C]);
       if (archived.rowCount && ++attempts === 1)
         throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
       return result;
     }),
   };
+  await expect(operations(retryDatabase).processWebhook('pull_request', event)).rejects.toMatchObject({ code: '40P01' });
+  expect(attempts).toBe(1);
+  expect((await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NULL`, [C])).rowCount).toBe(1);
+  expect(app.deleteBranch).not.toHaveBeenCalled();
   await operations(retryDatabase).processWebhook('pull_request', event);
   expect(attempts).toBe(2);
   await assertArchived();
@@ -119,7 +124,7 @@ it('Reproduction MERGE-DEADLOCK-1: rolls back a deadlocked archival and commits 
   expect(app.deleteBranch).toHaveBeenCalledTimes(1);
 });
 
-it.each([['40P01', 3], ['XX000', 1]] as const)('bounds archival retries for %s', async (code, expectedAttempts) => {
+it.each([['40P01', 1], ['XX000', 1]] as const)('returns archival %s without replay', async (code, expectedAttempts) => {
   let attempts = 0;
   const error = Object.assign(new Error('forced transaction failure'), { code });
   const failing: SqlDatabase = {
@@ -142,7 +147,8 @@ it.each([['40P01', 3], ['XX000', 1]] as const)('bounds archival retries for %s',
 it.skipIf(!postgresUrl).each(['merge webhook', 'agent close', 'phone close'] as const)(
   'Reproduction MERGE-DEADLOCK-1: tagged final reply and %s both commit', async path => {
   if (path !== 'merge webhook') await db.query(`UPDATE corner_github_cache SET lifecycle=lifecycle-'pr' WHERE corner_id=$1`, [C]);
-  await createAgentCommand(db, { roomId: C, agentId: B, sourceMessageId: null, reason: 'system' });
+  const peer = await createAgentCommand(db, { roomId: C, agentId: B, sourceMessageId: null, reason: 'system' });
+  await db.transaction(tx => claimAgentCommand(tx, C, B, peer!.id, 'peer-generation'));
   let releaseReply!: () => void, replyLocked!: () => void, cancellationStarted!: () => void;
   const resume = new Promise<void>(resolve => { releaseReply = resolve; });
   const locked = new Promise<void>(resolve => { replyLocked = resolve; });
@@ -151,7 +157,7 @@ it.skipIf(!postgresUrl).each(['merge webhook', 'agent close', 'phone close'] as 
   const sqlErrors: string[] = [];
   const wrap = (tx: SqlDatabase): SqlDatabase => ({
     query: async <Row extends QueryResultRow>(sql: string, values?: unknown[]) => {
-      if (sql.includes('SELECT * FROM agent_commands') && sql.includes('ORDER BY created_at DESC,id DESC FOR UPDATE'))
+      if (sql.includes('pg_advisory_xact_lock(hashtextextended') && values?.[0] === ROUTER_AUTHORITY_LOCK)
         cancellationStarted();
       const result = await tx.query<Row>(sql, values).catch(error => {
         sqlErrors.push(error.code);
@@ -177,8 +183,8 @@ it.skipIf(!postgresUrl).each(['merge webhook', 'agent close', 'phone close'] as 
     : path === 'agent close'
       ? daemon.execute('archiveCorner', { cornerId: C }, A)
       : new PhoneService(hooked, 'http://test').execute('requestCornerClose', { roomId: C }, H);
-  await cancelling;
-  releaseReply();
+  // Archival now waits at authority before taking command-row locks.
+  try { await cancelling; } finally { releaseReply(); }
   const results = await Promise.allSettled([reply, archive]);
   console.log('Reproduction MERGE-DEADLOCK-1:', results.map(result => result.status === 'fulfilled'
     ? 'committed' : { code: result.reason.code, message: result.reason.message }));

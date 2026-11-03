@@ -80,6 +80,9 @@ export function readTraySavedWindowCause(value:Record<string,unknown>):TraySaved
 export const TRAY_SAVED_WINDOW_SCHEMA=`
 ${liveControlNotificationSchema()}
 ALTER TABLE message_bookmarks ADD COLUMN IF NOT EXISTS bookmark_id uuid;
+-- An old writer can insert between release DDL statements, including while an
+-- existing identity trigger is being replaced. Keep that write valid throughout.
+ALTER TABLE message_bookmarks ALTER COLUMN bookmark_id SET DEFAULT gen_random_uuid();
 UPDATE message_bookmarks SET bookmark_id=gen_random_uuid() WHERE bookmark_id IS NULL;
 ALTER TABLE message_bookmarks ALTER COLUMN bookmark_id SET NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS message_bookmarks_incarnation_idx ON message_bookmarks(bookmark_id);

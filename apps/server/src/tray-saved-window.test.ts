@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SqlDatabase } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
+import { splitMigrationStatements } from './migration-steps.js';
 import { readMessageBookmarks } from './tray-projection.js';
 import { TRAY_SAVED_WINDOW_SCHEMA, readTraySavedCursor, readTraySavedWindow, readTraySavedWindowCause } from './tray-saved-window.js';
 
@@ -19,6 +20,29 @@ const ddl=`CREATE TABLE workspaces(id uuid PRIMARY KEY);
    created_at timestamptz NOT NULL DEFAULT now(),PRIMARY KEY(identity_id,message_id));
  CREATE INDEX message_bookmarks_workspace_viewer_page_idx ON message_bookmarks(workspace_id,identity_id,created_at DESC,message_id);`;
 const format=vi.fn((row:{id:string;kind:'human'|'agent';name:string})=>({pubkey:row.id,kind:row.kind,name:row.name}));
+it('accepts legacy bookmark inserts between every additive DDL statement and on repeated migration', async () => {
+  const db = new PgliteDatabase();
+  try {
+    await db.query(ddl);
+    await db.query(DURABLE_LIVE_SCHEMA);
+    await db.query(`INSERT INTO workspaces VALUES($1);`, [w1]);
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Reader')`, [viewer]);
+    let sequence = 0;
+    for (let run = 0; run < 2; run++) {
+      for (const statement of splitMigrationStatements(TRAY_SAVED_WINDOW_SCHEMA)) {
+        await db.query(statement);
+        await db.query(`INSERT INTO message_bookmarks(identity_id,workspace_id,room_id,message_id,
+          source_room_name,source_room_kind,message_created_at)
+          VALUES($1,$2,$3,$4,'Legacy Room','room',now())`, [viewer, w1, r1, `legacy-${++sequence}`]);
+      }
+      const rows = (await db.query<{ bookmark_id: string }>('SELECT bookmark_id FROM message_bookmarks')).rows;
+      expect(rows).toHaveLength(sequence);
+      expect(rows.every(row => typeof row.bookmark_id === 'string')).toBe(true);
+      expect(new Set(rows.map(row => row.bookmark_id)).size).toBe(sequence);
+    }
+  } finally { await db.close(); }
+}, 20_000);
+
 describe('uninstalled stable Saved window identity and pure query',()=>{
   let db:PgliteDatabase;
   const scope={workspaceId:w1,readerId:viewer};

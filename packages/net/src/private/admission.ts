@@ -11,6 +11,7 @@ const policies = {
   'phone.readRouterSnapshot': { mode: 'read', screen: 'AppShell' as 'AppShell' | 'Room'|'ScheduledWork'|'Tray' },
   'phone.readMediaMetadata': { mode: 'read', screen: 'Room' },
   'phone.readAgentUsageCell': { mode: 'read', screen: 'AgentProfile' },
+  'phone.readRoomTools': {mode:'read-action',action:'OpenToolGroup'},
   'phone.readMediaLink': { mode: 'read-action', action: 'OpenArtifactBrowser' },
   'phone.readMediaPlayback': { mode: 'read-action', action: 'RunArtifact' },
   'phone.sendRoomMessage': { mode: 'command', action: 'SendMessage' },
@@ -198,6 +199,17 @@ export class AdmissionOwner {
     const lifetime = { active: true }; const pass = this.mint(request, lifetime);
     this.states.get(pass)!.completionLifetime = owner.lifetime;
     try { return handler(pass); } finally { lifetime.active = false; }
+  }
+
+  toolTap<T>(generation:number,roomId:string,request:Request<'phone.readRoomTools'>,handler:(pass:Pass<'phone.readRoomTools'>)=>T):T{
+    if(!this.foreground)return this.deny('background');
+    const owner=[...this.residencies.values()].find(item=>item.screen==='Room'&&item.generation===generation&&item.lifetime.active&&
+      item.keys.some(key=>(JSON.parse(key)[4] as {roomId?:string}).roomId===roomId));
+    if(request.input.roomId!==roomId)return this.deny('wrong tool Room');
+    if(!owner)return this.deny('inactive tool action');
+    this.validateRequests([request]);const lifetime={active:true},pass=this.mint(request,lifetime);
+    this.states.get(pass)!.completionLifetime=owner.lifetime;
+    try{return handler(pass);}finally{lifetime.active=false;}
   }
 
   focus<S extends Screen>(generation: number, screen: S, requests: readonly Requests<ScreenRoute<S>>[]): readonly Pass<ScreenRoute<S>>[] {

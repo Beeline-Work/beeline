@@ -17,6 +17,8 @@ import type { AttachmentReference } from '@beeline/buzz-client';
 type SessionId = string;
 
 export type AgentActivityItem = {
+  toolGroup?: import('@beeline/api-contract/phone').RoomViewActivity['toolGroup'];
+  toolOutput?: import('@beeline/api-contract/phone').RoomViewActivity['toolOutput'];
   /**
    * `output` is the agent's own prose — narration, the thing the reader is
    * actually here to read. It is deliberately distinct from `summary`, the

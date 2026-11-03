@@ -98,6 +98,7 @@ const OWNER_CALLERS = {
     'app/(app)/beeline/chat/RoomMessageVariants.tsx', 'buzz/picture-actions.ts', 'buzz/artifact-link.ts'],
   routerOwnerNavigation: ['buzz/use-router-navigation.ts'],
   routerOwnerListPanel: ['components/SidebarNavigator.tsx'],
+  readRouterToolPage: ['components/buzz/ActivityTimeline.tsx'],
   admitRouterPreparedMessage: ['buzz/command-message-gesture.ts'],
   admitRouterScheduledStop: ['buzz/router-scheduled-work.ts'],
   acquireRouterSavedContinuation: ['buzz/router-tray.ts'],

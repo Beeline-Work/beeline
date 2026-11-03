@@ -33,6 +33,8 @@ export type TurnActivityFile = {
 };
 
 export type TurnActivityAction = {
+  toolGroup?: import('@beeline/api-contract/phone').RoomViewActivity['toolGroup'];
+  toolOutput?: import('@beeline/api-contract/phone').RoomViewActivity['toolOutput'];
   id: string;
   /** `note` is an earlier text run of the turn, shown in full between tools. */
   kind: 'tool' | 'thought' | 'note';
@@ -689,6 +691,8 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
     const row: TurnActivityAction = {
       id,
       kind: 'tool',
+      ...(tool.toolGroup?{toolGroup:tool.toolGroup}:{}),
+      ...(tool.toolOutput?{toolOutput:tool.toolOutput}:{}),
       weight,
       title,
       label: ledgerStepLabel(tool),

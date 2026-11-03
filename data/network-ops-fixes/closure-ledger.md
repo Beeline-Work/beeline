@@ -31,6 +31,13 @@ No whole finding is closed until all consumers and the specified executable proo
 | F25 hidden roster | Open | P3/P8 picker closed Workspace reads0; open ≤1 snapshot; grants current server authority. |
 | F26 wait polls | Closed: committed completion capture, 85-second no-poll and existing connector/MCP integration proofs pass | P7/P12 completion before/during listen never lost; pending85s one initial read/no repeats; duplicate effect1. |
 
+## Integrated group drafts (whole findings remain Open)
+
+- Group A: https://github.com/Beeline-Work/beeline/pull/3376 at `8fe42a0a5`; seven scoped PostgreSQL scenarios pass on the integrated source. Five strict closure assertions still identify missing facts/unaffected-cell work; see [report](group-a-proof-report.md).
+- Group B: https://github.com/Beeline-Work/beeline/pull/3375 at `c63418f27`; source/deadline composition and P12 proofs integrated. Whole inventory/cohort reconciliation remains open.
+- Group C: https://github.com/Beeline-Work/beeline/pull/3374 at `df154c8e1`; bounded tool disclosure and PostgreSQL proofs integrated. The strict full Room workload still reports eight candidate statements against two legacy statements; F13 remains open. Other complete-cohort requirements also remain open.
+- No group finding is marked closed merely because its draft is integrated. Router activation remains off. [T7 release sequence](t7-compatibility.md) requires a separate additive expansion release before switching, preserving canary auto-revert to a ledger-aware image.
+
 ## Validated staged infrastructure
 
 - F04 live projection read-purity regression shipped separately; same-cut count/cells and source coverage remain required.
@@ -42,7 +49,7 @@ No whole finding is closed until all consumers and the specified executable proo
 
 These counts identify the staged validation run; later changes must rerun affected suites before a PR claims the result.
 
-- T7 policy rollback/migration follow-up: actual phone socket/HTTP21 passes, including a selected command on one server replayed through a second policy-off server, repeated full migration retaining all receipt columns, and pending/unknown/expired outcomes that cannot redispatch. Server types pass. [Evidence and limits](t7-compatibility.md) distinguish this from historical-image rollback: main requires schema46 and candidate schema61, so the deployed rollback floor remains OPEN. Fresh phone owner measurement is82592raw/23589gzip within90112/24576; boundary extraction still contains158 legacy keys/218 occurrences. No new finding closes and activation stays OFF.
+- T7 policy rollback/migration follow-up: actual phone socket/HTTP21 passes, including a selected command on one server replayed through a second policy-off server, repeated full migration retaining all receipt columns, and pending/unknown/expired outcomes that cannot redispatch. Server types pass. [Evidence and limits](t7-compatibility.md) distinguish this from historical-image rollback: the original marker46→61 incompatibility is now addressed by separate additive router readiness, but the exact expansion-image rollback floor remains OPEN. Fresh phone owner measurement is82592raw/23589gzip within90112/24576; boundary extraction still contains158 legacy keys/218 occurrences. No new finding closes and activation stays OFF.
 - T7 actual-client follow-up: the bundled production mobile transport passes a two-server lost-receipt/rollback/recovery proof. One initial snapshot, one incident replacement, zero incapable-server command/stale-executor sends, original command identity on explicit recovery, one retained reaction and zero HTTP fallback are asserted. This is Node-hosted current-image policy compatibility with explicit host seams, not native/old-image/full-owner closure; [scope](t7-compatibility.md) remains explicit.
 
 - F03/F05/F09 staged compatibility fixes filter transient roster events, release hidden schedule/workflow/profile observers, and make portraits consume parent detail. Focused suites pass; complete negotiated roster/workflow facts and cross-consumer closure remain open.

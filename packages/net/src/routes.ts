@@ -96,6 +96,7 @@ const phoneOperations = {
   readIdentitySettings: true,
   readNeedsYou: true,
   readRoom: true,
+  readRoomTools: true,
   readRouterSnapshot: true,
   readMediaMetadata: true,
   readAgentUsageCell: true,

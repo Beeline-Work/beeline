@@ -770,6 +770,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
+        with:
+          mobile: true
       - name: Prove server pools disable JIT on isolated PostgreSQL
         run: npm test -w @beeline/server -- --run src/database-jit.test.ts --maxWorkers=1 --minWorkers=1
         env:
@@ -799,6 +801,12 @@ jobs:
           BEELINE_SENTRY_TEST_POSTGRES_URL="$BEELINE_COMMAND_TEST_POSTGRES_URL" npm test -w @beeline/server -- src/sentry-wake.test.ts -t 'SENTRY-CLOCK|SENTRY-DEADLINE' --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/background-leader.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/background-deadlines.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/router-group-c-completion.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/router-group-c-oauth.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          npm test -w @beeline/server -- src/router-group-c-replay.postgres.test.ts --maxWorkers=2 --minWorkers=1
+          node --import tsx scripts/prove-router-group-c-room-payload.mjs
+          (cd apps/mobile && npx vitest run sources/buzz/router-group-c-media.postgres.test.ts --maxWorkers=2 --minWorkers=1)
+          (cd apps/mobile && npx vitest run sources/sync/transport/router-group-c-connection.postgres.test.ts --maxWorkers=2 --minWorkers=1)
           npm test -w @beeline/server -- src/router-command.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-projections.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/durable-live.postgres.test.ts --maxWorkers=2 --minWorkers=1

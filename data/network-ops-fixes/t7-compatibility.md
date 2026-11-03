@@ -58,52 +58,86 @@ test asserts that no command or stale snapshot reaches it. Its first failed
 run acknowledged only the short sync frame; the fixture was corrected to
 match the historical workspace-cursor sync path before retaining the result.
 
-The main source at `f43bd3f86e4c7a30aa75378df82fcbda10027c72`
-requires schema 46; this candidate requires schema 61. Both boot checks require
-an exact marker. A previous image therefore cannot simply restart after the
-candidate migration's final marker. The passing tests above must not be used as
-evidence for that image rollback. Before activation, a ledger-preserving image
-floor and compatible schema rollout must be established for both serving
-machines and the release recovery path. Neither the native runtime number nor
-the presence of the command table establishes that floor.
+### Additive schema readiness and image recovery
 
-### Why the existing image rollback cannot establish the floor
+The main source at `f43bd3f86e4c7a30aa75378df82fcbda10027c72` requires
+marker 46. The initial candidate wrote marker 61; the negative proof committed
+at `6fa313f65` showed that swapping back to the historical image then fails boot.
+Rewinding the marker failed the candidate instead. That source arrangement
+could not support the existing image-only canary auto-revert.
+
+Instruction041 changes the release plan to **expand, then switch**. The candidate
+now preserves `beeline_schema_state.version=46` and records completed router
+migrations separately in additive `beeline_router_schema_state.version=61`.
+`markSchemaCurrent` writes both in the final migration call. Candidate boot
+requires both exact versions in one read; the historical boot function still
+reads its unchanged marker. No capability flag bypasses readiness, no range of
+unknown versions is accepted, and missing/incomplete router migrations refuse
+candidate boot. Old migrations cannot erase the separate router marker by
+rewriting their own marker.
 
 `router-schema-rollback.test.ts` executes the verbatim historical marker/boot
-functions retained in `fixtures/schema46-readiness.source.txt` against isolated
-PGlite and the candidate's actual functions. The fixture records the source
-commit and complete historical file hash. It exercises successful marker reads;
-any historical connection-error/retry helper invocation fails the test.
+functions in `fixtures/schema46-readiness.source.txt` alongside the candidate
+functions on isolated PGlite. The fixture records its source commit and complete
+historical file hash; any historical connection-error/retry path fails the test.
+The proof covers old boot before/after expansion, current boot only after both
+markers, a historical marker rewrite, incomplete/missing router markers and a
+wrong base marker. It is not a historical server image or complete DDL proof.
 
-| Shared database marker | Historical source boot | Candidate boot |
-| --- | --- | --- |
-| 46, before candidate migration | Accepts | Rejects: expected 61, found 46 |
-| 61, after candidate migration | Rejects: expected 46, found 61 | Accepts |
-| 46, after marker-only rewind | Accepts marker | Rejects: expected 61, found 46 |
+The additive review found a write window in the staged Saved metadata DDL:
+`bookmark_id NOT NULL` preceded installation of its old-writer identity trigger.
+The migration now installs a UUID default before backfill/NOT NULL so an old
+writer can insert between every release statement, including trigger replacement
+on rerun. The Saved-window test interleaves legacy inserts with every actual
+DDL statement twice and requires unique, non-null final identities. Existing
+old columns and wire fields remain. This module is staged/uninstalled; changing
+it does not establish that the complete migration graph is backward-compatible.
 
-The release planner `planServerCanaryDeployment` in
-`scripts/unified-release.mjs` migrates before replacing the first machine.
-`runReleaseMigration` in `apps/server/src/index.ts` writes the marker last,
-after server/auth schema and data work. Automatic rollback changes the canary's
-image back; the manual `.github/workflows/server-rollback.yml` also only changes
-images. Neither restores a compatible schema/marker. An already-running old
-process is not evidence that the old image can restart against marker 61.
-Disabling the router capability does not bypass either boot check.
+### Required release sequence
 
-Changing the marker to 46 would fail the candidate's boot and would certify
-neither backwards-compatible DDL/data nor historical command interpretation.
-The historical phone dispatcher also has no router command ledger integration:
-retaining ledger tables alone cannot make that code replay durable outcomes.
-A pre-migration database restore would lose writes made since the backup, so it
-does not satisfy this task's retained-outcome rollback requirement either.
+1. **Expansion release, router off.** Cut the prerequisite release from the
+   supported main image with additive router schema plus boot and durable-outcome
+   compatibility code. Preserve old tables, columns, write defaults, endpoint
+   formats and the base marker 46. Install new tables/nullable or defaulted
+   columns, backfills and compatible source capture without removing old paths.
+   Runtime behavior outside that prerequisite scope stays at the supported
+   release. Do not deploy the entire combined draft as a schema-only release.
+   Run the old application's read/write corpus against the expanded database,
+   including writes interleaved with migration statements; build both exact
+   images and prove restart/boot plus the real canary auto-revert path in an
+   isolated environment. The original image remains a valid rollback target
+   during this release because no router-selected commands exist yet.
+2. **Establish the image floor.** Complete the normal two-machine canary sequence
+   with the expansion image and router still off. Record its immutable image
+   reference and release record as the supported recovery floor. Both machines
+   must interpret retained command identities, pending/unknown/expired outcomes,
+   generation ownership and legacy wire before any router activation. Merely
+   retaining tables or passing the old boot check is insufficient. This is an
+   owner-operated release prerequisite; no production state was inspected or
+   changed by these proofs.
+3. **Switch release.** Only after F01–F26 and the remaining T7 cohort/budget
+   proofs close, select the unified router using the existing rollout setting.
+   Its migration must leave the expansion image's base and router markers valid;
+   no destructive DDL or old-wire removal belongs here. The release planner
+   already remembers each machine's prior image: canary auto-revert now targets
+   the ledger-aware expansion image, not the pre-router source. Prove selected
+   command/unknown outcomes, both serving machines and old/new clients through
+   that actual image transition without duplicate effects or blanket reads.
+4. **Removal follows stability.** Delete obsolete implementations only after
+   supported wire ingress, runtime40 and mixed-cohort proofs pass. Preserve the
+   expansion recovery floor and durable outcomes throughout the rollback window.
+   Any eventual contraction needs its own compatibility boundary; it is not
+   bundled into the switch migration.
 
-Thus **the supplied image-only rollback cannot satisfy T7**. A separately
-validated compatibility release must first accept the shared schema transition
-and retain/interpret command outcomes and generations on both serving machines;
-its exact immutable image must then be the recovery floor. No such deployed
-floor or image provenance has been established here. This proof neither builds
-an old server image nor tests all migration DDL, PostgreSQL concurrency or live
-Machines. No marker, release workflow, safety check or deployment was changed.
+`planServerCanaryDeployment` in `scripts/unified-release.mjs` runs migration
+before replacing the first machine. Its auto-revert and the manual
+`.github/workflows/server-rollback.yml` change images only. They must remain
+usable with the sequence above; neither performs a destructive database rewind.
+A pre-migration backup restore would lose newer writes and does not satisfy
+retained-outcome rollback. The historical image remains a boot-compatible
+**expansion** fallback, not a safe **post-switch** recovery floor: its dispatcher
+has no router ledger interpretation. No exact built/deployed expansion image,
+full DDL/old-application corpus, or complete image rollback has yet been proven.
 
 ## Native runtime 40
 

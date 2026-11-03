@@ -1,4 +1,7 @@
-import React, { useMemo, useState } from 'react';
+import { displayRoomMessage } from '@/buzz/room-view-presentation';
+import { readRoomViewMessage, type PhoneOperationMap } from '@beeline/api-contract/phone';
+import { readRouterToolPage } from '@/buzz/router-owner';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { AgentActivityItem } from '@/sync/transport/rig-transport';
@@ -113,6 +116,30 @@ function ToolLedgerLineRow({
   );
 }
 
+function toolPageLines(page:PhoneOperationMap['readRoomTools']['output']):ToolLedgerLine[]{
+  if(!Array.isArray(page.messages)||page.messages.length>50)throw new Error('Tool output is unavailable.');
+  const messages=page.messages.map(readRoomViewMessage);
+  if(messages.some(message=>!message))throw new Error('Tool output is unavailable.');
+  return toolLedgerLines(buildTurnActivity(messages.flatMap(message=>displayRoomMessage(message!,'').activity??[])).steps);
+}
+function useToolOutput(){
+  const [line,setLine]=useState<ToolLedgerLine|null>(null);
+  const current=React.useRef(0);
+  useEffect(()=>()=>{current.current++;},[]);
+  const open=(next:ToolLedgerLine)=>{
+    const generation=++current.current;
+    if(!next.toolOutput){setLine(next);return;}
+    setLine({...next,detail:'Loading…'});
+    const request=readRouterToolPage(next.toolOutput);
+    void request.then(page=>{
+      if(generation!==current.current)return;
+      const full=toolPageLines(page).find(item=>item.id===next.id);
+      setLine({...next,detail:full?.detail??'Output unavailable.'});
+    }).catch(()=>{if(generation===current.current)setLine({...next,detail:'Output unavailable. Open again to retry.'});});
+  };
+  return {line,open,close:()=>{current.current++;setLine(null);}};
+}
+
 /**
  * One collapsed machine-run summary — `⌄ 6 steps · 2 failed · 48s` —
  * that expands in place into its individual ledger lines.
@@ -126,12 +153,30 @@ function ToolRunGroupRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [showAll, setShowAll] = useState(false);
+  const [loaded,setLoaded]=useState<ToolLedgerLine[]>([]);
+  const [remoteIndex,setRemoteIndex]=useState(0);
+  const [cursor,setCursor]=useState<string|undefined>();
+  const [loading,setLoading]=useState(false);
+  const [failed,setFailed]=useState(false);
+  const pending=React.useRef(false);
+  const remote=run.lines.flatMap(line=>line.toolGroup?[line.toolGroup]:[]);
+  const hasRemote=remoteIndex<remote.length;
+  const lines=remote.length?[...run.lines.filter(line=>!line.toolGroup),...loaded]:run.lines;
+  const load=()=>{
+    const group=remote[remoteIndex];if(!group||pending.current)return;
+    pending.current=true;setLoading(true);setFailed(false);
+    const request=readRouterToolPage({roomId:group.roomId,anchor:group.anchor,...(cursor?{before:cursor}:{})});
+    void request.then(page=>{
+      const lines=toolPageLines(page);setLoaded(previous=>[...previous,...lines]);
+      setCursor(page.next);if(!page.next)setRemoteIndex(index=>index+1);
+    }).catch(()=>setFailed(true)).finally(()=>{pending.current=false;setLoading(false);});
+  };
   const duration = formatToolCallDuration(run.durationMs);
   const summary = toolGroupSummary(run.count, run.failed, run.durationMs, run.notes);
   const steps = run.count > 0 || run.notes === 0;
   return (
     <LedgerLogGroup testID={`tool-run-container-${run.id}`}>
-      <LedgerDisclosure expanded={expanded} onPress={() => { if (expanded) setShowAll(false); setExpanded(value => !value); }}
+      <LedgerDisclosure expanded={expanded} onPress={() => { if (expanded) setShowAll(false); else if(remote.length&&!loaded.length)load(); setExpanded(value => !value); }}
         accessibilityLabel={`${summary}, expandable`} accessibilityState={{ expanded }} rowTestID={`tool-run-group-${run.id}`}>
         {steps ? `${run.count} ${run.count === 1 ? 'step' : 'steps'}` : null}
         {run.failed ? <Text style={styles.groupFailed}>{` · ${run.failed} failed`}</Text> : null}
@@ -139,21 +184,21 @@ function ToolRunGroupRow({
         {duration ? ` · ${duration}` : null}
       </LedgerDisclosure>
       {expanded
-        ? (showAll || run.lines.length <= 3 ? run.lines : run.lines.slice(0, 2)).map((line, index) => (
+        ? (remote.length||showAll || lines.length <= 3 ? lines : lines.slice(0, 2)).map((line, index) => (
             <ToolLedgerLineRow
               key={line.id}
               line={line}
               divider={index > 0}
-              onPress={line.detail ? () => onPressLine?.(line) : undefined}
+              onPress={line.detail||line.toolOutput ? () => onPressLine?.(line) : undefined}
               testID={`tool-ledger-line-${line.id}`}
             />
           ))
         : null}
-      {expanded && !showAll && run.lines.length > 3 ? <LedgerDisclosure
+      {expanded && (hasRemote||!showAll&&lines.length>3) ? <LedgerDisclosure
         expanded={false} accessibilityState={{ expanded: false }}
-        accessibilityLabel={`${run.lines.length - 2} more steps`} onPress={() => setShowAll(true)}
+        accessibilityLabel={`${run.lines.length - 2} more steps`} onPress={() => hasRemote?load():setShowAll(true)}
         rowTestID={`tool-run-more-${run.id}`}>
-        {run.lines.length - 2} more
+        {loading?'Loading…':failed?'Retry':hasRemote?`${Math.max(0,run.count-loaded.length)} more`:`${lines.length-2} more`}
       </LedgerDisclosure> : null}
     </LedgerLogGroup>
   );
@@ -175,16 +220,16 @@ export const TurnStepsLine = React.memo(function TurnStepsLine({
     () => groupToolLedgerRuns(toolLedgerLines(buildTurnActivity(items).steps)),
     [items],
   );
-  const [sheetLine, setSheetLine] = useState<ToolLedgerLine | null>(null);
+  const {line:sheetLine,open:openLine,close:closeLine}=useToolOutput();
   if (!runs.length) return null;
   return (
     <View testID={testID}>
       {runs.map((run) => (
-        <ToolRunGroupRow key={run.id} onPressLine={setSheetLine} run={run} />
+        <ToolRunGroupRow key={run.id} onPressLine={openLine} run={run} />
       ))}
       <ToolOutputSheet
         detail={sheetLine?.detail}
-        onClose={() => setSheetLine(null)}
+        onClose={closeLine}
         subtitle={sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined}
         title={sheetLine?.label ?? 'Output'}
         visible={Boolean(sheetLine?.detail)}
@@ -215,7 +260,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
     () => groupToolLedgerRuns(toolLedgerLines(turn.steps, active)),
     [turn, active],
   );
-  const [sheetLine, setSheetLine] = useState<ToolLedgerLine | null>(null);
+  const {line:sheetLine,open:openLine,close:closeLine}=useToolOutput();
   // The provisional face and tone, plus this lane's own spacing. One object,
   // memoised, so the markdown renderer's identity check still bails out.
   const draftTextStyle = useMemo(
@@ -244,7 +289,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
         />
       ))}
       {runs.map((run) => (
-        <ToolRunGroupRow key={run.id} onPressLine={setSheetLine} run={run} />
+        <ToolRunGroupRow key={run.id} onPressLine={openLine} run={run} />
       ))}
       {messageDraft || messageDraftKey ? (
         <StreamingProse
@@ -255,7 +300,7 @@ export const ActivityTimeline = React.memo(function ActivityTimeline({
       ) : null}
       <ToolOutputSheet
         detail={sheetLine?.detail}
-        onClose={() => setSheetLine(null)}
+        onClose={closeLine}
         subtitle={sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined}
         title={sheetLine?.label ?? 'Output'}
         visible={Boolean(sheetLine?.detail)}

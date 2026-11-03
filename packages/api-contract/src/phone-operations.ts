@@ -94,6 +94,7 @@ export type CornerMergeHold = {
 
 export type PhoneOperationMap = PhoneRouteOperationMap & {
   readAgentUsageCell: { input: { agentId: string }; output: AgentUsageCell };
+  readRoomTools: { input: import('./phone-types.js').RoomToolReference & { before?: string; messageId?: string }; output: import('./phone-types.js').RoomToolPage };
   readRouterSnapshot: { input: RouterSnapshotInput; output: RouterSnapshot };
   readMediaMetadata: { input: { objectId: string }; output: MediaMetadata };
   readMediaLink: { input: { objectId: string }; output: MediaLink };
@@ -298,6 +299,7 @@ export type PhoneOperationMap = PhoneRouteOperationMap & {
  */
 export const PHONE_READ_OPERATIONS = [
   ...PHONE_ROUTE_READ_OPERATIONS,
+  'readRoomTools',
   'readRouterSnapshot',
   'readAgentUsageCell',
   'readMediaMetadata',

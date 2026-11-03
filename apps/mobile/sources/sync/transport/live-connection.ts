@@ -72,7 +72,7 @@ type RoomCursor = { epoch: string; base: number; seen: Set<number> };
 
 type RouterOwnerBridge = {
   requestedCapabilities?: () => Promise<{ families: readonly RouterFamily[]; authorityFencesV1: boolean; scheduledWorkCoverageV1?:boolean }>;
-  negotiated: (next: { generation: number; families: readonly RouterFamily[]; usageCellV1?: boolean; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>; authorityFencesV1?: boolean; roomHeadContinuityV1?: boolean; scheduledWorkCoverageV1?:RouterCapabilities['scheduledWorkCoverageV1']; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>; executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>; execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> }) => Promise<void>;
+  negotiated: (next: { generation: number; families: readonly RouterFamily[]; usageCellV1?: boolean; executeTools?: (input:PhoneOperationMap['readRoomTools']['input'])=>Promise<PhoneOperationMap['readRoomTools']['output']>; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>; authorityFencesV1?: boolean; roomHeadContinuityV1?: boolean; scheduledWorkCoverageV1?:RouterCapabilities['scheduledWorkCoverageV1']; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>; executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>; execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> }) => Promise<void>;
   disconnected: () => void;
   receive: (frame: RouterPushFrame | RouterUnavailable | RouterAuthorityFence) => void;
 };
@@ -372,6 +372,7 @@ export class LiveConnection {
         authorityFencesV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.authorityFencesV1 === true,
         mediaMetadataV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.mediaMetadataV1 === true,
         usageCellV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.usageCellV1 === true,
+        executeTools: input=>executeCurrent('readRoomTools',input) as Promise<PhoneOperationMap['readRoomTools']['output']>,
         executeUsageCell: agentId => executeCurrent('readAgentUsageCell', { agentId }) as Promise<AgentUsageCell>,
         executeMetadata: objectId => executeCurrent('readMediaMetadata', { objectId }) as Promise<MediaMetadata>,
         executeLink: objectId => executeCurrent('readMediaLink', { objectId }) as Promise<MediaLink>,

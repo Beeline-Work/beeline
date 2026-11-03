@@ -1,4 +1,4 @@
-import { ROOM_ROUTER_CTES,roomRouterColumnsSql } from './room-router-read.js';
+import { ROOM_ROUTER_CTES,ROOM_ROUTER_HEAD_JOIN,roomRouterColumnsSql,roomMessageTagsSql } from './room-router-read.js';
 import { projectRoomToolSummaries,type RoomToolSummaryRow } from './room-tool-projection.js';
 import { buildTrayProjection, readMessageBookmarks } from './tray-projection.js';
 import { readTraySavedWindow } from './tray-saved-window.js';
@@ -2971,6 +2971,8 @@ export class PhoneService {
     return { view, deck: loaded.deck };
   }
 
+  /** Bound each authorized message window before identity/reaction decoration.
+   * The author foreign key preserves the original inner-join membership. */
   private async roomRows(roomId: string, viewerId: string): Promise<RoomReadRow | undefined> {
     if(this.pureProjection)this.routerRoomRows=undefined;
     const row = (
@@ -3049,11 +3051,13 @@ export class PhoneService {
                WHERE report.source_kind='human' AND report.trigger_message_id=m.id)) feedback_reported,
              '{}'::text[] tagged_ids
            FROM authorized_room room
-           JOIN messages m ON m.room_id=room.id
+           JOIN LATERAL (
+             SELECT m.* FROM messages m WHERE m.room_id=room.id
+               AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+               AND ${visibleMessageSql('m')}
+             ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
+           ) m ON true
            JOIN identities i ON i.id=m.author_id
-           WHERE (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-             AND ${visibleMessageSql('m')}
-           ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
          ), activity_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
@@ -3064,36 +3068,41 @@ export class PhoneService {
                WHERE report.source_kind='human' AND report.trigger_message_id=m.id)) feedback_reported,
              '{}'::text[] tagged_ids
            FROM authorized_room room
-           JOIN messages m ON m.room_id=room.id
+           JOIN LATERAL (
+             SELECT m.* FROM messages m JOIN active_turn_rows turn ON turn.agent_id=m.author_id
+               AND m.created_at>=date_trunc('second',turn.created_at)
+             WHERE m.room_id=room.id AND m.presentation='activity' AND m.durable_fact IS NULL
+               ${this.pureProjection ? `AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(m.activity) item WHERE item->>'kind'='tool')` : ''}
+             ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
+           ) m ON true
            JOIN identities i ON i.id=m.author_id
-           JOIN active_turn_rows turn ON turn.agent_id=m.author_id
-             AND date_trunc('second',m.created_at)>=date_trunc('second',turn.created_at)
-           WHERE m.presentation='activity' AND m.durable_fact IS NULL
-             ${this.pureProjection ? `AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(m.activity) item WHERE item->>'kind'='tool')` : ''}
-           ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
          ), corner_tool_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
              ${reactionIdentitiesSql('m')} reaction_identities,
              false bookmarked,false feedback_reported,'{}'::text[] tagged_ids
            FROM authorized_room room
-           JOIN messages m ON m.room_id=room.id
+           JOIN LATERAL (
+             SELECT m.* FROM messages m WHERE m.room_id=room.id
+               AND room.parent_id IS NOT NULL ${this.pureProjection ? 'AND false' : ''} AND m.presentation='activity'
+               AND m.durable_fact IS NULL AND EXISTS(
+                 SELECT 1 FROM jsonb_array_elements(m.activity) item
+                 WHERE item->>'kind' IN ('tool','output'))
+             ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_TOOL_ROW_LIMIT}
+           ) m ON true
            JOIN identities i ON i.id=m.author_id
-           WHERE room.parent_id IS NOT NULL ${this.pureProjection ? 'AND false' : ''} AND m.presentation='activity'
-             AND m.durable_fact IS NULL AND EXISTS(
-               SELECT 1 FROM jsonb_array_elements(m.activity) item
-               WHERE item->>'kind' IN ('tool','output'))
-           ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_TOOL_ROW_LIMIT}
          ), corner_briefing_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
              ${reactionIdentitiesSql('m')} reaction_identities,
              false bookmarked,false feedback_reported,'{}'::text[] tagged_ids
            FROM authorized_room room
-           JOIN messages m ON m.room_id=room.parent_id
+           JOIN LATERAL (
+             SELECT m.* FROM messages m WHERE m.room_id=room.parent_id
+               AND room.parent_id IS NOT NULL AND m.created_at<=room.created_at
+             ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}
+           ) m ON true
            JOIN identities i ON i.id=m.author_id
-           WHERE room.parent_id IS NOT NULL AND m.created_at<=room.created_at
-           ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}
          )
          ${this.pureProjection?ROOM_ROUTER_CTES:''}
          SELECT
@@ -3135,7 +3144,7 @@ export class PhoneService {
                FROM corner_tool_rows),'[]'::jsonb)
            ) END corner
            ${this.pureProjection?roomRouterColumnsSql():''}
-         FROM authorized_room ${this.pureProjection?`LEFT JOIN live_streams stream ON stream.id='workspace:'||authorized_room.workspace_id::text`:''}`,
+         FROM authorized_room ${this.pureProjection?ROOM_ROUTER_HEAD_JOIN:''}`,
         this.pureProjection?[roomId,viewerId,this.expectedRouterWorkspace??null]:[roomId, viewerId],
       )
     ).rows[0];
@@ -3193,7 +3202,7 @@ export class PhoneService {
       this.optionalEnrichment(
         'message-tags',
         this.enrichmentDatabase.query<{ id: string; tagged_ids: string[] }>(
-          `SELECT m.id,${taggedIdentityIdsSql('m')} tagged_ids
+          `SELECT m.id,${roomMessageTagsSql('m')} tagged_ids
            FROM messages m WHERE m.id=ANY($1::text[])`,
           [row.transcript.map((message) => message.id)],
         ),
@@ -3296,7 +3305,7 @@ export class PhoneService {
                AND member.removed_at IS NULL
                AND member.identity_id=ANY($3::text[])),'[]'::jsonb) presence,
            COALESCE((SELECT jsonb_agg(jsonb_build_object('id',m.id,
-             'tagged_ids',${taggedIdentityIdsSql('m')}))
+             'tagged_ids',${roomMessageTagsSql('m')}))
              FROM messages m WHERE m.id=ANY($4::text[])),'[]'::jsonb) tags,
            COALESCE((SELECT jsonb_agg(jsonb_build_object('message_id',message_id))
              FROM message_bookmarks WHERE identity_id=$2

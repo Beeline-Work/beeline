@@ -864,6 +864,7 @@ jobs:
           npm test -w @beeline/server -- src/router-group-c-replay.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/room-router-read.postgres.test.ts --maxWorkers=2 --minWorkers=1
           node --import tsx scripts/prove-router-group-c-room-payload.mjs
+          BEELINE_GROUP_C_COST_PROOF=1 node --import tsx scripts/prove-router-group-c-room-payload.mjs
           (cd apps/mobile && npx vitest run sources/buzz/router-group-c-media.postgres.test.ts --maxWorkers=2 --minWorkers=1)
           (cd apps/mobile && npx vitest run sources/sync/transport/router-group-c-connection.postgres.test.ts --maxWorkers=2 --minWorkers=1)
           npm test -w @beeline/server -- src/router-command.postgres.test.ts --maxWorkers=2 --minWorkers=1

@@ -43,7 +43,7 @@ export function roomRouterColumnsSql(): string {
           WHERE agent_id=member.identity_id AND kind='presence' ORDER BY updated_at DESC LIMIT 1) presence ON true
         WHERE member.room_id=COALESCE(authorized_room.parent_id,authorized_room.id) AND member.removed_at IS NULL
           AND member.identity_id IN(SELECT id FROM member_rows)),'[]'::jsonb),
-      'tags',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',m.id,'tagged_ids',${taggedIdentityIdsSql('m')}))
+      'tags',COALESCE((SELECT jsonb_agg(jsonb_build_object('id',m.id,'tagged_ids',${roomMessageTagsSql('m')}))
         FROM messages m WHERE m.id IN(SELECT id FROM router_read_messages)),'[]'::jsonb),
       'bookmarks',COALESCE((SELECT jsonb_agg(jsonb_build_object('message_id',message_id)) FROM message_bookmarks
         WHERE identity_id=$2 AND message_id IN(SELECT id FROM router_visible_ids)),'[]'::jsonb),
@@ -59,4 +59,22 @@ export function roomRouterColumnsSql(): string {
         substring(CASE WHEN authorized_room.parent_id IS NULL THEN authorized_room.repository_key
           ELSE (SELECT repository_key FROM rooms parent WHERE parent.id=authorized_room.parent_id) END
           FROM '^github:([0-9]+)$')::bigint)) router_enrichment`;
+}
+
+/** Equal closed bounds preserve the DESC index pathkey. An equality join lets
+ * PostgreSQL discard that ordering and scan old head versions before the
+ * current one, pruning their full heap pages on the first read after a bulk
+ * commit. The existing primary key serves this one-key backward lookup;
+ * no index, writer work, warm-up or read-side maintenance is added. */
+export const ROOM_ROUTER_HEAD_JOIN = `LEFT JOIN LATERAL (
+  SELECT epoch,sequence FROM live_streams
+  WHERE id>='workspace:'||authorized_room.workspace_id::text
+    AND id<='workspace:'||authorized_room.workspace_id::text
+  ORDER BY id DESC LIMIT 1
+) stream ON true`;
+
+/** No tokenizer branch can produce a mention without an @ character. Keep
+ * the complete existing tokenizer/ambiguity rules for every possible tag. */
+export function roomMessageTagsSql(alias: string): string {
+  return `CASE WHEN strpos(${alias}.text,'@')=0 THEN '{}'::text[] ELSE ${taggedIdentityIdsSql(alias)} END`;
 }

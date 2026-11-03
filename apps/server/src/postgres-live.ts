@@ -166,6 +166,7 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id),
         'messageId', COALESCE(NEW.id, OLD.id),
+        'workflowRunsChanged', COALESCE(NEW.card_type='workflow-handoff',false) OR COALESCE(OLD.card_type='workflow-handoff',false),
         'agentId', COALESCE(NEW.author_id, OLD.author_id),
         'needsYouCandidate', COALESCE(NEW.presentation,OLD.presentation) IN ('card','system')
           OR (COALESCE(NEW.presentation,OLD.presentation)='message' AND
@@ -503,7 +504,7 @@ BEGIN
           'sourceRemoved',TG_TABLE_NAME='rooms' AND TG_OP='UPDATE'
             AND to_jsonb(OLD)->>'workspace_id'=workspace_target
             AND to_jsonb(NEW)->>'workspace_id' IS DISTINCT FROM to_jsonb(OLD)->>'workspace_id',
-          'needsYouCandidate',payload->'needsYouCandidate','removed',payload->'removed'));
+          'needsYouCandidate',payload->'needsYouCandidate','workflowRunsChanged',payload->'workflowRunsChanged','removed',payload->'removed'));
         END IF;
         streams := array_append(streams,'workspace:' || workspace_target);
       END LOOP;

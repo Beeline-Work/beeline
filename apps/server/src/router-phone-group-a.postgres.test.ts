@@ -8,6 +8,10 @@ import { SurfaceResponseCache, isWorkspaceView } from '@beeline/buzz-client';
 import { SurfaceRegistry } from '../../mobile/sources/buzz/surface-registry.js';
 import { shouldReadWorkspaceRoster } from '../../mobile/sources/buzz/room-participants.js';
 import { groupAFixture, ObservedDatabase, reader, peer, workspace, room } from '../proofs/router-group-a-postgres.js';
+import {createWallet,readWalletView,fakeCdpWalletSource} from './wallet.js';
+import {PhoneService} from './phone-service.js';
+import {buildOwnerSnapshot,fenceOwnerProjection} from './router-owner-projections.js';
+import {fenceRouterEnqueue} from './router-projections.js';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 describe.skipIf(!url)('P3/P5 Group A phone read closure', () => {
@@ -16,6 +20,81 @@ describe.skipIf(!url)('P3/P5 Group A phone read closure', () => {
   beforeAll(async () => { fixture = await groupAFixture(url!); }, 120_000);
   afterEach(async () => { await fixture?.closeServers(); });
   afterAll(async () => { await fixture?.close(); });
+
+  it('F08: owner snapshots write/provider/queue zero, survive Workspace removal and keep connector commits independent of wallet reads',async()=>{
+    const source=fakeCdpWalletSource(),created=await createWallet(fixture.a,reader,workspace(7),source);
+    source.state.holdings.set(created.address,new Map([['usdc',123],['eth',0]]));
+    const observedWallet=await readWalletView(fixture.a,reader,workspace(7),source);
+    const connector='77777777-7777-4777-8777-777777777777',agent='7e'.repeat(32);
+    await fixture.a.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Owner helper')`,[agent]);
+    await fixture.a.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,reader]);
+    await fixture.a.query(`INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,helper_agent_id,connector_type,status)
+      VALUES($1,$2,$3,$4,'tailscale','connected')`,[connector,workspace(7),reader,agent]);
+    await fixture.a.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id IS NULL`,[reader]);
+    const fetch=vi.fn(async()=>{throw new Error('Projection attempted provider work');});vi.stubGlobal('fetch',fetch);
+    try{
+      const server=await fixture.server(fixture.a,['owner-workbench','owner-wallet']);
+      const workbench={family:'owner-workbench' as const},wallet={family:'owner-wallet' as const};
+      server.observed.reset();await Promise.all([server.demand(workbench),server.demand(workbench)]);
+      expect(server.reads()).toBe(1);
+      expect(server.observed.statements.filter(({sql})=>/wallet_bindings|owner_wallet_projections|squire_work_queue/.test(sql))).toEqual([]);
+      await server.demand(wallet);
+      expect(server.lanes.peek(wallet).value).toMatchObject({wallet:observedWallet});
+      expect(server.lanes.peek(workbench).cut?.stream).toBe(`owner:${reader}`);
+      expect(server.lanes.peek(wallet).cut?.stream).toBe(`owner:${reader}`);
+      expect(server.observed.statements.filter(({sql})=>/^\s*(INSERT|UPDATE|DELETE|MERGE)\b/i.test(sql))).toEqual([]);
+      server.observed.reset();server.builds.length=0;const reads=server.reads();
+      await fixture.b.query(`UPDATE workspace_connectors SET signed_in_as='owner-committed@example.invalid' WHERE id=$1`,[connector]);
+      await server.barrier();
+      expect((server.lanes.peek(workbench).value as any).connectors.find((row:any)=>row.id==='tailscale'))
+        .toMatchObject({signedInAs:'owner-committed@example.invalid'});
+      expect(server.lanes.peek(wallet).state).toBe('LIVE');expect(server.reads()).toBe(reads);
+      expect(server.builds).toEqual([workbench]);
+      expect(server.observed.statements.filter(({sql})=>/wallet_bindings|owner_wallet_projections|squire_work_queue/.test(sql))).toEqual([]);
+      expect(fetch).not.toHaveBeenCalled();
+    }finally{vi.unstubAllGlobals();
+      await fixture.a.query(`UPDATE memberships SET removed_at=NULL WHERE identity_id=$1 AND room_id IS NULL`,[reader]);}
+  });
+
+  it('F08: ownership transfer between build and enqueue fences the former owner private Workbench and gives only the new owner its row',async()=>{
+    const agent='7f'.repeat(32),connector='77777777-7777-4777-8777-777777777778';
+    await fixture.a.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Transfer helper')`,[agent]);
+    await fixture.a.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,reader]);
+    await fixture.a.query(`INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,helper_agent_id,connector_type,status,signed_in_as)
+      VALUES($1,$2,$3,$4,'tailscale','connected','private-old-owner')`,[connector,workspace(7),reader,agent]);
+    const phone=new PhoneService(fixture.a,'https://synthetic.invalid'),input={family:'owner-workbench' as const};
+    const stale=await fixture.a.transaction(async db=>{
+      await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');return buildOwnerSnapshot(db,phone,input,reader);
+    });
+    await fixture.b.query(`UPDATE workspace_connectors SET owner_identity_id=$2 WHERE id=$1`,[connector,peer]);
+    const enqueue=vi.fn(()=>undefined);
+    await expect(fenceOwnerProjection(fixture.a,input,reader,stale.authority,enqueue)).rejects.toThrow('authority');
+    expect(enqueue).not.toHaveBeenCalled();
+    const old=await phone.readRouterSnapshot(input,reader),current=await phone.readRouterSnapshot(input,peer);
+    expect(JSON.stringify(old.value)).not.toContain('private-old-owner');
+    expect((current.value as any).connectors.find((row:any)=>row.id==='tailscale')).toMatchObject({signedInAs:'private-old-owner'});
+  });
+
+  it('F09: a delayed profile cannot enqueue private grants after owner transfer or Workspace revocation on another pool',async()=>{
+    const agent='6e'.repeat(32),input={family:'agent-profile' as const,workspaceId:workspace(6),agentId:agent};
+    await fixture.a.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Private profile helper')`,[agent]);
+    await fixture.a.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,reader]);
+    await fixture.a.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,[workspace(6),agent]);
+    await fixture.a.query(`INSERT INTO agent_grants(id,workspace_id,agent_id,kind,target,reason,status,requested_by,decided_by,room_id)
+      VALUES('66666666-6666-4666-8666-666666666666',$1,$2,'secret','private-owner-grant','isolated proof','approved',$3,$3,$4)`,[workspace(6),agent,reader,room(6)]);
+    const phone=new PhoneService(fixture.a,'https://synthetic.invalid'),stale=await phone.readRouterSnapshot(input,reader);
+    expect(JSON.stringify(stale.value)).toContain('private-owner-grant');
+    await fixture.b.query('UPDATE agents SET owner_id=$2 WHERE agent_id=$1',[agent,peer]);
+    const enqueue=vi.fn(()=>undefined);
+    await expect(fenceRouterEnqueue(fixture.a,input,reader,stale.authority,enqueue)).rejects.toThrow('authority');
+    expect(enqueue).not.toHaveBeenCalled();expect(JSON.stringify((await phone.readRouterSnapshot(input,reader)).value)).not.toContain('private-owner-grant');
+    const transferred=await phone.readRouterSnapshot(input,peer);expect(JSON.stringify(transferred.value)).toContain('private-owner-grant');
+    await fixture.b.query(`UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,[workspace(6),peer]);
+    try{
+      await expect(fenceRouterEnqueue(fixture.a,input,peer,transferred.authority,enqueue)).rejects.toThrow('authority');
+      expect(enqueue).not.toHaveBeenCalled();
+    }finally{await fixture.a.query(`UPDATE memberships SET removed_at=NULL WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,[workspace(6),peer]);}
+  });
 
   it('F02: one affected list update on both independent PostgreSQL listeners, with no unrelated projection or phone read', async () => {
     const left = await fixture.server(fixture.a, ['room-list', 'needs-you-count']);

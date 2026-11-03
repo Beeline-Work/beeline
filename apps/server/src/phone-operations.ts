@@ -105,8 +105,10 @@ export function createPhoneOperationDispatcher(
         if (!(ROUTER_FAMILIES as readonly unknown[]).includes(input.family)) refuse(400,'invalid_router_family');
         const family = input.family as RouterFamily;
         const roomId = input.roomId === undefined ? undefined : uuid(input,'roomId');
-        const roomScoped=family==='room-head'||family==='room-scheduled-work';
+        const roomScoped=family==='room-head'||family==='room-scheduled-work'||family==='room-workflows';
         if (roomScoped !== Boolean(roomId)) refuse(400,'invalid_router_scope');
+        if(family==='agent-profile')return phone.readRouterSnapshot({family,workspaceId:uuid(input,'workspaceId'),agentId:required(input,'agentId')},viewerId);
+        if(family==='owner-workbench'||family==='owner-wallet')return phone.readRouterSnapshot({family},viewerId);
         return phone.readRouterSnapshot(roomScoped
           ? {family,roomId:roomId!,...(input.workspaceId ? {workspaceId:uuid(input,'workspaceId')} : {})}
           : {family,workspaceId:uuid(input,'workspaceId')},viewerId);

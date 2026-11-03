@@ -1,4 +1,6 @@
 export * from './workbench-companies.js';
+export {projectWorkbenchDisplay,projectWorkbenchConnection} from './workbench-display.js';
+export type {WorkbenchDisplayView} from './workbench-display.js';
 /**
  * Workbench: per-human connector provisioning and connection sovereignty.
  *

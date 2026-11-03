@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
+import { legacyRouterProofShims } from '../test-fixtures/router-proof';
 
 it('CR1: failed workflow fetch leaves a clean objective and recovers on an event', async () => {
   const mobile = process.cwd();
@@ -40,7 +41,7 @@ it('CR1: failed workflow fetch leaves a clean objective and recovers on an event
       }, 1600);`);
     for (const theme of ['obsidian', 'bone']) {
       for (const width of [390, 1180]) {
-        const shims = webProofShims(mobile);
+        const shims = { ...webProofShims(mobile), ...legacyRouterProofShims() };
         shims['react-native-unistyles'] = shims['react-native-unistyles']!.replace('beelineThemes.obsidian', `beelineThemes.${theme}`);
         const options = { entry, mobile, width, head, budgetMs: 1900,
           

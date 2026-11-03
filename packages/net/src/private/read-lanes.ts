@@ -1,19 +1,21 @@
-import type { SavedRowPayload, TrayGroupPayload } from '@beeline/api-contract/router-protocol';
+import type { SavedRowPayload, TrayGroupPayload, NeedsYouRoomsPayload } from '@beeline/api-contract/router-protocol';
 import { trayFamily } from './tray-group.js';
 import { ProjectionGroups, type GroupCell, type GroupProposal } from './projection-groups.js';
 import { jsonBytes as bytes, stagingWithinBudget } from './staging-bounds.js';
 import { LaneStaging, sameStream } from './lane-staging.js';
 /** Local state only. No transport, clock, scheduler, native module or server inventory. */
-export type LaneFamily = 'room-list' | 'needs-you' | 'needs-you-tray' | 'needs-you-count' | 'room-head'|'room-scheduled-work'|'needs-you-saved-page';
-export type LaneRequest = Readonly<{ family: 'room-head'|'room-scheduled-work'; roomId: string; workspaceId?: string }> |
-  Readonly<{ family: Exclude<LaneFamily, 'room-head'|'room-scheduled-work'|'needs-you-saved-page'>; workspaceId: string; roomId?: never }>|
-  Readonly<{family:'needs-you-saved-page';workspaceId:string;before?:string;roomId?:never}>;
+export type LaneFamily = 'room-list' | 'needs-you' | 'needs-you-tray' | 'needs-you-count' | 'room-head'|'room-scheduled-work'|'needs-you-saved-page'|'workspace-roster'|'room-workflows'|'agent-profile'|'owner-workbench'|'owner-wallet';
+export type LaneRequest = Readonly<{ family: 'room-head'|'room-scheduled-work'|'room-workflows'; roomId: string; workspaceId?: string;agentId?:never }> |
+  Readonly<{ family: Exclude<LaneFamily, 'room-head'|'room-scheduled-work'|'room-workflows'|'needs-you-saved-page'|'agent-profile'|'owner-workbench'|'owner-wallet'>; workspaceId: string; roomId?: never;agentId?:never }>|
+  Readonly<{family:'needs-you-saved-page';workspaceId:string;before?:string;roomId?:never;agentId?:never}>|
+  Readonly<{family:'agent-profile';workspaceId:string;agentId:string;roomId?:never}>|
+  Readonly<{family:'owner-workbench'|'owner-wallet';workspaceId?:never;agentId?:never;roomId?:never}>;
 export type LaneCut = Readonly<{ stream: string; epoch: string; through: number; protocol: 1 }>;
 export type LaneAuthority = Readonly<{ digest: string; scopes: readonly Readonly<{ authorityScope: string; epoch: string }>[] }>;
 export type LaneSnapshot = Readonly<{ kind: 'snapshot'; value: unknown; cut: LaneCut; atomicGroup: string; authority: LaneAuthority;clockVersion?:string }>;
 export type LaneState = 'ABSENT' | 'OPENING' | 'LIVE' | 'PARKED' | 'INACTIVE_CACHED' | 'REVOKED';
 export type LaneView = Readonly<{ state: LaneState; value: unknown | null; error: string | null; cut: LaneCut | null }>;
-export type LaneFact = Readonly<{ atomicGroup: string; authority: LaneAuthority; payload:SavedRowPayload|TrayGroupPayload
+export type LaneFact = Readonly<{ atomicGroup: string; authority: LaneAuthority; payload:SavedRowPayload|TrayGroupPayload|NeedsYouRoomsPayload
   | { kind: 'scope-replace'; family: LaneFamily; scope: string; value: unknown }
   | { kind: 'authority'; scope: string; authorityScope?: string; allowed: boolean }
   | {kind:'authority-fence';scope:string;authorityScope:string;mode:'deny'|'advance'}
@@ -39,12 +41,10 @@ const SCHEDULED_FAMILY='room-scheduled-work';
 const ABSENT_VIEW: LaneView = Object.freeze({ state: 'ABSENT', value: null, error: null, cut: null });
 const absent = (): LaneView => ABSENT_VIEW;
 const liveOwner = (entry: Entry): boolean => [...entry.owners.values()].some(owner => owner.active && owner.permit.isCurrent());
-const roomFamily=(family:LaneFamily):boolean=>family==='room-head'||family===SCHEDULED_FAMILY;
+const roomFamily=(family:LaneFamily):boolean=>family==='room-head'||family===SCHEDULED_FAMILY||family==='room-workflows';
 // The original projection cohort has no proven inactive Room feed. Only an
 // explicitly negotiated DB-audience feed can lift that conservative guard.
-const CONTINUOUS_CACHE:Readonly<Record<LaneFamily,boolean>>={
-  'room-list':true,'needs-you':true,'needs-you-tray':true,'needs-you-count':true,'room-head':false,'room-scheduled-work':true,'needs-you-saved-page':true,
-};
+
 
 /** An executor is installed only by the negotiated connection owner. Demand
  * arrives only after admission has atomically consumed a real owner pass.
@@ -78,7 +78,7 @@ export class ReadLanes {
   key(request: LaneRequest): string {
     return JSON.stringify([this.identity.origin, this.identity.principal, this.identity.sessionEpoch,
       request.family, roomFamily(request.family) ? '' : request.workspaceId,
-      request.family==='needs-you-saved-page'?request.before??'':request.roomId??'',1]);
+      request.family==='needs-you-saved-page'?request.before??'':request.agentId??request.roomId??'',1]);
   }
   /** Optional caller-known Workspace is a constraint on the canonical Room
    * identity, never another Room-head cache address or read budget.
@@ -182,7 +182,7 @@ export class ReadLanes {
       this.evict();
     };
   }
-  private continuouslyFed(family:LaneFamily):boolean{return family==='room-head'?this.continuousRooms:CONTINUOUS_CACHE[family]===true;}
+  private continuouslyFed(family:LaneFamily):boolean{return family!=='room-head'||this.continuousRooms;}
 
   /** Explicit Retry is passed an independently spent synchronous gesture. */
   retry(request: LaneRequest, permit: LanePermit): void {
@@ -236,8 +236,8 @@ export class ReadLanes {
         // that merely shares this complete certificate.
         const targetDomain = fact.payload.authorityScope;
         const streamWorkspace = batch.to.stream.startsWith('workspace:') ? batch.to.stream.slice('workspace:'.length) : undefined;
-        const roomFits = targetDomain === `room:${logicalScope}` && !!streamWorkspace &&
-          fact.authority.scopes.some(scope => scope.authorityScope === `reader:${this.identity.principal}:workspace:${streamWorkspace}`);
+        const readerFits=!!streamWorkspace&&fact.authority.scopes.some(scope=>scope.authorityScope===`reader:${this.identity.principal}:workspace:${streamWorkspace}`);
+        const roomFits = targetDomain === `room:${logicalScope}` && readerFits;
         const domainFits = roomFits || batch.to.stream === `workspace:${logicalScope}`&&
           (targetDomain === `reader:${this.identity.principal}:workspace:${logicalScope}`||
             mode==='advance'&&targetDomain===`reader:${this.identity.principal}:workspace:${logicalScope}:visibility`);
@@ -245,7 +245,11 @@ export class ReadLanes {
           targetDomain===`scheduled-work-principal:${this.identity.principal}`&&logicalScope===this.identity.principal||
           targetDomain===`scheduled-work-manager:${this.identity.principal}:workspace:${logicalScope}`&&batch.to.stream===`workspace:${logicalScope}`||
           targetDomain===`scheduled-work-member:${this.identity.principal}:room:${logicalScope}`||targetDomain===`scheduled-work-room:${logicalScope}`);
-        const target = domainFits||scheduledFits ? fact.authority.scopes.find(scope => scope.authorityScope === targetDomain) : undefined;
+        const profileFits=readerFits&&targetDomain===`profile:${streamWorkspace}:${logicalScope}`&&
+          fact.atomicGroup===`agent-profile:${streamWorkspace}:${logicalScope}:${this.identity.principal}`;
+        const ownerFits=batch.to.stream===`owner:${this.identity.principal}`&&logicalScope===this.identity.principal&&
+          targetDomain?.startsWith(`owner:${this.identity.principal}:owner-`);
+        const target = domainFits||scheduledFits||profileFits||ownerFits ? fact.authority.scopes.find(scope => scope.authorityScope === targetDomain) : undefined;
         if (!target||!/^\d+$/.test(target.epoch)) {
           if(fact.payload.kind===AUTHORITY_FENCE_KIND){await this.unavailableGroup(batch.to.stream,fact.atomicGroup);continue;}
           for (const entry of this.entries.values()) if (entry.request.roomId === logicalScope ||
@@ -315,7 +319,7 @@ export class ReadLanes {
     for(const entry of this.entries.values()){
       const held=entry.snapshot??entry.baseline;
       const canonical=roomFamily(entry.request.family)?`${entry.request.family}:${entry.request.roomId}:${this.identity.principal}`:
-        `${entry.request.family==='room-list'?'room-list':'needs-you'}:${entry.request.workspaceId}:${this.identity.principal}`;
+        `${entry.request.family.startsWith('needs-you')?'needs-you':entry.request.family}:${entry.request.workspaceId}:${entry.request.agentId?entry.request.agentId+':':''}${this.identity.principal}`;
       if(held?held.atomicGroup!==group||held.cut.stream!==stream:
         canonical!==group||(entry.request.workspaceId?stream!==`workspace:${entry.request.workspaceId}`:!stream.startsWith('workspace:')))continue;
       this.transition(entry,{...absent(),state:'PARKED',error:UNAVAILABLE});changed.push(entry);
@@ -398,7 +402,7 @@ export class ReadLanes {
     const key = this.key(request);
     let entry = this.entries.get(key);
     if (!entry) {
-      if (roomFamily(request.family) ? !request.roomId : !request.workspaceId) throw new Error('invalid lane scope');
+      if (roomFamily(request.family) ? !request.roomId : !request.workspaceId&&!request.family.startsWith('owner-')) throw new Error('invalid lane scope');
       entry = { key, request: Object.freeze({ ...request }), view: absent(), owners: new Map(), revision: 0,
         connection: -1,covered:false,committing:0, queued: this.staging.stage(), listeners: new Set() };
       this.entries.set(key, entry); this.evict();

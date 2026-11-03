@@ -456,6 +456,7 @@ export async function readOwnerApps(
   database: SqlDatabase,
   ownerId: string,
   composio?: ComposioApps,
+  options?:{readonly pure?:boolean},
 ): Promise<WorkbenchAppView[]> {
   const rows = (
     await database.query<
@@ -492,17 +493,21 @@ export async function readOwnerApps(
   ).rows;
   const views: WorkbenchAppView[] = [];
   for (const row of rows) {
-    const derived = await deriveStatus(database, row, composio);
-    if (row.transport === 'composio' && derived.status === 'error' &&
+    // The pure display reports only committed activation/error metadata.
+    // Provider reconciliation remains an explicit sign-in/work operation.
+    const derived:Derived = options?.pure&&row.transport==='composio'
+      ?row.sign_in_error?{status:'error',errorMessage:row.sign_in_error}:row.authorised_at?{status:'connected'}:{status:'connecting'}
+      :await deriveStatus(database, row, composio);
+    if (!options?.pure&&row.transport === 'composio' && derived.status === 'error' &&
       derived.errorMessage && derived.errorMessage !== 'App connection could not be checked. Try again.') {
       // A card update must not turn a readable Workbench status into a failed read.
       try { await failAppSignInCards(database, row.id, derived.errorMessage); }
       catch { /* The Workbench error remains visible even if a Room card cannot update. */ }
     }
-    if (derived.status === 'connected' && !row.authorised_at) {
+    if (!options?.pure&&derived.status === 'connected' && !row.authorised_at) {
       await database.query(`UPDATE workspace_apps SET authorised_at=COALESCE(authorised_at,now()) WHERE id=$1`, [row.id]);
     }
-    if (row.transport === 'composio' && !row.authorised_at && derived.status === 'error'
+    if (!options?.pure&&row.transport === 'composio' && !row.authorised_at && derived.status === 'error'
       && (row.sign_in_error || (row.composio_link_expires_at && row.composio_link_expires_at <= new Date()))) {
       await database.query(`DELETE FROM workspace_apps WHERE id=$1 AND authorised_at IS NULL
         AND NOT EXISTS(SELECT 1 FROM workspace_app_usage WHERE app_id=$1)

@@ -5,6 +5,7 @@ import { createAgentCommand } from '../src/agent-command.js';
 import { saveWorkflow, startWorkflow } from '../src/workflow-runs.js';
 import { SurfaceResponseCache, isAgentDetailView } from '@beeline/buzz-client';
 import { SurfaceRegistry } from '../../mobile/sources/buzz/surface-registry.js';
+import {projectWorkbenchDisplay} from '@beeline/api-contract/workbench';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if (!url) throw new Error('Closure gates require BEELINE_COMMAND_TEST_POSTGRES_URL; refusing to skip PostgreSQL proof');
@@ -44,13 +45,19 @@ describe('Group A unclosed executable obligations', () => {
     await fixture.a.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$3,$5,'@reader please review changed'),($2,$4,$5,'@reader please review untouched')`,
       [...ids, room(), room(11), peer]);
     const server = await fixture.server(fixture.a, ['needs-you', 'needs-you-count']);
-    await server.demand({ family: 'needs-you', workspaceId: workspace() });
+    const cells={family:'needs-you' as const,workspaceId:workspace()},badge={family:'needs-you-count' as const,workspaceId:workspace()};
+    await server.demand(cells);await server.demand(badge);
     await server.barrier(); server.observed.reset();
     await fixture.b.query(`UPDATE messages SET text='@reader please review committed edit' WHERE id=$1`, [ids[0]]);
     await server.barrier();
     const unrelatedCells = server.observed.statements.flatMap(statement => statement.rows ?? [])
       .filter(row => row.message_id === ids[1]);
     expect(unrelatedCells.map(row => row.message_id), 'F04 affected-Room emission must perform zero unaffected cell reads').toEqual([]);
+    expect(server.lanes.peek(cells).state).toBe('LIVE');
+    expect(server.lanes.peek(cells).value).toMatchObject({items:expect.arrayContaining([
+      expect.objectContaining({messageId:ids[0],text:expect.stringContaining('committed edit')}),
+      expect.objectContaining({messageId:ids[1]})])});
+    expect(server.lanes.peek(badge).cut).toEqual(server.lanes.peek(cells).cut);
   });
 
   it('F05: a committed saved-workflow start supplies the exact held workflow list without a covering read', async () => {
@@ -83,16 +90,17 @@ describe('Group A unclosed executable obligations', () => {
     await fixture.a.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Connector helper')`, [agent]);
     await fixture.a.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, reader]);
     await fixture.a.query(`INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,helper_agent_id,connector_type,status)
-      VALUES($1,$2,$3,$4,'google-calendar','connected')`, [connector, workspace(5), reader, agent]);
+      VALUES($1,$2,$3,$4,'tailscale','connected')`, [connector, workspace(5), reader, agent]);
     const server = await fixture.server(fixture.a, ROUTER_FAMILIES);
-    await server.request('readWorkbench', { workspaceId: workspace(5) });
+    const initial=await server.request('readWorkbench', { workspaceId: workspace(5) });
     await server.barrier(); const position = server.frames.length;
     await fixture.b.query(`UPDATE workspace_connectors SET signed_in_as='committed@example.invalid' WHERE id=$1`, [connector]);
     await server.barrier();
     expect(server.requests.map(request => request.op)).toEqual(['readWorkbench']);
     const cells = replacements(server.frames, position).flatMap(value => value.connectors ?? []);
-    expect(cells.filter(cell => cell.id === connector && cell.signedInAs === 'committed@example.invalid'),
-      'F08 connector commit must carry its exact owner-scoped Workbench replacement').toHaveLength(1);
+    expect(cells.filter(cell => cell.id === 'tailscale'),
+      'F08 connector commit must carry its exact owner-scoped Workbench replacement').toEqual([
+        {...projectWorkbenchDisplay(initial,reader).connectors.find(cell=>cell.id==='tailscale')!,signedInAs:'committed@example.invalid'}]);
   });
 
   it('F09: a committed portrait revision supplies the shared parent detail once for both consumers without an event read', async () => {

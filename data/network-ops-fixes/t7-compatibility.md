@@ -1,7 +1,8 @@
 # T7 compatibility evidence and remaining gates
 
 The router remains capability-off. Only F26 is closed in the [closure ledger](closure-ledger.md).
-These proofs exercise current source and retained historical native evidence;
+These proofs exercise current source, isolated historical/current server images
+and retained historical native evidence;
 they do not authorize activation or establish a deployed rollback image.
 
 ## Durable command migration and policy rollback
@@ -142,6 +143,60 @@ therefore never received workspace sync acknowledgement. The fixture now uses
 the actual owner from historical `index.ts`; no synthetic acknowledgement or
 weaker readiness assertion was substituted.
 
+### Full local image expansion and rollback smoke
+
+`scripts/prove-router-image-expansion.mjs` passes with the actual production
+entrypoints built from historical `f43bd3f86` and candidate `4e51e0327` using
+their respective Dockerfiles and lockfiles. Both builds use the pinned Node 22
+base, a 4 GiB memory ceiling and two-CPU quota. The [image artifact](t7-image-expansion-proof.json)
+retains both immutable local image IDs, source/Dockerfile/lock hashes, Node
+version and each startup/shutdown result. Packaged lock hashes match Git.
+
+The proof uses a new disposable PostgreSQL database, synthetic identity/token
+rows and the real production token verifier. Runtime containers use
+`--network none`; their only external communication is a read-only bind of the
+task-owned PostgreSQL Unix socket. No host credentials, production database or
+owner Workspace is used. It verifies:
+
+- Two historical images boot through the full entrypoint and return successful
+  health, readiness, source identity and authenticated legacy Room reads.
+- The complete candidate release migration, including auth and data backfills,
+  runs while both old images remain alive. Their Room DTO stays unchanged and
+  an old-image reaction write succeeds.
+- Replacing one image with the candidate preserves legacy wire equality and a
+  candidate reaction write succeeds. Replacing it back with the old image
+  boots successfully without any schema restore. Both markers remain 46/61.
+- Repeating the full candidate migration preserves the current Room DTO. All
+  four stop operations drain normally with exit 0 and no OOM kill. The command
+  ledger remains empty: this is deliberately a pre-switch, capability-off test.
+- The historical packaged image contains both test socket fixtures; the fresh
+  candidate contains neither. This extends the earlier source-graph/TypeScript
+  exclusion evidence to an actual server Docker artifact.
+
+The test follows the production canary planner's migration/image/revert order
+and injects failure after candidate startup. It does **not** run the 90-second
+watcher, Fly commands, an actual provider or a release. Its planner registry
+references are synthetic aliases for the local Docker IDs, never published
+registry manifests. This is not the separate prerequisite expansion release or
+its deployed ledger-aware recovery floor; no router-selected command exists
+in this image smoke. The earlier selected-command/source/mobile proofs remain
+separate evidence. Full old-operation/native/provider coverage is still open.
+
+Reproduce after building both exact source archives with their own
+`apps/server/Dockerfile`, the recorded release SHA build argument and
+`DOCKER_BUILDKIT=0 docker build --memory=4g --memory-swap=4g --cpu-period=100000 --cpu-quota=200000`:
+
+```sh
+NODE_OPTIONS=--max-old-space-size=4096 \
+BEELINE_COMMAND_TEST_POSTGRES_URL=postgres://USER@127.0.0.1:PORT/postgres \
+node scripts/prove-router-image-expansion.mjs \
+  "$HISTORICAL_IMAGE" "$CANDIDATE_IMAGE" "$TASK_POSTGRES_SOCKET"
+```
+
+The socket must belong to the disposable trust-authenticated cluster at the
+given loopback URL. The script owns and removes its random database and named
+containers. It neither builds/pushes images nor contacts Fly.
+
 ### Required release sequence
 
 1. **Expansion release, router off.** Cut the prerequisite release from the
@@ -185,8 +240,10 @@ usable with the sequence above; neither performs a destructive database rewind.
 A pre-migration backup restore would lose newer writes and does not satisfy
 retained-outcome rollback. The historical image remains a boot-compatible
 **expansion** fallback, not a safe **post-switch** recovery floor: its dispatcher
-has no router ledger interpretation. No exact built/deployed expansion image,
-full DDL/old-application corpus, or complete image rollback has yet been proven.
+has no router ledger interpretation. The local full-image smoke above proves
+the tested policy-off image swap. The separate expansion release, deployed
+recovery floor, actual canary watcher and full old-application corpus remain
+unproved.
 
 ## Native runtime 40
 

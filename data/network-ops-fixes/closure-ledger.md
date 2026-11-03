@@ -42,6 +42,8 @@ Instruction043 separates **Proven pre-rollout** candidate paths from **Closed (c
 
 - Historical-source expansion smoke passes:621 archived source files verified,1,508 old catalog columns preserved, old socket reads/writes and handler recreation work after migration, current legacy-wire equality and repeated migration pass. Actual mobile transport also parks a lost command on that historical server and reuses its identity on recovery with one effect and zero HTTP fallback. [Scope and evidence](t7-compatibility.md) explicitly exclude historical dependencies/container images, full startup and the deployed rollback floor.
 
+- Separate full-image follow-up passes with exact historical `f43bd3f86` and candidate `4e51e0327` Docker builds and their own locked dependencies: production startup/authentication, two old servers surviving complete release migration, mixed-image reads/writes, image-only revert, repeated migration and four graceful exits. Runtime egress is disabled; both test socket fixtures are absent from the candidate artifact. [Evidence](t7-image-expansion-proof.json) does not claim the real canary watcher, separate expansion release or deployed ledger-aware recovery floor. No additional finding closes.
+
 ## Validated staged infrastructure
 
 - F04 live projection read-purity regression shipped separately; same-cut count/cells and source coverage remain required.

@@ -100,9 +100,14 @@ export class AgentTurnStream {
   private readonly overlay:HelperOverlayOwner|undefined;
   constructor(private readonly options: AgentTurnStreamOptions) {
     const transport=options.api.channel?.overlay;
-    if(transport?.enabled()&&options.commandId&&options.turnGeneration)this.overlay=new HelperOverlayOwner({
-      agentId:options.agentId,roomId:options.roomId,commandId:options.commandId,turnId:options.requestId,
-      turnGeneration:options.turnGeneration,kind:'draft'},transport);
+    if(transport && (transport.enabled() || transport.selected?.())) {
+      // Registration loss cannot restore the growing-snapshot producer while
+      // this command is still bound to the negotiated overlay protocol.
+      if(!options.commandId || !options.turnGeneration) throw new Error('Overlay requires a claimed command generation');
+      this.overlay=new HelperOverlayOwner({
+        agentId:options.agentId,roomId:options.roomId,commandId:options.commandId,turnId:options.requestId,
+        turnGeneration:options.turnGeneration,kind:'draft'},transport);
+    }
   }
 
   /**

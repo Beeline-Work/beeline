@@ -119,6 +119,7 @@ const phoneOperations = {
   redeemInvite: true,
   refreshAgentModelCatalog: true,
   refreshAgentUsage: true,
+  refreshWallet:true,
   registerPushDevice: true,
   removeAgent: true,
   removeRoomMember: true,

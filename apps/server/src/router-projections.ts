@@ -24,6 +24,7 @@ export function routerAuthority(scopes: RouterAuthorityCertificate['scopes']): R
   return { digest: createHash('sha256').update(JSON.stringify(ordered)).digest('hex'), scopes: ordered };
 }
 export function routerAtomicGroup(input: RouterSnapshotInput, viewer: string): string {
+  if(input.family.startsWith('owner-'))return `${input.family}:${viewer}`;
   if(input.family==='agent-profile')return `agent-profile:${input.workspaceId}:${input.agentId}:${viewer}`;
   return input.family.startsWith('needs-you') ? `needs-you:${input.workspaceId}:${viewer}`
     : input.family === 'room-head'||input.family==='room-scheduled-work'||input.family==='room-workflows' ? `${input.family}:${input.roomId}:${viewer}` : `${input.family}:${input.workspaceId}:${viewer}`;
@@ -85,7 +86,9 @@ export async function deniedRouterAuthorityScope(db: SqlDatabase, args: RouterSn
   return {scope:input.workspaceId,authorityScope:`reader:${viewer}:workspace:${input.workspaceId}`};
 }
 export async function readRouterCut(db: SqlDatabase, workspace: string): Promise<RouterCut> {
-  const stream = `workspace:${workspace}`;
+  return readRouterStreamCut(db,`workspace:${workspace}`);
+}
+export async function readRouterStreamCut(db:SqlDatabase,stream:string):Promise<RouterCut>{
   const row = (await db.query<{ epoch: string; sequence: string }>(
     `SELECT epoch,sequence::text FROM live_streams WHERE id=$1`, [stream])).rows[0];
   const through = Number(row?.sequence);
@@ -171,7 +174,11 @@ export class RouterProjectionDrain {
   async subscribe(workspace: string,
     project: (db: SqlDatabase, from: RouterCut, to: RouterCut, causes: readonly Record<string, unknown>[]) => Promise<void | (() => Promise<void>)>,
     unavailable: (reason: RouterUnavailable['reason']) => void): Promise<() => void> {
-    const stream = `workspace:${workspace}`;
+    return this.subscribeStream(`workspace:${workspace}`,project,unavailable);
+  }
+  async subscribeStream(stream:string,
+    project:(db:SqlDatabase,from:RouterCut,to:RouterCut,causes:readonly Record<string,unknown>[])=>Promise<void|(()=>Promise<void>)>,
+    unavailable:(reason:RouterUnavailable['reason'])=>void):Promise<()=>void>{
     let stopped = false, dirty = false, running = false, position: RouterCut | undefined;
     const drain = async () => {
       if (stopped || running || !position) return;
@@ -181,7 +188,7 @@ export class RouterProjectionDrain {
           dirty = false;
           const built = await this.database.transaction(async db => {
             await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-            const to = await readRouterCut(db, workspace), from = position!;
+            const to = await readRouterStreamCut(db, stream), from = position!;
             if (to.epoch !== from.epoch || to.through < from.through) throw new RouterProjectionUnavailable('retention');
             if (to.through === from.through) return {to,deliver:undefined};
             const entries = await db.query<{sequence: string; event: Record<string, unknown>}>(
@@ -209,7 +216,7 @@ export class RouterProjectionDrain {
     const unresync = this.live.subscribeResync(() => { dirty=true; void drain(); });
     const unhealth=this.live.subscribeProjectionUnavailable(()=>{if(!stopped){release();unavailable('listener');}});
     const release = () => { stopped=true; unlisten(); unresync(); unhealth(); };
-    try { position = await readRouterCut(this.database, workspace); void drain(); return release; }
+    try { position = await readRouterStreamCut(this.database, stream); void drain(); return release; }
     catch (error) { release(); throw error; }
   }
 }

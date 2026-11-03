@@ -267,11 +267,11 @@ export default function BuzzMembers({
     [identity?.publicKey, relayUrl, workspaceId, agentId],
   );
   const surface = useSurfaceSnapshot(workspaceAddress, isWorkspaceView);
-  const legacyAgent = useSurfaceSnapshot(agentAddress, isAgentDetailView);
   const routedAgent = useRoutedResource('agent-profile', workspaceId && profileAgentId
     ? {family:'agent-profile',workspaceId,agentId:profileAgentId} : undefined, focused&&!!profileAgentId);
+  const cachedAgent = useSurfaceSnapshot(profileAgentId&&routedAgent.mode!=='legacy'?null:agentAddress, isAgentDetailView);
   const profileMode=profileAgentId?routedAgent.mode:'legacy';
-  const selectedAgent = profileAgentId&&routedAgent.mode!=='legacy' ? routedAgent.value : legacyAgent;
+  const selectedAgent = profileAgentId&&routedAgent.mode!=='legacy' ? routedAgent.value : cachedAgent;
   const setSelectedAgent = (value: AgentDetailView | null) => {
     if(profileAgentId&&routedAgent.mode!=='legacy')return;
     if (!value) {
@@ -334,7 +334,8 @@ export default function BuzzMembers({
   const queuedConfigVersionRef = useRef<string | undefined>(undefined);
   latestConfigVersionRef.current = selectedAgent?.configVersion;
   const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
-  const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
+  const canRemoveSelectedAgent = profileMode==='router'?routedAgent.value?.canRemove===true:
+    ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
   const recordScope =
     identity && relayUrl && workspaceId
       ? workspaceRecordScope(relayUrl, identity.publicKey, workspaceId)
@@ -516,7 +517,7 @@ export default function BuzzMembers({
         current?.publicKey === nextIdentity.publicKey ? current : nextIdentity,
       );
       setRelayUrl(nextRelayUrl);
-      if(profileAgentId&&routedAgent.mode==='pending')return;
+      if(profileAgentId&&routedAgent.mode!=='legacy')return;
       // Every Members instance (the list under an agent profile included)
       // paints the one shared entry; rows and totals read the shared records,
       // which hear every write of this entry.
@@ -1140,6 +1141,7 @@ export default function BuzzMembers({
               }
             : undefined
         }
+        voiceRevision={profileMode==='router'?routedAgent.value?.voiceRevision:undefined}
         modelManagement={
           selectedAgent ? (
             <>

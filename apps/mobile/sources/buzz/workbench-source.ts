@@ -1,3 +1,4 @@
+import {projectWorkbenchDisplay,projectWorkbenchConnection} from '@beeline/api-contract/workbench';
 import type {
   ConnectionDetailView,
   ConnectorInstallState,
@@ -91,53 +92,6 @@ type WorkbenchDto = PhoneOperationMap['readWorkbench']['output'];
 type ConnectorViewDto = WorkbenchDto['connectors'][number];
 type ConnectionViewDto = WorkbenchDto['connections'][number];
 
-function toConnector(entry: {
-  connectorType: string;
-  name: string;
-  available: boolean;
-  row?: ConnectorViewDto;
-}): WorkbenchConnector {
-  const id: WorkbenchRowId = entry.connectorType;
-  return {
-    id,
-    name: entry.name,
-    description: CONNECTOR_DESCRIPTIONS[entry.connectorType as WorkbenchConnectorId] ?? '',
-    available: entry.available,
-    ...(entry.row
-      ? {
-          status: entry.row.status.status,
-          helperName: entry.row.status.helperName,
-          agentCount: entry.row.status.agentCount,
-          signedInAs: entry.row.status.signedInAs,
-          ...(entry.row.status.errorMessage ? { errorMessage: entry.row.status.errorMessage } : {}),
-        }
-      : {}),
-  };
-}
-
-function toConnection(
-  dto: ConnectionViewDto,
-  viewerId: string,
-): WorkbenchView['connections'][number] {
-  return {
-    connectionId: dto.connectionId,
-    ref: dto.reference,
-    name: dto.label,
-    // The vault's own service, carried through as itself. A server that
-    // reports none leaves the field absent rather than inventing a `vault`
-    // placeholder, so the screens can tell "no service reported" from one.
-    ...(dto.service ? { service: dto.service } : {}),
-    hosts: dto.allowedHosts,
-    fieldNames: dto.fieldNames,
-    ...(dto.faviconDomain ? { faviconDomain: dto.faviconDomain } : {}),
-    state: dto.state,
-    ...(dto.stale ? { stale: true } : {}),
-    ...(dto.lastSyncedAt !== undefined ? { lastSyncedAt: dto.lastSyncedAt } : {}),
-    createdAt: dto.createdAt,
-    ownerId: viewerId,
-  };
-}
-
 function toSteps(
   steps: readonly {
     label: string;
@@ -201,103 +155,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
       workspaceId: input.workspaceId,
       ...(input.refreshVault ? { refreshVault: true } : {}),
     });
-    return {
-      companies: dto.companies,
-      aiClients: dto.aiClients,
-      ...(dto.linkAccount ? { linkAccount: dto.linkAccount } : {}),
-      helpers: dto.helpers.map((helper): WorkbenchHelper => ({
-        id: helper.id,
-        name: helper.name,
-        online: helper.online,
-        ...(helper.squire ? { squire: helper.squire } : {}),
-      })),
-      connectors: [
-        ...dto.catalog.map((entry) => {
-          if (entry.connectorType === 'trusty-squire') {
-            const reports = dto.helpers.filter((helper) => helper.squire);
-            const connected = reports.find((helper) => helper.squire?.status === 'connected');
-            const failed = reports.find((helper) => helper.squire?.status === 'error');
-            const helper = connected ?? failed;
-            return { id: 'trusty-squire' as const, name: entry.name,
-              description: CONNECTOR_DESCRIPTIONS['trusty-squire'], available: entry.available,
-              status: connected ? 'connected' as const : failed ? 'error' as const : 'disconnected' as const,
-              ...(helper ? { helperName: helper.name } : {}),
-              ...(failed && !connected ? { errorMessage: failed.squire?.errorMessage } : {}) };
-          }
-          // Wallet creation is a direct human operation, not a helper
-          // connector install. The server catalog's helper availability does
-          // not govern whether this row can act. The row is connected only
-          // once agents hold an active grant to sign; a wallet whose earlier
-          // grant ended asks to reconnect.
-          if (entry.connectorType === 'wallet') {
-            const ended = dto.wallet && !dto.wallet.delegationActive
-              && dto.wallet.delegationExpiresAt !== null;
-            return {
-              id: 'wallet' as const,
-              name: entry.name,
-              description: CONNECTOR_DESCRIPTIONS.wallet,
-              available: true,
-              status: dto.wallet?.delegationActive ? ('connected' as const)
-                : ended ? ('error' as const) : ('disconnected' as const),
-              ...(ended ? { errorMessage: WALLET_GRANT_ENDED_MESSAGE } : {}),
-            };
-          }
-          if (entry.connectorType.startsWith('google-') && dto.googleAccount) {
-            const row = dto.connectors.find(candidate => candidate.connectorType === entry.connectorType);
-            if (dto.googleAccount.connected || dto.googleAccount.pending) {
-              return { ...toConnector({ connectorType: entry.connectorType, name: entry.name,
-                available: true, row }), available: true,
-                sharedGoogleAccount: dto.googleAccount.connectedTypes.includes(entry.connectorType),
-                signedInAs: dto.googleAccount.accountEmail,
-                status: dto.googleAccount.connectedTypes.includes(entry.connectorType)
-                  || row?.status.status === 'connected'
-                  ? 'connected' as const : dto.googleAccount.pending ? 'installing' as const
-                    : 'disconnected' as const,
-                errorMessage: undefined };
-            }
-            return { ...toConnector({ connectorType: entry.connectorType, name: entry.name,
-              available: true, row }), available: true,
-              status: row?.status.status === 'connected' ? 'connected' as const : 'disconnected' as const,
-              errorMessage: undefined };
-          }
-          return toConnector({
-            connectorType: entry.connectorType,
-            name: entry.name,
-            available: entry.available,
-            row: dto.connectors.find(
-              (candidate) => candidate.connectorType === entry.connectorType &&
-                candidate.status.status === 'connected',
-            ) ?? dto.connectors.find(
-              (candidate) => candidate.connectorType === entry.connectorType,
-            ),
-          });
-        }),
-      ],
-      // A Registry server is an app now: its row is the app's, never a
-      // second dynamic tool row.
-      apps: (dto.apps ?? []).map((app): WorkbenchApp => ({
-        id: app.appId,
-        key: app.appKey,
-        name: app.name,
-        ...(app.domain ? { domain: app.domain } : {}),
-        ...(app.description ? { description: app.description } : {}),
-        ...(app.logo ? { logo: app.logo } : {}),
-        transport: app.transport,
-        status: app.status,
-        ...(app.errorMessage ? { errorMessage: app.errorMessage } : {}),
-        ...(app.helperName ? { helperName: app.helperName } : {}),
-        ...(app.helperId ? { helperId: app.helperId } : {}),
-        ...(app.connectionReference ? { connectionReference: app.connectionReference } : {}),
-        useCount: app.useCount,
-        ...(app.lastUsedAt !== undefined ? { lastUsedAt: app.lastUsedAt } : {}),
-        ...(app.createdAt !== undefined ? { createdAt: app.createdAt } : {}),
-        ...(app.accountLabel ? { accountLabel: app.accountLabel } : {}),
-        ...(app.workspaceName ? { workspaceName: app.workspaceName } : {}),
-        ...(app.lastUse ? { lastUse: { ...app.lastUse } } : {}),
-      })),
-      appCatalog: dto.appCatalog ?? [],
-      connections: dto.connections.map((connection) => toConnection(connection, input.viewerId)),
-    };
+    return projectWorkbenchDisplay(dto,input.viewerId);
   }
 
   async listHelpers(input: { workspaceId: string }): Promise<readonly WorkbenchHelper[]> {
@@ -376,7 +234,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
       connectionId: input.connectionId,
     });
     return {
-      connection: toConnection(detail.connection, input.viewerId),
+      connection: projectWorkbenchConnection(detail.connection, input.viewerId),
       grants: detail.grants
         .filter((grant) => grant.revokedAt === undefined)
         .map((grant) => ({

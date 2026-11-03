@@ -7,6 +7,9 @@ import { workingTurnFreshSql } from './turn-ownership.js';
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import { buildRouterSnapshot,RouterProjectionUnavailable,routerAuthority,routerAtomicGroup } from './router-projections.js';
 import { profileDomain } from './router-profile-source.js';
+import {ownerFamily,buildOwnerSnapshot} from './router-owner-projections.js';
+import {readWalletProjection} from './wallet.js';
+import {projectWorkbenchDisplay} from '@beeline/api-contract/workbench';
 import { CommandScopedDatabase } from './command-scoped-database.js';
 import type { TrayDecisionOperation } from './tray-decision-command.js';
 import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
@@ -1195,6 +1198,10 @@ export class PhoneService {
   }
 
   readRouterSnapshot(input: RouterSnapshotInput, viewerId: string,options?:{readonly trayClock?:true}) {
+    if(ownerFamily(input.family))return this.database.transaction(async db=>{
+      await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      return buildOwnerSnapshot(db,this,input,viewerId);
+    });
     if(input.family==='room-head')return this.readRoomRouterSnapshot({...input,family:'room-head'},viewerId);
     if (input.family === 'needs-you-count') return readNeedsYouCountSnapshot(this.database,input.workspaceId,viewerId,options?.trayClock?'committed':'wall');
     return buildRouterSnapshot(this.database, input, viewerId, (db, args, viewer) => this.buildRouterValue(db, args, viewer,options),options);
@@ -1206,6 +1213,8 @@ export class PhoneService {
     viewerId: string,options?:{readonly trayClock?:true}): Promise<RouterValues[RouterFamily] | null> {
     const reader = new PhoneService(database, this.publicOrigin);
     reader.pureProjection = true;
+    if(input.family==='owner-workbench')return projectWorkbenchDisplay(await reader.readWorkbench({workspaceId:''},viewerId),viewerId);
+    if(input.family==='owner-wallet')return readWalletProjection(database,viewerId);
     if(input.family==='agent-profile'){
       const value=await reader.readAgent(input.workspaceId,input.agentId,viewerId);
       if(!value)return null;
@@ -1213,7 +1222,14 @@ export class PhoneService {
       const revision=(await database.query<{epoch:string}>('SELECT epoch::text FROM router_authority WHERE scope=$1',
         [profileDomain(input.workspaceId,input.agentId)])).rows[0]?.epoch;
       if(!revision)throw new RouterProjectionUnavailable('authority');
-      const result={...stable,configVersion:revision};
+      const metadata=(await database.query<{role:string;chosen_voices:unknown}>(`SELECT member.role,agent.chosen_voices
+        FROM memberships member LEFT JOIN agents agent ON agent.agent_id=$3
+        WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.identity_id=$2 AND member.removed_at IS NULL`,
+        [input.workspaceId,viewerId,input.agentId])).rows[0];
+      const canRemove=value.access?.owner?.id===viewerId||metadata?.role==='owner'||metadata?.role==='admin';
+      const voiceRevision=hash(JSON.stringify({voices:metadata?.chosen_voices??{},soul:value.soul?.instructions??'',
+        name:value.agent.identity.name,handle:value.agent.identity.handle,owner:value.access?.owner?.id,role:metadata?.role}));
+      const result={...stable,configVersion:revision,canRemove,voiceRevision};
       if(Buffer.byteLength(JSON.stringify(result))>32*1024)throw new RouterProjectionUnavailable('budget');
       return result;
     }
@@ -4957,6 +4973,11 @@ export class PhoneService {
           viewerId,
           await this.viewerWorkbenchWorkspace(viewerId),
         )) as Output<Name>;
+      case 'refreshWallet':{
+        const binding=(await this.database.query<{workspace_id:string}>('SELECT workspace_id FROM wallet_bindings WHERE identity_id=$1',[viewerId])).rows[0];
+        if(!binding)throw new Error('wallet not created');
+        return await readWallet(this.database,viewerId,binding.workspace_id) as Output<Name>;
+      }
       case 'sendFromWallet':
         await this.requireWorkspaceMember(
           (input as Input<'sendFromWallet'>).workspaceId,
@@ -9345,8 +9366,10 @@ export class PhoneService {
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {
-    const linkAccount = await this.linkWallet?.status(viewerId);
-    if (input.refreshVault) {
+    const linkAccount = this.pureProjection?(await this.database.query<{connected:boolean;pending:boolean;ineligible:boolean}>(
+      `SELECT sealed_grant IS NOT NULL connected,(state IS NOT NULL AND attempt_expires_at>now()) pending,ineligible
+       FROM link_oauth_accounts WHERE owner_identity_id=$1`,[viewerId])).rows[0]:await this.linkWallet?.status(viewerId);
+    if (input.refreshVault&&!this.pureProjection) {
       const machines = (await this.database.query<{ machine_id: string }>(
         `SELECT DISTINCT COALESCE(machine_id,agent_id) machine_id FROM agents WHERE owner_id=$1`, [viewerId],
       )).rows;
@@ -9477,7 +9500,7 @@ export class PhoneService {
 
     // Squire API rows point at vault credentials. They remain installed for
     // agent use, but the person's Connectors page presents them under Keys.
-    const apps = (await readOwnerApps(this.database, viewerId, this.composio))
+    const apps = (await readOwnerApps(this.database, viewerId, this.composio,{pure:this.pureProjection}))
       .filter((app) => app.transport !== 'squire-api' && app.hasConnected);
     const catalogKeys = new Set([
       'gmail',
@@ -9496,7 +9519,7 @@ export class PhoneService {
         .filter((app) => app.transport === 'composio')
         .map((app) => composioToolkitForApp(app.appKey)),
     ]);
-    const appCatalog = await this.readAppCatalog(catalogKeys);
+    const appCatalog = this.pureProjection?[]:await this.readAppCatalog(catalogKeys);
     const appMetadata = new Map(appCatalog.map((item) => [item.appKey, item]));
     const uniqueConnections = uniqueVaultConnections(connections);
     const walletRow = (
@@ -9505,7 +9528,10 @@ export class PhoneService {
         delegation_expires_at: Date | null;
         delegation_standing: boolean;
       }>(
-        `SELECT created_at,delegation_expires_at,delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
+        this.pureProjection?`SELECT to_timestamp((value->>'createdAt')::double precision) created_at,
+          to_timestamp((value->>'expiresAt')::double precision) delegation_expires_at,(value->>'standing')::boolean delegation_standing
+          FROM owner_projection_cells WHERE owner_id=$1 AND cell='wallet-summary'`:
+          `SELECT created_at,delegation_expires_at,delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
         [viewerId],
       )
     ).rows[0];
@@ -9618,24 +9644,24 @@ export class PhoneService {
     const ownedCompanies = new Set([...view.connections.map(key => resolveCompany(key).id),
       ...(view.apps ?? []).filter(app => app.transport === 'squire-api').map(app => resolveCompany(app).id)]);
     const oauthApps = new Set<string>();
-    if (this.composio) await Promise.all(COMPANY_APPS.filter(app => ownedCompanies.has(resolveCompany({ domain: app.domain }).id))
+    if (!this.pureProjection&&this.composio) await Promise.all(COMPANY_APPS.filter(app => ownedCompanies.has(resolveCompany({ domain: app.domain }).id))
       .map(async app => {
         try {
           if (await this.composio!.supportsOAuth(composioToolkitForApp(app.appKey))) oauthApps.add(app.appKey);
         } catch { /* Keep existing routes available when provider discovery is unavailable. */ }
       }));
-    const companies = projectWorkbenchCompanies(view, this.publicOrigin, await companyPopularity(this.database), undefined, oauthApps);
+    const companies = projectWorkbenchCompanies(view, this.publicOrigin, this.pureProjection?new Map<string,number>():await companyPopularity(this.database), undefined, oauthApps);
     const keys = companies.rows.flatMap(company => {
       const known = companyForMcp(company.domain ?? company.id);
       return known ? [`company:${known.id}`, `search:${known.id}`] : [];
     });
-    const cached = await this.connectorDiscovery.read(keys);
+    const cached = await this.connectorDiscovery.read(this.pureProjection?[]:keys);
     const rows = companies.rows.map(company => {
       if (company.kind !== 'company' || company.items.some(item => item.kind === 'connection')) return company;
       const known = companyForMcp(company.domain ?? company.id);
       if (!known) return company;
       const cacheKey = `company:${known.id}`;
-      this.connectorDiscovery.warm(cacheKey, viewerId, cached.get(cacheKey));
+      if(!this.pureProjection)this.connectorDiscovery.warm(cacheKey, viewerId, cached.get(cacheKey));
       const manifest = [...cached.get(cacheKey)?.manifests ?? [], ...cached.get(`search:${known.id}`)?.manifests ?? []]
         .find(manifest => registryServerAppKey(manifest.name) === appIdentity(known.domain!)?.key
           && known.hosts.includes(registryServerDomain(manifest.name) ?? '') && !manifest.secretInputNames.length
@@ -11047,6 +11073,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'revokeConnectionGrants',
   'createWallet',
   'readWallet',
+  'refreshWallet',
   'sendFromWallet',
   'grantWalletDelegation',
   'revokeWalletDelegation',

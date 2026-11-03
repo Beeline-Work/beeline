@@ -5,6 +5,7 @@ import { createAgentCommand } from '../src/agent-command.js';
 import { saveWorkflow, startWorkflow } from '../src/workflow-runs.js';
 import { SurfaceResponseCache, isAgentDetailView } from '@beeline/buzz-client';
 import { SurfaceRegistry } from '../../mobile/sources/buzz/surface-registry.js';
+import {projectWorkbenchDisplay} from '@beeline/api-contract/workbench';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if (!url) throw new Error('Closure gates require BEELINE_COMMAND_TEST_POSTGRES_URL; refusing to skip PostgreSQL proof');
@@ -89,16 +90,17 @@ describe('Group A unclosed executable obligations', () => {
     await fixture.a.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Connector helper')`, [agent]);
     await fixture.a.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, reader]);
     await fixture.a.query(`INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,helper_agent_id,connector_type,status)
-      VALUES($1,$2,$3,$4,'google-calendar','connected')`, [connector, workspace(5), reader, agent]);
+      VALUES($1,$2,$3,$4,'tailscale','connected')`, [connector, workspace(5), reader, agent]);
     const server = await fixture.server(fixture.a, ROUTER_FAMILIES);
-    await server.request('readWorkbench', { workspaceId: workspace(5) });
+    const initial=await server.request('readWorkbench', { workspaceId: workspace(5) });
     await server.barrier(); const position = server.frames.length;
     await fixture.b.query(`UPDATE workspace_connectors SET signed_in_as='committed@example.invalid' WHERE id=$1`, [connector]);
     await server.barrier();
     expect(server.requests.map(request => request.op)).toEqual(['readWorkbench']);
     const cells = replacements(server.frames, position).flatMap(value => value.connectors ?? []);
-    expect(cells.filter(cell => cell.id === connector && cell.signedInAs === 'committed@example.invalid'),
-      'F08 connector commit must carry its exact owner-scoped Workbench replacement').toHaveLength(1);
+    expect(cells.filter(cell => cell.id === 'tailscale'),
+      'F08 connector commit must carry its exact owner-scoped Workbench replacement').toEqual([
+        {...projectWorkbenchDisplay(initial,reader).connectors.find(cell=>cell.id==='tailscale')!,signedInAs:'committed@example.invalid'}]);
   });
 
   it('F09: a committed portrait revision supplies the shared parent detail once for both consumers without an event read', async () => {

@@ -10,16 +10,18 @@ const detached = () => noop;
 
 /** The existing navigation owner spends the route-bound opportunity. Effects
  * attach consumers only; no invalidation, elapsed time or response opens it. */
-export function useRoutedResource<F extends RouterFamily>(family: F, input: RouterSnapshotInput | undefined, focused: boolean) {
+export function useRoutedResource<F extends RouterFamily>(family: F, input: RouterSnapshotInput | undefined, focused: boolean,
+  validate?:(value:unknown)=>boolean) {
   const mode = useRouterFamily(family), visible = useRef(focused); visible.current = focused;
   const key = input ? JSON.stringify(input) : '';
   const request = useMemo(() => input, [key]);
+  const listener=useMemo(()=>()=>{},[]);
   const [held, setHeld] = useState<{ key: string; handle: ReturnType<typeof acquireRouterLane> }>();
   useEffect(() => {
     if (mode !== 'router' || !focused || !request) { setHeld(undefined); return; }
-    const handle = acquireRouterLane(request, () => visible.current && AppState.currentState === 'active', noop);
+    const handle = acquireRouterLane(request, () => visible.current && AppState.currentState === 'active', listener,validate);
     setHeld({ key, handle }); return handle.release;
-  }, [mode, focused, request, key]);
+  }, [mode, focused, request, key,listener,validate]);
   const current = mode === 'router' && focused && held?.key === key ? held.handle : undefined;
   const view = useSyncExternalStore(current?.subscribe ?? detached, () => current?.current() ?? empty, () => empty);
   return { mode, value: mode === 'router' ? view.value as RouterValues[F] | null : null,

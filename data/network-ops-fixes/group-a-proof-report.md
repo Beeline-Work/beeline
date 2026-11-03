@@ -15,7 +15,7 @@ The second command is an explicit closure gate, separate from regression discove
 
 Initial measured run: PostgreSQL 16.15, integrator base `0a864c56f`, seven scoped regressions pass; five closure gates reproduce implementation gaps:
 
-| Finding | Executable test prefix | Current evidence |
+| Finding | Executable test prefix | Initial evidence |
 | --- | --- | --- |
 | F02 | `F02: one affected list update` | Both real servers deliver the same current list once; client reads and unrelated count projection queries remain zero. Complete consumer/cohort proof remains required. |
 | F03 | `F03: 1,000 transient frames` | Transient frames cause no read; the committed membership supplies zero roster DTOs, expected one. |
@@ -37,3 +37,15 @@ The unchanged F03, F04 and F05 server closure assertions now pass after adding a
 The legacy `liveNeedsYou` path now reads the existing aggregate order/count boundary and only the changed Room's cells in one read-only repeatable-read transaction. It preserves the old display cap and wire shape, including the existing explicit-seen behavior.
 
 Validation at this increment: real PostgreSQL F03/F04/F05 gates pass; F08/F09 remain red at their original missing-fact assertions. Core lanes 34, group publication 11, admission 14, new Room-fold 9, workflow consumer 3 and legacy Needs-you 39 tests pass. Server, mobile and net typechecks pass. The workflow consumer selects one negotiated path and releases all 16 unmounted Room observers. The roster client is deliberately not advertised before its remaining consumers are migrated. Full finding/cohort closure remains work in progress.
+
+## Owner and profile implementation increment
+
+F08 now has separate `owner-workbench` and `owner-wallet` families on `owner:<principal>`, independent of Workspace membership. Workbench snapshots use committed owner data and a transactional summary cell; they never call provider status, warm discovery, queue vault work, or read the wallet balance projection. Display shaping is shared with the existing adapter and runs on the server for the negotiated family. Wallet snapshots return an actual persisted provider observation, its observation time, and separate signing metadata. Missing observations stay absent. The existing refresh gesture invokes the explicit `refreshWallet` operation; a snapshot never provisions or refreshes an account.
+
+Committed owner changes advance independent permission domains. Current-authority fences retire older private facts before enqueue, including ownership changes on the other PostgreSQL pool. Unsupported clients do not receive new authority-domain controls. The server's deployment capability remains disabled.
+
+The negotiated profile paints the parent detail directly, passes that same object to portrait controls, and detaches its old cached-detail observer and event reads. The server supplies removal permission and a voice-specific revision, so a portrait revision cannot trigger another voice-catalogue read. Private grant facts are fenced after owner transfer and Workspace revocation.
+
+Measured validation before the final profile revision increment: `router-phone-group-a.postgres.test.ts` passes 10 real PostgreSQL scenarios, including the two new F08 owner/purity tests and the F09 delayed-private-grant test. `owner-resources.router.test.tsx` passes three mounted consumer scenarios (shared facts, 1,000 legacy changes, owner key across Workspaces, pending/blur, explicit provider work). The phone network-channel check retains all 72 existing entries, architecture retains its existing limits, and the owner bundle gate passes after moving the workflow display-result graph outside the admission/fold entry. No assertion, byte limit, scenario deadline, or architecture allowance was raised.
+
+The F08 source gate now uses a supported Tailscale connector and asserts its complete canonical display cell. The original Google-calendar fixture is absent from the current connector catalog; treating its legacy wire row as a rendered catalog row was an incorrect fixture assumption. Final source/consumer/cohort revalidation is still in progress. These scoped results do not close the full native/browser/legacy matrix or the remaining Members/picker consumer obligations.

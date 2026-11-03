@@ -4,13 +4,15 @@ import { ChoiceVideoPreview } from '@/components/buzz/ChoiceVideoPreview';
 import { funnelOnboarding } from '@/auth/signin-funnel';
 import { LedgerUntaggedHint } from '@/components/buzz/Ledger';
 import { ErrorBanner } from '@/components/buzz/ErrorBanner';
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
 export { GitHubEventCard, DaemonFactCard } from '@/components/buzz/LifecycleCard';
 import { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
 export { NotificationLifecycleCard };
 import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
+import { ButtonRowFrame } from '@/components/buzz/ButtonRow';
+import { DesktopWorkspacePortal } from '@/components/buzz/DesktopWorkspacePortal';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import {
   MESSAGE_REACTION_EMOJIS,
@@ -874,6 +876,53 @@ function SwipeToReply({
   const [desktopActionsVisible, setDesktopActionsVisible] = useState(false);
   const [desktopRowHovered, setDesktopRowHovered] = useState(false);
   const [reactionPickerVisible, setReactionPickerVisible] = useState(false);
+  const actionsRef = useRef<View>(null);
+  const pickerRef = useRef<View>(null);
+  const [pickerPosition, setPickerPosition] = useState<{ top: number; left: number } | null>(null);
+  useEffect(() => setReactionPickerVisible(false), [messageId, isDesktop]);
+  useLayoutEffect(() => {
+    if (!isDesktop || !reactionPickerVisible || Platform.OS !== 'web') {
+      setPickerPosition(null);
+      return;
+    }
+    // RN Web rows create stacking contexts. A row-local zIndex cannot clear
+    // later messages, and the transcript clips anything below its bottom edge.
+    // Measure the real surface in the body portal, then keep it in the viewport.
+    const anchor = actionsRef.current as unknown as HTMLElement;
+    const picker = pickerRef.current as unknown as HTMLElement;
+    if (!anchor || !picker) return;
+    const bounds = anchor.getBoundingClientRect();
+    const size = picker.getBoundingClientRect();
+    const inset = 8;
+    const maxTop = Math.max(inset, window.innerHeight - size.height - inset);
+    setPickerPosition({
+      top: Math.max(inset, Math.min(
+        bounds.bottom + size.height <= window.innerHeight - inset
+          ? bounds.bottom
+          : bounds.top - size.height,
+        maxTop,
+      )),
+      left: Math.max(inset, Math.min(bounds.right - size.width, window.innerWidth - size.width - inset)),
+    });
+    const dismiss = () => setReactionPickerVisible(false);
+    const outside = (event: PointerEvent) => {
+      if (!picker.contains(event.target as Node) && !anchor.contains(event.target as Node)) dismiss();
+    };
+    const escape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') dismiss();
+    };
+    document.addEventListener('pointerdown', outside, true);
+    document.addEventListener('keydown', escape);
+    // A scrolled/replaced row must never leave a picker pointing at old content.
+    document.addEventListener('scroll', dismiss, true);
+    window.addEventListener('resize', dismiss);
+    return () => {
+      document.removeEventListener('pointerdown', outside, true);
+      document.removeEventListener('keydown', escape);
+      document.removeEventListener('scroll', dismiss, true);
+      window.removeEventListener('resize', dismiss);
+    };
+  }, [isDesktop, messageId, reactionPickerVisible]);
   const message = isDesktop ? (
     <Pressable
       accessibilityHint="Long press to copy the entire message"
@@ -910,7 +959,8 @@ function SwipeToReply({
         } as any)}
       >
         {message}
-        <View
+        <ButtonRowFrame
+          ref={actionsRef}
           accessibilityLabel="Message actions"
           style={[
             styles.replyDesktopActions,
@@ -932,28 +982,34 @@ function SwipeToReply({
               <DesktopMessageAction action="forward" label="Forward message" tooltip="Forward" onPress={onForward} onFocus={() => setDesktopActionsVisible(true)} onBlur={() => setDesktopActionsVisible(false)} testID={`forward-button-${messageId}`} />
             </>
           ) : null}
-        </View>
+        </ButtonRowFrame>
         {!replyOnly && reactionPickerVisible ? (
-          <View style={styles.reactionPicker} testID={`reaction-picker-${messageId}`}>
-            {MESSAGE_REACTION_EMOJIS.map((emoji) => (
-              <Pressable
-                accessibilityLabel={`React with ${emoji}`}
-                accessibilityRole="button"
-                key={emoji}
-                onPress={() => {
-                  onReact(emoji);
-                  setReactionPickerVisible(false);
-                }}
-                style={({ pressed }) => [
-                  styles.reactionPickerChoice,
-                  pressed && styles.replyDesktopPressed,
-                ]}
-                testID={`reaction-choice-${messageId}-${emoji}`}
-              >
-                <Text style={styles.reactionEmoji}>{emoji}</Text>
-              </Pressable>
-            ))}
-          </View>
+          <DesktopWorkspacePortal>
+            <ButtonRowFrame
+              ref={pickerRef}
+              style={[styles.reactionPicker, pickerPosition ?? { opacity: 0 }]}
+              testID={`reaction-picker-${messageId}`}
+            >
+              {MESSAGE_REACTION_EMOJIS.map((emoji) => (
+                <Pressable
+                  accessibilityLabel={`React with ${emoji}`}
+                  accessibilityRole="button"
+                  key={emoji}
+                  onPress={() => {
+                    onReact(emoji);
+                    setReactionPickerVisible(false);
+                  }}
+                  style={({ pressed }) => [
+                    styles.reactionPickerChoice,
+                    pressed && styles.replyDesktopPressed,
+                  ]}
+                  testID={`reaction-choice-${messageId}-${emoji}`}
+                >
+                  <Text style={styles.reactionEmoji}>{emoji}</Text>
+                </Pressable>
+              ))}
+            </ButtonRowFrame>
+          </DesktopWorkspacePortal>
         ) : null}
       </View>
     );
@@ -1736,9 +1792,7 @@ const styles = StyleSheet.create((theme) => ({
   replyDesktopActionsVisible: { opacity: 1 },
   replyDesktopPressed: { backgroundColor: theme.buzz.bgHighlight },
   reactionPicker: {
-    position: 'absolute',
-    top: 46,
-    right: 0,
+    position: 'fixed' as any,
     zIndex: 4,
     flexDirection: 'row',
     padding: 4,

@@ -38,6 +38,11 @@ const composerSource = readFileSync(
   'utf8',
 );
 
+// Test renderer has no document body; browser regression covers the real portal.
+vi.mock('@/components/buzz/DesktopWorkspacePortal', () => ({
+  DesktopWorkspacePortal: ({ children }: { children: React.ReactNode }) => children,
+}));
+
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>

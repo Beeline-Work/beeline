@@ -4,12 +4,12 @@ import type { SqlDatabase } from './database.js';
 import { LiveHub } from './live.js';
 
 afterEach(()=>{vi.useRealTimers();vi.restoreAllMocks();});
-it('never inherits the legacy deadlock timer or redispatches an owned effect after 24h',async()=>{
+it.each([true, false])('never redispatches a failed effect after 24h (owned=%s)',async owned=>{
   vi.useFakeTimers();
   const timers=vi.spyOn(globalThis,'setTimeout');
   const deadlock=Object.assign(new Error('Synthetic transaction rolled back'),{code:'40P01'});
   const query=vi.fn(async(sql:string)=>sql.includes('agent_command_generation_owners')
-    ?{rows:[{owned:true}],rowCount:1}
+    ?{rows:owned?[{owned:true}]:[],rowCount:owned?1:0}
     :{rows:[{corner_reviewer:false,is_corner:false,private_command:false,voice_agent_name:null}],rowCount:1});
   const transaction=vi.fn(async()=>{throw deadlock;});
   const daemon=new DaemonService({query,transaction} as unknown as SqlDatabase,new LiveHub());

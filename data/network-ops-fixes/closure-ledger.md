@@ -109,3 +109,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F18 GitHub zero-check confirmation removes its ten-second delayed provider observation. Auth check18 and server zero-check17 pass: one bounded evidence read, idle-day no follow-up, registration/current-head/webhook fences intact. Remaining provider/consumer and whole-finding gates remain open.
 
 - F18 Pi generated homes now disable both conversation and provider SDK retries through the same pure policy as owned-model sessions. Agent-home59 and pinned Pi10 pass, including actual SDK refusal/disconnect and idle-day evidence. No whole finding changes status; final harness routing/isolation remains open.
+
+- F18 daemon deadlock replay is removed for legacy and owned effects. Commander206 and focused owned/legacy idle-day2 pass; brief failures roll back without delivery and new explicit actions recheck membership/revision. Server types pass. Durable route/cohort gates remain open.

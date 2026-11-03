@@ -585,10 +585,6 @@ export class DaemonService {
     if (turnOwner && name !== 'claimAgentCommand' && name !== 'postAgentTurnReceipt' && name !== 'acknowledgeAgentCommand' && name !== 'getAgentCommands')
       throw new Error('Turn ownership operation unavailable');
     if(name==='readCommandActivation')throw new Error('Activation context requires the negotiated machine socket');
-    let ownedAttempt = Boolean(turnOwner || this.authorizedCommand?.turn_owner_connection_id);
-    for (let attempt = 0; ; attempt++) {
-      let committed = false;
-      try {
     input = { ...input };
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.agentId === 'string' && candidate.agentId !== authenticatedAgentId)
@@ -656,7 +652,6 @@ export class DaemonService {
     }
     if (ownedIntent && !ownedTurnOperationSupported(String(name)))
       throw new ExpectedRefusalError('Owned command adapter is not enabled for this operation');
-    ownedAttempt ||= ownedIntent;
     // Provider reads happen before the command transaction. Reports may be
     // delivered in the commander's Room, so refresh their origin corners too.
     if (!ownedIntent && !this.commandTransaction && scopedRoom && this.github) {
@@ -1159,7 +1154,6 @@ export class DaemonService {
         }
         return result;
       });
-      committed = true;
       for (const task of committedTasks) {
         try {
           await task(this.database);
@@ -2457,22 +2451,6 @@ export class DaemonService {
         )) as Output<Name>;
       default:
         throw new CommandRefusalError(`unsupported daemon operation: ${String(name)}; use order and report`, 410);
-    }
-      } catch (error) {
-        // New owned effects preserve their uncertain identity for an actual
-        // recovery boundary. They never inherit the legacy timed redispatch.
-        if (ownedAttempt) throw error;
-        // These operations have transactional writes and buffered live events.
-        // Retry the owning transaction, including authorization, after rollback;
-        // a nested transaction cannot recover an aborted PostgreSQL transaction.
-        const retryableWrite = name === 'postAgentActivity' ||
-          (name === 'reviseCornerBrief' && !committed) ||
-          (name === 'postAgentTurnReceipt' && (input as Input<'postAgentTurnReceipt'>).status === 'failed');
-        if (!retryableWrite || this.commandTransaction || attempt >= 2 ||
-          !error || typeof error !== 'object' || !('code' in error) || error.code !== '40P01')
-          throw error;
-        await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1) + Math.floor(Math.random() * 25)));
-      }
     }
   }
 

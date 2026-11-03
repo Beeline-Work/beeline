@@ -214,3 +214,9 @@ Auth check18 and server zero-check17 pass, including a 24-hour no-follow-up proo
 Generated Pi settings used to enable three conversation retries and leave provider SDK defaults implicit. A pure shared settings function now disables both layers for generated homes and the owned-model harness, preserving the existing HTTP idle deadline and operator-settings isolation. No owned-model extension is installed by this change.
 
 Agent-home59 and pinned Pi10 pass. The generated JSON is interpreted by the actual SettingsManager; pinned SDK 429/500/disconnect proofs observe one request and no retry over 24 hours. Full harness routing, credential isolation and cohort gates remain open.
+
+## D080 — Remove daemon transaction replay after deadlock
+
+Legacy postAgentActivity, failed receipts and brief revisions previously replayed up to three whole transactions after a randomized delay. Every daemon operation now returns its first transaction failure. Rollback still buffers live events and protects revision/command rows; a separate explicit action rechecks current authority and revision before making another attempt.
+
+Commander206, owned/legacy idle-day2 and server types pass. Brief fault injection proves full rollback, one later explicit success, refusal after membership removal and refusal after concurrent revision. This does not complete durable ownership adapters or any whole audit finding.

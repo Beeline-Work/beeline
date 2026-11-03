@@ -32,6 +32,24 @@ inventory entries. Existing local incremental `dist/` files are not shipping
 proof; use a fresh build for packaging. The router inventory remains **158 keys**
 and every real runtime ownership/removal obligation remains open.
 
+
+## Individual architecture relaxation disposition (instruction042)
+
+| Existing red rule | Exact addition and present reason | Required final disposition |
+| --- | --- | --- |
+| `live.notify` owners | `postgres-live-notifications.ts` is a dependency-free fixed-channel SQL notifier leaf, imported by schema installers without loading the listener's runtime graph. `postgres-live.ts` remains the listener/decoder; this adds no second LISTEN connection. | Prefer one permitted owner if dependency cycles can be removed without weakening source capture. If the leaf remains, its exact owner addition requires the existing owner-only manual disposition; no general notifier exemption. |
+| `settings.server-env` 60→61 | `BEELINE_NETWORK_ROUTER_V1` is the single temporary server-first switch requested for staged migration. | Delete it after the validated expansion/switch sequence and router-only removal; no per-family or replacement setting. Final count ≤60. |
+| `paths.server-parallel` 18→20 | `cdp-client.ts::waitForLegacyReceipt` is actual remaining receipt polling and must go. `scheduled-work-audience.ts`'s `fallback` variable supplies a principal denial certificate for a deleted/inaccessible Room; it is not a transport retry, but remains counted by the unchanged rule. | Remove the old receipt implementation through the completion owner (F21/C). Consolidate the denial-certificate computation with its single authority path if useful; do not rename it just to evade counting. Final count ≤18. |
+| `paths.helper-parallel` 29→30 | `session-join/store.ts::takeInbox` consumes old local text atomically before durable delivery files, preserving already-written joined-session input during storage migration. It does not open a network connection. | Remove the obsolete storage branch only with the supported-upgrade proof preserving pending input, or offset by deleting an actual obsolete helper path. Final count ≤29. |
+| `paths.phone-parallel` 19→24 | Tray legacy observer selection, `acquireLegacyChatList`, `useLegacyNeedsYouCount`, old usage mode and `installLegacyMediaCacheConnection` retain old-server branches while rollout is off. The count is a name-pattern ratchet, not a count of requests. | Move every supported cohort to the router/sole compatibility ingress, then delete those feature implementations. No renaming, hidden scanner exception or count waiver establishes removal. Final count ≤19. |
+
+These are individual explanations of staged debt, not approval to retain
+parallel networking in the final architecture. The trusted-base guard stays
+red for any relaxation left at review; final target is zero relaxations. All
+listed runtime removal paths overlap the A/B/C findings and require their actual
+consumer/cohort proofs before deletion. The test-only compiled-output cleanup
+above neither removes nor excuses these paths.
+
 ## Final architecture and compatibility boundary
 
 1. One transport-free shared route registry owns literal operation identity, exact codecs, permitted trigger/owner, scope/key, recovery policy, input/result/queue bounds, durable effect classification and source/deadline dependencies. No arbitrary URL, operation name, request object, provider client or executor is available to feature code. A caller can select only a closed leaf it is authorized to admit.

@@ -1,6 +1,6 @@
 {
-  "baseHead": "81a921351c8cfced38ddedef2454186a29e933af",
-  "scope": "Tracked production sources; pending change only adds socket compatibility tests. This is not a runtime network capture or empty-sweep proof.",
+  "baseHead": "73a6c477dae238c4f1f8101abdd5d826bcd389f0",
+  "scope": "Integrated group draft source snapshot; no runtime capture, empty-sweep or whole-finding closure claim.",
   "router": {
     "keys": 158,
     "occurrences": 218,
@@ -17,19 +17,19 @@
     {
       "name": "phone-owner",
       "entry": "packages/net/src/private/phone-owner.ts",
-      "rawBytes": 82592,
-      "gzipBytes": 23589,
+      "rawBytes": 83222,
+      "gzipBytes": 23714,
       "rawLimit": 90112,
       "gzipLimit": 24576,
       "sources": {
         "packages/net/src/private/compact-wire-shapes.ts": "ad612a2011935dd2775d8b5c83d93d5b0bae4e4ad75a26d2fbeaf0daf828021d",
-        "packages/net/src/private/generated-owner-input-shapes.ts": "c12b6cbb84ec492418de5103b9ebc555a8971b4fdf5eadad2d88a4a72f6f1ef5",
+        "packages/net/src/private/generated-owner-input-shapes.ts": "a5759c3d0efcac70ee98c22920a9671df87dae4fbd278da27f0174c63ccbf890",
         "packages/net/src/wire-codec.ts": "e6ca4a450576a3c16468b7121a7b96062fa5bd711f5ea38f674e3beb75af2ee3",
         "packages/net/src/private/projection-codecs.ts": "e13c3034841289cf90aed5a2bce969b3e2cdde9c6b2c553e9987e7f49efeb7c8",
         "packages/net/src/private/saved-windows.ts": "9f635b5c670bfbdb08e06eb7fcdbcaa0669ba961f490460cbf3b36e12f335c2d",
         "packages/net/src/private/owner-inputs.ts": "46766fbd3d1a7bf076baeafe40b2803e125702d7ae8497a27fd42642f938fbcf",
         "packages/net/src/private/canonical.ts": "3e20bb7095a1528485d0ad3c90176c254fa0c7de8ff4bd4d7ce81e64e499502a",
-        "packages/net/src/private/admission.ts": "f842fff3dbd22549931aa956001adf3a0df4353d3ffa116d54b26994953d5dae",
+        "packages/net/src/private/admission.ts": "69a8193342f77cca242023688e083ea2d17e9a15fe9065a222d90ae8ca8a0929",
         "packages/net/src/private/staging-bounds.ts": "68bd5182d4231677e06707b29e31d871a6eecaf66b60933297124b5b9bbe96e5",
         "packages/net/src/private/lane-staging.ts": "25ac016c0fca7fbbd475e8350e97432159a268aaaa21ceee8d53741473234a21",
         "packages/net/src/private/tray-group.ts": "c9b4adb06adfaefd14d4df6078d69c26216c150933ffc32713eb61d5ee555792",
@@ -47,12 +47,12 @@
     {
       "name": "phone-shadow",
       "entry": "packages/net/src/phone-inputs.ts",
-      "rawBytes": 27146,
-      "gzipBytes": 5838,
+      "rawBytes": 27388,
+      "gzipBytes": 5872,
       "rawLimit": 32768,
       "gzipLimit": 8192,
       "sources": {
-        "packages/net/src/generated-phone-input-shapes.ts": "48af1e5167321f8a4a0db796ba3cb057be60aab38c9fbbbac9c9fd3495257a5e",
+        "packages/net/src/generated-phone-input-shapes.ts": "12dff83ef1c1b5851cc455dd871bf779c9a8093d88e5aa60c65fd42f929e5e61",
         "packages/net/src/wire-codec.ts": "e6ca4a450576a3c16468b7121a7b96062fa5bd711f5ea38f674e3beb75af2ee3",
         "packages/net/src/phone-inputs.ts": "ad64d6cafe773fccb46df2c6dc174a278ea5a676bcd49696f055af19076bf396"
       }

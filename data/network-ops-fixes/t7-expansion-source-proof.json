@@ -1,0 +1,24 @@
+{
+  "status": "PASS",
+  "historicalRevision": "f43bd3f86e4c7a30aa75378df82fcbda10027c72",
+  "historicalFiles": 621,
+  "productionBaseHead": "73a6c477dae238c4f1f8101abdd5d826bcd389f0",
+  "scope": "Historical source with current installed dependencies, synthetic auth, real loopback sockets/PostgreSQL; no image/startup background/native/deployed floor claim",
+  "installedDependencyLockSha256": "1a36b9a09a3df51414365470f038b2725363515d6e2d82661f294f117a35bdc8",
+  "node": "v24.16.0",
+  "historicalEntries": {
+    "database": "93ef608efcf6552eafa0c6fb0d89a26c7e078943bb232923b6010affaf6c3d40",
+    "phone-service": "ab485e3e4c481cf24d88d84284cfd56499ea135908a6113b747703b9b60c06fb",
+    "live": "8ea412ba7b0ad462dc46a1ef150b16f44ec6c2f20bd047d58f72beb256dd394e",
+    "server": "d4ddb8816be17b436f8388a6eb45bfc1992e0fc2570e4ffc6d38e998e2f962e4"
+  },
+  "legacyColumnsPreserved": 1508,
+  "additiveColumns": 54,
+  "oldBootAfterExpansion": true,
+  "oldSocketReadAfterExpansion": true,
+  "oldWriteAfterExpansion": true,
+  "oldHandlerRestart": true,
+  "currentLegacyWireEqual": true,
+  "currentWrite": true,
+  "repeatedExpansion": true
+}

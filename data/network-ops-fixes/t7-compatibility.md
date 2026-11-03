@@ -32,6 +32,23 @@ not advertise deduplication, then reusing its original identity after a later
 capable generation. The bundle regression suite passes all three consumer
 gates. Server typechecking passes on the same source.
 
+`router-mobile-transport.integration.test.ts` additionally bundles the actual
+mobile `LiveConnection` and connects it to two real local server instances.
+One advertises snapshots and command deduplication; the other has no router
+policy. The proof passes with one initial count snapshot, a committed reaction
+whose reply is dropped at the socket boundary, exactly one incident replacement,
+and no command or stale snapshot request sent on the incapable replacement.
+An explicit recovery opens the third socket and reuses the original command
+identity. The reaction stays set, the ledger has one committed row, and HTTP
+fallback calls remain zero. The retained snapshot executor cannot cross into
+the replacement socket. This test changes no transport or admission behavior.
+
+This is a Node-hosted transport proof with explicit platform/UI/auth seams and
+a supplied owner bridge. It does not exercise native APIs, production navigation
+admission, persistent phone storage or a pre-router server image. The server
+database is isolated PGlite, and every client socket is restricted to the two
+loopback fixture origins.
+
 The current main image at `f43bd3f86e4c7a30aa75378df82fcbda10027c72`
 requires schema 46; this candidate requires schema 61. Both boot checks require
 an exact marker. A previous image therefore cannot simply restart after the

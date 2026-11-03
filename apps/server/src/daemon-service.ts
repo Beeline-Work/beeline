@@ -9074,7 +9074,10 @@ export class DaemonService {
            RETURNING url,name,mime_type,size,created_at,id
          )
          INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event,attachments,reply_to_message_id,root_message_id)
-         SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3),
+         SELECT COALESCE((SELECT prior.id FROM messages prior
+           WHERE prior.id=$10 AND prior.room_id=$2 AND prior.author_id=$3
+             AND prior.text=$4 AND prior.reply_to_message_id=$8),$1),
+           room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3),
            CASE WHEN room.id=$5::uuid THEN $6 ELSE NULL END,
            jsonb_build_object('turnGenerationId',$7::text),
            COALESCE((SELECT jsonb_agg(jsonb_build_object('url',url,'name',name,'mimeType',mime_type,'size',size)
@@ -9082,7 +9085,9 @@ export class DaemonService {
          FROM rooms room WHERE room.id=$2 AND room.archived_at IS NULL
          ON CONFLICT(id) DO UPDATE SET id=messages.id
          RETURNING id,created_at`,
-        [key ? mentionReplyId(key) : id(), input.cornerId, agentId, text, input.roomId, input.requestId, input.generationId, input.replyTo ?? null, root],
+        // Explicit posts may answer the same mention with different text. A
+        // retry of that text keeps its id, while a new post gets its own row.
+        [key ? mentionReplyId(`${key}:${text}`) : id(), input.cornerId, agentId, text, input.roomId, input.requestId, input.generationId, input.replyTo ?? null, root, key ? mentionReplyId(key) : null],
       )
     ).rows[0];
     if (!saved) throw new CommandRefusalError('post refused: address is archived', 409);

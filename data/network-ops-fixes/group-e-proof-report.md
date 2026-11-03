@@ -1,7 +1,8 @@
 # Group E: server/helper/provider ownership follow-up
 
-Initial base: `e22ad688e`; integrated current `f9d8473f3` from
-`fm/network-ops-fixes-combined` at merge `a859e8bc6`. Router activation remains
+Initial base: `e22ad688e`; integrated `f9d8473f3` at merge `a859e8bc6`, then
+current `5ac0dcb45` at merge `187913b1e` from `fm/network-ops-fixes-combined`.
+Router activation remains
 default-off. No supported-version floor, removal hold, assertion, budget,
 network manifest or CI/security gate changes. This is a pre-switch correction,
 not whole-finding closure or rollout acceptance.
@@ -105,3 +106,8 @@ installed-text inbox adoption 3. Across the 20 named suites, **388 cases pass**.
 The receipt/intake suite's retained setup failure and successful unchanged
 rerun are distinguished above. These results do not turn any remaining
 physical-provider, installed-cohort or whole-workload boundary into closure.
+
+After the combined branch advanced to `5ac0dcb45`, the merge was conflict-free,
+the Group E diff remained the same 14 files, and the full composed root typecheck
+passed again. The existing combined-branch CI repair owns its new empty-read
+regressions; none of the four Group E runtime corrections changed in this merge.

@@ -370,6 +370,16 @@ the phone OTA against a stand-in eas-cli.
 
 ## Release memory
 
+Column drops have an additional compatibility gate. A release must first stop
+reading/writing a column; a later release adds its idempotent drop under
+`apps/server/contracts/`. Before predeployment migrations, `rollout-schema.mjs`
+checks candidate and preceding serving/rollback source revisions. After both
+Machines update successfully, `run-contract-migrations.mjs` verifies the drained
+fleet and executes column contracts, including on a rerun that already serves
+the candidate image. Existing unrelated migrations retain their order. The
+incident columns remain compatibility storage in this release. Evidence and
+limits: [November rollout replay](rollout-nov03-replay.md).
+
 The permanent GitHub Release is the pipeline's only memory. Each published
 release carries one `release.json`, uploaded before the release is published:
 per-component version and source commit, the server image and the image it

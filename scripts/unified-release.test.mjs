@@ -2086,11 +2086,15 @@ test('R-DESKTOP-EVIDENCE: notification diagnostics are optional while desktop bu
 
 test('public JSON release outputs survive punctuation masking across plan, OTA and bookkeeping', () => {
   const previous = deliveredPrevious();
+  previous.components.server.imageRef = `registry.fly.io/beeline-server:0.0.8-${OLD_SHA.slice(0,12)}`;
+  previous.components.server.previousImageRef = `registry.fly.io/beeline-server:0.0.7-${'a'.repeat(12)}`;
   const state = initializeRelease({ version: 'v0.0.9', sourceSha: NEW_SHA, previous });
   const outputs = Object.fromEntries(planOutputs(state, previous).trim().split('\n').map((line) => {
     const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)];
   }));
   assert.equal(outputs.release_state, undefined);
+  assert.equal(outputs.previous_server_image_ref, previous.components.server.imageRef);
+  assert.equal(outputs.rollback_server_image_ref, previous.components.server.previousImageRef);
   for (const key of ['previous_record', 'ota_memory']) {
     assert.doesNotMatch(outputs[key], /[{}\[\]]/);
     assert.equal(typeof decodeReleaseOutput(outputs[key]), 'object');

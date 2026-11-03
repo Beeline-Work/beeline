@@ -731,7 +731,11 @@
           "corner_id": "existing before the registry; weekly audit reviews",
           "lifecycle": "existing before the registry; weekly audit reviews",
           "locked": "existing before the registry; weekly audit reviews",
-          "reviewer_agent_id": "existing before the registry; weekly audit reviews"
+          "reviewer_agent_id": "existing before the registry; weekly audit reviews",
+          "owner_agent_id": {
+            "reason": "Compatibility for rollout-0707: preceding serving and rollback images read the retired owner column",
+            "drop": "Remove only through a reviewed contract migration after serving and rollback images stop reading it."
+          }
         }
       },
       "corner_github_cache": {
@@ -1007,7 +1011,11 @@
           "answered_milestone": "existing before the registry; weekly audit reviews",
           "checked_milestone": "existing before the registry; weekly audit reviews",
           "closed": "existing before the registry; weekly audit reviews",
-          "updated_at": "existing before the registry; weekly audit reviews"
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "reached_milestone": {
+            "reason": "Compatibility for BEELINE-SERVER-27: preceding images write this column when posting replies",
+            "drop": "Remove only through a reviewed contract migration after serving and rollback images stop writing it."
+          }
         }
       },
       "github_user_tokens": {

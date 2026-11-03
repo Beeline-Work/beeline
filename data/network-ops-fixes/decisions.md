@@ -306,3 +306,10 @@ The hourly throttle and minute repair call are removed. Existing bounded deletio
 The next-candidate query waits for its writer rather than spinning on a skipped locked row or losing an obligation when that writer rolls back. An isolated PostgreSQL proof holds that lock, observes the wait and rolls back before verifying cleanup. The same proof sets host time to2099 and uses10,000 later rows to check the production due index and fewer than60 shared blocks for the future-candidate lookup. This is a minimal physical/concurrency fixture, not full production workload or rollout evidence. Mixed active-request costs, whole-generation ownership, all retention families and released-cohort gates remain open.
 
 Validation: cleanup7, live listener43 plus the extended focused command-source case, isolated PostgreSQL1, shutdown10, server types, workspace build8, dead-code (five existing/zero new), phone scanner72 and workflow paths118 pass. No whole finding is newly closed.
+
+
+## D093 — Keep overlay PostgreSQL fixture current and expose host-test failures
+
+The isolated overlay proof installs the production live schema prefix, which now also installs the corner cache UPDATE trigger. Its minimal fixture lacked that relation. Adding the unused fixture table preserves the actual listener, UTF8 generation, missed revision, viewer demand and terminal resurrection assertions; isolated PostgreSQL1 passes.
+
+The published shared suite also returned exit2 from the nightly-host fixture's first mocked run without surfacing stderr. The assertion now includes stderr. All11 isolated mocked host cases pass locally; the CI-only cause is not established and this diagnostic change is not claimed as a fix. No real emulator, host lifecycle or production operation was invoked. Full CI on the next head remains required.

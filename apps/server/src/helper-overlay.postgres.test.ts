@@ -40,6 +40,7 @@ describe.skipIf(!url)('overlay real PostgreSQL remote listener and viewer fences
         CREATE TABLE agent_commands(id text PRIMARY KEY,room_id uuid,agent_id text,turn_request_id text,action text,generation_id text,state text,created_at timestamptz DEFAULT now(),lease_expires_at timestamptz);
         CREATE TABLE agent_turns(room_id uuid,agent_id text,request_id text,generation_id text,status text);
         CREATE TABLE live_outputs(room_id uuid,agent_id text,turn_id text,kind text,body jsonb,updated_at timestamptz DEFAULT now(),PRIMARY KEY(room_id,agent_id,turn_id,kind));
+        CREATE TABLE corner_github_cache(corner_id uuid PRIMARY KEY);
         CREATE TABLE registry_mcp_oauth_attempts(state text,connector_id text,expires_at timestamptz,code text);`);
       // Install the production journal+capture function, and its real source
       // trigger on the one table this isolated fixture exercises.

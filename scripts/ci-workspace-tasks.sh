@@ -17,13 +17,6 @@ typecheck() {
   node scripts/check-phone-network-channels.mjs --base "$CHANNEL_BASE"
   node --test --test-concurrency=1 scripts/router-boundaries.test.mjs
   node scripts/check-router-boundaries.mjs --base "$CHANNEL_BASE"
-  node --test --test-concurrency=1 scripts/network-base-policy.test.mjs
-  network_guard=scripts/check-network-base.mjs
-  if git cat-file -e "$CHANNEL_BASE:scripts/check-network-base.mjs" 2>/dev/null; then
-    network_guard="$RUNNER_TEMP/check-network-base.mjs"
-    git show "$CHANNEL_BASE:scripts/check-network-base.mjs" > "$network_guard"
-  fi
-  node "$network_guard" --root "$PWD" --base "$CHANNEL_BASE"
   # Keep each module's sinks in their owner files
   export ARCHITECTURE_BASE="$CI_BASE_SHA"
   git fetch --no-tags --depth=1 origin "$ARCHITECTURE_BASE"

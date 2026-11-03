@@ -77,7 +77,11 @@ export class SquireShareRenewals {
       const lease = shareResult(result);
       if (lease.upstreamUrl !== share.upstreamUrl || lease.expiresAt <= share.expiresAt)
         throw new Error('Squire did not renew the existing share');
-      if (!(await this.persist({ sessionId: share.sessionId, ...lease }))) {
+      const persisted = await this.persist({ sessionId: share.sessionId, ...lease });
+      // Persistence can finish after an explicit replacement. Its old result
+      // cannot retire or rearm the new live-session lease.
+      if (this.shares.get(share.sessionId) !== share) return;
+      if (!persisted) {
         this.stop(share.sessionId);
         return;
       }

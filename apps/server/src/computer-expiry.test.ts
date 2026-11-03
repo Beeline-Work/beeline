@@ -8,6 +8,8 @@ import { LiveHub } from './live.js';
 import type { PostgresDatabase } from './database.js';
 import { groupBPostgresDatabase } from './test-fixtures/test-support-router-group-b-postgres.js';
 import { GroupBClock } from './test-fixtures/router-group-b-clock.js';
+import { SquireShareRenewals } from '../../body/src/squire-share-renewals.js';
+import type { StdioSquireMcpClient } from '../../body/src/squire-mcp-client.js';
 const owner='a'.repeat(64),agent='b'.repeat(64),workspace='11111111-1111-4111-8111-111111111111',room='22222222-2222-4222-8222-222222222222';
 const upstream=`https://synthetic.trycloudflare.com/s/${'c'.repeat(43)}/`;
 const postgresUrl=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
@@ -55,6 +57,36 @@ describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 computer share a
     const ended=(await db.query('SELECT ended_at FROM computer_sessions WHERE id=$1',[share.id])).rows;
     expect(await expireComputerSessions(db,live)).toBe(0);expect((await db.query('SELECT ended_at FROM computer_sessions WHERE id=$1',[share.id])).rows).toEqual(ended);
     expect(queries.some(sql=>sql.includes('ORDER BY expires_at LIMIT 1'))).toBe(true);
+  });
+  it('F21: a delayed old persistence refusal leaves the replacement lease owner able to renew the actual share', async () => {
+    const sessionId = `held-persistence-${backend}`;
+    const share = await create(sessionId, Date.now() + 10_000);
+    let release!: () => void, entered!: () => void, renewed!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const pending = new Promise<void>(resolve => { entered = resolve; });
+    const committed = new Promise<void>(resolve => { renewed = resolve; });
+    let writes = 0;
+    const call = vi.fn(async () => ({ content: [{ type: 'text', text: JSON.stringify({
+      url: upstream, expires_at: new Date(Date.now() + 20_000).toISOString(),
+    }) }] }));
+    const client = { requestMcp: call } as unknown as StdioSquireMcpClient;
+    const reaped = vi.fn();
+    const renewals = new SquireShareRenewals(() => true, async lease => {
+      if (++writes === 1) { entered(); await held; return false; }
+      const result = await refreshComputerSession(db, { roomId: room, agentId: agent, ...lease });
+      expect(result.live).toBe(true); renewed(); return result.live;
+    }, reaped);
+    const lease = () => ({ content: [{ type: 'text', text: JSON.stringify({
+      url: upstream, expires_at: new Date(Date.now() + 200).toISOString(),
+    }) }] });
+    try {
+      renewals.track(sessionId, client, lease()); await pending;
+      renewals.track(sessionId, client, lease()); release(); await committed;
+      expect(call).toHaveBeenCalledTimes(2); expect(writes).toBe(2);
+      expect(reaped).not.toHaveBeenCalled();
+      expect((await db.query<{ future: boolean }>(`SELECT expires_at>clock_timestamp()+interval '10 seconds' future
+        FROM computer_sessions WHERE id=$1`, [share.id])).rows[0]?.future).toBe(true);
+    } finally { release(); renewals.close(); await endComputerSession(db, live, (await getComputerSession(db, share.id))!); }
   });
   it('fences a selected old expiry against a newer source version and a successful renewal',async()=>{
     const fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);

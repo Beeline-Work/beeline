@@ -16,6 +16,7 @@ import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 import { PgliteDatabase } from './test-support.js';
 import { OperationOutcomes } from './operation-outcomes.js';
+import { commandArgumentDigest } from './router-command-ledger.js';
 
 // Reproduction SOCKET-OPS-1: real HTTP and WebSocket boundaries against an isolated database.
 // This is a protocol feature, not a defect report; no production phone can issue it yet.
@@ -86,9 +87,10 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
       socket.on('message', onMessage); socket.once('close', onClose);
     });
   }
-  function request(socket: WebSocket, op: string, args: object = {}, id = `request-${++sequence}`) {
+  function request(socket: WebSocket, op: string, args: object = {}, id = `request-${++sequence}`,
+    command?: { v: 1; id: string }) {
     const reply = response(socket, id);
-    socket.send(JSON.stringify({ t: 'req', id, op, args })); return reply;
+    socket.send(JSON.stringify({ t: 'req', id, op, args, ...(command ? { command } : {}) })); return reply;
   }
   function http(path: string, args?: object, token = 'viewer') {
     return fetch(`${origin}${path}`, { headers: { authorization: `Bearer ${token.repeat(8)}`, 'content-type': 'application/json' },
@@ -154,6 +156,81 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     expect(await request(socket, 'readRoom', { roomId: ROOM })).toMatchObject({ ok: true });
     expect(authenticatePhone).toHaveBeenCalledTimes(1);
   });
+
+  it('P10: a second policy-off server retains a selected command across HTTP, socket and repeated migration', async () => {
+    // This is the current image with rollout policy absent, not an assertion
+    // that a pre-ledger image is a supported rollback target.
+    const op = 'reactToMessage';
+    const args = { roomId: ROOM, messageId: MESSAGE, emoji: '👍' };
+    const command = { v: 1 as const, id: 'rollback-reaction' };
+    const selected = createBeelineServer({ database: db, phone, live,
+      auth: { authenticatePhone } as unknown as TokenAuth,
+      daemon: {} as DaemonService, mediaMaximumBytes: 1,
+      routerProjections: { families: [], commandDedupV1: true, listenerReady: () => true },
+    });
+    selected.listen(0, '127.0.0.1'); await once(selected, 'listening');
+    let first: PhoneResponseFrame;
+    const socket = new WebSocket(`ws://127.0.0.1:${(selected.address() as AddressInfo).port}/v1/phone/live`,
+      [`bearer.${'viewer'.repeat(8)}`]);
+    sockets.push(socket);
+    try {
+      await once(socket, 'open');
+      const capability = once(socket, 'message');
+      socket.send(JSON.stringify({ type: 'router-negotiate', protocol: 1, families: [], commandDedupV1: true }));
+      expect(JSON.parse(String((await capability)[0]))).toMatchObject({ type: 'router-capabilities', commandDedupV1: true });
+      first = await request(socket, op, args, undefined, command);
+    } finally {
+      socket.terminate();
+      await new Promise<void>(resolve => selected.close(() => resolve()));
+    }
+    expect(first).toMatchObject({ ok: true, result: { state: 'committed', commandId: command.id } });
+    const retained = (await db.query('SELECT * FROM router_commands')).rows;
+    expect(retained).toHaveLength(1);
+
+    await migrate(db);
+    await migrate(db);
+    expect((await db.query('SELECT * FROM router_commands')).rows).toEqual(retained);
+
+    const publish = vi.spyOn(live, 'publish');
+    const replay = await http(`/v1/phone/operations/${op}`, { ...args, command });
+    expect(replay.status).toBe(200);
+    expect(await replay.json()).toEqual(first.ok ? first.result : undefined);
+    const replacement = await open();
+    expect(await request(replacement, op, args, undefined, command))
+      .toMatchObject({ ok: true, result: first.ok ? first.result : undefined });
+    expect(publish).not.toHaveBeenCalled();
+    expect((await db.query('SELECT reactions FROM messages WHERE id=$1', [MESSAGE])).rows)
+      .toEqual([{ reactions: { '👍': [VIEWER] } }]);
+    const conflict = await http(`/v1/phone/operations/${op}`, { ...args, emoji: '❤️', command });
+    expect(conflict.status).toBe(409);
+    expect(await conflict.json()).toEqual({ error: 'command_identity_conflict' });
+  });
+
+  it.each(['pending', 'unknown', 'result-expired'] as const)(
+    'P10: migration and policy rollback preserve %s without redispatch on either ingress', async outcome => {
+      const op = 'reactToMessage';
+      const args = { roomId: ROOM, messageId: MESSAGE, emoji: '👍' };
+      const command = { v: 1 as const, id: `rollback-${outcome}` };
+      await db.query(`INSERT INTO router_commands(principal,operation,command_id,digest,state,result,result_expires_at)
+        VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::timestamptz)`,
+      [VIEWER, op, command.id, commandArgumentDigest(op, args), outcome === 'result-expired' ? 'committed' : outcome,
+        outcome === 'result-expired' ? JSON.stringify({ privateResult: 'expired' }) : null,
+        outcome === 'result-expired' ? '2000-01-01T00:00:00Z' : null]);
+      const retained = (await db.query('SELECT * FROM router_commands')).rows;
+      await migrate(db);
+      expect((await db.query('SELECT * FROM router_commands')).rows).toEqual(retained);
+      const publish = vi.spyOn(live, 'publish');
+      const expected = { v: 1, operation: op, commandId: command.id, state: outcome };
+      const reply = await http(`/v1/phone/operations/${op}`, { ...args, command });
+      expect(reply.status).toBe(200);
+      expect(await reply.json()).toEqual(expected);
+      expect(await request(await open(), op, args, undefined, command)).toMatchObject({ ok: true, result: expected });
+      expect(publish).not.toHaveBeenCalled();
+      expect((await db.query('SELECT reactions FROM messages WHERE id=$1', [MESSAGE])).rows)
+        .toEqual([{ reactions: {} }]);
+      expect((await db.query('SELECT * FROM router_commands')).rows).toEqual(retained);
+    },
+  );
 
   it('C3 counts HTTP and socket refusals once each alongside successful operations', async () => {
     const socket = await open('outsider');

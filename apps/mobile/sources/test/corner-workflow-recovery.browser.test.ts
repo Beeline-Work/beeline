@@ -1,11 +1,11 @@
-import { mkdir, mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 it('CR1: failed workflow fetch leaves a clean objective and recovers on an event', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/workflow-recovery-'));
+  const directory = await createBrowserProofDirectory("workflow-recovery-");
   const evidence = process.env.CORNER_WORKFLOW_EVIDENCE;
   if (evidence) await mkdir(evidence, { recursive: true });
   const font = await readFile(path.join(mobile, 'sources/assets/fonts/SpaceGrotesk-Regular.ttf'));

@@ -1,18 +1,18 @@
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { rm, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 it('Legacy standalone lifecycle adapters retain their destinations in both themes', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/lifecycle-proof-'));
+  const directory = await createBrowserProofDirectory("lifecycle-proof-");
   try {
     const entry = path.join(directory, 'proof.tsx');
     await writeFile(entry, `import React from 'react';
 import { createRoot } from 'react-dom/client';
 import { DaemonFactCard, GitHubEventCard } from '@/components/buzz/LifecycleCard';
 import { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
-import { lifecycleFixtures } from '../../../scripts/lifecycle-card-fixtures';
+import { lifecycleFixtures } from ${JSON.stringify(path.join(mobile, 'scripts/lifecycle-card-fixtures'))};
 import { useUnistyles } from 'react-native-unistyles';
 import regular from '@/assets/fonts/SpaceGrotesk-Regular.ttf';
 import strong from '@/assets/fonts/SpaceGrotesk-SemiBold.ttf';

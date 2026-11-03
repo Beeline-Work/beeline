@@ -174,10 +174,11 @@ describe('background advisory-lock ownership', () => {
         `INSERT INTO push_delivery_floors(id,started_at)
          VALUES('message-delivery',now()-interval '2 days')`,
       );
+      // Keep over one page of expired history; query shape and delivery are asserted below.
       await db.query(
         `INSERT INTO messages(id,room_id,author_id,text,created_at)
          SELECT lpad(n::text,64,'0'),$1,$2,repeat('@owner historical message ',100),
-           now()-interval '1 day' FROM generate_series(1,21630) n`,
+           now()-interval '1 day' FROM generate_series(1,201) n`,
         [room, agent],
       );
       await db.query(

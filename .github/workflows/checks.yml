@@ -90,7 +90,7 @@ concurrency:
   group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# One control listener uses one CPU; nine test listeners use at most two each.
+# Control uses one CPU, heavy listeners at most two, and mobile at most three.
 # The CI slice shares its ten-CPU hard cap across all ten jobs and every PR.
 env:
   CI_TEST_WORKERS: '2'
@@ -401,14 +401,14 @@ jobs:
     needs:
       - changes
       - prepare-workspace
-    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-workspace"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
     timeout-minutes: 30
     env:
       CI_TEST_WORKERS: "1"
       CI_BASE_SHA: ${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}
       JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
       RUN_TYPECHECK: ${{ ((github.event_name == 'pull_request' || github.event_name == 'merge_group') || inputs.suite == 'all' || inputs.suite == 'typecheck') }}
-      RUN_MOBILE: |-
+      NEEDS_MOBILE_TOOLCHAIN: |-
         ${{ (
           ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileSuite == 'true') ||
           (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
@@ -426,7 +426,6 @@ jobs:
         ) }}
     outputs:
       typecheck: ${{ steps.checks.outputs['typecheck'] }}
-      mobile-suite: ${{ steps.checks.outputs['mobile-suite'] }}
       dead-code: ${{ steps.checks.outputs['dead-code'] }}
       native-fingerprint: ${{ steps.checks.outputs['native-fingerprint'] }}
       mobile-export-reachability: ${{ steps.checks.outputs['mobile-export-reachability'] }}
@@ -447,11 +446,11 @@ jobs:
           git fetch --no-tags --depth=1 origin "$PR_BASE_SHA"
           node scripts/pr-store-build.mjs "$PR_BASE_SHA"
       - uses: actions/setup-java@v4
-        if: env.RUN_MOBILE == 'true'
+        if: env.NEEDS_MOBILE_TOOLCHAIN == 'true'
         with:
           distribution: temurin
           java-version: "17"
-      - name: Run two bounded workspace lanes
+      - name: Run sequential workspace checks
         id: checks
         run: node scripts/run-ci-workspace-checks.mjs
       - uses: actions/upload-artifact@v4
@@ -829,23 +828,29 @@ jobs:
     name: MOBILE SUITE
     needs:
       - changes
-      - typecheck
+      - prepare-workspace
     if: |-
       !cancelled() && (
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group') && needs.changes.outputs.mobileSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    runs-on: ${{ github.event_name == 'pull_request' && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-workspace"]') || 'ubuntu-latest' }}
     env:
-      CI_TEST_WORKERS: "1"
-    timeout-minutes: 5
+      CI_TEST_WORKERS: "2"
+      JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
+    timeout-minutes: 25
     steps:
-      - name: Take the verdict from the workspace lane that ran it
-        env:
-          CHECK_RESULT: ${{ needs.typecheck.outputs['mobile-suite'] }}
-        run: |
-          echo "MOBILE SUITE: $CHECK_RESULT (workspace lanes in TYPECHECK)"
-          test "$CHECK_RESULT" = success
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/ci-workspace
+        with:
+          prepared: ${{ github.event_name == 'pull_request' }}
+          mobile: 'true'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - name: Run the mobile suite in its own checkout
+        run: timeout 20m bash scripts/ci-workspace-tasks.sh mobile-suite
 
   # This is the one gate whose evidence exists nowhere else: a Metro export
   # resolves the real package-export graph, and no source-only unit test

@@ -1,12 +1,12 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 describe('resource observers in the desktop web renderer', () => {
   it('demonstrates R9a–R9c through the mounted corner line, sign-in and inspector', async () => {
     const mobile = process.cwd();
-    const directory = await mkdtemp(path.join(mobile, 'sources/test/observer-proof-'));
+    const directory = await createBrowserProofDirectory("observer-proof-");
     try {
       const entry = path.join(directory, 'proof.jsx');
       await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client'; import { flushSync } from 'react-dom';
@@ -113,7 +113,7 @@ describe('resource observers in the desktop web renderer', () => {
 
   it('Reproductions R9d and R9-OBS-01: the open run updates and recovers on reconnect', async () => {
     const mobile = process.cwd();
-    const directory = await mkdtemp(path.join(mobile, 'sources/test/observer-proof-'));
+    const directory = await createBrowserProofDirectory("observer-proof-");
     try {
       const entry = path.join(directory, 'proof.jsx');
       await writeFile(entry, `import React from 'react';
@@ -159,7 +159,7 @@ describe('resource observers in the desktop web renderer', () => {
   }, 90000);
   it('Reproductions R9-OBS-06 and R12k: workflow failures stay silent and recover on the next eligible event', async () => {
     const mobile = process.cwd();
-    const directory = await mkdtemp(path.join(mobile, 'sources/test/observer-proof-'));
+    const directory = await createBrowserProofDirectory("observer-proof-");
     try {
       const entry = path.join(directory, 'proof.jsx');
       await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client';

@@ -67,8 +67,8 @@ describe('R-DURABLE-REPLAY: database writes → reconnect → phone socket', () 
     const waiters = new Set<() => void>();
     socket.on('message', raw => { frames.push(JSON.parse(raw.toString())); for (const wake of waiters) wake(); });
     await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
-    const wait = (predicate: (frames: Frame[]) => boolean) => new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => { waiters.delete(check); reject(new Error(`frames: ${frames.length}`)); }, 30_000);
+    const wait = (predicate: (frames: Frame[]) => boolean, timeoutMs = 30_000) => new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => { waiters.delete(check); reject(new Error(`frames: ${frames.length}`)); }, timeoutMs);
       const check = () => { if (!predicate(frames)) return; clearTimeout(timer); waiters.delete(check); resolve(); };
       waiters.add(check); check();
     });
@@ -112,7 +112,10 @@ describe('R-DURABLE-REPLAY: database writes → reconnect → phone socket', () 
     const second = await start();
     const resumed = await connect(second.port);
     resumed.send({ type: 'subscribe', roomId: ROOM, cursors: { [ROOM]: cursor } });
-    await resumed.wait(frames => frames.some(f => f.type === 'cursor' && f.sequence === cursor.base + 300));
+    // PGlite projects these rows serially on the same event loop as the
+    // socket. Under CI contention the complete replay can exceed 30 seconds
+    // before queued frames reach the client; keep the full 300-row assertion.
+    await resumed.wait(frames => frames.some(f => f.type === 'cursor' && f.sequence === cursor.base + 300), 60_000);
     expect(resumed.frames.find(f => f.type === 'subscribed')).toMatchObject({ resumed: true });
     const messages = resumed.frames.filter(f => f.type === 'message-delta');
     expect(messages.map(f => f.message.id)).toEqual(Array.from({ length: 300 }, (_, n) => `message-${n + 1}`));

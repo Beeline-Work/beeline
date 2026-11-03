@@ -333,3 +333,14 @@ The minute repair loop no longer rediscovers and rewrites stranded pending comma
 Daemon bootstrap independently enumerates every pending member Room, so its recovery does not rely on the100-row hint batch. This slice does not establish full route/owner generations, complete deadline source cost or all-cohort delivery. Those gates remain open.
 
 Validation so far: focused command/bootstrap4, focused connection/reconnect1, server types, workspace build8, dead-code (five existing/zero new) and router boundary inventory pass. Full connection-presence validation stalled twice; verbose output stops after six passing cases, at the21,630-message history fixture. Both runs were interrupted; full-suite success is not claimed. Per the repeated-obstacle handoff rule, this slice is committed locally but not pushed, pending firstmate resolution. Logs: `.beeline-proof/network-ops/renudge-presence.log` and `renudge-presence-verbose.log` in the task root.
+
+
+## D096 — Pre-existing presence history fixture stall
+
+Firstmate035 requested a clean-main counterfactual. Renudge commit53688dfbf was pushed first. Detached origin/main68605b52e with its own built workspace packages also stalled at the21,630-message history case; no other task-local test/build ran concurrently. Host load readings ranged13–32 during investigation, and the corrected suites passed under that load.
+
+The await point was the fixture's `database.query(INSERT ... generate_series(1,21630))`, before `presence.announce` or the recovery query. Temporary EXPLAIN ANALYZE instrumentation on main measured1,000 inserted rows at3,055.539ms and5,000 at26,440.109ms. Live-notification trigger time grew706.487→13,907.701ms; search-document and corner triggers added further write work. The single WASM query also prevented normal event-loop timeout progress. This is pre-existing write-side fixture cost, not evidence of a new renudge regression.
+
+The tiny fix restores historical rows with user triggers disabled only during fixture loading, then reenables them in `finally` before the actual recovery code. Foreign keys stay enforced. The complete21,630-row count, repeated historical text, one-query assertion and materialization/index/zero-tag-subplan execution checks are preserved; an explicit cardinality assertion is added. No timeout is raised and no test is skipped.
+
+Full clean-main presence28 passes in44.01s, and full router-branch presence30 passes in46.62s. The history case itself takes3.686s/3.723s. Logs remain under task-root `.beeline-proof/network-ops/`: `presence-origin-main.log`, `presence-main-seed-plan.log`, `presence-main-seed-plan-5000.log`, `presence-main-fixture-fixed.log`, `presence-branch-fixture-fixed.log`. This resolves D095's validation block. Production source-write performance and whole-router workload/cohort gates remain open; fixture loading is not an ingestion benchmark.

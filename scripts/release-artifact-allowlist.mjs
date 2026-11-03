@@ -37,7 +37,7 @@ export const ALLOWED = [
   { category: 'Android crash-decoding (R8 mapping) file', kind: 'artifact', pattern: /^android-mapping-\$\{\{ steps\.play-upload\.outputs\.version_code \}\}$/ },
   { category: 'test screenshots and evidence', kind: 'artifact', pattern: new RegExp(`^release-proof-${ID}$`) },
   { category: 'test screenshots and evidence', kind: 'artifact', pattern: /^desktop-native-notification-\$\{\{ matrix\.label \}\}$/ },
-  { category: 'website build', kind: 'pages', pattern: /^$/ },
+  { category: 'website build', kind: 'pages', pattern: /^(?:|github-pages-\$\{\{ github\.job \}\}-\$\{\{ github\.run_attempt \}\})$/ },
   { category: 'compiler cache', kind: 'cache', pattern: /^desktop-cargo-\$\{\{ matrix\.label \}\}-\$\{\{ hashFiles\('apps\/mobile\/src-tauri\/Cargo\.lock'\) \}\}$/ },
   { category: 'compiler cache', kind: 'cache', file: '.github/actions/buzz-agent-cache/action.yml', pattern: /^\$\{\{ steps\.key\.outputs\.key \}\}$/ },
 ];

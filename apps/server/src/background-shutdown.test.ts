@@ -24,7 +24,7 @@ describe('background shutdown', () => {
   it('drains the detached check-in receipt after leader admissions stop and before pool close', async () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     const registration = source.slice(source.indexOf('let nextDayCheckinRunning:'),
-      source.indexOf("if (push) work.add('push'"));
+      source.indexOf("if (push) work.addDeadline('push'"));
     expect(registration).toContain("nextDayCheckinRunning = backgroundJobs.run('next-day-checkin'");
     expect(registration).not.toContain("void backgroundJobs.run");
     const shutdown = source.slice(source.indexOf('const stop = async () =>'));
@@ -211,7 +211,8 @@ describe('background shutdown', () => {
 
   it('Reproduction MA-1: missed merge recovery is never admitted by the repair clock', () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const repairStart = source.indexOf("work.add('repair', reconciliationMs, async (newLeader) => {");
+    expect(source).not.toContain("work.add('repair'");
+    const repairStart = source.indexOf('registerBackgroundDeadlineFamilies(work');
     expect(repairStart).toBeGreaterThan(-1);
     const recurring = source.slice(repairStart);
     const cycle = recurring.slice(0, recurring.indexOf('const leader = new BackgroundLeader'));

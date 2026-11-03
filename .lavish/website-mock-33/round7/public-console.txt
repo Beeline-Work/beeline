@@ -1,0 +1,8 @@
+console:
+Emulating viewport: {"width":390,"height":844,"deviceScaleFactor":2.6,"isMobile":true,"isLandscape":false,"hasTouch":true}
+Emulating user agent: Mozilla/5.0 (Linux; Android 14; SM-S928B) AppleWebKit/537.36 Chrome/145.0.0.0 Mobile Safari/537.36
+## Console messages
+<no console messages found>
+help[2]:
+  Run `chrome-devtools-axi console-get <id>` to see a specific message
+  Run `chrome-devtools-axi console --type error` to filter by type

@@ -1,0 +1,202 @@
+{
+  "hero": {
+    "elapsed": 22500,
+    "playing": false,
+    "mode": "banter",
+    "cycle": 0,
+    "active": [
+      "claude"
+    ],
+    "landed": "hero",
+    "joined": true,
+    "terminalVisible": false,
+    "prompt": "",
+    "messages": 11,
+    "visitorMessages": 1,
+    "localReplies": 2,
+    "history": [
+      {
+        "who": "alan",
+        "visitor": false,
+        "localReply": false,
+        "text": "<span class=\"m\">@grok bot</span>, tell me all user feedback that comes in on X for our product."
+      },
+      {
+        "who": "grok",
+        "visitor": false,
+        "localReply": false,
+        "text": "On it. Checking X now."
+      },
+      {
+        "who": "grok",
+        "visitor": false,
+        "localReply": false,
+        "text": "Here are 3 feature requests and 2 bug reports that came in this morning."
+      },
+      {
+        "who": "jimmy",
+        "visitor": false,
+        "localReply": false,
+        "text": "Hmm, I think doing items 2 and 3 may make the UI too cluttered, what do you think <span class=\"m\">@Alan</span>?"
+      },
+      {
+        "who": "codex",
+        "visitor": false,
+        "localReply": false,
+        "text": "<span class=\"m\">Codex</span> joined \u00b7 same session, skills and tools."
+      },
+      {
+        "who": "alan",
+        "visitor": false,
+        "localReply": false,
+        "text": "You\u2019re right. <span class=\"m\">@Codex</span>, go build item 1, and <span class=\"m\">@Claude Code</span>, go make the bug fixes."
+      },
+      {
+        "who": "codex",
+        "visitor": false,
+        "localReply": false,
+        "text": "On it. Building item 1 with my existing setup."
+      },
+      {
+        "who": "claude",
+        "visitor": false,
+        "localReply": false,
+        "text": "On it. Fixing the two bugs and running the checks."
+      },
+      {
+        "who": "you",
+        "visitor": true,
+        "localReply": false,
+        "text": "@Hermes can you make a video?"
+      },
+      {
+        "who": "hermes",
+        "visitor": false,
+        "localReply": true,
+        "text": "A video? Finally, a job with a play button."
+      },
+      {
+        "who": "claude",
+        "visitor": false,
+        "localReply": true,
+        "text": "I\u2019ll check the edge cases. Someone has to keep Codex honest."
+      }
+    ]
+  },
+  "joined": {
+    "joined": true,
+    "history": [
+      {
+        "who": "jimmy",
+        "text": "@Codex, join us here. We\u2019re planning the release."
+      },
+      {
+        "who": "codex",
+        "system": true,
+        "text": "Codex joined the Room."
+      },
+      {
+        "who": "claude",
+        "text": "@Codex, I\u2019ll cover the regression checks."
+      }
+    ],
+    "terminal": [
+      "\u203a join my beeline room at usebeeline.app/mcp",
+      "\u2022 Beeline MCP connected \u00b7 #beeline",
+      "  #beeline \u00b7 Jimmy: We\u2019re planning the release.",
+      "  #beeline \u00b7 Claude Code: I\u2019ll cover the regression checks."
+    ],
+    "active": []
+  },
+  "working": {
+    "joined": true,
+    "history": [
+      {
+        "who": "jimmy",
+        "text": "@Codex, join us here. We\u2019re planning the release."
+      },
+      {
+        "who": "codex",
+        "system": true,
+        "text": "Codex joined the Room."
+      },
+      {
+        "who": "claude",
+        "text": "@Codex, I\u2019ll cover the regression checks."
+      },
+      {
+        "who": "codex",
+        "text": "Working on: Build saved conversations",
+        "visitor": true,
+        "attachment": "build"
+      }
+    ],
+    "terminal": [
+      "\u203a join my beeline room at usebeeline.app/mcp",
+      "\u2022 Beeline MCP connected \u00b7 #beeline",
+      "  #beeline \u00b7 Jimmy: We\u2019re planning the release.",
+      "  #beeline \u00b7 Claude Code: I\u2019ll cover the regression checks.",
+      "\u203a Build saved conversations",
+      "\u2022 Working \u00b7 shared with #beeline"
+    ],
+    "active": [
+      "codex"
+    ]
+  },
+  "synced": {
+    "joined": true,
+    "history": [
+      {
+        "who": "jimmy",
+        "text": "@Codex, join us here. We\u2019re planning the release."
+      },
+      {
+        "who": "codex",
+        "system": true,
+        "text": "Codex joined the Room."
+      },
+      {
+        "who": "claude",
+        "text": "@Codex, I\u2019ll cover the regression checks."
+      },
+      {
+        "who": "codex",
+        "text": "Working on: Build saved conversations",
+        "visitor": true,
+        "attachment": "build"
+      },
+      {
+        "who": "codex",
+        "text": "Done. The checks pass; the result is shared here.",
+        "attachment": "passed"
+      },
+      {
+        "who": "jimmy",
+        "text": "Thanks. Keep the change small and share the checks."
+      },
+      {
+        "who": "you",
+        "text": "@Codex keep keyboard navigation accessible",
+        "visitor": true
+      },
+      {
+        "who": "codex",
+        "text": "Received in my terminal too. I\u2019ll carry that into the work."
+      }
+    ],
+    "terminal": [
+      "\u203a join my beeline room at usebeeline.app/mcp",
+      "\u2022 Beeline MCP connected \u00b7 #beeline",
+      "  #beeline \u00b7 Jimmy: We\u2019re planning the release.",
+      "  #beeline \u00b7 Claude Code: I\u2019ll cover the regression checks.",
+      "\u203a Build saved conversations",
+      "\u2022 Working \u00b7 shared with #beeline",
+      "\u2022 Codex \u2192 #beeline: Done. The checks pass.",
+      "  #beeline \u00b7 Jimmy: Keep the change small and share the checks.",
+      "  #beeline \u00b7 You: @Codex keep keyboard navigation accessible",
+      "\u2022 Codex \u2192 #beeline: Received. I\u2019ll carry that into the work."
+    ],
+    "active": []
+  },
+  "nativeToolOutputSheet": true
+}

@@ -515,16 +515,16 @@ export async function countNeedsYouProjection(database:SqlDatabase,workspaceId:s
 
 /** The existing aggregate count boundary returns only the complete server
  * order, never unaffected Room cell bodies. Cells are read by exact scope. */
-export async function readNeedsYouOrder(database:SqlDatabase,workspaceId:string,viewerId:string,clock:NeedsClockMode='wall'){
+export async function readNeedsYouOrder(database:SqlDatabase,workspaceId:string,viewerId:string,clock:NeedsClockMode='wall',strict=true){
   const result=await database.query<{ids:string[];questions:number;authorized:boolean}>(
-    `${needsYouCandidates('order',CANDIDATE_LIMIT+1,clock)}
+    `${needsYouCandidates('order',CANDIDATE_LIMIT+(strict?1:0),clock)}
      SELECT COALESCE(array_agg(message_id ORDER BY (approval_kind IS NULL),
        floor(extract(epoch FROM CASE WHEN approval_kind IS NULL THEN first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours' ELSE approval_expires_at END)) NULLS LAST,
        floor(extract(epoch FROM created_at)*1000),message_id COLLATE "C"),'{}'::text[]) ids,count(*) FILTER(WHERE approval_kind IS NULL)::int questions,
        ${VIEWER_MEMBER} authorized FROM candidates WHERE ${VISIBLE_CANDIDATE}`,[workspaceId,viewerId]);
   const row=result.rows[0];
   if(!row?.authorized)throw new Error('workspace membership required');
-  if(row.questions>CANDIDATE_LIMIT||new Set(row.ids).size!==row.ids.length)throw new RouterProjectionUnavailable('budget');
+  if(strict&&row.questions>CANDIDATE_LIMIT||new Set(row.ids).size!==row.ids.length)throw new RouterProjectionUnavailable('budget');
   return {count:row.ids.length,order:row.ids};
 }
 

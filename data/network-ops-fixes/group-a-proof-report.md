@@ -29,3 +29,11 @@ Initial measured run: PostgreSQL 16.15, integrator base `0a864c56f`, seven scope
 | F25 | `F25: the closed picker` | Closed picker reads zero; concurrent opens use one real snapshot; a stale held roster cannot authorize a membership write after revocation. Complete consumer/cohort proof remains required. |
 
 The picker proof uses the real picker admission predicate and shared surface registry, rather than mounting the entire chat screen. Native/browser/platform and complete legacy/new-consumer matrices are additional obligations. No CPU/WAL/native paint or whole-router non-regression result is claimed here.
+
+## First implementation increment
+
+The unchanged F03, F04 and F05 server closure assertions now pass after adding a bounded Workspace roster family, a bounded Room workflow family, precise workflow-card causes, and negotiated changed-Room Needs-you facts. The latter carry the complete server order/count and at most 30 changed cells; mechanical application refuses missing rows and preserves one atomic count/cell cut, including pending baseline races. Older protocol clients retain full replacements unless they explicitly select `needsYouRoomsV1`.
+
+The legacy `liveNeedsYou` path now reads the existing aggregate order/count boundary and only the changed Room's cells in one read-only repeatable-read transaction. It preserves the old display cap and wire shape, including the existing explicit-seen behavior.
+
+Validation at this increment: real PostgreSQL F03/F04/F05 gates pass; F08/F09 remain red at their original missing-fact assertions. Core lanes 34, group publication 11, admission 14, new Room-fold 9, workflow consumer 3 and legacy Needs-you 39 tests pass. Server, mobile and net typechecks pass. The workflow consumer selects one negotiated path and releases all 16 unmounted Room observers. The roster client is deliberately not advertised before its remaining consumers are migrated. Full finding/cohort closure remains work in progress.

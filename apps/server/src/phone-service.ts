@@ -1593,7 +1593,9 @@ export class PhoneService {
   async liveNeedsYou(roomId: string, viewerId: string): Promise<{
     workspaceId: string; count: number; items: readonly NeedsYouItemView[];
   } | null> {
-    const scope = (await this.database.query<{ workspace_id: string }>(
+    return this.database.transaction(async database=>{
+    await database.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const scope = (await database.query<{ workspace_id: string }>(
       `SELECT room.workspace_id FROM rooms room
        JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -1603,10 +1605,13 @@ export class PhoneService {
        WHERE room.id=$1`, [roomId, viewerId],
     )).rows[0];
     if (!scope) return null;
-    const { items } = await needsYouItems(this.database, scope.workspace_id, viewerId,
-      (row) => identity(row, this.publicOrigin), false);
-    return { workspaceId: scope.workspace_id, count: items.length,
-      items: items.filter((item) => item.roomId === roomId) };
+    const order=await readNeedsYouOrder(database,scope.workspace_id,viewerId,'wall',false);
+    const { items } = await needsYouItems(database, scope.workspace_id, viewerId,
+      (row) => identity(row, this.publicOrigin), false,'wall',[roomId]);
+    const selected=new Map(items.map(item=>[item.messageId,item]));
+    return { workspaceId: scope.workspace_id, count: order.count,
+      items: order.order.flatMap(id=>selected.has(id)?[selected.get(id)!]:[]) };
+    });
   }
 
   /**

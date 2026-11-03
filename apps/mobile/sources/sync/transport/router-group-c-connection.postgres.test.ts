@@ -141,6 +141,7 @@ describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
       await vi.waitFor(() => expect(app.network).toBeDefined());
       expect(netInfo.configure.mock.calls[0]![0].reachabilityShouldRun()).toBe(false);
       sample(); // The initial native sample is a baseline, never a recovery edge.
+      await expect(connection.request('readRoomTools', { roomId: room, anchor: 'a'.repeat(64) })).rejects.toMatchObject({ code: 'owner_required' });
       await expect(connection.request('readMediaMetadata', { objectId: room })).rejects.toMatchObject({ code: 'owner_required' });
       await expect(connection.request('readMediaLink', { objectId: room })).rejects.toMatchObject({ code: 'owner_required' });
       await expect(connection.request('readMediaPlayback', { objectId: room })).rejects.toMatchObject({ code: 'owner_required' });
@@ -205,16 +206,18 @@ describe.skipIf(!url)('Group D P9 correlated native callback adapter composition
     const inspected = deferred(); let requests = 0, reads = 0;
     const state = 's'.repeat(43), token = 'r'.repeat(43);
     const hash = createHash('sha256').update(token).digest('hex');
-    const pending: Promise<unknown>[] = [];
+    const pending: Promise<unknown>[] = [], controllers = new Set<AbortController>();
     const server = createServer((request, response) => {
       let body = ''; request.on('data', chunk => { body += String(chunk); });
       request.on('end', () => {
+        const controller = new AbortController(); controllers.add(controller);
+        response.once('close', () => { controller.abort(); controllers.delete(controller); });
         const work = (async () => {
           requests++;
           const args = JSON.parse(body) as { recoveryToken: string; waitMs?: number };
           expect(args.recoveryToken).toBe(token);
           const ticket = await waitForAuthTicket(wake => subscribeCommandCompletion({ principal: 'auth', operation: 'ticket', commandId: hash }, wake),
-            async () => { reads++; const found = await reader.findTicket(hash); inspected.resolve(); return found; }, args.waitMs ?? 0);
+            async () => { reads++; const found = await reader.findTicket(hash); inspected.resolve(); return found; }, args.waitMs ?? 0, controller.signal);
           response.writeHead(ticket ? 200 : 202, { 'content-type': 'application/json' });
           response.end(JSON.stringify(ticket ? {
             protocol: 1, kind: 24250, marker: 'beeline-oidc-bind-v1', ticket: token,
@@ -253,6 +256,7 @@ describe.skipIf(!url)('Group D P9 correlated native callback adapter composition
       await vi.advanceTimersByTimeAsync(600_000);
       expect({ requests, reads }).toEqual({ requests: 1, reads: 2 });
     } finally {
+      for (const controller of controllers) controller.abort();
       vi.useRealTimers(); await Promise.allSettled(pending);
       await new Promise<void>(resolve => server.close(() => resolve())); await listener.end();
       await readerDb.close(); await writerDb.close(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end();

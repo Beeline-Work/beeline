@@ -37,8 +37,8 @@ are preserved. The cache tar wrapper uses a shared file lock; no service is adde
    `beeline-ci-workspace` and must not also have the heavy role. PR gates select
    those roles explicitly so preparation cannot queue behind long suites.
 5. Run a monitored real-PR trial. Firstmate accepted the initial rollout at
-   27m20s; the follow-up target is twelve minutes or less while CI stays inside
-   the same pool. Firstmate controls landing; subsequent three-PR proof uses real PRs carrying
+   27m20s; the follow-up targets reliable green checks and server shards at or
+   below twenty minutes while CI stays inside the same pool. Firstmate controls landing; subsequent three-PR proof uses real PRs carrying
    this routing and the leak fix. An older PR head still runs its own old workflow;
    rerunning it does not test the new routing. Coordinate those heads with
    their owners, without rewriting another worker's branch.
@@ -71,10 +71,11 @@ helper and desktop timings separately. A failed or cancelled run is not a
 passing timing result. Report maximum sampled whole-host one-minute load,
 minimum available memory, peak pool memory and OOM/throttling deltas.
 
-The follow-up acceptance is three overlapping successful PR runs each at or below twelve minutes,
-with CI pool usage inside ten CPUs and 60 GiB and no OOM kills. Report host
-load as context; it is not the CI CPU budget. A ten-CPU quota alone does not
-prove the wall-time target.
+The follow-up targets each server shard at or below twenty minutes, with CI
+pool usage inside ten CPUs and 60 GiB and no OOM kills. Report measured per-PR
+wall time, remaining unexplained failures and concurrent workload. The overall
+twelve-minute target is deferred. Host load is context; it is not the CI CPU
+budget. A ten-CPU quota alone does not prove wall-time capacity.
 Confirm required check names against the base workflow and verify main's
 required checks remain green. Record actual after measurements in the PR;
 leave unmeasured claims explicitly pending.

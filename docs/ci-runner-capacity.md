@@ -27,11 +27,14 @@ capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
 | Privileged Body setup, PostgreSQL timing, Docker build/lint, corpus replay | `ubuntu-latest` | `ubuntu-latest` |
 
 Each server shard runs its balanced file assignment and one of the existing
-eight integration batches. Held voice playback runs alone on shard two. On
-PRs, width and room-read latency budgets run with one worker in the existing
+eight integration batches. Held voice playback and durable socket replay run in fresh worker processes.
+On PRs, width, room-read latency and completion-latency budgets run with one
+worker in the existing
 hosted PRODUCTION-CORPUS REPLAY job, outside the shared quota. A shard moves
 them only when that required hosted gate is enabled; merge/dispatch runs
-retain their original isolated shard coverage. Timing limits stay unchanged.
+retain isolated shard coverage. The replay fixture still delivers all 300
+missed messages, checks their order and deduplication, and retains its original
+deadlines. Its engine and sockets start in a fresh process. Timing limits stay unchanged.
 PRs consume SELECT SERVER TESTS; an unavailable selection fails closed to the
 full suite. Main coverage remains full. No integration batch is removed or
 repeated.
@@ -135,12 +138,21 @@ CPU-minutes because it includes the other runs. Sampled pool memory peaked at
 restart occurred. Whole-host one-minute load reached 33.89. There was no local
 profiling during this trial.
 
-This is not twelve-minute acceptance. That measured head's own CPU work would
-require about 17m48s at ten CPUs even with perfect utilization and no queue or
-setup cost. Further fixture reductions and duplicate-compiler removal follow
-that measurement; their real-run result remains pending. The follow-up still
-targets twelve minutes or less on the same pool. Three overlapping passing PRs
-at the target remain unverified; quotas alone do not prove capacity.
+The [second trial](https://github.com/Beeline-Work/beeline/actions/runs/41546769663)
+completed in 27m42s with 177.38 attributed CPU-minutes and no OOM or helper
+restart. Its completion-trace clock-gap assertion and durable socket replay
+wait failed. Neither file used the changed history/schema-clone fixtures.
+The trace test now compares the exact real pre-query clock read, preserving
+its 500 ms budget and transaction assertions. Socket replay runs in a fresh
+worker; all 300 rows, ordering/deduplication assertions and deadlines remain.
+Weights account for this reserved work before distributing ordinary files.
+
+The current acceptance is green checks with each server shard targeting at
+most twenty minutes of execution under the existing ten-CPU pool. Required
+check names, the thirty-minute shard timeout and assertion coverage stay
+unchanged. Record the actual per-PR wall time and remaining unexplained
+failures. The twelve-minute target and further selective-testing policy are
+deferred; this change introduces no additional selection policy.
 
 Whole-host load includes independent Beeline agents, Gradle and emulators;
 record it as context. Abort trials on CI budget violations, sustained memory

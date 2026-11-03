@@ -292,6 +292,7 @@ jobs:
     outputs:
       image_ref: ${{ steps.leg.outputs.image_ref }}
       previous_image_ref: ${{ steps.leg.outputs.previous_image_ref }}
+      completed_at: ${{ steps.complete.outputs.completed_at }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -299,7 +300,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
       - uses: ./.github/actions/require-tools
         with:
           tools: flyctl docker git curl
@@ -309,16 +309,6 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Prepare the server migration CLI once
-        run: |
-          set -euo pipefail
-          bash scripts/npm-ci-timed.sh
-          npm run build -w @beeline/nostr
-          npm run build -w @beeline/api-contract
-          npm run build -w @beeline/buzz-client
-          npm run build -w @beeline/body
-          npm run build -w @beeline/auth
-          npm run build -w @beeline/server
       - uses: ./.github/actions/server-leg
         id: leg
         env:
@@ -333,6 +323,10 @@ jobs:
         with:
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
+
+      - name: Record live server completion after both Machines passed
+        id: complete
+        run: echo "completed_at=$(date +%s)" >> "$GITHUB_OUTPUT"
 
   helper_macos:
     name: HELPER BUILD (${{ matrix.platform }})
@@ -431,7 +425,7 @@ jobs:
           retention-days: 1
 
   helper:
-    needs: [initialize, helper_macos]
+    needs: [initialize, helper_macos, delivery_result]
     if: >-
       !cancelled() && needs.initialize.outputs.run_helper == 'true' &&
       needs.helper_macos.result == 'success'
@@ -696,6 +690,8 @@ jobs:
     if: needs.initialize.outputs.run_website == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    outputs:
+      completed_at: ${{ steps.complete.outputs.completed_at }}
     permissions:
       actions: read
       contents: read
@@ -703,7 +699,7 @@ jobs:
       id-token: write
     environment: github-pages
     concurrency:
-      group: usebeeline-pages-${{ needs.initialize.outputs.run_helper == 'true' && github.run_id || 'deploy' }}
+      group: usebeeline-pages
       cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
@@ -723,7 +719,6 @@ jobs:
           npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
       - uses: ./.github/actions/eas-cli
       - uses: ./.github/actions/pages-leg
-        if: needs.initialize.outputs.run_helper != 'true'
         with:
           manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
       - uses: ./.github/actions/web-app-leg
@@ -733,9 +728,15 @@ jobs:
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
 
+      - name: Record live website completion after both origins passed
+        id: complete
+        run: echo "completed_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+
   mobile_native_android:
-    needs: initialize
+    # Reserve the two production runners for server and OTA first.
+    needs: [initialize, delivery_result]
     if: >-
+      !cancelled() && needs.initialize.result == 'success' &&
       needs.initialize.outputs.run_mobile_native == 'true' &&
       ((inputs.store_track != '' && inputs.store_track != 'none') ||
        (inputs.selection != '' && inputs.selection != 'auto')) &&
@@ -1046,11 +1047,34 @@ jobs:
           xargs security default-keychain -d user -s < "$RUNNER_TEMP/user-default-keychain.txt"
 
 
+  # This checkpoint can finish while any Mac/desktop/helper build is queued.
+  # Native jobs still attach their checked artifacts in release_result below.
+  delivery_result:
+    needs: [initialize, server, mobile_ota, mobile_ota_after_proof, website, release_proof]
+    if: "!cancelled() && needs.initialize.result == 'success'"
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 3
+    outputs:
+      report: ${{ steps.live.outputs.report }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Measure dispatch to all user-visible legs
+        id: live
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
+        run: node scripts/release-delivery.mjs measure
+
   release_result:
     # !cancelled(), not always(): a run superseded by cancel-in-progress must not
     # classify itself as a failed attempt.
     if: "!cancelled() && needs.initialize.result == 'success'"
-    needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_ota_after_proof, mobile_native_android, mobile_native_ios, desktop_installers, website, release_proof]
+    needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_ota_after_proof, mobile_native_android, mobile_native_ios, desktop_installers, website, release_proof, delivery_result]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -1078,6 +1102,7 @@ jobs:
       - name: Record each component job's result and classify the attempt
         id: result
         env:
+          DELIVERY_REPORT: ${{ needs.delivery_result.outputs.report }}
           TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
           NEEDS: ${{ toJSON(needs) }}
           NO_OP: ${{ needs.initialize.outputs.no_op }}
@@ -1116,6 +1141,7 @@ jobs:
           soft_limit_seconds=$(node -e 'process.stdout.write(String(require(process.argv[1]).softLimitSeconds))' "$RUNNER_TEMP/release-classification.json")
           if [ -n "$failure_class" ]; then
             node scripts/unified-release.mjs finalize --state "$state" --outcome failure --failure-class "$failure_class"
+            if [ -n "${DELIVERY_REPORT:-}" ]; then node scripts/release-delivery.mjs record "$state"; fi
             {
               echo "outcome=failure"
               echo "failure_class=$failure_class"
@@ -1182,6 +1208,7 @@ jobs:
       - name: Finalize the release record
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
         env:
+          NEEDS: ${{ toJSON(needs) }}
           RELEASE_PROOF_UNPROVEN: ${{ needs.initialize.outputs.run_mobile_ota == 'true' && inputs.run_release_proof != true }}
         run: |
           state="$RUNNER_TEMP/release/release.json"
@@ -1190,6 +1217,7 @@ jobs:
             args+=(--unproven "mobile OTA promoted without a device proof; proof is opt-in and was not requested")
           fi
           node scripts/unified-release.mjs finalize "${args[@]}"
+          node scripts/release-delivery.mjs record "$state"
           node -e 'const fs=require("node:fs");const p=process.argv[1];const r=JSON.parse(fs.readFileSync(p,"utf8"));r.runId=Number(process.env.GITHUB_RUN_ID);fs.writeFileSync(p,JSON.stringify(r,null,2)+"\n")' "$state"
       - name: Publish the one GitHub release record with its release.json and stable desktop downloads
         if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
@@ -1331,6 +1359,8 @@ jobs:
           const release = JSON.parse(fs.readFileSync(process.argv[2]));
           console.log(`## Release ${release.delivery.state}: ${release.version}`);
           if (release.delivery.durationSeconds !== undefined) console.log(`- Duration: ${release.delivery.durationSeconds}s`);
+          if (release.delivery.live) console.log(`- Dispatch to live (server, OTA, website): ${release.delivery.live.elapsedSeconds}s; target <${release.delivery.live.targetSeconds}s`);
+          if (release.delivery.background) console.log(`- Native/helper completion: ${JSON.stringify(release.delivery.background)}`);
           console.log(`- Fix to phone: ${process.env.OTA_ELAPSED_SECONDS}s`);
           if (process.env.SLOW === 'true') console.log(`- Slow: whole run reached ${process.env.WHOLE_RUN_ELAPSED_SECONDS}s (soft limit ${process.env.SOFT_LIMIT_SECONDS}s); release record still published.`);
           console.log(`- Selected: ${release.plan.selected.join(', ') || 'none'}`);

@@ -1,0 +1,32 @@
+# Compile/push only. Migrations and Fly Machine changes require an attributed
+# unified release dispatch; a merge to main never releases.
+name: Prebuild server image
+on:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+  packages: read
+concurrency:
+  group: server-image-prebuild
+  cancel-in-progress: true
+jobs:
+  image:
+    runs-on: [self-hosted, beeline-prod-host]
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - uses: ./.github/actions/require-tools
+        with:
+          tools: flyctl docker git
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prebuild this exact main SHA without deploying
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: bash scripts/server-release-image.sh prebuild "$SOURCE_SHA"

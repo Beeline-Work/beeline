@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { runWorkspaceChecks, workspaceChecks } from './run-ci-workspace-checks.mjs';
 
-test('workspace lanes run at most two checks and preserve failures independently', async () => {
+test('workspace checks run sequentially and preserve failures independently', async () => {
   const active = new Set();
   let maximum = 0;
   const starts = [];
@@ -10,16 +10,15 @@ test('workspace lanes run at most two checks and preserve failures independently
     active.add(name);
     starts.push(name);
     maximum = Math.max(maximum, active.size);
-    if (active.size === 2) assert.ok(active.has('mobile-suite'), 'only mobile may overlap another check');
-    await new Promise(resolve => setTimeout(resolve, name === 'mobile-suite' ? 30 : 5));
+    await new Promise(resolve => setTimeout(resolve, 5));
     active.delete(name);
     return name === 'dead-code' ? 1 : 0;
   });
-  assert.equal(maximum, 2);
-  assert.deepEqual(starts, ['mobile-suite', 'typecheck', 'dead-code', 'native-fingerprint', 'mobile-export-reachability']);
+  assert.equal(maximum, 1);
+  assert.deepEqual(starts, ['typecheck', 'dead-code', 'native-fingerprint', 'mobile-export-reachability']);
   assert.equal(results['dead-code'], 'failure');
   assert.equal(results['mobile-export-reachability'], 'success', 'a failed check cannot hide later checks');
-  assert.equal(results['mobile-suite'], 'success');
+  assert.equal(Object.hasOwn(results, 'mobile-suite'), false, 'mobile has its own job and checkout');
 });
 
 test('disabled checks never execute and runner exceptions fail their verdict closed', async () => {

@@ -1,12 +1,12 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 describe('Reproduction R1: computer status', () => {
   it.each([390])('renders one sign-in service and its machine broker reports at %spx', async (width) => {
     const mobile = process.cwd();
-    const directory = await mkdtemp(path.join(mobile, 'sources/test/squire-status-proof-'));
+    const directory = await createBrowserProofDirectory("squire-status-proof-");
     try {
       const entry = path.join(directory, 'proof.jsx');
       await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client';

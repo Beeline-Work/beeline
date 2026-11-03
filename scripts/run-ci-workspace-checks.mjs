@@ -6,15 +6,13 @@ import { fileURLToPath } from 'node:url';
 
 export const workspaceChecks = {
   typecheck: 'RUN_TYPECHECK',
-  'mobile-suite': 'RUN_MOBILE',
   'dead-code': 'RUN_DEAD_CODE',
   'native-fingerprint': 'RUN_NATIVE_FINGERPRINT',
   'mobile-export-reachability': 'RUN_MOBILE_EXPORT',
 };
 
-// Mobile has two isolated workers in its lane; all other checks run
-// sequentially in another with at most one. The listener caps the job at
-// three CPUs, and the parent still shares ten CPUs across the whole pool.
+// Each job owns its checkout. These checks run sequentially; MOBILE SUITE
+// has a separate job so generated browser fixtures cannot race a compiler.
 export async function runWorkspaceChecks(enabled, execute) {
   const results = Object.fromEntries(Object.keys(workspaceChecks).map(name => [name, 'skipped']));
   async function run(name) {
@@ -25,9 +23,7 @@ export async function runWorkspaceChecks(enabled, execute) {
       results[name] = 'failure';
     }
   }
-  const mobile = run('mobile-suite');
-  for (const name of Object.keys(workspaceChecks).filter(name => name !== 'mobile-suite')) await run(name);
-  await mobile;
+  for (const name of Object.keys(workspaceChecks)) await run(name);
   return results;
 }
 
@@ -37,7 +33,7 @@ async function main() {
     assert.ok(['true', 'false'].includes(value), `${flag} must be true or false`);
     return [name, value === 'true'];
   }));
-  if (['pull_request', 'merge_group'].includes(process.env.GITHUB_EVENT_NAME)) {
+  if (['pull_request', 'merge_group', 'push'].includes(process.env.GITHUB_EVENT_NAME)) {
     assert.equal(enabled.typecheck, true, 'TYPECHECK must execute on every PR and merge group');
   }
   const children = new Set();
@@ -58,7 +54,7 @@ async function main() {
     console.log(`Starting workspace check: ${name}`);
     const startedAt = new Date().toISOString();
     return new Promise(resolveResult => {
-      const minutes = { typecheck: 30, 'mobile-suite': 20, 'dead-code': 15,
+      const minutes = { typecheck: 30, 'dead-code': 15,
         'native-fingerprint': 15, 'mobile-export-reachability': 30 };
       const child = spawn('timeout', [`${minutes[name]}m`, 'bash', '--noprofile', '--norc', '-e', '-o', 'pipefail',
         fileURLToPath(new URL('./ci-workspace-tasks.sh', import.meta.url)), name], {

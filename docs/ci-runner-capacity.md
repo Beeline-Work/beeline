@@ -3,17 +3,17 @@
 `.github/workflows/checks.yml` uses the isolated `beeline-ci` Linux pool for
 credential-free PR work. Desktop, Mac helper acceptance, privileged Body setup,
 PostgreSQL timing, Docker build/lint and production-corpus replay retain their
-existing platform or hosted runners. Main-push server coverage stays hosted
-and runs the full suite. Required check names stay stable.
+existing platform or hosted runners. Main pushes run full Checks on the same bounded pool, retaining hosted
+privileged/timing jobs, and publish coverage from those server executions. Required check names stay stable.
 
 ## Routing and resource budget
 
 All ten listeners are active. Instance `01` has one CPU and the
-`beeline-ci-control` role for detection, cache preparation, shared tests and
+`beeline-ci-control` role for detection, cache preparation, selection and
 verdicts. Instances `02`–`09` have the `beeline-ci-heavy` role for eight server
-shards, each capped at two CPUs / 8 GiB. Instance `10` has only the
+shards, shared tests, typecheck and companion checks, each capped at two CPUs / 8 GiB. Instance `10` has only the
 `beeline-ci-workspace` role, capped at three CPUs / 12 GiB with CPUWeight 300.
-It combines two mobile workers and one sequential check lane. The **parent
+It runs the mobile suite with two workers in its own job and checkout. The **parent
 slice shares a ten-CPU hard quota across every listener and PR**, with
 MemoryHigh 48 GiB / MemoryMax 60 GiB; per-service maxima are not additive
 capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
@@ -21,9 +21,10 @@ capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
 
 | Checks work | Pull requests | Merge groups / manual dispatch |
 | --- | --- | --- |
-| Eight server shards | `beeline-ci, beeline-ci-heavy` (02–09) | `ubuntu-latest` |
-| Typecheck, mobile, dead-code, fingerprint and export execution | `beeline-ci, beeline-ci-workspace` (10) | `ubuntu-latest` |
-| Detection, preparation, shared tests, selection, required verdicts, README, app associations | `beeline-ci, beeline-ci-control` (01) | `ubuntu-latest` |
+| Eight server shards, shared tests, TYPECHECK | `beeline-ci, beeline-ci-heavy` (02–09) | `ubuntu-latest` |
+| Dead-code, fingerprint and export | `beeline-ci, beeline-ci-heavy` (02–09) | Same bounded heavy pool |
+| Mobile suite execution | `beeline-ci, beeline-ci-workspace` (10) | `ubuntu-latest` |
+| Detection, preparation, selection, required verdicts, README, app associations | `beeline-ci, beeline-ci-control` (01) | `ubuntu-latest` |
 | Privileged Body setup, PostgreSQL timing, Docker build/lint, corpus replay | `ubuntu-latest` | `ubuntu-latest` |
 
 Each server shard runs its balanced file assignment and one of the existing
@@ -58,29 +59,77 @@ RPCs under the shared quota. `scripts/ci-shards.test.mjs` exercises this with
 microtask-only tests and fake timers; RPC deadlines and error reporting stay
 unchanged.
 
-The required TYPECHECK job executes two workspace lanes through
-`scripts/run-ci-workspace-checks.mjs` and `scripts/ci-workspace-tasks.sh`.
-Mobile occupies one lane with two isolated workers; root typecheck and the
-conditional dead-code/fingerprint/export tasks run sequentially in the other.
-All previous policy checks, including the trusted-base architecture guard,
-remain in the task script. Required mobile/dead-code/fingerprint/export
-contexts keep their original conditions and take individual, fail-closed
-verdicts from the recorded task outputs. A failing task does not hide later
-checks. The job emits a timing artifact and forwards cancellation only to its
-own child process groups. The task script is included in workflow path lint.
+The temporary migrated database template is an uncompressed tar image, shared
+immutably within each worker by its unique run path. Every test database still
+has its own PGlite filesystem and mutable state. Eight feature fixtures also
+clone that schema instead of rerunning migrations before every case; explicit
+migration and backfill proofs still run their migrations. Object-service
+fixtures close each database after the test. The snapshot helper retains gzip
+as its default for persisted callers. Snapshot round-trip tests cover both
+formats, independent copies and rollback. Large read-history fixtures
+keep their rows and query-plan assertions while avoiding unrelated write
+fanout during bulk seeding; foreign keys remain active and hooks resume
+before the behavior under test.
 
-Detection precedes a cache-only producer on the reserved control listener.
-Preparation installs/builds once and publishes verified exact-commit builds
-before shared tests start. Linux consumers wait for preparation rather than
-independent shared-test completion, and the workspace lane restores its
-root/mobile/build caches once for all five checks. Consumers require the
-lockfile/manifest-keyed root/mobile dependency caches, so a failed producer
-cannot fan out cold installs. Exact-commit build caches can disappear after
-preparation or before a failed-job rerun; a miss rebuilds the checked-out
-commit with one Turbo task at a time and verifies API exports before use or
-publication. Compiled outputs never fall back to another commit. Build cache
-v2 uses explicit dist globs and validates API exports. TYPECHECK already runs the isolated mobile typecheck, so mobile does
-not repeat it. Required check names and platform routes remain unchanged.
+The workflow suite is split across four files with a shared per-file fixture.
+All 170 test names and the original test blocks are retained. Scheduling
+weights use the latest observed CI profile; source revision and measurement
+time are recorded with the weights. The balancer reserves each
+shard's isolated-suite and integration-batch cost before assigning its
+ordinary files.
+
+The required TYPECHECK job executes root typecheck and its policy guards.
+MOBILE SUITE, DEAD CODE, NATIVE FINGERPRINT and MOBILE-EXPORT REACHABILITY
+execute in separate jobs and checkouts on existing bounded listeners. Their
+assertions, policy conditions and execution caps remain intact; slow native
+work and export no longer serialize behind compiler work. Shared-package
+tests also use heavy listeners, leaving control available for preparation and
+verdicts. No concurrent jobs mutate one working tree. Browser entries stay in
+the OS temporary directory, outside compiler globs. Commands remain in
+`scripts/ci-workspace-tasks.sh`; trusted-base architecture/phone/UI checks
+remain mandatory, and root typecheck already checks mobile once.
+
+Preparation installs/builds once. Dependencies remain lockfile/manifest keyed.
+The separate input-addressed `.turbo/cache` restores deterministic build and
+typecheck tasks across commits; test-result caching is disabled. Root compiler
+configuration and the external usebeeline builder participate in task hashes.
+Mobile compiler incremental state is restored separately; the compiler still
+executes and checks current inputs. Job-specific cache writes let completed
+typecheck tasks publish after the same head's producer has finished.
+
+Final compiled outputs use the v3 exact-SHA archive, with no foreign-head
+fallback. `scripts/ci-build-provenance.mjs` verifies the checked-out SHA, Node
+major and hashes of every compiled file, rejecting missing, extra or changed
+outputs. API exports are checked before publication. Missing exact-head
+archives rebuild with one Turbo task at a time. Consumers require successful
+shared preparation, but cache eviction after that success recovers through
+lockfile-based `npm ci --prefer-offline`. Cold installs share a kernel file lock
+on squire, retain one install worker and the existing runner/pool limits, and
+propagate installation failures. Warm consumers keep restoring dependencies.
+The selector caches its pinned standalone TypeScript instead of restoring an entire compiled workspace.
+
+`scripts/workspace-test-selection.mjs` discovers the actual Vitest entries
+and follows reverse imports across workspace boundaries, including source in
+browser-proof strings. Public workspace exports conservatively depend on
+provider source; source scanners and opaque/dynamic loaders remain selected.
+Shared contracts, migrations, configuration, added production inputs,
+deletions, renames and unknown inputs fall back to full suites. Newly
+discovered regression tests always run. Unknown asset/data reads also fall back.
+Required frame/storage proofs are included when their original gates run.
+Per-group selections carry the exact head; missing, malformed, foreign-head
+or unknown-file selections execute full suites. Native fingerprint retains
+its existing isolated coverage and conditions. TYPECHECK and SHARED PACKAGE
+TESTS still execute on every PR.
+
+The existing coverage-map server selector remains authoritative for server
+files and always-running source readers. Body and mobile use the workspace
+file graph. Every main push executes full suites without cancelling an older
+merge. Those same server and timing jobs produce the next complete coverage
+map; the on-demand workflow remains available without duplicating main's full
+server work. The existing Nightly Checks reporter also consumes completed
+main runs, reports failures immediately to the existing fix-loop issue label,
+and does not rerun them before reporting. Its existing hosted route and
+permissions are retained; PR/foreign-branch events cannot publish main issues.
 
 All CI-only workspace jobs prepend `.github/actions/ci-workspace/bin` to PATH.
 Its tar wrapper serializes only cache archives through the CI user's shared
@@ -111,9 +160,56 @@ end-to-end performance result. A later eight-shard consolidation run completed
 Linux checks in 24m22s, with two progress-RPC failures and a stale fingerprint
 workflow assertion. Its maximum sampled CI memory was 36.95 GiB, with no hard
 memory-limit/OOM events or helper restarts. The accepted initial landing target
-is now approximately 24 minutes at ten CPUs, followed by work toward twelve
-minutes or less on the same pool. A green real-PR measurement and subsequent
-concurrent-PR validation remain required; quotas alone do not prove capacity.
+was approximately 24 minutes at ten CPUs. The
+[initial passing run](https://github.com/Beeline-Work/beeline/actions/runs/41523839846)
+completed in 27m20s with a 37.04 GiB sampled memory peak, no OOM or helper
+restart, and all 41 PR-head checks green. Firstmate accepted that delivery.
+The [first follow-up trial](https://github.com/Beeline-Work/beeline/actions/runs/41539926797)
+passed all 41 head checks in 38m12s under overlapping real CI runs. Server jobs
+waited as much as 17m03s for a listener; shard five then executed in 15m44s,
+including 7m09s for its largest file, instead of timing out. Approximate
+per-job CI CPU attribution was 178.02 CPU-minutes; total pool work was 381.11
+CPU-minutes because it includes the other runs. Sampled pool memory peaked at
+38.38 GiB, available host memory stayed above 74.37 GiB, and no OOM or helper
+restart occurred. Whole-host one-minute load reached 33.89. There was no local
+profiling during this trial.
+
+The [second trial](https://github.com/Beeline-Work/beeline/actions/runs/41546769663)
+completed in 27m42s with 177.38 attributed CPU-minutes and no OOM or helper
+restart. Its completion-trace clock-gap assertion and durable socket replay
+wait failed. Neither file used the changed history/schema-clone fixtures.
+The trace test now compares the exact real pre-query clock read, preserving
+its 500 ms budget and transaction assertions. Socket replay runs in a fresh
+worker; all 300 rows, ordering/deduplication assertions and deadlines remain.
+Weights account for this reserved work before distributing ordinary files.
+
+The [merged cache/deadline repair run](https://github.com/Beeline-Work/beeline/actions/runs/41565883259)
+passed before this follow-up was integrated. Its feedback setup reduction
+brought shard five below the job limit at 17m09s. All Linux work completed in
+40m34s under overlapping CI; three other shards still exceeded twenty minutes
+(longest 25m12s), motivating the measured rebalance here. Attributed work was
+197.96 CPU-minutes; the shared pool peaked at 37.37 GiB, with no OOM or helper
+restart. This is a reliability result, not a demonstrated pipeline speedup.
+
+The [integrated reliability run](https://github.com/Beeline-Work/beeline/actions/runs/41570674167)
+passed all 41 head contexts, including Mac helper and desktop builds. Server
+jobs took 17m43s–20m08s (eight seconds above the twenty-minute target), while
+Linux wall time was 89m46s amid severe multi-PR queueing. Attributed work was
+201.33 CPU-minutes; shared-pool work including other runs was 872.60 CPU-minutes.
+Peak sampled pool memory was 43.54 GiB, with no OOM or helper restart. Detection
+waited 13m43s; mobile waited 40m14s, and verdicts waited another 8–12 minutes.
+These are prior-head reliability measurements, not selective-policy results.
+A separate repaired-head PR still reproduced durable-replay `frames: 0`;
+process isolation alone does not prove that flake fixed.
+
+The captain's current target is as close to ten minutes per PR as practical,
+with no additional paid runners or pool expansion and no weakened assertions.
+Measure real server-only, mobile-only and shared-contract PR shapes after the
+policy lands. A full-contract workload of roughly 201 attributed CPU-minutes
+cannot finish in ten minutes on ten CPUs before further work reduction; queue
+and serial costs add to that bound. Keep estimates distinct from measured
+passing runs and report the remaining gap. Main full-suite demand also shares
+the same pool and must be included when describing contention.
 
 Whole-host load includes independent Beeline agents, Gradle and emulators;
 record it as context. Abort trials on CI budget violations, sustained memory

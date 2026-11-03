@@ -162,7 +162,8 @@ function ConnectToolFlow() {
   const helpers = workbench?.helpers ?? null;
   const [install, setInstall] = useState<ConnectorInstallState | null>(null);
   const [selectedHelperName, setSelectedHelperName] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errorCause, setError] = useState<string | null>(null);
+  const error = errorCause ? connectorSetupErrorCopy(errorCause) : null;
   const [startedAt, setStartedAt] = useState(() => Date.now());
   const [now, setNow] = useState(() => Date.now());
   const { theme } = useUnistyles();
@@ -389,7 +390,7 @@ function ConnectToolFlow() {
             ))}
           </View>
         ) : null}
-        {errorUnplaced ? <Text style={styles.failure} testID="connect-error">{error ? connectorSetupErrorCopy(error) : null}</Text> : null}
+        {errorUnplaced ? <Text style={styles.failure} testID="connect-error">{error}</Text> : null}
         {helperLoadError && !helpers ? <Text style={styles.failure} testID="connect-error">Helpers are unavailable right now</Text> : null}
       </ScrollView>
       {showSteps ? (

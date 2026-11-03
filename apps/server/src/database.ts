@@ -1,3 +1,4 @@
+import { AGENT_SCHEDULE_SOURCE_SCHEMA } from './agent-schedule-source.js';
 import { HELPER_ACTIVATION_SCHEMA } from './helper-activation-schema.js';
 import { HELPER_USAGE_SCHEMA } from './helper-usage.js';
 import { HELPER_OVERLAY_SCHEMA } from './helper-overlay.js';
@@ -1894,6 +1895,11 @@ WITH resolved AS (
 )
 UPDATE agent_schedules schedule SET workflow_slug=resolved.slug
 FROM resolved WHERE schedule.id=resolved.id AND resolved.slug IS NOT NULL;
+-- A failed occurrence remains parked until an actual schedule revision or due changes.
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS failed_due_at timestamptz;
+ALTER TABLE agent_schedules ADD COLUMN IF NOT EXISTS failed_revision timestamptz;
+CREATE INDEX IF NOT EXISTS agent_schedules_admitted_due_idx ON agent_schedules(next_run_at,id)
+ WHERE failed_due_at IS DISTINCT FROM next_run_at OR failed_revision IS DISTINCT FROM updated_at;
 CREATE INDEX IF NOT EXISTS agent_schedules_due_idx ON agent_schedules(next_run_at, id);
 CREATE INDEX IF NOT EXISTS agent_schedules_room_idx ON agent_schedules(room_id, created_at, id);
 CREATE INDEX IF NOT EXISTS agent_schedules_workspace_idx ON agent_schedules(workspace_id);
@@ -3520,6 +3526,7 @@ export async function migrate(
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
+  await ddlScript('agent schedule due source', AGENT_SCHEDULE_SOURCE_SCHEMA);
   await ddlScript('computer expiry source', COMPUTER_EXPIRY_SCHEMA);
   await ddlScript('choice expiry source', CHOICE_EXPIRY_SCHEMA);
   await ddlScript('router projection authority', ROUTER_PROJECTION_SCHEMA);

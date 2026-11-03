@@ -191,4 +191,15 @@ describe('background shutdown', () => {
     expect(source).not.toContain('recoveredCornerMerges');
     expect(source).not.toContain('reconciledMergedCorners');
   });
+  it('owns schedule deadlines and exact committed/recovery wakes without a minute scan', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    expect(source).toContain("work.addDeadline('schedules'");
+    expect(source).not.toContain("work.add('schedules'");
+    expect(source).toContain('if (!fired.ok) return;');
+    expect(source).toContain('subscribeCommandCompletion(AGENT_SCHEDULE_DUE_KEY, wakeSchedules)');
+    expect(source).toContain('jobsDatabase.onRecovery(wakeSchedules)');
+    expect(source).toContain('live.subscribeResync(wakeSchedules)');
+    expect(source).toContain('stopScheduleRecovery();stopScheduleResync();');
+  });
+
 });

@@ -1,4 +1,5 @@
-import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
+import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
+import { COMMAND_COMPLETION_CHANNEL, subscribeCommandCompletion } from './command-completion.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
@@ -98,6 +99,7 @@ class SkewedClockDatabase implements SqlDatabase {
 describe('Postgres live fanout', () => {
   let database: PgliteDatabase;
   const listeners: PostgresLiveListener[] = [];
+  const completionReleases: Array<() => void> = [];
 
   beforeEach(async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -113,9 +115,54 @@ describe('Postgres live fanout', () => {
   });
 
   afterEach(async () => {
+    for (const release of completionReleases.splice(0)) release();
     await Promise.all(listeners.map((listener) => listener.stop()));
     await database.close();
     vi.restoreAllMocks();
+  });
+
+  it('SCHEDULE-DUE-SOURCE: only committed calendar and eligibility changes wake its private owner', async () => {
+    const agent = 'b'.repeat(64), schedule = '33333333-3333-4333-8333-333333333333';
+    await database.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Scheduler')", [agent]);
+    const live = new LiveHub(), events: LiveEvent[] = [];
+    live.subscribeAll(event => events.push(event));
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client);
+    const wake = vi.fn(); completionReleases.push(subscribeCommandCompletion(AGENT_SCHEDULE_DUE_KEY, wake)); listeners.push(listener);
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+      VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":5}','Synthetic',now()+interval '1 hour')`,
+      [schedule,WORKSPACE,ROOM,agent,AUTHOR]);
+    await eventually(() => wake.mock.calls.length === 1);
+    await settle(events); wake.mockClear();
+    await database.query("UPDATE rooms SET name='Renamed' WHERE id=$1", [ROOM]);
+    await database.query("UPDATE identities SET name='Renamed' WHERE id=$1", [agent]);
+    await database.query('UPDATE agent_schedules SET failed_due_at=next_run_at,failed_revision=updated_at WHERE id=$1', [schedule]);
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE,ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [ROOM]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE rooms SET archived_at=NULL WHERE id=$1', [ROOM]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    const child = '44444444-4444-4444-8444-444444444444';
+    await database.query("INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Child')", [child,WORKSPACE,ROOM]);
+    await database.query('UPDATE agent_schedules SET room_id=$2 WHERE id=$1', [schedule,child]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    // Child schedule access is inherited from this parent membership.
+    await database.query('UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2', [ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await expect(database.transaction(async db => {
+      await db.query("UPDATE agent_schedules SET next_run_at=next_run_at+interval '1 hour' WHERE id=$1", [schedule]);
+      throw new Error('rollback');
+    })).rejects.toThrow('rollback');
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await database.query("UPDATE agent_schedules SET updated_at=updated_at+interval '1 second' WHERE id=$1", [schedule]);
+    await eventually(() => wake.mock.calls.length === 1);
+    expect(events.some(event => event.type === 'invalidate' && event.reason === 'postgres:agent_schedule_due')).toBe(false);
   });
 
   it('BRANCH-DERIVED: room archival and fact updates publish closeRequested without the retired flag', async () => {

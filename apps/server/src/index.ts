@@ -1,3 +1,4 @@
+import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
 import { failConnectingOffers } from './connector-offer-completion.js';
 import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { NextDayCheckin } from './next-day-checkin.js';
@@ -471,10 +472,11 @@ async function main() {
     const due = await backgroundJobs.run('push-next-due', () => push.nextDueAt());
     if (due.ok && due.value) return Math.max(1000, due.value.getTime() - Date.now());
   });
-  work.add('schedules', reconciliationMs, async () => {
-    await backgroundJobs.run('schedules', () => schedules.runOnce());
-    const due = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
-    if (due.ok && due.value) return Math.max(0, due.value.getTime() - Date.now());
+  work.addDeadline('schedules', async () => {
+    const fired = await backgroundJobs.run('schedules', () => schedules.runOnce());
+    if (!fired.ok) return;
+    const due = await backgroundJobs.run('schedule-next-due', () => schedules.nextDelayMs());
+    if (due.ok) return due.value;
   });
   work.add('sentry', reconciliationMs, async () => {
     await backgroundJobs.run('sentry-wakes', () => flushSentryWakes(jobsDatabase, sentryWakeAgentId));
@@ -537,6 +539,10 @@ async function main() {
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   const wakeSystemDms=()=>wakeWork('operator-system-dms','committed-system-dm');
   const wakeChoices = () => wakeWork('choices', 'choice-expiry');
+  const wakeSchedules = () => wakeWork('schedules', 'schedule-source');
+  const stopScheduleWake = subscribeCommandCompletion(AGENT_SCHEDULE_DUE_KEY, wakeSchedules);
+  const stopScheduleRecovery = jobsDatabase.onRecovery(wakeSchedules);
+  const stopScheduleResync = live.subscribeResync(wakeSchedules);
   const stopChoiceWake = subscribeCommandCompletion({ principal: 'choice', operation: 'expiry', commandId: 'pending' }, wakeChoices);
   const stopChoiceRecovery = jobsDatabase.onRecovery(wakeChoices);
   const stopSystemDmWake=subscribeOperatorSystemDmDeliveries(wakeSystemDms);
@@ -567,7 +573,6 @@ async function main() {
     if (event.reason === 'postgres:messages') {
       wakeWork('deadlines', 'messages');
     }
-    if (event.reason === 'postgres:agent_schedules') wakeWork('schedules');
   });
   const port = Number(process.env.PORT ?? '8080');
   const host = process.env.HOST ?? '127.0.0.1';
@@ -585,6 +590,7 @@ async function main() {
     const mcpStopped = stopMcpWebhooks();
     stopSystemDmWake();stopSystemDmRecovery();
     stopChoiceWake();stopChoiceRecovery();
+    stopScheduleRecovery();stopScheduleResync();stopScheduleWake();
     await leader.stop();
     await mcpStopped;
     stopComputerExpiry();

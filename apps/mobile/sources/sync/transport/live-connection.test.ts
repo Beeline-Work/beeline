@@ -317,6 +317,34 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it.each([true, false])('P10: old negotiated executors cannot send on a replacement socket (router=%s)', async selected => {
+    type Negotiated = Parameters<NonNullable<ConstructorParameters<typeof LiveConnection>[0]['router']>['negotiated']>[0];
+    const router = { negotiated: vi.fn(async (_next: Negotiated) => {}), disconnected: vi.fn(), receive: vi.fn() };
+    const connection = new LiveConnection({ authorization: async () => 'token',
+      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
+    try {
+      await connection.register([], () => {}); sockets[0]!.open();
+      sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-list'],
+        authorityFencesV1: true, mediaMetadataV1: true, usageCellV1: true });
+      await Promise.resolve();
+      const old = router.negotiated.mock.calls[0]![0];
+      connection.reconnectNow(); await Promise.resolve(); await Promise.resolve();
+      sockets[1]!.open(); sockets[1]!.emit(selected
+        ? { type: 'router-capabilities', protocol: 1, families: ['room-list'], mediaMetadataV1: true }
+        : { type: 'sync-ok' });
+      await Promise.resolve();
+      expect(router.negotiated.mock.calls[1]![0]).toMatchObject({ generation: 2, families: selected ? ['room-list'] : [], mediaMetadataV1: selected });
+      const before = [...sockets[1]!.sent];
+      const settled = [
+        old.execute({ family: 'room-list', workspaceId: 'workspace' }),
+        old.executeUsageCell!('agent'), old.executeMetadata!('object'),
+        old.executeLink!('object'), old.executePlayback!('object'),
+      ].map(promise => promise.then(() => 'resolved', () => 'rejected'));
+      expect(sockets[1]!.sent).toEqual(before);
+      expect(await Promise.all(settled)).toEqual(Array(5).fill('rejected'));
+    } finally { connection.dispose(); }
+  });
+
   it('parks an open-close flap after one replacement until explicit Retry', async () => {
     vi.useFakeTimers();
     const { connection } = createConnection();

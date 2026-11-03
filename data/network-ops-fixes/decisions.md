@@ -388,3 +388,9 @@ This closes the narrower missing-module coverage in D100, not a whole audit find
 The next-day check-in previously kept only a boolean while its provider/database work ran outside the leader cycle. Stopping the leader therefore did not wait for the email-result receipt before closing pools. The existing independent flight now retains its promise; shutdown first ends leader admission and then awaits that promise. Scheduling, provider attempt identity and unrelated leader-job concurrency are unchanged.
 
 The controlled pending-email regression and production wiring assertion pass with the full background shutdown suite11. This is a shutdown ownership correction only: check-in calendar admission, exact committed reply/outcome sources, generation fencing and remaining periodic discovery are still open. No whole finding closes.
+
+## D103 — Negotiated read executors belong to one physical socket
+
+A retained projection, usage or media executor rejects after its negotiated socket is replaced or closes, before sending a request. It cannot borrow a replacement connection's capabilities, including after server policy rollback. The actual server compatibility proof restarts the server with selection off/on/off, preserving legacy reads/writes and committed messages while negotiated snapshots follow the selected policy.
+
+Validation: LiveConnection87 and actual phone socket17 pass with a4096MiB heap and at most two workers, one suite at a time. This is scoped P10 rollback evidence; released-helper/iOS/web/Tauri, mixed-machine and all-family migration proofs remain open. No finding closes or capability activates.

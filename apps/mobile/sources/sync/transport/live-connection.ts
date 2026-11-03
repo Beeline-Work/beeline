@@ -359,17 +359,24 @@ export class LiveConnection {
           (f!=='room-scheduled-work'||frame.commandDedupV1===true&&frame.authorityFencesV1===true)) as RouterFamily[] : [];
       this.commandDedupV1 = frame.type === 'router-capabilities' && frame.protocol === 1 && frame.commandDedupV1 === true;
       this.routerState = 'initializing';
+      // A negotiated executor belongs to this physical connection. Retained
+      // work cannot borrow a replacement socket's capabilities after rollback.
+      const executeCurrent = (operation: string, args: unknown): Promise<unknown> => {
+        if (this.socket !== socket || !isSocketOpen(socket))
+          return Promise.reject(new MonolithSessionChangedError());
+        return this.startRequest(operation, args, {});
+      };
       void this.deps.router.negotiated({ generation: this.socketEpoch, families,
         scheduledWorkCoverageV1: families.includes('room-scheduled-work') ? frame.scheduledWorkCoverageV1 as RouterCapabilities['scheduledWorkCoverageV1'] : undefined,
         roomHeadContinuityV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.roomHeadContinuityV1 === true && families.includes('room-head'),
         authorityFencesV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.authorityFencesV1 === true,
         mediaMetadataV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.mediaMetadataV1 === true,
         usageCellV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.usageCellV1 === true,
-        executeUsageCell: agentId => this.startRequest('readAgentUsageCell', { agentId }, {}) as Promise<AgentUsageCell>,
-        executeMetadata: objectId => this.startRequest('readMediaMetadata', { objectId }, {}) as Promise<MediaMetadata>,
-        executeLink: objectId => this.startRequest('readMediaLink', { objectId }, {}) as Promise<MediaLink>,
-        executePlayback: objectId => this.startRequest('readMediaPlayback', { objectId }, {}) as Promise<MediaLink>,
-        execute: input => this.startRequest('readRouterSnapshot', input, {}) as Promise<RouterSnapshot>,
+        executeUsageCell: agentId => executeCurrent('readAgentUsageCell', { agentId }) as Promise<AgentUsageCell>,
+        executeMetadata: objectId => executeCurrent('readMediaMetadata', { objectId }) as Promise<MediaMetadata>,
+        executeLink: objectId => executeCurrent('readMediaLink', { objectId }) as Promise<MediaLink>,
+        executePlayback: objectId => executeCurrent('readMediaPlayback', { objectId }) as Promise<MediaLink>,
+        execute: input => executeCurrent('readRouterSnapshot', input) as Promise<RouterSnapshot>,
       }).then(() => {
         if (this.socket !== socket) return;
         this.routerState = 'ready';

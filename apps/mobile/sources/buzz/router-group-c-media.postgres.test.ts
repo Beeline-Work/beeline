@@ -12,7 +12,14 @@ import { AdmissionOwner } from '../../../../packages/net/src/private/admission.j
 import { MediaDemandOwner } from '../../../../packages/net/src/private/media-demand-owner.js';
 import { resetClientState } from '@/sync/client-reset';
 
-const mocks = vi.hoisted(() => ({ disk: new Map<string, Uint8Array>() }));
+const mocks = vi.hoisted(() => ({ disk: new Map<string, Uint8Array>(),
+  fetch: vi.fn(), action: (_action: string, _objectId: string) => {}, open: vi.fn(),
+}));
+vi.mock('@/auth/monolith-session', () => ({ monolithSession: { fetch: mocks.fetch } }));
+vi.mock('./router-owner', () => ({ routerOwnerArtifactAction: (action: string, objectId: string) => mocks.action(action, objectId) }));
+vi.mock('@/utils/open-external-url', () => ({ openExternalUrl: mocks.open }));
+vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
+vi.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: async () => ({ publicKey: 'synthetic-owner' }) }));
 vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://media.test' }) }));
 vi.mock('./artifact-byte-store', () => ({ createArtifactByteStore: () => ({
@@ -22,6 +29,8 @@ vi.mock('./artifact-byte-store', () => ({ createArtifactByteStore: () => ({
   revoke: async () => [], localUri: async () => 'file:///synthetic/cache.png',
 }) }));
 import { readArtifactObject } from './artifact-byte-owner';
+import { artifactImageSource, artifactLocalUri, fetchArtifactBytes, openArtifactInBrowser } from './artifact-link';
+import { requestMediaPlayback } from './media-cache-connection';
 import { installMediaCacheConnection, receiveMediaAuthorityRemoval, suspendMediaCacheConnection } from './media-cache-connection';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
@@ -41,7 +50,7 @@ describe.skipIf(!url)('Group C P8/P10/P11 PostgreSQL media composition', () => {
     const schema = `group_c_media_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: url, max: 1 });
     await admin.query(`CREATE SCHEMA ${schema}`);
     const db = new PostgresDatabase('', 2, { pool: new Pool({ connectionString: url, options: `-c search_path=${schema},public`, max: 2 }) });
-    const byteStarted = deferred(), releaseBytes = deferred(); let transfers = 0, metadataReads = 0;
+    const byteStarted = deferred(), releaseBytes = deferred(), linkStarted = deferred(), releaseLink = deferred(); let transfers = 0, metadataReads = 0;
     const server = createServer((_request, response) => {
       transfers++; byteStarted.resolve();
       void releaseBytes.promise.then(() => { response.writeHead(200, { 'content-type': 'image/png' }); response.end(bytes); });
@@ -51,6 +60,11 @@ describe.skipIf(!url)('Group C P8/P10/P11 PostgreSQL media composition', () => {
     const admission = new AdmissionOwner({ origin: 'https://media.test', principal: 'synthetic-owner', sessionEpoch: 1 });
     const owner = new MediaDemandOwner(admission, () => ({ screen: 'Room', roomId: room, generation: 1 }));
     owner.connected(1); owner.viewport(room, [object]);
+    mocks.action = (action, objectId) => owner.action(action as 'OpenArtifactBrowser', objectId);
+    mocks.open.mockClear(); mocks.fetch.mockImplementation(async (url: string, init?: RequestInit) => {
+      expect(url).toBe(`https://media.test/v1/media/${object}`);
+      return fetch(byteUrl, init);
+    });
     let active: Promise<unknown>[] = [];
     try {
       await db.query(`CREATE TABLE workspaces(id uuid PRIMARY KEY);
@@ -63,7 +77,7 @@ describe.skipIf(!url)('Group C P8/P10/P11 PostgreSQL media composition', () => {
       await db.query(DURABLE_LIVE_SCHEMA); await db.query(ROUTER_PROJECTION_SCHEMA); await db.query(MEDIA_AUTHORITY_SCHEMA);
       await db.query(`INSERT INTO objects VALUES($1,'synthetic-owner','immutable/key',$2,3,'image/png','ready',now()+interval '1 day')`,
         [object, createHash('sha256').update(bytes).digest('hex')]);
-      installMediaCacheConnection({ generation: 1, mediaMetadataV1: true,
+      installMediaCacheConnection({ origin: 'https://media.test', principal: 'synthetic-owner', generation: 1, mediaMetadataV1: true,
         joinedMetadata: id => owner.satisfy('readMediaMetadata', id),
         executeMetadata: id => owner.dispatch('readMediaMetadata', id, async () => {
           metadataReads++;
@@ -71,23 +85,32 @@ describe.skipIf(!url)('Group C P8/P10/P11 PostgreSQL media composition', () => {
           await fenceMediaMetadataEnqueue(db, id, 'synthetic-owner', result.authority, () => undefined);
           return result;
         }),
+        executePlayback: id => owner.dispatch('readMediaPlayback', id, async () => ({ url: 'https://games.test/play/file', expiresIn: 60 })),
+        executeLink: id => owner.dispatch('readMediaLink', id, async () => {
+          const metadata = await readMediaMetadata(db, id, 'synthetic-owner');
+          await fenceMediaMetadataEnqueue(db, id, 'synthetic-owner', metadata.authority, () => undefined);
+          linkStarted.resolve(); await releaseLink.promise;
+          return { url: 'https://files.test/private-file', expiresIn: 60 };
+        }),
       });
       const read = vi.fn(async (_id: string, signal: AbortSignal, maxBytes: number) => {
         const response = await fetch(byteUrl, { signal });
         const result = new Uint8Array(await response.arrayBuffer());
         expect(result.byteLength).toBeLessThanOrEqual(maxBytes); return result;
       });
-      const preview = readArtifactObject(attachment, read, { preview: true }); active.push(preview);
+      const preview = artifactImageSource(attachment, { preview: true }); active.push(preview);
       await byteStarted.promise;
       owner.action('OpenArtifact', object);
-      const view = readArtifactObject(attachment, read); active.push(view);
+      const view = fetchArtifactBytes(attachment); active.push(view);
       owner.action('SaveArtifact', object);
-      const save = readArtifactObject(attachment, read); active.push(save);
+      const save = artifactLocalUri(attachment); active.push(save);
       releaseBytes.resolve();
       const results = await Promise.all([preview, view, save]);
-      expect(results.map(result => [...result.bytes])).toEqual([[1, 2, 3], [1, 2, 3], [1, 2, 3]]);
-      expect(new Set(results.map(result => result.key)).size).toBe(1);
-      expect({ metadataReads, transfers, byteCalls: read.mock.calls.length }).toEqual({ metadataReads: 1, transfers: 1, byteCalls: 1 });
+      expect(results).toEqual([{ uri: 'file:///synthetic/cache.png' }, bytes, 'file:///synthetic/cache.png']);
+      expect({ metadataReads, transfers, byteCalls: mocks.fetch.mock.calls.length }).toEqual({ metadataReads: 1, transfers: 1, byteCalls: 1 });
+      owner.action('RunArtifact', object);
+      await expect(requestMediaPlayback(object)).resolves.toMatchObject({ url: 'https://games.test/play/file' });
+      expect(metadataReads).toBe(1);
       // Time invalidates freshness but cannot issue its own metadata/byte read.
       vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
       await vi.advanceTimersByTimeAsync(86_400_001);
@@ -96,10 +119,14 @@ describe.skipIf(!url)('Group C P8/P10/P11 PostgreSQL media composition', () => {
       owner.action('OpenArtifact', object);
       expect((await readArtifactObject(attachment, read)).bytes).toEqual(bytes);
       expect({ metadataReads, transfers }).toEqual({ metadataReads: 2, transfers: 1 });
+      const value = await readArtifactObject(attachment, read);
+      const link = openArtifactInBrowser(attachment); active.push(link);
+      const refusedLink = expect(link).rejects.toThrow('authority'); await linkStarted.promise;
       const previous = await readMediaMetadata(db, object, 'synthetic-owner');
       await db.query(`UPDATE objects SET owner_id='other-owner' WHERE id=$1`, [object]);
       receiveMediaAuthorityRemoval(`object:${object}`, previous.authority.scopes[0]!.epoch);
-      expect(results.every(result => !result.isCurrent())).toBe(true);
+      releaseLink.resolve(); await refusedLink;
+      expect(mocks.open).not.toHaveBeenCalled(); expect(value.isCurrent()).toBe(false);
       owner.action('SaveArtifact', object);
       await expect(readArtifactObject(attachment, read)).rejects.toMatchObject({ status: 404 });
       expect(transfers).toBe(1);
@@ -107,7 +134,7 @@ describe.skipIf(!url)('Group C P8/P10/P11 PostgreSQL media composition', () => {
       await expect(readArtifactObject(attachment, read)).rejects.toThrow('awaiting connection');
       expect(transfers).toBe(1);
     } finally {
-      releaseBytes.resolve(); await Promise.allSettled(active); owner.disconnected(); resetClientState(); vi.useRealTimers();
+      releaseBytes.resolve(); releaseLink.resolve(); await Promise.allSettled(active); owner.disconnected(); resetClientState(); vi.useRealTimers();
       await new Promise<void>(resolve => server.close(() => resolve())); await db.close();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end();
     }

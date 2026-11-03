@@ -1,10 +1,11 @@
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { Pool } from 'pg';
+import { Client, Pool } from 'pg';
+import { createServer } from 'node:http';
 import { WebSocket, WebSocketServer } from 'ws';
 import { describe, expect, it, vi } from 'vitest';
-import type { RouterSnapshotInput } from '@beeline/api-contract/router-protocol';
+import type { RouterFamily, RouterSnapshot, RouterSnapshotInput } from '@beeline/api-contract/router-protocol';
 import { ReadLanes } from '../../../../../packages/net/src/private/read-lanes.js';
 import { PostgresDatabase, type SqlDatabase } from '../../../../server/src/database.js';
 import { DURABLE_LIVE_SCHEMA } from '../../../../server/src/durable-live.js';
@@ -14,14 +15,44 @@ import { PhoneService } from '../../../../server/src/phone-service.js';
 import { routerSocketProtocol } from '../../../../server/src/router-socket.js';
 import { buildRouterSnapshot } from '../../../../server/src/router-projections.js';
 
-const app = vi.hoisted(() => ({ listeners: new Set<(state: string) => void>(), currentState: 'active' }));
+const app = vi.hoisted(() => ({ listeners: new Set<(state: string) => void>(), currentState: 'active', origin: '',
+  network: undefined as undefined | ((state: { type: string; isConnected: boolean; isInternetReachable: boolean; details: { ipAddress: string } }) => void),
+  negotiated: async (_next: { generation: number; families: readonly RouterFamily[]; execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> }) => {},
+  disconnected: () => {},
+}));
+const netInfo = vi.hoisted(() => ({ configure: vi.fn(), addEventListener: vi.fn((listener: NonNullable<typeof app.network>) => {
+  app.network = listener; return () => { app.network = undefined; };
+}) }));
+vi.mock('@react-native-community/netinfo', () => ({ default: netInfo }));
+vi.mock('@/buzz/runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: app.origin }) }));
+vi.mock('@/buzz/router-owner', () => ({
+  routerOwnerCapabilities: async () => ({ families: ['room-head'], authorityFencesV1: true }),
+  routerOwnerNegotiated: (next: Parameters<typeof app.negotiated>[0]) => app.negotiated(next),
+  routerOwnerDisconnected: () => app.disconnected(), routerOwnerReceive: () => {},
+}));
 vi.mock('react-native', () => ({ AppState: {
   get currentState() { return app.currentState; },
   addEventListener: (_event: string, listener: (state: string) => void) => {
     app.listeners.add(listener); return { remove: () => app.listeners.delete(listener) };
   },
-}, NativeModules: {}, Platform: { OS: 'android' } }));
-import { LiveConnection } from './live-connection';
+}, NativeModules: { RNCNetInfo: {} }, Platform: { OS: 'android' } }));
+import { LiveConnection, sharedLiveConnection, resetSharedLiveConnection } from './live-connection';
+import { monolithSession } from '@/auth/monolith-session';
+
+const authStorage = vi.hoisted(() => new Map<string, string>());
+vi.mock('@react-native-async-storage/async-storage', () => ({ default: {
+  getItem: async (key: string) => authStorage.get(key) ?? null,
+  setItem: async (key: string, value: string) => { authStorage.set(key, value); },
+  removeItem: async (key: string) => { authStorage.delete(key); },
+} }));
+vi.mock('expo-linking', () => ({ createURL: (path: string) => `beeline://${path}` }));
+vi.mock('@/auth/desktop-auth-redirect', () => ({ desktopAuthRedirectUri: (_name: string, fallback: string) => fallback }));
+vi.mock('@/auth/google-account-picker', () => ({ googleAccountPicker: null }));
+import { runGoogleSignIn, resumeGoogleSignIn } from '@/auth/google-auth-session';
+import { runResilientGitHubSignInSession, resumeInitialGitHubSignIn } from '@/auth/github-auth-session';
+import { AuthStore, type BindTicket } from '../../../../auth/src/store.js';
+import { waitForAuthTicket } from '../../../../auth/src/completion-wait.js';
+import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion, subscribeCommandCompletion } from '../../../../server/src/command-completion.js';
 
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if (url && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname))
@@ -32,11 +63,12 @@ const input = { family: 'room-head' as const, workspaceId: workspace, roomId: ro
 function deferred<T = void>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
 // The socket framing bridge and credential are synthetic. The WebSockets,
-// LiveConnection, lane state machine, PostgreSQL snapshot and final enqueue
-// fence are real. Installed native/network-adapter cohorts remain separate.
+// sharedLiveConnection and its production NetInfo callback adapter, lane state
+// machine, PostgreSQL snapshot and final enqueue fence are real. The native
+// NetInfo source is synthetic; installed OS/SDK captures remain separate.
 describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
   it('F10/F18: healthy callbacks read zero; one half-open replacement recovers each demanded key once and flapping cannot refill it', async () => {
-    app.currentState = 'active'; app.listeners.clear();
+    resetSharedLiveConnection(); app.currentState = 'active'; app.listeners.clear(); netInfo.configure.mockClear();
     const healthyPong = deferred();
     class ClientSocket extends WebSocket {
       constructor(address: string, protocols: string[]) {
@@ -57,7 +89,9 @@ describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
     const reads: RouterSnapshotInput[] = [], errors: unknown[] = [];
     const protocols: ReturnType<typeof routerSocketProtocol>[] = [];
     const lanes = new ReadLanes({ origin: 'https://synthetic.test', principal: viewer, sessionEpoch: 1 }, () => true);
-    let network = () => {}, connection: LiveConnection | undefined;
+    let connection: LiveConnection | undefined, path = 1;
+    const sample = () => app.network!({ type: 'wifi', isConnected: true, isInternetReachable: true, details: { ipAddress: `192.0.2.${path}` } });
+    const network = () => { path++; sample(); };
     let challenged = deferred(), negotiated = deferred(), installed = deferred(), rejected = deferred();
     lanes.subscribe(input, () => { if (lanes.peek(input).state === 'LIVE') installed.resolve(); });
     const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 }); await once(wss, 'listening');
@@ -98,16 +132,18 @@ describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
       phone.readRouterSnapshot = async (args, reader) => {
         reads.push(args); return buildRouterSnapshot(observed, args, reader, phone.buildRouterValue.bind(phone));
       };
-      connection = new LiveConnection({ authorization: async () => 'synthetic-credential',
-        liveUrl: () => `ws://127.0.0.1:${(wss.address() as AddressInfo).port}`,
-        subscribeIdentityChange: () => () => {}, subscribeNetworkChange: listener => { network = listener; return () => {}; },
-        router: {
-          requestedCapabilities: async () => ({ families: ['room-head'], authorityFencesV1: true }),
-          negotiated: async next => { lanes.connected(next.generation, next.families, next.execute, { roomHeadContinuityV1: true }); negotiated.resolve(); },
-          disconnected: () => lanes.disconnected(), receive: () => {},
-        },
-      });
+      app.origin = `http://127.0.0.1:${(wss.address() as AddressInfo).port}`;
+      vi.spyOn(monolithSession, 'authorization').mockResolvedValue('synthetic-credential');
+      app.negotiated = async next => { lanes.connected(next.generation, next.families, next.execute, { roomHeadContinuityV1: true }); negotiated.resolve(); };
+      app.disconnected = () => lanes.disconnected();
+      connection = sharedLiveConnection();
       await connection.register([], () => {}); await negotiated.promise;
+      await vi.waitFor(() => expect(app.network).toBeDefined());
+      expect(netInfo.configure.mock.calls[0]![0].reachabilityShouldRun()).toBe(false);
+      sample(); // The initial native sample is a baseline, never a recovery edge.
+      await expect(connection.request('readMediaMetadata', { objectId: room })).rejects.toMatchObject({ code: 'owner_required' });
+      await expect(connection.request('readMediaLink', { objectId: room })).rejects.toMatchObject({ code: 'owner_required' });
+      await expect(connection.request('readMediaPlayback', { objectId: room })).rejects.toMatchObject({ code: 'owner_required' });
       const a = {}, b = {}, oldHidden = {}, hiddenInput = { ...input, roomId: hidden };
       lanes.demand(input, a, { isCurrent: () => true }); lanes.demand(input, b, { isCurrent: () => true }); await installed.promise;
       const hiddenInstalled = deferred(); const stopHidden = lanes.subscribe(hiddenInput, () => { if (lanes.peek(hiddenInput).state === 'LIVE') hiddenInstalled.resolve(); });
@@ -117,7 +153,7 @@ describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
       const cut = lanes.peek(input).cut;
       queries = 0;
       transition('background'); transition('active');
-      for (let n = 0; n < 100; n++) transition('active');
+      for (let n = 0; n < 100; n++) { transition('active'); sample(); }
       await challenged.promise;
       // Wait for the actual pong to clear the single outstanding challenge.
       await healthyPong.promise;
@@ -145,10 +181,81 @@ describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
       await vi.advanceTimersByTimeAsync(86_400_000);
       expect(sockets).toBe(3); expect(reads).toHaveLength(3); expect(errors).toEqual([]);
     } finally {
-      connection?.dispose(); vi.useRealTimers(); vi.unstubAllGlobals();
+      resetSharedLiveConnection(); connection?.dispose(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();
       for (const protocol of protocols) protocol.close(); for (const socket of wss.clients) socket.terminate();
       await new Promise<void>(resolve => wss.close(() => resolve())); await db.close();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); app.listeners.clear();
+    }
+  }, 20_000);
+});
+
+
+// Actual preauth clients/HTTP, independent PostgreSQL pools, durable ticket
+// capture and LISTEN wake. Browser/OS callback delivery and the HTTP response
+// serializer are explicit synthetic seams; no installed-native claim is made.
+describe.skipIf(!url)('Group D P9 correlated native callback adapter composition', () => {
+  it.each(['github', 'google'] as const)('F11: %s warm/cold callbacks share one held HTTP request and committed ticket', async provider => {
+    authStorage.clear();
+    const schema = `group_d_auth_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: url, max: 1 });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const config = { connectionString: url, options: `-c search_path=${schema},public`, max: 2 };
+    const readerDb = new PostgresDatabase('', 2, { pool: new Pool(config) });
+    const writerDb = new PostgresDatabase('', 2, { pool: new Pool(config) });
+    const listener = new Client(config), reader = new AuthStore(readerDb), writer = new AuthStore(writerDb);
+    const inspected = deferred(); let requests = 0, reads = 0;
+    const state = 's'.repeat(43), token = 'r'.repeat(43);
+    const hash = createHash('sha256').update(token).digest('hex');
+    const pending: Promise<unknown>[] = [];
+    const server = createServer((request, response) => {
+      let body = ''; request.on('data', chunk => { body += String(chunk); });
+      request.on('end', () => {
+        const work = (async () => {
+          requests++;
+          const args = JSON.parse(body) as { recoveryToken: string; waitMs?: number };
+          expect(args.recoveryToken).toBe(token);
+          const ticket = await waitForAuthTicket(wake => subscribeCommandCompletion({ principal: 'auth', operation: 'ticket', commandId: hash }, wake),
+            async () => { reads++; const found = await reader.findTicket(hash); inspected.resolve(); return found; }, args.waitMs ?? 0);
+          response.writeHead(ticket ? 200 : 202, { 'content-type': 'application/json' });
+          response.end(JSON.stringify(ticket ? {
+            protocol: 1, kind: 24250, marker: 'beeline-oidc-bind-v1', ticket: token,
+            challenge: ticket.challenge, provider: ticket.issuer, audience: ticket.audience,
+            subject: ticket.subject, community: ticket.community,
+            issued_at: Math.floor(ticket.createdAt.getTime() / 1000), expires_at: Math.floor(ticket.expiresAt.getTime() / 1000),
+          } : {}));
+        })(); pending.push(work); void work.catch(error => response.destroy(error));
+      });
+    });
+    try {
+      await writer.migrate(); await listener.connect();
+      listener.on('notification', event => { if (event.channel === COMMAND_COMPLETION_CHANNEL && event.payload) notifyCommandCompletion(event.payload); });
+      await listener.query(`LISTEN ${COMMAND_COMPLETION_CHANNEL}`);
+      await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+      app.origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+      vi.useFakeTimers({ toFake: ['Date', 'setTimeout', 'clearTimeout'] });
+      const browser = { state, recoveryToken: token, platform: 'android', openAuthSession: async () => ({ type: 'opened' }), subscribeToUrls: () => ({ remove() {} }) };
+      const warm = provider === 'github' ? runResilientGitHubSignInSession(browser) : runGoogleSignIn(browser);
+      const warmResult = warm.then(value => ({ value }), error => ({ error }));
+      await inspected.promise;
+      const cold = provider === 'github'
+        ? resumeInitialGitHubSignIn(async () => `beeline://beeline/github-callback?state=${state}&completed=1`)
+        : resumeGoogleSignIn(`beeline://beeline/google-callback?state=${state}&completed=1`);
+      const coldResult = cold.then(value => ({ value }), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(119_999);
+      expect({ requests, reads }).toEqual({ requests: 1, reads: 1 });
+      const ticket: BindTicket = { challenge: 'c'.repeat(43), community: 'synthetic.test', issuer: provider === 'github' ? 'https://github.com' : 'https://accounts.google.com',
+        audience: 'fixture', subject: 'synthetic-person', createdAt: new Date(), expiresAt: new Date(Date.now() + 120_000), attemptCount: 0, consumedAt: null, boundPubkey: null };
+      await writer.createTicket(hash, ticket);
+      const first = await warmResult, second = await coldResult;
+      expect(first).toEqual(second);
+      if (provider === 'github') expect(first).toMatchObject({ value: { ticket: token, provider: 'https://github.com' } });
+      else expect(first).toEqual({ value: token });
+      expect({ requests, reads }).toEqual({ requests: 1, reads: 2 });
+      await vi.advanceTimersByTimeAsync(600_000);
+      expect({ requests, reads }).toEqual({ requests: 1, reads: 2 });
+    } finally {
+      vi.useRealTimers(); await Promise.allSettled(pending);
+      await new Promise<void>(resolve => server.close(() => resolve())); await listener.end();
+      await readerDb.close(); await writerDb.close(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end();
     }
   }, 20_000);
 });

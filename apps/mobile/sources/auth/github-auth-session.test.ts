@@ -895,3 +895,20 @@ it('retains reconnect intent across callback recovery and clears it with the one
   await persistGitHubSignInState(STATE);
   expect(await isPendingGitHubReconnect()).toBe(false);
 });
+
+
+it('F11: duplicate cold callback adapters join one correlated GitHub recovery inspection', async () => {
+  storage.clear(); await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
+  let finish!: (value: Response) => void;
+  const fetcher = vi.fn(() => new Promise<Response>(resolve => { finish = resolve; }));
+  vi.stubGlobal('fetch', fetcher);
+  try {
+    const url = `beeline://beeline/github-callback?state=${STATE}&completed=1`;
+    const first = resumeInitialGitHubSignIn(async () => url);
+    const second = resumeInitialGitHubSignIn(async () => url);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    finish(recoveryResponse());
+    expect(await first).toEqual(await second);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  } finally { vi.unstubAllGlobals(); }
+});

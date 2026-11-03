@@ -19,7 +19,7 @@ const bytes = new Uint8Array([1, 2, 3]);
 const drain = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
 function install(capable = true, size = 3) {
   const scopes = [{ authorityScope: `object:${id}`, epoch: '1' }];
-  installMediaCacheConnection({ generation: 1, mediaMetadataV1: capable, executeMetadata: async () => ({
+  installMediaCacheConnection({ origin: mocks.origin, principal: mocks.principal, generation: 1, mediaMetadataV1: capable, executeMetadata: async () => ({
     objectId: id, sha256: bytesToHex(sha256(bytes)), size, mimeType: 'image/png', expiresAt: Date.now() + 60_000,
     authority: { scopes, digest: bytesToHex(sha256(utf8ToBytes(JSON.stringify(scopes)))) },
   }) });

@@ -19,6 +19,8 @@ export function checkNativeUpdate(observer?: (stage: 'available' | 'downloaded')
         nativeFlight = (async () => {
             const update = await Updates.checkForUpdateAsync();
             if (!update.isAvailable) return { available: false as const };
+            if (update.manifest?.runtimeVersion && Updates.runtimeVersion && update.manifest.runtimeVersion !== Updates.runtimeVersion)
+                throw new Error('Update runtime is incompatible');
             nativeStage = 'available'; for (const receive of nativeObservers) receive(nativeStage);
             const fetched = await Updates.fetchUpdateAsync();
             if (!fetched.isNew && !fetched.isRollBackToEmbedded) return { available: false as const, downloadFailed: true };

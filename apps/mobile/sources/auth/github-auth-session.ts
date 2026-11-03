@@ -332,7 +332,21 @@ function challengeCallbackUrl(challenge: OidcBindChallenge, state: string): stri
   return callback.toString();
 }
 
-async function fetchGitHubRecoveryChallenge(
+let recoveryFlight: { key: string; promise: Promise<OidcBindChallenge | null> } | undefined;
+/** One ceremony owns completion inspection across warm/cold callback adapters. */
+function fetchGitHubRecoveryChallenge(
+  recoveryToken: string, state: string, runtime: BuzzRuntimeConfig, fetchImpl: typeof fetch,
+  waitMs = 0, signal?: AbortSignal,
+): Promise<OidcBindChallenge | null> {
+  const key = JSON.stringify([authBaseUrl(runtime), state, recoveryToken]);
+  if (recoveryFlight?.key === key) return recoveryFlight.promise;
+  const promise = inspectGitHubRecoveryChallenge(recoveryToken, state, runtime, fetchImpl, waitMs, signal);
+  const flight = { key, promise }; recoveryFlight = flight;
+  void promise.finally(() => { if (recoveryFlight === flight) recoveryFlight = undefined; }).catch(() => {});
+  return promise;
+}
+
+async function inspectGitHubRecoveryChallenge(
   recoveryToken: string,
   state: string,
   runtime: BuzzRuntimeConfig,
@@ -578,7 +592,8 @@ export async function runResilientGitHubSignInSession({
   }, async error => {
     if (controller.signal.aborted) throw error;
     if (!(error instanceof OidcBindError) || error.code !== 'browser_canceled') throw error;
-    const challenge = await fetchGitHubRecoveryChallenge(recoveryToken, state, runtime, fetchImpl);
+    controller.abort();
+    const challenge = await recovery.catch(() => null) ?? await fetchGitHubRecoveryChallenge(recoveryToken, state, runtime, fetchImpl);
     if (challenge) { await persistPendingCallback(challengeCallbackUrl(challenge, state), state); return challenge; }
     void cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
     leftGitHubSignIns.add(error); throw error;

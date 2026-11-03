@@ -355,3 +355,12 @@ it('rejects an incompatible native manifest without requesting a reload', async 
   await expect(checkNativeUpdate()).rejects.toThrow('runtime is incompatible');
   expect(updates.reloadAsync).not.toHaveBeenCalled();
 });
+
+
+it('F11: an incompatible check result cannot start a native SDK download', async () => {
+  updates.runtimeVersion = '40';
+  updates.checkForUpdateAsync.mockResolvedValueOnce({ isAvailable: true, manifest: { id: 'new-runtime', runtimeVersion: '55' } });
+  await expect(checkNativeUpdate()).rejects.toThrow('runtime is incompatible');
+  expect(updates.fetchUpdateAsync).not.toHaveBeenCalled();
+  expect(updates.reloadAsync).not.toHaveBeenCalled();
+});

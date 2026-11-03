@@ -65,7 +65,7 @@ export class MediaDemandOwner {
     this.admission.mediaTap(focus.generation, focus.roomId, action, request, pass => {
       this.keep(operation, objectId, this.admission.spend(request, pass), focus, this.connection!);
     });
-    if (action === 'RunArtifact') {
+    if (action === 'RunArtifact' || action === 'OpenArtifactBrowser') {
       const metadata = { route: 'phone.readMediaMetadata' as const, input: { objectId } };
       this.admission.mediaTap(focus.generation, focus.roomId, action, metadata, pass => {
         this.keep('readMediaMetadata', objectId, this.admission.spend(metadata, pass), focus, this.connection!);

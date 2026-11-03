@@ -452,6 +452,7 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           prepared: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+          preparation-result: ${{ needs.prepare-workspace.result }}
           mobile: "true"
       - name: Run sequential workspace checks
         id: checks
@@ -476,6 +477,7 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           prepared: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+          preparation-result: ${{ needs.prepare-workspace.result }}
           mobile: 'true'
       # buzz-client resolves @beeline/nostr and @beeline/api-contract from
       # built dist, the same as every app that imports those packages.
@@ -527,6 +529,7 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           prepared: 'true'
+          preparation-result: ${{ needs.prepare-workspace.result }}
           mobile: 'true'
       - name: Execute dead-code in its own checkout
         run: timeout 15m bash scripts/ci-workspace-tasks.sh dead-code
@@ -723,6 +726,7 @@ jobs:
         id: workspace
         with:
           prepared: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+          preparation-result: ${{ needs.prepare-workspace.result }}
       # Without a selection (merge queue, dispatch, selection failure) every
       # server test file runs.
       - name: Use this PR's server test selection
@@ -768,6 +772,7 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           prepared: 'true'
+          preparation-result: ${{ needs.prepare-workspace.result }}
       - uses: actions/download-artifact@v4
         with:
           pattern: server-coverage-records-*
@@ -899,6 +904,7 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           prepared: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+          preparation-result: ${{ needs.prepare-workspace.result }}
           mobile: 'true'
       - uses: actions/setup-java@v4
         with:
@@ -932,6 +938,7 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           prepared: 'true'
+          preparation-result: ${{ needs.prepare-workspace.result }}
           mobile: 'true'
       - name: Execute mobile-export-reachability in its own checkout
         run: timeout 30m bash scripts/ci-workspace-tasks.sh mobile-export-reachability
@@ -955,6 +962,7 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           prepared: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+          preparation-result: ${{ needs.prepare-workspace.result }}
       - uses: actions/cache/restore@v4
         id: corpus
         with:
@@ -1130,6 +1138,7 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           prepared: 'true'
+          preparation-result: ${{ needs.prepare-workspace.result }}
           mobile: 'true'
       - name: Flag store builds before merge
         if: github.event_name == 'pull_request'
@@ -1187,6 +1196,7 @@ jobs:
       - uses: ./.github/actions/ci-workspace
         with:
           prepared: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
+          preparation-result: ${{ needs.prepare-workspace.result }}
       - name: Verify the committed app associations, Pages build, and bundle merge
         run: node --test --test-concurrency=1 scripts/app-associations.test.mjs scripts/pages-site.test.mjs scripts/merge-beeline-bundles.test.mjs scripts/verify-beeline-install.test.mjs scripts/landing-animation.test.mjs scripts/pages-channel.test.mjs scripts/verify-pages-update.test.mjs scripts/verify-web-deployment.test.mjs scripts/web-asset-guard.test.mjs
       - name: Run the public website contract test

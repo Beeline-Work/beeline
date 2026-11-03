@@ -298,30 +298,87 @@ test('the network admission CI command runs without duplicate package-script wor
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
-test('prepared consumers cannot fan out cold dependency installs after a preparation failure', () => {
+test('cache eviction recovers dependencies only after successful preparation and propagates install failures', () => {
   const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
   const directory = mkdtempSync(join(tmpdir(), 'ci-preparation-'));
   try {
     const marker = join(directory, 'npm-called');
-    writeFileSync(join(directory, 'npm'), '#!/bin/sh\nprintf "%s\\n" "$*" > "$NPM_MARKER"\n', { mode: 0o755 });
+    writeFileSync(join(directory, 'npm'), '#!/bin/sh\nprintf "%s\\n" "$*" > "$NPM_MARKER"\nexit "${NPM_RESULT:-0}"\n', { mode: 0o755 });
+    const guard = action.runs.steps.find(step => step.name === 'Require successful shared preparation');
+    assert.ok(guard, 'failed preparation must still stop consumers before recovery');
+    assert.equal(guard.if, "inputs.prepared == 'true'");
+    assert.equal(guard.env.CI_PREPARATION_RESULT, '${{ inputs.preparation-result }}');
     const steps = action.runs.steps.filter(step => /\bnpm ci\b/.test(step.run ?? ''));
     assert.equal(steps.length, 2, 'root and mobile dependency fallbacks must be covered');
     for (const step of steps) {
-      const env = { ...process.env, PATH: `${directory}:${process.env.PATH}`, NPM_MARKER: marker, CI_PREPARED: 'true' };
-      const missing = spawnSync('bash', ['-c', step.run], { env, encoding: 'utf8' });
-      assert.equal(missing.status, 1, `prepared consumer must fail before ${step.run}`);
-      assert.equal(existsSync(marker), false, 'a consumer must never install dependencies');
+      const env = { ...process.env, HOME: directory, PATH: `${directory}:${process.env.PATH}`,
+        RUNNER_NAME: process.platform === 'linux' ? 'beeline-ci-squire-fixture' : 'hosted-fixture',
+        NPM_MARKER: marker, CI_PREPARED: 'true', NPM_RESULT: '0' };
       assert.equal(step.env.CI_PREPARED, '${{ inputs.prepared }}');
-      const producer = spawnSync('bash', ['-c', step.run], { env: { ...env, CI_PREPARED: 'false' }, encoding: 'utf8' });
+      assert.equal(step.env.npm_config_jobs, '1');
+      for (const result of ['', 'failure', 'cancelled', 'skipped']) {
+        const failed = spawnSync('bash', ['-e', '-c', `${guard.run}\n${step.run}`], {
+          env: { ...env, CI_PREPARATION_RESULT: result }, encoding: 'utf8' });
+        assert.equal(failed.status, 1, `preparation ${result} must prevent installation`);
+        assert.equal(existsSync(marker), false);
+      }
+      const recovery = spawnSync('bash', ['-e', '-c', `${guard.run}\n${step.run}`], {
+        env: { ...env, CI_PREPARATION_RESULT: 'success' }, encoding: 'utf8' });
+      assert.equal(recovery.status, 0, recovery.stderr);
+      assert.match(recovery.stdout, /::warning::/);
+      assert.match(readFileSync(marker, 'utf8'), /^ci .*--prefer-offline/);
+      assert.equal(spawnSync('bash', ['-c', step.run], {
+        env: { ...env, NPM_RESULT: '23' }, encoding: 'utf8' }).status, 23,
+      'a failed recovery must fail setup');
+      rmSync(marker);
+      const producer = spawnSync('bash', ['-c', step.run], {
+        env: { ...env, CI_PREPARED: 'false', RUNNER_NAME: 'hosted-fixture' }, encoding: 'utf8' });
       assert.equal(producer.status, 0, producer.stderr);
-      assert.ok(existsSync(marker), 'the producer must still prepare a cold cache');
+      assert.ok(existsSync(marker), 'cold producer and hosted installs remain supported');
       rmSync(marker);
     }
     for (const name of preparedConsumers) {
       const setup = jobs[name].steps.find(step => step.uses === './.github/actions/ci-workspace');
       assert.equal(setup.with.prepared, ['dead-code', 'native-fingerprint', 'mobile-export-reachability'].includes(name) ? 'true' : "${{ github.event_name == 'pull_request' || github.event_name == 'push' }}", name);
+      assert.equal(setup.with['preparation-result'], '${{ needs.prepare-workspace.result }}', name);
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+
+test('simultaneous dependency cache misses serialize cold installs on squire', { skip: process.platform !== 'linux' }, async () => {
+  const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
+  const install = action.runs.steps.find(step => /npm ci --no-audit/.test(step.run ?? ''));
+  const directory = mkdtempSync(join(tmpdir(), 'ci-install-lock-'));
+  const children = [];
+  try {
+    const marker = join(directory, 'installs');
+    const release = join(directory, 'release');
+    writeFileSync(join(directory, 'npm'), `#!/bin/sh
+set -eu
+printf 'started\\n' >> "$NPM_MARKER"
+printf 'started\\n'
+while [ ! -f "$INSTALL_RELEASE" ]; do sleep 0.02; done
+`, { mode: 0o755 });
+    const env = { ...process.env, HOME: directory, PATH: `${directory}:${process.env.PATH}`,
+      RUNNER_NAME: 'beeline-ci-squire-fixture', CI_PREPARED: 'true', NPM_MARKER: marker, INSTALL_RELEASE: release };
+    const first = spawn('bash', ['-e', '-c', install.run], { env }); children.push(first);
+    // The warning is printed before locking; wait for the stub's marker too.
+    for (let i = 0; i < 200 && !existsSync(marker); i++) await delay(10);
+    assert.ok(existsSync(marker), 'first install must acquire its lock');
+    const firstExit = once(first, 'exit');
+    const second = spawn('bash', ['-e', '-c', install.run], { env }); children.push(second);
+    const secondExit = once(second, 'exit');
+    await delay(100);
+    assert.equal(readFileSync(marker, 'utf8'), 'started\n', 'a second consumer must wait outside npm');
+    writeFileSync(release, 'release');
+    assert.equal((await firstExit)[0], 0);
+    assert.equal((await secondExit)[0], 0);
+    assert.equal(readFileSync(marker, 'utf8'), 'started\nstarted\n');
+  } finally {
+    for (const child of children) if (child.exitCode === null) child.kill();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
 
 

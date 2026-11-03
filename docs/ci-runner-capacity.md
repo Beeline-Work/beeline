@@ -101,9 +101,12 @@ Final compiled outputs use the v3 exact-SHA archive, with no foreign-head
 fallback. `scripts/ci-build-provenance.mjs` verifies the checked-out SHA, Node
 major and hashes of every compiled file, rejecting missing, extra or changed
 outputs. API exports are checked before publication. Missing exact-head
-archives rebuild with one Turbo task at a time; prepared consumers still
-refuse missing dependency caches. The selector caches its pinned standalone
-TypeScript instead of restoring an entire compiled workspace.
+archives rebuild with one Turbo task at a time. Consumers require successful
+shared preparation, but cache eviction after that success recovers through
+lockfile-based `npm ci --prefer-offline`. Cold installs share a kernel file lock
+on squire, retain one install worker and the existing runner/pool limits, and
+propagate installation failures. Warm consumers keep restoring dependencies.
+The selector caches its pinned standalone TypeScript instead of restoring an entire compiled workspace.
 
 `scripts/workspace-test-selection.mjs` discovers the actual Vitest entries
 and follows reverse imports across workspace boundaries, including source in

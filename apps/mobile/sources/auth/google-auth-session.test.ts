@@ -363,3 +363,28 @@ it.each(['resolve', 'reject'])('F11/F18: late native picker %s cannot complete o
     expect(JSON.parse(storage.get('beeline.google-sign-in.v1')!)).toEqual(next);
   } finally { picker.enabled = false; vi.unstubAllGlobals(); }
 });
+
+it('F11: cancellation while recovering a lost native completion cannot return the old token', async () => {
+  storage.clear(); picker.enabled = true; picker.signIn.mockReset(); picker.signIn.mockResolvedValue('native-id-token');
+  const controller = new AbortController();
+  let finish!: (response: Response) => void;
+  const fetcher = vi.fn(async (url: string) => {
+    if (url.endsWith('/native/start')) return new Response(JSON.stringify({ state, nonce: 'n'.repeat(43), serverClientId: 'server.apps.googleusercontent.com' }));
+    if (url.endsWith('/native/complete')) throw new TypeError('completion response lost');
+    if (url.endsWith('/completion')) return new Promise<Response>(resolve => { finish = resolve; });
+    return new Response(null, { status: 204 });
+  });
+  vi.stubGlobal('fetch', fetcher); const browser = vi.fn();
+  try {
+    const result = runGoogleSignIn({ state, recoveryToken, signal: controller.signal,
+      openAuthSession: browser, subscribeToUrls: () => ({ remove() {} }) });
+    const outcome = result.then(value => ({ value }), error => ({ error }));
+    await vi.waitFor(() => expect(fetcher.mock.calls.some(([url]) => url.endsWith('/completion'))).toBe(true));
+    // A switch to another provider aborts this owner without replacing the
+    // Google storage record. The recovery response alone cannot retain it.
+    controller.abort(); finish(new Response('{}'));
+    expect(await outcome).toMatchObject({ error: { code: 'browser_canceled' } });
+    expect(fetcher.mock.calls.filter(([url]) => url.endsWith('/completion/cancel'))).toHaveLength(1);
+    expect(browser).not.toHaveBeenCalled(); expect(storage.size).toBe(0);
+  } finally { picker.enabled = false; vi.unstubAllGlobals(); }
+});

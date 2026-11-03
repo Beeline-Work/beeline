@@ -142,6 +142,19 @@ export async function runGoogleSignIn(input: {
     const nativePending = { ...pending, recoveryToken: nativeToken };
     let nativeStarted = false;
     let completionAttempted = false;
+    let nativeCancellation: Promise<void> | undefined;
+    const cancelNative = () => nativeCancellation ??= (async () => {
+      if (nativeStarted) await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ recoveryToken: nativeToken }),
+      }).catch(() => undefined);
+    })();
+    const assertNativeCurrent = async () => {
+      try { await assertCurrent(nativeToken); }
+      catch (error) {
+        await cancelNative(); await clearPendingGoogleSignIn(input.state); throw error;
+      }
+    };
     try {
       await savePending(nativePending);
       const start = await googleAuthFetch(`${base}/auth/oidc/native/start`, {
@@ -172,30 +185,18 @@ export async function runGoogleSignIn(input: {
       await assertCurrent(nativeToken);
       return nativeToken;
     } catch {
-      const current = await pendingGoogle();
-      if (input.signal?.aborted || current?.state !== input.state || current.recoveryToken !== nativeToken) {
-        if (nativeStarted) await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ recoveryToken: nativeToken }),
-        }).catch(() => undefined);
-        await clearPendingGoogleSignIn(input.state);
-        throw new OidcBindError('browser_canceled', 'This sign-in was replaced');
-      }
-      // A dropped response may follow a committed ticket. Recover it before
-      // falling back, without spending a second sign-in proof for that account.
+      await assertNativeCurrent();
+      // A dropped response may follow a committed ticket. Recovery belongs to
+      // this same native owner, including cancellation while it is waiting.
       if (completionAttempted) {
         const recovered = await completion(nativePending).catch(() => null);
+        await assertNativeCurrent();
         if (recovered) return recovered;
       }
-      if (nativeStarted) {
-        await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ recoveryToken: nativeToken }),
-        }).catch(() => undefined);
-      }
+      await cancelNative();
       // Missing routes/configuration and every native failure retain browser
       // sign-in, including test copies whose signing keys are unregistered.
-      await assertCurrent(nativeToken);
+      await assertNativeCurrent();
       await savePending(pending);
     }
   }

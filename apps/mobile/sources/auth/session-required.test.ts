@@ -34,3 +34,22 @@ it('ignores a delayed signed-out read after a newer sign-in or unmount', async (
   change(); stop(); await Promise.resolve();
   expect(onRequired).not.toHaveBeenCalled();
 });
+
+it('does not interrupt review redemption after its deliberate sign-out', async () => {
+  let change!: () => void;
+  let resolve!: (identity: string | null) => void;
+  let route = '/beeline/channels';
+  const onRequired = vi.fn();
+  const stop = watchSessionRequired(onRequired, {
+    identityId: () => new Promise(r => { resolve = r; }),
+    subscribeIdentityChange: listener => { change = listener; return vi.fn(); },
+  }, () => !route.startsWith('/review/'));
+  change();
+  route = '/review/proof-secret';
+  resolve(null); await Promise.resolve();
+  expect(onRequired).not.toHaveBeenCalled();
+  route = '/beeline/channels';
+  change(); resolve(null); await Promise.resolve();
+  expect(onRequired).toHaveBeenCalledOnce();
+  stop();
+});

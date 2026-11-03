@@ -192,23 +192,7 @@ export class MonolithSession {
     });
     if (!response.ok) throw new MonolithSessionRequiredError();
     const tokens = (await response.json()) as MonolithTokens;
-    await this.accept(tokens, true, revision);
-    const acceptedRevision = this.credentialRevision;
-    await this.mutateCredentials(async () => {
-      if (acceptedRevision !== this.credentialRevision) throw new MonolithSessionChangedError();
-      await (
-        await this.secureStorage()
-      ).setItemAsync(
-        ACCESS_KEY,
-        JSON.stringify({
-          token: tokens.accessToken,
-          expiresAt: tokens.accessExpiresAt,
-          identityId: tokens.identityId,
-          reviewSecretHash: bytesToHex(sha256(utf8ToBytes(secret))),
-        }),
-      );
-      if (acceptedRevision !== this.credentialRevision) throw new MonolithSessionChangedError();
-    });
+    await this.accept(tokens, true, revision, undefined, bytesToHex(sha256(utf8ToBytes(secret))));
     return tokens.identityId;
   }
 
@@ -534,10 +518,10 @@ export class MonolithSession {
       const refreshToken = this.refreshToken ?? await untilAborted(
         this.secureStorage().then(storage => storage.getItemAsync(REFRESH_KEY)), controller.signal);
       if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
-      if (!refreshToken) {
-        await untilAborted(this.clear(), controller.signal);
-        throw new MonolithSessionRequiredError();
-      }
+      // A startup probe may race an exchange whose native writes are still
+      // pending. Missing credentials do not authorize clearing that exchange,
+      // or emitting another reset from an already signed-out session.
+      if (!refreshToken) throw new MonolithSessionRequiredError();
       response = await untilAborted(
         fetchImpl(`${this.baseUrl}/v1/auth/refresh`, {
           method: 'POST',
@@ -576,6 +560,7 @@ export class MonolithSession {
     signedIn = false,
     expectedRevision = this.credentialRevision,
     previousRefresh?: string,
+    acceptedReviewSecretHash?: string,
   ): Promise<void> {
     if (!tokens.accessToken || !tokens.refreshToken || !tokens.identityId)
       throw new Error('Invalid monolith session response');
@@ -587,7 +572,7 @@ export class MonolithSession {
       const storage = await this.secureStorage();
       const previousId = this.access?.identityId ?? (await storage.getItemAsync(IDENTITY_KEY));
       if (signedIn || previousId !== tokens.identityId) this.sessionRevision += 1;
-      let reviewSecretHash: string | undefined;
+      let reviewSecretHash = acceptedReviewSecretHash;
       if (!signedIn && previousId === tokens.identityId) {
         try {
           const saved = JSON.parse((await storage.getItemAsync(ACCESS_KEY)) ?? 'null') as {

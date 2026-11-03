@@ -616,6 +616,64 @@ describe('monolith phone session', () => {
     }
   });
 
+  it.each(['review', 'github', 'google'] as const)(
+    'preserves a successful %s exchange while native credential writes are slow', async (provider) => {
+      vi.useFakeTimers();
+      let release!: () => void;
+      const slowWrites = new Promise<void>(resolve => { release = resolve; });
+      let started!: () => void;
+      const writing = new Promise<void>(resolve => { started = resolve; });
+      const values = new Map<string, string>();
+      const storage = {
+        getItemAsync: async (key: string) => values.get(key) ?? null,
+        setItemAsync: async (key: string, value: string) => {
+          started(); await slowWrites; values.set(key, value);
+        },
+        deleteItemAsync: async (key: string) => { values.delete(key); },
+      };
+      const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(7))));
+      const session = new MonolithSession('https://server.example', fetcher, async () => storage);
+      const identityChanged = vi.fn();
+      session.subscribeIdentityChange(identityChanged);
+      try {
+        const exchange = provider === 'review' ? session.exchangeReviewSecret('review-proof')
+          : provider === 'github' ? session.exchangeGitHubTicket('ticket') : session.exchangeGoogleTicket('ticket');
+        const result = exchange.then(value => ({ value }), error => ({ error }));
+        await writing;
+        // App-wide live startup can authorize before Android has committed
+        // any of the three credential values. Absence here is not revocation.
+        const startup = session.authorization().catch(error => error);
+        await vi.advanceTimersByTimeAsync(20_000);
+        release();
+        expect(await result).toEqual({ value: tokens(7).identityId });
+        await startup;
+        expect(await session.authorization()).toBe(tokens(7).accessToken);
+        expect(values.get('buzzy.monolith.refresh.v1')).toBe(tokens(7).refreshToken);
+        expect(identityChanged).toHaveBeenCalledOnce();
+        if (provider === 'review') {
+          expect(await session.reviewIdentityForSecret('review-proof')).toBe(tokens(7).identityId);
+        }
+      } finally { release(); vi.useRealTimers(); }
+    },
+  );
+
+  it('persists accepted-review metadata before notifying startup observers', async () => {
+    const session = new MonolithSession('https://server.example',
+      vi.fn(async () => new Response(JSON.stringify(tokens(8)))));
+    let observed!: Promise<string | null>;
+    session.subscribeIdentityChange(() => { observed = session.reviewIdentityForSecret('review-proof'); });
+    await session.exchangeReviewSecret('review-proof');
+    expect(await observed).toBe(tokens(8).identityId);
+  });
+
+  it('an already signed-out authorization probe never emits another client reset', async () => {
+    const session = new MonolithSession('https://server.example', vi.fn());
+    const reset = vi.fn();
+    session.subscribeIdentityChange(reset);
+    await expect(session.authorization()).rejects.toBeInstanceOf(MonolithSessionRequiredError);
+    expect(reset).not.toHaveBeenCalled();
+  });
+
   it('bounds a stalled secure access restore and lets Retry restore it again', async () => {
     vi.useFakeTimers();
     let stalled = true;

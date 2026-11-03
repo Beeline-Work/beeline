@@ -31,6 +31,8 @@ vi.mock('react-native', async () => {
 vi.mock('expo-router', async () => {
   const ReactModule = await import('react');
   return {
+    usePathname: () => '/beeline/channels',
+    router: { replace: vi.fn() },
     Stack: Object.assign(
       (props: any) => {
         stackRef.current = { props };

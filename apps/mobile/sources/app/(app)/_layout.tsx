@@ -1,5 +1,5 @@
 import { watchSessionRequired } from '@/auth/session-required';
-import { router, Stack } from 'expo-router';
+import { router, Stack, usePathname } from 'expo-router';
 import 'react-native-reanimated';
 import * as React from 'react';
 import { View } from 'react-native';
@@ -14,7 +14,15 @@ export const unstable_settings = {
 };
 
 export default function RootLayout() {
-  React.useEffect(() => watchSessionRequired(() => router.replace('/beeline/onboarding')), []);
+  const pathname = usePathname();
+  const pathnameRef = React.useRef(pathname);
+  pathnameRef.current = pathname;
+  // Review redemption deliberately signs out the old identity before exchange.
+  // That intermediate removal must not navigate away from its own sign-in UI.
+  React.useEffect(() => watchSessionRequired(
+    () => router.replace('/beeline/onboarding'), undefined,
+    () => !pathnameRef.current.startsWith('/review/'),
+  ), []);
   React.useEffect(() => {
     // Delivery is required on every signed-in route, including a stale web tab.
     void startMessageOutbox();

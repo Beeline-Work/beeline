@@ -1,6 +1,7 @@
 # Group E: server/helper/provider ownership follow-up
 
-Base: `e22ad688e` on `fm/network-ops-fixes-combined`. Router activation remains
+Initial base: `e22ad688e`; integrated current `f9d8473f3` from
+`fm/network-ops-fixes-combined` at merge `a859e8bc6`. Router activation remains
 default-off. No supported-version floor, removal hold, assertion, budget,
 network manifest or CI/security gate changes. This is a pre-switch correction,
 not whole-finding closure or rollout acceptance.
@@ -85,3 +86,22 @@ ignored local artifacts were moved inside `.scratch/group-e/` and restored
 unchanged afterward; no tracked compiler configuration or source exclusion was
 changed. Initial workspace errors from stale generated package declarations
 were resolved by rebuilding the existing workspaces.
+
+
+The composed root typecheck passed again after merging `f9d8473f3`. Architecture
+(20 rules) and router boundary (158 inventoried boundaries, no production opt-in)
+checks pass. Actual helper socket ownership/intake/readiness passes **10/10** on
+PGlite/PostgreSQL. The first full run retained a 60-second migration-setup hook
+timeout (9/10 passed); an unchanged serial rerun with build work idle passes all
+10, with PostgreSQL cases taking 25–33 seconds. No hook/test budget or database
+durability setting was changed. Core leader/work/shutdown suites pass 12/11/11;
+actual background family PostgreSQL passes 5/5.
+
+
+Final additional serial proofs pass: PostgreSQL helper overlay 2, activation 1,
+MCP authority stream 1, two-server replay 1, correlated completion 4, OAuth
+handoff 1 and voice accounting 2; Body stream 30, monolith activation 2 and
+installed-text inbox adoption 3. Across the 20 named suites, **388 cases pass**.
+The receipt/intake suite's retained setup failure and successful unchanged
+rerun are distinguished above. These results do not turn any remaining
+physical-provider, installed-cohort or whole-workload boundary into closure.

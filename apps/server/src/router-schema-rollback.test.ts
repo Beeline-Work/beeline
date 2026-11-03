@@ -26,27 +26,35 @@ function historicalReadiness() {
   return exports;
 }
 
-it('demonstrates why swapping schema46 and schema61 images cannot roll back the shared marker', async () => {
+it('keeps historical boot valid through additive readiness while requiring completed router migrations', async () => {
   const database = new PgliteDatabase();
   const old = historicalReadiness();
   try {
     expect(old.REQUIRED_SCHEMA_VERSION).toBe(46);
     await old.markSchemaCurrent(database);
     await expect(old.assertSchemaCurrent(database)).resolves.toBeUndefined();
-    await expect(assertSchemaCurrent(database)).rejects.toThrow('expected schema version 61, found 46');
+    await expect(assertSchemaCurrent(database)).rejects.toThrow('release migration step');
 
-    // The release migration writes this marker last; image rollback does not
-    // rewrite it. This is a marker compatibility proof, not full schema/DDL or
-    // old-server application compatibility, nor a deployed-image claim.
     await markSchemaCurrent(database);
     await expect(assertSchemaCurrent(database)).resolves.toBeUndefined();
-    await expect(old.assertSchemaCurrent(database)).rejects.toThrow('expected schema version 46, found 61');
+    await expect(old.assertSchemaCurrent(database)).resolves.toBeUndefined();
+    expect((await database.query('SELECT version FROM beeline_schema_state')).rows).toEqual([{ version: 46 }]);
+    expect((await database.query('SELECT version FROM beeline_router_schema_state')).rows).toEqual([{ version: 61 }]);
 
-    // Rewinding just the marker reverses the failure. It does not create a
-    // shared serving floor or prove that retained commands can be understood.
+    // A historical migration can still mark its baseline without deleting the
+    // additive marker. This does not claim it understands router commands.
     await old.markSchemaCurrent(database);
     await expect(old.assertSchemaCurrent(database)).resolves.toBeUndefined();
-    await expect(assertSchemaCurrent(database)).rejects.toThrow('expected schema version 61, found 46');
+    await expect(assertSchemaCurrent(database)).resolves.toBeUndefined();
+
+    await database.query('UPDATE beeline_router_schema_state SET version=60');
+    await expect(assertSchemaCurrent(database)).rejects.toThrow('expected router schema version 61, found 60');
+    await expect(old.assertSchemaCurrent(database)).resolves.toBeUndefined();
+    await database.query('DELETE FROM beeline_router_schema_state');
+    await expect(assertSchemaCurrent(database)).rejects.toThrow('expected router schema version 61, found no marker');
+    await markSchemaCurrent(database);
+    await database.query('UPDATE beeline_schema_state SET version=45');
+    await expect(assertSchemaCurrent(database)).rejects.toThrow('expected schema version 46, found 45');
   } finally {
     await database.close();
   }

@@ -130,6 +130,8 @@ async function issueCommentRoute(personal, auth, context) {
     return unpack(await mcp('tools/call', { name: toolName, arguments: args }));
   }
   return async (request, body) => {
+    if (managed && request.method === 'GET' && request.headers.host === 'api.github.com')
+      return await execute('BEELINE_GITHUB_REST_READ', { path: request.url });
     if (request.method !== 'POST' || request.headers.host !== 'api.github.com')
       throw new Error('This GitHub provider supports issue-comment requests only');
     const input = JSON.parse(body);

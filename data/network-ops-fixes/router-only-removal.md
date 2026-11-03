@@ -40,15 +40,15 @@ closes the packaging-evidence gap for these two fixtures only; it does not
 establish a clean mobile/native bundle or remove any migration inventory row.
 
 
-## Individual architecture relaxation disposition (instruction042)
+## Individual architecture disposition (instruction050)
 
-| Existing red rule | Exact addition and present reason | Required final disposition |
+| Rule | Current disposition | Remaining removal |
 | --- | --- | --- |
-| `live.notify` owners | The fixed-channel notifier leaf avoids initialization cycles in Needs-you and router authority schema imports; decoding remains in `postgres-live.ts`. Two cold-import consolidation attempts reproduced those cycles and were reverted. | Instruction 045 retains this individually justified exception for owner disposition; the guard remains red. |
-| `settings.server-env` 60→61 | `BEELINE_NETWORK_ROUTER_V1` is the single temporary server-first switch requested for staged migration. | Delete it after the validated expansion/switch sequence and router-only removal; no per-family or replacement setting. Final count ≤60. |
+| `live.notify` owners | Restored to `postgres-live.ts` only. Deferred schema assembly and dependency-light wire decoding resolve cold import cycles; migration SQL is unchanged. | No exception; four cold-entry regressions pass. |
+| `settings.server-env` | Restored to60 by using the existing startup configuration reader for the single disabled rollout switch. | Delete the switch after validated rollout/removal; no replacement setting. |
 | `paths.server-parallel` | Restored from 20 to main's 18: removed `waitForLegacyReceipt`; both old-wire and opted-in wallet callers observe a receipt once. Scheduled Work now obtains existing/missing-Room certificates in the same authority statement, deleting the audience's duplicate certificate query. | Existing ratchet tightened to 18; no renamed path, caller exception or budget waiver. [Proofs](removal-progress.md). |
 | `paths.helper-parallel` | Restored from 30 to main's 29: local inbox producers now use the same durable queue as member-stream deliveries. Old pending text is atomically adopted into that queue and consumed by the existing claim path. The old text writer and separate text consumer are deleted. | Existing ratchet tightened to 29; installed pending input, interrupted adoption, ordering and replay proofs pass. [Proofs](removal-progress.md). |
-| `paths.phone-parallel` 19→24 | Tray legacy observer selection, `acquireLegacyChatList`, `useLegacyNeedsYouCount`, old usage mode and `installLegacyMediaCacheConnection` retain old-server branches while rollout is off. The count is a name-pattern ratchet, not a count of requests. | Move every supported cohort to the router/sole compatibility ingress, then delete those feature implementations. No renaming, hidden scanner exception or count waiver establishes removal. Final count ≤19. |
+| `paths.phone-parallel` | Restored to19. Chat-list acquisition, count subscriptions, Tray selection and media connection installation choose the explicit old-server adapter within the existing negotiated owner. | Supported old-server behavior remains tested; remove retained implementations only after the compatibility floor. This count pass alone does not establish router-only removal. |
 
 These are individual explanations of staged debt, not approval to retain
 parallel networking in the final architecture. The trusted-base guard stays

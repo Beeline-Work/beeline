@@ -42,8 +42,8 @@ including durable cursor/replay, joined-session regressions 11, and Body typeche
 These are isolated storage/operation proofs, not native helper lifecycle tests or
 an exactly-once claim for delivery into third-party applications.
 
-The existing architecture scanner has no tree/count mismatch. Against main it
-still reports three relaxations: notification owner, server environment 60→61,
-and phone parallel paths 19→24. No scanner, pattern, scope, allowlist or guard was
-weakened. Phone path removal and the unified-switch deletion belong to the
-post-switch removal build described in the release sequence.
+Instruction050 subsequently restored all base architecture rules, including
+notification ownership, server environment60 and phone parallel19. Supported
+old-server adapters are selected inside existing owners; the post-switch
+implementation-removal hold remains. [CI repair evidence](ci-repair.md) records
+the unchanged guard and migration-SQL proofs.

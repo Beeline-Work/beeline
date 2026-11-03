@@ -190,3 +190,9 @@ The restored-feed proof holds the replacement's actual connection promise while 
 Delete the per-row retry map, 5/15/60-second policy and retry-test inspection export. Each actual save schedules one best-effort embedding attempt; provider refusal or throw ends it. The original row/version conditions still guard the write, and missing embedding evidence remains on the durable item/skill. A later save can admit a new attempt without reviving the failed one. Disabled configuration still performs no row read. Startup backfill admission, durable route ownership and full F18/F22 closure remain open.
 
 All 36 embedding tests pass, including idle-day provider failure, separately admitted edits, stale-version guards, disabled configuration, deadlines and existing backfill behavior. No real provider is called.
+
+## D076 — Fly transition refusals return to the action owner
+
+Delete the start adapter's six-attempt HTTP 412 loop and 250ms exponential timer. One admitted start still performs its existing image/version checks and bounded state wait when required, then submits start once. Both a known transition refusal and an uncertain transport failure return unchanged. A separately admitted action can try the same Machine; the adapter never manufactures it.
+
+All 10 Fly adapter tests use fake fetches and pass, including an idle day without reattempt, image preservation and no start after failed image update. No real Machine or Herdr lifecycle is driven. The existing higher-level free-agent sweep and complete machine-transition ownership remain open.

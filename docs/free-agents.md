@@ -66,7 +66,7 @@ soul. Existing free agents keep their names.
   `sleeping` and asks Fly to suspend the Machine. If suspend fails, it stops the
   Machine. A helper behind the announced release asks for `refresh` and gets a stop,
   so its next boot installs the new release. The helper never updates in place.
-- **Wake.** Before starting an existing Machine, the server compares its image
+- **Wake.** The Fly adapter submits one start request per admitted action. HTTP 412 and lost replies return to the owner without a timer or resubmission (`fly-machines.test.ts`). Before starting an existing Machine, the server compares its image
   with the configured published digest and updates it while keeping its complete
   configuration and persistent rootfs. Cold boot reconciles the broker marker
   directory anchor after an image replacement, preserving its account binding.

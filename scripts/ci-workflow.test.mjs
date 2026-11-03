@@ -275,10 +275,19 @@ test('every main merge runs full checks and publishes one coverage map without c
   assert.ok(main.needs.includes('production-corpus-replay'));
   assert.match(JSON.stringify(main.steps), /test-selection.mjs check-map/);
   assert.match(JSON.stringify(main.steps), /"name":"server-coverage-map"/);
-  for (const name of ['server-suite-shard', 'production-corpus-replay']) {
+  for (const name of ['server-suite-shard']) {
     assert.ok(jobs[name].steps.some(step => /SERVER_COVERAGE_MAP_DIR=/.test(step.run ?? '')));
     assert.ok(jobs[name].steps.some(step => step.uses === 'actions/upload-artifact@v4' && /server-coverage-records/.test(step.with?.name)));
   }
+  const replay = jobs['production-corpus-replay'];
+  assert.equal(replay.steps.some(step => /SERVER_COVERAGE_MAP_DIR=/.test(step.run ?? '')), false,
+    'main must not enable coverage across hosted timing gates');
+  for (const name of ['Replay sanitized corpus and time production hot reads', 'Run server wall-clock budgets outside the shared quota']) {
+    const step = replay.steps.find(step => step.name === name);
+    assert.equal(step.env.SERVER_COVERAGE_MAP_DIR, '');
+    assert.equal(step.env.NODE_V8_COVERAGE, '');
+  }
+  assert.equal(replay.steps.some(step => /server-coverage-records/.test(step.with?.name ?? '')), false);
   const legacy = parse(readFileSync(new URL('../.github/workflows/server-coverage-map.yml', import.meta.url), 'utf8'));
   assert.equal(legacy.on.push, undefined, 'main must not execute a duplicate full server suite');
   assert.equal(legacy.on.schedule, undefined);

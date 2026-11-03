@@ -719,7 +719,7 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
-      - name: Record complete main coverage
+      - name: Record ordinary server coverage on main
         if: github.event_name == 'push'
         run: echo "SERVER_COVERAGE_MAP_DIR=$RUNNER_TEMP/coverage-records" >> "$GITHUB_ENV"
       - uses: ./.github/actions/ci-workspace
@@ -778,7 +778,7 @@ jobs:
           pattern: server-coverage-records-*
           merge-multiple: true
           path: ${{ runner.temp }}/coverage-records
-      - name: Publish complete main coverage for later PR selections
+      - name: Publish main coverage for later PR selections
         run: |
           node apps/server/scripts/test-selection.mjs build-map --records "$RUNNER_TEMP/coverage-records" --commit "$GITHUB_SHA" --out "$RUNNER_TEMP/server-coverage-map.json"
           node apps/server/scripts/test-selection.mjs check-map "$RUNNER_TEMP/server-coverage-map.json"
@@ -956,9 +956,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-      - name: Record complete main coverage
-        if: github.event_name == 'push'
-        run: echo "SERVER_COVERAGE_MAP_DIR=$RUNNER_TEMP/coverage-records" >> "$GITHUB_ENV"
       - uses: ./.github/actions/ci-workspace
         with:
           prepared: ${{ github.event_name == 'pull_request' || github.event_name == 'push' }}
@@ -971,6 +968,8 @@ jobs:
       - name: Replay sanitized corpus and time production hot reads
         id: replay
         env:
+          SERVER_COVERAGE_MAP_DIR: ''
+          NODE_V8_COVERAGE: ''
           PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
           PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
         run: |
@@ -984,6 +983,9 @@ jobs:
       - name: Run server wall-clock budgets outside the shared quota
         if: github.event_name == 'pull_request' || github.event_name == 'push'
         working-directory: apps/server
+        env:
+          SERVER_COVERAGE_MAP_DIR: ''
+          NODE_V8_COVERAGE: ''
         run: npx vitest run src/production-corpus-width.test.ts src/phone-service.read-room-latency.test.ts src/daemon-service.completion-latency.test.ts --maxWorkers=1 --minWorkers=1
       - uses: actions/upload-artifact@v4
         if: always()
@@ -991,14 +993,6 @@ jobs:
           name: production-corpus-hot-read-plans
           path: ${{ runner.temp }}/beeline-production-plans
           if-no-files-found: ignore
-
-      - uses: actions/upload-artifact@v4
-        if: github.event_name == 'push' && always()
-        with:
-          name: server-coverage-records-timing
-          path: ${{ runner.temp }}/coverage-records
-          retention-days: 3
-          if-no-files-found: error
 
   production-corpus-replay-on-demand:
     name: PRODUCTION-CORPUS REPLAY (on demand)

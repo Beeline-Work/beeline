@@ -71,6 +71,13 @@ keep their rows and query-plan assertions while avoiding unrelated write
 fanout during bulk seeding; foreign keys remain active and hooks resume
 before the behavior under test.
 
+Main records function coverage for ordinary server tests. Corpus/latency
+budgets, isolated socket/timer suites (including wake-inbox), and monolith
+integration batches run without V8 coverage. Instrumentation otherwise slows
+budgeted reads and disables the shared database template inside the existing
+hook deadline. These files still run with their original assertions and
+budgets; without map entries the server selector always includes them.
+
 The workflow suite is split across four files with a shared per-file fixture.
 All 170 test names and the original test blocks are retained. Scheduling
 weights use the latest observed CI profile; source revision and measurement

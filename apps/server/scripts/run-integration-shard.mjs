@@ -25,6 +25,9 @@ if (!runs(readSelection(), 'src/integration.test.ts')) {
 
 const vitest = fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs', import.meta.url));
 const testFile = 'src/integration.test.ts';
+// Precise coverage disables the shared database template and adds setup cost
+// inside the unchanged hook deadline. No map entry makes this file always run.
+const testEnv = { ...process.env, SERVER_COVERAGE_MAP_DIR: '', NODE_V8_COVERAGE: '' };
 const escapeRegExp = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 // Vitest writes the list to a file: global setup logs migrations to stdout.
@@ -33,7 +36,7 @@ function listTests(args = []) {
   const output = join(directory, 'tests.json');
   try {
     const result = spawnSync(process.execPath, [vitest, 'list', testFile, '--maxWorkers=1', '--minWorkers=1', `--json=${output}`, ...args], {
-      encoding: 'utf8',
+      encoding: 'utf8', env: testEnv,
       stdio: ['ignore', 'ignore', 'inherit'],
     });
     if (result.status !== 0) throw new Error(`vitest list failed: ${result.status}`);
@@ -63,7 +66,7 @@ if (process.argv.includes('--list')) {
 const run = spawnSync(
   process.execPath,
   [vitest, 'run', testFile, '--maxWorkers=1', '--minWorkers=1', '--testNamePattern', pattern],
-  { stdio: 'inherit' },
+  { stdio: 'inherit', env: testEnv },
 );
 if (run.error) throw run.error;
 process.exit(run.status ?? 1);

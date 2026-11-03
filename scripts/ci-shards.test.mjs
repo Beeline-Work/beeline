@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync, readFileSync, symlinkSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, symlinkSync, rmSync, mkdirSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { balanceFiles } from '../apps/server/scripts/ci-shards.mjs';
@@ -48,7 +48,7 @@ test('isolated latency and voice suites remain covered exactly once outside para
   });
   const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts',
     'src/phone-service.read-room-latency.test.ts', 'src/daemon-service.completion-latency.test.ts',
-    'src/durable-live.integration.test.ts'];
+    'src/durable-live.integration.test.ts', 'src/wake-inbox.integration.test.ts'];
   isolated.forEach((file, index) => assert.deepEqual(shards[index].isolatedFiles, [file]));
   const files = shards.flatMap(shard => [...shard.files, ...shard.isolatedFiles]);
   assert.equal(new Set(files).size, files.length);
@@ -172,4 +172,74 @@ test('a PR selection runs each selected file once and skips unselected integrati
   const integration = spawnSync(process.execPath, ['apps/server/scripts/run-integration-shard.mjs', '1/8'], { encoding: 'utf8', env });
   assert.equal(integration.status, 0, integration.stderr);
   assert.match(integration.stdout, /skipped/);
+});
+
+
+function coverageRunnerFixture() {
+  const root = mkdtempSync(join(tmpdir(), 'coverage-runner-'));
+  const server = join(root, 'apps/server');
+  mkdirSync(join(server, 'scripts'), { recursive: true });
+  mkdirSync(join(root, 'node_modules/vitest'), { recursive: true });
+  writeFileSync(join(root, 'package.json'), '{"type":"module"}');
+  for (const name of ['run-ci-shard.mjs', 'run-integration-shard.mjs', 'ci-shards.mjs', 'selected-tests.mjs', 'ci-test-timings.json']) {
+    copyFileSync(new URL(`../apps/server/scripts/${name}`, import.meta.url), join(server, 'scripts', name));
+  }
+  const calls = join(root, 'calls.jsonl');
+  writeFileSync(join(root, 'node_modules/vitest/vitest.mjs'), `
+import { appendFileSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+const args = process.argv.slice(2);
+appendFileSync(process.env.CALLS, JSON.stringify({ args, coverage: process.env.SERVER_COVERAGE_MAP_DIR }) + '\\n');
+if (args[0] === 'list') {
+  let result;
+  if (args.some((arg, i) => arg === 'src/integration.test.ts' && args[i - 1] !== '--exclude')) {
+    const names = ['monolith integration > first', 'monolith integration > second'];
+    const pattern = args[args.indexOf('--testNamePattern') + 1];
+    result = names.filter(name => !args.includes('--testNamePattern') || new RegExp(pattern).test(name.replace(' > ', ' '))).map(name => ({ name }));
+  } else {
+    const all = ['src/ordinary.test.ts', 'src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts',
+      'src/phone-service.read-room-latency.test.ts', 'src/daemon-service.completion-latency.test.ts',
+      'src/durable-live.integration.test.ts', 'src/wake-inbox.integration.test.ts'];
+    const excluded = args.filter((_, i) => args[i - 1] === '--exclude');
+    const requested = args.filter((arg, i) => arg.endsWith('.test.ts') && args[i - 1] !== '--exclude');
+    result = all.filter(file => !excluded.includes(file) && (!requested.length || requested.includes(file))).map(file => ({ file: resolve(file) }));
+  }
+  const json = args.find(arg => arg.startsWith('--json='));
+  if (json) writeFileSync(json.slice(7), JSON.stringify(result));
+  else console.log(JSON.stringify(result));
+}
+`);
+  const env = { ...process.env, CI_TEST_WORKERS: '1', SERVER_HOSTED_TIMING: 'false', SERVER_TEST_SELECTION: '',
+    SERVER_COVERAGE_MAP_DIR: join(root, 'coverage'), CALLS: calls };
+  return { root, server, calls, env };
+}
+
+test('main records ordinary coverage but runs every isolated timer/socket suite uninstrumented', () => {
+  const fixture = coverageRunnerFixture();
+  try {
+    const result = spawnSync(process.execPath, [join(fixture.server, 'scripts/run-ci-shard.mjs'), '1/1'], {
+      cwd: fixture.server, env: fixture.env, encoding: 'utf8', timeout: 15_000 });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const runs = readFileSync(fixture.calls, 'utf8').trim().split('\n').map(JSON.parse).filter(call => call.args[0] === 'run');
+    const ordinary = runs.find(call => call.args.includes('--exclude'));
+    assert.equal(ordinary.coverage, fixture.env.SERVER_COVERAGE_MAP_DIR);
+    const isolated = runs.filter(call => !call.args.includes('--exclude'));
+    for (const call of isolated) assert.equal(call.coverage, '', JSON.stringify(call.args));
+    assert.equal(isolated.length, 6);
+    assert.ok(isolated.some(call => call.args.includes('src/wake-inbox.integration.test.ts')));
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
+});
+
+test('integration discovery and execution retain warm database setup under main coverage', () => {
+  const fixture = coverageRunnerFixture();
+  try {
+    const result = spawnSync(process.execPath, [join(fixture.server, 'scripts/run-integration-shard.mjs'), '1/1'], {
+      cwd: fixture.server, env: fixture.env, encoding: 'utf8', timeout: 15_000 });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    const calls = readFileSync(fixture.calls, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(calls.length, 3, 'two exact discoveries and one execution remain mandatory');
+    for (const call of calls) assert.equal(call.coverage, '');
+    assert.equal(calls.at(-1).args[0], 'run');
+    assert.ok(calls.at(-1).args.includes('--maxWorkers=1'));
+  } finally { rmSync(fixture.root, { recursive: true, force: true }); }
 });

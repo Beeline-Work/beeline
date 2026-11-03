@@ -17,7 +17,7 @@ const vitest = fileURLToPath(new URL('../../../node_modules/vitest/vitest.mjs', 
 // the shared CPU quota. Merge/dispatch runs retain them in their hosted shards.
 const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts',
   'src/phone-service.read-room-latency.test.ts', 'src/daemon-service.completion-latency.test.ts',
-  'src/durable-live.integration.test.ts'];
+  'src/durable-live.integration.test.ts', 'src/wake-inbox.integration.test.ts'];
 // Fresh worker processes give socket replay and completion timing independent
 // engine/clock lifetimes. Replay remains on squire; the latency budget joins
 // the existing hosted wall-clock proofs on PRs.
@@ -70,7 +70,10 @@ if (!process.argv.includes('--list')) {
     console.log('No selected server test files for this shard.');
   }
   for (const file of isolatedFiles) {
-    const isolatedResult = spawnSync(process.execPath, [vitest, 'run', file, '--maxWorkers=1', '--minWorkers=1'], { cwd: root, stdio: 'inherit' });
+    const isolatedResult = spawnSync(process.execPath, [vitest, 'run', file, '--maxWorkers=1', '--minWorkers=1'], { cwd: root, stdio: 'inherit',
+      // Coverage changes real deadlines, fake timers and database startup.
+      // Unmapped tests remain mandatory in the server selector.
+      env: { ...process.env, SERVER_COVERAGE_MAP_DIR: '', NODE_V8_COVERAGE: '' } });
     if (isolatedResult.error) throw isolatedResult.error;
     if (isolatedResult.status !== 0) status = isolatedResult.status ?? 1;
   }

@@ -43,12 +43,7 @@ const liveOwner = (entry: Entry): boolean => [...entry.owners.values()].some(own
 const roomFamily=(family:LaneFamily):boolean=>family==='room-head'||family===SCHEDULED_FAMILY||family==='room-workflows';
 // The original projection cohort has no proven inactive Room feed. Only an
 // explicitly negotiated DB-audience feed can lift that conservative guard.
-const CONTINUOUS_CACHE:Readonly<Record<LaneFamily,boolean>>={
-  'workspace-roster':true,
-  'room-workflows':true,
-  'agent-profile':true,
-  'room-list':true,'needs-you':true,'needs-you-tray':true,'needs-you-count':true,'room-head':false,'room-scheduled-work':true,'needs-you-saved-page':true,
-};
+
 
 /** An executor is installed only by the negotiated connection owner. Demand
  * arrives only after admission has atomically consumed a real owner pass.
@@ -186,7 +181,7 @@ export class ReadLanes {
       this.evict();
     };
   }
-  private continuouslyFed(family:LaneFamily):boolean{return family==='room-head'?this.continuousRooms:CONTINUOUS_CACHE[family]===true;}
+  private continuouslyFed(family:LaneFamily):boolean{return family!=='room-head'||this.continuousRooms;}
 
   /** Explicit Retry is passed an independently spent synchronous gesture. */
   retry(request: LaneRequest, permit: LanePermit): void {
@@ -240,8 +235,8 @@ export class ReadLanes {
         // that merely shares this complete certificate.
         const targetDomain = fact.payload.authorityScope;
         const streamWorkspace = batch.to.stream.startsWith('workspace:') ? batch.to.stream.slice('workspace:'.length) : undefined;
-        const roomFits = targetDomain === `room:${logicalScope}` && !!streamWorkspace &&
-          fact.authority.scopes.some(scope => scope.authorityScope === `reader:${this.identity.principal}:workspace:${streamWorkspace}`);
+        const readerFits=!!streamWorkspace&&fact.authority.scopes.some(scope=>scope.authorityScope===`reader:${this.identity.principal}:workspace:${streamWorkspace}`);
+        const roomFits = targetDomain === `room:${logicalScope}` && readerFits;
         const domainFits = roomFits || batch.to.stream === `workspace:${logicalScope}`&&
           (targetDomain === `reader:${this.identity.principal}:workspace:${logicalScope}`||
             mode==='advance'&&targetDomain===`reader:${this.identity.principal}:workspace:${logicalScope}:visibility`);
@@ -249,9 +244,8 @@ export class ReadLanes {
           targetDomain===`scheduled-work-principal:${this.identity.principal}`&&logicalScope===this.identity.principal||
           targetDomain===`scheduled-work-manager:${this.identity.principal}:workspace:${logicalScope}`&&batch.to.stream===`workspace:${logicalScope}`||
           targetDomain===`scheduled-work-member:${this.identity.principal}:room:${logicalScope}`||targetDomain===`scheduled-work-room:${logicalScope}`);
-        const profileFits=!!streamWorkspace&&targetDomain===`profile:${streamWorkspace}:${logicalScope}`&&
-          fact.atomicGroup===`agent-profile:${streamWorkspace}:${logicalScope}:${this.identity.principal}`&&
-          fact.authority.scopes.some(scope=>scope.authorityScope===`reader:${this.identity.principal}:workspace:${streamWorkspace}`);
+        const profileFits=readerFits&&targetDomain===`profile:${streamWorkspace}:${logicalScope}`&&
+          fact.atomicGroup===`agent-profile:${streamWorkspace}:${logicalScope}:${this.identity.principal}`;
         const target = domainFits||scheduledFits||profileFits ? fact.authority.scopes.find(scope => scope.authorityScope === targetDomain) : undefined;
         if (!target||!/^\d+$/.test(target.epoch)) {
           if(fact.payload.kind===AUTHORITY_FENCE_KIND){await this.unavailableGroup(batch.to.stream,fact.atomicGroup);continue;}

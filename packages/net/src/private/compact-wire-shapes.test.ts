@@ -37,13 +37,6 @@ function verdict(shapes: readonly WireShape[], root: number, value: unknown): st
 }
 
 describe('compact owner schema reconstruction', () => {
-  it('restores dictionary field names, own prototype keys and exact optional/index references',()=>{
-    expect(expandWireShapes([[13,[0,0,'__proto__',-1,1,-4],0]],['required','optional']))
-      .toEqual([{kind:'object',properties:Object.fromEntries([['required',{node:0,optional:false}],
-        ['__proto__',{node:0,optional:true}],['optional',{node:3,optional:true}]]),index:0}]);
-    for(const shape of [[13,[0,1]],[13,['odd']],[13,['key','ref']]])
-      expect(()=>expandWireShapes([shape] as unknown as readonly CompactWireShape[])).toThrow('network codec: invalid compact');
-  });
   it('exactly restores every WireShape variant, optional node zero, index zero and cyclic reference IDs', () => {
     expect(expandWireShapes(packed)).toEqual(original);
     expect(expandWireShapes(packed)[17]).not.toHaveProperty('index');

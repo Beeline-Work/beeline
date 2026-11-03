@@ -1,10 +1,10 @@
 import {ROUTER_TRAY_CLOCK_STREAM} from '@beeline/api-contract/router-protocol';
-import { validateWorkspaceProjection, validateWorkflowProjection, validateAgentProjection, validateNeedsRoomsPayload } from '@beeline/net/owner';
+import { validateWorkflowProjection, validateNeedsRoomsPayload } from '@beeline/net/owner';
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import { installUsageCellConnection, suspendUsageCellConnection, receiveUsageCell, setUsageCellProfile } from './agent-usage-cell';
 import { AdmissionOwner, ReadLanes, RouterBatchAssembly, ScheduledWorkAuthority, NavigationOwner, MediaDemandOwner, UsageDemandOwner,validateScheduledWorkProjection,validateTrayProjection,validateSavedWindow,
   type MediaAction, type LaneFamily, type LaneRequest, type LaneSnapshot, type LaneView, type NavigationState, type AdmittedCommand } from '@beeline/net/owner';
-import { readChatListView, readRoomView } from '@beeline/api-contract/phone';
+import { readChatListView, readRoomView, readWorkspaceView, isAgentDetailView } from '@beeline/api-contract/phone';
 import type { MediaMetadata, MediaLink, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { RouterValues, RouterSnapshotInput, RouterSnapshot, RouterCapabilities, ScheduledWorkAuthorityPosition } from '@beeline/api-contract/router-protocol';
 import { sha256 } from '@noble/hashes/sha2.js';
@@ -57,10 +57,14 @@ const empty: LaneView = Object.freeze({ state: 'ABSENT', value: null, cut: null,
 const roomScoped=(family:LaneFamily)=>family==='room-head'||family==='room-scheduled-work'||family==='room-workflows';
 
 function validValue(request: LaneRequest, value: unknown): boolean {
-  if(request.family==='agent-profile')return validateAgentProjection(value)&&
+  if(request.family==='agent-profile')return isAgentDetailView(value)&&utf8ToBytes(JSON.stringify(value)).length<=32*1024&&
     (value as RouterValues['agent-profile']).workspaceId===request.workspaceId&&
     (value as RouterValues['agent-profile']).agent.identity.pubkey===request.agentId;
-  if(request.family==='workspace-roster')return validateWorkspaceProjection(value);
+  if(request.family==='workspace-roster'){
+    const roster=readWorkspaceView(value);
+    return !!roster&&roster.workspace.id===request.workspaceId&&roster.members.length+roster.agents.length<=100&&
+      utf8ToBytes(JSON.stringify(value)).length<=64*1024;
+  }
   if(request.family==='room-workflows')return validateWorkflowProjection(value);
   if(request.family==='needs-you-saved-page')return validateSavedWindow(value,request.workspaceId);
   if(request.family==='needs-you-tray')return validateTrayProjection(value,request.workspaceId);

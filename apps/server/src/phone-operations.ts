@@ -1,3 +1,4 @@
+import { readRoomTools } from './room-tool-projection.js';
 import { dispatchTrayDecisionCommand, isTrayDecisionCommand } from './tray-decision-command.js';
 import { helperUsageEnabled, readAgentUsageCell } from './helper-usage.js';
 import { readMediaMetadata } from './phone-media.js';
@@ -137,6 +138,12 @@ export function createPhoneOperationDispatcher(
           if (error instanceof MessageSearchTooBroadError) refuse(422, 'query_too_broad');
           throw error;
         }
+      }
+      case 'readRoomTools': {
+        if(!readLimits.history.admit(viewerId))refuse(429,'too_many_requests');
+        const anchor=required(input,'anchor'),before=optional(input,'before'),target=optional(input,'messageId');
+        if([anchor,before,target].some(value=>value!==undefined&&(!value.length||value.length>128)))refuse(400,'invalid_tool_target');
+        return readRoomTools(options.database,{roomId:uuid(input,'roomId'),anchor,...(before?{before}:{}),...(target?{messageId:target}:{})},viewerId);
       }
       case 'readRoom': return found(await phone.readRoom(uuid(input, 'roomId'), viewerId));
       case 'readHistory':

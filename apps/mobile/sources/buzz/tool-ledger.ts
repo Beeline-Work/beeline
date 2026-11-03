@@ -69,6 +69,8 @@ export function toolGlyph(step: Pick<TurnActivityAction, 'kind' | 'toolKind'>): 
 }
 
 export type ToolLedgerLine = {
+  toolGroup?: import('@beeline/api-contract/phone').RoomViewActivity['toolGroup'];
+  toolOutput?: import('@beeline/api-contract/phone').RoomViewActivity['toolOutput'];
   id: string;
   kind: 'tool' | 'thought' | 'note';
   glyph: string;
@@ -104,6 +106,8 @@ export function toolLedgerLines(
         : undefined;
     return {
       id: step.id,
+      ...(step.toolGroup?{toolGroup:step.toolGroup}:{}),
+      ...(step.toolOutput?{toolOutput:step.toolOutput}:{}),
       kind: step.kind,
       glyph: toolGlyph(step),
       // A thought's own label already says `thought` and a note's label is its
@@ -164,7 +168,7 @@ export function groupToolLedgerRuns(lines: readonly ToolLedgerLine[]): ToolLedge
     {
       kind: 'group',
       id: lines[0]!.id,
-      count: lines.length - notes,
+      count: lines.reduce((sum,line)=>sum+(line.kind==='note'?0:line.toolGroup?.count??1),0),
       failed,
       notes,
       ...(durationMs ? { durationMs } : {}),

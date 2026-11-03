@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir, hostname } from 'node:os';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
@@ -17,6 +17,7 @@ import {
   prepareHostedSquire,
   isProcessAlive,
   parseConnectReport,
+  pairSquire,
   readConnectionDetail,
   readConnectionLedger,
   readGrants,
@@ -131,6 +132,67 @@ describe('hosted broker readiness', () => {
         expect(result.status).toBe(expected);
         expect(result.signIn).toBeUndefined();
         if (expected === 'connected') expect(result.steps.every(step => step.status === 'done')).toBe(true);
+      }
+    } finally {
+      vi.unstubAllEnvs();
+      broker.close(); mcpSocket.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it.each(['bound', 'sign-in', 'retry', 'unbound'] as const)('recovers a legacy hosted install through connect (%s)', async (recovery) => {
+    const root = mkdtempSync(join(tmpdir(), 'hosted-legacy-squire-'));
+    mkdirSync(join(root, '.trusty-squire'));
+    mkdirSync(join(root, '.config/trusty-squire'), { recursive: true });
+    const sessionPath = join(root, '.config/trusty-squire/session.json');
+    writeFileSync(sessionPath, JSON.stringify({ machine_token: 'legacy-fixture' }));
+    const broker = createServer(socket => socket.destroy());
+    const mcpSocket = createServer(socket => socket.destroy());
+    await new Promise<void>(resolve => broker.listen(join(root, '.trusty-squire/broker.sock'), resolve));
+    await new Promise<void>(resolve => mcpSocket.listen(join(root, '.trusty-squire/mcp.sock'), resolve));
+    vi.stubEnv('HOME', root);
+    vi.stubEnv('XDG_CONFIG_HOME', join(root, '.config'));
+    vi.stubEnv('BEELINE_HOSTED_SERVICES', '1');
+    const reconnect = JSON.stringify({ error: { code: 'reconnect_required',
+      message: "This install is from before single-tier auth and isn't bound to an account. Run `npx @trusty-squire/mcp connect` to reconnect." } });
+    let connects = 0;
+    const { client, calls } = mockSquire({ list_credentials: () => {
+      const session = JSON.parse(readFileSync(sessionPath, 'utf8'));
+      if (!session.account_id) throw new Error(`list_credentials failed: ${reconnect}`);
+      return { credentials: [] };
+    } });
+    const streamRun = vi.fn(async () => {
+      connects++;
+      if (recovery === 'bound' || (recovery === 'retry' && connects === 2))
+        writeFileSync(sessionPath, JSON.stringify({ account_id: 'fixture-owner', agent_session_token: 'fixture' }));
+      return { stdout: '', stderr: '', abort: () => {}, report: report(recovery === 'sign-in' ? {
+        state: 'needs-sign-in', sign_in_url: 'https://squire.example/install?fixture',
+        browser_location: { kind: 'host_screen' },
+      } : { state: 'connected', terminal: true }) };
+    });
+    try {
+      const result = await installSquire({ workspaceId: 'legacy-hosted-proof', run: okRunner(), streamRun, mcp: client });
+      expect(streamRun).toHaveBeenCalledWith(process.execPath,
+        expect.arrayContaining(['connect', '--json', '--skip-browser']),
+        expect.objectContaining({ HOME: root, XDG_CONFIG_HOME: join(root, '.config') }), 'legacy-hosted-proof');
+      expect(connects).toBe(recovery === 'retry' || recovery === 'unbound' ? 2 : 1);
+      expect(calls.length).toBeGreaterThan(1);
+      expect(result.steps.some(step => step.status === 'failed')).toBe(recovery === 'unbound');
+      if (recovery === 'unbound') {
+        expect(result.status).toBe('error');
+        expect(result.steps.find(step => step.status === 'failed')?.reason).toBe('Trusty Squire needs account sign-in');
+      } else if (recovery === 'sign-in') {
+        expect(result.status).toBe('installing');
+        expect(result.signIn?.url).toBe('https://squire.example/install?fixture');
+        expect(result.steps.find(step => step.label === 'waiting for sign-in')?.status).toBe('pending');
+        // The real connect process publishes this binding after browser sign-in.
+        writeFileSync(sessionPath, JSON.stringify({ account_id: 'fixture-owner', agent_session_token: 'fixture' }));
+        const settled = await installSquire({ workspaceId: 'legacy-hosted-proof', run: okRunner(), streamRun, mcp: client });
+        expect(settled.status).toBe('connected');
+        expect(connects).toBe(1);
+      } else {
+        expect(result.status).toBe('connected');
+        expect(result.steps.find(step => step.label === 'paired to workspace')?.status).toBe('done');
       }
     } finally {
       vi.unstubAllEnvs();
@@ -1250,5 +1312,28 @@ describe('awaitPublicPage', () => {
   it('gives up after its bound instead of holding the sign-in back', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('fetch failed'); }));
     expect(await awaitPublicPage('https://never.trycloudflare.com/', 1_500)).toBe(false);
+  });
+});
+
+
+describe('pairing error copy', () => {
+  it.each(['throw', 'result', 'envelope'] as const)('recognizes reconnect_required in a %s response', async (kind) => {
+    const payload = { error: { code: 'reconnect_required', message: 'Run the CLI' } };
+    const mcp: SquireMcpClient = { call: async () => {
+      if (kind === 'throw') throw new Error(`list_credentials failed: ${JSON.stringify(payload)}`);
+      if (kind === 'envelope') return payload;
+      return { isError: true, content: [{ type: 'text', text: JSON.stringify(payload) }] };
+    } };
+    expect(await pairSquire(mcp, 'fixture')).toEqual({ ok: false,
+      reason: 'Trusty Squire needs account sign-in', reconnectRequired: true });
+  });
+
+  it.each(['throw', 'result'] as const)('shows the plain cause from a structured %s failure', async (kind) => {
+    const payload = { error: { code: 'vault_locked', message: 'Squire vault locked' } };
+    const mcp: SquireMcpClient = { call: async () => {
+      if (kind === 'throw') throw new Error(`list_credentials failed: ${JSON.stringify(payload)}`);
+      return { isError: true, content: [{ type: 'text', text: JSON.stringify(payload) }] };
+    } };
+    expect(await pairSquire(mcp, 'fixture')).toEqual({ ok: false, reason: 'Squire vault locked' });
   });
 });

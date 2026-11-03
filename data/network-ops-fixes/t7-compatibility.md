@@ -77,3 +77,16 @@ declared migration boundaries still need real route ownership and executable
 closure. Passing the inventory ratchet does not mean every boundary is owned.
 Runtime SDK/native captures, all supported cohorts, equal-workload CPU/WAL/
 wire budgets and the complete migration/rollback matrix remain required.
+
+## Enforcement observations for owner disposition
+
+The existing CI checks compare inventories against the trusted base but execute
+the proposed scanner source. A changed scanner could therefore approve its own
+relaxed policy. The read-only main-protection response observed during this
+work has no required PR reviews and administrator enforcement disabled.
+
+Per firstmate instruction039, these are observations only: no additional or
+tightened enforcement gate is authorized. The added base-scanner driver was
+reverted; the existing phone/router scanners and CI hooks remain as specified.
+No live repository settings were changed. These observations do not establish
+the specification's enforceable-review proof or close T7.

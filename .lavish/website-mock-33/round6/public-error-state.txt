@@ -1,0 +1,3 @@
+result: "{\"state\":{\"elapsed\":-104.54400009536744,\"playing\":true,\"mode\":\"script\",\"cycle\":0,\"active\":[\"alan\"],\"landed\":\"hero\",\"joined\":false,\"terminalVisible\":false,\"prompt\":\"\",\"messages\":1,\"visitorMessages\":0,\"localReplies\":0,\"history\":[{\"who\":\"alan\",\"visitor\":false,\"localReply\":false,\"text\":\"<span class=\\\"m\\\">@grok bot</span>, tell me all user feedback that comes in on X for our product.\"}]},\"time\":56569.300000190735}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state

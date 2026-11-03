@@ -1,0 +1,3 @@
+result: "{\"title\":\"Beeline · Round 6 · The whole team, in one Room\",\"width\":390,\"overflow\":false,\"brokenImages\":[],\"videos\":[{\"width\":1440,\"height\":1000,\"duration\":55.2,\"playing\":true},{\"width\":390,\"height\":844,\"duration\":55.2,\"playing\":true}]}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state

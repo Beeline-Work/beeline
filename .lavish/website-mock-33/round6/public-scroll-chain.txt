@@ -1,0 +1,3 @@
+result: "{\"scrollChain\":\"auto\",\"snap\":\"y mandatory\",\"playing\":true,\"elapsed\":6322.300000190735}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state

@@ -1,0 +1,3 @@
+result: "{\"width\":390,\"reduced\":true,\"snap\":\"y mandatory\",\"bounce\":\"none\",\"roomOpacity\":\"1\",\"overflow\":false}"
+help[1]:
+  Run `chrome-devtools-axi snapshot` to see current page state

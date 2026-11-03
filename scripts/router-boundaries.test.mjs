@@ -213,3 +213,11 @@ test('Tray command and paint authority cannot escape their declared viewport and
   assert.deepEqual(inspectSource('apps/mobile/sources/app/(app)/beeline/tray.tsx',
     "import { prepareTrayCommand, acknowledgeRoutedTrayPaint, useRoutedTray } from '@/buzz/router-tray';").errors,[]);
 });
+
+
+test('tool page admission belongs only to the existing explicit disclosure boundary',()=>{
+  assert.deepEqual(inspectSource('apps/mobile/sources/components/buzz/ActivityTimeline.tsx',
+    'import { readRouterToolPage } from "@/buzz/router-owner";').errors,[]);
+  assert.ok(inspectSource('apps/mobile/sources/components/Feature.tsx',
+    'import { readRouterToolPage } from "@/buzz/router-owner";').errors.length);
+});

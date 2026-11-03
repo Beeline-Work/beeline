@@ -252,7 +252,8 @@ describe('root OTA update coordinator', () => {
     expect(updates.checkForUpdateAsync).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      for (const listener of appState.listeners) listener('active');
+      for (let n = 0; n < 100; n++)
+        for (const listener of appState.listeners) listener('active');
     });
 
     expect(updates.checkForUpdateAsync).toHaveBeenCalledTimes(1);

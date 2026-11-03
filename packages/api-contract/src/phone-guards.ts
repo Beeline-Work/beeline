@@ -352,6 +352,11 @@ function readActivityRequester(
   };
 }
 
+function readToolReference(value:unknown): import('./phone-types.js').RoomToolReference|undefined {
+  const item=record(value);
+  return item&&typeof item.roomId==='string'&&/^[0-9a-f-]{36}$/.test(item.roomId)&&
+    typeof item.anchor==='string'&&item.anchor.length>0&&item.anchor.length<=128?{roomId:item.roomId,anchor:item.anchor}:undefined;
+}
 function readActivity(value: unknown): RoomViewActivity | null {
   const item = record(value);
   if (
@@ -369,6 +374,10 @@ function readActivity(value: unknown): RoomViewActivity | null {
   return {
     kind: item.kind,
     title: item.title,
+    ...field('toolGroup',readToolReference(item.toolGroup)&&integer(record(item.toolGroup)?.count)&&Number(record(item.toolGroup)?.count)>0
+      ?{...readToolReference(item.toolGroup)!,count:Number(record(item.toolGroup)!.count)}:undefined),
+    ...field('toolOutput',readToolReference(item.toolOutput)&&typeof record(item.toolOutput)?.messageId==='string'
+      ?{...readToolReference(item.toolOutput)!,messageId:String(record(item.toolOutput)!.messageId)}:undefined),
     ...field('text', typeof item.text === 'string' ? item.text : undefined),
     ...field('operation', typeof item.operation === 'string' ? item.operation : undefined),
     ...field('status', typeof item.status === 'string' ? item.status : undefined),

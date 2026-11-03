@@ -265,7 +265,7 @@
         "apps/mobile/sources"
       ],
       "owners": [],
-      "total": 24,
+      "total": 19,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {

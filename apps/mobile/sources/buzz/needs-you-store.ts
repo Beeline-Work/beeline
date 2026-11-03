@@ -22,13 +22,12 @@ type Change = { at: number; kind: 'needs' | 'saved'; apply: (entry: Entry) => En
 type Slot = { key: string; relay: string; pubkey: string; workspaceId: string;
   /** One order for both sections, projection reads, and local edits. */
   entry: Entry; clock: number; needsRead: number; savedRead: number;
-  reads: Set<number>; changes: Change[]; projectionRead?: Promise<readonly NeedsYouItemView[]>;
+  reads: Set<number>; changes: Change[];
   trayRead?: Promise<{ needsError?: string; savedError?: string }>;
   needsStale?: number; forgotten?: boolean; seen?: Set<string>; seeing?: Set<string> };
 const EMPTY: Entry = { needs: null, saved: null, held: new Set() };
 const slots = new Map<string, Slot>();
 const listeners = new Set<() => void>();
-const badgeReaders = new Map<string, number>();
 const trayReaders = new Map<string, Set<(reason: string) => void>>();
 let viewer: { key: string; relay: string; pubkey: string } | undefined;
 let resolving: Promise<NonNullable<typeof viewer>> | undefined;
@@ -114,8 +113,6 @@ function startLive(): void {
       for (const slot of slots.values()) if (signal.reason !== 'bookmark-gap' && !trayReaders.has(slot.workspaceId)) {
         slot.clock += 1;
         slot.needsStale = slot.clock;
-        if (badgeReaders.has(slot.workspaceId) && !slot.forgotten)
-          void refreshProjection(slot).catch(() => undefined);
       }
       for (const readers of trayReaders.values()) for (const read of readers) read(signal.reason);
     }
@@ -329,55 +326,10 @@ export function useTrayList(workspaceId: string | null | undefined, enabled = tr
   return { needs: visibleNeeds(entry),
     bookmarks: entry.saved ?? EMPTY_SAVED, next: entry.next };
 }
-function refreshProjection(slot: Slot): Promise<readonly NeedsYouItemView[]> {
-  return slot.projectionRead ??= loadNeedsYouList(slot.workspaceId).then((items) => {
-    slot.projectionRead = undefined;
-    // A second gap during the read needs a newer read, still without blanking.
-    if (active(slot) && !slot.forgotten && slot.needsStale && badgeReaders.has(slot.workspaceId))
-      return refreshProjection(slot);
-    return items;
-  }, (error) => { slot.projectionRead = undefined; throw error; });
-}
-function useLegacyNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown, enabled: boolean) {
-  useEffect(() => { if (enabled) void resolveViewer(); }, [enabled]);
-  useEffect(() => {
-    if (!enabled || !workspaceId || refreshKey === undefined) return;
-    badgeReaders.set(workspaceId, (badgeReaders.get(workspaceId) ?? 0) + 1);
-    return () => {
-      const remaining = (badgeReaders.get(workspaceId) ?? 1) - 1;
-      if (remaining) badgeReaders.set(workspaceId, remaining);
-      else badgeReaders.delete(workspaceId);
-    };
-  }, [workspaceId, refreshKey, enabled]);
-  // A badge observes its number, not every replacement of the Tray's rows.
-  const count = useSyncExternalStore(subscribe, () => {
-    const entry = workspaceId ? current(workspaceId)?.entry : undefined;
-    return entry ? visibleNeeds(entry)?.length ?? null : null;
-  });
-  const generation = useSyncExternalStore(subscribeClientReset, clientResetGeneration);
-  useEffect(() => {
-    if (!enabled || !workspaceId || refreshKey === undefined) return;
-    let cancelled = false;
-    void (async () => {
-      const slot = slotFor(await resolveViewer(), workspaceId);
-      if (cancelled || !active(slot) || (slot.entry.needs && !slot.needsStale)) return;
-      try {
-        // The existing badge read seeds complete rows. Concurrent badges share
-        // it; loadNeedsYouList replays deltas received while it was in flight.
-        await refreshProjection(slot);
-      } catch { /* Keep the previous projection. */ }
-    })();
-    return () => { cancelled = true; };
-  }, [workspaceId, refreshKey, count, generation, enabled]);
-  return count ?? 0;
-}
-
-
 export function useNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown, visible?: () => boolean) {
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
   const mode = useRouterFamily('needs-you-count');
-  const legacy = useLegacyNeedsYouCount(workspaceId, refreshKey, mode === 'legacy');
   const subscribeCount = useCallback((listener: () => void) => {
     if (!workspaceId || refreshKey === undefined) return () => {};
     const lane = acquireRouterLane({ family: 'needs-you-count', workspaceId }, () => visibleRef.current?.() ?? true, listener);
@@ -389,7 +341,7 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
     return value?.count ?? 0;
   }, [mode, workspaceId]);
   const count = useSyncExternalStore(subscribeCount, snapshot, () => 0);
-  return mode === 'router' ? count : mode === 'legacy' ? legacy : 0;
+  return count;
 }
 
 /** Called only for viewable question cells in the focused Tray, after paint. */

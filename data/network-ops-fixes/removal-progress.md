@@ -47,3 +47,11 @@ still reports three relaxations: notification owner, server environment 60→61,
 and phone parallel paths 19→24. No scanner, pattern, scope, allowlist or guard was
 weakened. Phone path removal and the unified-switch deletion belong to the
 post-switch removal build described in the release sequence.
+
+## Separate post-switch phone removal build
+
+The [removal build](post-switch-removal.md) removes five named phone compatibility
+paths, restoring its ratchet from 24 to main's 19. It is separate from the
+capability-off integration branch and cannot deploy before the switch/floor proof.
+The router and phone manifests shrink by the two deleted artifact HTTP metadata
+occurrences; their remaining keys still represent unresolved boundary inventory.

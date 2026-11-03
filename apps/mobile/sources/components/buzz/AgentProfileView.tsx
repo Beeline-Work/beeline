@@ -341,7 +341,7 @@ export function AgentProfileView({
                 </>
               )}
             </View>
-            {canEdit && (!usageCell || usageCell.mode === 'legacy' || usageCell.mode === 'router' && usageCell.cell?.allowed) ? <AgentUsageSection key={detail.agent.identity.pubkey} usage={usageCell?.mode === 'router' && usageCell.cell?.allowed ? usageCell.cell.usage ?? undefined : detail.usage} harness={detail.harness} onRefresh={refreshUsage} /> : null}
+            {canEdit && usageCell?.mode === 'router' && usageCell.cell?.allowed ? <AgentUsageSection key={detail.agent.identity.pubkey} usage={usageCell.cell.usage ?? undefined} harness={detail.harness} onRefresh={refreshUsage} /> : null}
             <AgentVoiceSection
               key={`${detail.workspaceId}:${identity.pubkey}:${voiceApi?.contextKey ?? ''}`}
               agentId={identity.pubkey}

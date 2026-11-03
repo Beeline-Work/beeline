@@ -16,6 +16,8 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: async () => ({ publicKey: 'ada' }), getEffectiveRelayUrl: async () => 'https://example.test',
 }));
 vi.mock('./surface-storage', () => ({ routerLaneStorage: () => fixture.storage, routerAuthorityStorageReady: () => fixture.authorityReady,routerCommandStorageReady:()=>fixture.commandsReady }));
+vi.mock('./router-family', () => ({holdRouterConnection: () => () => {}, useRouterFamily: () => 'router'}));
+import { acquireChatList } from './chat-list-store';
 import { resetClientState } from '@/sync/client-reset';
 import { acquireRouterLane, acquireRouterSavedContinuation, routerOwnerNegotiated, routerOwnerNavigation, routerOwnerDisconnected,
   readRouterToolPage, admitRouterTrayCommand, admitRouterTrayPaint, routerOwnerListPanel, routerOwnerCapabilities, routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport, routerOwnerUsageProfile } from './router-owner';
@@ -31,6 +33,28 @@ const settle = async () => { for (let i = 0; i < 35; i++) await Promise.resolve(
 beforeEach(() => { fixture.authorityReady = true;fixture.commandsReady=true; fixture.state = 'active'; resetClientState(); vi.clearAllMocks(); });
 
 describe('real mobile router owner', () => {
+  it('two actual list consumers share the router and cannot fall back on an incapable replacement',async()=>{
+    const workspace='11111111-1111-4111-8111-111111111111';
+    const key={workspaceId:workspace,relayUrl:'https://example.test',viewerPubkey:'ada'};
+    const value={workspace:{id:workspace,name:'Synthetic',role:'member' as const,updatedAt:1},chats:[],
+      viewer:{pubkey:'a'.repeat(64),kind:'human' as const,name:'Reader'},truncated:false,watchFilters:[]};
+    const certScopes=[{authorityScope:`reader:ada:workspace:${workspace}`,epoch:'1'},
+      {authorityScope:`reader:ada:workspace:${workspace}:visibility`,epoch:'1'}];
+    const execute=vi.fn(async()=>({kind:'snapshot' as const,family:'room-list' as const,scope:workspace,value,
+      cut:{...snapshot().cut,stream:`workspace:${workspace}`},authority:{scopes:certScopes,digest:hash(certScopes)},
+      atomicGroup:`room-list:${workspace}:ada`}));
+    const first=acquireChatList(key,{visible:()=>true}),second=acquireChatList(key,{visible:()=>true});
+    try{
+      await settle();expect(execute).not.toHaveBeenCalled();expect(first.current()).toBeNull();
+      routerOwnerNavigation({routes:[{key:'rooms',name:'beeline/channels',params:{communityId:workspace}}]});
+      await routerOwnerNegotiated({generation:1,families:['room-list'],authorityFencesV1:true,execute});await settle();
+      expect(execute).toHaveBeenCalledTimes(1);expect(first.current()).toEqual(value);expect(second.current()).toEqual(value);
+      first.force();second.catchUp();await settle();expect(execute).toHaveBeenCalledTimes(1);
+      routerOwnerDisconnected();await settle();expect(first.current()).toBeNull();
+      await routerOwnerNegotiated({generation:2,families:[],execute});await settle();
+      expect(first.current()).toBeNull();expect(second.current()).toBeNull();expect(execute).toHaveBeenCalledTimes(1);
+    }finally{first.release();second.release();}
+  });
   it('refuses an additive family until its local assembly is implemented without minting a read',async()=>{
     const execute=vi.fn(async()=>snapshot());
     expect(routerOwnerCapabilities().families).not.toContain('needs-you-saved-page');

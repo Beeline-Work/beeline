@@ -6,7 +6,6 @@ import { cornerShortTitle } from '@beeline/api-contract/phone';
 import { CornerGlyph, CORNER_META_SIZE } from './CornerGlyph';
 import { CornerWaitingPulse } from './CornerWaitingPulse';
 import { InlineRow } from './IndexRow';
-import { useRoomCornerSummary } from '@/buzz/room-corner-store';
 
 /** The viewer's open corners in one Room: ones they follow (started, posted,
  * steered or were tagged in) or that owe them something, waiting first. Everyone else's corners stay off the rail. The
@@ -20,9 +19,8 @@ export function DesktopRoomCorners({
   onOpen: (cornerId: string, name: string) => void;
   mobile?: boolean;
 }) {
-  // The Room's corner record holds the newest summary of its open corners,
-  // seeded by the chat list read; no per-Room corners read.
-  const corners = (useRoomCornerSummary(item.room.id)?.openCorners ?? [])
+  // The committed list DTO owns its corner facts; no secondary projection.
+  const corners = (item.openCorners ?? [])
     .filter((corner) => corner.mine)
     .sort((a, b) => Number(b.state === 'waiting') - Number(a.state === 'waiting'));
   if (corners.length === 0) return null;

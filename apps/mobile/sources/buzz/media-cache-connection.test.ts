@@ -3,7 +3,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import type { MediaMetadata } from '@beeline/api-contract/media-metadata';
 import { resetClientState } from '@/sync/client-reset';
-import { installLegacyMediaCacheConnection, installMediaCacheConnection, mediaCertificateCurrent, mediaMetadataFor, receiveMediaAuthorityRemoval,
+import { installMediaCacheConnection, mediaCertificateCurrent, mediaMetadataFor, receiveMediaAuthorityRemoval,
   requestMediaPlayback, subscribeMediaCacheBoundary, suspendMediaCacheConnection } from './media-cache-connection';
 const id = '11111111-1111-4111-8111-111111111111';
 const thumbId = '22222222-2222-4222-8222-222222222222';
@@ -22,7 +22,7 @@ describe('independently negotiated current media authority', () => {
   it('does not dispatch metadata on a legacy server or on install/suspend boundaries', async () => {
     const executeMetadata = vi.fn(async () => metadata());
     installMediaCacheConnection({ generation: 1, mediaMetadataV1: false, executeMetadata });
-    expect(await mediaMetadataFor(origin, 'ada', id)).toBeUndefined();
+    await expect(mediaMetadataFor(origin, 'ada', id)).rejects.toThrow('awaiting connection');
     suspendMediaCacheConnection(); expect(executeMetadata).not.toHaveBeenCalled();
   });
   it('authority unavailability parks a capable route until an explicit new negotiation', async () => {
@@ -31,8 +31,8 @@ describe('independently negotiated current media authority', () => {
     await mediaMetadataFor(origin, 'ada', id); suspendMediaCacheConnection();
     await expect(mediaMetadataFor(origin, 'ada', id)).rejects.toThrow('awaiting connection');
     expect(executeMetadata).toHaveBeenCalledTimes(1);
-    installLegacyMediaCacheConnection(2);
-    expect(await mediaMetadataFor(origin, 'ada', id)).toBeUndefined();
+    installMediaCacheConnection({ generation: 2, mediaMetadataV1: false, executeMetadata });
+    await expect(mediaMetadataFor(origin, 'ada', id)).rejects.toThrow('awaiting connection');
   });
   it('shares explicit metadata demand, partitions principal/origin and suspends held certificates', async () => {
     const value = metadata(); const executeMetadata = vi.fn(async () => value);

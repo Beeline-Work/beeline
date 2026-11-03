@@ -4,17 +4,14 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// These fixtures exercise the negotiated legacy compatibility path. The actual
-// router owner/negotiation path has independent integration coverage.
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
-vi.mock('@/buzz/router-owner', () => ({
-  routerFamilyMode: () => 'legacy',
-  acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
-    subscribe: () => () => {}, refreshVisibility: () => {} }),
-  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: () => {}, routerOwnerListPanel: () => {},
-}));
+// UI-only canonical DTO fixtures; real list admission lives in owner/store tests.
+const listSource=vi.hoisted(()=>({owner:null as any}));
+vi.mock('@/buzz/router-family',()=>({useRouterFamily:()=> 'router',holdRouterConnection:()=>()=>{}}));
+vi.mock('@/buzz/router-owner',async()=>{
+  const {canonicalListFixture}=await import('@/test/canonical-list-fixture');
+  listSource.owner=canonicalListFixture(chats);
+  return {...listSource.owner,retryRouterLane:()=>{},routerOwnerListPanel:()=>{}};
+});
 
 const workspaceLive = vi.hoisted(() => ({ listeners: new Set<() => void>(), deleted: false, empty: false }));
 const routerReplace = vi.hoisted(() => vi.fn());
@@ -39,39 +36,40 @@ const createHumanCorner = vi.hoisted(() =>
 );
 const chats = vi.hoisted(() =>
   vi.fn(async (workspaceId: string) => ({
-    workspace: { id: workspaceId, name: workspaceId, role: workspaceRole.current },
-    viewer: { kind: viewer.kind },
+    workspace: { id: workspaceId, name: workspaceId, role: workspaceRole.current, updatedAt:1 },
+    truncated:false,
+    viewer: { pubkey:'a'.repeat(64),kind: viewer.kind,name:'Reader' },
     chats:
-      workspaceId === 'workspace-a'
+      workspaceId === '11111111-1111-4111-8111-111111111111'
         ? [
             {
-              room: { id: 'room-a', workspaceId, name: 'Alpha' },
+              room: { id: '33333333-3333-4333-8333-333333333333', workspaceId, name: 'Alpha',archived:false,createdAt:1,updatedAt:1 },
               cornerCount: 2,
               openCorners: [
                 {
-                  id: 'corner-a',
+                  id: '55555555-5555-4555-8555-555555555555',
                   name: 'Fix fixture',
                   state: openCornerState.current,
                   mine: true,
                   ...(openCornerState.current === 'waiting' ? { attention: true } : {}),
                 },
-                { id: 'corner-theirs', name: 'Their fix', state: 'waiting' },
+                { id: '66666666-6666-4666-8666-666666666666', name: 'Their fix', state: 'waiting' },
               ],
             },
             {
-              room: { id: 'dm-a', workspaceId, name: 'Direct' },
-              directMessage: { peer: { name: 'Mina' } },
+              room: { id: '44444444-4444-4444-8444-444444444444', workspaceId, name: 'Direct',archived:false,createdAt:1,updatedAt:1 },
+              directMessage: { peer: { pubkey:'b'.repeat(64),kind:'human',name: 'Mina' } },
             },
           ]
         : [],
-    watchFilters: workspaceId === 'workspace-a' ? [{ '#h': ['room-a', 'dm-a'] }] : [],
+    watchFilters: workspaceId === '11111111-1111-4111-8111-111111111111' ? [{ '#h': ['33333333-3333-4333-8333-333333333333', '44444444-4444-4444-8444-444444444444'] }] : [],
   })),
 );
 const workspaceSummary = vi.hoisted(() => ({ attention: true, roomCount: 3 }));
 const workspaces = vi.hoisted(() => vi.fn(async () => ({
   workspaces: workspaceLive.empty ? [] : [
-    ...(!workspaceLive.deleted ? [{ id: 'workspace-a', name: 'Alpha Workspace' }] : []),
-    { id: 'workspace-empty', name: 'Empty Workspace', ...workspaceSummary },
+    ...(!workspaceLive.deleted ? [{ id: '11111111-1111-4111-8111-111111111111', name: 'Alpha Workspace' }] : []),
+    { id: '22222222-2222-4222-8222-222222222222', name: 'Empty Workspace', ...workspaceSummary },
   ],
   viewer: { pubkey: 'viewer', kind: 'human', name: 'Ada Lovelace' },
 })));
@@ -224,7 +222,7 @@ vi.mock('@/buzz/community-storage', () => ({
   saveActiveCommunityId,
   subscribeActiveCommunityId: vi.fn(() => () => undefined),
   watchActiveCommunityId: vi.fn((_pubkey: string, listener: (id: string | null) => void) => {
-    void Promise.resolve('workspace-a').then(listener);
+    void Promise.resolve('11111111-1111-4111-8111-111111111111').then(listener);
     return () => undefined;
   }),
 }));
@@ -332,7 +330,7 @@ vi.mock('@/components/buzz/HullActionSheet', () => ({
 }));
 
 import { SidebarView } from './SidebarView';
-import { liveChatList, refreshChatList, resetChatListStoresForTest } from '@/buzz/chat-list-store';
+import { liveChatList, resetChatListStoresForTest } from '@/buzz/chat-list-store';
 import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 let tree: ReactTestRenderer;
@@ -355,14 +353,14 @@ async function expectEmptyRoomList() {
   await vi.waitFor(async () => {
     await settle();
     expect(control('desktop-new-direct-message')).toBeDefined();
-    expect(tree.root.findAllByProps({ testID: 'desktop-room-room-a' })).toHaveLength(0);
-    expect(tree.root.findAllByProps({ testID: 'desktop-room-dm-a' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-33333333-3333-4333-8333-333333333333' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-44444444-4444-4444-8444-444444444444' })).toHaveLength(0);
   }, { timeout: 5_000 });
 }
 
 async function refreshWorkspaceViewer() {
-  const key = { relayUrl: 'http://server.test', viewerPubkey: 'viewer', workspaceId: 'workspace-a' };
-  refreshChatList(key);
+  const key = { relayUrl: 'http://server.test', viewerPubkey: 'viewer', workspaceId: '11111111-1111-4111-8111-111111111111' };
+  listSource.owner.publish(key.workspaceId,await chats(key.workspaceId));
   await vi.waitFor(() => {
     const surface = liveChatList(key);
     expect(surface?.workspace.role).toBe(workspaceRole.current);
@@ -398,7 +396,7 @@ afterAll(() => {
 describe('desktop Workspace navigation', () => {
   beforeEach(async () => {
     vi.clearAllMocks();
-    resetChatListStoresForTest();
+    resetChatListStoresForTest();listSource.owner.reset();
     surfaceRows.clear();
     surfaceListeners.clear();
     workspaceLive.deleted = false;
@@ -407,7 +405,7 @@ describe('desktop Workspace navigation', () => {
     windowListeners.clear();
     route.communityId = undefined;
     route.parent = undefined;
-    route.pathname = '/beeline/chat/room-a';
+    route.pathname = '/beeline/chat/33333333-3333-4333-8333-333333333333';
     workspaceSummary.attention = true;
     workspaceSummary.roomCount = 3;
     openCornerState.current = 'working';
@@ -428,7 +426,7 @@ describe('desktop Workspace navigation', () => {
     await settle();
     const failed = tree.root.findAll((node: any) => node.props.action === 'Retry' && node.props.title === 'Could not load workspaces.');
     expect(failed.length).toBeGreaterThan(0);
-    expect(tree.root.findAllByProps({ testID: 'desktop-room-room-a' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-33333333-3333-4333-8333-333333333333' })).toHaveLength(0);
     const reads = workspaces.mock.calls.length;
     await act(async () => {
       if (recovery === 'Retry') failed[0]!.props.onPress();
@@ -440,18 +438,18 @@ describe('desktop Workspace navigation', () => {
     await settle();
     expect(workspaces).toHaveBeenCalledTimes(reads + (recovery === 'shared covering read' ? 0 : 1));
     expect(tree.root.findAll((node: any) => node.props.title === 'Could not load workspaces.')).toHaveLength(0);
-    expect(tree.root.findAllByProps({ testID: 'desktop-room-room-a' }).length).toBeGreaterThan(0);
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-33333333-3333-4333-8333-333333333333' }).length).toBeGreaterThan(0);
   });
 
   it('removes the deleted workspace from the permanent rail while a Room is open', async () => {
-    route.pathname = '/beeline/chat/room-a';
+    route.pathname = '/beeline/chat/33333333-3333-4333-8333-333333333333';
     workspaceLive.deleted = true;
     await act(async () => { for (const listener of [...workspaceLive.listeners]) listener(); });
     await settle();
-    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.map((workspace: { id: string }) => workspace.id)).toEqual(['workspace-empty']);
-    expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', 'workspace-empty');
-    expect(routerReplace).toHaveBeenCalledWith({ pathname: '/beeline/channels', params: { communityId: 'workspace-empty' } });
-    expect(chats).toHaveBeenLastCalledWith('workspace-empty');
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.map((workspace: { id: string }) => workspace.id)).toEqual(['22222222-2222-4222-8222-222222222222']);
+    expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', '22222222-2222-4222-8222-222222222222');
+    expect(routerReplace).toHaveBeenCalledWith({ pathname: '/beeline/channels', params: { communityId: '22222222-2222-4222-8222-222222222222' } });
+    expect(chats).toHaveBeenLastCalledWith('22222222-2222-4222-8222-222222222222');
     console.log('Reproduction workspace-removal: permanent desktop rail removed Alpha Workspace and opened remaining workspace without a room retry');
   });
 
@@ -465,14 +463,14 @@ describe('desktop Workspace navigation', () => {
   });
 
   it('counts the Rooms of the shared Room list in the desktop toolbar', () => {
-    // workspace-a lists one Room and one DM; neither is unread or pinned.
+    // 11111111-1111-4111-8111-111111111111 lists one Room and one DM; neither is unread or pinned.
     expect(tree.root.findByType(RoomListToolbar).props.counts).toEqual({ all: 2, unread: 0, pinned: 0 });
   });
 
   it('keeps one shared projection across route hops without another GET', async () => {
-    expect(chats.mock.calls.every(([id]) => id === 'workspace-a')).toBe(true);
+    expect(chats.mock.calls.every(([id]) => id === '11111111-1111-4111-8111-111111111111')).toBe(true);
     const rail = tree.root.findByType('DesktopWorkspaceRail');
-    expect(rail.props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: true, roomCount: 3 });
+    expect(rail.props.workspaces.find((item: any) => item.id === '22222222-2222-4222-8222-222222222222')).toMatchObject({ needsAttention: true, roomCount: 3 });
     const initialReads = workspaces.mock.calls.length;
     const initialChatReads = chats.mock.calls.length;
     workspaceSummary.attention = false;
@@ -484,7 +482,7 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
     expect(workspaces).toHaveBeenCalledTimes(initialReads);
-    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: true, roomCount: 3 });
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.find((item: any) => item.id === '22222222-2222-4222-8222-222222222222')).toMatchObject({ needsAttention: true, roomCount: 3 });
 
     workspaceSummary.attention = true;
     workspaceSummary.roomCount = 4;
@@ -495,18 +493,18 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
     expect(workspaces).toHaveBeenCalledTimes(initialReads);
-    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.find((item: any) => item.id === 'workspace-empty')).toMatchObject({ needsAttention: true, roomCount: 3 });
+    expect(tree.root.findByType('DesktopWorkspaceRail').props.workspaces.find((item: any) => item.id === '22222222-2222-4222-8222-222222222222')).toMatchObject({ needsAttention: true, roomCount: 3 });
     expect(chats).toHaveBeenCalledTimes(initialChatReads);
-    expect(chats.mock.calls.every(([id]) => id === 'workspace-a')).toBe(true);
+    expect(chats.mock.calls.every(([id]) => id === '11111111-1111-4111-8111-111111111111')).toBe(true);
     expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe('Alpha Workspace');
     const hopStarted = performance.now();
     for (let hop = 0; hop < 10; hop += 1) {
-      route.pathname = hop % 2 ? '/beeline/chat/room-a' : '/beeline/tray';
+      route.pathname = hop % 2 ? '/beeline/chat/33333333-3333-4333-8333-333333333333' : '/beeline/tray';
       await act(async () => {
         pathnameListeners.forEach((listener) => listener());
         tree.update(<SidebarView />);
       });
-      expect(control('desktop-room-room-a')).toBeDefined();
+      expect(control('desktop-room-33333333-3333-4333-8333-333333333333')).toBeDefined();
     }
     expect(workspaces).toHaveBeenCalledTimes(initialReads);
     expect(chats).toHaveBeenCalledTimes(initialChatReads);
@@ -586,12 +584,12 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(true);
 
     await act(async () => {
-      tree.root.findByType('DesktopWorkspaceRail').props.onSelect('workspace-empty');
+      tree.root.findByType('DesktopWorkspaceRail').props.onSelect('22222222-2222-4222-8222-222222222222');
       expect(routerPush).toHaveBeenCalledWith({
         pathname: '/beeline/channels',
-        params: { communityId: 'workspace-empty' },
+        params: { communityId: '22222222-2222-4222-8222-222222222222' },
       });
-      expect(chats.mock.calls.some(([id]) => id === 'workspace-empty')).toBe(false);
+      expect(chats.mock.calls.some(([id]) => id === '22222222-2222-4222-8222-222222222222')).toBe(false);
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -601,12 +599,12 @@ describe('desktop Workspace navigation', () => {
       'Empty Workspace',
     );
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
-    expect(chats).toHaveBeenCalledWith('workspace-empty');
+    expect(chats).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222');
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/channels',
-      params: { communityId: 'workspace-empty' },
+      params: { communityId: '22222222-2222-4222-8222-222222222222' },
     });
-    expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', 'workspace-empty');
+    expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', '22222222-2222-4222-8222-222222222222');
   });
 
   it('opens and closes the overlay rail without replacing the Room list', () => {
@@ -686,13 +684,13 @@ describe('desktop Workspace navigation', () => {
     act(() => members.props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/members',
-      params: { communityId: 'workspace-a' },
+      params: { communityId: '11111111-1111-4111-8111-111111111111' },
     });
 
     act(() => tree.root.findByType(TrayGlyph).props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/tray',
-      params: { communityId: 'workspace-a', workspaceName: 'Alpha Workspace' },
+      params: { communityId: '11111111-1111-4111-8111-111111111111', workspaceName: 'Alpha Workspace' },
     });
   });
 
@@ -709,10 +707,10 @@ describe('desktop Workspace navigation', () => {
   it('returns from a searched Room to the full list with search closed and empty', async () => {
     act(() => control('room-search-toggle').props.onPress());
     await act(async () => control('desktop-room-search').props.onChangeText('Alpha'));
-    expect(tree.root.findAllByProps({ testID: 'desktop-room-dm-a' })).toHaveLength(0);
-    act(() => control('desktop-room-room-a').props.onPress());
+    expect(tree.root.findAllByProps({ testID: 'desktop-room-44444444-4444-4444-8444-444444444444' })).toHaveLength(0);
+    act(() => control('desktop-room-33333333-3333-4333-8333-333333333333').props.onPress());
     await act(async () => {
-      route.pathname = '/beeline/chat/room-a';
+      route.pathname = '/beeline/chat/33333333-3333-4333-8333-333333333333';
       pathnameListeners.forEach((listener) => listener());
     });
     await act(async () => {
@@ -720,7 +718,7 @@ describe('desktop Workspace navigation', () => {
       pathnameListeners.forEach((listener) => listener());
     });
     expect(tree.root.findAllByProps({ testID: 'desktop-room-search' })).toHaveLength(0);
-    expect(control('desktop-room-dm-a')).toBeDefined();
+    expect(control('desktop-room-44444444-4444-4444-8444-444444444444')).toBeDefined();
     act(() => control('room-search-toggle').props.onPress());
     expect(control('desktop-room-search').props.value).toBe('');
   });
@@ -729,8 +727,8 @@ describe('desktop Workspace navigation', () => {
     act(() => control('room-search-toggle').props.onPress());
     await act(async () => control('desktop-room-search').props.onChangeText('a'));
     expect(tree.root.findAllByType('RoomListSectionHeader')).toHaveLength(0);
-    expect(control('desktop-room-room-a')).toBeDefined();
-    expect(control('desktop-room-dm-a')).toBeDefined();
+    expect(control('desktop-room-33333333-3333-4333-8333-333333333333')).toBeDefined();
+    expect(control('desktop-room-44444444-4444-4444-8444-444444444444')).toBeDefined();
   });
 
   it('carries the section creation controls in the section heads', () => {
@@ -769,11 +767,11 @@ describe('desktop Workspace navigation', () => {
 
     expect(push('desktop-new-room')).toEqual({
       pathname: '/beeline/channels',
-      params: { communityId: 'workspace-a', newRoom: expect.any(String) },
+      params: { communityId: '11111111-1111-4111-8111-111111111111', newRoom: expect.any(String) },
     });
     expect(push('desktop-new-direct-message')).toEqual({
       pathname: '/beeline/channels',
-      params: { communityId: 'workspace-a', newDirectMessage: expect.any(String) },
+      params: { communityId: '11111111-1111-4111-8111-111111111111', newDirectMessage: expect.any(String) },
     });
   });
 
@@ -828,31 +826,31 @@ describe('desktop Workspace navigation', () => {
   });
 
   it('exposes the active conversation to assistive technology', async () => {
-    route.pathname = '/beeline/chat/room-a';
+    route.pathname = '/beeline/chat/33333333-3333-4333-8333-333333333333';
     await act(async () => {
       tree.update(<SidebarView key="active-room-route" />);
     });
     await settle();
 
-    expect(control('desktop-room-room-a').props.accessibilityState).toEqual({ selected: true });
+    expect(control('desktop-room-33333333-3333-4333-8333-333333333333').props.accessibilityState).toEqual({ selected: true });
   });
 
   it('opens the Room corner list from a tap on the corner glyph', () => {
-    act(() => control('desktop-room-room-a-corners').props.onPress({ stopPropagation: vi.fn() }));
+    act(() => control('desktop-room-33333333-3333-4333-8333-333333333333-corners').props.onPress({ stopPropagation: vi.fn() }));
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/corners/[roomId]',
-      params: { roomId: 'room-a' },
+      params: { roomId: '33333333-3333-4333-8333-333333333333' },
     });
     expect(createHumanCorner).not.toHaveBeenCalled();
     expect(
-      tree.root.findAll((node: any) => node.props.testID === 'desktop-corner-corner-a'),
+      tree.root.findAll((node: any) => node.props.testID === 'desktop-corner-55555555-5555-4555-8555-555555555555'),
     ).toHaveLength(0);
   });
 
   it('opens a Room on a row click without opening its corner list', async () => {
-    act(() => control('desktop-room-room-a').props.onPress());
+    act(() => control('desktop-room-33333333-3333-4333-8333-333333333333').props.onPress());
     expect(routerNavigate).toHaveBeenCalledWith(
-      { pathname: '/beeline/chat/[channelId]', params: { channelId: 'room-a' } },
+      { pathname: '/beeline/chat/[channelId]', params: { channelId: '33333333-3333-4333-8333-333333333333' } },
       { dangerouslySingular: true },
     );
     expect(routerPush).not.toHaveBeenCalled();
@@ -860,17 +858,17 @@ describe('desktop Workspace navigation', () => {
 
   it('opens a new corner from a long press on the Room corner glyph in the main pane', async () => {
     await act(async () => {
-      await control('desktop-room-room-a-corners').props.onLongPress();
+      await control('desktop-room-33333333-3333-4333-8333-333333333333-corners').props.onLongPress();
     });
 
     expect(createHumanCorner).toHaveBeenCalledOnce();
     const [roomId, title] = createHumanCorner.mock.calls[0]!;
-    expect(roomId).toBe('room-a');
+    expect(roomId).toBe('33333333-3333-4333-8333-333333333333');
     expect(title).toMatch(/-corner$/);
     expect(routerPush).toHaveBeenCalledOnce();
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/chat/[channelId]',
-      params: { channelId: 'corner-new', parent: 'room-a', title },
+      params: { channelId: 'corner-new', parent: '33333333-3333-4333-8333-333333333333', title },
     });
   });
 
@@ -881,12 +879,12 @@ describe('desktop Workspace navigation', () => {
       tree.update(<SidebarView key="agent-viewer" />);
     });
     await settle();
-    expect(control('desktop-room-room-a-corners').props.onLongPress).toBeUndefined();
+    expect(control('desktop-room-33333333-3333-4333-8333-333333333333-corners').props.onLongPress).toBeUndefined();
   });
 
   it('closes without routing when the current Workspace is picked', () => {
     act(() => tree.root.findByType('CommunitySwitcherTrigger').props.onPress());
-    act(() => tree.root.findByType('DesktopWorkspaceRail').props.onSelect('workspace-a'));
+    act(() => tree.root.findByType('DesktopWorkspaceRail').props.onSelect('11111111-1111-4111-8111-111111111111'));
 
     expect(tree.root.findByType('DesktopWorkspaceRail').props.open).toBe(false);
     expect(routerPush).not.toHaveBeenCalled();
@@ -894,7 +892,7 @@ describe('desktop Workspace navigation', () => {
   });
 
   it('uses a deep-linked Workspace URL as the persistent desktop sidebar authority', async () => {
-    route.communityId = 'workspace-empty';
+    route.communityId = '22222222-2222-4222-8222-222222222222';
     await act(async () => {
       tree.update(<SidebarView key="deep-linked-workspace" />);
     });
@@ -903,8 +901,8 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findByType('CommunitySwitcherTrigger').props.community.name).toBe(
       'Empty Workspace',
     );
-    expect(chats).toHaveBeenCalledWith('workspace-empty');
-    expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', 'workspace-empty');
+    expect(chats).toHaveBeenCalledWith('22222222-2222-4222-8222-222222222222');
+    expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', '22222222-2222-4222-8222-222222222222');
   });
 });
 

@@ -104,24 +104,13 @@ export async function artifactLocalUri(attachment: AttachmentReference, options:
   return uri;
 }
 
-interface ArtifactLinkResponse {
-  url?: string;
-  link?: string;
-}
-
 /** Only the trusted app mints capabilities. The game receives no bearer. */
 export async function runnableArtifactUrl(attachment: AttachmentReference): Promise<string> {
   const objectId = mediaIdFromUrl(attachment.url);
   if (!objectId) throw new Error('attachment is not a monolith media URL');
   const mode = mediaTransportMode();
   if (mode === 'pending') throw new Error('File authority is awaiting connection.');
-  const value = mode === 'router'
-    ? await requestMediaPlayback(objectId)
-    : await (async () => {
-      const response = await monolithSession.fetch(`${artifactMediaUrl(attachment)}/play`, {}, { timeoutMs: 10_000 });
-      if (!response.ok) throw new Error('This interactive page could not be opened. Close and try again.');
-      return response.json() as Promise<{ url: string }>;
-    })();
+  const value = await requestMediaPlayback(objectId);
   const { url } = value;
   const game = new URL(url);
   const app = new URL(getBuzzRuntimeConfig().monolithUrl);
@@ -137,17 +126,8 @@ export async function openArtifactInBrowser(attachment: AttachmentReference): Pr
   const objectId = mediaIdFromUrl(attachment.url);
   if (!objectId) throw new Error('attachment is not a monolith media URL');
   routerOwnerArtifactAction('OpenArtifactBrowser', objectId);
-  const base = getBuzzRuntimeConfig().monolithUrl;
-  const mode = mediaTransportMode();
-  if (mode === 'pending') throw new Error('File authority is awaiting connection.');
-  const body = mode === 'router'
-    ? await requestMediaLink(objectId)
-    : await (async () => {
-      const response = await monolithSession.fetch(`${base}/v1/media/${objectId}/link`, {}, { timeoutMs: 10_000 });
-      if (!response.ok) throw new Error(`artifact link failed: ${response.status}`);
-      return response.json() as Promise<ArtifactLinkResponse>;
-    })();
-  const url = body.url ?? ('link' in body ? body.link : undefined);
+  if (mediaTransportMode() !== 'router') throw new Error('File authority is awaiting connection.');
+  const {url} = await requestMediaLink(objectId);
   if (!url) throw new Error('artifact link response carried no URL');
   await openExternalUrl(url);
 }

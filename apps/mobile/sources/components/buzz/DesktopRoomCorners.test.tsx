@@ -14,7 +14,6 @@ vi.mock('./CornerWaitingPulse', () => ({
 }));
 
 import { DesktopRoomCorners } from './DesktopRoomCorners';
-import { applyChatListCorners } from '@/buzz/room-corner-store';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
@@ -27,7 +26,6 @@ describe('DesktopRoomCorners', () => {
       cornerCount: 1,
       openCorners: [{ id: 'c1', name: 'Docs refresh', state: 'working', mine: true }],
     } as unknown as ChatListItem;
-    applyChatListCorners([item], -1);
     let tree!: ReturnType<typeof create>;
     act(() => {
       tree = create(<DesktopRoomCorners item={item} onOpen={() => {}} />);

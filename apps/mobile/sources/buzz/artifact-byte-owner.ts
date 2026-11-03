@@ -69,15 +69,16 @@ export async function readArtifactObject(attachment: AttachmentReference,
   const metadata = await mediaMetadataFor(origin, identity.publicKey, objectId);
   if (reset !== clientResetGeneration() || localEpoch !== epoch || options.signal?.aborted) throw new Error('The file is no longer visible.');
   const raster = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(attachment.mimeType);
-  const source = options.thumbnail ? metadata?.thumbnail : options.preview && metadata && metadata.size > 16 * 1024
+  const source = options.thumbnail ? metadata.thumbnail : options.preview && metadata.size > 16 * 1024
     ? raster ? metadata.thumbnail : undefined : metadata;
   if (options.thumbnail && !source) throw new ArtifactPreviewUnavailable();
-  if (options.preview && metadata && !source) throw new ArtifactPreviewUnavailable();
-  if (options.preview && (!source && (!Number.isSafeInteger(attachment.size) || attachment.size > 16 * 1024) || source && source.size > 16 * 1024))
+  if (options.preview && !source) throw new ArtifactPreviewUnavailable();
+  if (options.preview && source && source.size > 16 * 1024)
     throw new ArtifactPreviewUnavailable();
-  const id = source?.objectId ?? objectId;
-  const mimeType = source?.mimeType ?? attachment.mimeType;
-  const version = source?.sha256 ?? attachment.sha256 ?? id;
+  if (!source) throw new ArtifactPreviewUnavailable();
+  const id = source.objectId;
+  const mimeType = source.mimeType;
+  const version = source.sha256;
   const address = { origin, principal: identity.publicKey, objectId: id, version };
   const key = cache.key(address);
   if (!details.has(key) && details.size >= 512) {
@@ -87,14 +88,14 @@ export async function readArtifactObject(attachment: AttachmentReference,
     details.delete(expendable[0]);
   }
   details.delete(key);
-  details.set(key, { format: formatOf(mimeType), objectId: id, parentId: objectId, authority: metadata?.authority, size: source?.size });
+  details.set(key, { format: formatOf(mimeType), objectId: id, parentId: objectId, authority: metadata.authority, size: source.size });
   const current = () => reset === clientResetGeneration() && localEpoch === epoch &&
-    new URL(getBuzzRuntimeConfig().monolithUrl).origin === origin && (!metadata || mediaCertificateCurrent(metadata));
+    new URL(getBuzzRuntimeConfig().monolithUrl).origin === origin && mediaCertificateCurrent(metadata);
   await adoptFences();
   const bytes = await cache.get(address, async signal => {
     const bytes = await read(id, signal, options.preview ? 16 * 1024 : 25 * 1024 * 1024);
     return bytes;
-  }, { signal: options.signal, restoreAuthorized: !!metadata, reuseAuthorized: !!metadata, isCurrent: current,
+  }, { signal: options.signal, restoreAuthorized: true, reuseAuthorized: true, isCurrent: current,
     maxBytes: options.preview ? 16 * 1024 : 25 * 1024 * 1024 });
   if (!current() || options.signal?.aborted) throw new Error('The file is no longer visible.');
   return { bytes, key, address, mimeType, isCurrent: current };

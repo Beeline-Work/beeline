@@ -1,0 +1,54 @@
+# Post-switch removal build (not deployable while capability is off)
+
+This branch is separate from the capability-off integration branch. It removes
+phone fallback implementations only after the expansion/switch sequence and
+supported-client floor have been proved. Do not deploy it before that sequence.
+An incapable connection parks the affected surfaces; it cannot use an old reader.
+Native runtime 40 remains a supported native runtime with compatible JavaScript;
+this change does not establish its end-to-end compatibility proof.
+
+## Actual deletions
+
+- Room lists have one canonical router lane. The old list scheduler, individual
+  Room watches, local message reducers, cached list restore and post-write list
+  refresh are deleted. Sidebar, settings and deck observe committed DTOs.
+- List corner marks and dropdowns render those DTOs directly. They no longer
+  depend on a secondary corner store seeded by the deleted reader.
+- Badges observe the count-only lane. Their old full-Tray reader is deleted.
+- Agent usage observes its own router cell; embedded detail usage is no fallback.
+- File metadata, link and playback authorization use router commands. The old
+  HTTP metadata/link/play alternatives and legacy cache mode are deleted. The
+  authenticated immutable byte request remains the documented HTTP exception.
+
+The scanner declarations shrink only for the two deleted artifact HTTP sites.
+No allowlist entry, scanner pattern, scope or budget was widened. Parallel path
+limits are server 18, helper 29, phone 19, equal to main. The permitted notifier
+owner exception and temporary unified server environment switch remain distinct
+architecture findings. An equal name-pattern count is not an empty boundary sweep.
+
+## Regression migration
+
+The retired list-store and SurfaceRegistry integration tests asserted the removed
+scheduler, reducer and secondary cache behavior. Their replacements in
+`chat-list-store.test.ts` and `router-owner.test.ts` exercise the actual router:
+mount alone cannot read; navigation admits one shared read; hidden/revealed
+observers and old receipt callbacks cannot mint passes; committed facts replace
+canonical state without another request; incapable connections and prior-identity
+responses cannot restore private state. Existing Room head/replay tests retain
+responsibility for transcript storage, rather than a Room-list delta consumer.
+
+UI suites feed complete server DTOs at a canonical-lane test boundary, preserving
+navigation, settings, corner and gesture assertions. They do not emulate the old
+watch/reducer or claim transport admission proof. Count hook tests verify no full
+Tray read or subscription; the real owner suite proves count admission and replay.
+
+## Remaining removal gates
+
+This is a partial removal build. Full Tray legacy machinery, Workspace readers,
+generic phone/daemon contracts and other migration inventory entries remain.
+The unified switch is intentionally still present until the validated switch;
+there is no deployed ledger-aware floor yet. The required final boundary inventory
+must still become empty, with every supported operation routed through its one
+owner and supported native/cohort proofs. No additional audit finding is closed
+by these source deletions alone. The integration closure ledger remains the source
+of truth.

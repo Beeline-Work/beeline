@@ -5,14 +5,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
-const protocol = vi.hoisted(() => ({ mode: 'legacy' as 'legacy' | 'router' | 'pending' }));
+const protocol = vi.hoisted(() => ({ mode: 'legacy' as 'legacy' | 'router' | 'pending',count:2,listeners:new Set<()=>void>(),acquire:vi.fn() }));
 vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => protocol.mode, holdRouterConnection: () => () => {} }));
 vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
 vi.mock('@/buzz/router-owner', () => ({
   routerFamilyMode: () => protocol.mode,
-  acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
-    subscribe: () => () => {}, refreshVisibility: () => {} }),
-  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
+  acquireRouterLane: (request:unknown,_visible:()=>boolean,listener:()=>void) => {
+    protocol.acquire(request);protocol.listeners.add(listener);return {release:()=>protocol.listeners.delete(listener)};
+  },
+  routerLaneSnapshot: () => ({ state: 'LIVE', value: {count:protocol.count}, cut: null, error: null }),
   retryRouterLane: () => {}, routerOwnerListPanel: () => {},
 }));
 
@@ -82,7 +83,7 @@ async function settle() {
 }
 
 beforeEach(() => {
-  protocol.mode = 'legacy';
+  protocol.mode = 'legacy';protocol.count=2;protocol.listeners.clear();protocol.acquire.mockClear();
   resetClientState();
   fixture.viewer = 'viewer-a';
   fixture.disk.clear();
@@ -251,42 +252,26 @@ describe('one tray clock and registration', () => {
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
-describe('Reproduction NEEDS-YOU-FLICKER: Room-list badge invalidations', () => {
-  it.each(['postgres:memberships', 'reconnect', 'needs-you-gap'].flatMap((reason) =>
-    [true, false].map((mounted) => ({ reason, mounted }))))(
-    'keeps every badge render nonzero during a held $reason refetch (mounted=$mounted)', async ({ reason, mounted }) => {
-      const first = loadNeedsYouList('ws');
-      await settle();
-      fixture.reads[0]!([need('ask-1'), need('ask-2')]);
-      await first;
-      if (!mounted) {
-        fixture.registrations[0]!.receive({ monolithLive: { type: 'invalidate', reason } });
-        await settle();
-        expect(fixture.reads).toHaveLength(1);
-      }
-      const values: number[] = [];
-      function Badge() {
-        const count = useNeedsYouCount('ws', 'surface');
-        values.push(count);
-        return React.createElement('badge', { count });
-      }
-      let root: ReturnType<typeof create>;
-      await act(async () => { root = create(React.createElement(React.Fragment, null,
-        React.createElement(Badge), React.createElement(Badge))); });
-      try {
-        await act(async () => {
-          if (mounted) fixture.registrations[0]!.receive({ monolithLive: { type: 'invalidate', reason } });
-          await settle();
-        });
-        expect(fixture.reads).toHaveLength(2);
-        const heldValues = [...values];
-        await act(async () => { fixture.reads[1]!([need('ask-new')]); await settle(); });
-        expect(heldValues.every((value) => value === 2)).toBe(true);
-        expect(values.at(-1)).toBe(1);
-        expect(values).not.toContain(0);
-        await act(async () => { forgetTray('ws'); await settle(); });
-        expect(values.at(-1)).toBe(0);
-        expect(fixture.reads).toHaveLength(2);
-      } finally { await act(async () => root!.unmount()); }
-    });
+describe('Room-list badges consume only the canonical count lane',()=>{
+  it('two badges share count facts without attaching the full Tray reader',async()=>{
+    protocol.mode='router';const values:number[]=[];
+    function Badge(){const count=useNeedsYouCount('ws','surface');values.push(count);return React.createElement('badge',{count});}
+    let root!:ReturnType<typeof create>;
+    await act(async()=>{root=create(React.createElement(React.Fragment,null,React.createElement(Badge),React.createElement(Badge)));});
+    expect(values).toEqual([2,2]);
+    expect(protocol.acquire.mock.calls.every(([request])=>request.family==='needs-you-count')).toBe(true);
+    expect(fixture.reads).toHaveLength(0);expect(fixture.registrations).toHaveLength(0);
+    await act(async()=>{protocol.count=1;for(const listener of protocol.listeners)listener();});
+    expect(values.slice(-2)).toEqual([1,1]);expect(values).not.toContain(0);
+    expect(fixture.reads).toHaveLength(0);
+    await act(async()=>root.unmount());expect(protocol.listeners.size).toBe(0);
+  });
+  it.each(['pending','legacy'] as const)('does not fall back to the full Tray list in %s mode',async mode=>{
+    protocol.mode=mode;let count=-1;
+    function Badge(){count=useNeedsYouCount('ws','surface');return null;}
+    let root!:ReturnType<typeof create>;
+    await act(async()=>{root=create(React.createElement(Badge));await settle();});
+    expect(count).toBe(0);expect(fixture.reads).toHaveLength(0);expect(fixture.registrations).toHaveLength(0);
+    await act(async()=>root.unmount());
+  });
 });

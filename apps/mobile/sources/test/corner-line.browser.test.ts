@@ -1,11 +1,11 @@
-import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { rm, writeFile, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 it('draws the call-site corner line in the Room corner row format in both themes', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/corner-line-proof-'));
+  const directory = await createBrowserProofDirectory("corner-line-proof-");
   try {
     const entry = path.join(directory, 'proof.tsx');
     await writeFile(

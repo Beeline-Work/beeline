@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
+import { backfillAgentHandles, migrate, migrateData, MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
 import { lockedTables, logLockHolders, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
 
 const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
@@ -60,6 +60,67 @@ describe('release-owned migration steps', () => {
       await admin.end();
     }
   });
+
+  it.skipIf(!postgresUrl)('R-MIGRATION-DATA stops each contended backfill and resumes only on a new release invocation', async () => {
+    const schema = `backfill_proof_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: postgresUrl, max: 1 });
+    const holder = await admin.connect();
+    const database = new PostgresDatabase('', 1, { mode: 'migration', pool: new Pool({
+      connectionString: postgresUrl, max: 1,
+      options: `-c search_path=${schema},public -c lock_timeout=30ms`,
+    }) });
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      await holder.query(`CREATE SCHEMA ${schema}`);
+      await migrate(database);
+      // Lock acquisition happens only when the targeted step starts, so earlier
+      // completed steps remain outside the contended step.
+      const steps = [
+        { name: 'archived corner holds', table: 'corner_merge_holds',
+          matches: (sql: string, _values: unknown[]) => sql.startsWith('SELECT 1 FROM corner_merge_holds hold JOIN rooms corner'),
+          run: () => migrateData(database) },
+        { name: 'corner hold messages', table: 'corner_merge_holds',
+          matches: (sql: string, _values: unknown[]) => sql.includes('SELECT hold.corner_id,hold.id,COALESCE'),
+          run: () => migrateData(database) },
+        { name: 'welcome video workflow', table: 'workflow_backfills',
+          matches: (sql: string, values: unknown[]) => sql.startsWith('SELECT name FROM workflow_backfills') && values[0] === 'welcome-video-v1',
+          run: () => migrateData(database) },
+        { name: 'agent handle candidates', table: 'identities',
+          matches: (sql: string, _values: unknown[]) => sql.startsWith('SELECT id,created_at FROM identities'),
+          run: () => backfillAgentHandles(database) },
+      ];
+      for (const step of steps) {
+        let calls = 0;
+        const query = database.query.bind(database);
+        const querySpy = vi.spyOn(database, 'query').mockImplementation(async (sql, values = []) => {
+          if (step.matches(sql, values) && ++calls === 1)
+            await holder.query(`BEGIN; LOCK TABLE ${schema}.${step.table} IN ACCESS EXCLUSIVE MODE`);
+          return query(sql, values);
+        });
+        try {
+          await expect(step.run()).rejects.toMatchObject({ code: '55P03' });
+          expect(calls, step.name).toBe(1);
+          // A full data migration resumes from its entry point, so release
+          // the lock before the next explicit invocation can reach this step.
+          await holder.query('COMMIT');
+          await step.run();
+          expect(calls, step.name).toBe(2);
+        } finally {
+          querySpy.mockRestore();
+          await holder.query('ROLLBACK');
+        }
+        // Failure leaves no aborted transaction or stranded pool slot.
+        await expect(database.query('SELECT 1')).resolves.toMatchObject({ rowCount: 1 });
+      }
+    } finally {
+      vi.restoreAllMocks();
+      await holder.query('ROLLBACK');
+      await database.close();
+      await holder.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+      holder.release();
+      await admin.end();
+    }
+  }, 60_000);
 
   it('keeps semicolons inside quoted strings, comments, and trigger bodies', () => {
     const script = `-- first; comment

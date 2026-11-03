@@ -1,8 +1,8 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { CHROME, runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, CHROME, runBrowserProof, webProofShims } from './browserProof';
 
 // Ruby's message from #beeline whose bold lead rendered as `**1.` / `Fixes dispatched.**`.
 const RUBY_MESSAGE =
@@ -15,7 +15,7 @@ const REVIEW_MESSAGE = '**Shipped. Finally** Next up is review. More.';
 
 it.skipIf(!existsSync(CHROME))('Reproduction lead-split-1: a bold lead renders without literal asterisks', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/lead-sentence-'));
+  const directory = await createBrowserProofDirectory("lead-sentence-");
   try {
     const entry = path.join(directory, 'proof.jsx');
     await writeFile(entry, `import React from 'react';

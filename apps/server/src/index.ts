@@ -1,6 +1,6 @@
 import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
-import { backgroundNextDelay } from './background-deadline-clock.js';
-import { BackgroundRecordDeadlines, backgroundSourceFamilies, maintenanceDeadlineFamilies, registerBackgroundDeadlineFamilies, subscribeBackgroundFamilies } from './background-deadlines.js';
+import { backgroundDatabaseCut } from './background-deadline-clock.js';
+import { BackgroundRecordDeadlines, backgroundSourceFamilies, repairDeadlineFamilies, registerBackgroundDeadlineFamilies, subscribeBackgroundFamilies } from './background-deadlines.js';
 import { sentryEligibilityKey } from './sentry-wake-source.js';
 import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
@@ -45,8 +45,6 @@ import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
 import { subscribeCommandCompletion } from './command-completion.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
-import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
-import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { clearStalePhoneViews } from './phone-viewing.js';
 import { createFirebasePushSender } from './firebase-push.js';
@@ -72,7 +70,6 @@ import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
 import { INSTITUTIONAL_MEMORY_ON } from './institutional-memory-shadow.js';
-import { runInstitutionalCuratorCycle } from './institutional-curator.js';
 import {
   backfillInstitutionalMemoryEmbeddingsOnce,
   warnIfEmbeddingKeyMissing,
@@ -109,8 +106,10 @@ async function runReleaseMigration(): Promise<void> {
     // live on every supported client (docs/welcome-retirement.md).
     const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();
     if (greeterAgentId) {
-      const retirement = await retireWelcomeWorkspace(database, { greeterAgentId });
-      console.log(`[migration] welcome retirement: ${JSON.stringify(retirement)}`);
+      await runMigrationStep('welcome retirement', async () => {
+        const retirement = await retireWelcomeWorkspace(database, { greeterAgentId });
+        console.log(`[migration] welcome retirement: ${JSON.stringify(retirement)}`);
+      });
     }
     // This is deliberately last: boot may proceed only after both schema owners
     // and every data backfill completed successfully.
@@ -462,14 +461,18 @@ async function main() {
     },
   });
   const work = new BackgroundWork();
-  const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app', undefined, undefined, publicOrigin);
+  let checkinClock=new Date();
+  let checkinCut:string|undefined;
+  const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app', undefined, ()=>checkinClock, publicOrigin);
   let nextDayCheckinRunning: Promise<unknown> | undefined;
   let nextDayCheckinPending = false;
   work.addDeadline('next-day-checkin', async () => {
     if (nextDayCheckinRunning) { nextDayCheckinPending = true; return; }
-    nextDayCheckinRunning = backgroundJobs.run('next-day-checkin', () => nextDayCheckin.runOnce())
+    nextDayCheckinRunning = backgroundJobs.run('next-day-checkin', async () => {
+      checkinCut=await backgroundDatabaseCut(jobsDatabase);checkinClock=new Date(checkinCut);await nextDayCheckin.runOnce();
+    })
       .then(async outcome => {
-        if (outcome.ok) work.schedule('next-day-checkin', await nextDayCheckin.nextDelayMs());
+        if (outcome.ok) work.schedule('next-day-checkin', await nextDayCheckin.nextDelayMs(checkinCut));
       }).catch(error => captureServerError(error,{background_job:'next-day-checkin'}))
       .finally(() => {
         nextDayCheckinRunning = undefined;
@@ -478,8 +481,11 @@ async function main() {
       });
   });
   if (push) work.addDeadline('push', async () => {
-    await backgroundJobs.run('push', () => push.runOnce());
-    const due = await backgroundJobs.run('push-next-due', () => push.nextDelayMs());
+    const dispatched=await backgroundJobs.run('push', async () => {
+      const cut=await backgroundDatabaseCut(jobsDatabase);await push.runOnce();return cut;
+    });
+    if(!dispatched.ok)return;
+    const due = await backgroundJobs.run('push-next-due', () => push.nextDelayMs(dispatched.value));
     if (due.ok) return due.value;
   });
   work.addDeadline('pending-attachment-cleanup', async () => {
@@ -511,9 +517,11 @@ async function main() {
     if (due.ok && due.value !== null) return Math.max(0, due.value);
   });
   if (freeAgents) work.addDeadline('free-agents', async () => {
-    const acted=await backgroundJobs.run('free-agents', () => freeAgents.sweep());
+    const acted=await backgroundJobs.run('free-agents', async () => {
+      const cut=await backgroundDatabaseCut(jobsDatabase);await freeAgents.sweep();return cut;
+    });
     if(!acted.ok)return;
-    const due=await backgroundJobs.run('free-agents-next-due',()=>freeAgents.nextDelayMs());
+    const due=await backgroundJobs.run('free-agents-next-due',()=>freeAgents.nextDelayMs(acted.value));
     if(due.ok)return due.value;
   });
   // A committed signup row owns delivery. Vendor report/balance observations
@@ -535,27 +543,9 @@ async function main() {
   });
   const voiceDeadlines=new BackgroundRecordDeadlines('voice-call-recovery',work,()=>leader.wake());
   const stopVoiceDeadlines=voiceDeadlines.subscribe();
-  registerBackgroundDeadlineFamilies(work,[
-    ...maintenanceDeadlineFamilies(jobsDatabase),
-    ...(voice?[{name:'voice-call-recovery',run:async()=>{
-      voiceDeadlines.consume();await voice.recover();
-      await voiceDeadlines.capture(async()=>(await jobsDatabase.query<{id:string;due:number|null}>(
-        `SELECT id,(extract(epoch FROM runtime_until)*1000)::float8 due FROM voice_calls WHERE ended_at IS NULL`)).rows);
-    },next:async()=>voiceDeadlines.next()}]:[]),
-    {name:'corner-reviewers',run:async()=>{await reconcileConfiguredCornerReviewers(jobsDatabase);}},
-    {name:'media-expiry',run:()=>mediaExpiry.runDeadline(),next:()=>mediaExpiry.nextDelayMs()},
-    {name:'corner-checks-blocked',run:async()=>{await noteBlockedCornerChecks(jobsDatabase);},next:()=>backgroundNextDelay(jobsDatabase,
-      `SELECT created_at+interval '2 minutes' due_at FROM agent_commands WHERE state='pending' AND action='input'
-       UNION ALL SELECT to_timestamp((lifecycle->'checksSummary'->>'updatedAt')::double precision)+interval '1 hour'
-       FROM corner_github_cache WHERE lifecycle->>'checks'='failing' AND lifecycle->'checksSummary'->>'updatedAt' IS NOT NULL`)},
-    {name:'expired-command-leases',run:async()=>{await reclaimExpiredCommandLeases(jobsDatabase,live);},next:()=>backgroundNextDelay(jobsDatabase,
-      `SELECT lease_expires_at+interval '5 minutes' due_at FROM agent_commands WHERE state='claimed' AND turn_owner_connection_id IS NULL`)},
-    {name:'mention-notices',run:async()=>{await phone.flushPendingMentionNotices();},next:()=>backgroundNextDelay(jobsDatabase,
-      `SELECT due_at FROM pending_mention_notices WHERE notified_at IS NULL`)},
-    {name:'institutional-curator',run:async()=>{await runInstitutionalCuratorCycle(jobsDatabase,institutionalMemory,new Date(),{
-      ...(institutionalAnchors?{anchors:institutionalAnchors}:{}),
-    });}},
-  ],(name,run)=>backgroundJobs.run(name,run));
+  registerBackgroundDeadlineFamilies(work,repairDeadlineFamilies(jobsDatabase,{
+    live,phone,mediaExpiry,institutionalMemory,institutionalAnchors,voice,voiceDeadlines,
+  }),(name,run)=>backgroundJobs.run(name,run),jobsDatabase);
   const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader));
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   const stopBackgroundSources=subscribeBackgroundFamilies(jobsDatabase,live,backgroundSourceFamilies(),name=>wakeWork(name,'committed-family-source'));

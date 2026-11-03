@@ -1,11 +1,11 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 it('Reproduction workflow-notice-1: workflow notices use compact system lines on desktop and phone widths', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/workflow-notice-'));
+  const directory = await createBrowserProofDirectory("workflow-notice-");
   try {
     const entry = path.join(directory, 'proof.jsx');
     await writeFile(entry, `import React from 'react';

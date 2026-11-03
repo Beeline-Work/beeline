@@ -834,7 +834,7 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   // up that early caches the miss for minutes, so publish once it answers.
   if (signIn && location?.kind === 'virtual' &&
       !await (options.awaitPage ?? awaitPublicPage)(signIn.url)) {
-    log(`trusty-squire sign-in page ${new URL(signIn.url).host} did not answer in ${PAGE_READY_TIMEOUT_MS / 1000}s; publishing it anyway`);
+    log(`trusty-squire sign-in page ${new URL(signIn.url).host} was not ready on its admitted observation; publishing the reported result`);
   }
 
   // Surface the reported sign-in URL so the phone has a page to
@@ -891,18 +891,14 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
 /** How long the helper waits for a fresh sign-in page to answer. */
 const PAGE_READY_TIMEOUT_MS = 30_000;
 
-/** True once the page answers below 500; Cloudflare says 530 until the tunnel is up. */
+/** One admitted readiness observation. A pending tunnel never schedules another
+ * GET; another explicit setup action or actual report can observe it anew. */
 export async function awaitPublicPage(url: string, timeoutMs = PAGE_READY_TIMEOUT_MS): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(5_000) });
-      await response.body?.cancel().catch(() => undefined);
-      if (response.status < 500) return true;
-    } catch { /* not resolvable yet */ }
-    await new Promise(resolve => setTimeout(resolve, 1_000));
-  }
-  return false;
+  try {
+    const response = await fetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(Math.max(1,Math.min(5_000,timeoutMs))) });
+    await response.body?.cancel().catch(() => undefined);
+    return response.status < 500;
+  } catch { return false; }
 }
 
 /** Probe the mounted Squire MCP to confirm the account is live on this helper. */

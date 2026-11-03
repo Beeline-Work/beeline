@@ -1,13 +1,13 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 /** A broken real connection reconnects directly from its visible list action. */
 describe('failed managed app in the mobile web renderer', () => {
   it('starts sign-in from the list without a nested Disconnect flow', async () => {
     const mobile = process.cwd();
-    const directory = await mkdtemp(path.join(mobile, 'sources/test/info-page-proof-'));
+    const directory = await createBrowserProofDirectory("info-page-proof-");
     try {
       const entry = path.join(directory, 'proof.jsx');
       await writeFile(

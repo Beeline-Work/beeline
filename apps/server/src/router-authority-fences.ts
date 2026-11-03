@@ -3,7 +3,7 @@ import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { authorizedMediaMetadata } from './phone-media.js';
 import { PhoneOperationError } from './phone-operations.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { routerAuthority, RouterProjectionUnavailable } from './router-projections.js';
 import {currentScheduledWorkFence} from './scheduled-work-authority.js';
 

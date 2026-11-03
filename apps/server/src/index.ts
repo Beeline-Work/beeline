@@ -1,3 +1,4 @@
+import { requiredServerSetting as required } from './server-configuration.js';
 import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
 import { backgroundDatabaseCut } from './background-deadline-clock.js';
 import { BackgroundRecordDeadlines, backgroundSourceFamilies, repairDeadlineFamilies, registerBackgroundDeadlineFamilies, subscribeBackgroundFamilies } from './background-deadlines.js';
@@ -86,11 +87,6 @@ import {
 } from './free-agents.js';
 import { FlyMachines } from './fly-machines.js';
 
-function required(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required`);
-  return value;
-}
 
 async function runReleaseMigration(): Promise<void> {
   const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {

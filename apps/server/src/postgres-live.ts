@@ -1,29 +1,37 @@
+import { X_SIGNUP_DELIVERY_TABLE, SERVER_LEASE_EVIDENCE_TABLE, AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification, USAGE_REFRESH_TABLE, USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult, MCP_WEBHOOK_TABLE } from './postgres-live-notifications.js';
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
-import { X_SIGNUP_DELIVERY_TABLE } from './x-ads.js';
-import { SERVER_LEASE_EVIDENCE_TABLE } from './server-lease-deadlines.js';
 import { notifyCommandCompletion, recoverCommandCompletions } from './command-completion.js';
 import { COMMAND_COMPLETION_CHANNEL, POSTGRES_LIVE_CHANNEL } from './postgres-live-notifications.js';
 import { Client } from 'pg';
-import { cornerOwnerSql } from './corner-worker.js';
 import type { UsageRefreshOutcome } from '@beeline/api-contract/daemon';
 import type { AgentSignInStep } from './agent-sign-in.js';
-import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
-import { USAGE_REFRESH_TABLE, USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './agent-usage.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
-import { askSql } from './needs-you.js';
-import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
-import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
-import {SCHEDULED_WORK_ROW_SOURCE_SCHEMA} from './scheduled-work-row-source.js';
-import {
-  CORNER_ROW_CACHE_COLUMNS,
-  CORNER_ROW_FACT_COLUMNS,
-  CORNER_ROW_MESSAGE_COLUMNS,
-  CORNER_ROW_ROOM_COLUMNS,
-  rowChangedSql,
-} from './corner-row-projection.js';
 
 export { POSTGRES_LIVE_CHANNEL } from './postgres-live-notifications.js';
+
+export function committedCommandNotificationSchema(): string {
+  return `CREATE OR REPLACE FUNCTION beeline_notify_committed_command(payload text) RETURNS void
+    LANGUAGE sql AS $$ SELECT pg_notify('beeline_command_completion',payload) $$;`;
+}
+export function liveControlNotificationSchema(): string {
+  return `CREATE OR REPLACE FUNCTION beeline_notify_live_control(payload text) RETURNS void
+    LANGUAGE sql AS $$ SELECT pg_notify('beeline_live_v1',payload) $$;`;
+}
+
+/** A command's SQL transaction owns completion; local callbacks are only hints. */
+export async function notifyCommittedCommand(database: Pick<SqlDatabase, 'query'>,
+  key: { principal: string; operation: string; commandId: string }): Promise<void> {
+  await database.query('SELECT pg_notify($1,$2)', [COMMAND_COMPLETION_CHANNEL, JSON.stringify(key)]);
+}
+
+/** Registration/takeover evidence carries no user-state projection or command
+ * authority. The existing listener decodes this named agent_connection hint. */
+export async function notifyAgentConnection(database: Pick<SqlDatabase, 'query'>,
+  agentId: string, epoch: number): Promise<void> {
+  await database.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL,
+    JSON.stringify({ table: 'agent_connection', operation: 'UPDATE', roomId: '', agentId, epoch })]);
+}
 
 const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
   'corner_owed', 'corner_follows', 'corner_merge_holds',
@@ -145,7 +153,14 @@ export async function notifyAgentConfigChange(
   }
 }
 
-export const POSTGRES_LIVE_SCHEMA = `
+/** Build after module initialization; notifier callers must not initialize dependent schemas. */
+export async function postgresLiveSchema(): Promise<string> {
+  const [{ cornerOwnerSql }, { askSql }, { DURABLE_LIVE_SCHEMA }, { SCHEDULED_WORK_ROW_SOURCE_SCHEMA },
+    { CORNER_ROW_CACHE_COLUMNS, CORNER_ROW_FACT_COLUMNS, CORNER_ROW_MESSAGE_COLUMNS, CORNER_ROW_ROOM_COLUMNS, rowChangedSql }] = await Promise.all([
+      import('./corner-worker.js'), import('./needs-you.js'), import('./durable-live.js'),
+      import('./scheduled-work-row-source.js'), import('./corner-row-projection.js'),
+    ]);
+  return `
 ${DURABLE_LIVE_SCHEMA}
 ${SCHEDULED_WORK_ROW_SOURCE_SCHEMA}
 CREATE OR REPLACE FUNCTION beeline_notify_live() RETURNS trigger AS $$
@@ -585,6 +600,7 @@ BEGIN
 END;
 $$;
 `;
+}
 
 interface PgNotification {
   channel: string;

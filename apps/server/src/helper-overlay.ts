@@ -1,4 +1,4 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 import {
   HELPER_OVERLAY_MAX_FRAME_BYTES, appendHelperOverlay, readHelperOverlayFrame, type HelperOverlayAck,
   type HelperOverlayDemand, type HelperOverlayFrame,
@@ -8,7 +8,7 @@ import { assertCurrentTurnOwner, registerOwnedEffectFence } from './turn-ownersh
 import { subscribeCommandCompletion } from './command-completion.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent } from './live.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 
 /** Independent deployment gate. Never infer support from native/helper version. */

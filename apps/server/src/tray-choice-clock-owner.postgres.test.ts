@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { PostgresDatabase, type SqlDatabase } from './database.js';
 import { BackgroundOwnership, BACKGROUND_OWNERSHIP_SCHEMA, BACKGROUND_LEADER_LOCK_KEY } from './background-ownership.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { TrayChoiceClockOwner } from './tray-choice-clock-owner.js';
 import { TRAY_CLOCK_OWNER_SCHEMA } from './tray-clock-owner.js';
 import { TRAY_CLOCK_SOURCE_SCHEMA } from './tray-clock-source.js';

@@ -16,7 +16,7 @@ import { lockCornerLifecycle } from './corner-lifecycle.js';
 import { lockAgentMachine } from './machine-offline.js';
 import { freeAgentReachableSql } from './free-agents.js';
 import { systemLine } from './system-line.js';
-import { notifyAgentConnection } from './postgres-live-notifications.js';
+import { notifyAgentConnection } from './postgres-live.js';
 import { renudgeStrandedPendingCommands } from './agent-command.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;

@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {Client,Pool,type QueryResultRow} from 'pg';
 import {describe,expect,it} from 'vitest';
 import {PostgresDatabase,type SqlDatabase,type QueryResult} from './database.js';
-import {POSTGRES_LIVE_SCHEMA} from './postgres-live.js';
+import {postgresLiveSchema} from './postgres-live.js';
 import {ROUTER_PROJECTION_SCHEMA} from './router-projection-schema.js';
 import {SCHEDULED_WORK_AUTHORITY_SCHEMA} from './scheduled-work-authority.js';
 import {ROOM_SCHEDULES_CAPTURE_SCHEMA} from './room-schedules-capture.js';
@@ -83,8 +83,8 @@ async function fixture(db:SqlDatabase,count:number){
   // Reuse the real existing journal/notification function. Its installer also
   // enumerates unrelated tables; only these actual exercised triggers belong
   // in this deliberately isolated workload schema.
-  const end=POSTGRES_LIVE_SCHEMA.indexOf('-- Memory jobs');if(end<0)throw new Error('Production live installer boundary changed');
-  await db.query(POSTGRES_LIVE_SCHEMA.slice(0,end));
+  const end=(await postgresLiveSchema()).indexOf('-- Memory jobs');if(end<0)throw new Error('Production live installer boundary changed');
+  await db.query((await postgresLiveSchema()).slice(0,end));
   for(const table of ['agent_schedules','agent_subscriptions','workspaces'])await db.query(`CREATE TRIGGER beeline_notify_live_${table} AFTER INSERT OR UPDATE OR DELETE ON ${table} FOR EACH ROW EXECUTE FUNCTION beeline_notify_live()`);
   await db.query(ROUTER_PROJECTION_SCHEMA);await db.query(SCHEDULED_WORK_AUTHORITY_SCHEMA);await db.query(ROOM_SCHEDULES_CAPTURE_SCHEMA);
   for(const workspace of [WS,DM_WS])await db.query(`SELECT beeline_journal($1,'{"sourceTable":"workspaces","operation":"INSERT"}'::jsonb)`,[`workspace:${workspace}`]);
@@ -131,7 +131,7 @@ describe.skipIf(!url)('real PostgreSQL equal Scheduled Work workload',()=>{
       const writeStats=async(mode:'legacy'|'duplicate'|'folded')=>{
         await db.query(legacyRowSource);
         if(mode==='folded'){
-          await db.query(POSTGRES_LIVE_SCHEMA.slice(0,POSTGRES_LIVE_SCHEMA.indexOf('-- Memory jobs')));
+          await db.query((await postgresLiveSchema()).slice(0,(await postgresLiveSchema()).indexOf('-- Memory jobs')));
           await db.query(ROOM_SCHEDULES_CAPTURE_SCHEMA);
         }else{
           await db.query(`ALTER TABLE agent_schedules DISABLE TRIGGER aa_beeline_scheduled_work_row_source`);

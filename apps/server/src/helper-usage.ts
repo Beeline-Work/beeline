@@ -1,4 +1,4 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 import { requireUsageSource } from './helper-usage-source.js';
 import { createHash } from 'node:crypto';
 import { readAgentUsage } from '@beeline/api-contract/daemon';

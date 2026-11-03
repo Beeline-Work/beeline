@@ -1,4 +1,4 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 import { createHash, randomUUID } from 'node:crypto';
 import type { CommandRow } from './agent-command.js';
 import { CommandRefusalError } from './command-refusal.js';

@@ -6,7 +6,7 @@ import type { HelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import { PostgresDatabase } from './database.js';
 import { HELPER_OVERLAY_SCHEMA, HelperOverlayViewer, applyHelperOverlay, fenceHelperOverlayEnqueue, subscribeHelperOverlayDemand } from './helper-overlay.js';
 import { LiveHub, type LiveEvent } from './live.js';
-import { POSTGRES_LIVE_SCHEMA, PostgresLiveListener } from './postgres-live.js';
+import { postgresLiveSchema, PostgresLiveListener } from './postgres-live.js';
 import { HelperOverlayOwner } from '../../body/src/helper-overlay.js';
 const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if(url&&!['127.0.0.1','localhost','[::1]'].includes(new URL(url).hostname))throw new Error('Overlay proofs require isolated loopback PostgreSQL');
@@ -45,7 +45,7 @@ describe.skipIf(!url)('overlay real PostgreSQL remote listener and viewer fences
         CREATE TABLE registry_mcp_oauth_attempts(state text,connector_id text,expires_at timestamptz,code text);`);
       // Install the production journal+capture function, and its real source
       // trigger on the one table this isolated fixture exercises.
-      await writer.query(POSTGRES_LIVE_SCHEMA.split('-- Memory jobs')[0]!);
+      await writer.query((await postgresLiveSchema()).split('-- Memory jobs')[0]!);
       await writer.query(`CREATE TRIGGER beeline_notify_live_live_outputs AFTER INSERT OR UPDATE OR DELETE ON live_outputs FOR EACH ROW EXECUTE FUNCTION beeline_notify_live()`);
       await writer.query(TURN_OWNERSHIP_SCHEMA);
     await writer.query(HELPER_OVERLAY_SCHEMA);

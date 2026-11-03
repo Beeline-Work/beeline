@@ -1,4 +1,4 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 
 /** Each key owns one business family, not the former catch-all repair tick. */
 export const backgroundDueKey = (family: string) => ({ principal: 'background', operation: 'source', commandId: family });

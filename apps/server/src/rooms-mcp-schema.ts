@@ -1,4 +1,4 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 /** OAuth credentials are independent of phone and helper credentials. */
 export const ROOMS_MCP_SCHEMA = `
 ${committedCommandNotificationSchema()}

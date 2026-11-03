@@ -6,7 +6,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 export type MediaCacheMetadata = MediaMetadata;
 export type MediaCacheBoundary = Readonly<{ kind: 'connection' }> | Readonly<{ kind: 'identity' }> |
   Readonly<{ kind: 'revoke'; authorityScope: string; epoch: string; objectIds: readonly string[] }>;
-type Connection = { generation: number; mediaMetadataV1: boolean; executeMetadata(objectId: string): Promise<MediaCacheMetadata>;
+type Connection = { generation: number; mediaMetadataV1: true; executeMetadata(objectId: string): Promise<MediaCacheMetadata>;
   executeLink?(objectId: string): Promise<MediaLink>; executePlayback?(objectId: string): Promise<MediaLink>;
   joinedMetadata?(objectId: string): void };
 type Held = { metadata: MediaCacheMetadata; generation: number };
@@ -50,20 +50,14 @@ function valid(value: MediaCacheMetadata, objectId: string): boolean {
 /** Sole authenticated socket owner installs this closed metadata adapter only
  * after independent capability negotiation. No caller can manufacture support.
  */
-export function installMediaCacheConnection(next: Connection): void {
-  if (!next.mediaMetadataV1) { installLegacyMediaCacheConnection(next.generation); return; }
+export function installMediaCacheConnection(next: Connection | { generation: number; mediaMetadataV1: false }): void {
   if (next.generation <= installedGeneration) return;
-  installedGeneration = next.generation; transportMode = 'router';
-  connection = next; held.clear(); flights.clear(); playbacks.clear(); notify({ kind: 'connection' });
-  if (next.mediaMetadataV1) { recoveryRevision++; for (const listener of recoveryListeners) listener(); }
-}
-/** Only an authenticated explicit negative capability receipt selects legacy.
- * Disconnection/authority failure never downgrades a capable path to HTTP.
- */
-export function installLegacyMediaCacheConnection(generation: number): void {
-  if (generation <= installedGeneration) return;
-  installedGeneration = generation; transportMode = 'legacy';
-  connection = undefined; held.clear(); flights.clear(); playbacks.clear(); notify({ kind: 'connection' });
+  installedGeneration = next.generation;
+  // Only an authenticated explicit capability receipt selects the adapter.
+  // Disconnects and authority failures never select the old-server path.
+  transportMode = next.mediaMetadataV1 ? 'router' : 'legacy';
+  connection = next.mediaMetadataV1 ? next : undefined;
+  held.clear(); flights.clear(); playbacks.clear(); notify({ kind: 'connection' });
   recoveryRevision++; for (const listener of recoveryListeners) listener();
 }
 /** Current mounted, actually visible byte/runnable displays only. Cache

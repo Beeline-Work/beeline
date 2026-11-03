@@ -19,7 +19,7 @@ import {
   notifyAgentConfigChange,
   notifyConnectorAssignment,
   POSTGRES_LIVE_CHANNEL,
-  POSTGRES_LIVE_SCHEMA,
+  postgresLiveSchema,
   PostgresLiveListener,
   type LivePgClient,
 } from './postgres-live.js';
@@ -951,7 +951,7 @@ describe('Postgres live fanout', () => {
 
   it('carries exact Workspace and identity on committed membership insert, revoke and deletion', async () => {
     // Install this trigger revision explicitly; the root owns production markers.
-    await database.query(POSTGRES_LIVE_SCHEMA);
+    await database.query((await postgresLiveSchema()));
     const live = new LiveHub(), client = new PgliteListenClient(database);
     const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener); const received: LiveEvent[] = [];

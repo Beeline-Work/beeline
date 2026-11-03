@@ -1,4 +1,4 @@
-import { notifyCommittedCommand } from './postgres-live-notifications.js';
+import { notifyCommittedCommand } from './postgres-live.js';
 import { createHash } from 'node:crypto';
 import type { RouterCommandReceipt, RouterCommandCoverage } from '@beeline/api-contract/router-command';
 import type { SqlDatabase } from './database.js';

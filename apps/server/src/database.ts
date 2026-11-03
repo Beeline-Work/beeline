@@ -11,7 +11,7 @@ import { MCP_MEMBER_STREAM_SCHEMA } from './rooms-mcp-stream.js';
 import { MEDIA_AUTHORITY_SCHEMA } from './media-authority-schema.js';
 import { X_SIGNUP_DELIVERY_SCHEMA } from './x-ads.js';
 import { SERVER_LEASE_DEADLINE_SCHEMA } from './server-lease-deadlines.js';
-import { COMMAND_COMPLETION_SCHEMA } from './command-completion.js';
+import { commandCompletionSchema } from './command-completion.js';
 import { ROUTER_PROJECTION_SCHEMA, ROUTER_EXTRA_CAPTURE_SCHEMA } from './router-projection-schema.js';
 import { ROUTER_PROFILE_SCHEMA } from './router-profile-source.js';
 import { ROUTER_OWNER_SCHEMA } from './router-owner-source.js';
@@ -84,7 +84,7 @@ import {
   perItemMembershipSubscriptionCleanupSql,
   syncTopLevelSharedRoomRoles,
 } from './membership-join.js';
-import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
+import { postgresLiveSchema } from './postgres-live.js';
 import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
 import { COMPUTER_EXPIRY_SCHEMA } from './computer-expiry-schema.js';
 import { CHOICE_EXPIRY_SCHEMA } from './choice-expiry-schema.js';
@@ -3553,7 +3553,7 @@ export async function migrate(
   await ddlScript('corner explicit wait function', cornerWaitingFunctionSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
-  await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
+  await ddlScript('live notification schema', (await postgresLiveSchema()));
   await ddlScript('sentry eligibility source', SENTRY_WAKE_SOURCE_SCHEMA);
   await ddlScript('display deadline source', DISPLAY_DEADLINE_SOURCE_SCHEMA);
   await ddlScript('agent schedule due source', AGENT_SCHEDULE_SOURCE_SCHEMA);
@@ -3570,7 +3570,7 @@ export async function migrate(
   await ddlScript('server lease deadlines', SERVER_LEASE_DEADLINE_SCHEMA);
   await ddlScript('X signup delivery deadlines', X_SIGNUP_DELIVERY_SCHEMA);
   await ddlScript('media authority domains', MEDIA_AUTHORITY_SCHEMA);
-  await ddlScript('command completion notifications', COMMAND_COMPLETION_SCHEMA);
+  await ddlScript('command completion notifications', commandCompletionSchema());
   await ddlScript('MCP member stream', MCP_MEMBER_STREAM_SCHEMA);
   await ddlScript('Helper overlay demand', HELPER_OVERLAY_SCHEMA);
   await ddlScript('Helper usage ownership', HELPER_USAGE_SCHEMA);

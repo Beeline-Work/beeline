@@ -183,7 +183,7 @@ export async function mcpMemberId(
   ).rows[0]?.member_id;
 }
 
-export const MCP_WEBHOOK_TABLE = 'rooms_mcp_webhook_outbox';
+export { MCP_WEBHOOK_TABLE } from './postgres-live-notifications.js';
 
 /** Webhook bearer secrets use the free-agent sealing helpers under their own key. */
 function webhookKey(): string {

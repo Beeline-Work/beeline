@@ -1,4 +1,4 @@
-import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
+import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
 
 /** Owner data is independent of Workspace membership. Causes and revision
  * changes commit with the source, before any phone fanout observes them. */

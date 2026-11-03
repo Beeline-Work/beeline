@@ -1,6 +1,6 @@
-import {liveControlNotificationSchema} from './postgres-live-notifications.js';
+import {liveControlNotificationSchema} from './postgres-live.js';
 import { grantDecidedBySql } from './needs-you.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 
 export const TRAY_MUTABLE_TABLES = ['agents', 'workspace_apps', 'agent_grants', 'permission_authority',

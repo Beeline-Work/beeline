@@ -180,7 +180,7 @@ function inspectGestureWrappers(file,source,errors){
 // Feature consumers may observe metadata/cells, but cannot replace their executor.
 function inspectConnectionOwners(file, source, errors) {
   const modules = {
-    'media-cache-connection': new Set(['installMediaCacheConnection', 'installLegacyMediaCacheConnection',
+    'media-cache-connection': new Set(['installMediaCacheConnection',
       'suspendMediaCacheConnection', 'receiveMediaAuthorityRemoval', 'invalidateMediaCacheDemand']),
     'agent-usage-cell': new Set(['installUsageCellConnection', 'suspendUsageCellConnection', 'receiveUsageCell', 'setUsageCellProfile']),
   };

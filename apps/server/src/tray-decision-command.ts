@@ -7,7 +7,7 @@ import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import type { PhoneService } from './phone-service.js';
 import { InvalidCommandArguments, type RouterCommandLedger } from './router-command-ledger.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { workflowRunLockKey } from './workflow-runs.js';
 
 const OPERATIONS = ['decideAgentGrant', 'decideWritePermission', 'skipChoice'] as const;

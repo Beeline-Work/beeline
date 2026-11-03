@@ -1,3 +1,4 @@
+import { AGENT_SIGN_IN_TABLE, readAgentSignInLink } from './postgres-live-notifications.js';
 import { notifyAgentSignIn } from './postgres-live.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 /**
@@ -16,7 +17,6 @@ import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { randomUUID } from 'node:crypto';
 import {
   AGENT_SIGN_IN_INPUT_MAX_LENGTH,
-  isAgentSignInKeyProvider,
   type AgentSignInLink,
   type CompleteAgentSignInResult,
   type ReportAgentSignInInput,
@@ -24,7 +24,7 @@ import {
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
 
-export const AGENT_SIGN_IN_TABLE = 'agent_sign_in';
+export { AGENT_SIGN_IN_TABLE, readAgentSignInLink, decodeAgentSignInNotification } from './postgres-live-notifications.js';
 /** The helper answers `start` with what it read from the harness's own login. */
 export const AGENT_SIGN_IN_LINK_WAIT_MS = 30_000;
 /** A pasted code or key: the helper's exchange has its own 30 s deadline; this covers it. */
@@ -46,82 +46,8 @@ export type AgentSignInStep = AgentSignInEvent extends infer Event
 
 const ATTEMPT_ID = /^[0-9a-f-]{36}$/;
 const CARD_ID = /^[0-9a-f]{64}$/;
-const USER_CODE = /^[A-Z0-9-]{4,16}$/;
-const MAX_REPORT_TEXT = 2_048;
 const CARD_TYPE = 'agent-sign-in';
 
-function httpsUrl(value: unknown): value is string {
-  return typeof value === 'string' && value.startsWith('https://') && value.length <= MAX_REPORT_TEXT;
-}
-
-/** The machine's answer to `start`, validated; anything else is dropped. */
-export function readAgentSignInLink(value: Record<string, unknown>): AgentSignInLink | undefined {
-  switch (value.kind) {
-    case 'paste-code':
-    case 'approve-wait':
-      return httpsUrl(value.authorizeUrl)
-        ? { kind: value.kind, authorizeUrl: value.authorizeUrl }
-        : undefined;
-    case 'device-code':
-      return httpsUrl(value.authorizeUrl) &&
-        typeof value.userCode === 'string' &&
-        USER_CODE.test(value.userCode) &&
-        typeof value.expiresAt === 'number' &&
-        Number.isFinite(value.expiresAt)
-        ? {
-            kind: 'device-code',
-            authorizeUrl: value.authorizeUrl,
-            userCode: value.userCode,
-            expiresAt: value.expiresAt,
-          }
-        : undefined;
-    case 'api-key':
-      return isAgentSignInKeyProvider(value.provider)
-        ? { kind: 'api-key', provider: value.provider }
-        : undefined;
-    default:
-      return undefined;
-  }
-}
-
-/** Decode one NOTIFY payload for this table; anything malformed is dropped. */
-export function decodeAgentSignInNotification(raw: string): AgentSignInEvent | undefined {
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return undefined;
-  }
-  if (parsed.table !== AGENT_SIGN_IN_TABLE) return undefined;
-  const { agentId, attemptId, step } = parsed;
-  if (typeof agentId !== 'string' || !agentId) return undefined;
-  if (typeof attemptId !== 'string' || !ATTEMPT_ID.test(attemptId)) return undefined;
-  const base = { type: 'agent-sign-in' as const, roomId: '' as const, agentId, attemptId };
-  switch (step as Step) {
-    case 'start':
-      return typeof parsed.cardId === 'string' && CARD_ID.test(parsed.cardId)
-        ? { ...base, step: 'start', cardId: parsed.cardId }
-        : undefined;
-    case 'code':
-      return typeof parsed.code === 'string' && parsed.code
-        ? { ...base, step: 'code', code: parsed.code }
-        : undefined;
-    case 'link': {
-      const link =
-        parsed.link && typeof parsed.link === 'object'
-          ? readAgentSignInLink(parsed.link as Record<string, unknown>)
-          : undefined;
-      return link ? { ...base, step: 'link', link } : undefined;
-    }
-    case 'result':
-      if (parsed.outcome === 'signed-in') return { ...base, step: 'result', outcome: 'signed-in' };
-      return parsed.outcome === 'failed' && typeof parsed.error === 'string'
-        ? { ...base, step: 'result', outcome: 'failed', error: parsed.error }
-        : undefined;
-    default:
-      return undefined;
-  }
-}
 
 async function notify(
   database: Pick<SqlDatabase, 'query'>,

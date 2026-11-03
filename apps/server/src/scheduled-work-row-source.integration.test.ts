@@ -1,7 +1,7 @@
 import {readFile} from 'node:fs/promises';
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
 import {migratedDatabase,type PgliteDatabase} from './test-support.js';
-import {POSTGRES_LIVE_SCHEMA} from './postgres-live.js';
+import {postgresLiveSchema} from './postgres-live.js';
 import {ROOM_SCHEDULES_CAPTURE_SCHEMA} from './room-schedules-capture.js';
 import {routerSourcePlan} from './router-source-plan.js';
 import {DurableLiveReplay} from './durable-live.js';
@@ -42,7 +42,7 @@ describe('single canonical schedule/subscription Workspace source',()=>{
     await db.query(legacy);
     for(const name of ['agent_schedules','agent_subscriptions'])await db.query(`ALTER TABLE ${name} DISABLE TRIGGER aa_beeline_scheduled_work_row_source;ALTER TABLE ${name} DISABLE TRIGGER zz_beeline_scheduled_work_capture`);
   }
-  async function currentInstaller(){await db.query(POSTGRES_LIVE_SCHEMA);await db.query(ROOM_SCHEDULES_CAPTURE_SCHEMA);}
+  async function currentInstaller(){await db.query((await postgresLiveSchema()));await db.query(ROOM_SCHEDULES_CAPTURE_SCHEMA);}
   it.each(['agent_schedules','agent_subscriptions'])('preserves frozen older %s notifications, Room/parent journals and actual legacy replay while folding its Workspace cause',async table=>{
     const id=table==='agent_schedules'?SCHEDULE:SUB,column=table==='agent_schedules'?'message':'prompt';
     await originalInstaller();const old=await observed(()=>db.query(`UPDATE ${table} SET ${column}='First change' WHERE id=$1`,[id]));

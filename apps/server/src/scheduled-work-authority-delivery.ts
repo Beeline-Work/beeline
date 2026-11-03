@@ -6,7 +6,7 @@ import {
 } from '@beeline/api-contract/router-protocol';
 import type {SqlDatabase} from './database.js';
 import type {LiveHub} from './live.js';
-import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
+import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
 import {currentAuthorityFence} from './router-authority-fences.js';
 import {currentScheduledWorkFence} from './scheduled-work-authority.js';
 import {fenceRouterBatchInTransaction,readRouterAuthority,RouterProjectionUnavailable} from './router-projections.js';

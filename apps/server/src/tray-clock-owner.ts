@@ -1,6 +1,6 @@
 import { BackgroundOwnership, type BackgroundEpoch } from './background-ownership.js';
 import { consumeTrayClockInTransaction, type TrayClockClaim } from './tray-clock-source.js';
-import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
+import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
 
 export type TrayDeadline = Readonly<Omit<TrayClockClaim, 'kind'> & {
   kind: Exclude<TrayClockClaim['kind'], 'choice-close'>; remainingMs: number;

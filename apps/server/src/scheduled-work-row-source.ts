@@ -1,4 +1,4 @@
-import {liveControlNotificationSchema} from './postgres-live-notifications.js';
+import {liveControlNotificationSchema} from './postgres-live.js';
 /** One early owner of schedule/subscription Workspace causes. Dependency-free
  * so both the legacy live installer and isolated source schemas can install it
  * before any Room journal lock, without a runtime/module cycle. */

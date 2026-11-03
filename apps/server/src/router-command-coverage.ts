@@ -1,7 +1,7 @@
 import type { RouterCommandCoverage, RouterCommandReceipt } from '@beeline/api-contract/router-command';
 import type { RouterSnapshotInput } from '@beeline/api-contract/router-protocol';
 import type { SqlDatabase } from './database.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { readRouterAuthority, readRouterCut, RouterProjectionUnavailable } from './router-projections.js';
 
 /** Run on the effect/receipt transaction. A cut describes this convenience

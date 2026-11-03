@@ -50,9 +50,29 @@ bytes (limits **90,112 / 24,576**). Shadow measurement remains **28,070 / 5,962*
 (limit **32,768 / 8,192**). No budgets, scanners, required checks, or production
 capabilities were weakened.
 
-The base-aware architecture check still rejects the three previously retained
-changes: `live.notify` notifier-leaf ownership, server environment budget
-60→61, and phone parallel-path budget 19→24. Its unchanged policy permits only
-owner manual merging of a relaxing change. The earlier direction to retain the
-leaf and hold fallback removal needs reconciliation before all-green can be
-claimed. Local validation is not an override of that required gate.
+## Base architecture restored
+
+Following instruction 050, the three rules now exactly match `origin/main`:
+server environment budget 60, phone parallel-path budget 19, and notification
+publishing owned only by `postgres-live.ts`. The unchanged base-aware checker
+passes all 20 rules. The rollout flag uses the startup configuration reader;
+its disabled default and exact explicit enable value remain unchanged.
+
+Chat-list acquisition, Needs-you count subscriptions, Tray view selection and
+media connection installation now select their old-server adapter inside the
+existing negotiated owner. Pending or disconnected capable paths never select
+legacy HTTP. Explicit negative capability receipts retain old-phone behavior.
+
+Notification publishers moved into the accepted live owner. Wire identities and
+synchronous decoders remain in the dependency-light notifications module;
+schema construction runs after initialization. The live SQL is byte-identical
+to the preceding repair (SHA256
+`4a981927f6b0481293c59c6faf13fb0ba31e958976987bd952678e498d4af513`).
+Four fresh-process import regressions cover Needs-you, authority, live and
+command-completion entry orders. This fixes both native ESM initialization and
+the Vite migration setup cycle without changing notification content or delivery.
+
+The additional validation record records **207 passing checks across 14 serial
+suite selections** and distinguishes this repair from the earlier 349-case
+selection. Root typechecking, all eight builds and dead-code checking also pass. Remote CI completion is still required; local passes are
+not a green remote-CI claim.

@@ -1,4 +1,4 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 
 export const PENDING_ATTACHMENT_DUE_KEY = { principal: 'attachment', operation: 'retention', commandId: 'pending' } as const;
 

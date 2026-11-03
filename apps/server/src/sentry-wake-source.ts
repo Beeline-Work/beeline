@@ -1,4 +1,4 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 export const SENTRY_TRIAGE_ROOM = 'a914716f-cd6c-4663-b42a-6e1044dc2bb9';
 export const sentryEligibilityKey = (principal: string) => ({ principal, operation: 'sentry-eligibility', commandId: SENTRY_TRIAGE_ROOM });
 export const SENTRY_WAKE_SOURCE_SCHEMA = `

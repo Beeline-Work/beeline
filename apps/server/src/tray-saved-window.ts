@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { SavedRow, SavedWindow } from '@beeline/api-contract/router-protocol';
 import type { RoomViewIdentity } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { liveControlNotificationSchema } from './postgres-live-notifications.js';
+import { liveControlNotificationSchema } from './postgres-live.js';
 
 const VERSION=1, PAGE=30, MAX_BYTES=64*1024;
 /** Bound DB result bytes before assembling a 30-row page or exact-row facts.

@@ -1,7 +1,7 @@
 import { BackgroundOwnership, type BackgroundEpoch } from './background-ownership.js';
 import { lockCornerLifecycle } from './corner-lifecycle.js';
 import { closeExpiredChoiceVersion } from './room-choice.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import type { TrayClockClaim } from './tray-clock-source.js';
 
 type ChoiceDeadline = TrayClockClaim & { kind: 'choice-close'; remainingMs: number };

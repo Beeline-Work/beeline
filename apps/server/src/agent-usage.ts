@@ -4,7 +4,6 @@ import { notifyUsageRefreshRequest, publishUsageRefreshResult } from './postgres
 import { randomUUID } from 'node:crypto';
 import {
   readAgentUsage,
-  readUsageRefreshOutcome,
   usageReason,
   type AgentUsage,
   type UsageRefreshOutcome,
@@ -13,7 +12,7 @@ import {
 import { agentHelperOnline } from './agent-sign-in.js';
 import type { SqlDatabase } from './database.js';
 import { freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentLimitsFromEnv } from './free-agent-limits.js';
-import type { LiveEvent, LiveHub } from './live.js';
+import type { LiveHub } from './live.js';
 
 /**
  * Plan usage belongs to an account, not an agent. A helper's quota-axi read
@@ -250,30 +249,11 @@ export async function saveAgentUsage(
   });
 }
 
-export const USAGE_REFRESH_TABLE = 'agent_usage_refresh';
-export const USAGE_REFRESH_RESULT_TABLE = 'agent_usage_refresh_result';
+export { USAGE_REFRESH_TABLE, USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './postgres-live-notifications.js';
 /** Longer than a practical helper read; the phone waits longer than this. */
 export const USAGE_REFRESH_WAIT_MS = 20_000;
 const REQUEST_ID = /^[0-9a-f-]{36}$/;
-type UsageRefreshResult = Extract<LiveEvent, { type: 'usage-refresh-result' }>;
 
-/** Decode one NOTIFY payload for the refresh result table; anything malformed is dropped. */
-export function decodeUsageRefreshResult(raw: string): UsageRefreshResult | undefined {
-  let parsed: Record<string, unknown>;
-  try {
-    parsed = JSON.parse(raw) as Record<string, unknown>;
-  } catch {
-    return;
-  }
-  const outcome = readUsageRefreshOutcome(parsed.outcome);
-  if (parsed.table !== USAGE_REFRESH_RESULT_TABLE || typeof parsed.agentId !== 'string' || !outcome) return;
-  if (parsed.requestId !== undefined && !(typeof parsed.requestId === 'string' && REQUEST_ID.test(parsed.requestId)))
-    return;
-  return {
-    type: 'usage-refresh-result', roomId: '', agentId: parsed.agentId, outcome,
-    ...(parsed.requestId ? { requestId: parsed.requestId as string } : {}),
-  };
-}
 
 /**
  * Tell every server instance what a helper's read found. Without a request id

@@ -3,7 +3,7 @@ import {readFile} from 'node:fs/promises';
 import {Pool} from 'pg';
 import {describe,expect,it} from 'vitest';
 import {PostgresDatabase,type SqlDatabase} from './database.js';
-import {POSTGRES_LIVE_SCHEMA} from './postgres-live.js';
+import {postgresLiveSchema} from './postgres-live.js';
 import {routerSourcePlan} from './router-source-plan.js';
 const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if(url&&!['127.0.0.1','localhost','[::1]'].includes(new URL(url).hostname))throw new Error('Scheduled row source proof requires isolated loopback PostgreSQL');
@@ -11,7 +11,7 @@ const legacy=await readFile(new URL('./test-fixtures/scheduled-work-legacy-sourc
 const WS='11111111-1111-4111-8111-111111111111',OTHER='22222222-2222-4222-8222-222222222222';
 const ROOM='33333333-3333-4333-8333-333333333333',OTHER_ROOM='44444444-4444-4444-8444-444444444444';
 const FIRST='55555555-5555-4555-8555-555555555555',SECOND='66666666-6666-4666-8666-666666666666',VIEWER='a'.repeat(64);
-const current=POSTGRES_LIVE_SCHEMA.slice(0,POSTGRES_LIVE_SCHEMA.indexOf('-- Memory jobs'));
+const current=(await postgresLiveSchema()).slice(0,(await postgresLiveSchema()).indexOf('-- Memory jobs'));
 async function fixture(db:SqlDatabase){
   await db.query(`CREATE TABLE rooms(id uuid PRIMARY KEY,workspace_id uuid NOT NULL,parent_id uuid,direct_participants jsonb);
     CREATE TABLE corner_github_cache(corner_id uuid PRIMARY KEY REFERENCES rooms(id),lifecycle jsonb NOT NULL DEFAULT '{}'::jsonb);

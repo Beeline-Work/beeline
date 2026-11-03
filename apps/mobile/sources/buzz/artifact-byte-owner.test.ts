@@ -12,7 +12,7 @@ vi.mock('./artifact-byte-store', () => ({ createArtifactByteStore: () => ({
   revoke: async () => [], localUri: async () => 'file:///synthetic/cache.png',
 }) }));
 import { readArtifactObject, subscribeArtifactBytesPurge } from './artifact-byte-owner';
-import { installLegacyMediaCacheConnection, installMediaCacheConnection, receiveMediaAuthorityRemoval, suspendMediaCacheConnection } from './media-cache-connection';
+import { installMediaCacheConnection, receiveMediaAuthorityRemoval, suspendMediaCacheConnection } from './media-cache-connection';
 const id = '11111111-1111-4111-8111-111111111111';
 const attachment = { url: `/v1/media/${id}`, name: 'photo.png', mimeType: 'image/png', size: 3, kind: 'artifact' as const };
 const bytes = new Uint8Array([1, 2, 3]);
@@ -43,7 +43,7 @@ describe('the shared artifact byte owner', () => {
     suspendMediaCacheConnection();
     await expect(readArtifactObject(attachment, read)).rejects.toThrow('awaiting connection');
     expect(read).toHaveBeenCalledTimes(1);
-    installLegacyMediaCacheConnection(2);
+    installMediaCacheConnection({ generation: 2, mediaMetadataV1: false });
     await readArtifactObject(attachment, read); expect(read).toHaveBeenCalledTimes(2);
   });
   it('refuses eager whole-document or unbounded legacy previews', async () => {

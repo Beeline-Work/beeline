@@ -1,4 +1,4 @@
-import { committedCommandNotificationSchema } from './postgres-live-notifications.js';
+import { committedCommandNotificationSchema } from './postgres-live.js';
 /** Only committed deadline/state changes wake the existing background owner. */
 export const CHOICE_EXPIRY_SCHEMA = `
 ${committedCommandNotificationSchema()}

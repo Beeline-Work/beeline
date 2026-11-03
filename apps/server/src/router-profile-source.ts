@@ -1,4 +1,4 @@
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { cornerOwnerSql } from './corner-worker.js';
 
 export const profileDomain=(workspace:string,agent:string)=>`profile:${workspace}:${agent}`;

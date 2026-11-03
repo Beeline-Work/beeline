@@ -4,7 +4,7 @@ import type { SqlDatabase } from './database.js';
 import { PhoneOperationError } from './phone-operations.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { readRouterAuthority, routerAuthority } from './router-projections.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 
 type ObjectRow={id:string;owner_id:string;sha256:string;size:string;mime:string;expires_at:Date};
 const MAX_OBJECT_BYTES=25*1024*1024,MAX_PREVIEW_BYTES=16*1024;

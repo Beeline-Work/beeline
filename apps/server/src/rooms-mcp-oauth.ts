@@ -235,6 +235,8 @@ export class RoomsMcpOAuth {
   private isResource(value: unknown): boolean {
     if (value === undefined) return true;
     if (typeof value !== 'string') return false;
+    // URI clients (including Muse) may preserve the bare origin or its slash.
+    // Both name the same resource; discovery consistently publishes the slash.
     const trimmed = value.replace(/\/$/, '');
     const short = joinOrigin(this.origin, this.joinHost);
     return [this.resource, this.origin, `${this.origin}/join`, short, `${short}/join`, `${short}/mcp`].includes(trimmed);

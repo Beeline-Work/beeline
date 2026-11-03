@@ -160,18 +160,30 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     eventTransport = postMcpWebhook; vi.unstubAllEnvs();
     await db.query('DELETE FROM rooms_mcp_event_subscriptions');
   });
-  it.each(['server/join', 'short/', 'short/join'])('JOIN-1: %s authorizes, initializes, reads and posts with the same resource', async alias => {
+  it.each(['server/join', 'short', 'short/', 'short/join'])('JOIN-1: %s authorizes, initializes, reads and posts with the same resource', async alias => {
     const short = alias.startsWith('short');
     const host = short ? `localhost:${new URL(origin).port}` : new URL(origin).host;
     const path = alias.endsWith('/join') ? '/join' : '/';
-    const resource = (short ? `http://${host}` : origin) + path;
+    const endpoint = (short ? `http://${host}` : origin) + path;
+    const resource = alias === 'short' ? endpoint.slice(0, -1) : endpoint;
     const grant = await authorize('rooms:read rooms:write', 'allow', undefined, undefined, {}, resource);
     const issued = await exchange(grant, { resource });
     expect(issued.status).toBe(200);
     const { access_token: token } = await issued.json() as { access_token: string };
+    // Muse preserves resource spelling and never follows redirects. A token
+    // obtained with either the bare or slashed origin must POST directly to '/'.
+    const direct = await fetch(endpoint, { method: 'POST', redirect: 'manual',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+        protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'muse-resource-proof', version: '1' },
+      } }),
+    });
+    expect(direct.status).toBe(200);
+    expect(direct.headers.get('location')).toBeNull();
+    expect((await direct.json() as { result: { serverInfo: { name: string } } }).result.serverInfo.name).toBe('beeline-rooms');
     const client = new Client({ name: 'join-alias-proof', version: '1' });
     clients.push(client);
-    await client.connect(new StreamableHTTPClientTransport(new URL(resource), {
+    await client.connect(new StreamableHTTPClientTransport(new URL(endpoint), {
       requestInit: { headers: { authorization: `Bearer ${token}` } },
     }));
     expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).toContain('Demo');

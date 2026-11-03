@@ -113,7 +113,7 @@ Discovery advertises both scopes. The initial unauthorized challenge asks only f
 Plain GETs of the join addresses return the instructions page. POST, SSE Accept,
 Authorization and MCP protocol/session headers select the existing MCP boundary.
 `/mcp` retains its previous HTTP behavior, including unauthenticated GET 401s.
-Protected-resource discovery describes the exact endpoint and host requested;
+The short-host resource is canonically `https://join.usebeeline.app/`. Bare and slashed origins are accepted as the same resource in authorization and token exchange. MCP POSTs to `/` are handled directly, without redirects. Protected-resource discovery describes the endpoint and host requested;
 the configured server origin remains the OAuth issuer for all aliases. Its
 existing sign-in callbacks, consent, PKCE and revocation paths are unchanged.
 Only the configured short hostname (the `RoomsMcpOAuth` constructor option, default `join.usebeeline.app`) is recognized; forwarded headers and

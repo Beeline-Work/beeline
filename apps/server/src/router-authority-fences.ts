@@ -13,7 +13,10 @@ export async function currentAuthorityFence(db:SqlDatabase,viewer:string,scope:s
   if(domain.startsWith('scheduled-work-'))return currentScheduledWorkFence(db,viewer,scope,domain);
   let allowed:boolean,mode:'deny'|'advance'='deny';
   const workspacePrefix=`reader:${viewer}:workspace:`;
-  if(domain.startsWith('profile:')){
+  if(scope===viewer&&(domain===`owner:${viewer}:owner-workbench`||domain===`owner:${viewer}:owner-wallet`)){
+    allowed=Boolean((await db.query(`SELECT 1 FROM identities WHERE id=$1 AND kind='human' AND NOT hidden_from_roster`,[viewer])).rowCount);
+    mode=allowed?'advance':'deny';
+  }else if(domain.startsWith('profile:')){
     const match=/^profile:([0-9a-f-]{36}):(.+)$/.exec(domain);
     if(!match||match[2]!==scope)return undefined;
     allowed=Boolean((await db.query(`SELECT 1 FROM memberships reader

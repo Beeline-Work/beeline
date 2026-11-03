@@ -102,6 +102,11 @@ export async function groupAFixture(url: string) {
     socket.on('message', raw => {
       const frame = JSON.parse(String(raw)); frames.push(frame);
       if (frame.kind === 'push-part' || frame.kind === 'push-commit') assembly.accept(frame);
+      if(frame.kind==='authority-fence'){
+        const epoch=frame.authority.scopes.find((scope:{authorityScope:string})=>scope.authorityScope===frame.authorityScope)?.epoch;
+        if(!epoch)throw new Error('Missing proof authority epoch');
+        applied=(frame.mode==='advance'?lanes.advance(frame.authorityScope,epoch):lanes.revoke(frame.authorityScope,epoch)).then(wake);
+      }
       if (frame.t === 'res') {
         const pending = responses.get(frame.id); responses.delete(frame.id);
         if (frame.ok) pending?.resolve(frame.result);

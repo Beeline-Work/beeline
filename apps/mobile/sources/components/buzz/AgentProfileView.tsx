@@ -52,6 +52,7 @@ export function AgentProfileView({
   management,
   modelManagement,
   voiceApi,
+  voiceRevision,
   saveWake,
 }: {
   detail: AgentDetailView | null;
@@ -80,6 +81,7 @@ export function AgentProfileView({
   management: React.ReactNode;
   modelManagement?: React.ReactNode;
   voiceApi?: AgentVoiceApi;
+  voiceRevision?:string;
   saveWake?: (url: string, key?: string) => Promise<void>;
 }) {
   const { theme } = useUnistyles();
@@ -345,7 +347,7 @@ export function AgentProfileView({
             <AgentVoiceSection
               key={`${detail.workspaceId}:${identity.pubkey}:${voiceApi?.contextKey ?? ''}`}
               agentId={identity.pubkey}
-              configVersion={detail.configVersion}
+              configVersion={voiceRevision??detail.configVersion}
               handle={identity.handle ?? identity.name}
               canEdit={canEdit}
               api={voiceApi}

@@ -284,6 +284,8 @@ export type PhoneOperationMap = PhoneRouteOperationMap & {
   /** One tap creates the wallet bound to the viewer's identity. */
   createWallet: { input: CreateWalletInput; output: WalletView };
   readWallet: { input: ReadWalletInput; output: WalletView };
+  /** Explicit owner refresh; provider reconciliation is never a snapshot. */
+  refreshWallet: {input:EmptyInput;output:WalletView};
   sendFromWallet: { input: SendFromWalletInput; output: WalletSendOutcome };
   grantWalletDelegation: { input: GrantWalletDelegationInput; output: GrantWalletDelegationResult };
   revokeWalletDelegation: { input: Record<string, never>; output: void };

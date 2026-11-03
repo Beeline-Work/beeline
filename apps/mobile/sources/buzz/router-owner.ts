@@ -1,5 +1,6 @@
 import {ROUTER_TRAY_CLOCK_STREAM} from '@beeline/api-contract/router-protocol';
-import { validateWorkflowProjection, validateNeedsRoomsPayload } from '@beeline/net/owner';
+import {validateWorkflowProjection} from '@beeline/net/display';
+import { validateNeedsRoomsPayload } from '@beeline/net/owner';
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import { installUsageCellConnection, suspendUsageCellConnection, receiveUsageCell, setUsageCellProfile } from './agent-usage-cell';
 import { AdmissionOwner, ReadLanes, RouterBatchAssembly, ScheduledWorkAuthority, NavigationOwner, MediaDemandOwner, UsageDemandOwner,validateScheduledWorkProjection,validateTrayProjection,validateSavedWindow,
@@ -23,6 +24,7 @@ type Negotiation = { generation: number; families: readonly LaneFamily[];
   executeTools?: (input:PhoneOperationMap['readRoomTools']['input'])=>Promise<PhoneOperationMap['readRoomTools']['output']>;
   execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> };
 type Slot = { request: LaneRequest; consumers: Map<() => void, () => boolean>; listeners: Set<() => void>;
+  validate?:(value:unknown)=>boolean;
   generation?: number; expectedWorkspace?: string; token?: object; release?: () => void; stop?: () => void };
 const navigation = new NavigationOwner();
 const listeners = new Set<() => void>();
@@ -57,7 +59,11 @@ const empty: LaneView = Object.freeze({ state: 'ABSENT', value: null, cut: null,
 const roomScoped=(family:LaneFamily)=>family==='room-head'||family==='room-scheduled-work'||family==='room-workflows';
 
 function validValue(request: LaneRequest, value: unknown): boolean {
+  const screenValidator=slotsByKey.get(slotKey(request))?.validate;
+  if(screenValidator)return screenValidator(value);
   if(request.family==='agent-profile')return isAgentDetailView(value)&&utf8ToBytes(JSON.stringify(value)).length<=32*1024&&
+    typeof (value as RouterValues['agent-profile']).canRemove==='boolean'&&
+    typeof (value as RouterValues['agent-profile']).voiceRevision==='string'&&
     (value as RouterValues['agent-profile']).workspaceId===request.workspaceId&&
     (value as RouterValues['agent-profile']).agent.identity.pubkey===request.agentId;
   if(request.family==='workspace-roster'){
@@ -151,7 +157,8 @@ const assembly = new RouterBatchAssembly(hash, batch => {
 function eligible(slot: Slot): boolean {
   const focused = navigation.current();
   if (!focused || ![...slot.consumers.values()].some(visible => visible()) || AppState.currentState === 'background' || AppState.currentState === 'inactive') return false;
-  if (!roomScoped(slot.request.family) && focused.workspaceId && slot.request.workspaceId !== focused.workspaceId) return false;
+  if (!roomScoped(slot.request.family)&&!slot.request.family.startsWith('owner-') && focused.workspaceId && slot.request.workspaceId !== focused.workspaceId) return false;
+  if(slot.request.family.startsWith('owner-'))return focused.screen==='AppShell';
   if(slot.request.family==='needs-you-saved-page')return focused.screen==='Tray'&&slot.generation===focused.generation;
   if(slot.request.family==='needs-you-tray')return focused.screen==='Tray';
   if(slot.request.family==='room-scheduled-work')return focused.screen==='ScheduledWork'&&focused.roomId===slot.request.roomId;
@@ -169,7 +176,7 @@ function release(slot: Slot): void {
 }
 function focus(slot: Slot): void {
   if (lanes && roomScoped(slot.request.family) && slot.expectedWorkspace)
-    lanes.constrain({ ...slot.request, workspaceId: slot.expectedWorkspace });
+    lanes.constrain({ ...slot.request, workspaceId: slot.expectedWorkspace } as LaneRequest);
   const residency = navigation.current();
   if (!admission || !lanes || !residency || !eligible(slot) || !lanes.supports(slot.request.family)) {
     release(slot); return;
@@ -239,7 +246,7 @@ export function routerOwnerListPanel(visible: boolean): void {
  * Unsupported storage keeps the legacy cohort, without suppressing its hints. */
 export function routerOwnerCapabilities(): { families: readonly LaneFamily[]; authorityFencesV1: boolean; scheduledWorkCoverageV1: boolean } {
   const ready = routerAuthorityStorageReady();
-  return { families: ready ? ['room-list', 'needs-you-count', 'room-head','room-workflows','agent-profile',...(routerCommandStorageReady()?['room-scheduled-work' as const]:[])] : [], authorityFencesV1: ready, scheduledWorkCoverageV1: ready&&routerCommandStorageReady() };
+  return { families: ready ? ['room-list', 'needs-you-count', 'room-head','room-workflows','agent-profile','owner-workbench','owner-wallet',...(routerCommandStorageReady()?['room-scheduled-work' as const]:[])] : [], authorityFencesV1: ready, scheduledWorkCoverageV1: ready&&routerCommandStorageReady() };
 }
 
 /** Sole transport owner calls this only after authentication and negotiation.
@@ -315,7 +322,7 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
   }
   lanes.connected(next.generation, next.families, async request => {
     const result = await next.execute(request);
-    if (result.family !== request.family || result.scope !== (request.agentId??(roomScoped(request.family) ? request.roomId : request.workspaceId)) ||
+    if (result.family !== request.family || result.scope !== (request.agentId??(roomScoped(request.family) ? request.roomId : request.workspaceId??principal)) ||
       !validCertificate(result) || utf8ToBytes(JSON.stringify(result)).length > 64 * 1024)
       throw new Error('Invalid projection snapshot.');
     if(request.family==='room-scheduled-work'&&next.scheduledWorkCoverageV1){
@@ -337,7 +344,7 @@ export function routerOwnerDisconnected(): void {
   instance += 1; negotiation = undefined; modeKnown = false; assembly.reset(); lanes?.disconnected(); notify();
 }
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-const families: readonly string[] = ['room-list', 'needs-you', 'needs-you-tray', 'needs-you-count', 'room-head','room-scheduled-work','needs-you-saved-page','workspace-roster','room-workflows','agent-profile'];
+const families: readonly string[] = ['room-list', 'needs-you', 'needs-you-tray', 'needs-you-count', 'room-head','room-scheduled-work','needs-you-saved-page','workspace-roster','room-workflows','agent-profile','owner-workbench','owner-wallet'];
 function cut(value: unknown): boolean {
   return record(value) && value.protocol === 1 && typeof value.stream === 'string' && value.stream.length <= 256 &&
     typeof value.epoch === 'string' && value.epoch.length <= 128 && Number.isSafeInteger(value.through) && Number(value.through) >= 0;
@@ -390,10 +397,11 @@ export function routerOwnerReceive(value: unknown): void {
     const domain = value.authorityScope;
     const profileDomain=negotiation.families.includes('agent-profile')&&typeof domain==='string'&&
       /^profile:[0-9a-f-]{36}:[^:]{1,128}$/.test(domain)&&domain.endsWith(`:${value.scope}`);
+    const ownerDomain=value.scope===principal&&negotiation.families.some(family=>family.startsWith('owner-')&&domain===`owner:${principal}:${family}`);
     if (typeof value.scope !== 'string' || value.scope.length > 256 || typeof domain !== 'string' ||
         ![ `room:${value.scope}`, `object:${value.scope}`, `reader:${principal}:workspace:${value.scope}`, `reader:${principal}:workspace:${value.scope}:visibility`,
           `scheduled-work-manager:${principal}:workspace:${value.scope}`,`scheduled-work-member:${principal}:room:${value.scope}`,
-          `scheduled-work-room:${value.scope}`,...(value.scope===principal?[`scheduled-work-principal:${principal}`]:[]) ].includes(domain)&&!profileDomain ||
+          `scheduled-work-room:${value.scope}`,...(value.scope===principal?[`scheduled-work-principal:${principal}`]:[]) ].includes(domain)&&!profileDomain&&!ownerDomain ||
         (value.mode !== undefined && value.mode !== 'deny' && value.mode !== 'advance') ||
         !certificate(value.authority) || !validCertificate({ authority: value.authority } as LaneSnapshot) ||
         utf8ToBytes(JSON.stringify(value)).length > 4096) { failAuthority(); return; }
@@ -447,15 +455,18 @@ export function routerLaneSnapshot(request: LaneRequest): LaneView { return lane
 /** Consumer attachment observes a trusted navigation slot. Mount alone cannot
  * authorize a read; the committed navigator and actual panel visibility gate it.
  */
-export function acquireRouterLane(request: LaneRequest, visible: () => boolean, listener: () => void) {
+const slotKey=(request:LaneRequest)=>JSON.stringify([request.family,roomScoped(request.family)?'':request.workspaceId,
+  request.family==='needs-you-saved-page'?request.before??'':request.agentId??request.roomId??'']);
+export function acquireRouterLane(request: LaneRequest, visible: () => boolean, listener: () => void,validate?:(value:unknown)=>boolean) {
   request = Object.freeze({ ...request });
-  const key = JSON.stringify([request.family, roomScoped(request.family) ? '' : request.workspaceId, request.family==='needs-you-saved-page'?request.before??'':request.agentId??request.roomId ?? '']);
+  const key = slotKey(request);
   let slot = slotsByKey.get(key);
   if (!slot) {
     slot = { request, consumers: new Map(), listeners: new Set() };
     slotNames.set(slot, `slot-${++nextSlotName}`); slots.add(slot); slotsByKey.set(key, slot);
   }
   const held = slot;
+  if(validate)held.validate=validate;
   if (roomScoped(request.family) && request.workspaceId) {
     if (held.expectedWorkspace && held.expectedWorkspace !== request.workspaceId) throw new Error('Room Workspace mismatch');
     lanes?.constrain(request);

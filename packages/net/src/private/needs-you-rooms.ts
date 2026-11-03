@@ -37,6 +37,6 @@ export function foldNeedsYouRooms(base:unknown,payload:NeedsYouRoomsPayload):{co
     if(rows.has(item.messageId))throw new Error('Invalid projection; Retry.');rows.set(item.messageId,item);
   }
   return {count:payload.count,items:payload.order.map(id=>{
-    const row=rows.get(id);if(!row)throw new Error('Invalid projection; Retry.');return row;
+    const row=rows.get(id);if(!row)throw new Error('Incomplete projection coverage');return row;
   })};
 }

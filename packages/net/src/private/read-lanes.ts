@@ -4,11 +4,12 @@ import { ProjectionGroups, type GroupCell, type GroupProposal } from './projecti
 import { jsonBytes as bytes, stagingWithinBudget } from './staging-bounds.js';
 import { LaneStaging, sameStream } from './lane-staging.js';
 /** Local state only. No transport, clock, scheduler, native module or server inventory. */
-export type LaneFamily = 'room-list' | 'needs-you' | 'needs-you-tray' | 'needs-you-count' | 'room-head'|'room-scheduled-work'|'needs-you-saved-page'|'workspace-roster'|'room-workflows'|'agent-profile';
+export type LaneFamily = 'room-list' | 'needs-you' | 'needs-you-tray' | 'needs-you-count' | 'room-head'|'room-scheduled-work'|'needs-you-saved-page'|'workspace-roster'|'room-workflows'|'agent-profile'|'owner-workbench'|'owner-wallet';
 export type LaneRequest = Readonly<{ family: 'room-head'|'room-scheduled-work'|'room-workflows'; roomId: string; workspaceId?: string;agentId?:never }> |
-  Readonly<{ family: Exclude<LaneFamily, 'room-head'|'room-scheduled-work'|'room-workflows'|'needs-you-saved-page'|'agent-profile'>; workspaceId: string; roomId?: never;agentId?:never }>|
+  Readonly<{ family: Exclude<LaneFamily, 'room-head'|'room-scheduled-work'|'room-workflows'|'needs-you-saved-page'|'agent-profile'|'owner-workbench'|'owner-wallet'>; workspaceId: string; roomId?: never;agentId?:never }>|
   Readonly<{family:'needs-you-saved-page';workspaceId:string;before?:string;roomId?:never;agentId?:never}>|
-  Readonly<{family:'agent-profile';workspaceId:string;agentId:string;roomId?:never}>;
+  Readonly<{family:'agent-profile';workspaceId:string;agentId:string;roomId?:never}>|
+  Readonly<{family:'owner-workbench'|'owner-wallet';workspaceId?:never;agentId?:never;roomId?:never}>;
 export type LaneCut = Readonly<{ stream: string; epoch: string; through: number; protocol: 1 }>;
 export type LaneAuthority = Readonly<{ digest: string; scopes: readonly Readonly<{ authorityScope: string; epoch: string }>[] }>;
 export type LaneSnapshot = Readonly<{ kind: 'snapshot'; value: unknown; cut: LaneCut; atomicGroup: string; authority: LaneAuthority;clockVersion?:string }>;
@@ -246,7 +247,9 @@ export class ReadLanes {
           targetDomain===`scheduled-work-member:${this.identity.principal}:room:${logicalScope}`||targetDomain===`scheduled-work-room:${logicalScope}`);
         const profileFits=readerFits&&targetDomain===`profile:${streamWorkspace}:${logicalScope}`&&
           fact.atomicGroup===`agent-profile:${streamWorkspace}:${logicalScope}:${this.identity.principal}`;
-        const target = domainFits||scheduledFits||profileFits ? fact.authority.scopes.find(scope => scope.authorityScope === targetDomain) : undefined;
+        const ownerFits=batch.to.stream===`owner:${this.identity.principal}`&&logicalScope===this.identity.principal&&
+          targetDomain?.startsWith(`owner:${this.identity.principal}:owner-`);
+        const target = domainFits||scheduledFits||profileFits||ownerFits ? fact.authority.scopes.find(scope => scope.authorityScope === targetDomain) : undefined;
         if (!target||!/^\d+$/.test(target.epoch)) {
           if(fact.payload.kind===AUTHORITY_FENCE_KIND){await this.unavailableGroup(batch.to.stream,fact.atomicGroup);continue;}
           for (const entry of this.entries.values()) if (entry.request.roomId === logicalScope ||
@@ -399,7 +402,7 @@ export class ReadLanes {
     const key = this.key(request);
     let entry = this.entries.get(key);
     if (!entry) {
-      if (roomFamily(request.family) ? !request.roomId : !request.workspaceId) throw new Error('invalid lane scope');
+      if (roomFamily(request.family) ? !request.roomId : !request.workspaceId&&!request.family.startsWith('owner-')) throw new Error('invalid lane scope');
       entry = { key, request: Object.freeze({ ...request }), view: absent(), owners: new Map(), revision: 0,
         connection: -1,covered:false,committing:0, queued: this.staging.stage(), listeners: new Set() };
       this.entries.set(key, entry); this.evict();

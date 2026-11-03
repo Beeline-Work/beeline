@@ -16,7 +16,7 @@ export type GroupProposal<T extends GroupCell>=Readonly<{id:string;group?:Group;
   whole:readonly CellSnapshot<T>[];versions:readonly number[];cut?:LaneCut;clockVersion?:string}>;
 const REPLACE='scope-replace',UNAVAILABLE='Projection unavailable; Retry.';
 const room=(request:LaneRequest)=>request.family==='room-head'||request.family==='room-scheduled-work'||request.family==='room-workflows';
-const scope=(request:LaneRequest)=>request.agentId??(room(request)?request.roomId!:request.workspaceId!);
+const scope=(request:LaneRequest,reader:string)=>request.agentId??(room(request)?request.roomId!:request.workspaceId??reader);
 
 /** The single local member/receipt/interval/proposal owner. ReadLanes alone
  * dispatches admitted reads and serializes storage/publication. Legacy members
@@ -70,7 +70,7 @@ export class ProjectionGroups<T extends GroupCell>{
   snapshot(cell:T,response:LaneSnapshot):GroupProposal<T>|undefined{
     const workspace=cell.expectedWorkspace??cell.request.workspaceId;
     if(response.kind!=='snapshot'||response.cut.protocol!==1||!Number.isSafeInteger(response.cut.through)||response.cut.through<0||!response.cut.epoch||
-      (workspace?response.cut.stream!==`workspace:${workspace}`:!response.cut.stream.startsWith('workspace:'))||
+      (workspace?response.cut.stream!==`workspace:${workspace}`:room(cell.request)?!response.cut.stream.startsWith('workspace:'):response.cut.stream!==`owner:${this.reader}`)||
       !this.authorized(response.authority)||!this.valid(cell.request,response.value))throw new Error('Invalid snapshot; Retry.');
     let state:Group|undefined;
     if(this.joint(cell)){
@@ -105,9 +105,9 @@ export class ProjectionGroups<T extends GroupCell>{
       }
       if(cell.flight){
         if(cell.request.workspaceId?batch.to.stream!==`workspace:${cell.request.workspaceId}`:
-          !batch.facts.some(fact=>fact.payload.kind===REPLACE&&fact.payload.family===cell.request.family&&fact.payload.scope===scope(cell.request)))continue;
+          !batch.facts.some(fact=>fact.payload.kind===REPLACE&&fact.payload.family===cell.request.family&&fact.payload.scope===scope(cell.request,this.reader)))continue;
         const related=new Set(batch.facts.filter(fact=>fact.payload.kind===REPLACE&&fact.payload.family===cell.request.family&&
-          fact.payload.scope===scope(cell.request)).map(fact=>fact.atomicGroup));if(held)related.add(held.atomicGroup);
+          fact.payload.scope===scope(cell.request,this.reader)).map(fact=>fact.atomicGroup));if(held)related.add(held.atomicGroup);
         try{cell.queued.add(batch,batch.facts.filter(fact=>fact.payload.kind!==REPLACE||related.has(fact.atomicGroup)));}
         catch{this.park(cell,'Projection queue overflow; Retry.');}continue;
       }
@@ -116,14 +116,14 @@ export class ProjectionGroups<T extends GroupCell>{
       if(batch.to.through<=held.cut.through)continue;
       const progress=cell.classified??held.cut;
       if(cell.view.state==='REVOKED'&&!batch.facts.some(fact=>fact.atomicGroup===held.atomicGroup&&fact.payload.kind===REPLACE&&
-        fact.payload.family===cell.request.family&&fact.payload.scope===scope(cell.request)&&this.authorized(fact.authority)))continue;
+        fact.payload.family===cell.request.family&&fact.payload.scope===scope(cell.request,this.reader)&&this.authorized(fact.authority)))continue;
       if(batch.from.through>progress.through){
         if(!cell.snapshot&&cell.view.value===null){unavailable.push(held.atomicGroup);continue;}
         const facts=batch.facts.filter(fact=>fact.atomicGroup===held.atomicGroup);
         if(!facts.length&&!(scheduled&&cell.request.family==='room-scheduled-work'&&batch.scheduledWorkClassification))continue;
         try{cell.queued.add(batch,facts,jsonBytes(batch),true);}catch{this.park(cell,'Projection gap; Retry.');}continue;
       }
-      const roomChanges=cell.request.family==='needs-you'?batch.facts.filter(fact=>fact.payload.kind==='needs-you-rooms-replace'&&fact.payload.scope===scope(cell.request)):[];
+      const roomChanges=cell.request.family==='needs-you'?batch.facts.filter(fact=>fact.payload.kind==='needs-you-rooms-replace'&&fact.payload.scope===scope(cell.request,this.reader)):[];
       if(roomChanges.length){
         const fact=roomChanges[0]!;
         try{
@@ -133,7 +133,7 @@ export class ProjectionGroups<T extends GroupCell>{
           items.push({cell,snapshot:{kind:'snapshot',value,cut:batch.to,atomicGroup:fact.atomicGroup,authority:fact.authority}});
         }catch{this.park(cell,UNAVAILABLE);}continue;
       }
-      const facts=batch.facts.filter(fact=>fact.payload.kind===REPLACE&&fact.payload.family===cell.request.family&&fact.payload.scope===scope(cell.request));
+      const facts=batch.facts.filter(fact=>fact.payload.kind===REPLACE&&fact.payload.family===cell.request.family&&fact.payload.scope===scope(cell.request,this.reader));
       const fact=facts.at(-1);
       if(!fact){
         if(scheduled&&batch.scheduledWorkClassification&&cell.request.family==='room-scheduled-work'&&cell.snapshot&&cell.covered&&

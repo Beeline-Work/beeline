@@ -22,10 +22,10 @@ BEGIN
  IF TG_OP='UPDATE' THEN
   IF previous IS NOT DISTINCT FROM current THEN RETURN NEW;END IF;
   IF TG_TABLE_NAME='agents' AND ROW(previous->'owner_id',previous->'access_policy',previous->'soul',previous->'harness',previous->'model_catalog',
-    previous->'commands',previous->'selected_model',previous->'selected_effort',previous->'fast_mode',previous->'model_unavailable',
+    previous->'commands',previous->'chosen_voices',previous->'selected_model',previous->'selected_effort',previous->'fast_mode',previous->'model_unavailable',
     previous->'yolo_mode',previous->'yolo_set_by',previous->'yolo_set_at') IS NOT DISTINCT FROM
    ROW(current->'owner_id',current->'access_policy',current->'soul',current->'harness',current->'model_catalog',
-    current->'commands',current->'selected_model',current->'selected_effort',current->'fast_mode',current->'model_unavailable',
+    current->'commands',current->'chosen_voices',current->'selected_model',current->'selected_effort',current->'fast_mode',current->'model_unavailable',
     current->'yolo_mode',current->'yolo_set_by',current->'yolo_set_at') THEN RETURN NEW;END IF;
   IF TG_TABLE_NAME='identities' AND
    ROW(current->'name',current->'handle',current->'avatar',current->'face_id',current->'hidden_from_roster')

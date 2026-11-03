@@ -1,4 +1,6 @@
-vi.mock('@/buzz/router-owner', () => ({ routerOwnerUsageProfile: vi.fn() }));
+const profileLane=vi.hoisted(()=>({mode:'legacy' as 'legacy'|'pending'|'router',view:null as any,listeners:new Set<()=>void>(),acquire:vi.fn(),retry:vi.fn()}));
+vi.mock('@/buzz/router-family',()=>({useRouterFamily:()=>profileLane.mode}));
+vi.mock('@/buzz/router-owner',()=>({routerOwnerUsageProfile:vi.fn(),acquireRouterLane:(...args:any[])=>profileLane.acquire(...args),retryRouterLane:(...args:any[])=>profileLane.retry(...args)}));
 vi.mock('@/buzz/use-agent-usage-cell', () => ({ useAgentUsageCell: () => ({ mode: 'legacy', cell: null }) }));
 vi.mock('@/utils/responsive', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/responsive')>()), useIsDesktop: () => false }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
@@ -32,6 +34,7 @@ const roomView = vi.hoisted(() => ({
   workspace: vi.fn(),
   agent: vi.fn(),
   workspaceMembers: vi.fn(),
+  agentVoices:vi.fn(),
 }));
 const share = vi.hoisted(() => vi.fn(async () => undefined));
 const modal = vi.hoisted(() => ({
@@ -204,7 +207,7 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     AccessibilityInfo: { announceForAccessibility: vi.fn() }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
-    AppState: { addEventListener: () => ({ remove: () => undefined }) },
+    AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
     Share: { share },
     Platform: platform,
     useWindowDimensions: () => ({ width: 390, height: 844 }),
@@ -367,6 +370,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspace = roomView.workspace;
     agent = roomView.agent;
+    agentVoices=roomView.agentVoices;
     workspaceMembers = roomView.workspaceMembers;
   },
 }));
@@ -375,6 +379,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
   class RoomViewClient {
     workspace = roomView.workspace;
     agent = roomView.agent;
+    agentVoices=roomView.agentVoices;
     workspaceMembers = roomView.workspaceMembers;
   }
   class SurfaceRefreshScheduler<T> {
@@ -516,6 +521,26 @@ function baseAgent() {
   };
 }
 
+it('F09 negotiated native profile and portrait consume one canonical detail; transient frames never read another profile or Workspace',async()=>{
+  const {AgentProfileView}=await import('@/components/buzz/AgentProfileView');
+  const {SoulPortraitControls}=await import('@/components/buzz/SoulPortraitControls');
+  profileLane.mode='router';profileLane.view={state:'LIVE',value:{...baseAgent(),canRemove:true,configVersion:'1',voiceRevision:'voice-1'},error:null,cut:null};
+  let renderer!:ReactTestRenderer;
+  await act(async()=>{renderer=create(<AgentProfileRoute/>);});
+  expect(profileLane.acquire).toHaveBeenCalledTimes(1);
+  expect(profileLane.acquire.mock.calls[0]![0]).toEqual({family:'agent-profile',workspaceId:WORKSPACE,agentId:AGENT});
+  expect(renderer.root.findByType(AgentProfileView).props.detail).toBe(profileLane.view.value);
+  expect(renderer.root.findByType(SoulPortraitControls).props.detail).toBe(profileLane.view.value);
+  const voiceReads=roomView.agentVoices.mock.calls.length;
+  for(let n=0;n<1000;n++)for(const listener of liveListeners)listener({monolithLive:{type:'resource-change',roomId:'',resource:'agent',resourceId:AGENT}});
+  const next={...profileLane.view.value,configVersion:'2',agent:{...profileLane.view.value.agent,identity:{...profileLane.view.value.agent.identity,avatar:'https://synthetic.invalid/committed.png'}}};
+  await act(async()=>{profileLane.view={...profileLane.view,value:next};for(const wake of profileLane.listeners)wake();});
+  expect(renderer.root.findByType(AgentProfileView).props.detail).toBe(next);
+  expect(renderer.root.findByType(SoulPortraitControls).props.detail).toBe(next);
+  expect(roomView.agent).not.toHaveBeenCalled();expect(roomView.workspace).not.toHaveBeenCalled();expect(phoneOperation).not.toHaveBeenCalled();
+  expect(profileLane.acquire).toHaveBeenCalledTimes(1);expect(roomView.agentVoices).toHaveBeenCalledTimes(voiceReads);
+});
+
 // Every screen unmounts before the next case, so it releases the shared
 // Workspace watch and the next case opens its own.
 const mounted: ReactTestRenderer[] = [];
@@ -567,12 +592,15 @@ beforeEach(() => {
   surfaces.values.clear();
   surfaces.listeners.clear();
   vi.clearAllMocks();
+  profileLane.mode='legacy';profileLane.view=null;profileLane.listeners.clear();
+  profileLane.acquire.mockImplementation(()=>({current:()=>profileLane.view,release:()=>{},subscribe:(wake:()=>void)=>{profileLane.listeners.add(wake);return()=>profileLane.listeners.delete(wake);}}));
   platform.OS = 'ios';
   navigation.beforeRemove = null;
   state.workspace = baseWorkspace();
   state.agent = baseAgent();
   roomView.workspace.mockImplementation(async () => state.workspace);
   roomView.agent.mockImplementation(async () => state.agent);
+  roomView.agentVoices.mockResolvedValue({currentVoiceId:'voice-1',canChange:true,choices:[{id:'voice-1',name:'Voice one'}]});
   roomView.workspaceMembers.mockImplementation(async () => ({
     viewer: state.workspace.viewer,
     members: state.workspace.members,

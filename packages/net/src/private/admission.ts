@@ -239,7 +239,7 @@ export class AdmissionOwner {
       if (!policy || !('screen' in policy)) return this.deny('wrong screen');
       if (request.route === 'phone.readRouterSnapshot') {
         const family = request.input.family;
-        if (screen === 'Room' ? !['room-head','room-workflows'].includes(family) :screen==='AgentProfile'?!['workspace-roster','agent-profile'].includes(family):screen==='ScheduledWork'?family!=='room-scheduled-work':screen==='Tray'?family!=='needs-you-tray':!['room-list', 'needs-you-count','workspace-roster'].includes(family))
+        if (screen === 'Room' ? !['room-head','room-workflows'].includes(family) :screen==='AgentProfile'?!['workspace-roster','agent-profile'].includes(family):screen==='ScheduledWork'?family!=='room-scheduled-work':screen==='Tray'?family!=='needs-you-tray':!['room-list', 'needs-you-count','workspace-roster'].includes(family)&&!family.startsWith('owner-'))
           return this.deny('wrong screen family');
         if (family === 'room-head'||family==='room-scheduled-work'||family==='room-workflows' ? !request.input.roomId : request.input.roomId !== undefined)
           return this.deny('wrong family scope');

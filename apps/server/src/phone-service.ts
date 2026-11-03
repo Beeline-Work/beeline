@@ -1,3 +1,4 @@
+import { roomToolSummaries } from './room-tool-projection.js';
 import { buildTrayProjection, readMessageBookmarks } from './tray-projection.js';
 import { readTraySavedWindow } from './tray-saved-window.js';
 import { buildTraySavedFacts, type TraySavedTarget } from './tray-saved-projection.js';
@@ -1202,7 +1203,10 @@ export class PhoneService {
     if (input.family === 'room-list') return reader.readChats(input.workspaceId, viewerId);
     if (input.family === 'room-head') {
       if (!input.roomId) throw new Error('roomId is required for room-head');
-      return reader.readRoom(input.roomId, viewerId);
+      const view = await reader.readRoom(input.roomId, viewerId);
+      if (!view) return null;
+      const summaries = await roomToolSummaries(database,input.roomId,viewerId);
+      return {...view,toolRows:undefined,messages:[...view.messages,...summaries].sort(messageOrder).slice(-30)};
     }
     if(input.family==='room-scheduled-work')return buildRoomSchedulesProjection(reader.database,input.roomId,viewerId,this.publicOrigin);
     if(input.family==='needs-you-tray')return buildTrayProjection(reader.database,input.workspaceId,viewerId,row=>identity(row,reader.publicOrigin),options?.trayClock?'committed':'wall');
@@ -3032,6 +3036,7 @@ export class PhoneService {
            JOIN active_turn_rows turn ON turn.agent_id=m.author_id
              AND date_trunc('second',m.created_at)>=date_trunc('second',turn.created_at)
            WHERE m.presentation='activity' AND m.durable_fact IS NULL
+             ${this.pureProjection ? `AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(m.activity) item WHERE item->>'kind'='tool')` : ''}
            ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
          ), corner_tool_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
@@ -3041,7 +3046,7 @@ export class PhoneService {
            FROM authorized_room room
            JOIN messages m ON m.room_id=room.id
            JOIN identities i ON i.id=m.author_id
-           WHERE room.parent_id IS NOT NULL AND m.presentation='activity'
+           WHERE room.parent_id IS NOT NULL ${this.pureProjection ? 'AND false' : ''} AND m.presentation='activity'
              AND m.durable_fact IS NULL AND EXISTS(
                SELECT 1 FROM jsonb_array_elements(m.activity) item
                WHERE item->>'kind' IN ('tool','output'))
@@ -10833,6 +10838,7 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
 ]);
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
+  'readRoomTools',
   ...PHONE_ROUTE_OPERATION_NAMES,
   'disconnectAiClient',
   'openComputerSession',

@@ -1,3 +1,9 @@
+/** Private owner timers can be driven without replacing Node's transport clocks. */
+export interface WorkTimers {
+  setTimeout(run: () => void, delayMs: number): ReturnType<typeof setTimeout>;
+  clearTimeout(timer: ReturnType<typeof setTimeout> | undefined): void;
+}
+
 /** Independent deadlines keep a notification from advancing unrelated repair work. */
 export class BackgroundWork {
   private readonly jobs = new Map<string, {
@@ -31,6 +37,13 @@ export class BackgroundWork {
     if (!job) return;
     job.pending = true;
     this.wakes[source] = (this.wakes[source] ?? 0) + 1;
+  }
+
+  /** A completed detached business flight publishes its next stored deadline.
+   * This does not admit an observation or mark the family pending. */
+  schedule(name: string, delay: number | undefined): void {
+    const job = this.jobs.get(name);
+    if (job) job.nextAt = delay === undefined ? Infinity : this.now() + Math.max(0,delay);
   }
 
   async run(newLeader: boolean): Promise<number> {

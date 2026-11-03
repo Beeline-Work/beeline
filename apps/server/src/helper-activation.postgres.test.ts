@@ -6,6 +6,7 @@ import { PostgresDatabase,type SqlDatabase } from './database.js';
 import { HELPER_ACTIVATION_SCHEMA } from './helper-activation-schema.js';
 import { captureCommandActivation,fenceCommandActivationEnqueue,type ActivationReader } from './helper-activation.js';
 import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
+import { CommandActivationContext } from '../../body/src/helper-activation-context.js';
 const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if(url&&!['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname))throw new Error('Activation proofs require isolated loopback PostgreSQL');
 const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {resolve,promise};};
@@ -53,6 +54,13 @@ describe.skipIf(!url)('actual PostgreSQL coherent activation and authority conte
       const oldCut=await captured;expect(oldCut.configuration.fastMode).toBe(false);
       const delivered:unknown[]=[];expect(await fenceCommandActivationEnqueue(left,oldCut,value=>{delivered.push(value);})).toBe(false);expect(delivered).toEqual([]);
       const current=await captureCommandActivation(left,input,read);expect(current.configuration.fastMode).toBe(true);
+      const scope={origin:'http://127.0.0.1',generation:1,source:input.source};
+      let setupReads=0;
+      const context=new CommandActivationContext({scope:()=>scope,selected:()=>true,read:async request=>{
+        setupReads++;return captureCommandActivation(left,request,read);
+      }});
+      const held=await Promise.all(Array.from({length:100},()=>context.read(input)));
+      expect(setupReads).toBe(1);expect(held.every(value=>value===held[0])).toBe(true);
       revoking=right.transaction(async db=>{await db.query(`UPDATE agent_grants SET status='revoked'`);revokeHeld.resolve();await commitRevoke.promise;});
       await revokeHeld.promise;
       const observed:SqlDatabase={query:(sql,values)=>left.query(sql,values),transaction:work=>left.transaction(db=>work({
@@ -62,6 +70,10 @@ describe.skipIf(!url)('actual PostgreSQL coherent activation and authority conte
       }))};
       fencing=fenceCommandActivationEnqueue(observed,current,value=>{delivered.push(value);});
       await fenceEntered.promise;expect(delivered).toEqual([]);commitRevoke.resolve();await revoking;expect(await fencing).toBe(false);expect(delivered).toEqual([]);
+      // A cached setup value is context, never current effect authority.
+      expect(await context.read(input)).toBe(held[0]);expect(setupReads).toBe(1);
+      expect(await fenceCommandActivationEnqueue(left,held[0]!,value=>{delivered.push(value);})).toBe(false);
+      expect(delivered).toEqual([]);
       const newest=await captureCommandActivation(left,input,read);
       await right.query(`UPDATE agent_commands SET generation_id='replacement' WHERE id=$1`,[input.commandId]);
       await expect(fenceCommandActivationEnqueue(left,newest,value=>{delivered.push(value);})).rejects.toThrow('command ownership changed');expect(delivered).toEqual([]);

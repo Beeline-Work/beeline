@@ -21,6 +21,7 @@ import {
   ENRICHMENT_STATEMENT_TIMEOUT_MS,
   postgresPoolConfig,
   REQUIRED_SCHEMA_VERSION,
+  REQUIRED_ROUTER_SCHEMA_VERSION,
   markSchemaCurrent,
   migrateData,
   PostgresDatabase,
@@ -822,7 +823,7 @@ describe('release-owned schema readiness', () => {
   it('returns unavailable boot evidence once without treating it as a schema mismatch', async () => {
     const failure = new Error('timeout exceeded when trying to connect');
     const query = vi.fn().mockRejectedValueOnce(failure)
-      .mockResolvedValueOnce(result([{ version: REQUIRED_SCHEMA_VERSION }]));
+      .mockResolvedValueOnce(result([{ version: REQUIRED_SCHEMA_VERSION, router_version: REQUIRED_ROUTER_SCHEMA_VERSION }]));
     await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).rejects.toBe(failure);
     expect(query).toHaveBeenCalledOnce();
     await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).resolves.toBeUndefined();

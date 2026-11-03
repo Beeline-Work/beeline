@@ -48,3 +48,8 @@
 - **Agent members reads expose assignment facts only within the Room.** `listRoomMembers` extends owner/host metadata with selected model, reported billing, remaining provider windows (fractions plus reset times), key dollars or credits, free token allowance, and the parent Room reviewer role (`agent-member-metadata.ts`). Unknown billing or allowance stays absent; snapshot timestamps preserve age. The workspace roster keeps only public metadata. Coverage: `agent-member-metadata.test.ts`; isolated dispatch and roster proof: `npm run prove:no-self-review`.
 
 - **Canonical helper usage is independently negotiated.** Owner/account publication, current actor/source fences, same-socket transport and independent phone usage cells are specified in [Helper usage ownership](helper-usage-protocol.md); that guide names the enablement gates and executable proofs.
+
+
+## Negotiated Room tool expansion
+
+`room-tool-projection.ts` supplies source IDs/counts for collapsed tool groups and bounded `readRoomTools` pages on the existing socket. `PhoneService.buildRouterValue` keeps full tool rows out of the initial negotiated Room value; legacy `readRoom` retains its format. Only the existing disclosure/More/Open gestures in `ActivityTimeline.tsx` admit expansion through `router-owner.ts`. Pages share the Room's current authority certificate and final enqueue fence; no mount, source notification or timer fetches the deferred output. The strict PostgreSQL gate is `scripts/prove-router-group-c-room-payload.mjs`; cohort and whole-finding status remains in the network closure ledger.

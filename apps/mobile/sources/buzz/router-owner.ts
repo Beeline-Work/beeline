@@ -20,6 +20,7 @@ type Negotiation = { generation: number; families: readonly LaneFamily[];
   usageCellV1?: boolean; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>;
   authorityFencesV1?: boolean; roomHeadContinuityV1?: boolean; scheduledWorkCoverageV1?: RouterCapabilities['scheduledWorkCoverageV1']; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>;
   executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>;
+  executeTools?: (input:PhoneOperationMap['readRoomTools']['input'])=>Promise<PhoneOperationMap['readRoomTools']['output']>;
   execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> };
 type Slot = { request: LaneRequest; consumers: Map<() => void, () => boolean>; listeners: Set<() => void>;
   generation?: number; expectedWorkspace?: string; token?: object; release?: () => void; stop?: () => void };
@@ -638,3 +639,24 @@ subscribeClientReset(() => {
   usageDemand?.disconnected(); usageDemand = undefined; readerOrigin = undefined; committedUsageProfile = null; usageProfilePending = false;
   admission = undefined; lanes?.reset(); lanes = undefined; initialized = undefined; navigation.reset(); notify();
 });
+
+/** Existing tool disclosure/More/Open gestures only; no mount or timer reads. */
+const toolFlights=new Map<string,Promise<PhoneOperationMap['readRoomTools']['output']>>();
+export function readRouterToolPage(input:PhoneOperationMap['readRoomTools']['input']):Promise<PhoneOperationMap['readRoomTools']['output']>{
+  try{
+  const focus=navigation.current(),connection=negotiation,owner=admission;
+  if(!owner||!focus||focus.screen!=='Room'||focus.roomId!==input.roomId||routerFamilyMode('room-head')!=='router'||!connection?.executeTools)
+    return Promise.reject(new Error('Tool output is unavailable.'));
+  const request={route:'phone.readRoomTools' as const,input};
+  const permit=owner.toolTap(focus.generation,focus.roomId,request,pass=>owner.spend(request,pass));
+  const key=JSON.stringify([instance,principal,readerOrigin,focus.generation,connection.generation,permit.wire.input]);
+  const joined=toolFlights.get(key);if(joined)return joined;
+  if(toolFlights.size>=16)throw new Error('Too many tool pages are opening.');
+  const flight=connection.executeTools(JSON.parse(permit.wire.input)).then(result=>{
+    if(!permit.isCurrent()||negotiation!==connection||authorityUnavailable)throw new Error('Tool output is no longer visible.');
+    return result;
+  });
+  toolFlights.set(key,flight);void flight.finally(()=>{if(toolFlights.get(key)===flight)toolFlights.delete(key);}).catch(()=>{});
+  return flight;
+  }catch(error){return Promise.reject(error);}
+}

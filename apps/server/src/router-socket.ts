@@ -382,6 +382,10 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
       return result;
     },
     async fenceReply(operation: string, args: Record<string, unknown>, result: unknown, enqueue: (safeResult?: unknown) => undefined): Promise<void> {
+      if(operation==='readRoomTools'){
+        await fenceRouterEnqueue(database,{family:'room-head',roomId:String(args.roomId)},viewer,
+          (result as import('@beeline/api-contract/phone').RoomToolPage).authority,()=>enqueue());return;
+      }
       if (operation === 'readAgentUsageCell') { this.requireUsage(); await fenceAgentUsageCellEnqueue(database, viewer, result as AgentUsageCell, cell => enqueue(cell)); return; }
       if(['readMediaMetadata','readMediaLink','readMediaPlayback'].includes(operation)){
         await fenceMediaMetadataEnqueue(database,String(args.objectId),viewer,

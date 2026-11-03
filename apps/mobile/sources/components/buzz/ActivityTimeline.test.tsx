@@ -1,3 +1,5 @@
+const toolReader=vi.hoisted(()=>vi.fn());
+vi.mock('@/buzz/router-owner',()=>({readRouterToolPage:toolReader}));
 import * as React from 'react';
 import { useFonts } from 'expo-font';
 vi.mock('expo-font', () => ({ useFonts: vi.fn(() => [true, null]) }));
@@ -891,4 +893,23 @@ it('retains Failed and a brass cross for a failed named MCP tool', () => {
   expect(cross.props.children).toBe('✗');
   expect(cross.props.style).toContainEqual({ color: groknight.accent });
   expect(texts.map((node: any) => node.props.children)).not.toContain('Read_file');
+});
+
+
+it('F07: collapsed 200-step summary reads zero; disclosure and output presses each load only their bounded target',async()=>{
+  toolReader.mockReset();
+  const roomId='22222222-2222-4222-8222-222222222222',anchor='d'.repeat(64);
+  const message={id:anchor,text:'',createdAt:1,presentation:'activity',author:{pubkey:'b'.repeat(64),kind:'agent',name:'Worker'},
+    activity:[{kind:'tool',title:'Synthetic tool',output:'excerpt',toolOutput:{roomId,anchor,messageId:anchor}}]};
+  toolReader.mockResolvedValueOnce({roomId,messages:[message],next:'tool-anchor'});
+  const renderer=render(<TurnStepsLine items={[{kind:'tool',id:'aggregate',title:'200 steps',toolGroup:{roomId,anchor,count:200}}]}/>);
+  expect(toolReader).not.toHaveBeenCalled();
+  expect(renderer.root.findByProps({testID:'tool-run-group-aggregate'}).props.accessibilityLabel).toContain('200 steps');
+  await act(async()=>expandRun(renderer,'aggregate'));
+  expect(toolReader).toHaveBeenCalledTimes(1);expect(toolReader.mock.calls[0][0]).toMatchObject({roomId,anchor});
+  toolReader.mockResolvedValueOnce({roomId,messages:[{...message,activity:[{kind:'tool',title:'Synthetic tool',output:'x'.repeat(32768)}]}]});
+  await act(async()=>renderer.root.findByProps({testID:`tool-ledger-line-${anchor}:0`}).props.onPress());
+  expect(toolReader).toHaveBeenCalledTimes(2);expect(toolReader.mock.calls[1][0]).toEqual({roomId,anchor,messageId:anchor});
+  expect(renderer.root.findByProps({testID:'tool-output-text'}).props.children).toBe('x'.repeat(32768));
+  await act(async()=>renderer.unmount());
 });

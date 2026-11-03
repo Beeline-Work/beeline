@@ -6,6 +6,7 @@ import { AGENT_SCHEDULE_SOURCE_SCHEMA } from './agent-schedule-source.js';
 import { HELPER_ACTIVATION_SCHEMA } from './helper-activation-schema.js';
 import { HELPER_USAGE_SCHEMA } from './helper-usage.js';
 import { HELPER_OVERLAY_SCHEMA } from './helper-overlay.js';
+import { BACKGROUND_DUE_SOURCE_SCHEMA } from './background-due-source.js';
 import { MCP_MEMBER_STREAM_SCHEMA } from './rooms-mcp-stream.js';
 import { MEDIA_AUTHORITY_SCHEMA } from './media-authority-schema.js';
 import { X_SIGNUP_DELIVERY_SCHEMA } from './x-ads.js';
@@ -257,7 +258,11 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 61;
+// Preserve the schema46 image's boot marker through the additive expansion.
+// Router readiness has its own marker, written only after all migrations finish.
+// The expansion image (router off) becomes the switch release's rollback floor.
+export const REQUIRED_SCHEMA_VERSION = 46;
+export const REQUIRED_ROUTER_SCHEMA_VERSION = 61;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -269,15 +274,26 @@ export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
     INSERT INTO beeline_schema_state(singleton, version, migrated_at)
     VALUES (true, ${REQUIRED_SCHEMA_VERSION}, now())
     ON CONFLICT (singleton) DO UPDATE
+      SET version=EXCLUDED.version, migrated_at=EXCLUDED.migrated_at;
+    CREATE TABLE IF NOT EXISTS beeline_router_schema_state (
+      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+      version integer NOT NULL,
+      migrated_at timestamptz NOT NULL DEFAULT now()
+    );
+    INSERT INTO beeline_router_schema_state(singleton, version, migrated_at)
+    VALUES (true, ${REQUIRED_ROUTER_SCHEMA_VERSION}, now())
+    ON CONFLICT (singleton) DO UPDATE
       SET version=EXCLUDED.version, migrated_at=EXCLUDED.migrated_at
   `);
 }
 
 export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> {
-  let result: QueryResult<{ version: number }>;
+  let result: QueryResult<{ version: number; router_version: number | null }>;
   try {
-    result = await database.query<{ version: number }>(
-      `SELECT version FROM beeline_schema_state WHERE singleton=true`,
+    result = await database.query<{ version: number; router_version: number | null }>(
+      `SELECT version,
+        (SELECT version FROM beeline_router_schema_state WHERE singleton=true) router_version
+       FROM beeline_schema_state WHERE singleton=true`,
     );
   } catch (error) {
     // Unavailability is not a schema mismatch and grants no timed observation.
@@ -292,6 +308,12 @@ export async function assertSchemaCurrent(database: SqlDatabase): Promise<void> 
   if (version !== REQUIRED_SCHEMA_VERSION) {
     throw new Error(
       `database schema is not ready for this server image (expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${version ?? 'no marker'}); run the release migration step`,
+    );
+  }
+  const routerVersion = result.rows[0]?.router_version;
+  if (routerVersion !== REQUIRED_ROUTER_SCHEMA_VERSION) {
+    throw new Error(
+      `database schema is not ready for this server image (expected router schema version ${REQUIRED_ROUTER_SCHEMA_VERSION}, found ${routerVersion ?? 'no marker'}); run the release migration step`,
     );
   }
 }
@@ -3550,6 +3572,7 @@ export async function migrate(
   await ddlScript('Helper usage ownership', HELPER_USAGE_SCHEMA);
   await ddlScript('Helper command activation', HELPER_ACTIVATION_SCHEMA);
   await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);
+  await ddlScript('Background obligation sources', BACKGROUND_DUE_SOURCE_SCHEMA);
   if (!options.deferData) await migrateData(database);
 }
 

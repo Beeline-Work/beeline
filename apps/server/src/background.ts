@@ -204,6 +204,22 @@ export class PushDeliveryLoop {
     return due.rows[0]?.not_before ?? null;
   }
 
+  async nextDelayMs(): Promise<number | undefined> {
+    if(this.#repeatBatch)return 0;
+    const platforms = [this.iosSender?.clearRead ? 'ios' : '', this.sender?.clearRead ? 'android' : ''];
+    const row = (await this.database.query<{delay_ms:number|null}>(`SELECT ceil(extract(epoch FROM (min(due_at)-clock_timestamp()))*1000)::float8 delay_ms FROM (
+      SELECT not_before due_at FROM push_outbox
+      UNION ALL SELECT clear.sent_at+interval '${READ_CLEAR_INTERVAL_SECONDS} seconds'
+      FROM push_read_clears clear JOIN push_devices device ON device.token=clear.device_token
+      WHERE device.platform=ANY($1::text[]) AND EXISTS(
+        SELECT 1 FROM push_delivery_claims claim JOIN messages message ON message.id=claim.message_id
+        JOIN room_read_marks mark ON mark.identity_id=device.identity_id AND mark.room_id=message.room_id
+        WHERE claim.device_token=device.token AND claim.status='delivered' AND claim.read_cleared_at IS NULL
+          AND (message.created_at,message.id)<=(mark.message_created_at,mark.message_id))
+    ) due WHERE due_at>clock_timestamp()`, [platforms])).rows[0];
+    return row?.delay_ms == null ? undefined : Math.max(0,Number(row.delay_ms));
+  }
+
   async runOnce(): Promise<number> {
     let delivered = 0;
     if (Date.now() - this.#lastBacklogCheck >= 60_000) {
@@ -887,6 +903,17 @@ export class MediaExpiryLoop {
     if (now - this.#lastSweep < this.intervalMs) return 0;
     this.#lastSweep = now;
     return this.sweepObjects();
+  }
+
+  /** Exact deadline owner bypasses the former hourly observation throttle. */
+  async runDeadline(): Promise<void> { await this.sweepObjects(); }
+
+  async nextDelayMs(): Promise<number | undefined> {
+    if (!this.objects) return;
+    return (await import('./background-deadline-clock.js')).backgroundNextDelay(this.database,
+      `SELECT LEAST(expires_at,CASE WHEN state='pending' THEN created_at+interval '1 hour' END) due_at FROM objects
+       WHERE NOT EXISTS(SELECT 1 FROM corner_brief_revisions brief JOIN rooms corner ON corner.id=brief.corner_id AND corner.archived_at IS NULL
+         CROSS JOIN LATERAL jsonb_array_elements(brief.attachments) file WHERE file->>'objectId'=objects.id::text)`);
   }
 
   /**

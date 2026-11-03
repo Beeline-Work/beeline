@@ -12,6 +12,26 @@ The original phone manifest contains 54 keys/70 occurrences, including origin st
 
 `packages/net/src/routes.ts` still constructs the exhaustive phone and daemon contracts with `compatibility:'legacy-only'`. There is no complete runtime route owner/admission implementation for every declared operation. `monolithPhoneOperation` and `MonolithRoomViewClient` still issue generic main-socket requests, and most `DaemonApiClient.execute` operations still issue HTTP. Moving a call to the main socket, adding codecs or renaming a wrapper does not close that bypass.
 
+## Integration follow-up: test-only boundaries
+
+At integrated group head `90cc89968`, all nine auth fixture importers and all
+three fake-broker importers are tests. Source-entry esbuild graphs for every
+auth export and Body's exports/CLI/recovery/read-only-MCP entries contain neither
+`server-test-fixture.ts` nor `squire-broker-link.test-support.ts` (19 auth and
+201 Body local inputs). [Inputs and hashes](t7-fixture-reachability.json) record
+this bounded proof; npm dependencies are external, so it is not a shipped
+archive/native/transitive dependency audit. The mobile browser proof driver has
+one browser-test importer; no mobile shipping-artifact exclusion is claimed.
+
+Both Node fixtures were nevertheless included by their broad production
+TypeScript `src/**/*.ts` globs. Their exact files are now excluded from production
+compilation; tests still import the same fixtures at their original paths.
+This removes test HTTP/Unix-socket adapters from fresh compiled output without
+renaming a boundary, exempting a source directory, changing a scanner or deleting
+inventory entries. Existing local incremental `dist/` files are not shipping
+proof; use a fresh build for packaging. The router inventory remains **158 keys**
+and every real runtime ownership/removal obligation remains open.
+
 ## Final architecture and compatibility boundary
 
 1. One transport-free shared route registry owns literal operation identity, exact codecs, permitted trigger/owner, scope/key, recovery policy, input/result/queue bounds, durable effect classification and source/deadline dependencies. No arbitrary URL, operation name, request object, provider client or executor is available to feature code. A caller can select only a closed leaf it is authorized to admit.

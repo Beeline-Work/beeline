@@ -1,0 +1,727 @@
+{
+  "schema": "router-recurring-inventory.v1",
+  "auditSha256": "fc930a9d1c4db0eb148103c8ca478bcdd33a33403edfc02ae5b336fab3ec213d",
+  "note": "Complete Appendix D1/D2 mechanism census. Classification does not attest a whole finding or cohort is closed. Proof paths identify required executable evidence; see group-b-proof.md for runs.",
+  "entries": [
+    {
+      "id": "D1-01",
+      "mechanism": "Phone refresh scheduler",
+      "disposition": "other",
+      "owner": "surface.snapshot",
+      "implementation": "packages/buzz-client/src/surface-refresh.ts",
+      "proof": "apps/mobile/sources/buzz/use-observed-resource.test.tsx",
+      "boundary": "F02/F05 consumer and cohort gates",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-02",
+      "mechanism": "Phone request/handshake/background timers",
+      "disposition": "control",
+      "owner": "LiveConnection request/barrier/background close",
+      "implementation": "apps/mobile/sources/sync/transport/live-connection.ts",
+      "proof": "apps/mobile/sources/sync/transport/live-connection.test.ts",
+      "boundary": "F10 owner and released-cohort matrix",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-03",
+      "mechanism": "Phone observed-resource cooldown",
+      "disposition": "other",
+      "owner": "observed-resource focus",
+      "implementation": "apps/mobile/sources/buzz/use-observed-resource.ts",
+      "proof": "apps/mobile/sources/buzz/use-observed-resource.test.tsx",
+      "boundary": "F05 hidden consumer/cohort gates",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-04",
+      "mechanism": "Phone read cursor/search debounce",
+      "disposition": "other",
+      "owner": "viewport mark / explicit message search",
+      "implementation": "apps/mobile/sources/buzz/use-message-search.ts",
+      "proof": "apps/mobile/sources/buzz/use-message-search.test.tsx",
+      "boundary": "F18 action ownership of delayed search is not closed here",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-05",
+      "mechanism": "Phone clock/UI timers",
+      "disposition": "local",
+      "owner": "display clock only",
+      "implementation": "apps/mobile/sources/buzz/chat-list-store.ts",
+      "proof": "apps/mobile/sources/buzz/chat-list-store.test.ts",
+      "boundary": "Local exclusion requires transitive network scanner evidence",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-06",
+      "mechanism": "Phone auth pending loops",
+      "disposition": "other",
+      "owner": "auth held completion",
+      "implementation": "apps/mobile/sources/auth/github-auth-session.ts",
+      "proof": "apps/mobile/sources/auth/github-auth-session.test.ts",
+      "boundary": "F11 owns provider/native matrix",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-07",
+      "mechanism": "Voice action transient retry",
+      "disposition": "other",
+      "owner": "voice call action",
+      "implementation": "apps/mobile/sources/buzz/use-voice-call.ts",
+      "proof": "apps/mobile/sources/buzz/use-voice-call.test.tsx",
+      "boundary": "F18/F21 installed SDK and call ownership gates",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-08",
+      "mechanism": "Shared-browser viewer recovery",
+      "disposition": "control",
+      "owner": "serveComputerStatus / explicit Retry",
+      "implementation": "apps/server/src/computer-session.ts",
+      "proof": "apps/server/src/computer-session.test.ts",
+      "boundary": "Full browser/native/cohort matrix",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-09",
+      "mechanism": "Helper working receipt",
+      "disposition": "open",
+      "owner": "startTurnReceiptHeartbeat legacy / owned turn-operation",
+      "implementation": "apps/body/src/turn-receipt-heartbeat.ts",
+      "proof": "apps/server/src/turn-ownership-socket.test.ts",
+      "boundary": "Legacy working heartbeat remains; owned source and effect floors remain open",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-10",
+      "mechanism": "Helper live reconnect / registration",
+      "disposition": "control",
+      "owner": "MachineLink / AgentChannel registration",
+      "implementation": "apps/body/src/machine-link.ts",
+      "proof": "apps/body/src/machine-link.refusal.test.ts",
+      "boundary": "Old helper and mixed-server workload proof",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-11",
+      "mechanism": "Helper Room supervisor",
+      "disposition": "control",
+      "owner": "RoomSupervisor source recovery",
+      "implementation": "apps/body/src/room-supervisor.ts",
+      "proof": "apps/body/src/room-supervisor.test.ts",
+      "boundary": "Full source/cohort coverage",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-12",
+      "mechanism": "Helper command claim retry",
+      "disposition": "control",
+      "owner": "ServerCommandIntake command claim",
+      "implementation": "apps/body/src/server-command-intake.ts",
+      "proof": "apps/body/src/server-command-intake.test.ts",
+      "boundary": "Targeted actual socket proof added; complete cohort/source closure remains",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-13",
+      "mechanism": "Helper read-only tool retry",
+      "disposition": "control",
+      "owner": "read-only MCP current action",
+      "implementation": "apps/body/src/read-only-mcp.ts",
+      "proof": "apps/body/src/read-only-mcp.test.ts",
+      "boundary": "All tool/provider adapter ownership not closed",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-14",
+      "mechanism": "Free bootstrap retry",
+      "disposition": "control",
+      "owner": "readBootstrap one attempt",
+      "implementation": "apps/body/src/free-agent-vm.ts",
+      "proof": "apps/body/src/free-agent-vm.test.ts",
+      "boundary": "No live lifecycle run; released helper floor open",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-15",
+      "mechanism": "Free idle tick",
+      "disposition": "open",
+      "owner": "FreeAgentIdle.tick / sleep",
+      "implementation": "apps/body/src/free-agent-idle.ts",
+      "proof": "apps/body/src/free-agent-idle.test.ts",
+      "boundary": "One-second local tick remains; failed sleep starts a new idle window",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-16",
+      "mechanism": "Squire public page ready",
+      "disposition": "open",
+      "owner": "waitForPublicPage",
+      "implementation": "apps/body/src/connector-squire.ts",
+      "proof": "apps/body/src/connector-squire.test.ts",
+      "boundary": "One-second public-page GET discovery remains",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-17",
+      "mechanism": "Squire share lease",
+      "disposition": "control",
+      "owner": "SquireShareRenewals known expiry",
+      "implementation": "apps/body/src/squire-share-renewals.ts",
+      "proof": "apps/body/src/squire-share-renewals.test.ts",
+      "boundary": "Owner/cohort proof remains",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-18",
+      "mechanism": "Local agent private storage",
+      "disposition": "local",
+      "owner": "agent-runtime private storage retention",
+      "implementation": "apps/body/src/agent-runtime.ts",
+      "proof": "apps/body/src/helper-storage.test.ts",
+      "boundary": "Local exclusion; actual recovery input remains separately admitted",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-19",
+      "mechanism": "Local helper process/disk observations",
+      "disposition": "local",
+      "owner": "helper-usage local process/disk scan",
+      "implementation": "apps/body/src/helper-usage.ts",
+      "proof": "apps/body/src/helper-usage.test.ts",
+      "boundary": "Local exclusion; account publication F20 separate",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-20",
+      "mechanism": "Host idle storage throttle",
+      "disposition": "other",
+      "owner": "machine-helper idle maintenance",
+      "implementation": "apps/body/src/machine-helper.ts",
+      "proof": "apps/body/src/machine-helper.test.ts",
+      "boundary": "Lifecycle recovery cannot be blanket exempted",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-21",
+      "mechanism": "Host filesystem/IPC retry",
+      "disposition": "local",
+      "owner": "filesystem / IPC coordination",
+      "implementation": "apps/body/src/session-join/store.ts",
+      "proof": "apps/body/src/session-join/member-stream.test.ts",
+      "boundary": "Actual pending network request remains separately admitted",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-22",
+      "mechanism": "Session list_mentions",
+      "disposition": "open",
+      "owner": "memberStream / acceptMemberDelivery / retained pollOnce",
+      "implementation": "apps/body/src/session-join/bridge.ts",
+      "proof": "apps/server/src/rooms-mcp-stream.test.ts",
+      "boundary": "Selected real PostgreSQL idle and durability pass; old Body cohort and retained pollOnce remain",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-23",
+      "mechanism": "Session OAuth handoff",
+      "disposition": "other",
+      "owner": "session OAuth completion",
+      "implementation": "apps/body/src/session-join/beeline-api.ts",
+      "proof": "apps/body/src/session-join/oauth-completion.test.ts",
+      "boundary": "F21 owns complete ceremony proof",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-24",
+      "mechanism": "Payment approval",
+      "disposition": "other",
+      "owner": "Link payment completion",
+      "implementation": "apps/body/src/read-only-mcp.ts",
+      "proof": "apps/body/src/wallet-tools.test.ts",
+      "boundary": "F21 owns payment/uncertainty coverage",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-25",
+      "mechanism": "Legacy corner wake wait",
+      "disposition": "control",
+      "owner": "waitForCornerWake live-event promise",
+      "implementation": "apps/server/src/daemon-service.ts",
+      "proof": "apps/server/src/agent-command.integration.test.ts",
+      "boundary": "Legacy caller census and released cohorts remain",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-26",
+      "mechanism": "Server LISTEN recovery",
+      "disposition": "control",
+      "owner": "PostgresLiveListener recovery",
+      "implementation": "apps/server/src/postgres-live.ts",
+      "proof": "apps/server/src/postgres-live.test.ts",
+      "boundary": "F18 higher-level recovery and SDK closure",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-27",
+      "mechanism": "Durable replay drain",
+      "disposition": "other",
+      "owner": "durable-live committed drain",
+      "implementation": "apps/server/src/durable-live.ts",
+      "proof": "apps/server/src/durable-live.postgres.test.ts",
+      "boundary": "F13 equal-workload DB/WAL/CPU gate",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-28",
+      "mechanism": "Server heartbeat / intake checkpoint",
+      "disposition": "control",
+      "owner": "machine health / negotiated no-checkpoint cohort",
+      "implementation": "apps/server/src/server.ts",
+      "proof": "apps/server/src/turn-ownership-socket.test.ts",
+      "boundary": "Legacy intake heartbeat remains; selected ten-minute proof passes",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-29",
+      "mechanism": "Server presence lease",
+      "disposition": "control",
+      "owner": "ConnectionPresence.renewLease",
+      "implementation": "apps/server/src/connection-presence.ts",
+      "proof": "apps/server/src/turn-ownership-socket.test.ts",
+      "boundary": "live_server_instances.renewed_at, <=1 aggregate write/30 seconds while held; full cohort/ownership gate",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-30",
+      "mechanism": "Server leader election/health",
+      "disposition": "control",
+      "owner": "BackgroundLeader blocking advisory lock",
+      "implementation": "apps/server/src/background-leader.ts",
+      "proof": "apps/server/src/background-leader.postgres.test.ts",
+      "boundary": "Dedicated backend advisory key 0x0bee11; exact transfer/cancellation proofs",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-31",
+      "mechanism": "Push delivery",
+      "disposition": "open",
+      "owner": "PushDeliveryLoop / work.add push",
+      "implementation": "apps/server/src/index.ts",
+      "proof": "apps/server/src/background-work.test.ts",
+      "boundary": "push_outbox.not_before exists but 60-second fallback registration remains",
+      "dueRecord": "push_outbox.not_before / push_delivery_claims"
+    },
+    {
+      "id": "D1-32",
+      "mechanism": "Agent schedules",
+      "disposition": "calendar",
+      "owner": "AgentScheduleLoop",
+      "implementation": "apps/server/src/agent-schedules.ts",
+      "proof": "apps/server/src/agent-schedule-deadline.postgres.test.ts",
+      "boundary": "agent_schedules.next_run_at; bounded parked revision and source wakes; full ownership floor open",
+      "dueRecord": "agent_schedules.next_run_at; failed_due_at/failed_revision"
+    },
+    {
+      "id": "D1-33",
+      "mechanism": "Sentry wakes / choices / deadlines",
+      "disposition": "deadline",
+      "owner": "SentryWake / ChoiceExpiryLoop / DeadlineExpiry",
+      "implementation": "apps/server/src/index.ts",
+      "proof": "apps/server/src/choice-expiry.test.ts",
+      "boundary": "Stored Sentry/room_choices.closes_at/display minimum; source-scoped choice and schedule idle proof added",
+      "dueRecord": "room_choices.closes_at / sentry owed deadline / display deadline source minimum"
+    },
+    {
+      "id": "D1-34",
+      "mechanism": "Free-agent sweep",
+      "disposition": "open",
+      "owner": "work.add free-agents / FreeAgentService.sweep",
+      "implementation": "apps/server/src/index.ts",
+      "proof": "apps/server/src/free-agents.test.ts",
+      "boundary": "15-second unconditional sweep registration remains; no live lifecycle proof",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-35",
+      "mechanism": "Computer expiry sweep",
+      "disposition": "expiry",
+      "owner": "startComputerExpirySweep",
+      "implementation": "apps/server/src/computer-session.ts",
+      "proof": "apps/server/src/computer-expiry.test.ts",
+      "boundary": "computer_sessions.expires_at; exact version fence, once-only expiry, empty-day proof",
+      "dueRecord": "computer_sessions.expires_at + exact expiry_version"
+    },
+    {
+      "id": "D1-36",
+      "mechanism": "Voice RTC lease",
+      "disposition": "control",
+      "owner": "VoiceRoomRuntime lease",
+      "implementation": "apps/server/src/voice-room-runtime.ts",
+      "proof": "apps/server/src/voice-room-runtime.test.ts",
+      "boundary": "voice_calls.runtime_until; current-owner lease max one/5 seconds while call held; full call/cohort gates",
+      "dueRecord": "voice_calls.runtime_until (15s lease)"
+    },
+    {
+      "id": "D1-37",
+      "mechanism": "Voice inactivity clock",
+      "disposition": "expiry",
+      "owner": "VoiceRoomRuntime inactivity",
+      "implementation": "apps/server/src/voice-room-runtime.ts",
+      "proof": "apps/server/src/voice-room-runtime.test.ts",
+      "boundary": "120-second actual absence deadline; physical and ownership-composition gate",
+      "dueRecord": "actual participant absence timestamp +120s"
+    },
+    {
+      "id": "D1-38",
+      "mechanism": "Voice budget flush",
+      "disposition": "accounting",
+      "owner": "VoiceAudioMeter / VoiceBudgetStore",
+      "implementation": "apps/server/src/voice-budget.ts",
+      "proof": "apps/server/src/voice-budget.postgres.test.ts",
+      "boundary": "voice_workspace_usage.audio union; nonempty commit max4/s and <=1 second buffer; real crash/takeover tests",
+      "dueRecord": "voice_workspace_usage.audio multirange + nonempty audio buffer"
+    },
+    {
+      "id": "D1-39",
+      "mechanism": "Server connector ready wait",
+      "disposition": "completion",
+      "owner": "waitForConnection",
+      "implementation": "apps/server/src/connection-wait.ts",
+      "proof": "apps/server/src/router-command.integration.test.ts",
+      "boundary": "Committed connector completion key, one initial read and terminal deadline; F26 already closed",
+      "dueRecord": "connector installation outcome; one terminal wait deadline"
+    },
+    {
+      "id": "D1-40",
+      "mechanism": "MCP concurrent-post idempotency wait",
+      "disposition": "completion",
+      "owner": "MCP idempotency completion",
+      "implementation": "apps/server/src/rooms-mcp.ts",
+      "proof": "apps/server/src/router-command.integration.test.ts",
+      "boundary": "Persisted idempotency outcome and committed result notification; F26 already closed",
+      "dueRecord": "rooms_mcp idempotency committed outcome; terminal wait deadline"
+    },
+    {
+      "id": "D1-41",
+      "mechanism": "Helper GitHub token outage retry",
+      "disposition": "control",
+      "owner": "Room GitHub token explicit attempt",
+      "implementation": "apps/body/src/agent-home.ts",
+      "proof": "apps/body/src/agent-home.test.ts",
+      "boundary": "F18 retains outage/refusal and explicit new command evidence",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-42",
+      "mechanism": "Helper startup pre-ready retry",
+      "disposition": "control",
+      "owner": "helper-lifecycle activation",
+      "implementation": "apps/body/src/helper-lifecycle.ts",
+      "proof": "apps/body/src/helper-lifecycle.test.ts",
+      "boundary": "Recovery source/cohort gates remain",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-43",
+      "mechanism": "Deferred corner-start Retry-After",
+      "disposition": "control",
+      "owner": "room-runtime command source/capacity boundary",
+      "implementation": "apps/body/src/room-runtime.ts",
+      "proof": "apps/body/src/room-runtime.lazy-corners.test.ts",
+      "boundary": "No Retry-After manufactured deadline; full route/cohort gates",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-44",
+      "mechanism": "Server DB transient connection retry",
+      "disposition": "control",
+      "owner": "PostgresDatabase one-attempt query",
+      "implementation": "apps/server/src/database.ts",
+      "proof": "apps/server/src/database-one-attempt.postgres.test.ts",
+      "boundary": "Lost INSERT/COMMIT reply remains one effect; higher-level retries separate",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-45",
+      "mechanism": "Server LISTEN reconnection",
+      "disposition": "control",
+      "owner": "PostgresLiveListener one-attempt acquisition",
+      "implementation": "apps/server/src/postgres-live.ts",
+      "proof": "apps/server/src/postgres-live-recovery.test.ts",
+      "boundary": "Actual source recovery only; F18 remaining routes",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-46",
+      "mechanism": "Embedding provider retries",
+      "disposition": "control",
+      "owner": "save-time embedding",
+      "implementation": "apps/server/src/institutional-memory-embeddings.ts",
+      "proof": "apps/server/src/institutional-memory-embeddings.test.ts",
+      "boundary": "Startup backfill/curator ownership still open",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-47",
+      "mechanism": "Fly start transition retry",
+      "disposition": "control",
+      "owner": "FlyMachines.start one transition",
+      "implementation": "apps/server/src/fly-machines.ts",
+      "proof": "apps/server/src/fly-machines.test.ts",
+      "boundary": "No live lifecycle; higher-level free-agent sweep still open",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-48",
+      "mechanism": "Chain receipt polling",
+      "disposition": "open",
+      "owner": "waitForTransactionReceipt",
+      "implementation": "apps/server/src/cdp-client.ts",
+      "proof": "apps/server/src/cdp-client.test.ts",
+      "boundary": "Two-second chain receipt poll remains",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-49",
+      "mechanism": "Legacy query HTTP retry",
+      "disposition": "other",
+      "owner": "legacy query transport",
+      "implementation": "packages/buzz-client/src/http.ts",
+      "proof": "packages/buzz-client/src/http.test.ts",
+      "boundary": "Current consumer/retry retirement census is F18 gate",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-50",
+      "mechanism": "Registry OAuth expiry",
+      "disposition": "expiry",
+      "owner": "registry OAuth expiry",
+      "implementation": "apps/server/src/postgres-live.ts",
+      "proof": "apps/server/src/postgres-live.test.ts",
+      "boundary": "registry_mcp_oauth_attempts.expires_at exact stored minimum",
+      "dueRecord": "registry_mcp_oauth_attempts.expires_at"
+    },
+    {
+      "id": "D1-51",
+      "mechanism": "Repair/background maintenance",
+      "disposition": "open",
+      "owner": "work.add repair / runMaintenance",
+      "implementation": "apps/server/src/index.ts",
+      "proof": "apps/server/src/background-shutdown.test.ts",
+      "boundary": "60-second repair registration, retention and reviewer/provider discovery remain",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-52",
+      "mechanism": "Next-day checkin",
+      "disposition": "open",
+      "owner": "work.add next-day-checkin / NextDayCheckin.runOnce",
+      "implementation": "apps/server/src/index.ts",
+      "proof": "apps/server/src/next-day-checkin.test.ts",
+      "boundary": "next_day_checkin_candidates.due_at exists but 60-second fallback scan remains",
+      "dueRecord": "next_day_checkin_candidates.due_at; next_day_checkins terminal state"
+    },
+    {
+      "id": "D1-53",
+      "mechanism": "Operator finances",
+      "disposition": "event",
+      "owner": "operator finance explicit demand",
+      "implementation": "apps/server/src/operator-finances.ts",
+      "proof": "apps/server/src/operator-finances.test.ts",
+      "boundary": "Hourly index registration retired; provider revisions/full route gates remain",
+      "dueRecord": null
+    },
+    {
+      "id": "D1-54",
+      "mechanism": "X conversions/visits/reports",
+      "disposition": "event",
+      "owner": "deliverXSignups / explicit report demand",
+      "implementation": "apps/server/src/x-ads.ts",
+      "proof": "apps/server/src/x-ads.test.ts",
+      "boundary": "x_signup_delivery.not_before exact next eligible row; no minute site-visit/report registrations",
+      "dueRecord": "x_signup_delivery.not_before / claimed_until"
+    },
+    {
+      "id": "D1-55",
+      "mechanism": "Fly `/readyz",
+      "disposition": "control",
+      "owner": "GET /readyz",
+      "implementation": "apps/server/src/server.ts",
+      "proof": "apps/server/src/turn-ownership-socket.test.ts",
+      "boundary": "Inbound hosting control <=1/10 seconds/machine; 60 actual HTTP requests query0",
+      "dueRecord": null
+    },
+    {
+      "id": "D2-01",
+      "mechanism": "app-association-drift.yml:6",
+      "disposition": "revision",
+      "owner": "association changed/released/manual",
+      "implementation": ".github/workflows/app-association-drift.yml",
+      "proof": "scripts/app-associations.test.mjs",
+      "boundary": "Cron removed; exact source/cohort audit remains",
+      "dueRecord": null
+    },
+    {
+      "id": "D2-02",
+      "mechanism": "log-walk.yml:6",
+      "disposition": "calendar",
+      "owner": "host diagnostic log deliverable",
+      "implementation": "scripts/log-walk/systemd/beeline-log-walk.timer",
+      "proof": "scripts/log-walk/walk.test.mjs",
+      "boundary": "Former workflow retired to explicit host timer; collected logs only, daily output",
+      "dueRecord": "host calendar timer, daily collected-log report"
+    },
+    {
+      "id": "D2-03",
+      "mechanism": "nightly-checks.yml:5",
+      "disposition": "calendar",
+      "owner": "nightly validation + workflow_run completion",
+      "implementation": ".github/workflows/nightly-checks.yml",
+      "proof": "scripts/nightly-checks.test.mjs",
+      "boundary": "One actual daily test obligation; status poll retired; no release dispatched",
+      "dueRecord": "daily trusted CI validation"
+    },
+    {
+      "id": "D2-04",
+      "mechanism": "release-preflight.yml:4",
+      "disposition": "revision",
+      "owner": "release candidate/manual preflight",
+      "implementation": ".github/workflows/release-preflight.yml",
+      "proof": "scripts/release-preflight.test.mjs",
+      "boundary": "Daily cron removed; current candidate/manual admission",
+      "dueRecord": null
+    },
+    {
+      "id": "D2-05",
+      "mechanism": "acp-adapters.yml:5",
+      "disposition": "revision",
+      "owner": "adapter explicit compatibility check",
+      "implementation": ".github/workflows/acp-adapters.yml",
+      "proof": "scripts/ci-workflow.test.mjs",
+      "boundary": "Daily upstream cron removed; manual/version event only",
+      "dueRecord": null
+    },
+    {
+      "id": "D2-06",
+      "mechanism": "reason-upstream.yml:9",
+      "disposition": "revision",
+      "owner": "Reason explicit upstream audit",
+      "implementation": ".github/workflows/reason-upstream.yml",
+      "proof": "scripts/ci-workflow.test.mjs",
+      "boundary": "Weekly upstream cron removed; manual/version event only",
+      "dueRecord": null
+    }
+  ],
+  "repairSuboperations": [
+    {
+      "mechanism": "promoted-branch startup repair",
+      "owner": "repository.startupRepair / leader epoch",
+      "disposition": "initialization",
+      "proof": "apps/server/src/background-shutdown.test.ts"
+    },
+    {
+      "mechanism": "stale mergeability startup repair",
+      "owner": "githubJobs.refreshStaleMergeability / leader epoch",
+      "disposition": "initialization",
+      "proof": "apps/server/src/background-shutdown.test.ts"
+    },
+    {
+      "mechanism": "voice recovery",
+      "owner": "voice.recover inside work.add repair",
+      "disposition": "open",
+      "proof": "apps/server/src/voice-room-runtime.test.ts"
+    },
+    {
+      "mechanism": "operator System-DM outbox",
+      "owner": "operator-system-dms committed row and persisted dispatch/claim deadline",
+      "disposition": "deadline",
+      "proof": "apps/server/src/operator-system-dm-source.postgres.test.ts"
+    },
+    {
+      "mechanism": "reviewer reconciliation",
+      "owner": "reconcileConfiguredCornerReviewers inside work.add repair",
+      "disposition": "open",
+      "proof": "apps/server/src/corner-reviewer-list.test.ts"
+    },
+    {
+      "mechanism": "branch deletion retries",
+      "owner": "GitHubOperations committed deletion obligation; no current repair invocation",
+      "disposition": "provider-ownership-open",
+      "proof": "apps/server/src/github-operations.test.ts"
+    },
+    {
+      "mechanism": "queued GitHub checks",
+      "owner": "refreshQueuedChecks removed; explicit check/head/webhook",
+      "disposition": "retired",
+      "proof": "apps/server/src/github-operations.test.ts"
+    },
+    {
+      "mechanism": "pending GitHub checks",
+      "owner": "refreshOpenPendingChecks removed; exact head event",
+      "disposition": "retired",
+      "proof": "apps/server/src/github-operations.test.ts"
+    },
+    {
+      "mechanism": "unfinished merge claims",
+      "owner": "current command/claim authority; no current repair invocation",
+      "disposition": "ownership-open",
+      "proof": "apps/server/src/github-operations.test.ts"
+    },
+    {
+      "mechanism": "merged-corner reconciliation",
+      "owner": "reconcileMergedCorners removed; exact webhook/check",
+      "disposition": "retired",
+      "proof": "apps/server/src/github-operations.test.ts"
+    },
+    {
+      "mechanism": "media expiry",
+      "owner": "mediaExpiry.runOnce inside work.add repair",
+      "disposition": "open",
+      "proof": "apps/server/src/background.test.ts"
+    },
+    {
+      "mechanism": "pending attachments",
+      "owner": "pending-attachment-cleanup / pending_attachments eligibility",
+      "disposition": "deadline",
+      "proof": "apps/server/src/pending-attachment-deadline.postgres.test.ts"
+    },
+    {
+      "mechanism": "retention maintenance",
+      "owner": "runMaintenance inside work.add repair",
+      "disposition": "open",
+      "proof": "apps/server/src/background.test.ts"
+    },
+    {
+      "mechanism": "blocked-check notices",
+      "owner": "noteBlockedCornerChecks inside work.add repair",
+      "disposition": "open",
+      "proof": "apps/server/src/github-operations.test.ts"
+    },
+    {
+      "mechanism": "pending-command renudge",
+      "owner": "recipient-specific actual pickup/connection event",
+      "disposition": "event",
+      "proof": "apps/server/src/agent-command.integration.test.ts"
+    },
+    {
+      "mechanism": "expired command leases",
+      "owner": "reclaimExpiredCommandLeases inside work.add repair",
+      "disposition": "open",
+      "proof": "apps/server/src/agent-command.integration.test.ts"
+    },
+    {
+      "mechanism": "pending mention notices",
+      "owner": "flushPendingMentionNotices inside work.add repair",
+      "disposition": "open",
+      "proof": "apps/server/src/channel-mention.test.ts"
+    },
+    {
+      "mechanism": "institutional curator",
+      "owner": "runInstitutionalCuratorCycle inside work.add repair",
+      "disposition": "open",
+      "proof": "apps/server/src/institutional-curator.test.ts"
+    }
+  ]
+}

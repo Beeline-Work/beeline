@@ -95,7 +95,7 @@ try {
       async query() { this.release = await db.client.listen(POSTGRES_LIVE_CHANNEL, payload => this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload })); }
       async end() { await this.release?.(); }
     }
-    const listener = new PostgresLiveListener(db, live, () => new Listen(), 1);
+    const listener = new PostgresLiveListener(db, live, () => new Listen());
     listener.setMcpWebhookWake(() => void deliverMcpMemberWebhooks(db, async (url, init) => {
       posts.push({ url: String(url), at: Date.now(), authorization: new Headers(init.headers).get('authorization'), body: JSON.parse(init.body) });
       return new Response('', { status: 200 });

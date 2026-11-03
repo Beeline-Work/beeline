@@ -75,7 +75,7 @@ async function main(): Promise<void> {
     }
   }
   const live = new LiveHub();
-  const listener = new PostgresLiveListener(db, live, () => new ListenClient() as never, 1);
+  const listener = new PostgresLiveListener(db, live, () => new ListenClient() as never);
   void listener.run();
   const ownerAuth = new TokenAuth(db, async () => ({ subject: 'owner', login: 'owner', name: 'Owner' }));
   const memberAuth = new TokenAuth(db, async () => ({ subject: 'member', login: 'member', name: 'Member' }));

@@ -83,7 +83,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     const isolated = new URL(url!); isolated.pathname = `/${databaseName}`;
     db = new PostgresDatabase(isolated.toString(), 8, { mode: 'migration' });
     await migrate(db);
-  }, 30_000);
+  }, 60_000);
   afterAll(async () => {
     await db?.close();
     if (admin) {
@@ -114,7 +114,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [W,room,who]);
   });
 
-  it('R-BRIEF-DEADLOCK: brief revision recovers a real PostgreSQL lifecycle deadlock', async () => {
+  it('R-BRIEF-DEADLOCK: brief revision returns a real deadlock and a separate action can recover', async () => {
     const source = 'e'.repeat(64);
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Clarify the brief')`, [source,R,H]);
     const command = await createAgentCommand(db,{roomId:R,agentId:A,sourceMessageId:source,reason:'human_tag'});
@@ -128,8 +128,16 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     const revision = watched.execute('reviseCornerBrief',{...turn,cornerId:C,expectedRevision:1,
       brief:{spec:'Build the clarified widget',change:'Clarify scope'}},A);
     await race.entered;
-    const [result] = await Promise.all([revision,race.other.transaction(tx => lockCornerLifecycle(tx,C))]);
+    const [failed, contender] = await Promise.allSettled([revision,race.other.transaction(tx => lockCornerLifecycle(tx,C))]);
+    expect(failed.status).toBe('rejected');
+    if (failed.status === 'rejected') expect(failed.reason).toMatchObject({code:'40P01'});
+    expect(contender.status).toBe('fulfilled');
     expect(race.errors).toEqual(['40P01']);
+    expect(race.attempts()).toBe(1);
+    expect((await db.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`,[C])).rowCount).toBe(1);
+    expect((await daemon.execute('getCornerRestoreState',{cornerId:C},A)).brief?.spec).toBe('Build the widget');
+    const result = await watched.execute('reviseCornerBrief',{...turn,cornerId:C,expectedRevision:1,
+      brief:{spec:'Build the clarified widget',change:'Clarify scope'}},A);
     expect(race.attempts()).toBe(2);
     expect(result.revision).toBe(2);
     expect((await daemon.execute('getCornerRestoreState',{cornerId:C},A)).brief?.spec).toBe('Build the clarified widget');
@@ -137,7 +145,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%Revision 2%'`,[C])).rowCount).toBe(1);
   });
 
-  it('BEELINE-SERVER-1W: concurrent refreshes recover a PostgreSQL deadlock and commit one rollup event', async () => {
+  it('BEELINE-SERVER-1W: concurrent refreshes return a deadlock and a later event preserves one rollup', async () => {
     const race = contention(db);
     const app = {
       installationToken: async () => ({token:'fixture'}),
@@ -151,9 +159,15 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     const second = new GitHubOperations(race.other, {} as GitHubOAuthClient, app, 'secret');
     const refresh = first.processWebhook('check_run', payload);
     await race.entered;
-    await Promise.all([refresh, second.processWebhook('check_run', payload)]);
+    const [failed, contender] = await Promise.allSettled([refresh, second.processWebhook('check_run', payload)]);
+    expect(failed.status).toBe('rejected');
+    if (failed.status === 'rejected') expect(failed.reason).toMatchObject({code:'40P01'});
+    expect(contender.status).toBe('fulfilled');
     expect(race.errors).toEqual(['40P01']);
-    // Includes the later mergeability transaction; the owning refresh retried once.
+    expect(race.attempts()).toBe(1);
+    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(2);
+    // Another delivered event is a separate admission, not deadlock replay.
+    await first.processWebhook('check_run', payload);
     expect(race.attempts()).toBeGreaterThanOrEqual(2);
     expect(race.attempts()).toBeLessThanOrEqual(3);
     for (const seen of race.statements.slice(0,2)) {
@@ -165,7 +179,7 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
     expect((await db.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [C])).rows[0]?.checks).toBe('failing');
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND system_event->>'kind'='check-failed'`, [C])).rowCount).toBe(1);
     expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`, [C])).rowCount).toBe(1);
-    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(2);
+    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(3);
   });
 
 });

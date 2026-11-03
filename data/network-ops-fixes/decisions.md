@@ -290,3 +290,10 @@ The existing aggregate background owner now uses deadline-only schedule work. A 
 Production firing and remaining-delay calculation use PostgreSQL time. Workflow timer deletion matches its exact Room, due, revision and payload; PostgreSQL timestamp text preserves microseconds across the claim and failure fence. The partial due index excludes parked revisions.
 
 Schedule23, workflow-view31 plus focused microsecond1, workflow-schedule25, live-listener42, isolated PostgreSQL clock/index1, database59, server types, workspace build8 and dead-code pass. The clock proof sets host time to2099 while PostgreSQL still owns a future deadline; 10,000 parked rows are skipped through the partial index within40 shared blocks. The migrated fixture proves idle-day silence and separate edited recovery, while the query-plan fixture deliberately uses minimal tables and does not claim whole-schema rollout. Whole scheduler ownership generations, equal-workload/cost and released-cohort gates remain open.
+
+
+## D091 — Align incident and attachment integration proofs with single attempts
+
+Published CI found two attachment fixtures and two real-PostgreSQL incident proofs still expecting the retired automatic retries. The attachment fixtures now fail one fetch, retain successful files and verify a separately admitted delivery. The incident harness still creates actual PostgreSQL deadlocks: each victim returns40P01 after one transaction, rolled-back brief state stays unchanged, and a separate action/event commits the intended result without duplicate notices or commands.
+
+Room-turn attachment9, historical MCP attachment6 and isolated PostgreSQL incident2 pass. No production retry was restored and no gate was removed. These update D080/D083's integration evidence; full CI on the new head and T7 remain open.

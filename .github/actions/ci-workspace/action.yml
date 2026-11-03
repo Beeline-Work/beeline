@@ -36,24 +36,6 @@ runs:
           exit 1
         fi
         npm ci --no-audit --no-fund
-    # Task caches are input-addressed; final dist archives below remain exact-SHA.
-    # Job-specific writes let TYPECHECK publish its completed task cache after
-    # preparation has already published the build task cache for the same head.
-    - uses: actions/cache@v4
-      with:
-        path: .turbo/cache
-        key: ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-${{ github.job }}-${{ github.sha }}
-        restore-keys: |
-          ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-${{ github.job }}-
-          ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-
-    - uses: actions/cache@v4
-      if: inputs.mobile == 'true'
-      with:
-        path: apps/mobile/tsconfig.tsbuildinfo
-        key: ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-${{ github.job }}-${{ github.sha }}
-        restore-keys: |
-          ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-${{ github.job }}-
-          ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-
     - uses: actions/cache/restore@v4
       id: builds
       with:
@@ -62,6 +44,26 @@ runs:
           apps/*/dist/**
           .beeline-ci-build.json
         key: ci-build-v3-${{ runner.os }}-node22-${{ github.sha }}
+    # Task caches are input-addressed; final dist archives remain exact-SHA.
+    # Warm test-only consumers need no task archive; cache misses still recover.
+    # Job-specific writes let TYPECHECK publish its completed task cache after
+    # preparation has already published the build task cache for the same head.
+    - uses: actions/cache@v4
+      if: steps.builds.outputs.cache-hit != 'true' || contains(fromJSON('["typecheck","dead-code","mac-helper-acceptance"]'), github.job)
+      with:
+        path: .turbo/cache
+        key: ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-${{ github.job }}-${{ github.sha }}
+        restore-keys: |
+          ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-${{ github.job }}-
+          ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-
+    - uses: actions/cache@v4
+      if: inputs.mobile == 'true' && github.job == 'typecheck'
+      with:
+        path: apps/mobile/tsconfig.tsbuildinfo
+        key: ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-${{ github.job }}-${{ github.sha }}
+        restore-keys: |
+          ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-${{ github.job }}-
+          ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-
     - if: steps.builds.outputs.cache-hit != 'true'
       shell: bash
       run: |

@@ -151,6 +151,16 @@ export class NextDayCheckin {
     private readonly now: () => Date = () => new Date(),
     private readonly imageOrigin = 'https://server.usebeeline.app') {}
 
+  async nextDelayMs(): Promise<number | undefined> {
+    if (!enabled()) return;
+    return (await import('./background-deadline-clock.js')).backgroundNextDelay(this.db,
+      `SELECT due_at FROM next_day_checkin_candidates WHERE NOT processed
+       UNION ALL SELECT due_at+interval '24 hours' FROM next_day_checkins
+         WHERE skip_reason IS NULL AND measured_at IS NULL AND sent_at IS NULL
+       UNION ALL SELECT sent_at+interval '1 hour' FROM next_day_checkins
+         WHERE skip_reason IS NULL AND measured_at IS NULL AND sent_at IS NOT NULL`);
+  }
+
   async runOnce(): Promise<void> {
     if (!enabled()) return;
     const candidates = (await this.db.query<{ identity_id: string }>(

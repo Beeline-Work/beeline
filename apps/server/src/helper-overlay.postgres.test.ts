@@ -7,6 +7,7 @@ import { PostgresDatabase } from './database.js';
 import { HELPER_OVERLAY_SCHEMA, HelperOverlayViewer, applyHelperOverlay, fenceHelperOverlayEnqueue, subscribeHelperOverlayDemand } from './helper-overlay.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import { POSTGRES_LIVE_SCHEMA, PostgresLiveListener } from './postgres-live.js';
+import { HelperOverlayOwner } from '../../body/src/helper-overlay.js';
 const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if(url&&!['127.0.0.1','localhost','[::1]'].includes(new URL(url).hostname))throw new Error('Overlay proofs require isolated loopback PostgreSQL');
 const room='11111111-1111-4111-8111-111111111111',workspace='22222222-2222-4222-8222-222222222222';
@@ -14,13 +15,13 @@ const frame=(value:Partial<HelperOverlayFrame>={}):HelperOverlayFrame=>({v:1,age
   kind:'draft',type:'baseline',revision:1,offset:0,text:'🌍',viewingRevision:1,...value});
 const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {resolve,promise};};
 describe.skipIf(!url)('overlay real PostgreSQL remote listener and viewer fences',()=>{
-  it('relays committed UTF8 generations across pools, replaces a missed revision, and fences zero viewers and terminal resurrection',async()=>{
+  it.each(['wire','helper'] as const)('P12 %s: relays committed UTF8 generations across pools, replaces a missed revision, and fences zero viewers and terminal resurrection',async mode=>{
     const schema='overlay_'+randomUUID().replaceAll('-',''),admin=new Pool({connectionString:url,max:1});await admin.query(`CREATE SCHEMA ${schema}`);
     const config={connectionString:url,options:`-c search_path=${schema},public`,max:3};
     const writer=new PostgresDatabase('',3,{pool:new Pool(config)}),reader=new PostgresDatabase('',3,{pool:new Pool(config)});
     const listenerUrl=new URL(url!);listenerUrl.searchParams.set('options',`-c search_path=${schema},public`);
     const live=new LiveHub(),listener=PostgresLiveListener.forConnectionString(listenerUrl.toString(),reader,live);
-    let listening:Promise<void>|undefined,stopDemand:(()=>void)|undefined,stopLive:(()=>void)|undefined;
+    let listening:Promise<void>|undefined,stopDemand:(()=>void)|undefined,stopLive:(()=>void)|undefined,helper:HelperOverlayOwner|undefined;
     const ready=deferred(),stopReady=live.subscribeResync(ready.resolve);
     const frames:LiveEvent[]=[],waits=new Map<number,()=>void>(),demandWaits=new Map<number,()=>void>();
     const waitFrame=(revision:number)=>new Promise<void>(resolve=>{waits.set(revision,resolve);});
@@ -51,13 +52,49 @@ describe.skipIf(!url)('overlay real PostgreSQL remote listener and viewer fences
       await writer.query(`INSERT INTO rooms VALUES($1,$2,NULL)`,[room,workspace]);
       await writer.query(`INSERT INTO room_access VALUES($1,'agent',NULL),($1,'reader',NULL)`,[room]);
       await writer.query(`INSERT INTO memberships VALUES($1,NULL,'agent','member',NULL),($1,NULL,'reader','member',NULL)`,[workspace]);
-      await writer.query(`INSERT INTO room_push_views VALUES($1,'reader','phone-on-reader-instance',NULL,NULL)`,[room]);
+      if(mode==='wire')await writer.query(`INSERT INTO room_push_views VALUES($1,'reader','phone-on-reader-instance',NULL,NULL)`,[room]);
       await writer.query(`INSERT INTO live_server_instances VALUES('owner-server',clock_timestamp());
       INSERT INTO agent_connections VALUES('agent','connection',1,NULL,'owner-server');
         INSERT INTO agent_turns VALUES('${room}','agent','turn','generation','working');
         INSERT INTO agent_commands(id,room_id,agent_id,turn_request_id,action,generation_id,state) VALUES('command','${room}','agent','turn','input','generation','claimed');`);
       listening=listener.run();await ready.promise;
-      stopLive=live.subscribe(room,event=>{if(viewer.accept(event))void forward(event);});viewer.enter(room);viewer.commit(room,1);
+      stopLive=live.subscribe(room,event=>{if(viewer.accept(event))void forward(event);});
+      if(mode==='helper'){
+        const uploaded:HelperOverlayFrame[]=[];
+        const initial=deferred();
+        helper=new HelperOverlayOwner({agentId:'agent',roomId:room,commandId:'command',turnId:'turn',turnGeneration:'generation',kind:'draft'}, {
+          enabled:()=>true,
+          subscribe:(_room,receive)=>subscribeHelperOverlayDemand(reader,room,demand=>{receive(demand);initial.resolve();}),
+          send:async value=>{uploaded.push(value);const result=await applyHelperOverlay(writer,'agent',{connectionId:'connection',epoch:1},value);expect(result.ack.accepted).toBe(true);return result.ack;},
+        });
+        await initial.promise;
+        for(let i=0;i<1000;i++)helper.update(`hidden 🌍 ${i}`);
+        expect(uploaded).toEqual([]);
+        expect((await writer.query('SELECT * FROM live_outputs')).rows).toEqual([]);
+        viewer.enter(room);viewer.commit(room,1);
+        const baseline=waitFrame(1);
+        await writer.query(`INSERT INTO room_push_views VALUES($1,'reader','phone-on-other-server',NULL,NULL)`,[room]);await baseline;
+        expect(uploaded).toHaveLength(1);expect(uploaded[0]).toMatchObject({type:'baseline',text:'hidden 🌍 999'});
+        let text='hidden 🌍 999';
+        for(let i=0;i<100;i++){
+          const next=waitFrame(i+2);text+='é🌍';helper.update(text);await next;
+        }
+        expect(uploaded.filter(value=>value.type==='baseline')).toHaveLength(1);
+        expect(uploaded.slice(1).every(value=>value.type==='append'&&value.text==='é🌍')).toBe(true);
+        // Text carried by all uploads is exactly final UTF8 length, rather
+        // than N growing snapshots. Framing has a fixed per-append bound.
+        expect(uploaded.reduce((bytes,value)=>bytes+Buffer.byteLength(value.text),0)).toBe(Buffer.byteLength(text));
+        expect(frames.at(-1)).toMatchObject({text});
+        const reset=waitFrame(102);helper.beginRun();await reset;
+        const restarted=waitFrame(103);helper.update('new 🌍');await restarted;
+        expect(uploaded[101]).toMatchObject({type:'baseline',runGeneration:1,text:''});
+        const ended=waitFrame(104);await helper.close();await ended;
+        expect(frames.at(-1)).toMatchObject({type:'retract',overlayV1:{runGeneration:1,revision:104}});
+        const before=uploaded.length;helper.update('late terminal');expect(uploaded).toHaveLength(before);
+        expect((await writer.query('SELECT count(*)::int count FROM live_journal')).rows).toEqual([{count:0}]);
+        return;
+      }
+      viewer.enter(room);viewer.commit(room,1);
       const demand1=waitDemand(1);stopDemand=subscribeHelperOverlayDemand(reader,room,demand=>{demandWaits.get(demand.viewingRevision)?.();});await demand1;
       const owner={connectionId:'connection',epoch:1};
       const first=waitFrame(1);expect((await applyHelperOverlay(writer,'agent',owner,frame())).ack).toEqual({accepted:true,revision:1});await first;
@@ -81,6 +118,7 @@ describe.skipIf(!url)('overlay real PostgreSQL remote listener and viewer fences
       await writer.query(`UPDATE agent_commands SET state='complete';UPDATE agent_turns SET status='complete'`);
       const before=frames.length;await forward(frames[0]!);expect(frames).toHaveLength(before);
     }finally{
+      await helper?.close();
       stopReady();stopDemand?.();stopLive?.();await listener.stop();await listening;
       await Promise.all([writer.close(),reader.close()]);await admin.query(`DROP SCHEMA ${schema} CASCADE`);await admin.end();
     }

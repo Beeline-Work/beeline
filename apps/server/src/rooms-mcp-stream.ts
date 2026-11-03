@@ -5,6 +5,7 @@ import type { SqlDatabase } from './database.js';
 import type { McpPrincipal } from './rooms-mcp-oauth.js';
 import { subscribeCommandCompletion } from './command-completion.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-projection-schema.js';
+import type { WorkTimers } from './background-work.js';
 
 /** Separate rollout floor; enable only after real-PG source/authority proofs. */
 export { networkRouterEnabled as memberStreamEnabled } from './network-router-rollout.js';
@@ -127,13 +128,13 @@ async function scopes(db: SqlDatabase, member: string, rooms: readonly string[])
  * an idle stream makes no reads, writes, empty responses or heartbeat frames. */
 export async function serveMcpMemberStream(database: SqlDatabase, principal: McpPrincipal, response: ServerResponse,
   input: { cursor?: McpStreamCursor; mentionCursor: string },
-  page: (db: SqlDatabase, after: string) => Promise<McpStreamPage>): Promise<void> {
+  page: (db: SqlDatabase, after: string) => Promise<McpStreamPage>, timers: WorkTimers = { setTimeout, clearTimeout }): Promise<void> {
   if (!principal.member_id || !principal.scope.split(' ').includes('rooms:read')) throw new Error('member stream unavailable');
   const member = principal.member_id, stream = `mcp:${member}`;
   let stopped = false, running = false, dirty = true, initial = true, position = input.cursor, mentionCursor = input.mentionCursor;
   let expiry: ReturnType<typeof setTimeout> | undefined;
   const close = (reason?: 'expired' | 'unavailable') => {
-    if (stopped) return; stopped=true; release(); if (expiry) clearTimeout(expiry);
+    if (stopped) return; stopped=true; release(); if (expiry) timers.clearTimeout(expiry);
     if (reason && !response.destroyed && !response.writableEnded) response.write(JSON.stringify({v:1,type:'ended',reason})+'\n');
     if (!response.writableEnded) response.end();
   };
@@ -200,8 +201,8 @@ export async function serveMcpMemberStream(database: SqlDatabase, principal: Mcp
           }
         });
         position=prepared.to; mentionCursor=prepared.after; initial=false;
-        if (expiry) clearTimeout(expiry);
-        expiry=setTimeout(()=>close('expired'),Math.max(0,prepared.expiresAt.getTime()-Date.now())); expiry.unref?.();
+        if (expiry) timers.clearTimeout(expiry);
+        expiry=timers.setTimeout(()=>close('expired'),Math.max(0,prepared.expiresAt.getTime()-Date.now())); expiry.unref?.();
       }
     } catch { close('unavailable'); } finally { running=false; }
   };

@@ -1,4 +1,6 @@
 import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
+import { backgroundNextDelay } from './background-deadline-clock.js';
+import { BackgroundRecordDeadlines, backgroundSourceFamilies, maintenanceDeadlineFamilies, registerBackgroundDeadlineFamilies, subscribeBackgroundFamilies } from './background-deadlines.js';
 import { sentryEligibilityKey } from './sentry-wake-source.js';
 import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
@@ -33,7 +35,6 @@ import {
   createPushTestSender,
   MediaExpiryLoop,
   PushDeliveryLoop,
-  runMaintenance,
 } from './background.js';
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { PendingAttachmentCleanupLoop } from './pending-attachment-cleanup.js';
@@ -83,7 +84,6 @@ import { FeedbackGitHub } from './feedback-github.js';
 import { startComputerExpirySweep } from './computer-session.js';
 import {
   addFreeAgentToWorkspace,
-  FREE_AGENT_SWEEP_MS,
   FreeAgentService,
   freeAgentConfigFromEnv,
 } from './free-agents.js';
@@ -461,19 +461,26 @@ async function main() {
         : {}),
     },
   });
-  const reconciliationMs = 60_000;
   const work = new BackgroundWork();
   const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app', undefined, undefined, publicOrigin);
   let nextDayCheckinRunning: Promise<unknown> | undefined;
-  work.add('next-day-checkin', reconciliationMs, async () => {
-    if (nextDayCheckinRunning) return;
+  let nextDayCheckinPending = false;
+  work.addDeadline('next-day-checkin', async () => {
+    if (nextDayCheckinRunning) { nextDayCheckinPending = true; return; }
     nextDayCheckinRunning = backgroundJobs.run('next-day-checkin', () => nextDayCheckin.runOnce())
-      .finally(() => { nextDayCheckinRunning = undefined; });
+      .then(async outcome => {
+        if (outcome.ok) work.schedule('next-day-checkin', await nextDayCheckin.nextDelayMs());
+      }).catch(error => captureServerError(error,{background_job:'next-day-checkin'}))
+      .finally(() => {
+        nextDayCheckinRunning = undefined;
+        if(nextDayCheckinPending){nextDayCheckinPending=false;work.wake('next-day-checkin','committed-during-flight');}
+        leader.wake();
+      });
   });
-  if (push) work.add('push', reconciliationMs, async () => {
+  if (push) work.addDeadline('push', async () => {
     await backgroundJobs.run('push', () => push.runOnce());
-    const due = await backgroundJobs.run('push-next-due', () => push.nextDueAt());
-    if (due.ok && due.value) return Math.max(1000, due.value.getTime() - Date.now());
+    const due = await backgroundJobs.run('push-next-due', () => push.nextDelayMs());
+    if (due.ok) return due.value;
   });
   work.addDeadline('pending-attachment-cleanup', async () => {
     const swept = await backgroundJobs.run('pending-attachment-cleanup', () => pendingAttachmentCleanup.runOnce());
@@ -503,8 +510,11 @@ async function main() {
     const due = await backgroundJobs.run('deadline-expiry', () => deadlineExpiry.runOnce(newLeader));
     if (due.ok && due.value !== null) return Math.max(0, due.value);
   });
-  if (freeAgents) work.add('free-agents', FREE_AGENT_SWEEP_MS, async () => {
-    await backgroundJobs.run('free-agents', () => freeAgents.sweep());
+  if (freeAgents) work.addDeadline('free-agents', async () => {
+    const acted=await backgroundJobs.run('free-agents', () => freeAgents.sweep());
+    if(!acted.ok)return;
+    const due=await backgroundJobs.run('free-agents-next-due',()=>freeAgents.nextDelayMs());
+    if(due.ok)return due.value;
   });
   // A committed signup row owns delivery. Vendor report/balance observations
   // are explicit operator demand and never background calendar jobs.
@@ -523,27 +533,32 @@ async function main() {
   if (githubJobs) work.addDeadline('repository.startupRepair', async () => {
     await backgroundJobs.run('github-mergeability', () => githubJobs.refreshStaleMergeability());
   });
-  work.add('repair', reconciliationMs, async (newLeader) => {
-    if (voice) await backgroundJobs.run('voice-call-recovery', () => voice.recover());
-    // Repair lost reviewer wakes on the reconciliation cadence;
-    // existing head-scoped dispatch and report keys keep replays quiet.
-    await backgroundJobs.run('corner-reviewers', () =>
-      reconcileConfiguredCornerReviewers(jobsDatabase));
-    const now = Date.now();
-    await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
-    await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
-    await backgroundJobs.run('corner-checks-blocked', () =>
-      noteBlockedCornerChecks(jobsDatabase));
-    await backgroundJobs.run('expired-command-leases', () =>
-      reclaimExpiredCommandLeases(jobsDatabase, live));
-    await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));
-    await backgroundJobs.run('institutional-curator', () =>
-      runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
-        ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
-      }));
-  });
+  const voiceDeadlines=new BackgroundRecordDeadlines('voice-call-recovery',work,()=>leader.wake());
+  const stopVoiceDeadlines=voiceDeadlines.subscribe();
+  registerBackgroundDeadlineFamilies(work,[
+    ...maintenanceDeadlineFamilies(jobsDatabase),
+    ...(voice?[{name:'voice-call-recovery',run:async()=>{
+      voiceDeadlines.consume();await voice.recover();
+      await voiceDeadlines.capture(async()=>(await jobsDatabase.query<{id:string;due:number|null}>(
+        `SELECT id,(extract(epoch FROM runtime_until)*1000)::float8 due FROM voice_calls WHERE ended_at IS NULL`)).rows);
+    },next:async()=>voiceDeadlines.next()}]:[]),
+    {name:'corner-reviewers',run:async()=>{await reconcileConfiguredCornerReviewers(jobsDatabase);}},
+    {name:'media-expiry',run:()=>mediaExpiry.runDeadline(),next:()=>mediaExpiry.nextDelayMs()},
+    {name:'corner-checks-blocked',run:async()=>{await noteBlockedCornerChecks(jobsDatabase);},next:()=>backgroundNextDelay(jobsDatabase,
+      `SELECT created_at+interval '2 minutes' due_at FROM agent_commands WHERE state='pending' AND action='input'
+       UNION ALL SELECT to_timestamp((lifecycle->'checksSummary'->>'updatedAt')::double precision)+interval '1 hour'
+       FROM corner_github_cache WHERE lifecycle->>'checks'='failing' AND lifecycle->'checksSummary'->>'updatedAt' IS NOT NULL`)},
+    {name:'expired-command-leases',run:async()=>{await reclaimExpiredCommandLeases(jobsDatabase,live);},next:()=>backgroundNextDelay(jobsDatabase,
+      `SELECT lease_expires_at+interval '5 minutes' due_at FROM agent_commands WHERE state='claimed' AND turn_owner_connection_id IS NULL`)},
+    {name:'mention-notices',run:async()=>{await phone.flushPendingMentionNotices();},next:()=>backgroundNextDelay(jobsDatabase,
+      `SELECT due_at FROM pending_mention_notices WHERE notified_at IS NULL`)},
+    {name:'institutional-curator',run:async()=>{await runInstitutionalCuratorCycle(jobsDatabase,institutionalMemory,new Date(),{
+      ...(institutionalAnchors?{anchors:institutionalAnchors}:{}),
+    });}},
+  ],(name,run)=>backgroundJobs.run(name,run));
   const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader));
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
+  const stopBackgroundSources=subscribeBackgroundFamilies(jobsDatabase,live,backgroundSourceFamilies(),name=>wakeWork(name,'committed-family-source'));
   const wakeSystemDms=()=>wakeWork('operator-system-dms','committed-system-dm');
   const wakeConnectorOffers = () => wakeWork('connector-offer-expiry', 'connector-offer-source');
   const stopConnectorOfferWake = subscribeCommandCompletion(CONNECTOR_OFFER_DUE_KEY, wakeConnectorOffers);
@@ -613,6 +628,8 @@ async function main() {
     stopAttachmentRecovery();stopAttachmentResync();stopAttachmentWake();
     stopScheduleRecovery();stopScheduleResync();stopScheduleWake();
     await leader.stop();
+    stopBackgroundSources();
+    stopVoiceDeadlines();
     // The provider flight intentionally does not block unrelated leader jobs.
     // Once leadership admissions stop, drain its final receipt before pools close.
     await nextDayCheckinRunning;

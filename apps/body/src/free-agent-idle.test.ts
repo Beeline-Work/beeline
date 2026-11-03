@@ -78,13 +78,13 @@ describe('free agent idle sleep', () => {
     expect(h.requests).toEqual([active + 60_000]);
   });
 
-  it('waits a whole window again after the server refuses because a wake is pending', async () => {
+  it('parks a refused idle episode for a day until actual activity starts another deadline', async () => {
     const h = harness({ accept: false });
     await h.run(60);
     expect(h.requests).toHaveLength(1);
-    await h.run(59);
+    await h.run(86_400);
     expect(h.requests).toHaveLength(1);
-    await h.run(1);
+    h.idle.noteActivity();await h.run(59);expect(h.requests).toHaveLength(1);await h.run(1);
     expect(h.requests).toHaveLength(2);
   });
 

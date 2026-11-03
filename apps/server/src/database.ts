@@ -6,6 +6,7 @@ import { AGENT_SCHEDULE_SOURCE_SCHEMA } from './agent-schedule-source.js';
 import { HELPER_ACTIVATION_SCHEMA } from './helper-activation-schema.js';
 import { HELPER_USAGE_SCHEMA } from './helper-usage.js';
 import { HELPER_OVERLAY_SCHEMA } from './helper-overlay.js';
+import { BACKGROUND_DUE_SOURCE_SCHEMA } from './background-due-source.js';
 import { MCP_MEMBER_STREAM_SCHEMA } from './rooms-mcp-stream.js';
 import { MEDIA_AUTHORITY_SCHEMA } from './media-authority-schema.js';
 import { X_SIGNUP_DELIVERY_SCHEMA } from './x-ads.js';
@@ -3550,6 +3551,7 @@ export async function migrate(
   await ddlScript('Helper usage ownership', HELPER_USAGE_SCHEMA);
   await ddlScript('Helper command activation', HELPER_ACTIVATION_SCHEMA);
   await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);
+  await ddlScript('Background obligation sources', BACKGROUND_DUE_SOURCE_SCHEMA);
   if (!options.deferData) await migrateData(database);
 }
 

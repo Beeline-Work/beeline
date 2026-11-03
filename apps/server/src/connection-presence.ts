@@ -131,7 +131,8 @@ export class ConnectionPresence {
       PRESENCE_EVIDENCE_MIN_INTERVAL_MS,
       Math.floor(pickupWindowMs / 3),
     ),
-    lease: { instanceId?: string; renewMs?: number; expiryMs?: number } = {},
+    private readonly lease: { instanceId?: string; renewMs?: number; expiryMs?: number;
+      connectionWork?: typeof startConnectionWork } = {},
   ) {
     this.#attention = new CornerAttentionDeadlines(database,live,this.report);
     this.#commanderWakes = new CommanderWakeDeadlines(database,live,this.report);
@@ -198,7 +199,7 @@ export class ConnectionPresence {
   startLease(): void {
     if (this.#leaseTimer || this.#stopped || (!this.#ownedConnections.size && !this.#phoneConnections)) return;
     const tick = () => void this.renewLease().catch(this.report);
-    this.#leaseTimer = startConnectionWork(tick, this.#leaseRenewMs);
+    this.#leaseTimer = (this.lease.connectionWork ?? startConnectionWork)(tick, this.#leaseRenewMs);
   }
 
   /** A healthy authenticated phone also owns viewing/push suppression rows.

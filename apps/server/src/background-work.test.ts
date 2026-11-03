@@ -64,14 +64,11 @@ describe('owned timer chains', () => {
     try {
       // Other worker activity may own timers while this connection closes.
       const unrelated = setTimeout(() => {}, 60_000);
-      const timers = vi.spyOn(globalThis, 'setTimeout');
-      const clear = vi.spyOn(globalThis, 'clearTimeout');
-      let nextTick: unknown;
+      const unrelatedCount = vi.getTimerCount();
       const run = vi.fn();
       const stop = startConnectionWork(() => {
         run();
         if (run.mock.calls.length === 2) {
-          nextTick = timers.mock.results.at(-1)!.value;
           stop();
         }
       }, 1000);
@@ -79,12 +76,11 @@ describe('owned timer chains', () => {
       expect(run).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(2001);
       expect(run).toHaveBeenCalledTimes(2);
-      expect(nextTick).toBeDefined();
-      expect(clear).toHaveBeenCalledWith(nextTick);
+      expect(vi.getTimerCount()).toBe(unrelatedCount);
       await vi.advanceTimersByTimeAsync(10_000);
       expect(run).toHaveBeenCalledTimes(2);
       clearTimeout(unrelated);
-    } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+    } finally { vi.useRealTimers(); }
   });
 
   it('runs startup work immediately and uses the next queue deadline', async () => {

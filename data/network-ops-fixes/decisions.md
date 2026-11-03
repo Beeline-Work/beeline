@@ -324,3 +324,12 @@ Timeout candidate discovery is capped100 and uses the partial connecting-deadlin
 Whole background ownership, complete provider/ceremony migration and released-cohort gates remain open. The isolated PostgreSQL fixture checks actual candidate/deadline SQL over20,001 minimal rows, database-clock admission under host time2099 and indexed lookups under40 shared blocks each; it is not a complete transition or workload proof. Actual transitions are covered by migrated integration fixtures.
 
 Validation: connector source/idle/failure3, real HTTP/card/command integration4, isolated PostgreSQL clock/index1, shutdown10, server types, workspace build8, dead-code (five existing/zero new), router inventory158 and workflow paths119 pass. No whole finding is newly closed.
+
+
+## D095 — Pending-command renudge requires a helper event
+
+The minute repair loop no longer rediscovers and rewrites stranded pending commands. The helper-specific entry point now requires an agent ID; its unscoped30/90-second age/retry mode is removed. Actual connection/reconnect and the existing one-shot pickup transition still admit bounded hints for that helper. Busy same-Room commands remain excluded; other Rooms can progress. Committed command release already publishes the recipient's wake, and `CommanderWakeDeadlines` retains actual stored wake/startup deadlines.
+
+Daemon bootstrap independently enumerates every pending member Room, so its recovery does not rely on the100-row hint batch. This slice does not establish full route/owner generations, complete deadline source cost or all-cohort delivery. Those gates remain open.
+
+Validation so far: focused command/bootstrap4, focused connection/reconnect1, server types, workspace build8, dead-code (five existing/zero new) and router boundary inventory pass. Full connection-presence validation stalled twice; verbose output stops after six passing cases, at the21,630-message history fixture. Both runs were interrupted; full-suite success is not claimed. Per the repeated-obstacle handoff rule, this slice is committed locally but not pushed, pending firstmate resolution. Logs: `.beeline-proof/network-ops/renudge-presence.log` and `renudge-presence-verbose.log` in the task root.

@@ -137,3 +137,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F16/F17/F22 pending attachment retention removes hourly/minute scans in favor of committed eligibility hints and database-clock deadlines. Empty/active-only queues park, bounded backlog continues from retained rows, and a locked due row survives writer rollback. Whole-generation ownership, mixed active-request cost and remaining retention/cohort proofs remain open; this does not close a whole finding.
 
 - F16/F21/F22 connector-offer timeouts use exact committed source and persisted 15-minute deadlines instead of a shared minute scan. Empty/failure observations park; bounded candidate cleanup retains the existing lock order and current eligibility checks. Complete background/ceremony ownership and cohort proofs remain open.
+
+- F14/F16/F18 pending-command renudge no longer runs from the minute sweep or exposes an unscoped30/90-second retry mode. Actual helper connection/pickup events retain bounded recipient-specific hints; bootstrap and stored wake deadlines remain separate recovery paths. Complete route/ownership/cohort gates remain open.

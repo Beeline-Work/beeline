@@ -598,7 +598,7 @@ it('bootstrap identifies only pending member surfaces, including the corner pare
   expect((await daemon.execute('getDaemonBootstrap', { agentId: A }, A)).pendingRooms).toEqual([]);
 });
 
-it('shows an accepted tagged command until claim and re-nudges a connected idle helper once', async () => {
+it('shows an accepted tagged command until claim and permits only an explicit helper eligibility boundary', async () => {
   const sent = await send('@hoots Please check this');
   const [command] = await commands(A);
   const waiting = { requestId: command!.turnRequestId, agentPubkey: A };
@@ -608,7 +608,7 @@ it('shows an accepted tagged command until claim and re-nudges a connected idle 
   ]);
 
   await db.query(`UPDATE agent_commands SET created_at=now()-interval '31 seconds' WHERE id=$1`, [command!.id]);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(0);
   await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('renudge-test') ON CONFLICT DO NOTHING`);
   await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
     VALUES($1,1,'renudge-test','renudge-test') ON CONFLICT(agent_id) DO UPDATE
@@ -616,10 +616,11 @@ it('shows an accepted tagged command until claim and re-nudges a connected idle 
   const busySend = await send('@hoots An earlier task');
   await db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '90 seconds'
     WHERE source_message_id=$1`, [busySend.messageId]);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(0);
   await db.query(`UPDATE agent_commands SET state='complete' WHERE source_message_id=$1`, [busySend.messageId]);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(1);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(1);
+  // A distinct reconnect boundary can notify immediately, without a 90-second retry clock.
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(1);
   await claim(command!);
   expect((await phone.readRoom(R, H))?.pendingAgentCommands).toEqual([]);
 });
@@ -661,9 +662,9 @@ it('re-nudges an order while the helper is claimed in a different room', async (
   const busy = await send('@hoots busy elsewhere');
   await db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '90 seconds'
     WHERE source_message_id=$1`, [busy.messageId]);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(1);
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(1);
   await db.query(`UPDATE agent_commands SET wake_after=now()+interval '1 hour',renudged_at=NULL WHERE id=$1`, [order!.id]);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(0);
 });
 async function claim(c: AgentCommand, generationId = 'g1') {
   await daemon.execute(

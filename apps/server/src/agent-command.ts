@@ -1418,11 +1418,11 @@ export { CORNER_CHECKS_BLOCKED_AFTER } from './corner-state.js';
  */
 export const CORNER_CHECK_STUCK_AFTER = systemMessage("agent-command.1-hour");
 
-/** Push a connected helper's stranded orders and tags again.
- * A room the helper is already claiming waits for that turn to finish.
- * Work in any other room is pushed anyway. Passing an agent retries at once
- * (a reconnect). The unscoped sweep waits 30 seconds, then retries every 90. */
-export async function renudgeStrandedPendingCommands(db: SqlDatabase, agentId?: string): Promise<number> {
+/** Push one helper's eligible orders after an actual connection or pickup event.
+ * Busy Rooms wait for the committed command release; other Rooms remain eligible.
+ * Bootstrap also enumerates every pending Room, independently of this bounded hint.
+ * There is no unscoped discovery or elapsed-time retry admission. */
+export async function renudgeStrandedPendingCommands(db: SqlDatabase, agentId: string): Promise<number> {
   const result = await db.query<{ count: number }>(
     `WITH due AS MATERIALIZED (
        SELECT command.id
@@ -1435,10 +1435,7 @@ export async function renudgeStrandedPendingCommands(db: SqlDatabase, agentId?: 
          AND command.reason IN ('human_tag','direct_message','order')
          AND (command.wake_after IS NULL OR command.wake_after<=clock_timestamp())
          AND (command.startup_wake_after IS NULL OR command.startup_wake_after<=clock_timestamp())
-         AND ($1::text IS NOT NULL OR command.renudged_at IS NULL
-           OR command.renudged_at<=clock_timestamp()-interval '90 seconds')
-         AND ($1::text IS NULL OR command.agent_id=$1)
-         AND ($1::text IS NOT NULL OR command.created_at<=clock_timestamp()-interval '30 seconds')
+         AND command.agent_id=$1
          AND NOT EXISTS (
            SELECT 1 FROM agent_commands busy
            WHERE busy.agent_id=command.agent_id AND busy.room_id=command.room_id
@@ -1449,11 +1446,9 @@ export async function renudgeStrandedPendingCommands(db: SqlDatabase, agentId?: 
      ), renudged AS (
        UPDATE agent_commands command SET renudged_at=clock_timestamp()
        FROM due WHERE command.id=due.id AND command.state='pending'
-         AND ($1::text IS NOT NULL OR command.renudged_at IS NULL
-           OR command.renudged_at<=clock_timestamp()-interval '90 seconds')
        RETURNING command.id
      ) SELECT count(*)::int count FROM renudged`,
-    [agentId ?? null],
+    [agentId],
   );
   return Number(result.rows[0]?.count ?? 0);
 }

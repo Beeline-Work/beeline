@@ -9,6 +9,7 @@ import type { FreeAgentMachines } from './fly-machines.js';
 import { LiveHub } from './live.js';
 import type { SqlDatabase } from './database.js';
 import { notifyCommandCompletion } from './command-completion.js';
+import { backgroundDatabaseCut, backgroundNextDelay } from './background-deadline-clock.js';
 import { groupBPostgresDatabase } from './test-fixtures/test-support-router-group-b-postgres.js';
 
 const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
@@ -28,12 +29,12 @@ describe.skipIf(!url)('P12 actual background deadline composition, real PostgreS
     const checkin=new NextDayCheckin(db,'http://127.0.0.1',provider),push=new PushDeliveryLoop(db,undefined);
     let now=0;const work=new BackgroundWork(()=>now,()=>{}),runner=new BackgroundJobRunner();
     const families=[...maintenanceDeadlineFamilies(db),
-      {name:'next-day-checkin',run:()=>checkin.runOnce(),next:()=>checkin.nextDelayMs()},
-      {name:'push',run:async()=>{await push.runOnce();},next:()=>push.nextDelayMs()},
-      {name:'free-agents',run:async()=>{await free.sweep();},next:()=>free.nextDelayMs()},
+      {name:'next-day-checkin',run:()=>checkin.runOnce(),next:(cut?:string)=>checkin.nextDelayMs(cut)},
+      {name:'push',run:async()=>{await push.runOnce();},next:(cut?:string)=>push.nextDelayMs(cut)},
+      {name:'free-agents',run:async()=>{await free.sweep();},next:(cut?:string)=>free.nextDelayMs(cut)},
     ];
     const runs:string[]=[],wakes:string[]=[];
-    registerBackgroundDeadlineFamilies(work,families,(name,run)=>{runs.push(name);return runner.run(name,run);});
+    registerBackgroundDeadlineFamilies(work,families,(name,run)=>{runs.push(name);return runner.run(name,run);},db);
     const stop=subscribeBackgroundFamilies(fixture.database,new LiveHub(),families.map(family=>family.name),name=>{wakes.push(name);work.wake(name);});
     try{
       expect(await work.run(true)).toBe(Infinity);expect(statements.length).toBeGreaterThan(20);
@@ -55,6 +56,12 @@ describe.skipIf(!url)('P12 actual background deadline composition, real PostgreS
       expect(statements).toEqual([]);expect(runs).toEqual([]);
       await work.run(true);expect(runs).toEqual(families.map(family=>family.name));expect(provider).not.toHaveBeenCalled();
     }finally{stop();}
+  });
+
+  it('retains a deadline that becomes due between the business scan and minimum query, while parking an older failed record',async()=>{
+    const db=fixture.database,cut=await backgroundDatabaseCut(db);
+    expect(await backgroundNextDelay(db,`SELECT clock_timestamp() due_at`,cut)).toBe(0);
+    expect(await backgroundNextDelay(db,`SELECT $1::timestamptz-interval '1 microsecond' due_at`,cut)).toBeUndefined();
   });
 
   it('moves known voice expiry without recovery reads and fences a baseline against concurrent source evidence',async()=>{

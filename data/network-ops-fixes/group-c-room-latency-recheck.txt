@@ -1,0 +1,51 @@
+
+> @beeline/server@0.0.0 test
+> vitest run src/phone-service.read-room-latency.test.ts -t reads a corner in one core --maxWorkers=2 --minWorkers=1
+
+
+ RUN  v2.1.9 /home/lunchbox/.treehouse/buzzy-655f97/17/buzzy/apps/server
+
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+stdout | src/phone-service.read-room-latency.test.ts > PhoneService.readRoom latency
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+
+stdout | src/phone-service.read-room-latency.test.ts > PhoneService.readRoom latency > a corner open > reads a corner in one core and one optional statement, with SQL caps
+[corner-open] {"durationMs":1021,"queries":2,"mentionPasses":1,"largestRead":1}
+
+stderr | src/phone-service.read-room-latency.test.ts > PhoneService.readRoom latency > a corner open > reads a corner in one core and one optional statement, with SQL caps
+[slow-operation] {"operation":"phone.read_room","durationMs":1018,"spans":{"data":618,"enrichment":364,"app-metadata":0,"projection":1}}
+
+ ❯ src/phone-service.read-room-latency.test.ts (18 tests | 1 failed | 17 skipped) 120893ms
+   × PhoneService.readRoom latency > a corner open > reads a corner in one core and one optional statement, with SQL caps 1058ms
+     → expected 1020.9858410000015 to be less than 650
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/phone-service.read-room-latency.test.ts > PhoneService.readRoom latency > a corner open > reads a corner in one core and one optional statement, with SQL caps
+AssertionError: expected 1020.9858410000015 to be less than 650
+ ❯ src/phone-service.read-room-latency.test.ts:281:26
+    279|         representative.spans[0]!.endedAt,
+    280|       );
+    281|       expect(durationMs).toBeLessThan(650);
+       |                          ^
+    282|       expect(enrichment.spans.filter((span) => /tagged_ids/.test(span.…
+    283|       expect(largestRead).toBe(1); // Both statements return one aggre…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 17 skipped (18)
+   Start at  00:01:23
+   Duration  140.52s (transform 5.05s, setup 18ms, collect 3.75s, tests 120.89s, environment 0ms, prepare 142ms)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error path /home/lunchbox/.treehouse/buzzy-655f97/17/buzzy/apps/server
+npm error workspace @beeline/server@0.0.0
+npm error location /home/lunchbox/.treehouse/buzzy-655f97/17/buzzy/apps/server
+npm error command failed
+npm error command sh -c vitest run src/phone-service.read-room-latency.test.ts -t 'reads a corner in one core' --maxWorkers=2 --minWorkers=1

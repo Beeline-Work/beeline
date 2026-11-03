@@ -42,3 +42,9 @@ A macOS/iOS test host or device service with the supported iOS37 and relevant re
 | F23 | Actual native file preview/view/share/save, immutable disk cache/digest, revoke/logout purge, 16 KiB/25 MiB/128 MiB/four-download bounds and demand-only expired capability refresh. |
 
 These are exact required native gates, not new scope or permission requirements. The prior PostgreSQL/real WebSocket/source-owner proofs remain useful but do not substitute for native SDK execution. Other unproved consumer/platform journeys are not silently marked passed. No finding is closed on the strength of a supported subset; no native lifecycle, release, minimum-version decision or production access was attempted.
+
+## Additional validation
+
+Server typecheck passes. Projection integration: 26 passed. CI workflow tests: 20 passed; 133 workflow path references resolve. The strict F07 payload/expansion proof still passes.
+
+The legacy Room latency suite passes 17 cases and fails its unchanged 650 ms corner-open ceiling at 702 ms. A targeted recheck also fails at 1,021 ms (two queries, one mention enrichment, largest result one row); [retained output](group-c-room-latency-recheck.txt). This is a failing validation, not a performance pass or a proven pre-existing failure. No threshold or assertion changed.

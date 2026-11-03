@@ -9,7 +9,7 @@ rows retain their authority; held compatibility removals stay held.
 
 | Finding | Gap closed here and executable proof | Still open, with exact evidence |
 | --- | --- | --- |
-| F01 overlays | No premature removal. Re-run the existing P12 `helper-overlay.postgres.test.ts` proof of hidden helper uploads, entry baseline and terminal fences. | The old full-draft Body path is held by the rollout-readiness row until the installed-helper compatibility floor is established. This task supplies no installed floor and does not delete that path. |
+| F01 overlays | No premature removal. The existing P12 `helper-overlay.postgres.test.ts` proof passes (2 cases): of hidden helper uploads, entry baseline and terminal fences. | The old full-draft Body path is held by the rollout-readiness row until the installed-helper compatibility floor is established. This task supplies no installed floor and does not delete that path. |
 | F07 history/tools/previews | Generic socket requests can no longer dispatch owner-only tool and media reads. The P4 socket proof rejects those bypasses before wire dispatch. The P8/P11 media proof now calls the real `artifactImageSource`, `fetchArtifactBytes`, `artifactLocalUri` and `openArtifactInBrowser` adapters. Preview/view/save share one metadata read and one HTTP byte transfer; a runnable capability reuses that metadata. `media-demand-owner.test.ts` proves browser metadata/link opportunities are consumed once. | Generic history remains open: `RoomViewClient.history/historyAfter/historyAround/outline` in `sync/transport/room-view-client.ts` still call its generic reader, and `room-message-store.ts` still offers automatic short-list fill. This follow-up does not claim those readers have router ownership. Installed parse/render and complete history/tool/preview cohorts remain required. |
 | F10 foreground | The existing real WebSocket/PostgreSQL P4 proof now enters through production `sharedLiveConnection`, including its NetInfo configuration and callback deduplication. Same-type Wi-Fi IP changes now count as path edges; initial/duplicate samples do not. Healthy callbacks execute zero queries and zero socket replacements; one half-open incident replaces once and recovers only the demanded Room. | NetInfo native events and AppState are synthetic inputs to the real adapter. Actual installed OS/path flapping and the remaining supported-platform callback matrix remain unproved. |
 | F11 auth/OTA | GitHub and Google completion inspections are shared across warm/cold adapters for the same origin/state/recovery token. Google native picker results and fallback cannot complete or restore a replaced ceremony. P9 in `router-group-c-connection.postgres.test.ts` composes both actual preauth clients, HTTP, independent PostgreSQL pools, `AuthStore`, durable ticket capture and LISTEN: two callback adapters make one held HTTP request, inspect once while pending, inspect once on commit, and make no timed repeat. Provider session tests cover cancellation, failed-held recovery, duplicate cold callbacks and late native picker success/refusal. | OS/browser callback delivery and the HTTP response serializer remain synthetic seams in P9. OTA behavior is unchanged: `update-provider.ts`/`useUpdates.ts` retain their shared SDK flight and connection quotas; installed Expo cold pre-socket/resume behavior and native retry capture remain open. Source `checkAutomatically: NEVER` alone cannot prove installed behavior. |
@@ -46,6 +46,13 @@ PostgreSQL proofs require an isolated loopback URL in
 - Full root `npm run typecheck`, `npm run lint:phone-network`,
   `npm run lint:router` and unchanged
   `node --test scripts/network-codec-bundle.test.mjs`.
+
+Observed on the integrated worker source: **325 mobile regressions in 12 serial
+suites**, **11 shared-core cases**, and **12 real-PostgreSQL cases in four serial
+suites** pass. The strict 200-tool payload proof passes: initial tool rows 0,
+initial value 1,970 bytes, expanded rows 200, explicit full output 32,768 bytes,
+and revoked enqueues 0. Full root typecheck, both scanners and all three bundle
+gates pass. Auth/native event and serializer seams remain as described above.
 
 The measured phone owner is **86,512 raw / 24,506 gzip bytes**, within the unchanged
 90,112 / 24,576 limits. The phone manifest remains 72 sites and the router scanner

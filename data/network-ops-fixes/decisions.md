@@ -394,3 +394,9 @@ The controlled pending-email regression and production wiring assertion pass wit
 A retained projection, usage or media executor rejects after its negotiated socket is replaced or closes, before sending a request. It cannot borrow a replacement connection's capabilities, including after server policy rollback. The actual server compatibility proof restarts the server with selection off/on/off, preserving legacy reads/writes and committed messages while negotiated snapshots follow the selected policy.
 
 Validation: LiveConnection87 and actual phone socket17 pass with a4096MiB heap and at most two workers, one suite at a time. This is scoped P10 rollback evidence; released-helper/iOS/web/Tauri, mixed-machine and all-family migration proofs remain open. No finding closes or capability activates.
+
+## D104 — Preserve Android app-switch behavior without recovery polling
+
+The current-main sign-in fix and staged router recovery are merged together. Android browser dismissal keeps the existing callback listener and correlated completion alive for its five-minute ceremony window; it frees the provider buttons immediately. A replacement aborts the old waiter and revokes only its token, with state-scoped local cleanup. Callback arrival is an actual completion boundary; no timer issues another pending observation. The one held request retains the server's120-second bound.
+
+Validation after main integration: root typecheck (14 workspace tasks, mobile and scripts) passes; GitHub56/Google29/onboarding21/callback-state20 pass. Bundle, boundary mutation and CI-script checks pass89. Legacy/native behavior is preserved by scoped source tests here; the new auth integration is not an additional native device capture.

@@ -464,6 +464,9 @@ async function awaitCompletedGitHubBindChallenge(expectedState: string): Promise
 
 interface ResilientGitHubSessionInput {
   funnelContext?: SigninFunnelEvent;
+  platform?: string;
+  signal?: AbortSignal;
+  onBrowserClosed?: () => void;
   state: string;
   recoveryToken: string;
   purpose?: 'signin' | 'reconnect';
@@ -474,15 +477,15 @@ interface ResilientGitHubSessionInput {
   ): GitHubAuthUrlSubscription | Promise<GitHubAuthUrlSubscription>;
   fetchImpl?: typeof fetch;
   recoveryWaitMs?: number;
-  recoveryPollMs?: number;
-  offlineGiveUpMs?: number;
-  closedPendingMs?: number;
   callbackGraceMs?: number;
 }
 
 /** Keep the deep link fast path, then recover the same one-use proof by app-held secret. */
 export async function runResilientGitHubSignInSession({
   funnelContext,
+  platform,
+  signal,
+  onBrowserClosed,
   state,
   recoveryToken,
   purpose = 'signin',
@@ -490,10 +493,15 @@ export async function runResilientGitHubSignInSession({
   openAuthSession,
   subscribeToUrls,
   fetchImpl = githubAuthFetch,
-  recoveryWaitMs = GITHUB_RECOVERY_WAIT_MS,
+  recoveryWaitMs = platform === 'android' ? 5 * 60_000 : GITHUB_RECOVERY_WAIT_MS,
   callbackGraceMs,
 }: ResilientGitHubSessionInput): Promise<OidcBindChallenge> {
+  const assertCurrent = () => {
+    if (signal?.aborted) throw new OidcBindError('browser_canceled', 'This sign-in was replaced');
+  };
+  assertCurrent();
   const previousRecoveryToken = (await readPendingSession())?.recoveryToken;
+  assertCurrent();
   if (
     previousRecoveryToken &&
     previousRecoveryToken !== recoveryToken &&
@@ -512,6 +520,7 @@ export async function runResilientGitHubSignInSession({
     authorization.searchParams.set('onboarding', '1');
     start.authorizationUrl = authorization.toString();
   }
+  assertCurrent();
   await persistGitHubSignInState(state, purpose, recoveryToken);
   const controller = new AbortController();
   let completionFailure: unknown;
@@ -519,6 +528,7 @@ export async function runResilientGitHubSignInSession({
   const recovery = fetchGitHubRecoveryChallenge(recoveryToken, state, runtime, fetchImpl,
     Math.min(120_000, Math.max(0, recoveryWaitMs)), controller.signal);
   const recovered = recovery.then(async challenge => {
+    assertCurrent();
     if (!challenge) return never();
     await persistPendingCallback(challengeCallbackUrl(challenge, state), state);
     return challenge;
@@ -532,10 +542,27 @@ export async function runResilientGitHubSignInSession({
     timeout = setTimeout(() => reject(completionFailure ??
       new OidcBindError('ticket_expired', 'The GitHub completion expired', 410)), recoveryWaitMs);
   });
+  let rejectReplacement!: (error: OidcBindError) => void;
+  const replaced = new Promise<never>((_resolve, reject) => { rejectReplacement = reject; });
+  const abort = () => {
+    controller.abort();
+    rejectReplacement(new OidcBindError('browser_canceled', 'This sign-in was replaced'));
+  };
+  signal?.addEventListener('abort', abort, { once: true });
+  if (signal?.aborted) abort();
   const callback = waitForAuthCallbackResult({ redirectUri: start.redirectUri,
-    openAuthSession: () => openAuthSession(start.authorizationUrl, start.redirectUri), subscribeToUrls,
+    openAuthSession: async () => {
+      assertCurrent();
+      const result = await openAuthSession(start.authorizationUrl, start.redirectUri);
+      if (platform === 'android' && (result.type === 'cancel' || result.type === 'dismiss')) {
+        onBrowserClosed?.();
+        return { type: 'opened' };
+      }
+      return result;
+    }, subscribeToUrls, openedCallbackWaitMs: recoveryWaitMs,
     signal: controller.signal, ...(callbackGraceMs === undefined ? {} : { callbackGraceMs }),
   }).then(async result => {
+    assertCurrent();
     if (controller.signal.aborted) return never();
     if (!recoverySignal(result.url, state)) return resumeGitHubSignInCallback(result.url);
     // A callback is an actual completion boundary. Old servers may have returned
@@ -544,6 +571,7 @@ export async function runResilientGitHubSignInSession({
       if (error instanceof OidcBindError && !error.retryable) throw error;
       return null;
     }) ?? await fetchGitHubRecoveryChallenge(recoveryToken, state, runtime, fetchImpl);
+    assertCurrent();
     if (!challenge) throw new OidcBindError('ticket_expired', 'The GitHub completion expired', 410);
     await persistPendingCallback(challengeCallbackUrl(challenge, state), state);
     return challenge;
@@ -555,12 +583,13 @@ export async function runResilientGitHubSignInSession({
     void cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
     leftGitHubSignIns.add(error); throw error;
   });
-  try { return await Promise.race([recovered, callback, deadline]); }
+  try { return await Promise.race([recovered, callback, deadline, replaced]); }
   catch (error) {
     if (error instanceof OidcBindError && !error.retryable && !leftGitHubSignIns.has(error))
       await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+    if (signal?.aborted) await clearPendingGitHubSignInState(state);
     throw error;
-  } finally { if (timeout) clearTimeout(timeout); controller.abort(); }
+  } finally { if (timeout) clearTimeout(timeout); signal?.removeEventListener('abort', abort); controller.abort(); }
 
 }
 

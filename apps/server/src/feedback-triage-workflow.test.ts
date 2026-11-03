@@ -238,10 +238,11 @@ describe('feedback-triage workflow', () => {
       await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
         VALUES($1,$2,$3,'Synthetic request','message')`,[`walk-${n}`,room,CREATOR]);
     }
+    // Scope/receipt coverage needs more than one 200-row page of internal history.
     // Reproduction walk-scope: the operator's internal traffic must never be reserved.
     await database.query(`UPDATE workspaces SET internal=true WHERE id=$1`,[WORKSPACE]);
     await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation)
-      SELECT 'internal-'||n,$1,$2,'Synthetic internal traffic','message' FROM generate_series(1,29650) n`,[ROOM,CREATOR]);
+      SELECT 'internal-'||n,$1,$2,'Synthetic internal traffic','message' FROM generate_series(1,201) n`,[ROOM,CREATOR]);
     await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('walk-start',$1,$2,'Start walk')`,[TRIAGE_CORNER,CREATOR]);
     const turn = cornerTurn('walk-start');
     await expect(saveWorkflow(database,turn,{contract:WORKSPACE_WALK_CONTRACT})).resolves.toMatchObject({slug:'workspace-walk'});

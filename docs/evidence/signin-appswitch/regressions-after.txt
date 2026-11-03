@@ -1,0 +1,83 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/0933f8b4999c555c7d04cde528cd5d817b973e797398c4c16b5d23a2aaaf458c/apps/mobile
+
+ ✓ sources/auth/google-auth-session.test.ts (27 tests) 840ms
+   ✓ Google sign-in continuation > R-onb-21: recovers and cancels on Hermes without AbortSignal.timeout  752ms
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > uses the primary GitHub button before sign-in
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > R-signin-entry: enters after exchange even when GitHub repository discovery is unavailable
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > R-signin-entry: restores a saved session before touching a consumed Google continuation
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > Reproduction 6c548392: keeps both providers available after browser_canceled
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > Reproduction 6c548392: keeps both providers available after ticket_expired
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > Reproduction 6c548392: keeps both providers available after offline
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > Reproduction signin-appswitch: Google dismissal keeps waiting and permits a replacement press
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > Reproduction signin-appswitch: GitHub dismissal frees the buttons while retaining the pending sign-in
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > opens monolith sign-in on server.usebeeline.app and exchanges its callback there
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > finishes the first press on the onboarding screen its own callback routed in
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > finishes the first press on the onboarding screen its own callback routed in
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > finishes a cold completed callback after the server initially reports pending
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ✓ sources/auth/github-auth-session.test.ts (56 tests) 1923ms
+   ✓ GitHub auth session redirects > Reproduction gh3: frees sign-in within 2 s when the person leaves GitHub and the server stays pending  1504ms
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > skips the face ceremony for a person who already chose a face
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > shows no connection with one Try again, and retries nothing until it is pressed
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > keeps a genuine GitHub refusal on its own message, not the no-connection state
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > renders GitHub on the first frame without waiting for auth capabilities
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > never consults capabilities or falls back to the legacy provider when the network fails
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > cold reconnect preserves the session and returns to Settings (failure=false)
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > cold reconnect preserves the session and returns to Settings (failure=true)
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > returns a signed-in device to Rooms when OTA replays a completed, now-expired GitHub launch callback
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > rejects a cold state mismatch without binding or saving a key
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/onboarding.github-callback.test.ts > GitHub callback delivery into onboarding > shows SESSION EXPIRED and leaves the sign-in action available
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ✓ sources/app/(app)/beeline/onboarding.github-callback.test.ts (21 tests) 672ms
+   ✓ GitHub callback delivery into onboarding > finishes a cold completed callback after the server initially reports pending  413ms
+ ✓ sources/auth/onboarding-state.test.ts (20 tests) 28ms
+ ✓ sources/auth/auth-session.test.ts (3 tests) 5ms
+
+ Test Files  5 passed (5)
+      Tests  127 passed (127)
+   Start at  20:54:01
+   Duration  4.50s (transform 1.30s, setup 660ms, collect 3.26s, tests 3.47s, environment 1ms, prepare 428ms)
+

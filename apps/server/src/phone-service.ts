@@ -233,6 +233,7 @@ import {
   ensureSystemDirectMessageRoomResult,
   identitySubject,
   systemIdentityMention,
+  settleSystemCard,
   systemLine,
 } from './system-line.js';
 export { directMessageRoomId } from './system-line.js';
@@ -9804,13 +9805,7 @@ export class PhoneService {
           )
         ).rows;
         for (const card of cards) {
-          await database.query(
-            `UPDATE messages SET card=jsonb_set(card,'{status}','"connected"'::jsonb)
-           WHERE id=$1`,
-            [card.id],
-          );
-          const source = await systemLine(database, {
-            roomId: card.room_id,
+          const source = await settleSystemCard(database, card.id, {
             authorId: viewerId,
             subject: { kind: 'person', id: viewerId, name: systemMessage("phone-service.a-member") },
             verb: systemMessage("phone-service.connected"),

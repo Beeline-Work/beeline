@@ -15,6 +15,33 @@ const state = 's'.repeat(43);
 const recoveryToken = 'r'.repeat(43);
 const pending = () => storage.set('beeline.google-sign-in.v1', JSON.stringify({ state, recoveryToken, startedAt: Date.now() }));
 describe('Google sign-in continuation', () => {
+  it.each(['cancel', 'dismiss'])('Reproduction signin-appswitch: Android %s on foreground keeps the link and recovery alive', async (type) => {
+    vi.useFakeTimers();
+    let returned = false;
+    let link: ((url: string) => void) | undefined;
+    const removed = vi.fn();
+    const closed = vi.fn();
+    const fetcher = vi.fn(async (url: string) => new Response('{}', {
+      status: url.endsWith('/cancel') || returned ? 200 : 202,
+    }));
+    vi.stubGlobal('fetch', fetcher);
+    try {
+      const result = runGoogleSignIn({ state, recoveryToken, platform: 'android', onBrowserClosed: closed,
+        openAuthSession: async () => ({ type }),
+        subscribeToUrls: (listener) => { link = listener; return { remove: removed }; },
+      });
+      const outcome = result.then(value => ({ value }), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(21_000);
+      expect(fetcher.mock.calls.some(([url]) => url.endsWith('/cancel'))).toBe(false);
+      expect(removed).not.toHaveBeenCalled();
+      expect(closed).toHaveBeenCalledOnce();
+      returned = true;
+      link!(`beeline://beeline/google-callback?state=${state}&completed=1`);
+      await vi.advanceTimersByTimeAsync(750);
+      expect(await outcome).toEqual({ value: recoveryToken });
+      expect(removed).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
   it.each(['dismiss', 'cancel'])('Reproduction 6c548392: %s checks pending server state and promptly cancels', async (type) => {
     vi.useFakeTimers();
     const fetcher = vi.fn(async (url: string) => new Response('{}', {
@@ -32,6 +59,37 @@ describe('Google sign-in continuation', () => {
       expect(fetcher.mock.calls.some(([url]) => url.endsWith('/completion'))).toBe(true);
       expect(fetcher.mock.calls.some(([url]) => url.endsWith('/cancel'))).toBe(true);
       expect(storage.size).toBe(0);
+    } finally { vi.useRealTimers(); }
+  });
+  it('Reproduction signin-appswitch: replacing a waiting Android attempt revokes only the old token', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const nextState = 'x'.repeat(43), nextToken = 'q'.repeat(43);
+    let complete = false;
+    const fetcher = vi.fn(async (url: string, options?: RequestInit) => {
+      const token = JSON.parse(options!.body as string).recoveryToken;
+      return new Response('{}', { status: url.endsWith('/cancel') || (complete && token === nextToken) ? 200 : 202 });
+    });
+    vi.stubGlobal('fetch', fetcher);
+    let callback!: (url: string) => void;
+    const open = { openAuthSession: async () => ({ type: 'dismiss' }),
+      subscribeToUrls: (listener: (url: string) => void) => { callback = listener; return { remove() {} }; }, platform: 'android' };
+    try {
+      const old = runGoogleSignIn({ ...open, state, recoveryToken, signal: controller.signal }).catch(error => error);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(fetcher.mock.calls.some(([url]) => url.endsWith('/cancel'))).toBe(false);
+      controller.abort();
+      const next = runGoogleSignIn({ ...open, state: nextState, recoveryToken: nextToken });
+      const nextOutcome = next.then(value => ({ value }), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(1_500);
+      expect(await old).toMatchObject({ code: 'browser_canceled' });
+      expect(JSON.parse(storage.get('beeline.google-sign-in.v1')!)).toMatchObject({ state: nextState, recoveryToken: nextToken });
+      const revoked = fetcher.mock.calls.filter(([url]) => url.endsWith('/cancel')).map(([, options]) => JSON.parse(options!.body as string).recoveryToken);
+      expect(revoked).toEqual([recoveryToken]);
+      complete = true;
+      callback(`beeline://beeline/google-callback?state=${nextState}&completed=1`);
+      await vi.advanceTimersByTimeAsync(750);
+      expect(await nextOutcome).toEqual({ value: nextToken });
     } finally { vi.useRealTimers(); }
   });
   it('Reproduction 6c548392: dismiss with completed server state signs in', async () => {

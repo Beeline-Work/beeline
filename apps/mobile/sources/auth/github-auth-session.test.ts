@@ -314,7 +314,6 @@ describe('GitHub auth session redirects', () => {
         }),
         subscribeToUrls: () => ({ remove: () => undefined }),
         fetchImpl: reachable(fetchImpl),
-        recoveryPollMs: 0,
       }),
     ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -332,6 +331,72 @@ describe('GitHub auth session redirects', () => {
       subscribeToUrls: () => ({ remove() {} }), fetchImpl: fetchImpl as typeof fetch, recoveryWaitMs: 10,
     })).rejects.toMatchObject({ code: 'ticket_expired' });
     expect(fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/completion'))).toHaveLength(1);
+  });
+
+  it.each(['cancel', 'dismiss'])('Reproduction signin-appswitch: Android %s on foreground keeps the link and recovery alive', async (type) => {
+    vi.useFakeTimers();
+    let link: ((url: string) => void) | undefined;
+    const removed = vi.fn();
+    const closed = vi.fn();
+    const fetchImpl = vi.fn(async (input: RequestInfo | URL) => new Response('{}', {
+      status: String(input).endsWith('/cancel') ? 200 : 202,
+    }));
+    try {
+      const result = runResilientGitHubSignInSession({
+        state: STATE, recoveryToken: RECOVERY_TOKEN, platform: 'android', onBrowserClosed: closed,
+        runtime: MONOLITH_RUNTIME,
+        // Expo resolves this result when Android brings the app to the foreground.
+        openAuthSession: async () => ({ type }),
+        subscribeToUrls: (listener) => { link = listener; return { remove: removed }; },
+        fetchImpl: reachable(fetchImpl),
+      });
+      const outcome = result.then(value => ({ value }), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(21_000);
+      expect(fetchImpl.mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false);
+      expect(link).toBeDefined();
+      expect(closed).toHaveBeenCalledOnce();
+      link!(bindCallback());
+      await vi.advanceTimersByTimeAsync(250);
+      expect(await outcome).toMatchObject({ value: { ticket: 't'.repeat(43) } });
+      expect(removed).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('Reproduction signin-appswitch: replacing a waiting Android attempt preserves the newer recovery', async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const nextToken = 'q'.repeat(43);
+    let complete = false;
+    const fetcher = vi.fn(async (url: RequestInfo | URL, options?: RequestInit) => {
+      const token = JSON.parse(options!.body as string).recoveryToken;
+      if (String(url).endsWith('/cancel')) return new Response(null, { status: 204 });
+      if (complete && token === nextToken) {
+        const response = await recoveryResponse().json();
+        return new Response(JSON.stringify({ ...response, ticket: nextToken }));
+      }
+      return new Response('{}', { status: 202 });
+    });
+    let callback!: (url: string) => void;
+    const input = { runtime: MONOLITH_RUNTIME, platform: 'android', openAuthSession: async () => ({ type: 'dismiss' }),
+      subscribeToUrls: (listener: (url: string) => void) => { callback = listener; return { remove() {} }; }, fetchImpl: reachable(fetcher) };
+    try {
+      const old = runResilientGitHubSignInSession({ ...input, state: STATE, recoveryToken: RECOVERY_TOKEN, signal: controller.signal }).catch(error => error);
+      await vi.advanceTimersByTimeAsync(3_000);
+      expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false);
+      controller.abort();
+      const next = runResilientGitHubSignInSession({ ...input, state: OTHER_STATE, recoveryToken: nextToken });
+      const nextOutcome = next.then(value => ({ value }), error => ({ error }));
+      await vi.advanceTimersByTimeAsync(2_000);
+      expect(await old).toMatchObject({ code: 'browser_canceled' });
+      expect(JSON.parse(storage.get('buzzy.github-sign-in-session.v2')!)).toMatchObject({ state: OTHER_STATE, recoveryToken: nextToken });
+      const revoked = fetcher.mock.calls.filter(([url]) => String(url).endsWith('/cancel')).map(([, options]) => JSON.parse(options!.body as string).recoveryToken);
+      expect(revoked.length).toBeGreaterThan(0);
+      expect(revoked.every(token => token === RECOVERY_TOKEN)).toBe(true);
+      complete = true;
+      callback(`beeline://beeline/github-callback?state=${OTHER_STATE}&completed=1`);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(await nextOutcome).toMatchObject({ value: { ticket: nextToken } });
+    } finally { vi.useRealTimers(); }
   });
 
   it('Reproduction gh3: frees sign-in within 2 s when the person leaves GitHub and the server stays pending', async () => {
@@ -379,7 +444,6 @@ describe('GitHub auth session redirects', () => {
         subscribeToUrls: () => ({ remove: () => undefined }),
         fetchImpl: reachable(fetchImpl),
         callbackGraceMs: 0,
-        recoveryPollMs: 0,
       }),
     ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
     expect(fetchImpl).toHaveBeenCalledTimes(2);

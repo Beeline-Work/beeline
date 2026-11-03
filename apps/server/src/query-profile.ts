@@ -74,8 +74,9 @@ export class QueryProfiler {
 
   record(sql: string, durationMs: number, error?: unknown): void {
     this.#window.recordQuery(durationMs);
+    const normalizedSql = sql.replace(/\s+/g, ' ').trim();
     const fingerprint = createHash('sha256')
-      .update(sql.replace(/\s+/g, ' ').trim())
+      .update(normalizedSql)
       .digest('hex')
       .slice(0, 16);
     const previous = this.#profiles.get(fingerprint);
@@ -95,7 +96,9 @@ export class QueryProfiler {
     };
     this.#profiles.set(fingerprint, next);
     if (durationMs >= 500)
-      console.warn('[database] slow query', { fingerprint, durationMs, code });
+      console.warn('[database] slow query', {
+        fingerprint, durationMs, code, sqlPreview: normalizedSql.slice(0, 300),
+      });
   }
 
   recordCheckout(durationMs: number, waiters: number): void {

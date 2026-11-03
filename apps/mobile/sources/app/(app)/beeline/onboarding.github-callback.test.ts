@@ -14,6 +14,7 @@ const linking = vi.hoisted(() => ({
   listener: null as ((event: { url: string }) => void) | null,
 }));
 const browser = vi.hoisted(() => ({ open: vi.fn() }));
+const random = vi.hoisted(() => ({ seed: 0 }));
 // The device's network: every auth-server request the sign-in makes goes through it.
 const network = vi.hoisted(() => ({ online: true, fetch: vi.fn() }));
 const runtime = vi.hoisted(() => ({
@@ -94,7 +95,7 @@ vi.mock('expo-web-browser', () => ({
   maybeCompleteAuthSession: vi.fn(),
   openAuthSessionAsync: browser.open,
 }));
-vi.mock('expo-crypto', () => ({ getRandomBytes: (length: number) => new Uint8Array(length) }));
+vi.mock('expo-crypto', () => ({ getRandomBytes: (length: number) => new Uint8Array(length).fill(++random.seed) }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn() }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   clearPendingGitHubIdentity: identityStorage.clearPending,
@@ -228,6 +229,7 @@ describe('GitHub callback delivery into onboarding', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     storage.clear();
+    random.seed = 0;
     clearOnboardingNotice();
     markSignInInFlight(false);
     network.online = true;
@@ -312,7 +314,7 @@ describe('GitHub callback delivery into onboarding', () => {
     },
   );
 
-  it('Reproduction 6c548392: Google back press shows punctuated cancel and permits immediate retry', async () => {
+  it('Reproduction signin-appswitch: Google dismissal keeps waiting and permits a replacement press', async () => {
     vi.useFakeTimers();
     browser.open.mockResolvedValue({ type: 'dismiss' });
     network.fetch.mockImplementation(async (url: string) => new Response('{}', {
@@ -322,19 +324,26 @@ describe('GitHub callback delivery into onboarding', () => {
       const tree = await render();
       const google = () => tree.root.find((node: any) =>
         node.type === 'Button' && node.props.testID === 'onboarding-google-sign-in');
+      const states: string[] = [];
       for (let attempt = 0; attempt < 2; attempt++) {
         let press!: Promise<void>;
         await act(async () => { press = google().props.onPress(); });
         await act(async () => { await vi.advanceTimersByTimeAsync(3_000); await press; });
-        expect(noticeText(tree)).toContain('Sign-in did not finish.');
+        expect(noticeText(tree)).not.toContain('Sign-in did not finish.');
         expect(google().props.disabled).toBe(false);
         expect(google().props.loading).toBe(false);
+        states.push(JSON.parse(storage.get('beeline.google-sign-in.v1')!).state);
       }
       expect(browser.open).toHaveBeenCalledTimes(2);
-    } finally { vi.useRealTimers(); }
+      expect(new Set(states).size).toBe(2);
+    } finally {
+      markSignInInFlight(false);
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
   });
 
-  it('Reproduction gh3: leaving the GitHub page frees both buttons within 2 s without a notice', async () => {
+  it('Reproduction signin-appswitch: GitHub dismissal frees the buttons while retaining the pending sign-in', async () => {
     vi.useFakeTimers();
     browser.open.mockResolvedValue({ type: 'dismiss' });
     network.fetch.mockImplementation(async (url: string) => new Response('{}', {
@@ -354,11 +363,12 @@ describe('GitHub callback delivery into onboarding', () => {
         expect(button(testID).props.loading).toBe(false);
       }
       expect(button('onboarding-github-sign-in').props.label).toBe('Continue with GitHub');
-      expect(network.fetch).toHaveBeenCalledWith(
-        'https://server.usebeeline.app/auth/github/completion/cancel',
-        expect.anything(),
-      );
-    } finally { vi.useRealTimers(); }
+      expect(network.fetch.mock.calls.some(([url]) => String(url).endsWith('/cancel'))).toBe(false);
+    } finally {
+      markSignInInFlight(false);
+      await vi.runAllTimersAsync();
+      vi.useRealTimers();
+    }
   });
 
   it('opens monolith sign-in on server.usebeeline.app and exchanges its callback there', async () => {

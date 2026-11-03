@@ -1,0 +1,176 @@
+{
+  "started": "2026-11-03T01:52:21.837844+00:00",
+  "ended": "2026-11-03T01:52:55.317950+00:00",
+  "route": "launcher",
+  "aegisSeconds": 21,
+  "after": [
+    {
+      "text": "Sign in - Google Accounts",
+      "description": "",
+      "id": "",
+      "bounds": "[0,283][1080,1520]"
+    },
+    {
+      "text": "Sign in with Google",
+      "description": "",
+      "id": "",
+      "bounds": "[126,327][459,382]"
+    },
+    {
+      "text": "Sign in",
+      "description": "",
+      "id": "headingText",
+      "bounds": "[63,535][1021,640]"
+    },
+    {
+      "text": "to continue to ",
+      "description": "",
+      "id": "",
+      "bounds": "[63,684][338,742]"
+    },
+    {
+      "text": "Beeline",
+      "description": "",
+      "id": "",
+      "bounds": "[336,684][488,742]"
+    },
+    {
+      "text": "Forgot email?",
+      "description": "",
+      "id": "",
+      "bounds": "[63,1020][307,1070]"
+    },
+    {
+      "text": "Before using this app, you can review Beeline\u2019s ",
+      "description": "",
+      "id": "",
+      "bounds": "[63,1188][850,1238]"
+    },
+    {
+      "text": "",
+      "description": "Privacy Policy",
+      "id": "",
+      "bounds": "[63,1188][981,1291]"
+    },
+    {
+      "text": "Privacy Policy",
+      "description": "",
+      "id": "",
+      "bounds": "[63,1188][981,1291]"
+    },
+    {
+      "text": " and ",
+      "description": "",
+      "id": "",
+      "bounds": "[168,1241][252,1291]"
+    },
+    {
+      "text": "",
+      "description": "Terms of Service",
+      "id": "",
+      "bounds": "[249,1241][551,1291]"
+    },
+    {
+      "text": "Terms of Service",
+      "description": "",
+      "id": "",
+      "bounds": "[249,1241][551,1291]"
+    },
+    {
+      "text": ".",
+      "description": "",
+      "id": "",
+      "bounds": "[548,1241][559,1291]"
+    },
+    {
+      "text": "Next",
+      "description": "",
+      "id": "",
+      "bounds": "[811,1398][1021,1508]"
+    },
+    {
+      "text": "Create account",
+      "description": "",
+      "id": "",
+      "bounds": "[18,1398][372,1508]"
+    },
+    {
+      "text": "English (United States)",
+      "description": "",
+      "id": "",
+      "bounds": "[21,1520][509,1520]"
+    },
+    {
+      "text": "",
+      "description": "Open Google Account Help Center (external, opens in a new window)",
+      "id": "",
+      "bounds": "[559,1520][690,1520]"
+    },
+    {
+      "text": "Help",
+      "description": "",
+      "id": "",
+      "bounds": "[590,1520][661,1520]"
+    },
+    {
+      "text": "",
+      "description": "Privacy Policy (external, opens in a new window)",
+      "id": "",
+      "bounds": "[708,1520][879,1520]"
+    },
+    {
+      "text": "Privacy",
+      "description": "",
+      "id": "",
+      "bounds": "[740,1520][850,1520]"
+    },
+    {
+      "text": "",
+      "description": "Google Terms of Service (external, opens in a new window)",
+      "id": "",
+      "bounds": "[897,1520][1052,1520]"
+    },
+    {
+      "text": "Terms",
+      "description": "",
+      "id": "",
+      "bounds": "[929,1520][1021,1520]"
+    },
+    {
+      "text": "",
+      "description": "Close tab",
+      "id": "com.android.chrome:id/close_button",
+      "bounds": "[0,136][126,283]"
+    },
+    {
+      "text": "",
+      "description": "Minimize tab",
+      "id": "com.android.chrome:id/custom_tabs_minimize_button",
+      "bounds": "[126,136][252,283]"
+    },
+    {
+      "text": "",
+      "description": "Connection is secure",
+      "id": "com.android.chrome:id/security_button",
+      "bounds": "[252,146][378,272]"
+    },
+    {
+      "text": "accounts.google.com",
+      "description": "",
+      "id": "com.android.chrome:id/url_bar",
+      "bounds": "[378,146][793,272]"
+    },
+    {
+      "text": "",
+      "description": "Share",
+      "id": "",
+      "bounds": "[845,136][970,283]"
+    },
+    {
+      "text": "",
+      "description": "Customize and control Google Chrome",
+      "id": "com.android.chrome:id/menu_button",
+      "bounds": "[970,136][1080,283]"
+    }
+  ]
+}

@@ -8,14 +8,13 @@ export type CompactWireShape = 0 | 1 | 2 | 3 | 4 | 5 |
   readonly [8 | 9, readonly number[]] |
   readonly [10, number] |
   readonly [11, readonly number[], number] |
-  readonly [12, Readonly<Record<string, number>>, number?]|
-  readonly [13,readonly (string|number)[],number?];
+  readonly [12, Readonly<Record<string, number>>, number?];
 
 const primitives = ['json', 'never', 'undefined', 'string', 'number', 'boolean'] as const;
 
 /** Restore the existing validator's complete WireShape representation once
  * at module initialization. No validation rule, root or reference is changed. */
-export function expandWireShapes(shapes: readonly CompactWireShape[],fields:readonly string[]=[]): readonly WireShape[] {
+export function expandWireShapes(shapes: readonly CompactWireShape[]): readonly WireShape[] {
   return shapes.map((shape): WireShape => {
     if (typeof shape === 'number') {
       const kind = primitives[shape];
@@ -36,16 +35,6 @@ export function expandWireShapes(shapes: readonly CompactWireShape[],fields:read
       case 12: return { kind: 'object', properties: Object.fromEntries(Object.entries(shape[1]).map(([key, ref]) =>
         [key, { node: ref < 0 ? -ref - 1 : ref, optional: ref < 0 }])),
       ...(shape[2] === undefined ? {} : { index: shape[2] }) };
-      case 13: {
-        if(shape[1].length%2)throw new Error('network codec: invalid compact fields');
-        const entries=[];
-        for(let i=0;i<shape[1].length;i+=2){
-          const key=shape[1][i],ref=shape[1][i+1],name=typeof key==='number'?fields[key]:key;
-          if(typeof name!=='string'||typeof ref!=='number')throw new Error('network codec: invalid compact field');
-          entries.push([name,{node:ref<0?-ref-1:ref,optional:ref<0}]);
-        }
-        return {kind:'object',properties:Object.fromEntries(entries),...(shape[2]===undefined?{}:{index:shape[2]})};
-      }
       default: throw new Error('network codec: invalid compact schema tag');
     }
   });

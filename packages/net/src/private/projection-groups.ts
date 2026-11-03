@@ -127,11 +127,11 @@ export class ProjectionGroups<T extends GroupCell>{
       if(roomChanges.length){
         const fact=roomChanges[0]!;
         try{
-          if(roomChanges.length!==1||fact.payload.kind!=='needs-you-rooms-replace'||!this.authorized(fact.authority))throw new Error('Invalid Needs-you group');
+          if(roomChanges.length!==1||fact.payload.kind!=='needs-you-rooms-replace'||!this.authorized(fact.authority))throw new Error(UNAVAILABLE);
           const value=foldNeedsYouRooms(cell.snapshot?.value,fact.payload);
-          if(!this.valid(cell.request,value))throw new Error('Invalid Needs-you value');
+          if(!this.valid(cell.request,value))throw new Error(UNAVAILABLE);
           items.push({cell,snapshot:{kind:'snapshot',value,cut:batch.to,atomicGroup:fact.atomicGroup,authority:fact.authority}});
-        }catch{this.park(cell,'Incomplete Needs-you coverage; Retry.');}continue;
+        }catch{this.park(cell,UNAVAILABLE);}continue;
       }
       const facts=batch.facts.filter(fact=>fact.payload.kind===REPLACE&&fact.payload.family===cell.request.family&&fact.payload.scope===scope(cell.request));
       const fact=facts.at(-1);

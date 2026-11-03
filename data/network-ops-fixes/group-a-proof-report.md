@@ -185,3 +185,27 @@ pass. The merge preserves the integrator's shim controls and added schema
 assertions along with the continuation's new roster exports and full Scheduled
 Work display validator. Whole-finding and installed-cohort status stays Open;
 remote CI readiness is reported separately after checking the exact PR head.
+
+## Second remote-CI follow-up
+
+The Workspace roster contains the Workspace header and manager settings. Its
+canonical `workspaces` cause must therefore continue to select the roster,
+independently of a complete-empty Scheduled Work cause. The continuation had
+removed that dependency. Restoring it makes the unchanged 17-case source-plan
+suite pass; no expected family or assertion was removed. A dedicated roster
+cause in the same transaction coalesces through the existing family Set.
+
+The continuation is now rebased onto router head `40d842a73`, which already
+contains the integrator's Tray evidence-selector and replay I/O-boundary fixes.
+Both new roster modules import the authority-lock constant from the base's
+new dependency-light owner module. These are the only implementation repairs
+in this follow-up.
+
+Fresh serial verification passes 45 Vitest cases: source planning17, complete
+browser evidence3 (all46 inventory cases), real PostgreSQL11 plus strict5,
+and the single replay follow-up9. All PostgreSQL closure cases pass with zero
+skips. Root typecheck, codec generation, bundle3, boundary regressions29,
+architecture20 and phone inventory72/72 pass. Limits and assertions remain
+unchanged. The latest router-head shard2 failure is in `voice-cutin.test.ts`
+timer-state handling and was reported to firstmate; it is outside Group A.
+Remote green status must still be verified for the newly rebased PR head.

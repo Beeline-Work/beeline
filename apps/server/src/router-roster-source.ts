@@ -1,4 +1,4 @@
-import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
+import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
 
 /** One Workspace roster version covers its public rows and manager header.
  * Search/page snapshots bind this version and never become live query owners. */

@@ -13,7 +13,9 @@ const dependencies: Readonly<Record<string, readonly RouterFamily[]>> = {
   memberships: ['room-list','needs-you','needs-you-tray','needs-you-count','room-head','room-workflows'],
   identities: ['room-list','needs-you','needs-you-tray','needs-you-count','room-head','room-workflows'],
   rooms: ['room-list','needs-you','needs-you-tray','needs-you-count','room-head','room-workflows'],
-  workspaces: ['room-list'],
+  // The roster includes the canonical Workspace header and manager settings.
+  // The dedicated roster cause in the same transaction coalesces in this Set.
+  workspaces: ['room-list','workspace-roster'],
   room_read_marks: ['room-list','room-head'],
   needs_you_marks: ['needs-you','needs-you-tray','needs-you-count'],
   agent_commands: ['room-list','room-head'],

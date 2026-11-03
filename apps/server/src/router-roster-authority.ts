@@ -1,7 +1,7 @@
 import type {SqlDatabase} from './database.js';
 import type {LiveHub} from './live.js';
 import type {RouterAuthorityFence,RouterUnavailable} from '@beeline/api-contract/router-protocol';
-import {ROUTER_AUTHORITY_LOCK} from './router-projection-schema.js';
+import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
 import {routerAuthority,RouterProjectionUnavailable} from './router-projections.js';
 
 /** A bounded Workspace control stream retires sealed roster windows without

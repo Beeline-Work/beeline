@@ -1,7 +1,7 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 /**
  * The shipped corner-open notices and Task
@@ -32,7 +32,7 @@ const FRAMES = {
 
 it('renders corner-open notices and tray approval rows in both themes', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/corner-open-tray-'));
+  const directory = await createBrowserProofDirectory("corner-open-tray-");
   try {
     const entry = path.join(directory, 'proof.jsx');
     await writeFile(

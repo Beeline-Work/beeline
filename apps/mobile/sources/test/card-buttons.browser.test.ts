@@ -1,18 +1,18 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof } from './browserProof';
 import { cardButtonShims } from '../../scripts/card-button-proof-shims';
 
 it('R1/R2: card and tray share facts, boxed alternatives, labels and a local folded script', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/card-buttons-'));
+  const directory = await createBrowserProofDirectory("card-buttons-");
   try {
     const entry = path.join(directory, 'proof.jsx');
     await writeFile(
       entry,
       `import React from 'react'; import { createRoot } from 'react-dom/client';
-      import { CoreCardScenes } from '../../../scripts/card-button-fixtures';
+      import { CoreCardScenes } from ${JSON.stringify(path.join(mobile, 'scripts/card-button-fixtures'))};
       import { useUnistyles } from 'react-native-unistyles';
       function Proof({busy=false}){const {theme}=useUnistyles();document.body.style.background=theme.buzz.bgBase;
         return <div style={{width:new URLSearchParams(location.search).get('width')+'px',padding:16,boxSizing:'border-box',color:theme.buzz.textPrimary}}><CoreCardScenes busy={busy}/></div>}

@@ -1,9 +1,9 @@
 import { existsSync, readFileSync, mkdirSync } from 'node:fs';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import ts from 'typescript';
 import { it, expect } from 'vitest';
-import { CHROME, runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, CHROME, runBrowserProof, webProofShims } from './browserProof';
 // Exercise the private production swipe wrapper and byline together without
 // importing the Room's unrelated server and navigation dependencies. Keep the
 // third-party swipe style props on the real Unistyles web implementation:
@@ -50,7 +50,7 @@ it.skipIf(!existsSync(CHROME))(
       .filter((p) => p.name && names.has(p.name.getText(file)))
       .map((p) => p.getText(file))
       .join(',');
-    const dir = await mkdtemp(path.join(mobile, 'sources/test/onboarding-edge-proof-'));
+    const dir = await createBrowserProofDirectory("onboarding-edge-proof-");
     try {
       const entry = path.join(dir, 'entry.tsx');
       await writeFile(

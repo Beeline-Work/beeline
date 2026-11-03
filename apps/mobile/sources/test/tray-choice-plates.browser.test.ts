@@ -1,7 +1,7 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 type Plate = { left: number; width: number; top: number; background: string; busy: string | null };
 type Cell = {
@@ -17,7 +17,7 @@ type Cell = {
 // open four-option question with Skip, on a phone and on a desktop width.
 it('shows Tray choice options as equal, aligned plates without the duplicate option line', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/tray-choice-plates-'));
+  const directory = await createBrowserProofDirectory("tray-choice-plates-");
   try {
     const entry = path.join(directory, 'proof.jsx');
     await writeFile(entry, `import React from 'react';

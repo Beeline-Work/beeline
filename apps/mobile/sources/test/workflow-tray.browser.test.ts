@@ -1,11 +1,11 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 it('distinguishes workflow outcomes from tray dismissal in both themes', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/workflow-tray-'));
+  const directory = await createBrowserProofDirectory("workflow-tray-");
   try {
     const entry = path.join(directory, 'proof.jsx');
     await writeFile(entry, `import React from 'react';

@@ -6,8 +6,9 @@ release/production services. There is no new service or workflow gate.
 
 The pool has ten active listeners and one job per listener. Instance 01 has
 one CPU for control work. Instances 02–09 have two CPUs / 8 GiB for server
-shards. Instance 10 has three CPUs / 12 GiB and CPUWeight 300 for the bounded
-workspace lanes. The slice shares `CPUQuota=1000%` / `MemoryMax=60G` across all
+shards and sequential TYPECHECK tasks. Instance 10 has three CPUs / 12 GiB
+and CPUWeight 300 for MOBILE SUITE. Each job owns its checkout; mobile tests
+never run concurrently with a compiler in the same working tree. The slice shares `CPUQuota=1000%` / `MemoryMax=60G` across all
 listeners; individual maxima are not additive capacity. Limits cover every
 child process. Existing credential isolation and production/release services
 are preserved. The cache tar wrapper uses a shared file lock; no service is added.
@@ -36,9 +37,9 @@ are preserved. The cache tar wrapper uses a shared file lock; no service is adde
    also has `beeline-ci-control`; 02–09 have `beeline-ci-heavy`; 10 has
    `beeline-ci-workspace` and must not also have the heavy role. PR gates select
    those roles explicitly so preparation cannot queue behind long suites.
-5. Run a monitored real-PR trial. Accept the first rollout only when required
-   Linux checks pass within fifteen minutes while CI stays inside the pool.
-   Firstmate controls landing; subsequent three-PR proof uses real PRs carrying
+5. Run a monitored real-PR trial. Firstmate accepted the initial rollout at
+   27m20s; the follow-up targets reliable green checks and server shards at or
+   below twenty minutes while CI stays inside the same pool. Firstmate controls landing; subsequent three-PR proof uses real PRs carrying
    this routing and the leak fix. An older PR head still runs its own old workflow;
    rerunning it does not test the new routing. Coordinate those heads with
    their owners, without rewriting another worker's branch.
@@ -71,10 +72,11 @@ helper and desktop timings separately. A failed or cancelled run is not a
 passing timing result. Report maximum sampled whole-host one-minute load,
 minimum available memory, peak pool memory and OOM/throttling deltas.
 
-Accept only three overlapping successful PR runs each at or below 15 minutes,
-with CI pool usage inside ten CPUs and 60 GiB and no OOM kills. Report host
-load as context; it is not the CI CPU budget. A ten-CPU quota alone does not
-prove the wall-time target.
+The follow-up targets each server shard at or below twenty minutes, with CI
+pool usage inside ten CPUs and 60 GiB and no OOM kills. Report measured per-PR
+wall time, remaining unexplained failures and concurrent workload. The overall
+twelve-minute target is deferred. Host load is context; it is not the CI CPU
+budget. A ten-CPU quota alone does not prove wall-time capacity.
 Confirm required check names against the base workflow and verify main's
 required checks remain green. Record actual after measurements in the PR;
 leave unmeasured claims explicitly pending.

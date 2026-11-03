@@ -1,13 +1,13 @@
-import { mkdtemp, writeFile, rm, mkdir } from 'node:fs/promises';
+import { writeFile, rm, mkdir } from 'node:fs/promises';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
+import { createBrowserProofDirectory, CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 it.skipIf(!existsSync(CHROME)).each(['bone', 'obsidian'] as const)(
   'CORNER-STATE: four states and Waiting taps (%s)',
   async (theme) => {
     const mobile = process.cwd();
-    const dir = await mkdtemp(path.join(mobile, 'sources/buzz/corner-proof-'));
+    const dir = await createBrowserProofDirectory("corner-proof-");
     const evidence = path.join(mobile, 'docs/evidence/corner-state');
     await mkdir(evidence, { recursive: true });
     try {

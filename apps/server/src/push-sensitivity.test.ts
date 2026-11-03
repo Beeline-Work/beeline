@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PushDeliveryLoop } from './background.js';
-import { seedCornerOpening, PgliteDatabase, insertCornerFacts } from './test-support.js';
+import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts } from './test-support.js';
 import { postWalletNotice } from './wallet-notices.js';
 
 const person = 'a'.repeat(64),
@@ -23,10 +23,9 @@ async function post(text: string, author = agent, channel = corner, request: str
   return id;
 }
 beforeEach(async () => {
-  db = new PgliteDatabase();
+  db = await migratedDatabase();
   sequence = 0;
   send.mockClear();
-  await migrate(db);
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES ($1,'human','Owner','owner'),($2,'human','Teammate','teammate'),($3,'agent','Bee','bee')`,
     [person, teammate, agent],

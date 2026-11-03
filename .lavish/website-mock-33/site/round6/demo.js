@@ -15,7 +15,7 @@
       const y = F===WIDE ? +n.dataset.y : +n.dataset.my;
       n.style.left=(x/F.w*100)+'%'; n.style.top=(y/F.h*100)+'%';
     });
-    const available=innerHeight-document.querySelector('.hero-top').offsetHeight-48; const s=Math.min(1,wrap.clientWidth/F.w,Math.max(280,available)/F.h);
+    if(F===TALL){stage.classList.add('phone');stage.style.setProperty('--s','1');wrap.style.height='auto';return;} stage.classList.remove('phone'); const available=innerHeight-document.querySelector('.hero-top').offsetHeight-48; const s=Math.min(1,wrap.clientWidth/F.w,Math.max(280,available)/F.h);
     stage.style.setProperty('--s',s);
     wrap.style.height=(F.h*s)+'px';
   }
@@ -41,7 +41,7 @@
     g.setAttribute('width',5); g.setAttribute('height',5);
     g.setAttribute('class','pad'); wires.appendChild(g);
   }
-  function draw(){
+  function draw(){if(F===TALL){drawPhone();return;}
     wires.setAttribute('viewBox','0 0 '+F.w+' '+F.h); wires.innerHTML=''; geo=[];
     const pw=F.pw, ph=F.ph, px=(F.w-pw)/2, py=(F.h-ph)/2;
     const half=26, R=10;
@@ -83,8 +83,24 @@
     });
   }
   layout(); draw();
-  addEventListener('resize',()=>{layout();draw();refreshActivity();});
+  addEventListener('resize',()=>{layout();draw();refreshActivity();if(window.r6Demo)update();});
 
+
+// Phone connections use the actual phone scene's CSS boxes, never the desktop
+// diagram's unscaled coordinates or a guess based on window.innerHeight.
+function drawPhone(){
+ const bounds=stage.getBoundingClientRect(),room=screen.getBoundingClientRect();
+ wires.setAttribute('viewBox',`0 0 ${stage.clientWidth} ${stage.clientHeight}`);wires.innerHTML='';geo=[];
+ const agents=nodeEls.filter(n=>n.classList.contains('agent')),humans=nodeEls.filter(n=>n.classList.contains('human'));
+ for(const n of nodeEls){
+  const box=n.getBoundingClientRect(),above=n.classList.contains('agent'),band=above?agents:humans,index=band.indexOf(n);
+  const sx=box.left+box.width/2-bounds.left,sy=(above?box.bottom+2:box.top-2)-bounds.top;
+  const ex=room.left-bounds.left+room.width/2+(index-(band.length-1)/2)*(above?54:94),ey=(above?room.top:room.bottom)-bounds.top;
+  const channel=above?ey-6-(band.length-1-index)*4:ey+8+index*4;
+  const d=velbow(sx,sy,channel,ex,ey,4),path=document.createElementNS('http://www.w3.org/2000/svg','path');
+  path.setAttribute('d',d);path.dataset.actor=n.dataset.id;wires.appendChild(path);pad(ex,ey);geo.push({node:n,path,id:n.dataset.id,d});
+ }
+}
 
   // Entirely hand-written, local demonstration. No model, fetch, socket or storage.
   const command='join my beeline room at usebeeline.app/mcp';
@@ -159,11 +175,19 @@
       if(card.dataset.work==='connect')card.querySelector('.connect-status').textContent=fraction>.82?'Connected ✓ · YouTube + X':'Trusty Squire → YouTube + X';
     }
   }
+  let phoneInvitation;
+  function syncPhoneInvitation(inviting){
+    if(F===TALL&&inviting){
+      if(!phoneInvitation){phoneInvitation=document.createElement('div');phoneInvitation.className='phone-inline-invite turn in latest';const copy=terminal.cloneNode(true);copy.removeAttribute('id');copy.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));copy.hidden=false;phoneInvitation.appendChild(copy);}
+      const code=phoneInvitation.querySelector('.terminal-command code');const changed=code.textContent!==typed.textContent;if(changed)code.textContent=typed.textContent;
+      if(!messages.contains(phoneInvitation)){messages.querySelectorAll('.latest').forEach(e=>e.classList.remove('latest'));messages.appendChild(phoneInvitation);ledger.scrollTop=ledger.scrollHeight;}else if(changed)ledger.scrollTop=ledger.scrollHeight;
+    }else if(phoneInvitation?.parentElement){phoneInvitation.remove();messages.lastElementChild?.classList.add('latest');}
+  }
   function update(){
     const scene=scenes.findLastIndex(s=>s.at<=elapsed),connected=elapsed>=15000;
     stage.classList.toggle('codex-connected',connected);document.querySelector('[data-id="codex"]').classList.toggle('not-joined',!connected);document.getElementById('member-count').textContent=(connected?'6':'5')+' members ›';
     const inviting=elapsed>=11800&&elapsed<15000;terminal.hidden=!inviting;stage.classList.toggle('inviting-codex',inviting);if(inviting){typed.textContent=command.slice(0,Math.max(0,Math.min(command.length,Math.floor((elapsed-12000)/43))));}
-    if(scene!==lastScene&&mode==='script'){lastScene=scene;active=scenes[scene].active;refreshActivity();active.forEach(pulseConnection);}syncMessages();updateWork();if(mode==='script')status.textContent=scenes[scene].label;
+    if(scene!==lastScene&&mode==='script'){lastScene=scene;active=scenes[scene].active;refreshActivity();active.forEach(pulseConnection);}syncMessages();syncPhoneInvitation(inviting);updateWork();if(mode==='script')status.textContent=scenes[scene].label;
   }
   function tick(now){elapsed=Math.max(0,now-base);if(elapsed>=end){cycle++;elapsed%=end;base=now-elapsed;seen=new Set();lastScene=-1;}update();if(playing)raf=requestAnimationFrame(tick);}
   function pause(){if(playing)elapsed=Math.max(0,(performance.now()-base)%end);playing=false;cancelAnimationFrame(raf);}

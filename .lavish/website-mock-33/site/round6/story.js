@@ -71,11 +71,19 @@
       if(card.dataset.work==='connect')card.querySelector('.connect-status').textContent=fraction>.82?'Connected ✓ · YouTube + X':'Trusty Squire → YouTube + X';
     }
   }
+  let phoneInvitation;
+  function syncPhoneInvitation(inviting){
+    if(F===TALL&&inviting){
+      if(!phoneInvitation){phoneInvitation=document.createElement('div');phoneInvitation.className='phone-inline-invite turn in latest';const copy=terminal.cloneNode(true);copy.removeAttribute('id');copy.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));copy.hidden=false;phoneInvitation.appendChild(copy);}
+      const code=phoneInvitation.querySelector('.terminal-command code');const changed=code.textContent!==typed.textContent;if(changed)code.textContent=typed.textContent;
+      if(!messages.contains(phoneInvitation)){messages.querySelectorAll('.latest').forEach(e=>e.classList.remove('latest'));messages.appendChild(phoneInvitation);ledger.scrollTop=ledger.scrollHeight;}else if(changed)ledger.scrollTop=ledger.scrollHeight;
+    }else if(phoneInvitation?.parentElement){phoneInvitation.remove();messages.lastElementChild?.classList.add('latest');}
+  }
   function update(){
     const scene=scenes.findLastIndex(s=>s.at<=elapsed),connected=elapsed>=15000;
     stage.classList.toggle('codex-connected',connected);document.querySelector('[data-id="codex"]').classList.toggle('not-joined',!connected);document.getElementById('member-count').textContent=(connected?'6':'5')+' members ›';
     const inviting=elapsed>=11800&&elapsed<15000;terminal.hidden=!inviting;stage.classList.toggle('inviting-codex',inviting);if(inviting){typed.textContent=command.slice(0,Math.max(0,Math.min(command.length,Math.floor((elapsed-12000)/43))));}
-    if(scene!==lastScene&&mode==='script'){lastScene=scene;active=scenes[scene].active;refreshActivity();active.forEach(pulseConnection);}syncMessages();updateWork();if(mode==='script')status.textContent=scenes[scene].label;
+    if(scene!==lastScene&&mode==='script'){lastScene=scene;active=scenes[scene].active;refreshActivity();active.forEach(pulseConnection);}syncMessages();syncPhoneInvitation(inviting);updateWork();if(mode==='script')status.textContent=scenes[scene].label;
   }
   function tick(now){elapsed=Math.max(0,now-base);if(elapsed>=end){cycle++;elapsed%=end;base=now-elapsed;seen=new Set();lastScene=-1;}update();if(playing)raf=requestAnimationFrame(tick);}
   function pause(){if(playing)elapsed=Math.max(0,(performance.now()-base)%end);playing=false;cancelAnimationFrame(raf);}

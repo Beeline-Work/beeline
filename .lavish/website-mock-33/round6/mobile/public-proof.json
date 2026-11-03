@@ -1,0 +1,48 @@
+{
+  "layout": {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": true,
+    "floatingInvitationVisible": false,
+    "width": 412,
+    "height": 915,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 803,
+    "heroHeight": 804,
+    "landed": "hero",
+    "scene": 14500,
+    "visibleElements": 70,
+    "overlaps": [],
+    "clipped": [],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0
+  },
+  "banter": {
+    "check": {
+      "visibleAvatars": 6,
+      "inlineInvitationFullyVisible": false,
+      "floatingInvitationVisible": false,
+      "width": 412,
+      "height": 915,
+      "dpr": 2.5999999046325684,
+      "touchPoints": 5,
+      "smallViewport": 803,
+      "heroHeight": 804,
+      "landed": "hero",
+      "scene": 15479.2,
+      "visibleElements": 71,
+      "overlaps": [],
+      "clipped": [],
+      "escapedImages": [],
+      "horizontalOverflow": false,
+      "watchVideoLinks": 0
+    },
+    "mode": "script",
+    "playing": true,
+    "localReplies": 2,
+    "visitorMessages": 1,
+    "scrollY": 0,
+    "requests": 0
+  }
+}

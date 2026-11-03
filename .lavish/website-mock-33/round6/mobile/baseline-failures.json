@@ -1,0 +1,4984 @@
+[
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 360,
+    "height": 780,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 668,
+    "heroHeight": 668,
+    "landed": "hero",
+    "scene": 4000,
+    "visibleElements": 74,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 328,
+        "height": 32.47
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 72.92,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent.live",
+        "width": 53.04,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "img.",
+        "width": 24.17,
+        "height": 14.6
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 32.47
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 29.02,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 15,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent.live",
+        "width": 53.04,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 9.83,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 9.83,
+        "height": 24.96
+      },
+      {
+        "a": "a.primary-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 7.53
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.node.agent.live",
+        "width": 15.38,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.tile",
+        "width": 11.31,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.node.agent.live",
+        "width": 15.38,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.tile",
+        "width": 11.31,
+        "height": 19.94
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      360,
+      780
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": true,
+    "width": 360,
+    "height": 780,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 668,
+    "heroHeight": 668,
+    "landed": "hero",
+    "scene": 12800,
+    "visibleElements": 76,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 328,
+        "height": 32.47
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 72.92,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 53.04,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "img.",
+        "width": 24.17,
+        "height": 14.6
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 32.47
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 29.02,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 15,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 53.04,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 9.83,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 9.83,
+        "height": 24.96
+      },
+      {
+        "a": "a.primary-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 7.53
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.node.agent",
+        "width": 15.38,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.tile",
+        "width": 11.31,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.node.agent",
+        "width": 15.38,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.tile",
+        "width": 11.31,
+        "height": 19.94
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#screen",
+        "width": 258.95,
+        "height": 48
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#track",
+        "width": 257.22,
+        "height": 47.14
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.view",
+        "width": 257.22,
+        "height": 47.14
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.hdr",
+        "width": 257.22,
+        "height": 47.14
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.back",
+        "width": 4.46,
+        "height": 16.13
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.t",
+        "width": 188.02,
+        "height": 36.78
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.title",
+        "width": 188.02,
+        "height": 16.56
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.h",
+        "width": 9.06,
+        "height": 16.4
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.sub",
+        "width": 188.02,
+        "height": 11.65
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#member-count",
+        "width": 188.02,
+        "height": 8.56
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.acts",
+        "width": 26.76,
+        "height": 15.7
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#screen",
+        "width": 257.22,
+        "height": 3.82
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#track",
+        "width": 257.22,
+        "height": 2.95
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.view",
+        "width": 257.22,
+        "height": 2.95
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.hdr",
+        "width": 257.22,
+        "height": 2.95
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#screen",
+        "width": 257.22,
+        "height": 29.35
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#track",
+        "width": 257.22,
+        "height": 29.35
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.view",
+        "width": 257.22,
+        "height": 29.35
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.hdr",
+        "width": 257.22,
+        "height": 29.35
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.back",
+        "width": 4.46,
+        "height": 16.13
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.t",
+        "width": 188.02,
+        "height": 21.94
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.title",
+        "width": 188.02,
+        "height": 16.56
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.h",
+        "width": 9.06,
+        "height": 16.4
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.sub",
+        "width": 188.02,
+        "height": 5.38
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.acts",
+        "width": 26.76,
+        "height": 15.7
+      },
+      {
+        "a": "span.",
+        "b": "#screen",
+        "width": 10.36,
+        "height": 11.22
+      },
+      {
+        "a": "span.",
+        "b": "#track",
+        "width": 10.36,
+        "height": 11.22
+      },
+      {
+        "a": "span.",
+        "b": "div.view",
+        "width": 10.36,
+        "height": 11.22
+      },
+      {
+        "a": "span.",
+        "b": "div.hdr",
+        "width": 10.36,
+        "height": 11.22
+      },
+      {
+        "a": "span.",
+        "b": "span.back",
+        "width": 4.46,
+        "height": 8.99
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#screen",
+        "width": 93.22,
+        "height": 11.22
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#track",
+        "width": 93.22,
+        "height": 11.22
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.view",
+        "width": 93.22,
+        "height": 11.22
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.hdr",
+        "width": 93.22,
+        "height": 11.22
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.t",
+        "width": 87.89,
+        "height": 8.99
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.title",
+        "width": 87.89,
+        "height": 8.99
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.h",
+        "width": 9.06,
+        "height": 8.99
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#screen",
+        "width": 257.22,
+        "height": 13.97
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#track",
+        "width": 257.22,
+        "height": 13.97
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.view",
+        "width": 257.22,
+        "height": 13.97
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.hdr",
+        "width": 257.22,
+        "height": 13.97
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.t",
+        "width": 188.02,
+        "height": 13.97
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.sub",
+        "width": 188.02,
+        "height": 6.27
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#member-count",
+        "width": 188.02,
+        "height": 7.7
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      360,
+      780
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 360,
+    "height": 780,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 668,
+    "heroHeight": 668,
+    "landed": "hero",
+    "scene": 35000,
+    "visibleElements": 70,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 328,
+        "height": 32.47
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 72.92,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 53.04,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent.live",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.hero-top",
+        "b": "img.",
+        "width": 24.17,
+        "height": 14.6
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 32.47
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 29.02,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 15,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 53.04,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 44.88,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent.live",
+        "width": 9.83,
+        "height": 24.96
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 9.83,
+        "height": 24.96
+      },
+      {
+        "a": "a.primary-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 7.53
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.node.agent",
+        "width": 15.38,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.tile",
+        "width": 11.31,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.node.agent",
+        "width": 15.38,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.tile",
+        "width": 11.31,
+        "height": 19.94
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      360,
+      780
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 360,
+    "height": 668,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 556,
+    "heroHeight": 556,
+    "landed": "hero",
+    "scene": 4000,
+    "visibleElements": 74,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 270.68,
+        "height": 81.5
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 60.18,
+        "height": 55.98
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 37.04
+      },
+      {
+        "a": "div.hero-top",
+        "b": "span.name",
+        "width": 60.18,
+        "height": 13.24
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent.live",
+        "width": 43.77,
+        "height": 55.98
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 37.04
+      },
+      {
+        "a": "div.hero-top",
+        "b": "span.name",
+        "width": 43.77,
+        "height": 13.24
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 37.04,
+        "height": 55.98
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 37.04
+      },
+      {
+        "a": "div.hero-top",
+        "b": "img.",
+        "width": 19.94,
+        "height": 19.94
+      },
+      {
+        "a": "div.hero-top",
+        "b": "span.name",
+        "width": 32.83,
+        "height": 13.24
+      },
+      {
+        "a": "div.hero-heading",
+        "b": "#stage",
+        "width": 270.68,
+        "height": 1.56
+      },
+      {
+        "a": "p.tagline",
+        "b": "#stage",
+        "width": 270.68,
+        "height": 1.56
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 66.94
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 42.56,
+        "height": 47.62
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 30.99,
+        "height": 28.68
+      },
+      {
+        "a": "div.smart-download",
+        "b": "span.name",
+        "width": 42.56,
+        "height": 13.24
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent.live",
+        "width": 43.77,
+        "height": 47.62
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 28.68
+      },
+      {
+        "a": "div.smart-download",
+        "b": "span.name",
+        "width": 43.77,
+        "height": 13.24
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 26.72,
+        "height": 47.62
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 26.72,
+        "height": 28.68
+      },
+      {
+        "a": "div.smart-download",
+        "b": "img.",
+        "width": 18.17,
+        "height": 19.94
+      },
+      {
+        "a": "div.smart-download",
+        "b": "span.name",
+        "width": 24.62,
+        "height": 13.24
+      },
+      {
+        "a": "a.primary-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 42.56,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 30.99,
+        "height": 28.68
+      },
+      {
+        "a": "a.primary-download",
+        "b": "span.name",
+        "width": 42.56,
+        "height": 7.62
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent.live",
+        "width": 43.77,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 28.68
+      },
+      {
+        "a": "a.primary-download",
+        "b": "span.name",
+        "width": 43.77,
+        "height": 7.62
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 26.72,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 26.72,
+        "height": 28.68
+      },
+      {
+        "a": "a.primary-download",
+        "b": "img.",
+        "width": 18.17,
+        "height": 19.94
+      },
+      {
+        "a": "a.primary-download",
+        "b": "span.name",
+        "width": 24.62,
+        "height": 7.62
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      360,
+      780
+    ],
+    "currentViewportReduction": 112
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": true,
+    "width": 360,
+    "height": 668,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 556,
+    "heroHeight": 556,
+    "landed": "hero",
+    "scene": 12800,
+    "visibleElements": 76,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 270.68,
+        "height": 81.5
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 60.18,
+        "height": 55.98
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 37.04
+      },
+      {
+        "a": "div.hero-top",
+        "b": "span.name",
+        "width": 60.18,
+        "height": 13.24
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 43.77,
+        "height": 55.98
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 37.04
+      },
+      {
+        "a": "div.hero-top",
+        "b": "span.name",
+        "width": 43.77,
+        "height": 13.24
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 37.04,
+        "height": 55.98
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 37.04
+      },
+      {
+        "a": "div.hero-top",
+        "b": "img.",
+        "width": 19.94,
+        "height": 19.94
+      },
+      {
+        "a": "div.hero-top",
+        "b": "span.name",
+        "width": 32.83,
+        "height": 13.24
+      },
+      {
+        "a": "div.hero-top",
+        "b": "#join-terminal",
+        "width": 213.69,
+        "height": 12.69
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.terminal-title",
+        "width": 212.27,
+        "height": 11.97
+      },
+      {
+        "a": "div.hero-top",
+        "b": "span.",
+        "width": 16.42,
+        "height": 5.7
+      },
+      {
+        "a": "div.hero-heading",
+        "b": "#stage",
+        "width": 270.68,
+        "height": 1.56
+      },
+      {
+        "a": "p.tagline",
+        "b": "#stage",
+        "width": 270.68,
+        "height": 1.56
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 66.94
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 42.56,
+        "height": 47.62
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 30.99,
+        "height": 28.68
+      },
+      {
+        "a": "div.smart-download",
+        "b": "span.name",
+        "width": 42.56,
+        "height": 13.24
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 43.77,
+        "height": 47.62
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 28.68
+      },
+      {
+        "a": "div.smart-download",
+        "b": "span.name",
+        "width": 43.77,
+        "height": 13.24
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 26.72,
+        "height": 47.62
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 26.72,
+        "height": 28.68
+      },
+      {
+        "a": "div.smart-download",
+        "b": "img.",
+        "width": 18.17,
+        "height": 19.94
+      },
+      {
+        "a": "div.smart-download",
+        "b": "span.name",
+        "width": 24.62,
+        "height": 13.24
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#join-terminal",
+        "width": 213,
+        "height": 12.69
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.terminal-title",
+        "width": 212.27,
+        "height": 11.97
+      },
+      {
+        "a": "div.smart-download",
+        "b": "span.",
+        "width": 16.42,
+        "height": 5.7
+      },
+      {
+        "a": "a.primary-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 42.56,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 30.99,
+        "height": 28.68
+      },
+      {
+        "a": "a.primary-download",
+        "b": "span.name",
+        "width": 42.56,
+        "height": 7.62
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 43.77,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 28.68
+      },
+      {
+        "a": "a.primary-download",
+        "b": "span.name",
+        "width": 43.77,
+        "height": 7.62
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 26.72,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 26.72,
+        "height": 28.68
+      },
+      {
+        "a": "a.primary-download",
+        "b": "img.",
+        "width": 18.17,
+        "height": 19.94
+      },
+      {
+        "a": "a.primary-download",
+        "b": "span.name",
+        "width": 24.62,
+        "height": 7.62
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#join-terminal",
+        "width": 64.03,
+        "height": 12.69
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.terminal-title",
+        "width": 64.03,
+        "height": 11.97
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#join-terminal",
+        "width": 64.03,
+        "height": 12.69
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.terminal-title",
+        "width": 64.03,
+        "height": 11.97
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#screen",
+        "width": 213.69,
+        "height": 39.88
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#track",
+        "width": 212.27,
+        "height": 39.16
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.view",
+        "width": 212.27,
+        "height": 39.16
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.hdr",
+        "width": 212.27,
+        "height": 39.16
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.back",
+        "width": 3.68,
+        "height": 13.31
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.t",
+        "width": 155.16,
+        "height": 30.62
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.title",
+        "width": 155.16,
+        "height": 13.67
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.h",
+        "width": 7.48,
+        "height": 13.53
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.sub",
+        "width": 155.16,
+        "height": 9.62
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#member-count",
+        "width": 155.16,
+        "height": 7.33
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.acts",
+        "width": 22.08,
+        "height": 12.96
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#screen",
+        "width": 212.27,
+        "height": 3.41
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#track",
+        "width": 212.27,
+        "height": 2.7
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.view",
+        "width": 212.27,
+        "height": 2.7
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.hdr",
+        "width": 212.27,
+        "height": 2.7
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#screen",
+        "width": 212.27,
+        "height": 24.22
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#track",
+        "width": 212.27,
+        "height": 24.22
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.view",
+        "width": 212.27,
+        "height": 24.22
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.hdr",
+        "width": 212.27,
+        "height": 24.22
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.back",
+        "width": 3.68,
+        "height": 13.31
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.t",
+        "width": 155.16,
+        "height": 18.37
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.title",
+        "width": 155.16,
+        "height": 13.67
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.h",
+        "width": 7.48,
+        "height": 13.53
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.sub",
+        "width": 155.16,
+        "height": 4.71
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.acts",
+        "width": 22.08,
+        "height": 12.96
+      },
+      {
+        "a": "span.",
+        "b": "#screen",
+        "width": 8.55,
+        "height": 9.26
+      },
+      {
+        "a": "span.",
+        "b": "#track",
+        "width": 8.55,
+        "height": 9.26
+      },
+      {
+        "a": "span.",
+        "b": "div.view",
+        "width": 8.55,
+        "height": 9.26
+      },
+      {
+        "a": "span.",
+        "b": "div.hdr",
+        "width": 8.55,
+        "height": 9.26
+      },
+      {
+        "a": "span.",
+        "b": "span.back",
+        "width": 3.68,
+        "height": 7.69
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#screen",
+        "width": 76.93,
+        "height": 9.26
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#track",
+        "width": 76.93,
+        "height": 9.26
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.view",
+        "width": 76.93,
+        "height": 9.26
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.hdr",
+        "width": 76.93,
+        "height": 9.26
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.t",
+        "width": 72.53,
+        "height": 7.69
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.title",
+        "width": 72.53,
+        "height": 7.69
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.h",
+        "width": 7.48,
+        "height": 7.69
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#screen",
+        "width": 212.27,
+        "height": 11.53
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#track",
+        "width": 212.27,
+        "height": 11.53
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.view",
+        "width": 212.27,
+        "height": 11.53
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.hdr",
+        "width": 212.27,
+        "height": 11.53
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.t",
+        "width": 155.16,
+        "height": 11.53
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.sub",
+        "width": 155.16,
+        "height": 4.91
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#member-count",
+        "width": 155.16,
+        "height": 6.62
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      360,
+      780
+    ],
+    "currentViewportReduction": 112
+  },
+  {
+    "visibleAvatars": 6,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 360,
+    "height": 668,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 556,
+    "heroHeight": 556,
+    "landed": "hero",
+    "scene": 35000,
+    "visibleElements": 72,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 270.68,
+        "height": 81.5
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 60.18,
+        "height": 55.98
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 37.04
+      },
+      {
+        "a": "div.hero-top",
+        "b": "span.name",
+        "width": 60.18,
+        "height": 13.24
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 28.51,
+        "height": 43.09
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 28.51,
+        "height": 28.51
+      },
+      {
+        "a": "div.hero-top",
+        "b": "span.name",
+        "width": 21.05,
+        "height": 10.19
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 43.77,
+        "height": 55.98
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 37.04
+      },
+      {
+        "a": "div.hero-top",
+        "b": "span.name",
+        "width": 43.77,
+        "height": 13.24
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent.live",
+        "width": 37.04,
+        "height": 55.98
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 37.04
+      },
+      {
+        "a": "div.hero-top",
+        "b": "img.",
+        "width": 19.94,
+        "height": 19.94
+      },
+      {
+        "a": "div.hero-top",
+        "b": "span.name",
+        "width": 32.83,
+        "height": 13.24
+      },
+      {
+        "a": "div.hero-heading",
+        "b": "#stage",
+        "width": 270.68,
+        "height": 1.56
+      },
+      {
+        "a": "p.tagline",
+        "b": "#stage",
+        "width": 270.68,
+        "height": 1.56
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 66.94
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 42.56,
+        "height": 47.62
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 30.99,
+        "height": 28.68
+      },
+      {
+        "a": "div.smart-download",
+        "b": "span.name",
+        "width": 42.56,
+        "height": 13.24
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 28.51,
+        "height": 41.17
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 28.51,
+        "height": 26.59
+      },
+      {
+        "a": "div.smart-download",
+        "b": "span.name",
+        "width": 21.05,
+        "height": 10.19
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 43.77,
+        "height": 47.62
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 28.68
+      },
+      {
+        "a": "div.smart-download",
+        "b": "span.name",
+        "width": 43.77,
+        "height": 13.24
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent.live",
+        "width": 26.72,
+        "height": 47.62
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 26.72,
+        "height": 28.68
+      },
+      {
+        "a": "div.smart-download",
+        "b": "img.",
+        "width": 18.17,
+        "height": 19.94
+      },
+      {
+        "a": "div.smart-download",
+        "b": "span.name",
+        "width": 24.62,
+        "height": 13.24
+      },
+      {
+        "a": "a.primary-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 42.56,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 30.99,
+        "height": 28.68
+      },
+      {
+        "a": "a.primary-download",
+        "b": "span.name",
+        "width": 42.56,
+        "height": 7.62
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 28.51,
+        "height": 41.17
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 28.51,
+        "height": 26.59
+      },
+      {
+        "a": "a.primary-download",
+        "b": "span.name",
+        "width": 21.05,
+        "height": 10.19
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 43.77,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 37.04,
+        "height": 28.68
+      },
+      {
+        "a": "a.primary-download",
+        "b": "span.name",
+        "width": 43.77,
+        "height": 7.62
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent.live",
+        "width": 26.72,
+        "height": 42
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 26.72,
+        "height": 28.68
+      },
+      {
+        "a": "a.primary-download",
+        "b": "img.",
+        "width": 18.17,
+        "height": 19.94
+      },
+      {
+        "a": "a.primary-download",
+        "b": "span.name",
+        "width": 24.62,
+        "height": 7.62
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      360,
+      780
+    ],
+    "currentViewportReduction": 112
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 390,
+    "height": 844,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 732,
+    "heroHeight": 732,
+    "landed": "hero",
+    "scene": 4000,
+    "visibleElements": 73,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 358,
+        "height": 6.81
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 6.81
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 6.81
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 6.81
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      390,
+      844
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": true,
+    "width": 390,
+    "height": 844,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 732,
+    "heroHeight": 732,
+    "landed": "hero",
+    "scene": 12800,
+    "visibleElements": 76,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 358,
+        "height": 6.81
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 6.81
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 6.81
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 6.81
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#screen",
+        "width": 282.63,
+        "height": 52.39
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#track",
+        "width": 280.75,
+        "height": 51.45
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.view",
+        "width": 280.75,
+        "height": 51.45
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.hdr",
+        "width": 280.75,
+        "height": 51.45
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.back",
+        "width": 4.87,
+        "height": 17.61
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.t",
+        "width": 205.22,
+        "height": 40.14
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.title",
+        "width": 205.22,
+        "height": 18.08
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.h",
+        "width": 9.89,
+        "height": 17.9
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.sub",
+        "width": 205.22,
+        "height": 12.72
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#member-count",
+        "width": 205.22,
+        "height": 9.35
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.acts",
+        "width": 29.21,
+        "height": 17.13
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#screen",
+        "width": 280.75,
+        "height": 4.16
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#track",
+        "width": 280.75,
+        "height": 3.22
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.view",
+        "width": 280.75,
+        "height": 3.22
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.hdr",
+        "width": 280.75,
+        "height": 3.22
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#screen",
+        "width": 280.75,
+        "height": 32.03
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#track",
+        "width": 280.75,
+        "height": 32.03
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.view",
+        "width": 280.75,
+        "height": 32.03
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.hdr",
+        "width": 280.75,
+        "height": 32.03
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.back",
+        "width": 4.87,
+        "height": 17.61
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.t",
+        "width": 205.22,
+        "height": 23.95
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.title",
+        "width": 205.22,
+        "height": 18.08
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.h",
+        "width": 9.89,
+        "height": 17.9
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.sub",
+        "width": 205.22,
+        "height": 5.87
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.acts",
+        "width": 29.21,
+        "height": 17.13
+      },
+      {
+        "a": "span.",
+        "b": "#screen",
+        "width": 11.31,
+        "height": 12.25
+      },
+      {
+        "a": "span.",
+        "b": "#track",
+        "width": 11.31,
+        "height": 12.25
+      },
+      {
+        "a": "span.",
+        "b": "div.view",
+        "width": 11.31,
+        "height": 12.25
+      },
+      {
+        "a": "span.",
+        "b": "div.hdr",
+        "width": 11.31,
+        "height": 12.25
+      },
+      {
+        "a": "span.",
+        "b": "span.back",
+        "width": 4.87,
+        "height": 9.82
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#screen",
+        "width": 101.75,
+        "height": 12.25
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#track",
+        "width": 101.75,
+        "height": 12.25
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.view",
+        "width": 101.75,
+        "height": 12.25
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.hdr",
+        "width": 101.75,
+        "height": 12.25
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.t",
+        "width": 95.93,
+        "height": 9.82
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.title",
+        "width": 95.93,
+        "height": 9.82
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.h",
+        "width": 9.89,
+        "height": 9.82
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#screen",
+        "width": 280.75,
+        "height": 15.25
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#track",
+        "width": 280.75,
+        "height": 15.25
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.view",
+        "width": 280.75,
+        "height": 15.25
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.hdr",
+        "width": 280.75,
+        "height": 15.25
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.t",
+        "width": 205.22,
+        "height": 15.25
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.sub",
+        "width": 205.22,
+        "height": 6.85
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#member-count",
+        "width": 205.22,
+        "height": 8.4
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      390,
+      844
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 6,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 390,
+    "height": 844,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 732,
+    "heroHeight": 732,
+    "landed": "hero",
+    "scene": 35000,
+    "visibleElements": 72,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 358,
+        "height": 6.81
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 6.81
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 6.81
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 6.81
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      390,
+      844
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 390,
+    "height": 732,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 620,
+    "heroHeight": 620,
+    "landed": "hero",
+    "scene": 4000,
+    "visibleElements": 73,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 308.09,
+        "height": 49.5
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 68.5,
+        "height": 42.44
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent.live",
+        "width": 49.82,
+        "height": 42.44
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 42.16,
+        "height": 42.44
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.hero-top",
+        "b": "img.",
+        "width": 22.7,
+        "height": 22.7
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 49.5
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 33.73,
+        "height": 42.44
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 20.55,
+        "height": 42.16
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent.live",
+        "width": 49.82,
+        "height": 42.44
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 15.69,
+        "height": 42.44
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 15.69,
+        "height": 42.16
+      },
+      {
+        "a": "div.smart-download",
+        "b": "img.",
+        "width": 5.96,
+        "height": 22.7
+      },
+      {
+        "a": "a.primary-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 24.56
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 33.73,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 20.55,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent.live",
+        "width": 49.82,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 15.69,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 15.69,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "img.",
+        "width": 5.96,
+        "height": 7.78
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.node.agent.live",
+        "width": 16.39,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.tile",
+        "width": 12.56,
+        "height": 19.65
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.node.agent.live",
+        "width": 16.39,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.tile",
+        "width": 12.56,
+        "height": 19.65
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      390,
+      844
+    ],
+    "currentViewportReduction": 112
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": true,
+    "width": 390,
+    "height": 732,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 620,
+    "heroHeight": 620,
+    "landed": "hero",
+    "scene": 12800,
+    "visibleElements": 76,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 308.09,
+        "height": 49.5
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 68.5,
+        "height": 42.44
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 49.82,
+        "height": 42.44
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 42.16,
+        "height": 42.44
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.hero-top",
+        "b": "img.",
+        "width": 22.7,
+        "height": 22.7
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 49.5
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 33.73,
+        "height": 42.44
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 20.55,
+        "height": 42.16
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 49.82,
+        "height": 42.44
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 15.69,
+        "height": 42.44
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 15.69,
+        "height": 42.16
+      },
+      {
+        "a": "div.smart-download",
+        "b": "img.",
+        "width": 5.96,
+        "height": 22.7
+      },
+      {
+        "a": "a.primary-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 24.56
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 33.73,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 20.55,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 49.82,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 15.69,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 15.69,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "img.",
+        "width": 5.96,
+        "height": 7.78
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.node.agent",
+        "width": 16.39,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.tile",
+        "width": 12.56,
+        "height": 19.65
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.node.agent",
+        "width": 16.39,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.tile",
+        "width": 12.56,
+        "height": 19.65
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#screen",
+        "width": 243.23,
+        "height": 45.09
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#track",
+        "width": 241.61,
+        "height": 44.27
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.view",
+        "width": 241.61,
+        "height": 44.27
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.hdr",
+        "width": 241.61,
+        "height": 44.27
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.back",
+        "width": 4.19,
+        "height": 15.15
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.t",
+        "width": 176.61,
+        "height": 34.55
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.title",
+        "width": 176.61,
+        "height": 15.56
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.h",
+        "width": 8.51,
+        "height": 15.4
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.sub",
+        "width": 176.61,
+        "height": 10.95
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#member-count",
+        "width": 176.61,
+        "height": 8.04
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.acts",
+        "width": 25.13,
+        "height": 14.75
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#screen",
+        "width": 241.61,
+        "height": 3.58
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#track",
+        "width": 241.61,
+        "height": 2.77
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.view",
+        "width": 241.61,
+        "height": 2.77
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.hdr",
+        "width": 241.61,
+        "height": 2.77
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#screen",
+        "width": 241.61,
+        "height": 27.57
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#track",
+        "width": 241.61,
+        "height": 27.57
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.view",
+        "width": 241.61,
+        "height": 27.57
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.hdr",
+        "width": 241.61,
+        "height": 27.57
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.back",
+        "width": 4.19,
+        "height": 15.15
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.t",
+        "width": 176.61,
+        "height": 20.61
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.title",
+        "width": 176.61,
+        "height": 15.56
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.h",
+        "width": 8.51,
+        "height": 15.4
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.sub",
+        "width": 176.61,
+        "height": 5.05
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.acts",
+        "width": 25.13,
+        "height": 14.75
+      },
+      {
+        "a": "span.",
+        "b": "#screen",
+        "width": 9.73,
+        "height": 10.54
+      },
+      {
+        "a": "span.",
+        "b": "#track",
+        "width": 9.73,
+        "height": 10.54
+      },
+      {
+        "a": "span.",
+        "b": "div.view",
+        "width": 9.73,
+        "height": 10.54
+      },
+      {
+        "a": "span.",
+        "b": "div.hdr",
+        "width": 9.73,
+        "height": 10.54
+      },
+      {
+        "a": "span.",
+        "b": "span.back",
+        "width": 4.19,
+        "height": 8.45
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#screen",
+        "width": 87.56,
+        "height": 10.54
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#track",
+        "width": 87.56,
+        "height": 10.54
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.view",
+        "width": 87.56,
+        "height": 10.54
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.hdr",
+        "width": 87.56,
+        "height": 10.54
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.t",
+        "width": 82.56,
+        "height": 8.45
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.title",
+        "width": 82.56,
+        "height": 8.45
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.h",
+        "width": 8.51,
+        "height": 8.45
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#screen",
+        "width": 241.61,
+        "height": 13.12
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#track",
+        "width": 241.61,
+        "height": 13.12
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.view",
+        "width": 241.61,
+        "height": 13.12
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.hdr",
+        "width": 241.61,
+        "height": 13.12
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.t",
+        "width": 176.61,
+        "height": 13.12
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.sub",
+        "width": 176.61,
+        "height": 5.89
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#member-count",
+        "width": 176.61,
+        "height": 7.23
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      390,
+      844
+    ],
+    "currentViewportReduction": 112
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 390,
+    "height": 732,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 620,
+    "heroHeight": 620,
+    "landed": "hero",
+    "scene": 35000,
+    "visibleElements": 68,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 308.09,
+        "height": 49.5
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 68.5,
+        "height": 42.44
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 49.82,
+        "height": 42.44
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent.live",
+        "width": 42.16,
+        "height": 42.44
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.hero-top",
+        "b": "img.",
+        "width": 22.7,
+        "height": 22.7
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 49.5
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 33.73,
+        "height": 42.44
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 20.55,
+        "height": 42.16
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 49.82,
+        "height": 42.44
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 42.16
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent.live",
+        "width": 15.69,
+        "height": 42.44
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 15.69,
+        "height": 42.16
+      },
+      {
+        "a": "div.smart-download",
+        "b": "img.",
+        "width": 5.96,
+        "height": 22.7
+      },
+      {
+        "a": "a.primary-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 24.56
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 33.73,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 20.55,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent",
+        "width": 49.82,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 42.16,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.node.agent.live",
+        "width": 15.69,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "div.tile",
+        "width": 15.69,
+        "height": 17.51
+      },
+      {
+        "a": "a.primary-download",
+        "b": "img.",
+        "width": 5.96,
+        "height": 7.78
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.node.agent",
+        "width": 16.39,
+        "height": 19.94
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.tile",
+        "width": 12.56,
+        "height": 19.65
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.node.agent",
+        "width": 16.39,
+        "height": 19.94
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.tile",
+        "width": 12.56,
+        "height": 19.65
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      390,
+      844
+    ],
+    "currentViewportReduction": 112
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 412,
+    "height": 915,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 803,
+    "heroHeight": 803,
+    "landed": "hero",
+    "scene": 4000,
+    "visibleElements": 74,
+    "overlaps": [],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      412,
+      915
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": true,
+    "width": 412,
+    "height": 915,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 803,
+    "heroHeight": 803,
+    "landed": "hero",
+    "scene": 12800,
+    "visibleElements": 76,
+    "overlaps": [
+      {
+        "a": "#join-terminal",
+        "b": "#screen",
+        "width": 300,
+        "height": 55.61
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#track",
+        "width": 298,
+        "height": 54.61
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.view",
+        "width": 298,
+        "height": 54.61
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.hdr",
+        "width": 298,
+        "height": 54.61
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.back",
+        "width": 5.17,
+        "height": 18.69
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.t",
+        "width": 217.83,
+        "height": 42.61
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.title",
+        "width": 217.83,
+        "height": 19.19
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.h",
+        "width": 10.5,
+        "height": 19
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.sub",
+        "width": 217.83,
+        "height": 13.5
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#member-count",
+        "width": 217.83,
+        "height": 9.92
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.acts",
+        "width": 31,
+        "height": 18.19
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#screen",
+        "width": 298,
+        "height": 4.42
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#track",
+        "width": 298,
+        "height": 3.42
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.view",
+        "width": 298,
+        "height": 3.42
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.hdr",
+        "width": 298,
+        "height": 3.42
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#screen",
+        "width": 298,
+        "height": 34
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#track",
+        "width": 298,
+        "height": 34
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.view",
+        "width": 298,
+        "height": 34
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.hdr",
+        "width": 298,
+        "height": 34
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.back",
+        "width": 5.17,
+        "height": 18.69
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.t",
+        "width": 217.83,
+        "height": 25.42
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.title",
+        "width": 217.83,
+        "height": 19.19
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.h",
+        "width": 10.5,
+        "height": 19
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.sub",
+        "width": 217.83,
+        "height": 6.23
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.acts",
+        "width": 31,
+        "height": 18.19
+      },
+      {
+        "a": "span.",
+        "b": "#screen",
+        "width": 12,
+        "height": 13
+      },
+      {
+        "a": "span.",
+        "b": "#track",
+        "width": 12,
+        "height": 13
+      },
+      {
+        "a": "span.",
+        "b": "div.view",
+        "width": 12,
+        "height": 13
+      },
+      {
+        "a": "span.",
+        "b": "div.hdr",
+        "width": 12,
+        "height": 13
+      },
+      {
+        "a": "span.",
+        "b": "span.back",
+        "width": 5.17,
+        "height": 10.42
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#screen",
+        "width": 108,
+        "height": 13
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#track",
+        "width": 108,
+        "height": 13
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.view",
+        "width": 108,
+        "height": 13
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.hdr",
+        "width": 108,
+        "height": 13
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.t",
+        "width": 101.83,
+        "height": 10.42
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.title",
+        "width": 101.83,
+        "height": 10.42
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.h",
+        "width": 10.5,
+        "height": 10.42
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#screen",
+        "width": 298,
+        "height": 16.19
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#track",
+        "width": 298,
+        "height": 16.19
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.view",
+        "width": 298,
+        "height": 16.19
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.hdr",
+        "width": 298,
+        "height": 16.19
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.t",
+        "width": 217.83,
+        "height": 16.19
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.sub",
+        "width": 217.83,
+        "height": 7.27
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#member-count",
+        "width": 217.83,
+        "height": 8.92
+      }
+    ],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      412,
+      915
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 6,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 412,
+    "height": 915,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 803,
+    "heroHeight": 803,
+    "landed": "hero",
+    "scene": 35000,
+    "visibleElements": 72,
+    "overlaps": [],
+    "clipped": [
+      "h1.wordmark"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      412,
+      915
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 412,
+    "height": 803,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 691,
+    "heroHeight": 691,
+    "landed": "hero",
+    "scene": 4000,
+    "visibleElements": 73,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 349.6,
+        "height": 14
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 77.73,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent.live",
+        "width": 56.54,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 14
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 23.92,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 8.97,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent.live",
+        "width": 56.54,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 3.46,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 3.46,
+        "height": 5.99
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 14
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.node.agent.live",
+        "width": 14.28,
+        "height": 5.99
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.tile",
+        "width": 9.94,
+        "height": 5.99
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 14
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.node.agent.live",
+        "width": 14.28,
+        "height": 5.99
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.tile",
+        "width": 9.94,
+        "height": 5.99
+      }
+    ],
+    "clipped": [
+      "h1.wordmark",
+      "span.name",
+      "span.name"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      412,
+      915
+    ],
+    "currentViewportReduction": 112
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": true,
+    "width": 412,
+    "height": 803,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 691,
+    "heroHeight": 691,
+    "landed": "hero",
+    "scene": 12800,
+    "visibleElements": 76,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 349.6,
+        "height": 14
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 77.73,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 56.54,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 14
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 23.92,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 8.97,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 56.54,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 3.46,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 3.46,
+        "height": 5.99
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 14
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.node.agent",
+        "width": 14.28,
+        "height": 5.99
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.tile",
+        "width": 9.94,
+        "height": 5.99
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 14
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.node.agent",
+        "width": 14.28,
+        "height": 5.99
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.tile",
+        "width": 9.94,
+        "height": 5.99
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#screen",
+        "width": 276,
+        "height": 51.16
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#track",
+        "width": 274.16,
+        "height": 50.24
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.view",
+        "width": 274.16,
+        "height": 50.24
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.hdr",
+        "width": 274.16,
+        "height": 50.24
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.back",
+        "width": 4.76,
+        "height": 17.19
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.t",
+        "width": 200.4,
+        "height": 39.2
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.title",
+        "width": 200.4,
+        "height": 17.65
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.h",
+        "width": 9.66,
+        "height": 17.48
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.sub",
+        "width": 200.4,
+        "height": 12.42
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#member-count",
+        "width": 200.4,
+        "height": 9.13
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.acts",
+        "width": 28.52,
+        "height": 16.73
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#screen",
+        "width": 274.16,
+        "height": 4.07
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#track",
+        "width": 274.16,
+        "height": 3.15
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.view",
+        "width": 274.16,
+        "height": 3.15
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.hdr",
+        "width": 274.16,
+        "height": 3.15
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#screen",
+        "width": 274.16,
+        "height": 31.28
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#track",
+        "width": 274.16,
+        "height": 31.28
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.view",
+        "width": 274.16,
+        "height": 31.28
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.hdr",
+        "width": 274.16,
+        "height": 31.28
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.back",
+        "width": 4.76,
+        "height": 17.19
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.t",
+        "width": 200.4,
+        "height": 23.39
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.title",
+        "width": 200.4,
+        "height": 17.65
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.h",
+        "width": 9.66,
+        "height": 17.48
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.sub",
+        "width": 200.4,
+        "height": 5.74
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.acts",
+        "width": 28.52,
+        "height": 16.73
+      },
+      {
+        "a": "span.",
+        "b": "#screen",
+        "width": 11.04,
+        "height": 11.96
+      },
+      {
+        "a": "span.",
+        "b": "#track",
+        "width": 11.04,
+        "height": 11.96
+      },
+      {
+        "a": "span.",
+        "b": "div.view",
+        "width": 11.04,
+        "height": 11.96
+      },
+      {
+        "a": "span.",
+        "b": "div.hdr",
+        "width": 11.04,
+        "height": 11.96
+      },
+      {
+        "a": "span.",
+        "b": "span.back",
+        "width": 4.76,
+        "height": 9.59
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#screen",
+        "width": 99.36,
+        "height": 11.96
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#track",
+        "width": 99.36,
+        "height": 11.96
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.view",
+        "width": 99.36,
+        "height": 11.96
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.hdr",
+        "width": 99.36,
+        "height": 11.96
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.t",
+        "width": 93.68,
+        "height": 9.59
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.title",
+        "width": 93.68,
+        "height": 9.59
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.h",
+        "width": 9.66,
+        "height": 9.59
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#screen",
+        "width": 274.16,
+        "height": 14.89
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#track",
+        "width": 274.16,
+        "height": 14.89
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.view",
+        "width": 274.16,
+        "height": 14.89
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.hdr",
+        "width": 274.16,
+        "height": 14.89
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.t",
+        "width": 200.4,
+        "height": 14.89
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.sub",
+        "width": 200.4,
+        "height": 6.68
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#member-count",
+        "width": 200.4,
+        "height": 8.21
+      }
+    ],
+    "clipped": [
+      "h1.wordmark",
+      "span.name",
+      "span.name"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      412,
+      915
+    ],
+    "currentViewportReduction": 112
+  },
+  {
+    "visibleAvatars": 6,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 412,
+    "height": 803,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 691,
+    "heroHeight": 691,
+    "landed": "hero",
+    "scene": 35000,
+    "visibleElements": 72,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 349.6,
+        "height": 14
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 77.73,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent",
+        "width": 56.54,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.node.agent.live",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.hero-top",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 14
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 23.92,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 8.97,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent",
+        "width": 56.54,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 47.84,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.node.agent.live",
+        "width": 3.46,
+        "height": 5.99
+      },
+      {
+        "a": "div.smart-download",
+        "b": "div.tile",
+        "width": 3.46,
+        "height": 5.99
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 14
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.node.agent",
+        "width": 14.28,
+        "height": 5.99
+      },
+      {
+        "a": "div.download-meta",
+        "b": "div.tile",
+        "width": 9.94,
+        "height": 5.99
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 14
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.node.agent",
+        "width": 14.28,
+        "height": 5.99
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "div.tile",
+        "width": 9.94,
+        "height": 5.99
+      }
+    ],
+    "clipped": [
+      "h1.wordmark",
+      "span.name",
+      "span.name"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      412,
+      915
+    ],
+    "currentViewportReduction": 112
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 430,
+    "height": 932,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 820,
+    "heroHeight": 820,
+    "landed": "hero",
+    "scene": 4000,
+    "visibleElements": 73,
+    "overlaps": [],
+    "clipped": [],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      430,
+      932
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": true,
+    "width": 430,
+    "height": 932,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 820,
+    "heroHeight": 820,
+    "landed": "hero",
+    "scene": 12800,
+    "visibleElements": 76,
+    "overlaps": [
+      {
+        "a": "#join-terminal",
+        "b": "#screen",
+        "width": 300,
+        "height": 55.61
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#track",
+        "width": 298,
+        "height": 54.61
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.view",
+        "width": 298,
+        "height": 54.61
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.hdr",
+        "width": 298,
+        "height": 54.61
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.back",
+        "width": 5.17,
+        "height": 18.69
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.t",
+        "width": 217.83,
+        "height": 42.61
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.title",
+        "width": 217.83,
+        "height": 19.19
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.h",
+        "width": 10.5,
+        "height": 19
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.sub",
+        "width": 217.83,
+        "height": 13.5
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#member-count",
+        "width": 217.83,
+        "height": 9.92
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.acts",
+        "width": 31,
+        "height": 18.19
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#screen",
+        "width": 298,
+        "height": 4.42
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#track",
+        "width": 298,
+        "height": 3.42
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.view",
+        "width": 298,
+        "height": 3.42
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.hdr",
+        "width": 298,
+        "height": 3.42
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#screen",
+        "width": 298,
+        "height": 34
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#track",
+        "width": 298,
+        "height": 34
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.view",
+        "width": 298,
+        "height": 34
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.hdr",
+        "width": 298,
+        "height": 34
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.back",
+        "width": 5.17,
+        "height": 18.69
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.t",
+        "width": 217.83,
+        "height": 25.42
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.title",
+        "width": 217.83,
+        "height": 19.19
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.h",
+        "width": 10.5,
+        "height": 19
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.sub",
+        "width": 217.83,
+        "height": 6.23
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.acts",
+        "width": 31,
+        "height": 18.19
+      },
+      {
+        "a": "span.",
+        "b": "#screen",
+        "width": 12,
+        "height": 13
+      },
+      {
+        "a": "span.",
+        "b": "#track",
+        "width": 12,
+        "height": 13
+      },
+      {
+        "a": "span.",
+        "b": "div.view",
+        "width": 12,
+        "height": 13
+      },
+      {
+        "a": "span.",
+        "b": "div.hdr",
+        "width": 12,
+        "height": 13
+      },
+      {
+        "a": "span.",
+        "b": "span.back",
+        "width": 5.17,
+        "height": 10.42
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#screen",
+        "width": 108,
+        "height": 13
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#track",
+        "width": 108,
+        "height": 13
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.view",
+        "width": 108,
+        "height": 13
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.hdr",
+        "width": 108,
+        "height": 13
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.t",
+        "width": 101.83,
+        "height": 10.42
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.title",
+        "width": 101.83,
+        "height": 10.42
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.h",
+        "width": 10.5,
+        "height": 10.42
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#screen",
+        "width": 298,
+        "height": 16.19
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#track",
+        "width": 298,
+        "height": 16.19
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.view",
+        "width": 298,
+        "height": 16.19
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.hdr",
+        "width": 298,
+        "height": 16.19
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.t",
+        "width": 217.83,
+        "height": 16.19
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.sub",
+        "width": 217.83,
+        "height": 7.27
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#member-count",
+        "width": 217.83,
+        "height": 8.92
+      }
+    ],
+    "clipped": [],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      430,
+      932
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 430,
+    "height": 932,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 820,
+    "heroHeight": 820,
+    "landed": "hero",
+    "scene": 35000,
+    "visibleElements": 68,
+    "overlaps": [],
+    "clipped": [],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      430,
+      932
+    ],
+    "currentViewportReduction": 0
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 430,
+    "height": 820,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 708,
+    "heroHeight": 708,
+    "landed": "hero",
+    "scene": 4000,
+    "visibleElements": 73,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 359.54,
+        "height": 5.5
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 5.5
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 5.5
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 5.5
+      }
+    ],
+    "clipped": [
+      "h1.wordmark",
+      "span.name",
+      "span.name"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      430,
+      932
+    ],
+    "currentViewportReduction": 112
+  },
+  {
+    "visibleAvatars": 5,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": true,
+    "width": 430,
+    "height": 820,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 708,
+    "heroHeight": 708,
+    "landed": "hero",
+    "scene": 12800,
+    "visibleElements": 76,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 359.54,
+        "height": 5.5
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 5.5
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 5.5
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 5.5
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#screen",
+        "width": 283.85,
+        "height": 52.97
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#track",
+        "width": 281.95,
+        "height": 52.02
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.view",
+        "width": 281.95,
+        "height": 52.02
+      },
+      {
+        "a": "#join-terminal",
+        "b": "div.hdr",
+        "width": 281.95,
+        "height": 52.02
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.back",
+        "width": 4.89,
+        "height": 17.68
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.t",
+        "width": 206.1,
+        "height": 40.67
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.title",
+        "width": 206.1,
+        "height": 18.15
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.h",
+        "width": 9.93,
+        "height": 17.98
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.sub",
+        "width": 206.1,
+        "height": 12.77
+      },
+      {
+        "a": "#join-terminal",
+        "b": "#member-count",
+        "width": 206.1,
+        "height": 9.74
+      },
+      {
+        "a": "#join-terminal",
+        "b": "span.acts",
+        "width": 29.33,
+        "height": 17.21
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#screen",
+        "width": 281.95,
+        "height": 4.54
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "#track",
+        "width": 281.95,
+        "height": 3.59
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.view",
+        "width": 281.95,
+        "height": 3.59
+      },
+      {
+        "a": "div.terminal-title",
+        "b": "div.hdr",
+        "width": 281.95,
+        "height": 3.59
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#screen",
+        "width": 281.95,
+        "height": 32.17
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "#track",
+        "width": 281.95,
+        "height": 32.17
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.view",
+        "width": 281.95,
+        "height": 32.17
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "div.hdr",
+        "width": 281.95,
+        "height": 32.17
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.back",
+        "width": 4.89,
+        "height": 17.68
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.t",
+        "width": 206.1,
+        "height": 24.41
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.title",
+        "width": 206.1,
+        "height": 18.15
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.h",
+        "width": 9.93,
+        "height": 17.98
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.sub",
+        "width": 206.1,
+        "height": 6.25
+      },
+      {
+        "a": "div.terminal-command",
+        "b": "span.acts",
+        "width": 29.33,
+        "height": 17.21
+      },
+      {
+        "a": "span.",
+        "b": "#screen",
+        "width": 11.35,
+        "height": 12.3
+      },
+      {
+        "a": "span.",
+        "b": "#track",
+        "width": 11.35,
+        "height": 12.3
+      },
+      {
+        "a": "span.",
+        "b": "div.view",
+        "width": 11.35,
+        "height": 12.3
+      },
+      {
+        "a": "span.",
+        "b": "div.hdr",
+        "width": 11.35,
+        "height": 12.3
+      },
+      {
+        "a": "span.",
+        "b": "span.back",
+        "width": 4.89,
+        "height": 10.21
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#screen",
+        "width": 102.18,
+        "height": 12.3
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "#track",
+        "width": 102.18,
+        "height": 12.3
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.view",
+        "width": 102.18,
+        "height": 12.3
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "div.hdr",
+        "width": 102.18,
+        "height": 12.3
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.t",
+        "width": 96.35,
+        "height": 10.21
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.title",
+        "width": 96.35,
+        "height": 10.21
+      },
+      {
+        "a": "#typed-prompt",
+        "b": "span.h",
+        "width": 9.93,
+        "height": 10.21
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#screen",
+        "width": 281.95,
+        "height": 15.32
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#track",
+        "width": 281.95,
+        "height": 15.32
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.view",
+        "width": 281.95,
+        "height": 15.32
+      },
+      {
+        "a": "#terminal-state",
+        "b": "div.hdr",
+        "width": 281.95,
+        "height": 15.32
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.t",
+        "width": 206.1,
+        "height": 15.32
+      },
+      {
+        "a": "#terminal-state",
+        "b": "span.sub",
+        "width": 206.1,
+        "height": 6.52
+      },
+      {
+        "a": "#terminal-state",
+        "b": "#member-count",
+        "width": 206.1,
+        "height": 8.79
+      }
+    ],
+    "clipped": [
+      "h1.wordmark",
+      "span.name",
+      "span.name"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      430,
+      932
+    ],
+    "currentViewportReduction": 112
+  },
+  {
+    "visibleAvatars": 6,
+    "inlineInvitationFullyVisible": false,
+    "floatingInvitationVisible": false,
+    "width": 430,
+    "height": 820,
+    "dpr": 2.5999999046325684,
+    "touchPoints": 5,
+    "smallViewport": 708,
+    "heroHeight": 708,
+    "landed": "hero",
+    "scene": 35000,
+    "visibleElements": 72,
+    "overlaps": [
+      {
+        "a": "div.hero-top",
+        "b": "#stage",
+        "width": 359.54,
+        "height": 5.5
+      },
+      {
+        "a": "div.smart-download",
+        "b": "#stage",
+        "width": 213,
+        "height": 5.5
+      },
+      {
+        "a": "div.download-meta",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 5.5
+      },
+      {
+        "a": "button.other-platforms",
+        "b": "#stage",
+        "width": 64.03,
+        "height": 5.5
+      }
+    ],
+    "clipped": [
+      "h1.wordmark",
+      "span.name",
+      "span.name"
+    ],
+    "escapedImages": [],
+    "horizontalOverflow": false,
+    "watchVideoLinks": 0,
+    "profile": [
+      430,
+      932
+    ],
+    "currentViewportReduction": 112
+  }
+]

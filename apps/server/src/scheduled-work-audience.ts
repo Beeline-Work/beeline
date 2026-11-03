@@ -1,7 +1,7 @@
 import type {SqlDatabase} from './database.js';
 import type {routerSourcePlan} from './router-source-plan.js';
-import {routerAuthority,RouterProjectionUnavailable} from './router-projections.js';
-import {scheduledWorkAuthorities,scheduledPrincipalDomain} from './scheduled-work-authority.js';
+import {RouterProjectionUnavailable} from './router-projections.js';
+import {scheduledWorkAuthorities} from './scheduled-work-authority.js';
 import {ROUTER_ROOM_AUDIENCE_LIMIT} from './router-room-audience.js';
 
 /** Current managers plus source-proven former recipients. All IDs come from
@@ -21,13 +21,14 @@ export async function scheduledWorkAudience(db:SqlDatabase,workspace:string,view
       ${currentAudience}SELECT causes."roomId" AS id FROM causes CROSS JOIN manager WHERE causes.readers IS NULL AND manager.allowed OR causes.readers ? $2
     ) SELECT id::text FROM candidates ORDER BY id LIMIT $4`,[workspace,viewer,JSON.stringify(plan.scheduledWorkCauses),ROUTER_ROOM_AUDIENCE_LIMIT+1])).rows;
   if(candidates.length>ROUTER_ROOM_AUDIENCE_LIMIT)throw new RouterProjectionUnavailable('budget');
-  const states=await scheduledWorkAuthorities(db,candidates.map(row=>row.id),viewer);
-  let fallback;
-  if(candidates.some(row=>!states.has(row.id))){
-    const row=(await db.query<{epoch:string}>(`SELECT epoch::text FROM router_authority WHERE scope=$1`,[scheduledPrincipalDomain(viewer)])).rows[0];
-    if(!row)throw new RouterProjectionUnavailable('authority');
-    fallback=routerAuthority([{authorityScope:scheduledPrincipalDomain(viewer),epoch:row.epoch}]);
-  }
-  return candidates.map(row=>({roomId:row.id,state:states.get(row.id),authority:states.get(row.id)?.authority??fallback!,
-    changed:plan.scheduledWorkCauses.some(cause=>cause.roomId===row.id&&(cause.readers===null||cause.readers.includes(viewer)))}));
+  // The same authority statement covers existing and removed Room IDs. A
+  // removed Room uses only the current principal certificate, never a second
+  // audience-side authority query or a stored client inventory.
+  const {states,principal}=await scheduledWorkAuthorities(db,candidates.map(row=>row.id),viewer);
+  return candidates.map(row=>{
+    const state=states.get(row.id),authority=state?.authority??principal;
+    if(!authority)throw new RouterProjectionUnavailable('authority');
+    return {roomId:row.id,state,authority,
+      changed:plan.scheduledWorkCauses.some(cause=>cause.roomId===row.id&&(cause.readers===null||cause.readers.includes(viewer)))};
+  });
 }

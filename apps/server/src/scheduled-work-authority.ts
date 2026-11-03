@@ -7,7 +7,7 @@ export const scheduledPrincipalDomain=(viewer:string)=>`scheduled-work-principal
 export const scheduledManagerDomain=(viewer:string,workspace:string)=>`scheduled-work-manager:${viewer}:workspace:${workspace}`;
 export const scheduledMemberDomain=(viewer:string,room:string)=>`scheduled-work-member:${viewer}:room:${room}`;
 export const scheduledRoomDomain=(room:string)=>`scheduled-work-room:${room}`;
-type AuthorityRow={id:string;workspace_id:string;parent_id:string|null;archived:boolean;direct:boolean;participant:boolean;
+type AuthorityRow={id:string;present:string|null;workspace_id:string;parent_id:string|null;archived:boolean;direct:boolean;participant:boolean;
   human:boolean;manager:boolean;member:boolean;scopes:{authorityScope:string;epoch:string}[]};
 export type ScheduledWorkAuthority={workspaceId:string;authority:RouterAuthorityCertificate;allowed:boolean;
   denied:{scope:string;authorityScope:string};complete:boolean};
@@ -15,9 +15,9 @@ export type ScheduledWorkAuthority={workspaceId:string;authority:RouterAuthority
 /** Matches requireScheduledWorkManager exactly. Public Room managers need no
  * transcript membership; humans manage their own DMs without a fictitious
  * Workspace membership requirement. These domains confer no transcript access. */
-export async function scheduledWorkAuthorities(db:SqlDatabase,rooms:readonly string[],viewer:string):Promise<ReadonlyMap<string,ScheduledWorkAuthority>>{
-  if(!rooms.length)return new Map();
-  const rows=(await db.query<AuthorityRow>(`SELECT room.id,room.workspace_id,room.parent_id,room.archived_at IS NOT NULL archived,
+export async function scheduledWorkAuthorities(db:SqlDatabase,rooms:readonly string[],viewer:string):Promise<{states:ReadonlyMap<string,ScheduledWorkAuthority>;principal?:RouterAuthorityCertificate}>{
+  if(!rooms.length)return {states:new Map()};
+  const rows=(await db.query<AuthorityRow>(`SELECT requested.id,room.id present,room.workspace_id,room.parent_id,room.archived_at IS NOT NULL archived,
     room.direct_participants IS NOT NULL direct,COALESCE(room.direct_participants ? $2,false) participant,
     EXISTS(SELECT 1 FROM identities person WHERE person.id=$2 AND person.kind='human' AND NOT person.hidden_from_roster) human,
     EXISTS(SELECT 1 FROM memberships manager WHERE manager.workspace_id=room.workspace_id AND manager.room_id IS NULL
@@ -27,9 +27,12 @@ export async function scheduledWorkAuthorities(db:SqlDatabase,rooms:readonly str
       WHERE scope='scheduled-work-principal:'||$2 OR scope='scheduled-work-room:'||room.id OR scope=CASE
         WHEN room.direct_participants IS NULL THEN 'scheduled-work-manager:'||$2||':workspace:'||room.workspace_id
         ELSE 'scheduled-work-member:'||$2||':room:'||room.id END),'[]'::jsonb) scopes
-    FROM rooms room WHERE room.id=ANY($1::uuid[])`,[rooms,viewer])).rows;
+    FROM unnest($1::uuid[]) requested(id) LEFT JOIN rooms room ON room.id=requested.id`,[rooms,viewer])).rows;
   const result=new Map<string,ScheduledWorkAuthority>();
+  const principalScope=scheduledPrincipalDomain(viewer);
+  const principalEpoch=rows[0]?.scopes.find(item=>item.authorityScope===principalScope);
   for(const row of rows){
+    if(!row.present)continue;
     const principal=scheduledPrincipalDomain(viewer),policy=scheduledRoomDomain(row.id);
     const access=row.direct?scheduledMemberDomain(viewer,row.id):scheduledManagerDomain(viewer,row.workspace_id);
     if(!row.scopes.some(item=>item.authorityScope===principal)||!row.scopes.some(item=>item.authorityScope===policy))continue;
@@ -39,10 +42,10 @@ export async function scheduledWorkAuthorities(db:SqlDatabase,rooms:readonly str
       authority:routerAuthority(row.scopes.map(item=>({authorityScope:item.authorityScope,epoch:item.epoch}))),
       allowed,complete:row.scopes.length===3,denied:{scope:target===principal?viewer:target===scheduledManagerDomain(viewer,row.workspace_id)?row.workspace_id:row.id,authorityScope:target}});
   }
-  return result;
+  return {states:result,principal:principalEpoch?routerAuthority([principalEpoch]):undefined};
 }
 export async function scheduledWorkAuthority(db:SqlDatabase,room:string,viewer:string):Promise<ScheduledWorkAuthority>{
-  const result=(await scheduledWorkAuthorities(db,[room],viewer)).get(room);
+  const result=(await scheduledWorkAuthorities(db,[room],viewer)).states.get(room);
   if(!result)throw new RouterProjectionUnavailable('authority');return result;
 }
 

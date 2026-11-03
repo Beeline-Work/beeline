@@ -307,7 +307,7 @@ export async function fenceRouterBatchInTransaction(db:SqlDatabase,workspace:str
       const input=inputs.get(group);
       const scope=input?.roomId??workspace;
       if(input?.family==='room-scheduled-work'){
-        const current=scheduled.get(input.roomId!);
+        const current=scheduled.states.get(input.roomId!);
         if(!current){
           safe.push({atomicGroup:group,authority:readerCertificate,payload:{kind:'group-unavailable',scope,reason:'authority'}});continue;
         }

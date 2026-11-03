@@ -241,7 +241,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 20,
+      "total": 18,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -253,7 +253,7 @@
         "apps/body/src"
       ],
       "owners": [],
-      "total": 30,
+      "total": 29,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {

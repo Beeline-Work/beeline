@@ -20,7 +20,7 @@ const call = { completionV1: true, chain: 'base', contract, data: '0x12345678',
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); vi.useRealTimers(); });
 
 describe('wallet completionV1 at the provider adapter', () => {
-  it('parks an unconfirmed approval after one receipt and never sends the dependent call', async () => {
+  it.each([true, undefined] as const)('parks an unconfirmed approval after one receipt without a dependent call (completionV1=%s)', async completionV1 => {
     vi.useFakeTimers();
     const methods: string[] = [];
     vi.stubGlobal('fetch', async (url: unknown, init: RequestInit) => {
@@ -32,7 +32,7 @@ describe('wallet completionV1 at the provider adapter', () => {
       methods.push(...rows.map(row => row.method));
       return Response.json(rows.map(({ id }) => ({ id, result: null })));
     });
-    const result = await client().contractCall(address, call).catch(error => error);
+    const result = await client().contractCall(address, { ...call, completionV1 }).catch(error => error);
     expect(result).toBeInstanceOf(WalletTransactionPending);
     expect(result).toMatchObject({ txId: hash, approval: { asset: 'usdc', amount: '1', spender: contract } });
     expect(result.message).toContain('dependent transaction was not submitted');
@@ -41,7 +41,7 @@ describe('wallet completionV1 at the provider adapter', () => {
     expect(methods).toEqual(['send', 'eth_getTransactionReceipt']);
   });
 
-  it('sends the dependent call only after the one admitted receipt confirms approval', async () => {
+  it.each([true, undefined] as const)('sends the dependent call only after one confirmed receipt (completionV1=%s)', async completionV1 => {
     let sends = 0;
     let receipts = 0;
     vi.stubGlobal('fetch', async (url: unknown, init: RequestInit) => {
@@ -55,11 +55,13 @@ describe('wallet completionV1 at the provider adapter', () => {
       expect(sends).toBe(1);
       return Response.json(rows.map(({ id }) => ({ id, result: { status: '0x1' } })));
     });
-    expect(await client().contractCall(address, call)).toEqual({ txId: hash });
+    expect(await client().contractCall(address, { ...call, completionV1 })).toEqual({ txId: hash });
     expect({ sends, receipts }).toEqual({ sends: 2, receipts: 1 });
   });
 
-  it.each([null, 'rpc-failure', '0x0', '0x1'] as const)('observes a final swap receipt once (%s)', async status => {
+  it.each(([null, 'rpc-failure', '0x0', '0x1'] as const).flatMap(status =>
+    [true, undefined].map(completionV1 => ({ status, completionV1: completionV1 as true | undefined }))))
+    ('observes a final swap receipt once ($status, completionV1=$completionV1)', async ({status, completionV1}) => {
     vi.useFakeTimers();
     let sends = 0;
     let receipts = 0;
@@ -75,7 +77,7 @@ describe('wallet completionV1 at the provider adapter', () => {
       const rows = JSON.parse(String(init.body)) as { id: number }[];
       return Response.json(rows.map(({ id }) => ({ id, result: status === null ? null : { status } })));
     });
-    const result = client().swap(address, { completionV1: true, chain: 'base',
+    const result = client().swap(address, { completionV1, chain: 'base',
       fromAsset: 'eth', toAsset: 'usdc', amount: '0.001' });
     if (status === '0x0') await expect(result).rejects.toThrow(`transaction ${hash} reverted`);
     else await expect(result).resolves.toMatchObject({ txId: hash, status: status === '0x1' ? 'confirmed' : 'pending' });
@@ -84,7 +86,7 @@ describe('wallet completionV1 at the provider adapter', () => {
     expect({ sends, receipts }).toEqual({ sends: 1, receipts: 1 });
   });
 
-  it('does not re-quote, sign a permit or submit a swap while its approval is pending', async () => {
+  it.each([true, undefined] as const)('does not re-quote, sign or submit while approval is pending (completionV1=%s)', async completionV1 => {
     const requests: string[] = [];
     vi.stubGlobal('fetch', async (url: unknown, init: RequestInit) => {
       const path = new URL(String(url)).pathname;
@@ -95,7 +97,7 @@ describe('wallet completionV1 at the provider adapter', () => {
       const rows = JSON.parse(String(init.body)) as { id: number }[];
       return Response.json(rows.map(({ id }) => ({ id, result: null })));
     });
-    await expect(client().swap(address, { completionV1: true, chain: 'base', fromAsset: 'usdc',
+    await expect(client().swap(address, { completionV1, chain: 'base', fromAsset: 'usdc',
       toAsset: 'eth', amount: '1' })).rejects.toMatchObject({ txId: hash, approval: { spender: contract } });
     expect(requests).toHaveLength(3);
     expect(requests.filter(path => path.endsWith('/evm/swaps'))).toHaveLength(1);

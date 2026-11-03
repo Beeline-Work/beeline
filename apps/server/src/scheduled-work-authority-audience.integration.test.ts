@@ -1,6 +1,8 @@
-import {afterEach,beforeEach,describe,expect,it} from 'vitest';
+import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import {SCHEDULED_WORK_AUTHORITY_SCHEMA,scheduledRoomDomain,currentScheduledWorkFence} from './scheduled-work-authority.js';
+import {scheduledWorkAudience} from './scheduled-work-audience.js';
+import {routerSourcePlan} from './router-source-plan.js';
 import {requireScheduledWorkManager} from './subscription-webhooks.js';
 const OWNER='a'.repeat(64),TARGET_OWNER='b'.repeat(64),PERSON='c'.repeat(64),FORMER='d'.repeat(64),READER='e'.repeat(64),HIDDEN='f'.repeat(64),AGENT='0'.repeat(64);
 const PEOPLE=[OWNER,TARGET_OWNER,PERSON,FORMER,READER,HIDDEN,AGENT];
@@ -80,6 +82,20 @@ describe('Scheduled Work Room-policy hint audience equals actual OLD/NEW manager
     await transition(()=>create([PERSON,READER]));await member(PERSON);await member(READER);
     const deleted=await transition(()=>db.query(`DELETE FROM rooms WHERE id=$1`,[ROOM]));
     expect(deleted.before).toEqual([PERSON,READER]);expect(deleted.after).toEqual([]);expect(deleted.recipients).toEqual([PERSON,READER]);
+    const plan=routerSourcePlan([],PERSON,WS);
+    plan.scheduledWorkCauses.push({roomId:ROOM,readers:[PERSON,READER]});
+    const query=vi.spyOn(db,'query');
+    try{
+      const audience=await scheduledWorkAudience(db,WS,PERSON,plan,true);
+      expect(audience).toHaveLength(1);
+      expect(audience[0]).toMatchObject({roomId:ROOM,state:undefined,changed:true,
+        authority:{scopes:[{authorityScope:`scheduled-work-principal:${PERSON}`,epoch:expect.any(String)}]}});
+      // Candidate selection plus one authority statement, even when no Room
+      // row survives. No independent certificate read in the audience layer.
+      expect(query).toHaveBeenCalledTimes(2);
+    }finally{query.mockRestore();}
+    await db.query(`DELETE FROM router_authority WHERE scope=$1`,[`scheduled-work-principal:${PERSON}`]);
+    await expect(scheduledWorkAudience(db,WS,PERSON,plan,true)).rejects.toThrow();
   });
   it('preserves SQL-null public policy separately from JSON-null private policy in both OLD and NEW records',async()=>{
     await transition(()=>create([PERSON]));await member(PERSON);

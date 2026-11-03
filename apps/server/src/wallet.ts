@@ -884,9 +884,7 @@ export async function agentWalletTool(
         return {
           outcome: 'pending',
           txUrl: walletExplorerTxUrl(swapChain, swapped.txId),
-          reason: input?.completionV1 === true
-            ? 'Swap submitted; confirmation is pending. Do not resubmit this intent.'
-            : 'Swap submitted; receipt confirmation timed out. Do not resubmit.',
+          reason: 'Swap submitted; confirmation is pending. Do not resubmit this intent.',
         };
       }
       await creditSnapshot(database, ctx.ownerIdentityId, swapChain, toAsset, swapped.toAmount);

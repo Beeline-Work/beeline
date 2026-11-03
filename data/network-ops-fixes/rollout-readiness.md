@@ -1,12 +1,12 @@
 # Local proof versus rollout acceptance
 
-Instruction043 requests separate pre-rollout proof and cohort-measured closure.
+Instructions 043/044 request separate pre-rollout proof and cohort-measured closure.
 The [ledger](closure-ledger.md) now records both. Router activation stays off;
 no production cohort or owner Workspace was used for this evidence.
 
 ## Concrete local failures
 
-These six findings have executable local failures, not merely missing production
+These five findings have executable local failures, not merely missing production
 measurements. Their assertions remain strict.
 
 | Finding | Remaining local work | Executable evidence |
@@ -16,13 +16,18 @@ measurements. Their assertions remain strict.
 | F05 | Publish the saved-workflow start fact. | Group A closure suite: zero workflow-list facts, expected one. |
 | F08 | Publish the committed connector's Workbench cell. | Group A closure suite: zero cells, expected one. |
 | F09 | Deliver the portrait parent revision to both held consumers. | Group A closure suite: updates `[0,0]`, expected `[1,1]`. |
-| F13 | Resolve the strict first-read WAL and legacy Room latency failures. | Group C follow-up fixes statements to 2/2, but retains 1,144 candidate WAL bytes versus 0 legacy and latency 702/1,021 ms versus 650 ms. [Report](group-c-followup-report.md); original and after-repair samples remain. |
 
 Group A reproduction and exact names: [proof report](group-a-proof-report.md),
 `npm run prove:router-group-a-open-gates -w @beeline/server` with the isolated
-PostgreSQL URL. Group C follow-up https://github.com/Beeline-Work/beeline/pull/3378 is integrated. Its same-cut and enqueue fences retain strict assertions. Reproduce cost with `BEELINE_GROUP_C_COST_PROOF=1` on
-`scripts/prove-router-group-c-room-payload.mjs`. The dedicated closure commands
-are additional evidence, not replacements for normal regression/CI gates.
+PostgreSQL URL. Group C's final follow-up https://github.com/Beeline-Work/beeline/pull/3379 fixes
+the earlier F13 statement/WAL/latency failures. On combined head `6eccacb48`,
+the unchanged strict cost proof passes all five samples, including cold, with
+statements 2/2 and WAL 0/0; all 18 legacy Room cases pass, with corner open 513 ms
+against 650 ms. [Combined cost evidence](group-c-room-cost-integrated.json) and
+[latency output](group-c-room-latency-integrated.txt) retain the observations.
+Original failures remain alongside the fixed results. The separate final
+READ COMMITTED authority fence is unchanged. Full production CPU/p95/native
+paint and consumer/cohort acceptance are still separate obligations.
 
 ## Passing candidate paths
 
@@ -37,9 +42,11 @@ cuts preserve obligations that become due during a scan. The 61-mechanism and
 candidate-path test remains in this group.
 
 **F02, F06, F20, F24 and F25** have passing scoped Group A candidate workloads.
-**F07, F10, F11, F18, F21 and F23** have passing scoped Group C candidate
-workloads. Those reports still reserve full consumer/platform/provider
-coverage. A green selected path is not evidence that every existing adapter
+**F07, F10, F11, F13, F18, F21 and F23 are Proven pre-rollout for Group C
+candidate paths**, per instruction 044. Native iOS captures are deferred to the
+rollout gate list in its [report](group-c-followup-report.md); the provided Mac
+needs adequate writable build capacity. Full consumer/platform/provider
+acceptance remains explicit. A green selected path is not evidence that every existing adapter
 has moved. F26 retains its previously accepted completion-capture closure.
 
 ## What is still broader than rollout measurement
@@ -72,8 +79,8 @@ Cross-cutting T7 work remains:
 - Equal-workload CPU/WAL, queue/parse/paint and physical SDK/native egress
   acceptance remain open beyond the local measurements already retained.
 
-Thus the actionable split is **six reproduced local defects; nineteen
+Thus the actionable split is **five reproduced local defects; twenty
 findings with passing candidate-path evidence but incomplete whole-finding
-acceptance; one existing closure**. Group B's local P12 implementation is ready
+acceptance; one existing closure**. The candidate implementations for Groups B and C are ready
 for the remaining integration/cohort acceptance work. No additional whole
 finding is marked Closed, and no production activation is authorized here.

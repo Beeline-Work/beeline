@@ -72,7 +72,7 @@ before the behavior under test.
 
 The workflow suite is split across four files with a shared per-file fixture.
 All 170 test names and the original test blocks are retained. Scheduling
-weights use the latest passing CI profile; source revision and measurement
+weights use the latest observed CI profile; source revision and measurement
 time are recorded with the weights. The balancer reserves each
 shard's isolated-suite and integration-batch cost before assigning its
 ordinary files.
@@ -158,6 +158,14 @@ The trace test now compares the exact real pre-query clock read, preserving
 its 500 ms budget and transaction assertions. Socket replay runs in a fresh
 worker; all 300 rows, ordering/deduplication assertions and deadlines remain.
 Weights account for this reserved work before distributing ordinary files.
+
+The [merged cache/deadline repair run](https://github.com/Beeline-Work/beeline/actions/runs/41565883259)
+passed before this follow-up was integrated. Its feedback setup reduction
+brought shard five below the job limit at 17m09s. All Linux work completed in
+40m34s under overlapping CI; three other shards still exceeded twenty minutes
+(longest 25m12s), motivating the measured rebalance here. Attributed work was
+197.96 CPU-minutes; the shared pool peaked at 37.37 GiB, with no OOM or helper
+restart. This is a reliability result, not a demonstrated pipeline speedup.
 
 The current acceptance is green checks with each server shard targeting at
 most twenty minutes of execution under the existing ten-CPU pool. Required

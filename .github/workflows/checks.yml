@@ -90,7 +90,7 @@ concurrency:
   group: checks-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
-# One control listener uses one CPU; nine test listeners use at most two each.
+# Control uses one CPU, heavy listeners at most two, and mobile at most three.
 # The CI slice shares its ten-CPU hard cap across all ten jobs and every PR.
 env:
   CI_TEST_WORKERS: '2'

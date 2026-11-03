@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# These commands run in two bounded lanes via run-ci-workspace-checks.mjs.
+# TYPECHECK runs its checks sequentially; MOBILE SUITE owns a separate checkout.
 # Keep trusted-base architecture and phone/UI policy checks equivalent to TYPECHECK.
 
 typecheck() {

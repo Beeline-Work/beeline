@@ -912,7 +912,7 @@ jobs:
       - name: Run server wall-clock budgets outside the shared quota
         if: github.event_name == 'pull_request'
         working-directory: apps/server
-        run: npx vitest run src/production-corpus-width.test.ts src/phone-service.read-room-latency.test.ts --maxWorkers=1 --minWorkers=1
+        run: npx vitest run src/production-corpus-width.test.ts src/phone-service.read-room-latency.test.ts src/daemon-service.completion-latency.test.ts --maxWorkers=1 --minWorkers=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -20,7 +20,7 @@ test('PR wall-clock suites leave the quota only when the required hosted replay 
   assert.match(replay.if, /needs.changes.outputs.productionCorpusReplay == 'true'/);
   const timing = replay.steps.find(step => /Run server wall-clock budgets/.test(step.name));
   assert.equal(timing.if, "github.event_name == 'pull_request'");
-  assert.match(timing.run, /src\/production-corpus-width.test.ts src\/phone-service.read-room-latency.test.ts --maxWorkers=1 --minWorkers=1/);
+  assert.match(timing.run, /src\/production-corpus-width.test.ts src\/phone-service.read-room-latency.test.ts src\/daemon-service.completion-latency.test.ts --maxWorkers=1 --minWorkers=1/);
   assert.equal(timing['continue-on-error'], undefined);
 });
 

@@ -1,0 +1,118 @@
+page:
+  title: Beeline · Round 5 · The existing hero · Lavish
+  refs: 108
+snapshot:
+uid=g229:228_0 RootWebArea "Beeline · Round 5 · The existing hero · Lavish" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/session/617a34f50233f5cc"
+  uid=g229:228_1 "Lavish"
+  uid=g229:228_2 button "Annotate" description="Toggle annotate/explore mode (⌘I / Ctrl+I)" pressed
+  uid=g229:228_3 button "More" expandable haspopup="menu"
+  uid=g229:228_4 Iframe
+    uid=g229:228_5 RootWebArea "Beeline · Round 5 · The existing hero" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/index.html?artifact_revision=21&artifact_load_token=G35OUEKEMOAIHLzcvHKIrfONKALFywZv"
+      uid=g229:228_6 main
+        uid=g229:228_7 "ROUND 5 · FULL WORKING PAGE AND RECORDINGS"
+        uid=g229:228_8 "Working mock"
+        uid=g229:228_9 link "https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/site/round5/index.html" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/site/round5/index.html"
+        uid=g229:228_11 "Desktop MP4"
+        uid=g229:228_12 link "https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/sequence-1440.mp4" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/sequence-1440.mp4"
+        uid=g229:228_14 "Phone MP4"
+        uid=g229:228_15 link "https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/sequence-390.mp4" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/sequence-390.mp4"
+        uid=g229:228_17 "Desktop GIF"
+        uid=g229:228_18 link "https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/sequence-1440.gif" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/sequence-1440.gif"
+        uid=g229:228_20 "Phone GIF"
+        uid=g229:228_21 link "https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/sequence-390.gif" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/sequence-390.gif"
+        uid=g229:228_23 "Desktop full page"
+        uid=g229:228_24 link "https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/home-1440.png" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/home-1440.png"
+        uid=g229:228_26 "Phone full page"
+        uid=g229:228_27 link "https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/home-390.png" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/home-390.png"
+        uid=g229:228_29 "ONE MOCK · BUILT FROM THE PRODUCTION HOME PAGE"
+        uid=g229:228_30 heading "The existing hero. The team’s story, playing inside it." level="1"
+        uid=g229:228_31 "Same transcript window, connector layout, palette, typography and downloads. Alan, Jimmy, grok bot, Codex, Claude Code and Hermes now work through the Option 2 conversation together."
+        uid=g229:228_32 link "Open the working mock →" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/site/round5/index.html"
+        uid=g229:228_34 heading "Every teammate on the same page." level="3"
+        uid=g229:228_35 "The feedback, discussion, handoffs and report stay in one conversation, visible to the whole team."
+        uid=g229:228_36 heading "Your session. Your skills. Your tools." level="3"
+        uid=g229:228_37 "Codex joins from its existing terminal. The agent and its setup come into the Room together."
+        uid=g229:228_38 "1440 DESKTOP + 390 PHONE"
+        uid=g229:228_39 heading "Watch the sequence." level="2"
+        uid=g229:228_40 "Active avatars pulse and their connectors light. Codex arrives after its terminal prompt types out. The recording ends with a message typed and submitted through the real composer."
+        uid=g229:228_41 Video
+          uid=g229:228_43 button "play"
+          uid=g229:228_44 button "mute" disableable disabled
+          uid=g229:228_45 button "enter full screen" disableable disabled
+          uid=g229:228_46 button "show more media controls" description="more options" haspopup="menu"
+          uid=g229:228_47 slider "video time scrubber" description="total time: 0:43" orientation="horizontal" value="0" valuemax="43.95000076293945" valuemin="0" valuetext="elapsed time: 0:00"
+        uid=g229:228_48 "1440 × 1000 · Desktop sequence · MP4"
+        uid=g229:228_49 Video
+          uid=g229:228_51 button "play"
+          uid=g229:228_52 button "mute" disableable disabled
+          uid=g229:228_53 button "enter full screen" disableable disabled
+          uid=g229:228_54 button "show more media controls" description="more options" haspopup="menu"
+          uid=g229:228_55 slider "video time scrubber" description="total time: 0:43" orientation="horizontal" value="0" valuemax="43.95000076293945" valuemin="0" valuetext="elapsed time: 0:00"
+        uid=g229:228_56 "390 × 844 · Phone network in view · MP4"
+        uid=g229:228_57 "Headless Chrome screenshot capture at 150ms story steps, stitched into video. The final local message is held for three seconds. No audio."
+        uid=g229:228_58 DisclosureTriangle "Small GIF versions" expandable
+        uid=g229:228_59 "THE SAME HERO GEOMETRY"
+        uid=g229:228_60 heading "Production → round five." level="2"
+        uid=g229:228_61 "The transcript and all six node positions come from the current marketing source. The copy changes to the two selling points, and the interaction changes happen inside the existing composition."
+        uid=g229:228_62 image "Original production Beeline desktop hero" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/beeline-home-1440.png"
+        uid=g229:228_63 "Production reference · desktop 1440"
+        uid=g229:228_64 image "Round five desktop hero with Grok sharing feedback" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/feedback-1440.png"
+        uid=g229:228_65 "Round 5 · desktop 1440 · same 320 × 600 transcript"
+        uid=g229:228_66 "SPEAKERS · INVITATION · WORK · YOUR MESSAGE"
+        uid=g229:228_67 heading "Inspect the moments." level="2"
+        uid=g229:228_68 "Story moment"
+        uid=g229:228_69 combobox "Story moment" expandable haspopup="menu" value="grok bot shares the feedback"
+          uid=g229:228_70 option "grok bot shares the feedback" selected
+          uid=g229:228_71 option "The Codex prompt finishes typing"
+          uid=g229:228_72 option "Codex connects into the Room"
+          uid=g229:228_73 option "Codex + Claude Code work"
+          uid=g229:228_74 option "Hermes shares the sample report"
+          uid=g229:228_75 option "A visitor types and submits"
+        uid=g229:228_76 link "Selected desktop moment" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/feedback-1440.png"
+          uid=g229:228_77 image "Selected desktop moment" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/feedback-1440.png"
+        uid=g229:228_78 "Desktop · 1440px"
+        uid=g229:228_79 link "Selected phone moment" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/feedback-390.png"
+          uid=g229:228_80 image "Selected phone moment" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/feedback-390.png"
+        uid=g229:228_81 "Phone · 390px"
+        uid=g229:228_82 "THE COMPLETE PAGE"
+        uid=g229:228_83 heading "The production ordering stays intact." level="2"
+        uid=g229:228_84 "Desktop keeps the network above the wordmark and download row. Phone keeps the wordmark and downloads above the network. The lower copy makes just the two requested points."
+        uid=g229:228_85 link "Full round five desktop page" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/home-1440.png"
+          uid=g229:228_86 image "Full round five desktop page" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/home-1440.png"
+        uid=g229:228_87 "Full desktop page"
+        uid=g229:228_88 link "Full round five phone page" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/home-390.png"
+          uid=g229:228_89 image "Full round five phone page" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/home-390.png"
+        uid=g229:228_90 "Full phone page"
+        uid=g229:228_91 "IMPLEMENTATION AND VERIFICATION"
+        uid=g229:228_92 heading "A local mock of the existing page." level="2"
+        uid=g229:228_93 "web/mock/round5/build.py"
+        uid=g229:228_94 " derives the hero directly from "
+        uid=g229:228_95 "web/index.html"
+        uid=g229:228_96 ". Production source is unchanged. The original wordmark, six node coordinates, connector router, CSS palette and font families, phone ordering and five download tiles are preserved."
+        uid=g229:228_97 "Checked 24 story states across 1440px and 390px: no horizontal overflow; speaker activity matches the pulsing avatars and lit connectors; Codex is absent until its arrival. Actual browser keyboard submission adds the visitor’s exact message, clears the input and pauses playback. No fetch/XHR was recorded."
+        uid=g229:228_98 "The terminal types "
+        uid=g229:228_99 "join my beeline room at usebeeline.app/mcp"
+        uid=g229:228_100 " exactly. This remains an illustrative invitation; the proposed endpoint returned 404 in the preceding review and is never called by this mock. The video report is sample content, and nothing is published. Messages stay in memory only."
+        uid=g229:228_101 link "Scene and keyboard proof" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round5/viewport-proof.json"
+        uid=g229:228_103 " · "
+        uid=g229:228_104 link "Production-source manifest" url="https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/site/round5/production-source.json"
+        uid=g229:228_106 DisclosureTriangle "Earlier review boards and benchmark" expandable
+        uid=g229:228_107 "ROUND FIVE REVIEW"
+        uid=g229:228_108 heading "Does this keep the right starting point?" level="2"
+        uid=g229:228_109 radio " Approve this mock for implementation" invalid="true"
+        uid=g229:228_110 radio " Revise the mock" invalid="true"
+        uid=g229:228_111 textbox "Round five feedback" multiline
+        uid=g229:228_112 button "Queue round five feedback"
+        uid=g229:228_113 status atomic live="polite" relevant="additions text"
+        uid=g229:228_114 "Mock only · No production publication or PR · Same review URL."
+  uid=g229:228_115 complementary
+    uid=g229:228_116 heading "Conversation" level="2"
+    uid=g229:228_117 status atomic live="polite" relevant="additions text"
+      uid=g229:228_118 "Agent listening"
+    uid=g229:228_119 button "Show conversation" expandable
+help[5]:
+  Run `chrome-devtools-axi fill @g229:228_69 "text"` to fill the "Story moment" field
+  Run `chrome-devtools-axi click @g229:228_2` to click the "Annotate" button
+  Run `chrome-devtools-axi click @g229:228_9` to click the "https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/site/round5/index.html" link
+  Run `chrome-devtools-axi scroll down` to scroll down
+  Use `chrome-devtools-axi eval <expr>` for JS expressions. For multi-statement code, pass a function: `eval "() => { ...; return result }"`

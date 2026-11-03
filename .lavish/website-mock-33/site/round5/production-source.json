@@ -1,0 +1,18 @@
+{
+  "base": "web/index.html",
+  "baseSHA256": "03d2169846e89936b76766400d3219abdd31eac500ba1912c9c9f0fb2d6f7936",
+  "preserved": [
+    "production CSS, palette and typography",
+    "880\u00d7600 desktop stage, 320\u00d7600 transcript",
+    "380\u00d7880 phone stage, 300\u00d7540 transcript",
+    "all six node coordinates and connector routing",
+    "production wordmark and five download tiles"
+  ],
+  "changes": [
+    "Option 2 cast and local script",
+    "active avatar pulses and connectors",
+    "mid-story Codex terminal invitation",
+    "typeable composer",
+    "two selling points"
+  ]
+}

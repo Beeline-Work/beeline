@@ -480,7 +480,7 @@
     "currentViewportReduction": 0
   },
   {
-    "visibleAvatars": 6,
+    "visibleAvatars": 5,
     "inlineInvitationFullyVisible": false,
     "floatingInvitationVisible": false,
     "width": 360,
@@ -491,7 +491,7 @@
     "heroHeight": 668.984375,
     "landed": "hero",
     "scene": 15000,
-    "visibleElements": 50,
+    "visibleElements": 47,
     "overlaps": [],
     "clipped": [],
     "escapedImages": [],
@@ -1488,7 +1488,7 @@
     "currentViewportReduction": 112
   },
   {
-    "visibleAvatars": 5,
+    "visibleAvatars": 6,
     "inlineInvitationFullyVisible": false,
     "floatingInvitationVisible": false,
     "width": 360,
@@ -1499,7 +1499,7 @@
     "heroHeight": 664.984375,
     "landed": "hero",
     "scene": 15000,
-    "visibleElements": 47,
+    "visibleElements": 50,
     "overlaps": [],
     "clipped": [],
     "escapedImages": [],
@@ -4512,7 +4512,7 @@
     "currentViewportReduction": 0
   },
   {
-    "visibleAvatars": 6,
+    "visibleAvatars": 5,
     "inlineInvitationFullyVisible": false,
     "floatingInvitationVisible": false,
     "width": 412,
@@ -4523,7 +4523,7 @@
     "heroHeight": 803.984375,
     "landed": "hero",
     "scene": 15000,
-    "visibleElements": 56,
+    "visibleElements": 53,
     "overlaps": [],
     "clipped": [],
     "escapedImages": [],
@@ -5520,7 +5520,7 @@
     "currentViewportReduction": 112
   },
   {
-    "visibleAvatars": 6,
+    "visibleAvatars": 5,
     "inlineInvitationFullyVisible": false,
     "floatingInvitationVisible": false,
     "width": 412,
@@ -5531,7 +5531,7 @@
     "heroHeight": 691.984375,
     "landed": "hero",
     "scene": 15000,
-    "visibleElements": 50,
+    "visibleElements": 47,
     "overlaps": [],
     "clipped": [],
     "escapedImages": [],
@@ -5795,7 +5795,7 @@
     "heroHeight": 691.984375,
     "landed": "hero",
     "scene": 25600,
-    "visibleElements": 50,
+    "visibleElements": 51,
     "overlaps": [],
     "clipped": [],
     "escapedImages": [],
@@ -6528,7 +6528,7 @@
     "currentViewportReduction": 0
   },
   {
-    "visibleAvatars": 6,
+    "visibleAvatars": 5,
     "inlineInvitationFullyVisible": false,
     "floatingInvitationVisible": false,
     "width": 430,
@@ -6539,7 +6539,7 @@
     "heroHeight": 820.984375,
     "landed": "hero",
     "scene": 15000,
-    "visibleElements": 56,
+    "visibleElements": 53,
     "overlaps": [],
     "clipped": [],
     "escapedImages": [],
@@ -7536,7 +7536,7 @@
     "currentViewportReduction": 112
   },
   {
-    "visibleAvatars": 6,
+    "visibleAvatars": 5,
     "inlineInvitationFullyVisible": false,
     "floatingInvitationVisible": false,
     "width": 430,
@@ -7547,7 +7547,7 @@
     "heroHeight": 708.984375,
     "landed": "hero",
     "scene": 15000,
-    "visibleElements": 50,
+    "visibleElements": 47,
     "overlaps": [],
     "clipped": [],
     "escapedImages": [],

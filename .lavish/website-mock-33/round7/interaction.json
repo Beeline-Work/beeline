@@ -1,17 +1,17 @@
 {
   "hero": {
-    "elapsed": 22500,
+    "elapsed": 27598.799999713898,
     "playing": false,
-    "mode": "banter",
+    "mode": "script",
     "cycle": 0,
     "active": [
-      "claude"
+      "jimmy"
     ],
     "landed": "hero",
     "joined": true,
     "terminalVisible": false,
     "prompt": "",
-    "messages": 11,
+    "messages": 14,
     "visitorMessages": 1,
     "localReplies": 2,
     "history": [
@@ -80,6 +80,24 @@
         "visitor": false,
         "localReply": true,
         "text": "I\u2019ll check the edge cases. Someone has to keep Codex honest."
+      },
+      {
+        "who": "codex",
+        "visitor": false,
+        "localReply": false,
+        "text": "Item 1 is ready. The saved-conversation checks pass."
+      },
+      {
+        "who": "claude",
+        "visitor": false,
+        "localReply": false,
+        "text": "Both bug fixes pass their regression checks."
+      },
+      {
+        "who": "jimmy",
+        "visitor": false,
+        "localReply": false,
+        "text": "<span class=\"m\">@Hermes</span>, make a video of the new features and announce it on YouTube and X via video. Send me a report when you are done."
       }
     ]
   },
@@ -106,7 +124,238 @@
       "  #beeline \u00b7 Jimmy: We\u2019re planning the release.",
       "  #beeline \u00b7 Claude Code: I\u2019ll cover the regression checks."
     ],
-    "active": []
+    "active": [],
+    "cycle": 0,
+    "phase": "joined",
+    "visible": false,
+    "manual": true,
+    "events": [
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 25184
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 25893
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 25983
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26074
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26150
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26221
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26324
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26417
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26504
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26617
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26681
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26718
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26773
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26816
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26914
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26959
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26977
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27031
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27104
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27141
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27158
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27178
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27197
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27211
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27236
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27243
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27253
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27269
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27283
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27289
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27313
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27325
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27339
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27351
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27357
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27437
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27494
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27518
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27531
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27545
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27566
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27579
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27598
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 28936
+      },
+      {
+        "phase": "joined",
+        "cycle": 0,
+        "at": 28936
+      }
+    ]
   },
   "working": {
     "joined": true,
@@ -129,6 +378,15 @@
         "text": "Working on: Build saved conversations",
         "visitor": true,
         "attachment": "build"
+      },
+      {
+        "who": "codex",
+        "text": "Done. The checks pass; the result is shared here.",
+        "attachment": "passed"
+      },
+      {
+        "who": "jimmy",
+        "text": "Thanks. Keep the change small and share the checks."
       }
     ],
     "terminal": [
@@ -137,10 +395,381 @@
       "  #beeline \u00b7 Jimmy: We\u2019re planning the release.",
       "  #beeline \u00b7 Claude Code: I\u2019ll cover the regression checks.",
       "\u203a Build saved conversations",
-      "\u2022 Working \u00b7 shared with #beeline"
+      "\u2022 Working \u00b7 shared with #beeline",
+      "\u2022 Codex \u2192 #beeline: Done. The checks pass.",
+      "  #beeline \u00b7 Jimmy: Keep the change small and share the checks."
     ],
-    "active": [
-      "codex"
+    "active": [],
+    "cycle": 0,
+    "phase": "result-shared",
+    "visible": false,
+    "manual": true,
+    "events": [
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 25184
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 25893
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 25983
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26074
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26150
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26221
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26324
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26417
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26504
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26617
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26681
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26718
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26773
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26816
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26914
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26959
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 26977
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27031
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27104
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27141
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27158
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27178
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27197
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27211
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27236
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27243
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27253
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27269
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27283
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27289
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27313
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27325
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27339
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27351
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27357
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27437
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27494
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27518
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27531
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27545
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27566
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27579
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27598
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 28936
+      },
+      {
+        "phase": "joined",
+        "cycle": 0,
+        "at": 28936
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33790
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33829
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33860
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33871
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33884
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33901
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33911
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33927
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33939
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33970
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33995
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34020
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34038
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34056
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34089
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34218
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34308
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34448
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34553
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34598
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34638
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34693
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34710
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34779
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34819
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 36351
+      },
+      {
+        "phase": "working",
+        "cycle": 0,
+        "at": 36351
+      },
+      {
+        "phase": "result-shared",
+        "cycle": 0,
+        "at": 38151
+      }
     ]
   },
   "synced": {
@@ -196,7 +825,493 @@
       "  #beeline \u00b7 You: @Codex keep keyboard navigation accessible",
       "\u2022 Codex \u2192 #beeline: Received. I\u2019ll carry that into the work."
     ],
-    "active": []
+    "active": [],
+    "cycle": 0,
+    "phase": "reply-shared",
+    "visible": false,
+    "manual": true,
+    "events": [
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27211
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27236
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27243
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27253
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27269
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27283
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27289
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27313
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27325
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27339
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27351
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27357
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27437
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27494
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27518
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27531
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27545
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27566
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27579
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 27598
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 28936
+      },
+      {
+        "phase": "joined",
+        "cycle": 0,
+        "at": 28936
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33790
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33829
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33860
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33871
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33884
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33901
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33911
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33927
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33939
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33970
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 33995
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34020
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34038
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34056
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34089
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34218
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34308
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34448
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34553
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34598
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34638
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34693
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34710
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34779
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 34819
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 36351
+      },
+      {
+        "phase": "working",
+        "cycle": 0,
+        "at": 36351
+      },
+      {
+        "phase": "result-shared",
+        "cycle": 0,
+        "at": 38151
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 43078
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 43910
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44034
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44060
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44097
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44162
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44178
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44197
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44206
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44234
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44253
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44298
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44331
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44410
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44478
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44599
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44634
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44664
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44734
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44768
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44789
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44815
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44852
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44870
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44935
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 44997
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45130
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45180
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45238
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45270
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45296
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45333
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45349
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45422
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45459
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45489
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45511
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45522
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45561
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45631
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45677
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45727
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 45747
+      },
+      {
+        "phase": "interactive",
+        "cycle": 0,
+        "at": 47162
+      },
+      {
+        "phase": "room-to-terminal",
+        "cycle": 0,
+        "at": 47162
+      },
+      {
+        "phase": "reply-shared",
+        "cycle": 0,
+        "at": 48267
+      }
+    ]
   },
   "nativeToolOutputSheet": true
 }

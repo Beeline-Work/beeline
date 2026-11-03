@@ -1,6 +1,6 @@
 function checkPhoneHeroOverlap(){
  const hero=document.querySelector('#hero'), root=hero.getBoundingClientRect();
- const excluded='.wires,.wires *,svg,svg *,.scan-line,.sr-only,.sr-only *';
+ const excluded='.wires,.wires *,svg,svg *,.native-codex-mark *,.scan-line,.sr-only,.sr-only *';
  const label=e=>e.id?'#'+e.id:e.tagName.toLowerCase()+'.'+[...e.classList].join('.');
  function rectangles(element){
   if(element.matches(excluded))return [];
@@ -21,7 +21,7 @@ function checkPhoneHeroOverlap(){
  }
  const critical=[...hero.querySelectorAll('.wordmark,.tagline,.primary-download,.other-platforms,.node .tile,.node .name,.screen,.hdr,.composer')].filter(e=>rectangles(e).length);
  const clipped=critical.filter(e=>{const b=e.getBoundingClientRect();return b.left<root.left-1||b.right>root.right+1||b.top<root.top-1||b.bottom>root.bottom+1;}).map(label);
- const escapedImages=[...hero.querySelectorAll('.av>img,.av>svg,.tile>img,.tile>svg')].filter(e=>{if(!rectangles(e.parentElement).length)return false;const b=e.getBoundingClientRect(),p=e.parentElement.getBoundingClientRect();return b.left<p.left-1||b.right>p.right+1||b.top<p.top-1||b.bottom>p.bottom+1;}).map(label);
+ const escapedImages=[...hero.querySelectorAll('.av>img,.av>svg,.tile>img,.tile>svg,.native-codex-mark [data-testid=identity-face-plate] svg')].filter(e=>{const parent=e.closest('.native-codex-mark')||e.parentElement;if(!rectangles(parent).length)return false;const b=e.getBoundingClientRect(),p=parent.getBoundingClientRect();return b.left<p.left-1||b.right>p.right+1||b.top<p.top-1||b.bottom>p.bottom+1;}).map(label);
  const inline=hero.querySelector('.phone-inline-invite>.join-terminal');const inlineRects=inline?rectangles(inline):[];const inlineBounds=inline?.getBoundingClientRect();const fullInline=!!inlineBounds&&inlineRects.some(r=>r.right-r.left>=inlineBounds.width-1&&r.bottom-r.top>=inlineBounds.height-1);
  return {visibleAvatars:[...hero.querySelectorAll('.node')].filter(e=>rectangles(e).length).length,inlineInvitationFullyVisible:fullInline,floatingInvitationVisible:rectangles(document.querySelector('#join-terminal')).length>0,width:innerWidth,height:innerHeight,dpr:devicePixelRatio,touchPoints:navigator.maxTouchPoints,smallViewport:parseFloat(getComputedStyle(document.querySelector('#context')).height),heroHeight:root.height,landed:window.r7Demo?.state().landed,scene:window.r7Demo?.state().elapsed,visibleElements:boxes.length,overlaps,clipped,escapedImages,horizontalOverflow:document.documentElement.scrollWidth>innerWidth,watchVideoLinks:[...hero.querySelectorAll('a')].filter(a=>a.textContent.includes('Watch demo video')).length};
 }

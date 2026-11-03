@@ -1,5 +1,6 @@
 import React,{useEffect,useLayoutEffect,useRef,useState} from 'react';
 import {createRoot} from 'react-dom/client';
+import {IdentityMark} from '@/components/buzz/IdentityMark';
 import {View} from 'react-native';
 import {LedgerEntry,LedgerSystemLine,LedgerHistoryLine} from '@/components/buzz/Ledger';
 import {TranscriptCard} from '@/components/buzz/TranscriptCard';
@@ -29,18 +30,68 @@ function Room({state,onSend,onTyping,prefix}:any){const [value,setValue]=useStat
  return <div className="native-room" data-native-room={prefix}><div className="native-header"><ChannelHeaderTitle title="#beeline" kind="room"/></div><div className="native-ledger" id={prefix==='hero'?'room-ledger':undefined} ref={ledger} tabIndex={0} aria-label={prefix+' demo conversation'}><LedgerHistoryLine text="TODAY · LOCAL DEMO"/>{history.map((entry:any,index:number)=><div key={index} data-entry-actor={entry.who}>{entry.system?<LedgerSystemLine id={prefix+'-system-'+index} text={plain(entry.text)} stamp="09:41"/>:<><LedgerEntry itemId={prefix+'-'+index} bodyText={entry.visitor||entry.localReply?entry.text:plain(entry.text)} bodyTestID={prefix+'-text-'+index} chronological mentionHandles={['alan','claude','codex','hermes','grok']} byline={{name:cast[entry.who]?.[0]||entry.who,role:cast[entry.who]?.[1]==='agent'?'AGENT':undefined,stamp:'09:'+String(41+index%18),isViewer:entry.who==='you',mark:mark(entry.who,active.includes(entry.who))}}/><Attachment entry={entry} state={state}/></>}</div>)}<div style={{height:TURN_LINE_ROW_MIN_HEIGHT+COMPOSER_TOP_GAP,flexShrink:0}}/></div><div className="native-composer-stack"><TurnBandSlot testID={prefix+'-turn-slot'}>{active.some((id:string)=>cast[id]?.[1]==='agent')&&<TurnProgressLine label={active.filter((id:string)=>cast[id]?.[1]==='agent').map((id:string)=>cast[id][0]).join(' + ')+' working'} testID={prefix+'-working'}/>}</TurnBandSlot><ConversationComposer value={value} onChangeText={(v:string)=>{setValue(v);onTyping?.();}} height={26} maxHeight={26} focused={focused} disabled={false} hasAgentMembers speechEnabled={false} attachDisabled onFocus={()=>{setFocused(true);onTyping?.();}} onBlur={()=>setFocused(false)} onContentSizeChange={noop} onKeyPress={(event:any)=>{if(event.nativeEvent.key==='Enter'&&!event.nativeEvent.shiftKey){event.preventDefault();if(value.trim()){onSend(value);setValue('');}}}} onSend={()=>{if(value.trim()){onSend(value);setValue('');}}} testIDPrefix={prefix+'-composer'}/></div></div>;
 }
 let resolveReady:any;w.r7RoomReady=new Promise(resolve=>resolveReady=resolve);
-function Hero(){const [state,setState]=useState<any>({history:[],active:[],elapsed:0});useEffect(()=>{w.r7Render=setState;resolveReady();},[]);return <Room state={state} prefix="hero" onTyping={()=>w.r7Typing?.()} onSend={(text:string)=>w.r7Send?.(text)}/>;}
-const join='join my beeline room at usebeeline.app/mcp';
-function Sync(){const [history,setHistory]=useState<any[]>([{who:'jimmy',text:'@Codex, join us here. We’re planning the release.'}]);const [terminal,setTerminal]=useState<string[]>([]);const [value,setValue]=useState('');const [joined,setJoined]=useState(false);const [active,setActive]=useState<string[]>([]);const timers=useRef<any[]>([]),started=useRef(false);const add=(entry:any)=>setHistory(h=>[...h,entry]);const output=useRef<HTMLDivElement>(null);
- function log(text:string){setTerminal(t=>[...t,text]);}
- function sendTerminal(text:string){if(!text.trim())return;setValue('');log('› '+text);if(!joined){if(text.trim()!==join){log('Use the join prompt above to connect this local demo.');return;}setJoined(true);log('• Beeline MCP connected · #beeline');add({who:'codex',system:true,text:'Codex joined the Room.'});log('  #beeline · Jimmy: We’re planning the release.');timers.current.push(setTimeout(()=>{add({who:'claude',text:'@Codex, I’ll cover the regression checks.'});log('  #beeline · Claude Code: I’ll cover the regression checks.');},900));return;}
-  setActive(['codex']);add({who:'codex',text:'Working on: '+text,visitor:true,attachment:'build'});log('• Working · shared with #beeline');timers.current.push(setTimeout(()=>{add({who:'codex',text:'Done. The checks pass; the result is shared here.',attachment:'passed'});log('• Codex → #beeline: Done. The checks pass.');add({who:'jimmy',text:'Thanks. Keep the change small and share the checks.'});log('  #beeline · Jimmy: Keep the change small and share the checks.');setActive([]);},1800));
+function Hero(){
+ const [state,setState]=useState<any>({history:[],active:[],elapsed:0});
+ const marks=useRef(new Map<Element,ReturnType<typeof createRoot>>());
+ const active=useRef(false);active.current=state.active?.includes('codex')||false;
+ function renderCodex(){
+  for(const element of document.querySelectorAll<HTMLElement>('.node[data-id="codex"] .tile,.sidebar-person[data-person="codex"] .agent-icon,[data-icon="codex"]')){
+   const size=Math.min(element.clientWidth,element.clientHeight);if(!size)continue;
+   element.classList.add('native-codex-mark');element.dataset.codexIdentity='cat';
+   let root=marks.current.get(element);if(!root){root=createRoot(element);marks.current.set(element,root);}
+   root.render(<IdentityMark {...mark('codex',active.current)} name="Codex" size={size} testID="codex-shared-mark"/>);
+  }
  }
- function sendRoom(text:string){add({who:'you',text,visitor:true});if(joined){log('  #beeline · You: '+text);setActive(['codex']);timers.current.push(setTimeout(()=>{add({who:'codex',text:'Received in my terminal too. I’ll carry that into the work.'});log('• Codex → #beeline: Received. I’ll carry that into the work.');setActive([]);},1100));}}
+ useEffect(()=>{w.r7Render=setState;resolveReady();addEventListener('resize',renderCodex);return()=>removeEventListener('resize',renderCodex);},[]);
+ useEffect(renderCodex,[state.history?.length,state.active?.includes('codex')]);
+ return <Room state={state} prefix="hero" onTyping={()=>w.r7Typing?.()} onSend={(text:string)=>w.r7Send?.(text)}/>;
+}
+const join='join my beeline room at usebeeline.app/mcp';
+function Sync(){
+ const invitation={who:'jimmy',text:'@Codex, join us here. We’re planning the release.'};
+ const [history,setHistory]=useState<any[]>([invitation]),[terminal,setTerminal]=useState<string[]>([]),[value,setValue]=useState(''),[joined,setJoined]=useState(false),[active,setActive]=useState<string[]>([]);
+ const joinedRef=useRef(false),timers=useRef<ReturnType<typeof setTimeout>[]>([]),output=useRef<HTMLDivElement>(null),actions=useRef<any>({});
+ const playback=useRef({visible:false,manual:false,cycle:0,phase:'idle',pending:new Set<ReturnType<typeof setTimeout>>(),events:[] as any[]});
+ const add=(entry:any)=>setHistory(h=>[...h,entry].slice(-50));
+ function log(text:string){setTerminal(t=>[...t,text].slice(-50));}
+ function record(phase:string){const p=playback.current;p.phase=phase;p.events.push({phase,cycle:p.cycle,at:Math.round(performance.now())});p.events=p.events.slice(-96);}
+ function stopPlayback(){const p=playback.current;p.pending.forEach(clearTimeout);p.pending.clear();}
+ function takeControl(){playback.current.manual=true;stopPlayback();record('interactive');}
+ function later(ms:number,run:()=>void){const p=playback.current;const timer=setTimeout(()=>{p.pending.delete(timer);if(p.visible&&!p.manual&&!document.hidden)run();},ms);p.pending.add(timer);}
+ function typePrompt(text:string,done:()=>void){let i=0;setValue('');function next(){setValue(text.slice(0,++i));if(i<text.length)later(35,next);else later(450,done);}next();}
+ function sendTerminal(text:string){
+  if(!text.trim())return;setValue('');log('› '+text);
+  if(!joinedRef.current){
+   if(text.trim()!==join){log('Use the join prompt above to connect this local demo.');return;}
+   joinedRef.current=true;setJoined(true);record('joined');log('• Beeline MCP connected · #beeline');add({who:'codex',system:true,text:'Codex joined the Room.'});log('  #beeline · Jimmy: We’re planning the release.');
+   timers.current.push(setTimeout(()=>{add({who:'claude',text:'@Codex, I’ll cover the regression checks.'});log('  #beeline · Claude Code: I’ll cover the regression checks.');},900));return;
+  }
+  record('working');setActive(['codex']);add({who:'codex',text:'Working on: '+text,visitor:true,attachment:'build'});log('• Working · shared with #beeline');
+  timers.current.push(setTimeout(()=>{add({who:'codex',text:'Done. The checks pass; the result is shared here.',attachment:'passed'});log('• Codex → #beeline: Done. The checks pass.');add({who:'jimmy',text:'Thanks. Keep the change small and share the checks.'});log('  #beeline · Jimmy: Keep the change small and share the checks.');setActive([]);record('result-shared');},1800));
+ }
+ function sendRoom(text:string){add({who:'you',text,visitor:true});if(joinedRef.current){record('room-to-terminal');log('  #beeline · You: '+text);setActive(['codex']);timers.current.push(setTimeout(()=>{add({who:'codex',text:'Received in my terminal too. I’ll carry that into the work.'});log('• Codex → #beeline: Received. I’ll carry that into the work.');setActive([]);record('reply-shared');},1100));}}
+ function playCycle(){
+  const p=playback.current;if(!p.visible||p.manual||document.hidden)return;
+  stopPlayback();timers.current.forEach(clearTimeout);timers.current=[];p.cycle++;record('typing-join');joinedRef.current=false;setJoined(false);setHistory([invitation]);setTerminal([]);setActive([]);setValue('');
+  typePrompt(join,()=>{actions.current.sendTerminal(join);later(1500,()=>{record('typing-task');typePrompt('Build saved conversations',()=>{actions.current.sendTerminal('Build saved conversations');later(3000,()=>{actions.current.sendRoom('@Codex keep keyboard navigation accessible');later(5000,()=>actions.current.playCycle());});});});});
+ }
+ actions.current={sendTerminal,sendRoom,playCycle};
  useLayoutEffect(()=>{if(output.current)output.current.scrollTop=output.current.scrollHeight;},[terminal.length]);
- useEffect(()=>{w.r7Sync={sendTerminal,sendRoom,state:()=>({joined,history,terminal,active}),demo:()=>{sendTerminal(join);}};},[joined,history,terminal,active]);
- useEffect(()=>{const host=document.getElementById('bring')!;const io=new IntersectionObserver(entries=>{if(entries.some(e=>e.intersectionRatio>.7)&&!started.current&&!new URLSearchParams(location.search).has('still')){started.current=true;let i=0;const typing=setInterval(()=>{setValue(join.slice(0,++i));if(i>=join.length)clearInterval(typing);},35);timers.current.push(typing);}}, {threshold:.7});io.observe(host);return()=>{io.disconnect();timers.current.forEach(clearTimeout);};},[]);
- return <div className="sync-grid"><div className="codex-tui" aria-label="Interactive simulated Codex CLI"><div className="codex-welcome"><strong>›_ OpenAI Codex</strong><p>model: &nbsp; gpt-5.4</p><p>directory: ~/your-project</p></div><div className="tui-output" ref={output} role="log">{terminal.map((line,i)=><div key={i}>{line}</div>)}{!terminal.length&&<span className="tui-hint">Paste the prompt below and press Enter.<br/>{join}</span>}</div><form onSubmit={e=>{e.preventDefault();sendTerminal(value);}} className="tui-prompt"><span>›</span><input aria-label="Codex terminal prompt" value={value} onChange={e=>setValue(e.target.value)} autoComplete="off" placeholder={joined?'Ask Codex to build something':join}/></form><div className="tui-footer">100% context left · ? for shortcuts</div></div><Room prefix="sync" state={{history,active,elapsed:active.length?21500:30000}} onSend={sendRoom}/></div>;
+ useEffect(()=>{w.r7Sync={sendTerminal,sendRoom,state:()=>({joined,history,terminal,active,cycle:playback.current.cycle,phase:playback.current.phase,visible:playback.current.visible,manual:playback.current.manual,events:playback.current.events}),demo:()=>sendTerminal(join)};},[joined,history,terminal,active]);
+ useEffect(()=>{
+  if(new URLSearchParams(location.search).has('still'))return;
+  const host=document.getElementById('bring')!;let frame=0;
+  function inspect(){const p=playback.current,box=host.getBoundingClientRect(),middle=document.documentElement.clientHeight/2;const visible=!document.hidden&&box.top<=middle&&box.bottom>middle;
+   if(visible===p.visible)return;p.visible=visible;
+   if(visible){p.manual=false;actions.current.playCycle();}else{stopPlayback();timers.current.forEach(clearTimeout);timers.current=[];record('offscreen');}
+  }
+  function queue(){cancelAnimationFrame(frame);frame=requestAnimationFrame(inspect);}
+  function visibility(){cancelAnimationFrame(frame);inspect();}
+  const observer=new IntersectionObserver(queue,{threshold:[0,.25,.5,.75,1]});observer.observe(host);
+  addEventListener('scroll',queue,{passive:true});addEventListener('resize',queue);addEventListener('hashchange',queue);addEventListener('pageshow',queue);document.addEventListener('visibilitychange',visibility);document.fonts.ready.then(queue);queue();
+  return()=>{cancelAnimationFrame(frame);observer.disconnect();stopPlayback();timers.current.forEach(clearTimeout);removeEventListener('scroll',queue);removeEventListener('resize',queue);removeEventListener('hashchange',queue);removeEventListener('pageshow',queue);document.removeEventListener('visibilitychange',visibility);};
+ },[]);
+ return <div className="sync-grid"><div className="codex-tui" aria-label="Interactive simulated Codex CLI"><div className="codex-welcome"><strong>›_ OpenAI Codex</strong><p>model: &nbsp; gpt-5.4</p><p>directory: ~/your-project</p></div><div className="tui-output" ref={output} role="log">{terminal.map((line,i)=><div key={i}>{line}</div>)}{!terminal.length&&<span className="tui-hint">{join}</span>}</div><form onSubmit={e=>{e.preventDefault();takeControl();sendTerminal(value);}} className="tui-prompt"><span>›</span><input aria-label="Codex terminal prompt" value={value} onFocus={takeControl} onChange={e=>{takeControl();setValue(e.target.value);}} autoComplete="off" placeholder={joined?'Ask Codex to build something':join}/></form><div className="tui-footer">100% context left · ? for shortcuts</div></div><Room prefix="sync" state={{history,active,elapsed:active.length?21500:30000}} onTyping={takeControl} onSend={(text:string)=>{takeControl();sendRoom(text);}}/></div>;
 }
 createRoot(document.getElementById('native-hero')!).render(<Hero/>);
 createRoot(document.getElementById('native-sync')!).render(<Sync/>);

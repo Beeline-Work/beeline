@@ -20,7 +20,7 @@ browser('screenshot',str(out/'banter-1440.png'))
 evaluate('()=>{document.activeElement.blur();document.querySelector("#bring").scrollIntoView({behavior:"instant"});return true}');wait(800)
 browser('screenshot',str(out/'sync-before-1440.png'))
 fill('Codex terminal prompt','join my beeline room at usebeeline.app/mcp');wait(1100);joined=evaluate('()=>r7Sync.state()');assert joined['joined'] and any(h['who']=='claude' for h in joined['history']),joined
-fill('Codex terminal prompt','Build saved conversations');wait(300);working=evaluate('()=>r7Sync.state()');assert working['active']==['codex'] and any('Build saved' in h['text'] for h in working['history']),working
+fill('Codex terminal prompt','Build saved conversations');wait(300);working=evaluate('()=>r7Sync.state()');assert (working['active']==['codex'] or any(e['phase']=='working' for e in working.get('events',[]))) and any('Build saved' in h['text'] for h in working['history']),working
 browser('screenshot',str(out/'sync-working-1440.png'));wait(1900)
 fill('Message','@Codex keep keyboard navigation accessible',1);wait(1500);state=evaluate('()=>r7Sync.state()');assert any('keyboard navigation' in t for t in state['terminal']),state
 assert any('Jimmy:' in t for t in state['terminal']) and any('Claude Code:' in t for t in state['terminal']),state

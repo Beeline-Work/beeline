@@ -5,30 +5,41 @@ import { COMPUTER_EXPIRY_SCHEMA } from './computer-expiry-schema.js';
 import { COMMAND_COMPLETION_CHANNEL,notifyCommandCompletion } from './command-completion.js';
 import { createComputerSession,endComputerSession,expireComputerSessions,getComputerSession,refreshComputerSession,startComputerExpirySweep } from './computer-session.js';
 import { LiveHub } from './live.js';
+import type { PostgresDatabase } from './database.js';
+import { groupBPostgresDatabase } from './test-fixtures/test-support-router-group-b-postgres.js';
+import { GroupBClock } from './test-fixtures/router-group-b-clock.js';
 const owner='a'.repeat(64),agent='b'.repeat(64),workspace='11111111-1111-4111-8111-111111111111',room='22222222-2222-4222-8222-222222222222';
 const upstream=`https://synthetic.trycloudflare.com/s/${'c'.repeat(43)}/`;
-describe('computer share actual source expiry',()=>{
-  let db:PgliteDatabase,release:()=>Promise<void>;const live=new LiveHub(),stops:Array<()=>void>=[];
+const postgresUrl=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
+describe.each(['pglite',...(postgresUrl?['postgres']:[])])('P12 computer share actual source expiry (%s)',backend=>{
+  let db:PgliteDatabase|PostgresDatabase,release:()=>Promise<void>,closeDatabase:()=>Promise<void>;const live=new LiveHub(),stops:Array<()=>void>=[];
   beforeAll(async()=>{
-    db=await migratedDatabase();await db.query(COMPUTER_EXPIRY_SCHEMA);
-    release=await db.client.listen(COMMAND_COMPLETION_CHANNEL,notifyCommandCompletion);
+    if(backend==='postgres'){
+      const fixture=await groupBPostgresDatabase(postgresUrl!);db=fixture.database;closeDatabase=fixture.close;
+      release=await fixture.listenToCompletions();
+    }else{
+      const local=await migratedDatabase();db=local;closeDatabase=()=>local.close();
+      release=await local.client.listen(COMMAND_COMPLETION_CHANNEL,notifyCommandCompletion);
+    }
+    await db.query(COMPUTER_EXPIRY_SCHEMA);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Synthetic owner'),($2,'agent','Synthetic agent')`,[owner,agent]);
     await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)',[agent,owner]);
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Computer expiry')`,[workspace]);
     await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`,[room,workspace]);
   },60000);
   afterEach(()=>{for(const stop of stops.splice(0))stop();vi.useRealTimers();vi.unstubAllGlobals();});
-  afterAll(async()=>{await release();await db.close();});
+  afterAll(async()=>{await release?.();await closeDatabase?.();});
   const create=(sessionId:string,expiresAt?:number)=>createComputerSession(db,live,{roomId:room,agentId:agent,sessionId,upstreamUrl:upstream,...(expiresAt===undefined?{}:{expiresAt})});
   it('does one acquisition pass and zero queue/provider observations over an empty idle day',async()=>{
-    vi.useFakeTimers();const queries:string[]=[],fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
+    vi.useFakeTimers({toFake:['Date']});const clock=new GroupBClock(),queries:string[]=[],fetcher=vi.fn();vi.stubGlobal('fetch',fetcher);
     let initial!:()=>void;const ready=new Promise<void>(resolve=>{initial=resolve;});
     const observed:SqlDatabase={transaction:work=>db.transaction(work),query:async(sql,values)=>{
       queries.push(sql);const result=await db.query(sql,values);if(sql.includes('delay_ms FROM computer_sessions'))initial();return result;
     }};
-    stops.push(startComputerExpirySweep(observed,live,1));await ready;await Promise.resolve();await Promise.resolve();
+    stops.push(startComputerExpirySweep(observed,live,1,clock));await ready;await Promise.resolve();await Promise.resolve();
     const initialized=queries.length;expect(initialized).toBe(2);
-    await vi.advanceTimersByTimeAsync(86_400_000);expect(queries).toHaveLength(initialized);expect(fetcher).not.toHaveBeenCalled();
+    vi.setSystemTime(Date.now()+86_400_000);clock.advanceBy(86_400_000);
+    expect(queries).toHaveLength(initialized);expect(fetcher).not.toHaveBeenCalled();expect(clock.size).toBe(0);
   });
   it('arms an actual committed future expiry, ends once, and never calls the upstream status page',async()=>{
     const fetcher=vi.fn(()=>{throw new Error('Upstream status must not be observed');});vi.stubGlobal('fetch',fetcher);

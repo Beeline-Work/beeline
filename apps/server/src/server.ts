@@ -215,6 +215,8 @@ export interface ServerOptions {
   phoneReadLimits?: PhoneReadLimits;
   /** Protocol ping interval for helper sockets; tests shorten it. */
   liveHeartbeatMs?: number;
+  /** Existing connection control owner; injectable without changing Node/pg clocks. */
+  connectionWork?: typeof startConnectionWork;
 }
 
 const appSignInReturnCookie = 'beeline_app_sign_in_return';
@@ -831,7 +833,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       if (principal.kind !== 'phone') {
         watchConnectionEpochs();
         let answered = true;
-        const stopHeartbeat = startConnectionWork(() => {
+        const stopHeartbeat = (options.connectionWork ?? startConnectionWork)(() => {
           if (!answered) {
             liveCounters.heartbeatTerminations++;
             stopHeartbeat();

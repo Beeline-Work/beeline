@@ -5,6 +5,7 @@ import { committedCommandNotificationSchema } from './postgres-live-notification
 export { COMMAND_COMPLETION_CHANNEL } from './postgres-live-notifications.js';
 export interface CommandCompletionKey { principal: string; operation: string; commandId: string }
 const listeners = new Map<string, Set<() => void>>();
+const families = new Map<string, Set<(key?: CommandCompletionKey) => void>>();
 const keyOf = (key: CommandCompletionKey) => JSON.stringify([key.principal, key.operation, key.commandId]);
 export function notifyCommandCompletion(payload: string | CommandCompletionKey): void {
   let key: CommandCompletionKey;
@@ -15,9 +16,17 @@ export function notifyCommandCompletion(payload: string | CommandCompletionKey):
     if (![key.principal, key.operation, key.commandId].every(value => typeof value === 'string')) return;
   } catch { return; }
   for (const listener of listeners.get(keyOf(key)) ?? []) listener();
+  for (const listener of families.get(JSON.stringify([key.principal,key.operation])) ?? []) listener(key);
 }
 export function recoverCommandCompletions(): void {
   for (const group of listeners.values()) for (const listener of group) listener();
+  for (const group of families.values()) for (const listener of group) listener();
+}
+/** Private committed-record control evidence; not a data-read admission. */
+export function subscribeCommandCompletionFamily(principal:string,operation:string,listener:(key?:CommandCompletionKey)=>void):()=>void{
+  const id=JSON.stringify([principal,operation]);let group=families.get(id);
+  if(!group)families.set(id,group=new Set());group.add(listener);
+  return()=>{group.delete(listener);if(!group.size)families.delete(id);};
 }
 export function subscribeCommandCompletion(key: CommandCompletionKey, listener: () => void): () => void {
   const id = keyOf(key);

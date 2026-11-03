@@ -296,11 +296,12 @@ export async function expireComputerSessions(database: SqlDatabase, live: LiveHu
 
 /** Existing startup adapter, now one actual deadline. The legacy interval
  * argument is accepted for source compatibility and never admits a scan. */
-export function startComputerExpirySweep(database: SqlDatabase, live: LiveHub, _legacyIntervalMs?:number): () => void {
+export function startComputerExpirySweep(database: SqlDatabase, live: LiveHub, _legacyIntervalMs?:number,
+  timers: import('./background-work.js').WorkTimers = { setTimeout, clearTimeout }): () => void {
   let closed=false,running=false,dirty=false,timer:ReturnType<typeof setTimeout>|undefined;
   const arm=(due:number)=>{
     if(closed)return;
-    timer=setTimeout(()=>{
+    timer=timers.setTimeout(()=>{
       timer=undefined;if(Date.now()<due)arm(due);else void drain();
     },Math.min(2_147_483_647,Math.max(0,due-Date.now())));timer.unref?.();
   };
@@ -308,7 +309,7 @@ export function startComputerExpirySweep(database: SqlDatabase, live: LiveHub, _
     dirty=true;if(closed||running)return;running=true;
     try{
       do{
-        dirty=false;clearTimeout(timer);timer=undefined;
+        dirty=false;timers.clearTimeout(timer);timer=undefined;
         await expireComputerSessions(database,live);if(closed)return;
         const next=(await database.query<{delay_ms:number}>(`SELECT EXTRACT(epoch FROM (expires_at-clock_timestamp()))::double precision*1000 delay_ms FROM computer_sessions
           WHERE status='live' AND expires_at IS NOT NULL ORDER BY expires_at LIMIT 1`)).rows[0]?.delay_ms;
@@ -322,7 +323,7 @@ export function startComputerExpirySweep(database: SqlDatabase, live: LiveHub, _
   };
   const stopSource=subscribeCommandCompletion({principal:'computer',operation:'expiry',commandId:'pending'},()=>{void drain();});
   const stopRecovery=database.onRecovery?.(()=>{void drain();});void drain();
-  return()=>{closed=true;clearTimeout(timer);stopSource();stopRecovery?.();};
+  return()=>{closed=true;timers.clearTimeout(timer);stopSource();stopRecovery?.();};
 }
 
 /** One authoritative read when a live viewer's socket reconnects. */

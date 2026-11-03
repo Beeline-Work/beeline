@@ -22,9 +22,9 @@ runner types. The Linux job also compiles the CLI. The final helper job waits
 for all three, combines their verified outputs and publishes once; it performs
 no native compilation. A retry whose exact identity already serves on Pages
 skips bundle rebuilding and promotion (see [the release pipeline](./release-pipeline.md)).
-Input-keyed native binaries may be restored from Actions cache or verified
-`helper-native-*` prerelease assets. Full-bundle install proof still runs;
-cache outputs never authorize a production release.
+Input-keyed native binaries may be restored from Actions cache; a miss builds
+them from the pinned upstream. Full-bundle install proof still runs. Native
+cache entries are never published on the public Releases page.
 Other selective releases carry the last successful helper version, SHA, and
 artifact reference.
 Its promote phase passes `daemon-artifact-<version>-<sha>` to

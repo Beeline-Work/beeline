@@ -44,7 +44,7 @@ import {
 
 import { encodeReleaseOutput, decodeReleaseOutput } from './release-job-output.mjs';
 import { liveDelivery, recordDelivery } from './release-delivery.mjs';
-import { NATIVE_CARGO_BUILD_FLAGS, nativeCacheIdentity, restoreNativeBinaries, saveNativeBinaries } from './native-agent-cache.mjs';
+import { NATIVE_CARGO_BUILD_FLAGS, nativeCacheIdentity } from './native-agent-cache.mjs';
 
 const OLD_SHA = '1'.repeat(40);
 const MID_SHA = '3'.repeat(40);
@@ -2374,14 +2374,11 @@ test('Linux helper compilation overlaps the Macs while one final job retains eve
   }
   for (const name of ['helper_linux', 'helper_macos']) {
     const steps = jobs[name].steps;
-    const verified = steps.findIndex(step => step.name?.startsWith('Build and install-verify'));
-    const save = steps.findIndex(step => step.uses === './.github/actions/buzz-agent-cache' && step.with?.phase === 'save');
-    assert.ok(verified >= 0 && save > verified, `${name} must install-verify before publishing cache bytes`);
-    assert.equal(steps[save].with.durable, 'true');
-    assert.equal(steps[save]['continue-on-error'], true);
-    assert.equal(steps[save]['timeout-minutes'], 2);
-    assert.equal(steps[verified]['continue-on-error'], undefined);
-    assert.doesNotMatch(steps[save].if, /always|cancelled/);
+    const lookup = steps.find(step => step.uses === './.github/actions/buzz-agent-cache');
+    const verified = steps.find(step => step.name?.startsWith('Build and install-verify'));
+    assert.equal(lookup['continue-on-error'], true);
+    assert.equal(lookup['timeout-minutes'], 2);
+    assert.equal(verified['continue-on-error'], undefined);
   }
   assert.ok(!jobs.helper.steps.some(step => /rust-toolchain|buzz-agent-cache/.test(step.uses ?? '')));
   const collect = jobs.helper.steps.find(step => step.with?.phase === 'collect');
@@ -2408,81 +2405,6 @@ test('native cache keys ignore release identity but bind platform, pinned source
   assert.throws(() => nativeCacheIdentity('darwin-x64', { env: {}, captureVersion: () => '' }), /incomplete/);
 });
 
-function nativeCacheFixture() {
-  const releases = new Map(), assets = new Map(), uploads = [];
-  let nextId = 1;
-  const repos = {
-    async getReleaseByTag({ tag }) {
-      if (!releases.has(tag)) throw Object.assign(new Error('missing'), { status: 404 });
-      return { data: structuredClone(releases.get(tag)) };
-    },
-    async createRelease(input) {
-      assert.equal(input.prerelease, true);
-      assert.equal(input.make_latest, 'false');
-      const release = { id: nextId++, prerelease: true, draft: false, assets: [] };
-      releases.set(input.tag_name, release);
-      return { data: structuredClone(release) };
-    },
-    async uploadReleaseAsset({ release_id, name, data }) {
-      const release = [...releases.values()].find(release => release.id === release_id);
-      const id = nextId++;
-      release.assets.push({ id, name });
-      assets.set(id, Buffer.from(data)); uploads.push(name);
-    },
-    async deleteReleaseAsset({ asset_id }) {
-      for (const release of releases.values()) release.assets = release.assets.filter(asset => asset.id !== asset_id);
-      assets.delete(asset_id);
-    },
-    async getReleaseAsset({ asset_id, headers }) {
-      assert.equal(headers.accept, 'application/octet-stream');
-      return { data: Uint8Array.from(assets.get(asset_id)).buffer };
-    },
-  };
-  return { github: { rest: { repos } }, releases, assets, uploads };
-}
-
-test('durable native hits verify the complete binary pair and repair a corrupt or partial upload', async () => {
-  const directory = mkdtempSync(join(tmpdir(), 'native-cache-proof-'));
-  const identity = nativeCacheIdentity('darwin-x64', { env: {}, captureVersion: () => 'compiler-1' });
-  const source = join(directory, 'source'), output = join(directory, 'restored');
-  mkdirSync(source);
-  writeFileSync(join(source, 'buzz-agent'), 'verified native agent');
-  writeFileSync(join(source, 'buzz-dev-mcp'), 'verified native mcp');
-  const fixture = nativeCacheFixture();
-  const args = { github: fixture.github, repo: { owner: 'example', repo: 'beeline' }, identity, sourceSha: NEW_SHA };
-  try {
-    const upload = fixture.github.rest.repos.uploadReleaseAsset;
-    fixture.github.rest.repos.uploadReleaseAsset = async input => {
-      if (input.name === 'buzz-dev-mcp') throw new Error('interrupted');
-      return upload(input);
-    };
-    await assert.rejects(saveNativeBinaries({ ...args, directory: source }), /interrupted/);
-    await assert.rejects(restoreNativeBinaries({ ...args, directory: output }), /missing/);
-    assert.equal(existsSync(output), false);
-    fixture.github.rest.repos.uploadReleaseAsset = upload;
-    await saveNativeBinaries({ ...args, directory: source });
-    assert.equal(fixture.uploads.at(-1), 'native-agent-cache.json');
-    await restoreNativeBinaries({ ...args, directory: output });
-    assert.equal(readFileSync(join(output, 'buzz-agent'), 'utf8'), 'verified native agent');
-    assert.equal(readFileSync(join(output, 'buzz-dev-mcp'), 'utf8'), 'verified native mcp');
-    const before = fixture.uploads.length;
-    await saveNativeBinaries({ ...args, directory: source });
-    assert.equal(fixture.uploads.length, before); // A complete verified key is immutable.
-    const release = fixture.releases.get(identity.tag);
-    const binary = release.assets.find(asset => asset.name === 'buzz-agent');
-    fixture.assets.set(binary.id, Buffer.from('corrupt'));
-    const corruptOutput = join(directory, 'corrupt');
-    await assert.rejects(restoreNativeBinaries({ ...args, directory: corruptOutput }), /integrity/);
-    assert.equal(existsSync(corruptOutput), false);
-    await saveNativeBinaries({ ...args, directory: source });
-    await restoreNativeBinaries({ ...args, directory: corruptOutput });
-    const wrong = { ...identity, key: `${identity.key}-wrong` };
-    await assert.rejects(restoreNativeBinaries({ ...args, identity: wrong, directory: join(directory, 'wrong') }), /identity/);
-    release.prerelease = false;
-    await assert.rejects(saveNativeBinaries({ ...args, directory: source }), /non-cache/);
-  } finally { rmSync(directory, { recursive: true, force: true }); }
-});
-
 test('Linux build artifact has one stable layout on fresh builds and already-shipped reruns', () => {
   const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
   const stage = workflow.jobs.helper_linux.steps.find(step => step.name === 'Stage only the Linux archive and compiled CLI');
@@ -2507,6 +2429,32 @@ test('Linux build artifact has one stable layout on fresh builds and already-shi
         const missing = spawnSync('bash', ['-c', stage.run], { cwd: fixture, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: temp, SHIPPED: shipped } });
         assert.notEqual(missing.status, 0); // Missing proof inputs cannot become a successful artifact upload.
       }
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('native compiler cache uses Actions only and exposes binaries only on a hit', () => {
+  const action = parse(readFileSync('.github/actions/buzz-agent-cache/action.yml', 'utf8'));
+  assert.deepEqual(Object.keys(action.inputs), ['platform']);
+  const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  for (const name of ['helper_linux', 'helper_macos']) assert.equal(workflow.jobs[name].permissions.contents, 'read');
+  assert.deepEqual(action.runs.steps.filter(step => step.uses).map(step => step.uses), ['actions/cache@v4']);
+  assert.doesNotMatch(readFileSync('scripts/native-agent-cache.mjs', 'utf8'), /getRelease|createRelease|uploadRelease|deleteRelease/);
+  const exporter = action.runs.steps.find(step => step.id === 'export');
+  const directory = mkdtempSync(join(tmpdir(), 'actions-native-cache-'));
+  try {
+    for (const hit of ['true', 'false']) {
+      const output = join(directory, `output-${hit}`), environment = join(directory, `env-${hit}`), summary = join(directory, `summary-${hit}`);
+      writeFileSync(environment, '');
+      const result = spawnSync('bash', ['-c', exporter.run], { encoding: 'utf8', env: {
+        ...process.env, ACTIONS_HIT: hit, DIRECTORY: '.beeline-tools/target/linux-x64/release',
+        GITHUB_WORKSPACE: directory, GITHUB_OUTPUT: output, GITHUB_ENV: environment, GITHUB_STEP_SUMMARY: summary,
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(readFileSync(output, 'utf8'), new RegExp(`source=${hit === 'true' ? 'actions' : 'miss'}`));
+      const exported = readFileSync(environment, 'utf8');
+      assert.equal(exported.includes('BUZZ_AGENT_BIN='), hit === 'true');
+      assert.equal(exported.includes('BUZZ_DEV_MCP_BIN='), hit === 'true');
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

@@ -334,6 +334,9 @@ jobs:
     needs: initialize
     if: needs.initialize.outputs.run_helper == 'true'
     runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      packages: read
     timeout-minutes: 20
     outputs:
       shipped: ${{ steps.shipped.outputs.shipped }}
@@ -369,21 +372,12 @@ jobs:
         if: steps.shipped.outputs.shipped != 'true'
         with:
           platform: linux-x64
-          durable: 'true'
       - name: Build and install-verify the Linux helper
         if: steps.shipped.outputs.shipped != 'true'
         run: npm run bundle:beeline -- --platform linux-x64
         env:
           BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
           BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
-      - uses: ./.github/actions/buzz-agent-cache
-        timeout-minutes: 2
-        continue-on-error: true
-        if: steps.shipped.outputs.shipped != 'true'
-        with:
-          platform: linux-x64
-          phase: save
-          durable: 'true'
       - name: Build the helper CLI packages
         env:
           SHIPPED: ${{ steps.shipped.outputs.shipped }}
@@ -423,6 +417,9 @@ jobs:
     needs: initialize
     if: needs.initialize.outputs.run_helper == 'true'
     runs-on: ${{ matrix.runs_on }}
+    permissions:
+      contents: read
+      packages: read
     # An unchanged Mac bundle is carried from the published helper channel;
     # every failed lookup, download or verification falls through to the cold
     # build.
@@ -496,22 +493,12 @@ jobs:
         if: steps.shipped.outputs.shipped != 'true' && steps.carry_bundle.outcome != 'success'
         with:
           platform: ${{ matrix.platform }}
-          durable: 'true'
       - name: Build and install-verify the native helper
         if: steps.shipped.outputs.shipped != 'true' && steps.carry_bundle.outcome != 'success'
         run: npm run bundle:beeline -- --platform "${{ matrix.platform }}"
         env:
           BEELINE_BUNDLE_COMMIT: ${{ needs.initialize.outputs.release_sha }}
           BEELINE_BUNDLE_VERSION: ${{ needs.initialize.outputs.release_version }}
-      - uses: ./.github/actions/buzz-agent-cache
-        timeout-minutes: 2
-        continue-on-error: true
-        if: steps.shipped.outputs.shipped != 'true' && steps.carry_bundle.outcome != 'success'
-        with:
-          platform: ${{ matrix.platform }}
-          phase: save
-          durable: 'true'
-      # Build output handed to the helper job in this same run.
       - uses: actions/upload-artifact@v4
         if: steps.shipped.outputs.shipped != 'true'
         with:

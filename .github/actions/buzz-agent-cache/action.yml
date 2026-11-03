@@ -1,20 +1,14 @@
-# Actions cache is the first tier. Trusted release builds also keep the exact
-# binary pair in input-keyed prereleases, outside Actions cache eviction.
+# Compiler outputs live only in Actions cache. A miss compiles the pinned
+# upstream; every restored binary still goes through bundle install proof.
 name: Restore the native agent binaries
-description: Reuse exact native binaries by upstream, platform, compiler and build flags
+description: Cache native binaries by upstream, platform, compiler and build flags
 inputs:
   platform:
     description: linux-x64 | darwin-arm64 | darwin-x64
     required: true
-  phase:
-    description: restore | save (save only after the bundle's install proof)
-    default: restore
-  durable:
-    description: Enable the release-owned durable binary cache
-    default: 'false'
 outputs:
   source:
-    description: actions | release-cache | miss
+    description: actions | miss
     value: ${{ steps.export.outputs.source }}
 runs:
   using: composite
@@ -25,62 +19,24 @@ runs:
         PLATFORM: ${{ inputs.platform }}
       run: node scripts/native-agent-cache.mjs "$PLATFORM"
     - id: cache
-      if: inputs.phase == 'restore'
       uses: actions/cache@v4
       with:
         path: |
           ${{ steps.key.outputs.directory }}/buzz-agent
           ${{ steps.key.outputs.directory }}/buzz-dev-mcp
         key: ${{ steps.key.outputs.key }}
-    - id: durable
-      if: inputs.phase == 'restore' && inputs.durable == 'true' && steps.cache.outputs.cache-hit != 'true'
-      continue-on-error: true
-      uses: actions/github-script@v7
-      env:
-        CACHE_KEY: ${{ steps.key.outputs.key }}
-        CACHE_TAG: ${{ steps.key.outputs.tag }}
-        CACHE_DIRECTORY: ${{ steps.key.outputs.directory }}
-      with:
-        script: |
-          const { restoreNativeBinaries } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/native-agent-cache.mjs`);
-          const identity = { key: process.env.CACHE_KEY, tag: process.env.CACHE_TAG, directory: process.env.CACHE_DIRECTORY };
-          try {
-            await restoreNativeBinaries({ github, repo: context.repo, identity });
-            core.setOutput('hit', 'true');
-          } catch {
-            core.info('Durable native cache unavailable or invalid; keeping the cold-build path.');
-            core.setOutput('hit', 'false');
-          }
     - id: export
-      if: inputs.phase == 'restore'
       shell: bash
       env:
         DIRECTORY: ${{ steps.key.outputs.directory }}
         ACTIONS_HIT: ${{ steps.cache.outputs.cache-hit }}
-        DURABLE_HIT: ${{ steps.durable.outputs.hit }}
       run: |
-        source=miss
-        if [ "$ACTIONS_HIT" = true ]; then source=actions;
-        elif [ "$DURABLE_HIT" = true ]; then source=release-cache; fi
-        echo "source=$source" >> "$GITHUB_OUTPUT"
-        echo "BEELINE_NATIVE_CACHE_SOURCE=$source" >> "$GITHUB_ENV"
-        echo "Native binary cache: $source" | tee -a "$GITHUB_STEP_SUMMARY"
-        if [ "$source" != miss ]; then
+        cache_source=miss
+        if [ "$ACTIONS_HIT" = true ]; then cache_source=actions; fi
+        echo "source=$cache_source" >> "$GITHUB_OUTPUT"
+        echo "BEELINE_NATIVE_CACHE_SOURCE=$cache_source" >> "$GITHUB_ENV"
+        echo "Native binary cache: $cache_source" | tee -a "$GITHUB_STEP_SUMMARY"
+        if [ "$cache_source" = actions ]; then
           echo "BUZZ_AGENT_BIN=$GITHUB_WORKSPACE/$DIRECTORY/buzz-agent" >> "$GITHUB_ENV"
           echo "BUZZ_DEV_MCP_BIN=$GITHUB_WORKSPACE/$DIRECTORY/buzz-dev-mcp" >> "$GITHUB_ENV"
         fi
-    - name: Save the install-verified native binary pair
-      if: inputs.phase == 'save' && inputs.durable == 'true'
-      continue-on-error: true
-      uses: actions/github-script@v7
-      env:
-        CACHE_KEY: ${{ steps.key.outputs.key }}
-        CACHE_TAG: ${{ steps.key.outputs.tag }}
-        CACHE_DIRECTORY: ${{ steps.key.outputs.directory }}
-      with:
-        script: |
-          const { execFileSync } = await import('node:child_process');
-          const { saveNativeBinaries } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/native-agent-cache.mjs`);
-          const identity = { key: process.env.CACHE_KEY, tag: process.env.CACHE_TAG, directory: process.env.CACHE_DIRECTORY };
-          const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
-          await saveNativeBinaries({ github, repo: context.repo, identity, sourceSha });

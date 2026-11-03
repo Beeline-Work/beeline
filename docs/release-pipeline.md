@@ -210,22 +210,17 @@ Jobs that compile source set up Node 22 once and install once with
 `scripts/npm-ci-timed.sh`, which prints the install's wall time, cache misses, and slowest registry
 fetches. The pinned eas-cli installs from `tools/eas-cli`'s lockfile.
 
-Helper builds cache `buzz-agent` and `buzz-dev-mcp` by the pinned block/buzz
-commit, platform, Rust/C compiler, SDK and build flags. Actions cache is the
-first tier. A trusted release job also saves the install-verified binary pair
-as assets of an input-keyed `helper-native-*` prerelease, with byte counts and
-SHA-256 hashes in `native-agent-cache.json`. These are pure compiler outputs,
-never production release memory; they cannot become the latest stable release.
-Missing, partial, mismatched or corrupt cache entries fall back to compilation.
-A successful verified build repairs a partial cache. Final bundle installation
-and all-platform publication checks still run on a native-cache hit.
-`scripts/native-agent-cache.mjs` owns the shared Cargo recipe, key and integrity
-contract. Cache I/O is optional and bounded to two minutes per step; native
-build/install proofs and publication still fail normally. The job
-summary distinguishes `actions`, `release-cache` and `miss`; an invoked Cargo
-build reports its duration separately. A verified full Mac payload carry is a
-fourth path, distinct from an Actions native-binary cache hit. Typecheck and
-tests ran in CI and do not rerun inside the release.
+Helper builds cache `buzz-agent` and `buzz-dev-mcp` only in Actions cache,
+keyed by the pinned block/buzz commit, platform, Rust/C/C++ toolchain, SDK and
+build flags. `scripts/native-agent-cache.mjs` owns the shared Cargo recipe and
+cache identity. A miss compiles the pinned upstream. Cache lookup is optional
+and bounded to two minutes; native build/install proofs and publication still
+fail normally. No native cache is published to GitHub Releases.
+
+The job summary distinguishes `actions` and `miss`; an invoked Cargo build
+reports its duration separately. A verified full Mac payload carry is another
+path, distinct from a native-binary cache hit. Typecheck and tests ran in CI
+and do not rerun inside the release.
 
 ### Server migration, canary, and rollback
 

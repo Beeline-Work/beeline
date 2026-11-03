@@ -104,8 +104,17 @@ describe.skipIf(!url)('Group C P8/P10/P11 PostgreSQL media composition', () => {
       const view = fetchArtifactBytes(attachment); active.push(view);
       owner.action('SaveArtifact', object);
       const save = artifactLocalUri(attachment); active.push(save);
+      // Retain the original immutable-owner guarantees as well as proving the
+      // concrete image/view/save adapters above use this same physical flight.
+      const owned = [readArtifactObject(attachment, read, { preview: true }),
+        readArtifactObject(attachment, read), readArtifactObject(attachment, read)];
+      active.push(...owned);
       releaseBytes.resolve();
       const results = await Promise.all([preview, view, save]);
+      const values = await Promise.all(owned);
+      expect(values.map(result => [...result.bytes])).toEqual([[1, 2, 3], [1, 2, 3], [1, 2, 3]]);
+      expect(new Set(values.map(result => result.key)).size).toBe(1);
+      expect(read).not.toHaveBeenCalled();
       expect(results).toEqual([{ uri: 'file:///synthetic/cache.png' }, bytes, 'file:///synthetic/cache.png']);
       expect({ metadataReads, transfers, byteCalls: mocks.fetch.mock.calls.length }).toEqual({ metadataReads: 1, transfers: 1, byteCalls: 1 });
       owner.action('RunArtifact', object);
@@ -127,6 +136,7 @@ describe.skipIf(!url)('Group C P8/P10/P11 PostgreSQL media composition', () => {
       receiveMediaAuthorityRemoval(`object:${object}`, previous.authority.scopes[0]!.epoch);
       releaseLink.resolve(); await refusedLink;
       expect(mocks.open).not.toHaveBeenCalled(); expect(value.isCurrent()).toBe(false);
+      expect(values.every(result => !result.isCurrent())).toBe(true);
       owner.action('SaveArtifact', object);
       await expect(readArtifactObject(attachment, read)).rejects.toMatchObject({ status: 404 });
       expect(transfers).toBe(1);

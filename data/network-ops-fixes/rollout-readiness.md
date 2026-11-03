@@ -62,7 +62,9 @@ Cross-cutting T7 work remains:
   actual mobile recovery pass. The full local historical/current image smoke
   now also passes startup, migration, reads/writes, image swap/revert and graceful
   shutdown. The exact separate expansion image, deployed ledger-preserving
-  floor and real canary watcher remain unproved. A full combined draft must
+  floor and real Fly execution remain unproved. The actual canary shell now
+  passes seven samples over 96.568 seconds with local adapters: an injected
+  failure restores only the first image and fails the release. A full combined draft must
   not be described as a schema-only prerequisite release.
 - The full native40/current Android/iOS/web/Tauri, old/new helper, mixed-server
   and every-family matrix remains incomplete. Historical native proofs are

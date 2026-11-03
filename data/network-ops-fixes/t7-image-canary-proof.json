@@ -1,0 +1,473 @@
+{
+  "status": "PASS",
+  "historical": {
+    "id": "sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+    "sourceSha": "f43bd3f86e4c7a30aa75378df82fcbda10027c72",
+    "version": "network-ops-t7-historical-proof",
+    "dockerfileSha256": "b0256f3ad0139de439981132dde28d98e2dd4c90195e180b1cfffd9c92dcc31b",
+    "lockfileSha256": "6a852a857d5f41a6b403d5ec8a869ce4d1791e3bd7c5efb0d25a62698fa6a338",
+    "node": "v22.23.3",
+    "packagedTestFixtures": {
+      "auth": true,
+      "body": true
+    }
+  },
+  "candidate": {
+    "id": "sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b",
+    "sourceSha": "4e51e032786647c72742323070c2f95326710f73",
+    "version": "network-ops-t7-candidate-proof",
+    "dockerfileSha256": "5b4ce67aa3ab519fc0bddcc16285befa5b7800b2b550adb707afd2bfa25306db",
+    "lockfileSha256": "1a36b9a09a3df51414365470f038b2725363515d6e2d82661f294f117a35bdc8",
+    "node": "v22.23.3",
+    "packagedTestFixtures": {
+      "auth": false,
+      "body": false
+    }
+  },
+  "startup": [
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-a",
+      "imageId": "sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+      "health": {
+        "/healthz": {
+          "ok": true
+        },
+        "/readyz": {
+          "ok": true
+        },
+        "/version": {
+          "version": "network-ops-t7-historical-proof",
+          "sourceSha": "f43bd3f86e4c7a30aa75378df82fcbda10027c72"
+        }
+      }
+    },
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-b",
+      "imageId": "sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+      "health": {
+        "/healthz": {
+          "ok": true
+        },
+        "/readyz": {
+          "ok": true
+        },
+        "/version": {
+          "version": "network-ops-t7-historical-proof",
+          "sourceSha": "f43bd3f86e4c7a30aa75378df82fcbda10027c72"
+        }
+      }
+    },
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-a",
+      "imageId": "sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b",
+      "health": {
+        "/healthz": {
+          "ok": true
+        },
+        "/readyz": {
+          "ok": true
+        },
+        "/version": {
+          "version": "network-ops-t7-candidate-proof",
+          "sourceSha": "4e51e032786647c72742323070c2f95326710f73"
+        }
+      }
+    },
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-a",
+      "imageId": "sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+      "health": {
+        "/healthz": {
+          "ok": true
+        },
+        "/readyz": {
+          "ok": true
+        },
+        "/version": {
+          "version": "network-ops-t7-historical-proof",
+          "sourceSha": "f43bd3f86e4c7a30aa75378df82fcbda10027c72"
+        }
+      }
+    },
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-a",
+      "imageId": "sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b",
+      "health": {
+        "/healthz": {
+          "ok": true
+        },
+        "/readyz": {
+          "ok": true
+        },
+        "/version": {
+          "version": "network-ops-t7-candidate-proof",
+          "sourceSha": "4e51e032786647c72742323070c2f95326710f73"
+        }
+      }
+    },
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-a",
+      "imageId": "sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+      "health": {
+        "/healthz": {
+          "ok": true
+        },
+        "/readyz": {
+          "ok": true
+        },
+        "/version": {
+          "version": "network-ops-t7-historical-proof",
+          "sourceSha": "f43bd3f86e4c7a30aa75378df82fcbda10027c72"
+        }
+      }
+    }
+  ],
+  "shutdown": [
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-a",
+      "exitCode": 0,
+      "oomKilled": false
+    },
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-a",
+      "exitCode": 0,
+      "oomKilled": false
+    },
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-a",
+      "exitCode": 0,
+      "oomKilled": false
+    },
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-a",
+      "exitCode": 0,
+      "oomKilled": false
+    },
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-a",
+      "exitCode": 0,
+      "oomKilled": false
+    },
+    {
+      "name": "beeline-network-ops-t7-45c61d0e81-b",
+      "exitCode": 0,
+      "oomKilled": false
+    }
+  ],
+  "fullEntrypoints": true,
+  "productionAuthSyntheticToken": true,
+  "runtimeNetwork": "none; task-owned PG Unix socket only",
+  "oldImagesSurviveFullMigration": true,
+  "oldNewLegacyWireEqual": true,
+  "writesBeforeAndAfterSwitch": true,
+  "rollbackWithoutSchemaRestore": true,
+  "repeatedMigration": true,
+  "markers": {
+    "base": 46,
+    "router": 61
+  },
+  "plan": {
+    "previousImageRef": "registry.fly.io/beeline-server:network-ops-t7-historical-proof@sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+    "secondPreviousImageRef": "registry.fly.io/beeline-server:network-ops-t7-historical-proof@sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+    "split": false,
+    "newImageRef": "registry.fly.io/beeline-server:network-ops-t7-candidate-proof@sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b",
+    "canaryMachineId": "a",
+    "secondMachineId": "b",
+    "steps": [
+      "migrate",
+      "update:a:registry.fly.io/beeline-server:network-ops-t7-candidate-proof@sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b",
+      "watch:a:90s",
+      "update:b:registry.fly.io/beeline-server:network-ops-t7-candidate-proof@sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b"
+    ],
+    "rollbackSteps": [
+      "update:a:registry.fly.io/beeline-server:network-ops-t7-historical-proof@sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+      "fail-release"
+    ]
+  },
+  "canaryAutoRevert": {
+    "status": "PASS",
+    "actionSha256": "666e60a389eb14a8f5915ada43e19988c68a2edc7030a0d470c45f7154c6ce5c",
+    "shellSha256": "dc82533041f69d159daf17d15f895c5d87f4c2d508e6a0914b06955d2100afa5",
+    "shellUnmodified": true,
+    "elapsedSeconds": 96.568,
+    "samples": [
+      {
+        "at": "2026-11-03T05:28:22.954Z",
+        "verdict": {
+          "clean": false,
+          "reasons": [
+            "authenticated Room read returned HTTP 503"
+          ],
+          "poolMetricsAvailable": true,
+          "pool": {
+            "size": 5,
+            "inUse": 0,
+            "waiting": 0,
+            "oldestActiveQueryAgeMs": null
+          }
+        }
+      },
+      {
+        "at": "2026-11-03T05:28:39.495Z",
+        "verdict": {
+          "clean": false,
+          "reasons": [
+            "authenticated Room read returned HTTP 503"
+          ],
+          "poolMetricsAvailable": true,
+          "pool": {
+            "size": 0,
+            "inUse": 0,
+            "waiting": 0,
+            "oldestActiveQueryAgeMs": null
+          }
+        }
+      },
+      {
+        "at": "2026-11-03T05:28:55.491Z",
+        "verdict": {
+          "clean": false,
+          "reasons": [
+            "authenticated Room read returned HTTP 503"
+          ],
+          "poolMetricsAvailable": true,
+          "pool": {
+            "size": 0,
+            "inUse": 0,
+            "waiting": 0,
+            "oldestActiveQueryAgeMs": null
+          }
+        }
+      },
+      {
+        "at": "2026-11-03T05:29:11.477Z",
+        "verdict": {
+          "clean": false,
+          "reasons": [
+            "authenticated Room read returned HTTP 503"
+          ],
+          "poolMetricsAvailable": true,
+          "pool": {
+            "size": 0,
+            "inUse": 0,
+            "waiting": 0,
+            "oldestActiveQueryAgeMs": null
+          }
+        }
+      },
+      {
+        "at": "2026-11-03T05:29:27.432Z",
+        "verdict": {
+          "clean": false,
+          "reasons": [
+            "authenticated Room read returned HTTP 503"
+          ],
+          "poolMetricsAvailable": true,
+          "pool": {
+            "size": 0,
+            "inUse": 0,
+            "waiting": 0,
+            "oldestActiveQueryAgeMs": null
+          }
+        }
+      },
+      {
+        "at": "2026-11-03T05:29:43.578Z",
+        "verdict": {
+          "clean": false,
+          "reasons": [
+            "authenticated Room read returned HTTP 503"
+          ],
+          "poolMetricsAvailable": true,
+          "pool": {
+            "size": 1,
+            "inUse": 0,
+            "waiting": 0,
+            "oldestActiveQueryAgeMs": null
+          }
+        }
+      },
+      {
+        "at": "2026-11-03T05:29:59.522Z",
+        "verdict": {
+          "clean": false,
+          "reasons": [
+            "authenticated Room read returned HTTP 503"
+          ],
+          "poolMetricsAvailable": true,
+          "pool": {
+            "size": 1,
+            "inUse": 0,
+            "waiting": 0,
+            "oldestActiveQueryAgeMs": null
+          }
+        }
+      }
+    ],
+    "verdict": {
+      "clean": false,
+      "reason": "only 0 of 7 canary samples were clean"
+    },
+    "updates": [
+      {
+        "machine": "a",
+        "imageRef": "registry.fly.io/beeline-server:network-ops-t7-candidate-proof@sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b"
+      },
+      {
+        "machine": "a",
+        "imageRef": "registry.fly.io/beeline-server:network-ops-t7-historical-proof@sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209"
+      }
+    ],
+    "requests": [
+      {
+        "machine": "a",
+        "path": "/readyz",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/version",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/health",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/health",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/version",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/v1/phone/rooms/22222222-2222-4222-8222-222222222222",
+        "actualStatus": 200,
+        "observedStatus": 503
+      },
+      {
+        "machine": "a",
+        "path": "/health",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/version",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/v1/phone/rooms/22222222-2222-4222-8222-222222222222",
+        "actualStatus": 200,
+        "observedStatus": 503
+      },
+      {
+        "machine": "a",
+        "path": "/health",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/version",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/v1/phone/rooms/22222222-2222-4222-8222-222222222222",
+        "actualStatus": 200,
+        "observedStatus": 503
+      },
+      {
+        "machine": "a",
+        "path": "/health",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/version",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/v1/phone/rooms/22222222-2222-4222-8222-222222222222",
+        "actualStatus": 200,
+        "observedStatus": 503
+      },
+      {
+        "machine": "a",
+        "path": "/health",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/version",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/v1/phone/rooms/22222222-2222-4222-8222-222222222222",
+        "actualStatus": 200,
+        "observedStatus": 503
+      },
+      {
+        "machine": "a",
+        "path": "/health",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/version",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/v1/phone/rooms/22222222-2222-4222-8222-222222222222",
+        "actualStatus": 200,
+        "observedStatus": 503
+      },
+      {
+        "machine": "a",
+        "path": "/health",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/version",
+        "actualStatus": 200,
+        "observedStatus": 200
+      },
+      {
+        "machine": "a",
+        "path": "/v1/phone/rooms/22222222-2222-4222-8222-222222222222",
+        "actualStatus": 200,
+        "observedStatus": 503
+      }
+    ],
+    "releaseExitCode": 1,
+    "secondPromoted": false,
+    "rollbackConfirmed": true,
+    "scope": "Actual checked-in shell and real 90-second clock; closed local Docker/HTTP adapters; synthetic transport failure; no Fly or production access"
+  },
+  "scope": "Local full-image policy-off expansion and actual canary-shell smoke; not a separate expansion release, deployed ledger-aware floor, Fly/provider/native or production proof"
+}

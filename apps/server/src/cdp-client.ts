@@ -537,10 +537,8 @@ export class CdpWalletClient implements CdpWalletSource {
           throw new WalletTransactionPending(error.txId, { ...call.approve, spender: call.contract });
         throw error;
       }
-      if (call.completionV1) {
-        if (!(await inspectReceipt(call.chain, approval)))
-          throw new WalletTransactionPending(approval, { ...call.approve, spender: call.contract });
-      } else await waitForLegacyReceipt(call.chain, approval);
+      if (!(await inspectReceipt(call.chain, approval)))
+        throw new WalletTransactionPending(approval, { ...call.approve, spender: call.contract });
     }
     return {
       txId: await this.sendEvmTransaction(address, call.chain, {
@@ -670,10 +668,8 @@ export class CdpWalletClient implements CdpWalletSource {
           throw new WalletTransactionPending(error.txId, { asset: from.symbol, amount: input.amount, spender });
         throw error;
       }
-      if (input.completionV1) {
-        if (!(await inspectReceipt(input.chain, approval)))
-          throw new WalletTransactionPending(approval, { asset: from.symbol, amount: input.amount, spender });
-      } else await waitForLegacyReceipt(input.chain, approval);
+      if (!(await inspectReceipt(input.chain, approval)))
+        throw new WalletTransactionPending(approval, { asset: from.symbol, amount: input.amount, spender });
       swap = await quote();
     }
     if (!swap.transaction) throw new Error('CDP swap quote returned no transaction');
@@ -693,9 +689,7 @@ export class CdpWalletClient implements CdpWalletSource {
       ...(swap.transaction.value ? { value: BigInt(swap.transaction.value) } : {}),
       ...(swap.transaction.gas ? { gas: BigInt(swap.transaction.gas) } : {}),
     }, input.completionV1 === true);
-    const confirmed = input.completionV1
-      ? await inspectReceipt(input.chain, txId)
-      : await waitForLegacyReceipt(input.chain, txId, true);
+    const confirmed = await inspectReceipt(input.chain, txId);
     return {
       txId,
       toAmount: toAmount ?? formatUnits(BigInt(swap.toAmount ?? '0'), to.decimals),
@@ -730,23 +724,6 @@ async function inspectReceipt(chain: WalletChainId, txHash: string): Promise<boo
     .catch(() => null) as { status?: string } | null;
   if (receipt?.status === '0x0') throw new Error(`transaction ${txHash} reverted`);
   return receipt?.status === '0x1';
-}
-
-/** Compatibility adapter for old JS/Body. Its repeated observations remain migration debt. */
-async function waitForLegacyReceipt(chain: WalletChainId, txHash: string, allowPending = false): Promise<boolean> {
-  const deadline = Date.now() + 60_000;
-  for (let attempt = 0; attempt < 30 && Date.now() < deadline; attempt += 1) {
-    const signal = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
-    const receipt = (await rpc(chain, 'eth_getTransactionReceipt', [txHash], signal).catch(() => null)) as
-      | { status?: string }
-      | null;
-    if (receipt?.status === '0x1') return true;
-    if (receipt?.status === '0x0') throw new Error(`transaction ${txHash} reverted`);
-    const remaining = deadline - Date.now();
-    if (remaining > 0) await new Promise((resolve) => setTimeout(resolve, Math.min(2_000, remaining)));
-  }
-  if (allowPending) return false;
-  throw new Error(`transaction ${txHash} was not mined within a minute`);
 }
 
 /**

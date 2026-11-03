@@ -62,8 +62,8 @@ on the production router first.
 Cross-cutting T7 work remains:
 
 - [Router-only removal](router-only-removal.md): the latest retained extraction
-  still has 158 legacy router boundary keys and 72 phone keys. Five architecture
-  baseline increases have individual dispositions in that document and the PR
+  still has 158 legacy router boundary keys and 72 phone keys. Three architecture
+  relaxations remain after server/helper counts returned to main; they have individual dispositions in that document and the PR
   body; they are not scanner exemptions or closed findings.
 - [Compatibility and rollback](t7-compatibility.md): historical source and
   actual mobile recovery pass. The full local historical/current image smoke

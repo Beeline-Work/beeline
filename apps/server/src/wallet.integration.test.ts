@@ -805,7 +805,9 @@ describe('wallet over the fake CDP seam', () => {
     expect((await database.query(`SELECT id FROM wallet_transactions WHERE identity_id=$1 AND direction='out'`, [HUMAN])).rows).toHaveLength(0);
   });
 
-  it.each([false, true])('an unconfirmed approval stays owner/chain/hash-bound and never submits its dependent call (provider first=%s)', async providerFirst => {
+  it.each([false, true].flatMap(providerFirst => [true, undefined].map(completionV1 =>
+    ({ providerFirst, completionV1: completionV1 as true | undefined }))))
+    ('an unconfirmed approval stays owner/chain/hash-bound without dependent submission (provider first=$providerFirst, completionV1=$completionV1)', async ({providerFirst, completionV1}) => {
     const wallet = await createdWallet();
     await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
     fundChain(wallet.address, 'base', 'usdc', 500);
@@ -837,12 +839,12 @@ describe('wallet over the fake CDP seam', () => {
     if (providerFirst)
       expect((await deliverWalletEvent('wallet.transaction.confirmed', data, 'provider-first-approval')).status).toBe(200);
     const response = await daemonOperation('walletContractCall', {
-      completionV1: true, agentId: HELPER, chain: 'base', contract, data: '0x12345678',
+      ...(completionV1 ? { completionV1 } : {}), agentId: HELPER, chain: 'base', contract, data: '0x12345678',
       approve: { asset: 'usdc', amount: '2' },
     });
     expect(response.body).toMatchObject({ outcome: 'pending', txUrl: walletExplorerTxUrl('base', hash),
       reason: expect.stringContaining('dependent transaction was not submitted') });
-    expect(source).toHaveBeenCalledWith(wallet.address, expect.objectContaining({ completionV1: true }));
+    expect(source.mock.calls[0]?.[1].completionV1).toBe(completionV1);
     expect({ submissions, receipts }).toEqual({ submissions: 1, receipts: 1 });
     const readApproval = async () => (await notices()).find(row => row.card.txUrl === walletExplorerTxUrl('base', hash))!;
     expect((await readApproval()).card).toMatchObject({ operation: 'approval',

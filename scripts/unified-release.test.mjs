@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -44,6 +44,7 @@ import {
 
 import { encodeReleaseOutput, decodeReleaseOutput } from './release-job-output.mjs';
 import { liveDelivery, recordDelivery } from './release-delivery.mjs';
+import { NATIVE_CARGO_BUILD_FLAGS, nativeCacheIdentity } from './native-agent-cache.mjs';
 
 const OLD_SHA = '1'.repeat(40);
 const MID_SHA = '3'.repeat(40);
@@ -1101,7 +1102,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
     const cap = job['timeout-minutes'];
     if (cap === undefined) continue;
     if (slowLegs.has(name)) continue;
-    assert.ok(name === 'helper' ? cap <= jobCeilingMinutes : cap < jobCeilingMinutes, `${name} timeout-minutes ${cap} exceeds the job ceiling`);
+    assert.ok(['helper', 'helper_linux'].includes(name) ? cap <= jobCeilingMinutes : cap < jobCeilingMinutes, `${name} timeout-minutes ${cap} exceeds the job ceiling`);
   }
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
@@ -1139,7 +1140,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
     assert.deepEqual(running, [expected], `pin changed ${pinChanged}, proof ${proof}`);
   }
   assert.deepEqual(workflow.jobs.release_result.needs, [
-    'initialize', 'server', 'helper_macos', 'helper', 'mobile_ota', 'mobile_ota_after_proof',
+    'initialize', 'server', 'helper_linux', 'helper_macos', 'helper', 'mobile_ota', 'mobile_ota_after_proof',
     'mobile_native_android', 'mobile_native_ios', 'desktop_installers', 'website', 'release_proof', 'delivery_result',
   ]);
   assert.equal(workflow.jobs.desktop_checkpoint, undefined);
@@ -1880,18 +1881,17 @@ test('ios-review-node: App Review establishes the runner Node PATH before submis
 
 test('all helper builds pin compatible Rust before cache restore and keep locked builds', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
-  for (const name of ['helper', 'helper_macos']) {
+  for (const name of ['helper_linux', 'helper_macos']) {
     const steps = workflow.jobs[name].steps;
     const setupIndex = steps.findIndex((step) => /rust-toolchain/.test(step.uses ?? ''));
     assert.ok(setupIndex >= 0, `${name} must provision Rust even when old distro tools exist`);
     assert.equal(steps[setupIndex].uses, 'dtolnay/rust-toolchain@1.95.0');
     assert.ok(setupIndex < steps.findIndex((step) => step.uses === './.github/actions/buzz-agent-cache'));
-    assert.equal(steps[setupIndex].if, name === 'helper'
-      ? "needs.helper_macos.outputs.shipped != 'true'"
-      : "steps.shipped.outputs.shipped != 'true'");
+    assert.equal(steps[setupIndex].if, "steps.shipped.outputs.shipped != 'true'");
   }
   const builder = readFileSync(new URL('./build-beeline-bundle.mjs', import.meta.url), 'utf8');
-  assert.match(builder, /'--locked'/);
+  assert.ok(NATIVE_CARGO_BUILD_FLAGS.includes('--locked'));
+  assert.match(builder, /\.\.\.NATIVE_CARGO_BUILD_FLAGS/);
 });
 
 
@@ -2019,15 +2019,15 @@ test('the helper asks Pages what shipped; a Mac bundle is carried from the publi
     shipped: { outputs: { shipped: 'true' } }, previous_bundle: { outcome: 'skipped' }, carry_bundle: { outcome: 'skipped' },
   } };
   assert.equal(evaluateWorkflowCondition(cold.if, shippedContext), false);
-  for (const phase of ['build', 'promote']) {
+  for (const phase of ['collect', 'promote']) {
     const leg = helper.steps.find((step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === phase);
-    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_macos: { outputs: { shipped: 'true' } } } }), false);
-    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_macos: { outputs: { shipped: 'false' } } } }), true);
+    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_linux: { outputs: { shipped: 'true' } } } }), false);
+    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_linux: { outputs: { shipped: 'false' } } } }), true);
   }
   // A failed Mac build never promotes a helper with missing bytes.
   const initialize = { result: 'success', outputs: { run_helper: 'true' } };
-  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_macos: { result: 'failure' } } }), false);
-  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_macos: { result: 'success' } } }), true);
+  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_linux: { result: 'success' }, helper_macos: { result: 'failure' } } }), false);
+  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_linux: { result: 'success' }, helper_macos: { result: 'success' } } }), true);
   const upload = macos.steps.find((step) => step.uses === 'actions/upload-artifact@v4');
   assert.match(upload.with.path, /mac-helper-inputs\.json/);
   assert.match(upload.with.path, /beeline-bootstrap\.mjs\n/);
@@ -2355,6 +2355,106 @@ fi
       assert.match(calls, new RegExp(image));
       assert.doesNotMatch(calls, /synthetic-proof-value|synthetic-greeter/);
       if (mode === 'success') assert.equal(calls.trim().split('\n').length, 2);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('Linux helper compilation overlaps the Macs while one final job retains every publish gate', () => {
+  const { jobs } = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  assert.equal(jobs.helper_linux.needs, 'initialize');
+  assert.equal(jobs.helper_linux['runs-on'], 'ubuntu-22.04');
+  assert.ok(jobs.helper_linux.steps.some(step => step.run?.includes('bundle:beeline -- --platform linux-x64')));
+  assert.ok(jobs.helper_linux.steps.some(step => step.run?.includes('npm run build -w usebeeline')));
+  assert.deepEqual(jobs.helper.needs, ['initialize', 'helper_linux', 'helper_macos', 'delivery_result']);
+  for (const [linux, mac, allowed] of [['success', 'success', true], ['failure', 'success', false], ['success', 'failure', false], ['skipped', 'success', false]]) {
+    assert.equal(evaluateWorkflowCondition(jobs.helper.if, { inputs: {}, steps: {}, needs: {
+      initialize: { result: 'success', outputs: { run_helper: 'true' } },
+      helper_linux: { result: linux }, helper_macos: { result: mac },
+    } }), allowed);
+  }
+  for (const name of ['helper_linux', 'helper_macos']) {
+    const steps = jobs[name].steps;
+    const lookup = steps.find(step => step.uses === './.github/actions/buzz-agent-cache');
+    const verified = steps.find(step => step.name?.startsWith('Build and install-verify'));
+    assert.equal(lookup['continue-on-error'], true);
+    assert.equal(lookup['timeout-minutes'], 2);
+    assert.equal(verified['continue-on-error'], undefined);
+  }
+  assert.ok(!jobs.helper.steps.some(step => /rust-toolchain|buzz-agent-cache/.test(step.uses ?? '')));
+  const collect = jobs.helper.steps.find(step => step.with?.phase === 'collect');
+  assert.match(collect.with.linux_bundle_dir, /helper-linux\/bundle/);
+  const daemon = parse(readFileSync('.github/actions/daemon-leg/action.yml', 'utf8'));
+  assert.doesNotMatch(JSON.stringify(daemon), /bundle:beeline/);
+  assert.match(daemon.runs.steps.find(step => step.name === 'Collect daemon artifact').run, /-z "\$linux_dir"/);
+  const pack = jobs.helper.steps.find(step => step.id === 'helper_package');
+  const publish = jobs.helper.steps.find(step => step.name === 'Publish the exact helper CLI package');
+  assert.ok(jobs.helper.steps.indexOf(collect) < jobs.helper.steps.indexOf(pack));
+  assert.ok(jobs.helper.steps.indexOf(pack) < jobs.helper.steps.indexOf(publish));
+});
+
+test('native cache keys ignore release identity but bind platform, pinned source, toolchain and flags', () => {
+  const captureVersion = (command, args) => `${command} ${args.join(' ')} version-1`;
+  const key = env => nativeCacheIdentity('darwin-x64', { env, captureVersion }).key;
+  assert.equal(key({}), key({ BEELINE_BUNDLE_COMMIT: 'a'.repeat(40), BEELINE_BUNDLE_VERSION: 'v0.1.999' }));
+  assert.notEqual(key({}), key({ BEELINE_BUZZ_REF: 'b'.repeat(40) }));
+  assert.notEqual(key({}), key({ RUSTFLAGS: '-C target-cpu=native' }));
+  assert.notEqual(key({}), key({ CARGO_PROFILE_RELEASE_OPT_LEVEL: 's' }));
+  assert.notEqual(key({}), nativeCacheIdentity('darwin-arm64', { env: {}, captureVersion }).key);
+  assert.notEqual(key({}), nativeCacheIdentity('darwin-x64', { env: {}, captureVersion: () => 'version-2' }).key);
+  assert.throws(() => key({ BEELINE_BUZZ_REF: 'main' }), /pinned/);
+  assert.throws(() => nativeCacheIdentity('darwin-x64', { env: {}, captureVersion: () => '' }), /incomplete/);
+});
+
+test('Linux build artifact has one stable layout on fresh builds and already-shipped reruns', () => {
+  const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  const stage = workflow.jobs.helper_linux.steps.find(step => step.name === 'Stage only the Linux archive and compiled CLI');
+  const files = ['beeline-linux-x64.tar.gz', 'beeline-linux-x64.tar.gz.sha256', 'manifest.json', 'beeline-bootstrap.mjs', 'beeline-bootstrap.mjs.sha256'];
+  const directory = mkdtempSync(join(tmpdir(), 'linux-helper-layout-'));
+  try {
+    for (const shipped of ['true', 'false']) {
+      const fixture = join(directory, shipped);
+      mkdirSync(join(fixture, 'packages/usebeeline/dist'), { recursive: true });
+      writeFileSync(join(fixture, 'packages/usebeeline/dist/usebeeline.mjs'), 'compiled CLI');
+      if (shipped === 'false') {
+        mkdirSync(join(fixture, 'web/dl'), { recursive: true });
+        for (const name of files) writeFileSync(join(fixture, 'web/dl', name), name);
+      }
+      const temp = join(fixture, 'temporary');
+      const result = spawnSync('bash', ['-c', stage.run], { cwd: fixture, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: temp, SHIPPED: shipped } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(readFileSync(join(temp, 'helper-linux/cli/usebeeline.mjs'), 'utf8'), 'compiled CLI');
+      for (const name of files) assert.equal(existsSync(join(temp, 'helper-linux/bundle', name)), shipped === 'false');
+      if (shipped === 'false') {
+        rmSync(join(fixture, 'web/dl/manifest.json'));
+        const missing = spawnSync('bash', ['-c', stage.run], { cwd: fixture, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: temp, SHIPPED: shipped } });
+        assert.notEqual(missing.status, 0); // Missing proof inputs cannot become a successful artifact upload.
+      }
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('native compiler cache uses Actions only and exposes binaries only on a hit', () => {
+  const action = parse(readFileSync('.github/actions/buzz-agent-cache/action.yml', 'utf8'));
+  assert.deepEqual(Object.keys(action.inputs), ['platform']);
+  const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  for (const name of ['helper_linux', 'helper_macos']) assert.equal(workflow.jobs[name].permissions.contents, 'read');
+  assert.deepEqual(action.runs.steps.filter(step => step.uses).map(step => step.uses), ['actions/cache@v4']);
+  assert.doesNotMatch(readFileSync('scripts/native-agent-cache.mjs', 'utf8'), /getRelease|createRelease|uploadRelease|deleteRelease/);
+  const exporter = action.runs.steps.find(step => step.id === 'export');
+  const directory = mkdtempSync(join(tmpdir(), 'actions-native-cache-'));
+  try {
+    for (const hit of ['true', 'false']) {
+      const output = join(directory, `output-${hit}`), environment = join(directory, `env-${hit}`), summary = join(directory, `summary-${hit}`);
+      writeFileSync(environment, '');
+      const result = spawnSync('bash', ['-c', exporter.run], { encoding: 'utf8', env: {
+        ...process.env, ACTIONS_HIT: hit, DIRECTORY: '.beeline-tools/target/linux-x64/release',
+        GITHUB_WORKSPACE: directory, GITHUB_OUTPUT: output, GITHUB_ENV: environment, GITHUB_STEP_SUMMARY: summary,
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(readFileSync(output, 'utf8'), new RegExp(`source=${hit === 'true' ? 'actions' : 'miss'}`));
+      const exported = readFileSync(environment, 'utf8');
+      assert.equal(exported.includes('BUZZ_AGENT_BIN='), hit === 'true');
+      assert.equal(exported.includes('BUZZ_DEV_MCP_BIN='), hit === 'true');
     }
   } finally { rmSync(directory, { recursive: true, force: true }); }
 });

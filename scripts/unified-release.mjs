@@ -67,6 +67,8 @@ export const COMPONENT_PATH_RULES = [
   { prefix: 'infra/free-agent/', components: ['server'] },
   { exact: 'fly.beeline-free-agents.toml', components: ['server'] },
   { prefix: '.github/actions/daemon-leg/', components: ['helper'] },
+  { prefix: '.github/actions/buzz-agent-cache/', components: ['helper'] },
+  { exact: 'scripts/native-agent-cache.mjs', components: ['helper'] },
   { prefix: '.github/actions/mobile-ota-leg/', components: ['mobile-ota'] },
   { prefix: '.github/actions/pages-leg/', components: ['helper', 'website'] },
   { prefix: '.github/actions/web-app-leg/', components: ['website'] },

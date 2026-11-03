@@ -208,10 +208,19 @@ Every self-hosted job first checks its runner has the tools it needs
 
 Jobs that compile source set up Node 22 once and install once with
 `scripts/npm-ci-timed.sh`, which prints the install's wall time, cache misses, and slowest registry
-fetches. The pinned eas-cli installs from `tools/eas-cli`'s lockfile. Helper
-builds cache `buzz-agent` and `buzz-dev-mcp` per pinned block/buzz commit,
-rustc, and platform. Typecheck and tests ran in CI and do not rerun inside the
-release.
+fetches. The pinned eas-cli installs from `tools/eas-cli`'s lockfile.
+
+Helper builds cache `buzz-agent` and `buzz-dev-mcp` only in Actions cache,
+keyed by the pinned block/buzz commit, platform, Rust/C/C++ toolchain, SDK and
+build flags. `scripts/native-agent-cache.mjs` owns the shared Cargo recipe and
+cache identity. A miss compiles the pinned upstream. Cache lookup is optional
+and bounded to two minutes; native build/install proofs and publication still
+fail normally. No native cache is published to GitHub Releases.
+
+The job summary distinguishes `actions` and `miss`; an invoked Cargo build
+reports its duration separately. A verified full Mac payload carry is another
+path, distinct from a native-binary cache hit. Typecheck and tests ran in CI
+and do not rerun inside the release.
 
 ### Server migration, canary, and rollback
 
@@ -310,8 +319,17 @@ in parallel → `delivery_result`. The checkpoint needs no helper, macOS,
 desktop or store build. The website always deploys its Pages content with the
 previous verified helper channel, even when a helper build is selected; the
 helper publishes its new channel later under the same Pages deployment lock.
-The helper promotion and Android store build wait for the live checkpoint to
-free the production runners. Mac and desktop builds can run concurrently.
+`helper_linux` starts directly after `initialize` on the existing standard
+`ubuntu-22.04` runner type, alongside both Mac builds. It builds and
+install-verifies Linux and compiles the CLI once, then hands only those build
+outputs to the final `helper` job through a same-run artifact. The final job
+requires Linux and both Mac jobs to succeed, verifies and merges the three
+platforms, runs the Pages update proof, packs and smoke-tests the exact compiled
+CLI tarball, and publishes once. It never recompiles a native bundle.
+
+The helper publication and Android store build still wait for the live
+checkpoint to free the production runners. Mac and desktop builds can run
+concurrently. No larger or reserved runner type is required.
 
 `delivery_result` measures dispatch to the last successful live-leg completion,
 using timestamps emitted after the server's two-Machine proof, OTA promotion,

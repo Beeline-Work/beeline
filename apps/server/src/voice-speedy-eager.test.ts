@@ -9,12 +9,14 @@ it.each([0,900])('SPEEDY-EAGER-1: final wait %s ms does not spend committed sear
  const agent={id:'ruby',name:'Ruby',handle:'ruby',soul:'',voice:'luna'};
  const draft=new VoiceEagerReply(new OpenRouterVoiceBrain('test',fetcher),agent,[{role:'user',content:'What is the capital of Japan?'}],[]);
  const search=vi.fn(async()=> {await new Promise(resolve=>setTimeout(resolve,1800)); return 'Tokyo, Japan.';});
+ let pending:ReturnType<VoiceEagerReply['consume']>|undefined;
  try{
   await vi.advanceTimersByTimeAsync(waitMs);
   expect(search).not.toHaveBeenCalled();
-  const pending=draft.consume(()=>{},{agents:[],announce:async()=>{},search},new AbortController().signal);
+  pending=draft.consume(()=>{},{agents:[],announce:async()=>{},search},new AbortController().signal);
+  void pending.catch(()=>{});
   await vi.advanceTimersByTimeAsync(2000);
   const result=await pending;
   expect(result).toEqual({text:'Tokyo.',order:false});
- }finally{draft.cancel();vi.useRealTimers();}
+ }finally{draft.cancel();await pending?.catch(()=>{});vi.useRealTimers();}
 });

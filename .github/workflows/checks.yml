@@ -630,25 +630,6 @@ jobs:
           BEELINE_LAUNCHD_USER: '0'
         run: npx vitest run src/fresh-room-discovery.integration.test.ts
 
-  # Temporary, branch-scoped evidence: today's balanced shards no longer keep
-  # the original failing files together. Do not change required shard coverage.
-  server-timer-repro:
-    name: SERVER TIMER REPRO
-    needs: [changes, prepare-workspace]
-    if: >-
-      !cancelled() && github.event_name == 'pull_request' &&
-      github.head_ref == 'fm/beeline-fix-intermittent-tray-approval-ask-voice-67'
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/ci-workspace
-        with:
-          prepared: 'true'
-          preparation-result: ${{ needs.prepare-workspace.result }}
-      - name: Replay the original failing single-fork group
-        run: node apps/server/scripts/timer-failure-repro.mjs
-
   # Not a required check: when it fails or is skipped, the shards run every
   # file. It downloads the newest coverage map built on the PR's base branch
   # (or its own branch) whose commit is in the PR's history, and diffs from
@@ -762,7 +743,6 @@ jobs:
         if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push' || inputs.suite != 'server-integration'
         working-directory: apps/server
         env:
-          SERVER_TIMER_DIAGNOSTICS: '1'
           # Move wall-clock budgets only when their existing hosted gate runs.
           SERVER_HOSTED_TIMING: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && needs.changes.outputs.productionCorpusReplay == 'true' }}
         run: node scripts/run-ci-shard.mjs ${{ matrix.shard }}/8

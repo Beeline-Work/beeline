@@ -381,19 +381,6 @@ it('re-arms durable commander windows at startup and flushes through one timeout
     await db.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE id=$1`,[delayed!.id]);
     await vi.advanceTimersByTimeAsync(61000);await db.query('SELECT 1');
     expect((await inbox()).some(command=>command.id===delayed!.id)).toBe(true);
-    if (process.env.SERVER_TIMER_DIAGNOSTICS === '1' && vi.getTimerCount() !== 0) {
-      // countTimers includes fake microtasks too. Capture the pending work
-      // before the finally block restores the clock and discards that evidence.
-      const { clock } = setTimeout as typeof setTimeout & { clock?: {
-        timers?: Record<string, { type: string; createdAt: number; callAt: number; delay: number }>;
-        jobs?: Array<{ func?: { name?: string } }>;
-      } };
-      console.error('[wake-inbox-pending-clock]', JSON.stringify({
-        timers: Object.values(clock?.timers ?? {}).map(({ type, createdAt, callAt, delay }) =>
-          ({ type, createdAt, callAt, delay })),
-        microtasks: clock?.jobs?.map(job => job.func?.name),
-      }));
-    }
     expect(vi.getTimerCount()).toBe(0);expect(errors).toEqual([]);
   }finally{deadlines.stop();vi.useRealTimers();}
 });

@@ -50,11 +50,16 @@ runs:
           await publishPagesChannel({ github, repo: context.repo, directory: process.env.BUNDLE_DIR,
             expectedSha: process.env.RELEASE_SHA, expectedVersion: process.env.RELEASE_VERSION });
     - uses: actions/configure-pages@v5
+    # One release run can deploy Pages from both the website and helper legs,
+    # so each leg uploads under its own artifact name.
     - uses: actions/upload-pages-artifact@v5
       with:
+        name: github-pages-${{ github.job }}-${{ github.run_attempt }}
         path: ${{ runner.temp }}/usebeeline-pages
         include-hidden-files: true
     - uses: actions/deploy-pages@v4
+      with:
+        artifact_name: github-pages-${{ github.job }}-${{ github.run_attempt }}
     # Only a new helper needs the update proof; a website-only deploy
     # republishes the durable channel unchanged.
     - name: Prove a real helper update from the deployed Pages host

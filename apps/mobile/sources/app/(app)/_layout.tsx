@@ -22,7 +22,7 @@ export default function RootLayout() {
   React.useEffect(() => watchSessionRequired(
     () => router.replace('/beeline/onboarding'), undefined,
     () => !pathnameRef.current.startsWith('/review/'),
-  ), []);
+  ), [pathname]);
   React.useEffect(() => {
     // Delivery is required on every signed-in route, including a stale web tab.
     void startMessageOutbox();

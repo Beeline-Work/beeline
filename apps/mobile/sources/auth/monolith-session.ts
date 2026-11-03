@@ -96,6 +96,8 @@ export class GitHubAccountMismatchError extends Error {
 
 export class MonolithSession {
   private readonly identityListeners = new Set<() => void>();
+  private readonly sessionRequiredListeners = new Set<() => void>();
+  private sessionRequired = false;
   private access?: { token: string; expiresAt: number; identityId: string };
   private refreshToken?: string;
   private refreshInFlight?: Promise<string>;
@@ -221,6 +223,7 @@ export class MonolithSession {
   }
 
   async identityId(): Promise<string | null> {
+    if (this.sessionRequired) return null;
     return this.access?.identityId ?? (await this.secureStorage()).getItemAsync(IDENTITY_KEY);
   }
 
@@ -230,6 +233,14 @@ export class MonolithSession {
     return () => {
       this.identityListeners.delete(listener);
     };
+  }
+
+  /** Replay confirmed revocation to routes that mount after cold-start auth.
+   * This signal never waits on native credential cleanup or another read. */
+  subscribeSessionRequired(listener: () => void): () => void {
+    this.sessionRequiredListeners.add(listener);
+    if (this.sessionRequired) listener();
+    return () => { this.sessionRequiredListeners.delete(listener); };
   }
 
   private identityChanged(): void {
@@ -255,6 +266,7 @@ export class MonolithSession {
         return;
       this.credentialRevision += 1;
       this.sessionRevision += 1;
+      this.sessionRequired = false;
       this.access = undefined;
       this.refreshToken = undefined;
       this.accessRestoreAttempted = false;
@@ -326,6 +338,7 @@ export class MonolithSession {
   }
 
   async authorization(fetchImpl: typeof fetch = this.fetchImpl): Promise<string> {
+    if (this.sessionRequired) throw new MonolithSessionRequiredError();
     const current = this.validAccessToken();
     if (current) return current;
     if (!this.access) {
@@ -534,7 +547,12 @@ export class MonolithSession {
       if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
       this.assertSharedRefresh(refreshToken);
       if (response.status === 401) {
-        await this.clear();
+        this.sessionRequired = true;
+        const cleanup = this.clear();
+        for (const listener of [...this.sessionRequiredListeners]) {
+          try { listener(); } catch { /* Navigation cannot block credential cleanup. */ }
+        }
+        await untilAborted(cleanup, controller.signal);
         throw new MonolithSessionRequiredError();
       }
       if (!response.ok) throw new MonolithRefreshError(response.status);
@@ -599,6 +617,7 @@ export class MonolithSession {
         ),
       ]);
       if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
+      this.sessionRequired = false;
       this.refreshToken = tokens.refreshToken;
       this.access = {
         token: tokens.accessToken,

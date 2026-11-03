@@ -24,12 +24,12 @@ export function routerAuthority(scopes: RouterAuthorityCertificate['scopes']): R
 }
 export function routerAtomicGroup(input: RouterSnapshotInput, viewer: string): string {
   return input.family.startsWith('needs-you') ? `needs-you:${input.workspaceId}:${viewer}`
-    : input.family === 'room-head'||input.family==='room-scheduled-work' ? `${input.family}:${input.roomId}:${viewer}` : `room-list:${input.workspaceId}:${viewer}`;
+    : input.family === 'room-head'||input.family==='room-scheduled-work'||input.family==='room-workflows' ? `${input.family}:${input.roomId}:${viewer}` : `${input.family}:${input.workspaceId}:${viewer}`;
 }
 export type ResolvedRouterSnapshotInput = { readonly family: RouterFamily; readonly workspaceId:string; readonly roomId?:string; readonly before?:string };
 export async function resolveRouterInput(db: SqlDatabase, input: RouterSnapshotInput | ResolvedRouterSnapshotInput): Promise<ResolvedRouterSnapshotInput> {
   if (input.workspaceId) return {...input,workspaceId:input.workspaceId};
-  if ((input.family !== 'room-head'&&input.family!=='room-scheduled-work') || !input.roomId) throw new RouterProjectionUnavailable('dependency');
+  if ((input.family !== 'room-head'&&input.family!=='room-scheduled-work'&&input.family!=='room-workflows') || !input.roomId) throw new RouterProjectionUnavailable('dependency');
   const room=(await db.query<{workspace_id:string}>(`SELECT workspace_id FROM rooms WHERE id=$1`,[input.roomId])).rows[0];
   if (!room) throw new RouterProjectionUnavailable('authority');
   return {...input,workspaceId:room.workspace_id};
@@ -100,7 +100,7 @@ export async function buildRouterSnapshot(database: SqlDatabase, input: RouterSn
     const snapshot = { kind: 'snapshot' as const, family: input.family, scope: input.roomId ?? input.workspaceId,
       value, cut: await readRouterCut(db, resolved.workspaceId), atomicGroup: routerAtomicGroup(input, viewer), authority,
       ...(clock?{clockVersion:clock.clockVersion}:{}) } as RouterSnapshot;
-    const limit = input.family === 'needs-you-count' ? 1024 : ['room-head','room-scheduled-work','needs-you-tray','needs-you-saved-page'].includes(input.family) ? PART_BYTES : MAX_BYTES;
+    const limit = input.family === 'needs-you-count' ? 1024 : ['room-head','room-scheduled-work','needs-you-tray','needs-you-saved-page','workspace-roster','room-workflows'].includes(input.family) ? PART_BYTES : MAX_BYTES;
     if (Buffer.byteLength(JSON.stringify(snapshot)) > limit) throw new RouterProjectionUnavailable('budget');
     return snapshot;
   });
@@ -209,9 +209,15 @@ export class RouterProjectionDrain {
 
 const ROOM_SCOPE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function groupInput(group:string,workspace:string,viewer:string):ResolvedRouterSnapshotInput|undefined {
+  if(group===`workspace-roster:${workspace}:${viewer}`)return {family:'workspace-roster',workspaceId:workspace};
   if(group===`room-list:${workspace}:${viewer}`)return {family:'room-list',workspaceId:workspace};
   if(group===`needs-you:${workspace}:${viewer}`)return {family:'needs-you',workspaceId:workspace};
   const prefix='room-head:',suffix=`:${viewer}`;
+  const workflows='room-workflows:';
+  if(group.startsWith(workflows)&&group.endsWith(suffix)){
+    const room=group.slice(workflows.length,-suffix.length);
+    if(ROOM_SCOPE.test(room))return {family:'room-workflows',workspaceId:workspace,roomId:room};
+  }
   const scheduled='room-scheduled-work:';
   if(group.startsWith(scheduled)&&group.endsWith(suffix)){
     const room=group.slice(scheduled.length,-suffix.length);
@@ -235,6 +241,10 @@ function validGroupCertificate(authority:RouterAuthorityCertificate,readerScope:
 }
 function validProjectedMember(fact:RouterFact,input:ResolvedRouterSnapshotInput,workspace:string,viewer:string,readerScope:string):boolean {
   const payload=fact.payload,scope=input.roomId??workspace;
+  if(payload.kind==='needs-you-rooms-replace')return !input.roomId&&input.family==='needs-you'&&payload.scope===workspace&&
+    Number.isSafeInteger(payload.count)&&payload.count===payload.order.length&&payload.order.length<=500&&
+    new Set(payload.order).size===payload.order.length&&payload.rooms.length<=128&&
+    payload.rooms.every(room=>ROOM_SCOPE.test(room.roomId)&&room.items.every(item=>item.workspaceId===workspace&&item.roomId===room.roomId));
   if(payload.kind==='tray-classification'||payload.kind==='tray-needs-replace'){
     if(input.roomId||payload.scope!==workspace||fact.atomicGroup!==`needs-you:${workspace}:${viewer}`)return false;
     return payload.kind==='tray-classification'?payload.version===1&&/^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion):payload.value.items.length<=30;
@@ -253,7 +263,7 @@ function validProjectedMember(fact:RouterFact,input:ResolvedRouterSnapshotInput,
     ?payload.scope===input.roomId&&payload.authorityScope===`room:${input.roomId}`
     :payload.scope===workspace&&payload.authorityScope===`${readerScope}:visibility`);
   return payload.kind==='scope-replace'&&payload.scope===scope&&
-    routerAtomicGroup({family:payload.family,workspaceId:workspace,...(payload.family==='room-head'?{roomId:scope}:{})} as RouterSnapshotInput,viewer)===fact.atomicGroup;
+    routerAtomicGroup({family:payload.family,workspaceId:workspace,...(['room-head','room-workflows'].includes(payload.family)?{roomId:scope}:{})} as RouterSnapshotInput,viewer)===fact.atomicGroup;
 }
 
 /** One short final fence covers all permitted groups and current content-free

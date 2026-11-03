@@ -2,6 +2,7 @@ import type { LaneAuthority, LaneBatch, LaneCut, LaneRequest, LaneSnapshot, Lane
 import { LaneStaging, intervalId, sameStream, type IntervalStage } from './lane-staging.js';
 import { jsonBytes, stagingWithinBudget, remember } from './staging-bounds.js';
 import { checkTraySnapshot, equal, exactCut, foldTray, trayCertificate, trayClock, trayFamily } from './tray-group.js';
+import { foldNeedsYouRooms } from './needs-you-rooms.js';
 
 export type GroupCell={key:string;request:LaneRequest;expectedWorkspace?:string;view:LaneView;
   snapshot?:LaneSnapshot;baseline?:Omit<LaneSnapshot,'value'>;classified?:LaneCut;flight?:Promise<void>;
@@ -14,7 +15,7 @@ type Group={id:string;workspace:string;intervals:IntervalStage;history:Map<strin
 export type GroupProposal<T extends GroupCell>=Readonly<{id:string;group?:Group;items:readonly CellSnapshot<T>[];
   whole:readonly CellSnapshot<T>[];versions:readonly number[];cut?:LaneCut;clockVersion?:string}>;
 const REPLACE='scope-replace',UNAVAILABLE='Projection unavailable; Retry.';
-const room=(request:LaneRequest)=>request.family==='room-head'||request.family==='room-scheduled-work';
+const room=(request:LaneRequest)=>request.family==='room-head'||request.family==='room-scheduled-work'||request.family==='room-workflows';
 const scope=(request:LaneRequest)=>room(request)?request.roomId!:request.workspaceId!;
 
 /** The single local member/receipt/interval/proposal owner. ReadLanes alone
@@ -84,6 +85,10 @@ export class ProjectionGroups<T extends GroupCell>{
   }
   stage(batch:LaneBatch,replay:boolean,generation:number,scheduled:boolean,current:()=>boolean):{proposals:GroupProposal<T>[];unavailable:string[]}{
     const proposals:GroupProposal<T>[]=[],unavailable:string[]=[],items:CellSnapshot<T>[]=[];
+    const roomGroups=new Set(batch.facts.filter(fact=>fact.payload.kind==='needs-you-rooms-replace').map(fact=>fact.atomicGroup));
+    const openingGroups=new Set([...this.cells.values()].filter(cell=>cell.flight&&
+      (cell.request.family==='needs-you'||cell.request.family==='needs-you-count'))
+      .map(cell=>cell.snapshot?.atomicGroup??this.group(cell.request.workspaceId!)).filter(group=>roomGroups.has(group)));
     if(this.strict&&!replay){
       try{for(const state of this.groups.values())if(current()&&!state.failed&&batch.to.stream===`workspace:${state.workspace}`){
         this.stageTray(state,batch);const proposal=this.prepare(state);if(proposal)proposals.push(proposal);
@@ -93,6 +98,11 @@ export class ProjectionGroups<T extends GroupCell>{
       if(!current())return{proposals:[],unavailable:[]};
       if(this.joint(cell)||cell.view.state==='PARKED')continue;
       const held=cell.snapshot??cell.baseline;
+      const group=held?.atomicGroup??this.group(cell.request.workspaceId!);
+      if(openingGroups.has(group)){
+        try{cell.queued.add(batch,batch.facts.filter(fact=>fact.atomicGroup===group));}
+        catch{this.park(cell,'Projection queue overflow; Retry.');}continue;
+      }
       if(cell.flight){
         if(cell.request.workspaceId?batch.to.stream!==`workspace:${cell.request.workspaceId}`:
           !batch.facts.some(fact=>fact.payload.kind===REPLACE&&fact.payload.family===cell.request.family&&fact.payload.scope===scope(cell.request)))continue;
@@ -112,6 +122,16 @@ export class ProjectionGroups<T extends GroupCell>{
         const facts=batch.facts.filter(fact=>fact.atomicGroup===held.atomicGroup);
         if(!facts.length&&!(scheduled&&cell.request.family==='room-scheduled-work'&&batch.scheduledWorkClassification))continue;
         try{cell.queued.add(batch,facts,jsonBytes(batch),true);}catch{this.park(cell,'Projection gap; Retry.');}continue;
+      }
+      const roomChanges=cell.request.family==='needs-you'?batch.facts.filter(fact=>fact.payload.kind==='needs-you-rooms-replace'&&fact.payload.scope===scope(cell.request)):[];
+      if(roomChanges.length){
+        const fact=roomChanges[0]!;
+        try{
+          if(roomChanges.length!==1||fact.payload.kind!=='needs-you-rooms-replace'||!this.authorized(fact.authority))throw new Error('Invalid Needs-you group');
+          const value=foldNeedsYouRooms(cell.snapshot?.value,fact.payload);
+          if(!this.valid(cell.request,value))throw new Error('Invalid Needs-you value');
+          items.push({cell,snapshot:{kind:'snapshot',value,cut:batch.to,atomicGroup:fact.atomicGroup,authority:fact.authority}});
+        }catch{this.park(cell,'Incomplete Needs-you coverage; Retry.');}continue;
       }
       const facts=batch.facts.filter(fact=>fact.payload.kind===REPLACE&&fact.payload.family===cell.request.family&&fact.payload.scope===scope(cell.request));
       const fact=facts.at(-1);

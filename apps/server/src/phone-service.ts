@@ -167,7 +167,7 @@ import {
 } from './message-mentions.js';
 import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { clearNeedsYouQuestions, countNeedsYouItems, countNeedsYouProjection, readNeedsYouCountSnapshot, needsYouItems, markNeedsYouSeen } from './needs-you.js';
+import { clearNeedsYouQuestions, countNeedsYouItems, countNeedsYouProjection, readNeedsYouCountSnapshot, readNeedsYouOrder, needsYouItems, markNeedsYouSeen } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyAgentConfigRoom,
@@ -1188,6 +1188,17 @@ export class PhoneService {
     viewerId: string,options?:{readonly trayClock?:true}): Promise<RouterValues[RouterFamily] | null> {
     const reader = new PhoneService(database, this.publicOrigin);
     reader.pureProjection = true;
+    if (input.family === 'room-workflows') {
+      const value=await reader.listRoomWorkflowRuns(input.roomId, viewerId);
+      if(value.workflows.length>30||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
+      return value;
+    }
+    if (input.family === 'workspace-roster') {
+      const value = await reader.readWorkspace(input.workspaceId, viewerId);
+      if (value && (value.members.length + value.agents.length > 100 ||
+          Buffer.byteLength(JSON.stringify(value)) > 64 * 1024)) throw new RouterProjectionUnavailable('budget');
+      return value;
+    }
     if (input.family === 'room-list') return reader.readChats(input.workspaceId, viewerId);
     if (input.family === 'room-head') {
       if (!input.roomId) throw new Error('roomId is required for room-head');
@@ -1212,6 +1223,16 @@ export class PhoneService {
   async buildRouterNeedsHead(database:SqlDatabase,workspaceId:string,viewerId:string){
     const value=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,'committed');
     if(value.items.length>30||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
+    return value;
+  }
+
+  async buildRouterNeedsRooms(database:SqlDatabase,workspaceId:string,viewerId:string,rooms:readonly string[]){
+    if(rooms.length>128)throw new RouterProjectionUnavailable('budget');
+    const order=await readNeedsYouOrder(database,workspaceId,viewerId);
+    const {items}=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,'wall',rooms);
+    const value={kind:'needs-you-rooms-replace' as const,scope:workspaceId,...order,
+      rooms:rooms.map(roomId=>({roomId,items:items.filter(item=>item.roomId===roomId)}))};
+    if(items.length>30||order.order.length>500||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
     return value;
   }
 

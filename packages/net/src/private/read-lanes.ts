@@ -1,19 +1,19 @@
-import type { SavedRowPayload, TrayGroupPayload } from '@beeline/api-contract/router-protocol';
+import type { SavedRowPayload, TrayGroupPayload, NeedsYouRoomsPayload } from '@beeline/api-contract/router-protocol';
 import { trayFamily } from './tray-group.js';
 import { ProjectionGroups, type GroupCell, type GroupProposal } from './projection-groups.js';
 import { jsonBytes as bytes, stagingWithinBudget } from './staging-bounds.js';
 import { LaneStaging, sameStream } from './lane-staging.js';
 /** Local state only. No transport, clock, scheduler, native module or server inventory. */
-export type LaneFamily = 'room-list' | 'needs-you' | 'needs-you-tray' | 'needs-you-count' | 'room-head'|'room-scheduled-work'|'needs-you-saved-page';
-export type LaneRequest = Readonly<{ family: 'room-head'|'room-scheduled-work'; roomId: string; workspaceId?: string }> |
-  Readonly<{ family: Exclude<LaneFamily, 'room-head'|'room-scheduled-work'|'needs-you-saved-page'>; workspaceId: string; roomId?: never }>|
+export type LaneFamily = 'room-list' | 'needs-you' | 'needs-you-tray' | 'needs-you-count' | 'room-head'|'room-scheduled-work'|'needs-you-saved-page'|'workspace-roster'|'room-workflows';
+export type LaneRequest = Readonly<{ family: 'room-head'|'room-scheduled-work'|'room-workflows'; roomId: string; workspaceId?: string }> |
+  Readonly<{ family: Exclude<LaneFamily, 'room-head'|'room-scheduled-work'|'room-workflows'|'needs-you-saved-page'>; workspaceId: string; roomId?: never }>|
   Readonly<{family:'needs-you-saved-page';workspaceId:string;before?:string;roomId?:never}>;
 export type LaneCut = Readonly<{ stream: string; epoch: string; through: number; protocol: 1 }>;
 export type LaneAuthority = Readonly<{ digest: string; scopes: readonly Readonly<{ authorityScope: string; epoch: string }>[] }>;
 export type LaneSnapshot = Readonly<{ kind: 'snapshot'; value: unknown; cut: LaneCut; atomicGroup: string; authority: LaneAuthority;clockVersion?:string }>;
 export type LaneState = 'ABSENT' | 'OPENING' | 'LIVE' | 'PARKED' | 'INACTIVE_CACHED' | 'REVOKED';
 export type LaneView = Readonly<{ state: LaneState; value: unknown | null; error: string | null; cut: LaneCut | null }>;
-export type LaneFact = Readonly<{ atomicGroup: string; authority: LaneAuthority; payload:SavedRowPayload|TrayGroupPayload
+export type LaneFact = Readonly<{ atomicGroup: string; authority: LaneAuthority; payload:SavedRowPayload|TrayGroupPayload|NeedsYouRoomsPayload
   | { kind: 'scope-replace'; family: LaneFamily; scope: string; value: unknown }
   | { kind: 'authority'; scope: string; authorityScope?: string; allowed: boolean }
   | {kind:'authority-fence';scope:string;authorityScope:string;mode:'deny'|'advance'}
@@ -39,10 +39,12 @@ const SCHEDULED_FAMILY='room-scheduled-work';
 const ABSENT_VIEW: LaneView = Object.freeze({ state: 'ABSENT', value: null, error: null, cut: null });
 const absent = (): LaneView => ABSENT_VIEW;
 const liveOwner = (entry: Entry): boolean => [...entry.owners.values()].some(owner => owner.active && owner.permit.isCurrent());
-const roomFamily=(family:LaneFamily):boolean=>family==='room-head'||family===SCHEDULED_FAMILY;
+const roomFamily=(family:LaneFamily):boolean=>family==='room-head'||family===SCHEDULED_FAMILY||family==='room-workflows';
 // The original projection cohort has no proven inactive Room feed. Only an
 // explicitly negotiated DB-audience feed can lift that conservative guard.
 const CONTINUOUS_CACHE:Readonly<Record<LaneFamily,boolean>>={
+  'workspace-roster':true,
+  'room-workflows':true,
   'room-list':true,'needs-you':true,'needs-you-tray':true,'needs-you-count':true,'room-head':false,'room-scheduled-work':true,'needs-you-saved-page':true,
 };
 
@@ -315,7 +317,7 @@ export class ReadLanes {
     for(const entry of this.entries.values()){
       const held=entry.snapshot??entry.baseline;
       const canonical=roomFamily(entry.request.family)?`${entry.request.family}:${entry.request.roomId}:${this.identity.principal}`:
-        `${entry.request.family==='room-list'?'room-list':'needs-you'}:${entry.request.workspaceId}:${this.identity.principal}`;
+        `${entry.request.family.startsWith('needs-you')?'needs-you':entry.request.family}:${entry.request.workspaceId}:${this.identity.principal}`;
       if(held?held.atomicGroup!==group||held.cut.stream!==stream:
         canonical!==group||(entry.request.workspaceId?stream!==`workspace:${entry.request.workspaceId}`:!stream.startsWith('workspace:')))continue;
       this.transition(entry,{...absent(),state:'PARKED',error:UNAVAILABLE});changed.push(entry);

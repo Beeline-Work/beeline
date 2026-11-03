@@ -355,7 +355,7 @@ export class LiveConnection {
     if (this.routerState === 'waiting' && (frame.type === 'router-capabilities' ||
       frame.type === 'sync-ok' || frame.type === 'subscribed' || frame.t === 'res')) {
       const families: RouterFamily[] = frame.type === 'router-capabilities' && frame.protocol === 1 && Array.isArray(frame.families)
-        ? ['room-list', 'needs-you-count', 'room-head','room-scheduled-work'].filter(f => (frame.families as unknown[]).includes(f)&&
+        ? ['room-list', 'needs-you-count', 'room-head','room-scheduled-work','workspace-roster','room-workflows'].filter(f => (frame.families as unknown[]).includes(f)&&
           (f!=='room-scheduled-work'||frame.commandDedupV1===true&&frame.authorityFencesV1===true)) as RouterFamily[] : [];
       this.commandDedupV1 = frame.type === 'router-capabilities' && frame.protocol === 1 && frame.commandDedupV1 === true;
       this.routerState = 'initializing';

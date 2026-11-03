@@ -230,12 +230,13 @@ export function viewerMemberSql(workspaceId: string, viewerId: string): string {
 }
 const VIEWER_MEMBER = viewerMemberSql('$1', '$2');
 
-const viewerRoomsSql = (columns='room.*')=>`
+const viewerRoomsSql = (columns='room.*',scoped=false)=>`
   viewer_rooms AS (
     SELECT ${columns} FROM room_access room_member
     JOIN rooms room ON room.id=room_member.room_id
     WHERE room_member.identity_id=$2 AND room_member.removed_at IS NULL
       AND room.workspace_id=$1 AND room.archived_at IS NULL
+      ${scoped?'AND room.id=ANY($4::uuid[])':''}
       AND ${VIEWER_MEMBER}
   )`;
 const VIEWER_ROOMS=viewerRoomsSql();
@@ -293,8 +294,9 @@ const VIEWER_MANAGES_WORKSPACE = `EXISTS (
   WHERE manager.workspace_id=$1 AND manager.room_id IS NULL AND manager.identity_id=$2
     AND manager.removed_at IS NULL AND manager.role IN ('owner','admin'))`;
 
-type CandidateProjection='cells'|'count';
-const candidateColumns=(projection:CandidateProjection)=>projection==='cells'?ROW_COLUMNS:'m.id message_id,m.card,mark.cleared_at';
+type CandidateProjection='cells'|'count'|'order';
+const candidateColumns=(projection:CandidateProjection)=>projection==='cells'?ROW_COLUMNS:
+  'm.id message_id,m.card,mark.cleared_at'+(projection==='order'?',m.created_at,mark.first_seen_at':'');
 function approvalBranches(projection:CandidateProjection,clock:NeedsClockMode='wall'):readonly string[]{
 const columns=candidateColumns(projection);
 const APPROVAL_FROM = (
@@ -302,7 +304,7 @@ const APPROVAL_FROM = (
   expiresAt = 'NULL::timestamptz',
   actorName = 'NULL::text',
 ) => `
-  SELECT ${columns},'${kind}' approval_kind,${projection==='cells'?expiresAt:'NULL::timestamptz'} approval_expires_at,
+  SELECT ${columns},'${kind}' approval_kind,${projection!=='count'?expiresAt:'NULL::timestamptz'} approval_expires_at,
     NULL::text[] pending_grant_ids,${projection==='cells'?actorName:'NULL::text'} actor_name
   FROM viewer_rooms room`;
 
@@ -442,7 +444,7 @@ const questionBranch=(projection:CandidateProjection,questionLimit=CANDIDATE_LIM
   LIMIT ${questionLimit}`;
 
 /** The same authorized candidates drive the tray and its badge. */
-const needsYouCandidates=(projection:CandidateProjection,questionLimit=CANDIDATE_LIMIT,clock:NeedsClockMode='wall')=>`WITH ${viewerRoomsSql(projection==='count'?'room.id':'room.*')},
+const needsYouCandidates=(projection:CandidateProjection,questionLimit=CANDIDATE_LIMIT,clock:NeedsClockMode='wall',scoped=false)=>`WITH ${viewerRoomsSql(projection==='cells'?'room.*':'room.id',scoped)},
   decidable AS (
     SELECT grant_row.id::text grant_id FROM agent_grants grant_row
     WHERE grant_row.workspace_id=$1 AND grant_row.status='pending' AND grant_row.superseded_at IS NULL
@@ -511,6 +513,21 @@ export async function countNeedsYouProjection(database:SqlDatabase,workspaceId:s
   return count;
 }
 
+/** The existing aggregate count boundary returns only the complete server
+ * order, never unaffected Room cell bodies. Cells are read by exact scope. */
+export async function readNeedsYouOrder(database:SqlDatabase,workspaceId:string,viewerId:string,clock:NeedsClockMode='wall'){
+  const result=await database.query<{ids:string[];questions:number;authorized:boolean}>(
+    `${needsYouCandidates('order',CANDIDATE_LIMIT+1,clock)}
+     SELECT COALESCE(array_agg(message_id ORDER BY (approval_kind IS NULL),
+       floor(extract(epoch FROM CASE WHEN approval_kind IS NULL THEN first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours' ELSE approval_expires_at END)) NULLS LAST,
+       floor(extract(epoch FROM created_at)*1000),message_id COLLATE "C"),'{}'::text[]) ids,count(*) FILTER(WHERE approval_kind IS NULL)::int questions,
+       ${VIEWER_MEMBER} authorized FROM candidates WHERE ${VISIBLE_CANDIDATE}`,[workspaceId,viewerId]);
+  const row=result.rows[0];
+  if(!row?.authorized)throw new Error('workspace membership required');
+  if(row.questions>CANDIDATE_LIMIT||new Set(row.ids).size!==row.ids.length)throw new RouterProjectionUnavailable('budget');
+  return {count:row.ids.length,order:row.ids};
+}
+
 /** The scalar badge, stream head and authority all come from one PostgreSQL
  * statement snapshot. A single pure SELECT needs no extra transaction/setup
  * or separate membership/head reads to establish its coherent cut. */
@@ -566,6 +583,7 @@ export async function needsYouItems(
   }) => RoomViewIdentity,
   markSeen = true,
   clock:NeedsClockMode='wall',
+  roomIds?:readonly string[],
 ): Promise<{ items: NeedsYouItemView[] }> {
   if(clock==='committed'&&markSeen)throw new Error('Committed Tray projection must be read-only');
   const result = await database.query<Row & {
@@ -573,7 +591,7 @@ export async function needsYouItems(
     viewer_handle: string | null;
     authorized: boolean;
   }>(
-    `${clock==='committed'?COMMITTED_NEEDS_YOU_CANDIDATES:NEEDS_YOU_CANDIDATES},
+    `${roomIds?needsYouCandidates('cells',CANDIDATE_LIMIT,clock,true):clock==='committed'?COMMITTED_NEEDS_YOU_CANDIDATES:NEEDS_YOU_CANDIDATES},
      visible AS MATERIALIZED (SELECT * FROM candidates WHERE ${VISIBLE_CANDIDATE}),
      started AS (
        ${markSeen ? `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
@@ -590,7 +608,7 @@ export async function needsYouItems(
      LEFT JOIN visible ON true
      LEFT JOIN started ON started.message_id=visible.message_id
      LEFT JOIN identities viewer ON viewer.id=$2`,
-    [workspaceId, viewerId, markSeen],
+    roomIds?[workspaceId, viewerId, markSeen,roomIds]:[workspaceId, viewerId, markSeen],
   );
   if (!result.rows[0]?.authorized) throw new Error('workspace membership required');
   const built = result.rows.filter((row) => row.message_id &&

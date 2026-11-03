@@ -24,6 +24,7 @@ import { RouterProjectionDrain, RouterProjectionUnavailable, encodeRouterBatch, 
 /** An explicit rollout policy, independently gated on the committed LISTEN.
  * Defaults advertise no families until capture/fence/differential proofs pass. */
 export interface RouterProjectionPolicy {
+  readonly needsYouRoomsV1?:boolean;
   readonly families: readonly RouterFamily[];
   readonly listenerReady: () => boolean;
   /** Installed shared control consumer, not a separate rollout switch. */
@@ -153,6 +154,9 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
             const plan = routerSourcePlan(causes,viewer,workspace);
             const facts: RouterFact[] = [];
             const jointTray=negotiated.includes('needs-you-saved-page');
+            const scopedNeedsEnabled=message.needsYouRoomsV1===true&&policy?.needsYouRoomsV1===true&&!jointTray&&
+              negotiated.includes('needs-you')&&plan.families.has('needs-you')&&!plan.allRooms&&plan.rooms.size>0;
+            let scopedNeeds:Awaited<ReturnType<PhoneService['buildRouterNeedsRooms']>>|undefined;
             const clock=jointTray&&policy?.trayClockAvailability?.ready()?await readTrayClockBasis(db,workspace):undefined;
             if(jointTray){
               const input={family:'needs-you-tray',workspaceId:workspace} as const;
@@ -160,7 +164,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
               if(clock?.ready)facts.push({atomicGroup,authority,payload:{kind:'tray-classification',scope:workspace,version:1,clockVersion:clock.clockVersion}});
               else facts.push({atomicGroup,authority,payload:{kind:'group-unavailable',scope:workspace,reason:'dependency'}});
             }
-            const roomAudience=negotiated.includes('room-head')?await readRouterRoomAudience(db,workspace,viewer,plan):[];
+            const roomAudience=negotiated.some(family=>family==='room-head'||family==='room-workflows')?await readRouterRoomAudience(db,workspace,viewer,plan):[];
             const scheduledAudience=negotiated.includes('room-scheduled-work')?await scheduledWorkAudience(db,workspace,viewer,plan,!!coverageOwner):[];
             for (const family of negotiated) {
               if(jointTray&&!clock?.ready&&family.startsWith('needs-you'))continue;
@@ -218,11 +222,12 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
               const affected=plan.families.has(family);
               // Workspace group names follow DB audience and the closed
               // registry. This is not a report of what a phone caches.
-              const scopes = family === 'room-head' ? roomAudience.map(room=>room.roomId) : [workspace];
+              const roomScoped=family==='room-head'||family==='room-workflows';
+              const scopes = roomScoped ? roomAudience.map(room=>room.roomId) : [workspace];
               for (const scope of scopes) {
-                const input = (family==='room-head' ? {family,workspaceId:workspace,roomId:scope} : {family,workspaceId:workspace}) satisfies RouterSnapshotInput;
-                const room=family==='room-head'?roomAudience.find(room=>room.roomId===scope):undefined;
-                const changed=room?.changed??affected;
+                const input = (roomScoped ? {family,workspaceId:workspace,roomId:scope} : {family,workspaceId:workspace}) as RouterSnapshotInput;
+                const room=roomScoped?roomAudience.find(room=>room.roomId===scope):undefined;
+                const changed=family==='room-workflows'?affected&&!!room&&(plan.allRooms||plan.rooms.has(scope)||room.parentId!==null&&plan.rooms.has(room.parentId)):room?.changed??affected;
                 if(room&&!room.complete){
                   facts.push({atomicGroup:routerAtomicGroup(input,viewer),authority:room.authority,
                     payload:{kind:'group-unavailable',scope,reason:'authority'}});continue;
@@ -249,15 +254,22 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
                   continue;
                 }
                 if(!changed){
-                  const group=routerAtomicGroup(input,viewer),domain=family==='room-head'?`room:${scope}`:`reader:${viewer}:workspace:${workspace}:visibility`;
+                  const group=routerAtomicGroup(input,viewer),domain=roomScoped?`room:${scope}`:`reader:${viewer}:workspace:${workspace}:visibility`;
                   if(!facts.some(fact=>fact.atomicGroup===group&&fact.payload.kind==='authority-fence'))
-                    facts.push({atomicGroup:group,authority,payload:{kind:'authority-fence',scope:family==='room-head'?scope:workspace,authorityScope:domain,mode:'advance'}});
+                    facts.push({atomicGroup:group,authority,payload:{kind:'authority-fence',scope:roomScoped?scope:workspace,authorityScope:domain,mode:'advance'}});
                   continue;
                 }
                 if(jointTray&&family==='needs-you-tray'){
                   facts.push({atomicGroup:routerAtomicGroup(input,viewer),authority,
                     payload:{kind:'tray-needs-replace',scope:workspace,value:await sources.phone.buildRouterNeedsHead(db,workspace,viewer)}});
                   continue;
+                }
+                if(scopedNeedsEnabled&&family==='needs-you'){
+                  scopedNeeds=await sources.phone.buildRouterNeedsRooms(db,workspace,viewer,[...plan.rooms].sort());
+                  facts.push({atomicGroup:routerAtomicGroup(input,viewer),authority,payload:scopedNeeds});continue;
+                }
+                if(scopedNeeds&&family==='needs-you-count'){
+                  facts.push({atomicGroup:routerAtomicGroup(input,viewer),authority,payload:{kind:'scope-replace',family,scope:workspace,value:{count:scopedNeeds.count}}});continue;
                 }
                 const value = ticket&&policy?.sharedBuilds
                   ?(await policy.sharedBuilds.coordinator.build(ticket,(tx,args,reader)=>sources.phone.buildRouterValue(tx,args,reader,options))).value
@@ -317,6 +329,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
         send(JSON.stringify({kind:'router-unavailable',stream:'',families:affected,reason:'listener'}));
       }
       const capabilities: RouterCapabilities = { protocol: 1, families: negotiated,
+        ...(message.needsYouRoomsV1===true&&policy?.needsYouRoomsV1===true&&negotiated.includes('needs-you')?{needsYouRoomsV1:true}:{}),
         ...(scheduledCoverage?{scheduledWorkCoverageV1:{version:1 as const,authorityStart:scheduledCoverage.start}}:{}),
         ...(message.roomHeadContinuityV1===true&&policy?.roomHeadContinuityV1===true&&authorityFencesV1&&negotiated.includes('room-head')?{roomHeadContinuityV1:true}:{}),
         ...(usageCellV1 ? {usageCellV1:true} : {}), commandDedupV1: policy?.commandDedupV1 === true,mediaMetadataV1:sources?.mediaMetadataV1===true&&authorityFencesV1,authorityFencesV1 };
@@ -341,13 +354,13 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
       if(!sources)throw new PhoneOperationError(409,{error:'router_family_unavailable'});
       const resolved=await resolveRouterInput(database,input);
       if(input.family==='room-scheduled-work'&&requestGeneration!==generation)throw new PhoneOperationError(503,{error:'router_projection_unavailable'});
-      const scopedInput:RouterSnapshotInput=input.family==='room-head'||input.family==='room-scheduled-work'?{...input,workspaceId:resolved.workspaceId}:input;
+      const scopedInput:RouterSnapshotInput=input.family==='room-head'||input.family==='room-scheduled-work'||input.family==='room-workflows'?{...input,workspaceId:resolved.workspaceId}:input;
       if(!subscribedWorkspaces.has(resolved.workspaceId))await refreshAudience?.();
       // The subscribe-before-head barrier must already cover this server
       // scope before opening its snapshot. A concurrent new grant can fail
       // closed; it cannot relabel a snapshot whose prior interval was missed.
       if(!subscribedWorkspaces.has(resolved.workspaceId))throw new PhoneOperationError(503,{error:'router_projection_unavailable'});
-      if(input.family==='room-head'){
+      if(input.family==='room-head'||input.family==='room-workflows'){
         try{await readRouterRoomAudience(database,resolved.workspaceId,viewer,routerSourcePlan([],viewer));}
         catch(error){if(error instanceof RouterProjectionUnavailable)throw new PhoneOperationError(503,{error:'router_projection_unavailable'});throw error;}
       }

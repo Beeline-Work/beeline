@@ -80,7 +80,7 @@ export async function groupAFixture(url: string) {
     const http = createBeelineServer({ database: observed, live, phone,
       auth: { authenticatePhone: async (token: string) => token === 'synthetic-reader-token' ? viewer : null } as TokenAuth,
       daemon: {} as DaemonService, mediaMaximumBytes: 1, phoneReadLimits: phoneReadLimits(),
-      routerProjections: { families, listenerReady: () => true, commandDedupV1: true },
+      routerProjections: { families, listenerReady: () => true, commandDedupV1: true, needsYouRoomsV1:true },
     });
     // Independent committed LISTEN for each server execution context. This is
     // a test bridge, not a second production listener or phone connection.
@@ -126,7 +126,7 @@ export async function groupAFixture(url: string) {
         await wait(() => frames.slice(position).some(frame => frame.type === 'router-capabilities'));
       },
     };
-    await protocol.handle({ type: 'router-negotiate', protocol: 1, families, authorityFencesV1: true, usageCellV1 });
+    await protocol.handle({ type: 'router-negotiate', protocol: 1, families, authorityFencesV1: true, usageCellV1, needsYouRoomsV1:true });
     let reads = 0;
     lanes.connected(1, families, async input => { reads++; return protocol.snapshot(input); });
     const releases: Array<() => void> = [];

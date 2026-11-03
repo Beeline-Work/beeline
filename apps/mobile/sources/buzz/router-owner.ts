@@ -1,4 +1,5 @@
 import {ROUTER_TRAY_CLOCK_STREAM} from '@beeline/api-contract/router-protocol';
+import { validateWorkspaceProjection, validateWorkflowProjection, validateNeedsRoomsPayload } from '@beeline/net/owner';
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import { installUsageCellConnection, suspendUsageCellConnection, receiveUsageCell, setUsageCellProfile } from './agent-usage-cell';
 import { AdmissionOwner, ReadLanes, RouterBatchAssembly, ScheduledWorkAuthority, NavigationOwner, MediaDemandOwner, UsageDemandOwner,validateScheduledWorkProjection,validateTrayProjection,validateSavedWindow,
@@ -52,9 +53,11 @@ function advanceMediaAuthority(scope: string, epoch: string): void {
   if (BigInt(epoch) > 0n) receiveMediaAuthorityRemoval(scope, (BigInt(epoch) - 1n).toString());
 }
 const empty: LaneView = Object.freeze({ state: 'ABSENT', value: null, cut: null, error: null });
-const roomScoped=(family:LaneFamily)=>family==='room-head'||family==='room-scheduled-work';
+const roomScoped=(family:LaneFamily)=>family==='room-head'||family==='room-scheduled-work'||family==='room-workflows';
 
 function validValue(request: LaneRequest, value: unknown): boolean {
+  if(request.family==='workspace-roster')return validateWorkspaceProjection(value);
+  if(request.family==='room-workflows')return validateWorkflowProjection(value);
   if(request.family==='needs-you-saved-page')return validateSavedWindow(value,request.workspaceId);
   if(request.family==='needs-you-tray')return validateTrayProjection(value,request.workspaceId);
   if(request.family==='room-scheduled-work'){
@@ -144,6 +147,8 @@ function eligible(slot: Slot): boolean {
   if(slot.request.family==='needs-you-saved-page')return focused.screen==='Tray'&&slot.generation===focused.generation;
   if(slot.request.family==='needs-you-tray')return focused.screen==='Tray';
   if(slot.request.family==='room-scheduled-work')return focused.screen==='ScheduledWork'&&focused.roomId===slot.request.roomId;
+  if(slot.request.family==='room-workflows')return focused.screen==='Room'&&focused.roomId===slot.request.roomId;
+  if(slot.request.family==='workspace-roster')return focused.screen==='AppShell'||focused.screen==='AgentProfile';
   if (slot.request.family === 'room-head') return focused.screen === 'Room' && focused.roomId === slot.request.roomId;
   if (slot.request.family === 'room-list') return focused.screen === 'AppShell' || listPanelVisible;
   return slot.request.family === 'needs-you-count';
@@ -173,7 +178,7 @@ function focus(slot: Slot): void {
   release(slot);
   slot.generation = residency.generation;
   const request = { route: 'phone.readRouterSnapshot' as const, input: slot.request };
-  const screen = slot.request.family === 'room-head' ? 'Room' :slot.request.family==='room-scheduled-work'?'ScheduledWork':slot.request.family==='needs-you-tray'?'Tray': 'AppShell';
+  const screen = slot.request.family === 'room-head'||slot.request.family==='room-workflows' ? 'Room' :slot.request.family==='workspace-roster'&&residency.screen==='AgentProfile'?'AgentProfile':slot.request.family==='room-scheduled-work'?'ScheduledWork':slot.request.family==='needs-you-tray'?'Tray': 'AppShell';
   const pass = admission.focusOwner(slotNames.get(slot)!, residency.generation, screen, [request])[0]!;
   const permit = admission.spend(request, pass);
   slot.token = pass;
@@ -225,7 +230,7 @@ export function routerOwnerListPanel(visible: boolean): void {
  * Unsupported storage keeps the legacy cohort, without suppressing its hints. */
 export function routerOwnerCapabilities(): { families: readonly LaneFamily[]; authorityFencesV1: boolean; scheduledWorkCoverageV1: boolean } {
   const ready = routerAuthorityStorageReady();
-  return { families: ready ? ['room-list', 'needs-you-count', 'room-head',...(routerCommandStorageReady()?['room-scheduled-work' as const]:[])] : [], authorityFencesV1: ready, scheduledWorkCoverageV1: ready&&routerCommandStorageReady() };
+  return { families: ready ? ['room-list', 'needs-you-count', 'room-head','room-workflows',...(routerCommandStorageReady()?['room-scheduled-work' as const]:[])] : [], authorityFencesV1: ready, scheduledWorkCoverageV1: ready&&routerCommandStorageReady() };
 }
 
 /** Sole transport owner calls this only after authentication and negotiation.
@@ -291,7 +296,7 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
     else {
       const request = { route: 'phone.readRouterSnapshot' as const, input: slot.request };
       const pass = admission.focusOwner(slotNames.get(slot)!, residency.generation,
-        slot.request.family === 'room-head' ? 'Room' :slot.request.family==='room-scheduled-work'?'ScheduledWork':slot.request.family==='needs-you-tray'?'Tray': 'AppShell', [request])[0]!;
+        slot.request.family === 'room-head'||slot.request.family==='room-workflows' ? 'Room' :slot.request.family==='workspace-roster'&&navigation.current()?.screen==='AgentProfile'?'AgentProfile':slot.request.family==='room-scheduled-work'?'ScheduledWork':slot.request.family==='needs-you-tray'?'Tray': 'AppShell', [request])[0]!;
       admission.spend(request, pass); // focused demand joins this recovery key
     }
     slot.generation = residency.generation;
@@ -323,7 +328,7 @@ export function routerOwnerDisconnected(): void {
   instance += 1; negotiation = undefined; modeKnown = false; assembly.reset(); lanes?.disconnected(); notify();
 }
 const record = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
-const families: readonly string[] = ['room-list', 'needs-you', 'needs-you-tray', 'needs-you-count', 'room-head','room-scheduled-work','needs-you-saved-page'];
+const families: readonly string[] = ['room-list', 'needs-you', 'needs-you-tray', 'needs-you-count', 'room-head','room-scheduled-work','needs-you-saved-page','workspace-roster','room-workflows'];
 function cut(value: unknown): boolean {
   return record(value) && value.protocol === 1 && typeof value.stream === 'string' && value.stream.length <= 256 &&
     typeof value.epoch === 'string' && value.epoch.length <= 128 && Number.isSafeInteger(value.through) && Number(value.through) >= 0;
@@ -341,6 +346,7 @@ function fact(value: unknown): boolean {
   if(record(value)&&value.kind==='scheduled-work-classification')return value.version===1&&authorityPosition(value.authorityBarrier)&&Object.keys(value).length===3;
   if (!record(value) || typeof value.atomicGroup !== 'string' || value.atomicGroup.length > 512 || !certificate(value.authority) || !record(value.payload)) return false;
   const payload = value.payload;
+  if(payload.kind==='needs-you-rooms-replace')return validateNeedsRoomsPayload(payload);
   if (typeof payload.scope !== 'string' || payload.scope.length > 256) return false;
   if(payload.kind==='tray-classification')return payload.version===1&&typeof payload.clockVersion==='string'&&
     /^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion)&&Object.keys(payload).length===4;

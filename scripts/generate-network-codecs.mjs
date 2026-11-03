@@ -169,6 +169,8 @@ const ownerOperations = Object.fromEntries(ownerRoutes.map(route => [route, sele
 // Closed complete display families use generated value codecs in the
 // trusted owner. Do not pull the complete legacy response registry into it.
 const ownerResults={'phone.readScheduledWork':selectInput(operations['phone.readScheduledWork'].output),
+  'phone.listRoomWorkflowRuns':selectInput(operations['phone.listRoomWorkflowRuns'].output),
+  'phone.readWorkspace':selectInput(operations['phone.readWorkspace'].output),
   'phone.readTray':selectInput(operations['phone.readTray'].output)};
 // Private owner encoding only. Keep the authoritative full and phone-input
 // projections unchanged, and reconstruct their existing WireShape semantics.

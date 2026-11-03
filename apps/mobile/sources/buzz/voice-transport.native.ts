@@ -94,7 +94,7 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
     generation = await background.start(roomId ? `beeline:///beeline/chat/${encodeURIComponent(roomId)}?voiceResume=${Date.now()}` : undefined);
     await AudioSession.startAudioSession();
     const room = new Room({ adaptiveStream: false, dynacast: false, publishDefaults: { stopMicTrackOnMute: true },
-      reconnectPolicy: { nextRetryDelayInMs: ({ retryCount }) => Math.min(5000, 500 * 2 ** Math.min(retryCount, 4)) } });
+      reconnectPolicy: { nextRetryDelayInMs: () => null } });
     return { room, closeAudio,
       configureStop: async (callId, token) => {
         if (!closed && generation !== undefined) await background.configureStop(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${callId}/native-stop`, token, generation);

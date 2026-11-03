@@ -244,3 +244,9 @@ Attachment19 and Body types pass. Refusal/network cases observe one fetch, no di
 The helper launcher no longer sleeps/retries token lookup three times or refreshes and replays a command after authentication failure. A separate invocation obtains fresh Room-scoped credentials; local commands still require no token and refusal exit codes remain intact. Existing host/REST adapter selection is unchanged and remains part of the final route migration.
 
 Wrapper84 and Body types pass. Actual generated child launchers prove one refused token read per invocation, fresh lookup on a later action, first 401/403 return, and no replay of failed remote commands. Local fixture pushes and synthetic providers only.
+
+## D085 — Remove voice action backoff and bound call replacement
+
+The hook no longer repeats transient voice requests after 1/2/4/8-second sleeps. Both transport adapters disable scheduled SDK reconnects. The existing call owner may replace its RTC connection once with the same expected call identity, preserving mute and generation fencing; another disconnect ends it without renewing admission from a brief open. A separate explicit join can act again.
+
+Hook25, native/browser adapter7, older-iOS guard6, mobile types and phone/router scanners pass. Tests cover an idle day after initial refusal and after replacement loss, current-session cancellation and mute preservation. This is not a full SDK or device proof: the installed LiveKit Room still has cloud-region failover and RTCEngine service-not-found protocol fallback outside the configured reconnect policy. Those and the voice route/usage/cohort gates remain open. No native module or UI control is added.

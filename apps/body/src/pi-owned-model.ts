@@ -4,11 +4,7 @@ import { OwnedModelFiles, OWNED_MODEL_DENY_TOKEN } from './owned-model-files.js'
 const unavailable = 'Owned model outcome UNKNOWN or unavailable; do not resubmit.';
 const abort = (ctx: ExtensionContext) => { try { ctx.abort(); } catch { /* Explicit error replacement still terminates the core loop. */ } };
 
-/** Selected-only settings. Neither zero delay nor SDK defaults disable both
- * retry layers. Existing/legacy settings are deliberately not modified here. */
-export function ownedModelPiSettings() {
-  return { retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } } } as const;
-}
+export { piNoRetrySettings as ownedModelPiSettings } from './pi-retry-settings.js';
 
 /** Uninstalled, filesystem-only supported extension factory. No registration,
  * fetch wrapper, status observation, environment mutation or request retry. A

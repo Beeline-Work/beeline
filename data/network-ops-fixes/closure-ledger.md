@@ -107,3 +107,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F18/F22 legacy model capacity refusals now return once with Retry-After metadata and one reservation refund; no three-minute retry window remains. Model proxy63 and server types pass. The 20-call proof observes20 attempts, peak8 and zero charges for refusal. Full harness ownership and cohort/removal gates remain open.
 
 - F18 GitHub zero-check confirmation removes its ten-second delayed provider observation. Auth check18 and server zero-check17 pass: one bounded evidence read, idle-day no follow-up, registration/current-head/webhook fences intact. Remaining provider/consumer and whole-finding gates remain open.
+
+- F18 Pi generated homes now disable both conversation and provider SDK retries through the same pure policy as owned-model sessions. Agent-home59 and pinned Pi10 pass, including actual SDK refusal/disconnect and idle-day evidence. No whole finding changes status; final harness routing/isolation remains open.

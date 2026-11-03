@@ -208,3 +208,9 @@ The complete model proxy suite passes63, including 20 parallel refused calls pro
 Remove the ten-second sleep before GitHub suite/run inspection. `confirmNoChecks` reads the same bounded registration evidence once during the admitted worker/check operation. Disabled Actions and no-workflow evidence retain their shortcuts; suites/runs, unknown counts and the server's post-confirmation head/rollup fences retain their semantics. Elapsed time is neither admission nor proof of future absence.
 
 Auth check18 and server zero-check17 pass, including a 24-hour no-follow-up proof, registered work blocking, a head changed during confirmation and a concurrent webhook refusing stale absence evidence. No periodic recovery is introduced.
+
+## D079 — Disable both Pi retry layers in every generated harness home
+
+Generated Pi settings used to enable three conversation retries and leave provider SDK defaults implicit. A pure shared settings function now disables both layers for generated homes and the owned-model harness, preserving the existing HTTP idle deadline and operator-settings isolation. No owned-model extension is installed by this change.
+
+Agent-home59 and pinned Pi10 pass. The generated JSON is interpreted by the actual SettingsManager; pinned SDK 429/500/disconnect proofs observe one request and no retry over 24 hours. Full harness routing, credential isolation and cohort gates remain open.

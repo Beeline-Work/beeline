@@ -37,7 +37,7 @@ describe('source and deadline owned background leadership',()=>{
     await vi.advanceTimersByTimeAsync(86_400_000);
     expect(cycle).toHaveBeenCalledOnce();expect(vi.getTimerCount()).toBe(0);
     expect(lock.clients[0]!.statements).toEqual(['SET statement_timeout=0; SET lock_timeout=0','SELECT pg_advisory_lock($1)']);
-    leader.wake();await settle();expect(cycle).toHaveBeenCalledTimes(2);expect(cycle).toHaveBeenLastCalledWith(false);
+    leader.wake();await settle();expect(cycle).toHaveBeenCalledTimes(2);expect(cycle).toHaveBeenLastCalledWith(false, expect.any(AbortSignal));
     await leader.stop();expect(lock.clients[0]!.release).toHaveBeenCalledOnce();
   });
   it('waits once in PostgreSQL and transfers ownership on the actual connection release',async()=>{
@@ -46,7 +46,7 @@ describe('source and deadline owned background leadership',()=>{
     void first.run();await settle();void second.run();await settle();
     await vi.advanceTimersByTimeAsync(86_400_000);expect(a).toHaveBeenCalledOnce();expect(b).not.toHaveBeenCalled();
     expect(lock.clients).toHaveLength(2);expect(lock.clients[1]!.statements).toHaveLength(2);
-    await first.stop();await settle();expect(b).toHaveBeenCalledOnce();expect(b).toHaveBeenLastCalledWith(true);await second.stop();
+    await first.stop();await settle();expect(b).toHaveBeenCalledOnce();expect(b).toHaveBeenLastCalledWith(true, expect.any(AbortSignal));await second.stop();
   });
   it('parks a failed acquisition until a real recovery',async()=>{
     vi.useFakeTimers();const lock=new Ownership();let recover!:()=>void;const stop=vi.fn();

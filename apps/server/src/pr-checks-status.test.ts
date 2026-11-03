@@ -1072,7 +1072,7 @@ describe('zero-check worker completion', () => {
     expect(await gate()).toMatchObject({ checks: 'pending', mergeAllowed: false });
   });
 
-  it('finishes a head with workflows but no registered suites or runs after the bounded settle delay', async () => {
+  it('finishes a head with workflows but no registered suites or runs in one explicit confirmation', async () => {
     rollupState = null;
     workflowCount = 2;
     registeredCount = 0;

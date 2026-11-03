@@ -202,3 +202,9 @@ All 10 Fly adapter tests use fake fetches and pass, including an idle day withou
 Remove the legacy proxy's three-minute in-flight-budget retry window, Retry-After delay parser and pause loop. A model request receives its first HTTP402 body and Retry-After header, refunds its reservation once and releases its call slot. A new admitted model call can succeed later. Existing per-process FIFO concurrency, queued-call cancellation, turn deadlines, successful stream accounting and claimed-turn authorization remain.
 
 The complete model proxy suite passes63, including 20 parallel refused calls producing exactly20 provider attempts with peak8, zero/long Retry-After idle-day checks, independent later success and accounting/authorization/stream cases. Server types pass. This removes a provider retry wrapper; final harness/model ownership and all consumer/cohort proofs remain open.
+
+## D078 — Zero-check confirmation reads registration within its explicit operation
+
+Remove the ten-second sleep before GitHub suite/run inspection. `confirmNoChecks` reads the same bounded registration evidence once during the admitted worker/check operation. Disabled Actions and no-workflow evidence retain their shortcuts; suites/runs, unknown counts and the server's post-confirmation head/rollup fences retain their semantics. Elapsed time is neither admission nor proof of future absence.
+
+Auth check18 and server zero-check17 pass, including a 24-hour no-follow-up proof, registered work blocking, a head changed during confirmation and a concurrent webhook refusing stale absence evidence. No periodic recovery is introduced.

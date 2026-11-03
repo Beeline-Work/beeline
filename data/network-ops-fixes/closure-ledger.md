@@ -105,3 +105,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F18 Fly start removes the timed HTTP412 retry loop. Fake-provider10 passes, preserving image/configuration checks, caller-visible refusal/uncertainty and zero autonomous request over 24 hours. Higher-level free-agent sweep/recovery remains open; no live lifecycle proof is performed.
 
 - F18/F22 legacy model capacity refusals now return once with Retry-After metadata and one reservation refund; no three-minute retry window remains. Model proxy63 and server types pass. The 20-call proof observes20 attempts, peak8 and zero charges for refusal. Full harness ownership and cohort/removal gates remain open.
+
+- F18 GitHub zero-check confirmation removes its ten-second delayed provider observation. Auth check18 and server zero-check17 pass: one bounded evidence read, idle-day no follow-up, registration/current-head/webhook fences intact. Remaining provider/consumer and whole-finding gates remain open.

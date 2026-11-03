@@ -1158,8 +1158,8 @@ export class GitHubAppClient {
     if (typeof workflows.total_count !== 'number' || workflows.total_count < 0)
       throw new Error('GitHub workflow count is invalid');
     if (workflows.total_count === 0) return true;
-    // Workflows may not have created suites when the worker finishes its turn.
-    await new Promise<void>((resolve) => setTimeout(resolve, 10_000));
+    // Inspect registration within this explicit read. Time alone cannot
+    // authorize another provider observation or establish future absence.
     const [suites, runs] = await Promise.all([
       this.readRepositoryJson(accessToken, fullName, `commits/${headSha}/check-suites?per_page=1`),
       this.readRepositoryJson(accessToken, fullName, `actions/runs?head_sha=${headSha}&per_page=1`),

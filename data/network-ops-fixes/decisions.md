@@ -362,3 +362,10 @@ The supported legacy expiry owner now runs once at acquisition, from changed sto
 The existing legacy notices and takeover semantics are preserved. This is not selection of the staged Tray clock owner or a claim that legacy display classification meets the final modern ownership contract. Full production composition, clock generations, workload and cohort gates remain open.
 
 Validation: listener45 plus corrected focused source/idle2, shutdown10, server types, build8, dead-code (five existing/zero introduced), router158/phone72 inventories and workflow paths120 pass. The first source fixture omitted required workspace_id; it was corrected without changing production constraints. No whole finding is newly closed.
+
+
+## D099 — Reviewer repair cannot observe GitHub
+
+Removed the optional provider-refresh callback from configured-reviewer reconciliation and its minute job caller. Repair uses already committed exact-head facts. Verified GitHub events and explicit helper commands retain their existing head-refresh paths, including before claim. A missed provider event does not authorize periodic discovery.
+
+The full reviewer suite93 and server types pass; the actual job wiring regression requires the database-only call. Lost-wake repair, explicit-wait release, delivered/stale verdict suppression, head changes and existing explicit command refresh remain covered. The periodic database repair itself still needs event scoping and is not claimed closed. No whole finding is newly closed.

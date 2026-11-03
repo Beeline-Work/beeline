@@ -2477,7 +2477,6 @@ export async function reconcileCornerMergeBlockers(
 export async function reconcileConfiguredCornerReviewers(
   db: SqlDatabase,
   parentRoomId?: string,
-  refreshHead?: (cornerId: string) => Promise<void>,
 ): Promise<{ subscriptions: number; commands: number }> {
     db = new CornerAccessDatabase(db);
   const subscriptions = await subscribeConfiguredReviewers(db, [parentRoomId ?? null]);
@@ -2600,7 +2599,6 @@ export async function reconcileConfiguredCornerReviewers(
     [parentRoomId ?? null],
   );
   for (const candidate of candidates.rows) {
-    if (refreshHead) await refreshHead(candidate.corner_id);
     // Re-report the green head. A review state repairs a missing wake; an
     // implement state waits for its current worker before taking rereview.
     const outcome = await advanceCorner(db, candidate.corner_id, {

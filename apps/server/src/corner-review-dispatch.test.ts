@@ -658,7 +658,8 @@ describe('corner message attribution', () => {
     const repairStart = index.indexOf("work.add('repair', reconciliationMs, async (newLeader) => {");
     expect(repairStart).toBeGreaterThan(-1);
     const repair = index.slice(repairStart, index.indexOf('const leader = new BackgroundLeader', repairStart));
-    expect(repair.replace(/\s+/g, ' ')).toContain("githubJobs ? id => githubJobs.refreshCornerReviewHead(id) : undefined");
+    expect(repair).toContain('reconcileConfiguredCornerReviewers(jobsDatabase)');
+    expect(repair).not.toContain('refreshCornerReviewHead');
     const cycle = () => reconcileConfiguredCornerReviewers(db);
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(61, '6'.repeat(40));

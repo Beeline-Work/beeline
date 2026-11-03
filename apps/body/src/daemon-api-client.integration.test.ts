@@ -926,9 +926,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       });
       sockets[0]!.close();
       await vi.waitFor(() => expect(connectionStates).toContain(false));
-      // The connection held the agent's presence; a socket that ended releases
-      // it at once, and the reconnect holds it again.
-      await vi.waitFor(() => expect(published).toContain('offline'));
+      // Reconnect restores online presence. A transient offline event appears
+      // only if the old socket's close is processed before the reconnect claims it.
       await vi.waitFor(() => expect(published.at(-1)).toBe('online'), { timeout: 5_000 });
       stopWatching();
       await vi.waitFor(
@@ -942,7 +941,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await vi.waitFor(() => expect(answered).toBe(2));
       expect(operations.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(0);
       await replies;
-      expect(await state()).toBe('online');
+      await vi.waitFor(async () => expect(await state()).toBe('online'));
       const after = (
         await database.query<{ updated_at: Date }>(
           `SELECT updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,

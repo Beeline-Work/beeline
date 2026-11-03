@@ -169,3 +169,12 @@ These counts identify the staged validation run; later changes must rerun affect
 - Native40 admission continuation now includes the actual byte admission owner and metadata validator in the native bundle. One successful launch passes shared demand, preview bounds, disconnect refusal, legacy non-reuse, pending-metadata cancellation and authority-removal fencing. Identity/config/metadata/byte leaf are synthetic; authenticated negotiation and complete native/cohort/family proofs remain open. Evidence: `apps/mobile/evidence/network-router-native40/admission-owner/` (D101). No whole finding closes.
 
 - F16/F22 shutdown follow-up retains and drains the detached next-day check-in flight after leader admission ends and before pools close. Background shutdown11 passes, including a pending email-result receipt. Periodic check-in discovery and full generation/source ownership remain open (D102).
+
+- Post-switch phone removal is a separate, non-activated build documented in
+  [post-switch-removal.md](post-switch-removal.md). It advances F02/F06/F20/F23/F24
+  by deleting the old list scheduler/reducer/cache consumer, full-Tray badge
+  reader, embedded usage fallback and HTTP media metadata/link/play alternatives.
+  Canonical consumers and the instruction046 cache-then-empty UI sequence pass
+  focused local proofs. Phone parallel-path count returns to19; server/helper
+  remain18/29. No finding is newly closed: native/cohort, full operation ownership,
+  deployed expansion/floor and remaining removal gates still apply.

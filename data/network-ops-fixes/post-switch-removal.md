@@ -42,6 +42,15 @@ navigation, settings, corner and gesture assertions. They do not emulate the old
 watch/reducer or claim transport admission proof. Count hook tests verify no full
 Tray read or subscription; the real owner suite proves count admission and replay.
 
+Instruction 046 preserves the deleted-Workspace cache-then-server sequence. Its
+UI case holds the Workspace reply, observes exactly one canonical list snapshot
+from the cached Workspace selection, then releases the empty Workspace reply and
+asserts that rows disappear with no further list reads. The fixture supplies an
+authorized canonical DTO; it is not a raw disk restore. Spec §5 (line 175) still
+requires private cached content after interruption/cold restore to stay hidden
+until an authorized snapshot or content-free certificate proves current access.
+The real owner tests, not this UI fixture, cover that authority boundary.
+
 ## Remaining removal gates
 
 This is a partial removal build. Full Tray legacy machinery, Workspace readers,
@@ -52,3 +61,30 @@ must still become empty, with every supported operation routed through its one
 owner and supported native/cohort proofs. No additional audit finding is closed
 by these source deletions alone. The integration closure ledger remains the source
 of truth.
+
+## Local validation
+
+All Vitest suites run individually with `--maxWorkers=2 --minWorkers=1` and
+`NODE_OPTIONS=--max-old-space-size=4096`.
+
+| Proof | Passing cases |
+| --- | ---: |
+| Actual list store / actual router owner | 5 / 30 |
+| Remaining notification filter identity / corner dropdowns | 1 / 5 |
+| Conversation row / desktop corner display | 11 / 1 |
+| Sidebar / Workspace settings / deck including instruction 046 sequence | 43 / 35 / 37 |
+| Tray and count hook | 14 |
+| Media connection / byte owner / artifact links / usage cell | 16 / 7 / 11 / 10 |
+| Phone shadow, trusted owner and helper bundle budgets | 3 |
+
+All eight workspace builds pass with serial Turbo execution. The two documented
+T7 proof CLI entrypoints are registered with Knip, making their imported adapters
+reachable without an export exemption or baseline increase. The unused draft-frame
+helper left by the removed list reader is deleted.
+
+Mobile typecheck, UI policy, both existing network scanners and the dead-code
+baseline (5 existing findings, zero introduced) pass. Architecture passes all20
+rules against the stacked combined base. The architecture guard
+against `origin/main` still fails on the retained `live.notify` owner and temporary
+server environment count 60→61; there is no parallel-path count mismatch. These
+are reported failures, not waived checks or a claim that CI is green.

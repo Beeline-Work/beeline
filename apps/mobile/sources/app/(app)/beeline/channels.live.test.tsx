@@ -27,6 +27,7 @@ const deck = vi.hoisted(() => ({
   workspacesResponse: null as WorkspaceListView | null,
   workspaceFailures: [] as Error[],
   workspaceReads: 0,
+  workspaceReadGate: null as Promise<void> | null,
   useRealWorkspaceRead: false,
   socketRequest: vi.fn(),
   selectedWorkspace: '00000001-1111-4111-8111-111111111111' as string | null,
@@ -268,6 +269,7 @@ vi.mock('@/sync/transport/room-view-client', async () => ({
   RoomViewClient: class {
     async workspaces(): Promise<WorkspaceListView> {
       deck.workspaceReads += 1;
+      if (deck.workspaceReadGate) await deck.workspaceReadGate;
       if (deck.useRealWorkspaceRead) {
         const { RoomViewClient } = await vi.importActual<typeof import('@/sync/transport/room-view-client')>('@/sync/transport/room-view-client');
         return new RoomViewClient({ baseUrl: 'https://relay.test', identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) } }).workspaces();
@@ -394,6 +396,7 @@ beforeEach(() => {
   deck.workspacesResponse = null;
   deck.workspaceFailures = [];
   deck.workspaceReads = 0;
+  deck.workspaceReadGate = null;
   deck.useRealWorkspaceRead = false;
   deck.socketRequest.mockReset();
   deck.selectedWorkspace = '00000001-1111-4111-8111-111111111111';
@@ -535,18 +538,27 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
 });
 
 describe('Deleted workspace removal', () => {
-  it('removes a cached deleted workspace on the first read after an offline session', async () => {
-    vi.mocked(mobileSurfaceCache.read)
-      .mockResolvedValueOnce({ workspaces: [{ id: '00000001-1111-4111-8111-111111111111', name: 'Work', role: 'member', updatedAt: 1 }], viewer, truncated: false, watchFilters: [] } as never)
-      .mockResolvedValueOnce(chatList({ id: 'cached', text: 'old room', createdAt: 1 }) as never);
+  it('shows one cached Workspace snapshot, then removes it on the empty server reply without rereading', async () => {
+    vi.mocked(mobileSurfaceCache.read).mockResolvedValueOnce({
+      workspaces: [{ id: '00000001-1111-4111-8111-111111111111', name: 'Work', role: 'member', updatedAt: 1 }],
+      viewer, truncated: false, watchFilters: [],
+    } as never);
+    deck.chatsResponse = chatList({ id: 'cached', text: 'old room', createdAt: 1 });
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
-    let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(BuzzChannels));mountedDecks.push(renderer); });
+    let finishWorkspaceRead!: () => void;
+    deck.workspaceReadGate = new Promise<void>(resolve => { finishWorkspaceRead = resolve; });
+    const renderer = await mountDeck();
+    expect(paintedRows(renderer)[0]!.latestMessage?.text).toBe('old room');
+    expect(deck.chatsReads).toBe(1);
+    await act(async () => { finishWorkspaceRead(); });
     await quiet();
     expect(router.replace).toHaveBeenCalledWith('/beeline/community');
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', null);
-    expect(deck.chatsReads).toBe(0);
     expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
+    expect(deck.chatsReads).toBe(1);
+    await quiet();
+    expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
+    expect(deck.chatsReads).toBe(1);
     await act(async () => renderer.unmount());
   });
 

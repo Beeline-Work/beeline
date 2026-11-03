@@ -222,7 +222,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           if (version !== revision.current) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           if (session.current?.room === room) { session.current.callId = fresh.call.id; session.current.sessionId = fresh.sessionId; }
           setCall(fresh.call);
-          await room.connect(fresh.url, fresh.token);
+          await room.connect(fresh.url, fresh.token, { maxRetries: 0 });
           if (version !== revision.current) { await release(); await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           const agentId = targetRef.current;
           await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(agentId
@@ -240,7 +240,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           setError(appErrorCopy(cause, 'Conversation mode could not start'));
         }).finally(() => { recovering = false; });
       });
-      await room.connect(joined.url, joined.token);
+      await room.connect(joined.url, joined.token, { maxRetries: 0 });
       if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
       const playbackReady = room.startAudio();
       const defaultTarget = joined.agents.find(a => a.pubkey === targetRef.current)?.pubkey;

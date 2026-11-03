@@ -127,3 +127,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F18/F22 MCP webhook delivery replaces maintenance scans with committed wakes and persisted finite dispatch/claim deadlines. Delivery24, worker11, shutdown9, isolated PostgreSQL indexed-deadline1 and server types pass. Empty/failed queues stay idle for 24 hours; bounded batches continue only for existing obligations; shutdown drains without claiming the next row. Legacy routing repair and complete route/cohort gates remain open.
 
 - F18 invite redemption stops automatic replay after an ambiguous receipt. Operation8 and mobile types pass, including idle-day silence and a separate explicit same-token Join. Durable command migration/cohort gates remain open.
+
+- F18/F21 initial LiveKit joins now select zero retries with a pinned postinstall patch covering ESM/CommonJS/source region probing, regional fallback, backoff and protocol replay. Private distributed-SDK8, hook25, mobile types and phone scanner pass. Actual provider/released-native compatibility and whole voice owner gates remain open. The MCP deadline PostgreSQL proof is included in the existing isolated CI lane.

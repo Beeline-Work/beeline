@@ -294,7 +294,7 @@ it('obtains a fresh authorized token after terminal RTC loss without ending the 
       call: voice.call, url: 'ws://proof', token: 'renewed-token', agents: [],
     })));
     await act(async () => fixture.room.emit('left'));
-    expect(fixture.room.connect).toHaveBeenLastCalledWith('ws://proof', 'renewed-token');
+    expect(fixture.room.connect).toHaveBeenLastCalledWith('ws://proof', 'renewed-token', { maxRetries: 0 });
     const [pinSignal] = fixture.room.localParticipant.publishData.mock.calls.at(-1)!;
     expect(JSON.parse(new TextDecoder().decode(pinSignal))).toEqual({type:'unpin'});
     expect(voice.call?.id).toBe(fixture.callId);

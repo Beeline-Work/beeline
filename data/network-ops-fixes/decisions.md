@@ -272,3 +272,10 @@ MCP delivery24, worker11, shutdown9 and server types pass. A real isolated Postg
 `monolithPhoneOperation` no longer repeats invite redemption after a lost socket or request deadline. It retains the existing unconfirmed-join message; a separate explicit Join action can submit the same token. Known refusals and operation deadlines remain intact.
 
 Operation8 and mobile types pass. Lost-socket/deadline cases assert one dispatch, no dispatch over an idle day, then a separately admitted successful action. Complete durable join command ownership and released-cohort gates remain open.
+
+
+## D089 — Enforce zero replay inside the pinned LiveKit adapter
+
+Both initial and incident-replacement joins explicitly select `maxRetries: 0`. The version-checked postinstall patch gives that option complete initial-admission semantics in LiveKit 2.22.4 source, ESM and CommonJS: no speculative cloud-region fetch, regional fallback, backoff wait or service-not-found protocol replay. SDK defaults for other callers are unchanged. A refused protocol/region is returned to the existing call owner; no new UI or native API is introduced.
+
+Private byte copies of both distributed entrypoints pass eight tests, including retained region state, unavailable/service-not-found signal failures and an idle day with no extra dispatch. The patch validates every replacement before writing and is idempotent. Voice hook25, mobile types and phone scanner pass. Installed dependencies were not modified in place. This resolves D085's named initial SDK fallback gap; actual released-runtime/provider compatibility, full voice route/usage ownership and final dependency/native capture remain open.

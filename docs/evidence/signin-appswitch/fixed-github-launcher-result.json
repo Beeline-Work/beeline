@@ -1,0 +1,94 @@
+{
+  "name": "fixed-github-launcher",
+  "started": "2026-11-03T01:44:16.968763+00:00",
+  "ended": "2026-11-03T01:45:14.100305+00:00",
+  "return": "launcher",
+  "codeReadInAegis": true,
+  "tabRestored": true,
+  "after": [
+    {
+      "text": "Beeline \u2014 GitHub",
+      "description": "",
+      "hint": "",
+      "id": "",
+      "bounds": "[0,283][1080,2339]"
+    },
+    {
+      "text": "BEELINE",
+      "description": "",
+      "hint": "",
+      "id": "",
+      "bounds": "[63,763][1021,815]"
+    },
+    {
+      "text": "Connect your GitHub repositories",
+      "description": "",
+      "hint": "",
+      "id": "",
+      "bounds": "[63,855][1021,931]"
+    },
+    {
+      "text": "Install Beeline on your personal account with All repositories so it can work on repositories you create later.",
+      "description": "",
+      "hint": "",
+      "id": "",
+      "bounds": "[63,970][1021,1120]"
+    },
+    {
+      "text": "",
+      "description": "Continue with GitHub",
+      "hint": "",
+      "id": "",
+      "bounds": "[63,1159][459,1212]"
+    },
+    {
+      "text": "Continue with GitHub",
+      "description": "",
+      "hint": "",
+      "id": "",
+      "bounds": "[63,1159][459,1212]"
+    },
+    {
+      "text": "",
+      "description": "Close tab",
+      "hint": "",
+      "id": "com.android.chrome:id/close_button",
+      "bounds": "[0,136][126,283]"
+    },
+    {
+      "text": "",
+      "description": "Minimize tab",
+      "hint": "",
+      "id": "com.android.chrome:id/custom_tabs_minimize_button",
+      "bounds": "[126,136][252,283]"
+    },
+    {
+      "text": "",
+      "description": "Connection is secure",
+      "hint": "",
+      "id": "com.android.chrome:id/security_button",
+      "bounds": "[252,146][378,272]"
+    },
+    {
+      "text": "server.usebeeline.app",
+      "description": "",
+      "hint": "",
+      "id": "com.android.chrome:id/url_bar",
+      "bounds": "[378,146][802,272]"
+    },
+    {
+      "text": "",
+      "description": "Share",
+      "hint": "",
+      "id": "",
+      "bounds": "[845,136][970,283]"
+    },
+    {
+      "text": "",
+      "description": "Customize and control Google Chrome",
+      "hint": "",
+      "id": "com.android.chrome:id/menu_button",
+      "bounds": "[970,136][1080,283]"
+    }
+  ]
+}

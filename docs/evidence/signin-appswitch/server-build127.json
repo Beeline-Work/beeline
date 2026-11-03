@@ -1,0 +1,83 @@
+[
+  {
+    "attempt_id": "f2598ead-a615-4d84-b44a-a42d048b7508",
+    "stage": "started",
+    "provider": "github",
+    "platform": null,
+    "version": null,
+    "error_code": null,
+    "occurred_at": "2026-11-03 00:51:45.921+00"
+  },
+  {
+    "attempt_id": "f2598ead-a615-4d84-b44a-a42d048b7508",
+    "stage": "cancelled",
+    "provider": "github",
+    "platform": null,
+    "version": null,
+    "error_code": null,
+    "occurred_at": "2026-11-03 00:53:06.681+00"
+  },
+  {
+    "attempt_id": "a9bc5601-f3f2-4430-b4cb-7d8d78e9682b",
+    "stage": "started",
+    "provider": "github",
+    "platform": null,
+    "version": null,
+    "error_code": null,
+    "occurred_at": "2026-11-03 00:53:09.28+00"
+  },
+  {
+    "attempt_id": "a9bc5601-f3f2-4430-b4cb-7d8d78e9682b",
+    "stage": "cancelled",
+    "provider": "github",
+    "platform": null,
+    "version": null,
+    "error_code": null,
+    "occurred_at": "2026-11-03 00:54:13.193+00"
+  },
+  {
+    "attempt_id": "50492326-eb6c-4ac8-8dbb-18bee43d683a",
+    "stage": "started",
+    "provider": "github",
+    "platform": null,
+    "version": null,
+    "error_code": null,
+    "occurred_at": "2026-11-03 00:54:15.855+00"
+  },
+  {
+    "attempt_id": "50492326-eb6c-4ac8-8dbb-18bee43d683a",
+    "stage": "cancelled",
+    "provider": "github",
+    "platform": null,
+    "version": null,
+    "error_code": null,
+    "occurred_at": "2026-11-03 00:55:24.27+00"
+  },
+  {
+    "attempt_id": "acd3f03a-6196-4d80-92b5-28224dc45819",
+    "stage": "started",
+    "provider": "github",
+    "platform": null,
+    "version": null,
+    "error_code": null,
+    "occurred_at": "2026-11-03 00:55:27.356+00"
+  },
+  {
+    "attempt_id": "acd3f03a-6196-4d80-92b5-28224dc45819",
+    "stage": "cancelled",
+    "provider": "github",
+    "platform": null,
+    "version": null,
+    "error_code": null,
+    "occurred_at": "2026-11-03 00:56:46.054+00"
+  },
+  {
+    "attempt_id": "114d4e68-18f9-41d5-aa3a-3520c8819987",
+    "stage": "started",
+    "provider": "github",
+    "platform": null,
+    "version": null,
+    "error_code": null,
+    "occurred_at": "2026-11-03 00:56:48.201+00"
+  }
+]

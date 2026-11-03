@@ -38,7 +38,8 @@ import {
 import {
   clearOnboardingNotice,
   isSignInInFlight,
-  markSignInInFlight,
+  beginSignInAttempt,
+  finishSignInAttempt,
   nextOnboardingStatus,
   noticeForAuthError,
   publishOnboardingNotice,
@@ -392,10 +393,17 @@ export default function BuzzOnboarding() {
     setStatus('opening_browser');
     clearOnboardingNotice();
     setNotice(null);
-    markSignInInFlight(true);
+    const attempt = beginSignInAttempt();
     try {
       const funnelContext = await beginFunnelAttempt('google').catch(() => undefined);
       const ticket = await runGoogleSignIn({
+        platform: Platform.OS,
+        signal: attempt.signal,
+        onBrowserClosed: () => {
+          if (attempt.signal.aborted) return;
+          setLoadingAction(null);
+          setStatus('idle');
+        },
         funnelContext,
         state: randomState(),
         recoveryToken: randomState(),
@@ -403,11 +411,15 @@ export default function BuzzOnboarding() {
           openAccountAuthSession(url, redirect, authSessionOptions(Platform.OS, redirect, 'google')),
         subscribeToUrls: subscribeToAuthUrls,
       });
+      if (attempt.signal.aborted) return;
+      setLoadingAction('google');
       void funnelCallback('success');
       const identityId = await exchangeFunnelTicket(ticket, 'google');
+      if (attempt.signal.aborted) return;
       await clearPendingGoogleSignIn().catch(() => undefined);
       await enterAfterMonolithSignIn(identityId);
     } catch (error) {
+      if (attempt.signal.aborted) return;
       const cancelled = error instanceof OidcBindError && ['browser_canceled', 'oidc_denied'].includes(error.code);
       void funnelCallback(cancelled ? 'cancelled' : 'error', cancelled ? undefined : 'unknown');
       const next = noticeForAuthError(
@@ -419,8 +431,10 @@ export default function BuzzOnboarding() {
       setNotice(next);
       publishOnboardingNotice(next);
     } finally {
-      markSignInInFlight(false);
-      setLoadingAction(null);
+      if (!attempt.signal.aborted) {
+        finishSignInAttempt(attempt);
+        setLoadingAction(null);
+      }
     }
   };
 
@@ -430,7 +444,7 @@ export default function BuzzOnboarding() {
     setStatus('opening_browser');
     clearOnboardingNotice();
     setNotice(null);
-    markSignInInFlight(true);
+    const attempt = beginSignInAttempt();
     let startedState: string | undefined;
     try {
       const funnelContext=await beginFunnelAttempt('github').catch(()=>undefined);
@@ -438,6 +452,13 @@ export default function BuzzOnboarding() {
       const state = randomState();
       startedState = state;
       const challenge = await runResilientGitHubSignInSession({
+        platform: Platform.OS,
+        signal: attempt.signal,
+        onBrowserClosed: () => {
+          if (attempt.signal.aborted) return;
+          setLoadingAction(null);
+          setStatus('idle');
+        },
         state,
         recoveryToken: randomState(),
         funnelContext,
@@ -450,12 +471,16 @@ export default function BuzzOnboarding() {
           ),
         subscribeToUrls: subscribeToAuthUrls,
       });
+      if (attempt.signal.aborted) return;
+      setLoadingAction('github');
       void funnelCallback('success');
       if (repositoryOnboarding) setStatus('binding');
       const identityId = await exchangeFunnelTicket(challenge.ticket);
+      if (attempt.signal.aborted) return;
       await clearPendingGitHubSignInState().catch(() => undefined);
       await enterAfterMonolithSignIn(identityId);
     } catch (error) {
+      if (attempt.signal.aborted) return;
       const cancelled=error instanceof OidcBindError && ['browser_canceled','github_denied','oidc_denied'].includes(error.code);
       void funnelCallback(cancelled?'cancelled':'error',cancelled?undefined:error instanceof OidcBindError && error.code==='offline'?'offline':'unknown');
       // Leaving the GitHub page is not a failure: free the buttons without a notice.
@@ -470,8 +495,10 @@ export default function BuzzOnboarding() {
       setNotice(next);
       publishOnboardingNotice(next);
     } finally {
-      markSignInInFlight(false);
-      setLoadingAction(null);
+      if (!attempt.signal.aborted) {
+        finishSignInAttempt(attempt);
+        setLoadingAction(null);
+      }
     }
   };
 

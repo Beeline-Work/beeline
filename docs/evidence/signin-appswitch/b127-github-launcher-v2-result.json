@@ -1,0 +1,266 @@
+{
+  "name": "b127-github-launcher-v2",
+  "provider": "github",
+  "route": "launcher",
+  "started": "2026-11-03T00:54:12.936899+00:00",
+  "ended": "2026-11-03T00:55:01.514369+00:00",
+  "before": [
+    {
+      "text": "Sign in to GitHub \u00b7 GitHub",
+      "description": "",
+      "id": "",
+      "bounds": "[0,283][1080,2339]"
+    },
+    {
+      "text": "",
+      "description": "Skip to content",
+      "id": "",
+      "bounds": "[0,283][5,288]"
+    },
+    {
+      "text": "Skip to content",
+      "description": "",
+      "id": "",
+      "bounds": "[0,288][23,994]"
+    },
+    {
+      "text": "Beeline App logo",
+      "description": "",
+      "id": "",
+      "bounds": "[472,466][609,603]"
+    },
+    {
+      "text": "Sign in to ",
+      "description": "",
+      "id": "",
+      "bounds": "[380,708][572,760]"
+    },
+    {
+      "text": "GitHub",
+      "description": "",
+      "id": "",
+      "bounds": "[569,708][700,760]"
+    },
+    {
+      "text": "\n",
+      "description": "",
+      "id": "",
+      "bounds": "[698,708][698,760]"
+    },
+    {
+      "text": "to continue to ",
+      "description": "",
+      "id": "",
+      "bounds": "[291,771][567,823]"
+    },
+    {
+      "text": "Beeline App",
+      "description": "",
+      "id": "",
+      "bounds": "[564,771][790,823]"
+    },
+    {
+      "text": "Username or email address",
+      "description": "",
+      "id": "",
+      "bounds": "[42,915][1042,976]"
+    },
+    {
+      "text": "Password",
+      "description": "",
+      "id": "",
+      "bounds": "[42,1128][1042,1186]"
+    },
+    {
+      "text": "",
+      "description": "Forgot password?",
+      "id": "forgot-password",
+      "bounds": "[740,1128][1042,1186]"
+    },
+    {
+      "text": "Forgot password?",
+      "description": "",
+      "id": "",
+      "bounds": "[740,1133][1042,1180]"
+    },
+    {
+      "text": "Sign in",
+      "description": "",
+      "id": "",
+      "bounds": "[42,1340][1042,1451]"
+    },
+    {
+      "text": "or",
+      "description": "",
+      "id": "",
+      "bounds": "[42,1501][1042,1558]"
+    },
+    {
+      "text": "Continue with Google",
+      "description": "",
+      "id": "",
+      "bounds": "[42,1606][1042,1716]"
+    },
+    {
+      "text": "Continue with Apple",
+      "description": "",
+      "id": "",
+      "bounds": "[42,1732][1042,1842]"
+    },
+    {
+      "text": "New to GitHub? ",
+      "description": "",
+      "id": "",
+      "bounds": "[254,1897][522,1942]"
+    },
+    {
+      "text": "",
+      "description": "Create an account",
+      "id": "",
+      "bounds": "[519,1897][826,1942]"
+    },
+    {
+      "text": "Create an account",
+      "description": "",
+      "id": "",
+      "bounds": "[519,1897][826,1942]"
+    },
+    {
+      "text": "Sign in with a passkey",
+      "description": "",
+      "id": "",
+      "bounds": "[359,1986][721,2047]"
+    },
+    {
+      "text": "",
+      "description": "Terms",
+      "id": "",
+      "bounds": "[496,2131][585,2173]"
+    },
+    {
+      "text": "Terms",
+      "description": "",
+      "id": "",
+      "bounds": "[496,2131][585,2173]"
+    },
+    {
+      "text": "",
+      "description": "Privacy",
+      "id": "",
+      "bounds": "[488,2199][593,2241]"
+    },
+    {
+      "text": "Privacy",
+      "description": "",
+      "id": "",
+      "bounds": "[488,2199][593,2241]"
+    },
+    {
+      "text": "",
+      "description": "Docs",
+      "id": "",
+      "bounds": "[504,2267][577,2309]"
+    },
+    {
+      "text": "Docs",
+      "description": "",
+      "id": "",
+      "bounds": "[504,2267][577,2309]"
+    },
+    {
+      "text": "",
+      "description": "Contact GitHub Support",
+      "id": "",
+      "bounds": "[372,2335][708,2339]"
+    },
+    {
+      "text": "Contact GitHub Support",
+      "description": "",
+      "id": "",
+      "bounds": "[372,2335][708,2339]"
+    },
+    {
+      "text": "Manage cookies",
+      "description": "",
+      "id": "",
+      "bounds": "[427,2339][656,2339]"
+    },
+    {
+      "text": "Do not share my personal information",
+      "description": "",
+      "id": "",
+      "bounds": "[280,2339][803,2339]"
+    },
+    {
+      "text": "",
+      "description": "Close tab",
+      "id": "com.android.chrome:id/close_button",
+      "bounds": "[0,136][126,283]"
+    },
+    {
+      "text": "",
+      "description": "Minimize tab",
+      "id": "com.android.chrome:id/custom_tabs_minimize_button",
+      "bounds": "[126,136][252,283]"
+    },
+    {
+      "text": "",
+      "description": "Connection is secure",
+      "id": "com.android.chrome:id/security_button",
+      "bounds": "[252,146][378,272]"
+    },
+    {
+      "text": "github.com",
+      "description": "",
+      "id": "com.android.chrome:id/url_bar",
+      "bounds": "[378,146][595,272]"
+    },
+    {
+      "text": "",
+      "description": "Share",
+      "id": "",
+      "bounds": "[845,136][970,283]"
+    },
+    {
+      "text": "",
+      "description": "Customize and control Google Chrome",
+      "id": "com.android.chrome:id/menu_button",
+      "bounds": "[970,136][1080,283]"
+    }
+  ],
+  "after": [
+    {
+      "text": "",
+      "description": "Beeline logo",
+      "id": "",
+      "bounds": "[393,902][687,1196]"
+    },
+    {
+      "text": "beeline.",
+      "description": "",
+      "id": "onboarding-wordmark",
+      "bounds": "[63,1206][1017,1290]"
+    },
+    {
+      "text": "workspace for all intelligence",
+      "description": "",
+      "id": "onboarding-tagline",
+      "bounds": "[120,1311][960,1372]"
+    },
+    {
+      "text": "",
+      "description": "busy",
+      "id": "onboarding-github-sign-in",
+      "bounds": "[63,1456][1017,1572]"
+    },
+    {
+      "text": "Continue with GitHub",
+      "description": "",
+      "id": "",
+      "bounds": "[212,1483][973,1544]"
+    }
+  ],
+  "foreground": [
+    "topResumedActivity=ActivityRecord{186428784 u0 app.usebeeline/.MainActivity t18}"
+  ]
+}

@@ -641,6 +641,20 @@ export async function restateSystemLine(
   return { text, event, updated: Boolean(result.rowCount) };
 }
 
+/** Replace an actionable card with its one catalog completion line, retaining its id. */
+export async function settleSystemCard(
+  database: SqlDatabase,
+  messageId: string,
+  phrase: SystemPhrase & { readonly authorId: string },
+): Promise<{ id: string; text: string; event: SystemEvent }> {
+  const { text, event } = await restateSystemLine(database, messageId, phrase);
+  await database.query(
+    `UPDATE messages SET author_id=$2,presentation='system',card_type=NULL,card=NULL WHERE id=$1`,
+    [messageId, phrase.authorId],
+  );
+  return { id: messageId, text, event };
+}
+
 /**
  * The line a deleted message becomes, in its own place: `@deleter deleted a
  * message`, with `· sent by @author` when someone else wrote it. Only the

@@ -701,6 +701,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/ci-workspace
+        id: workspace
         with:
           prepared: ${{ github.event_name == 'pull_request' }}
       # Without a selection (merge queue, dispatch, selection failure) every
@@ -723,7 +724,7 @@ jobs:
           SERVER_HOSTED_TIMING: ${{ github.event_name == 'pull_request' && needs.changes.outputs.productionCorpusReplay == 'true' }}
         run: node scripts/run-ci-shard.mjs ${{ matrix.shard }}/8
       - name: Run one bounded integration batch
-        if: ${{ !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.suite == 'all' || inputs.suite == 'server-integration') }}
+        if: ${{ !cancelled() && steps.workspace.outcome == 'success' && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || inputs.suite == 'all' || inputs.suite == 'server-integration') }}
         working-directory: apps/server
         env:
           SHARD: ${{ matrix.shard }}

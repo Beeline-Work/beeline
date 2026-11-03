@@ -1,7 +1,7 @@
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
-import { systemLine } from './system-line.js';
+import { settleSystemCard } from './system-line.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
 
 /** First-party sign-ins take precedence over external discovery and saved pending routes. */
@@ -30,12 +30,10 @@ export async function settleFirstPartySignIn(database: SqlDatabase, ownerId: str
       AND card->>'status'='pending' FOR UPDATE`, [key, ownerId],
   )).rows;
   for (const card of cards) {
-    await database.query(`UPDATE messages SET card=jsonb_set(card,'{status}','"connected"'::jsonb)
-      WHERE id=$1`, [card.id]);
-    if (card.card.resumeOnConnect === false) continue;
-    const source = await systemLine(database, { roomId: card.room_id, authorId: ownerId,
+    const source = await settleSystemCard(database, card.id, { authorId: ownerId,
       subject: { kind: 'person', id: ownerId, name: systemMessage("first-party-integrations.a-member") }, verb: systemMessage("first-party-integrations.connected"),
       object: card.card.name, consequence: systemMessage("first-party-integrations.the-request-can-continue") });
+    if (card.card.resumeOnConnect === false) continue;
     const parent = card.card.commandId ? (await database.query<CommandRow>(
       `SELECT * FROM agent_commands WHERE id=$1 AND room_id=$2 AND agent_id=$3`,
       [card.card.commandId, card.room_id, card.card.agentId],

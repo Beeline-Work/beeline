@@ -1,0 +1,137 @@
+[
+  {
+    "attempt_id": "ef4b1126-dfad-42f9-8685-7353e1701a27",
+    "stage": "started",
+    "provider": "github",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 00:58:53.204+00"
+  },
+  {
+    "attempt_id": "ef4b1126-dfad-42f9-8685-7353e1701a27",
+    "stage": "cancelled",
+    "provider": "github",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 00:59:30.76+00"
+  },
+  {
+    "attempt_id": "d30e1d82-21a3-4f29-804a-94133dfda3a4",
+    "stage": "started",
+    "provider": "github",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:00:12.862+00"
+  },
+  {
+    "attempt_id": "d30e1d82-21a3-4f29-804a-94133dfda3a4",
+    "stage": "cancelled",
+    "provider": "github",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:01:07.571+00"
+  },
+  {
+    "attempt_id": "ef5081a9-5b58-4662-a38b-ce86d6426b43",
+    "stage": "started",
+    "provider": "github",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:01:10.026+00"
+  },
+  {
+    "attempt_id": "ef5081a9-5b58-4662-a38b-ce86d6426b43",
+    "stage": "cancelled",
+    "provider": "github",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:01:50.388+00"
+  },
+  {
+    "attempt_id": "ddaf8735-0a78-4c1b-99aa-2e8f15d2816d",
+    "stage": "started",
+    "provider": "google",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:02:48.889+00"
+  },
+  {
+    "attempt_id": "ddaf8735-0a78-4c1b-99aa-2e8f15d2816d",
+    "stage": "cancelled",
+    "provider": "google",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:04:57.521+00"
+  },
+  {
+    "attempt_id": "ac78551f-52bc-4094-ad1e-ddbc0197afa9",
+    "stage": "started",
+    "provider": "google",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:04:59.249+00"
+  },
+  {
+    "attempt_id": "87b0430e-4219-4f59-8b08-91b13975c649",
+    "stage": "started",
+    "provider": "google",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:05:51.274+00"
+  },
+  {
+    "attempt_id": "87b0430e-4219-4f59-8b08-91b13975c649",
+    "stage": "cancelled",
+    "provider": "google",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:05:59.243+00"
+  },
+  {
+    "attempt_id": "1a44f581-b612-4d20-930a-2ac2378fe425",
+    "stage": "started",
+    "provider": "google",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:06:00.961+00"
+  },
+  {
+    "attempt_id": "ede8f3f2-6cbe-44dd-95a3-8ddc7805cedc",
+    "stage": "started",
+    "provider": "google",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:07:26.351+00"
+  },
+  {
+    "attempt_id": "ede8f3f2-6cbe-44dd-95a3-8ddc7805cedc",
+    "stage": "cancelled",
+    "provider": "google",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:07:35.77+00"
+  },
+  {
+    "attempt_id": "5b342946-f8fb-4581-bfbb-b821ccdbbfe5",
+    "stage": "started",
+    "provider": "google",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:07:38.588+00"
+  }
+]

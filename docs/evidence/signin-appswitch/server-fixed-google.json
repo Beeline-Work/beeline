@@ -1,0 +1,26 @@
+[
+  {
+    "attempt_id": "2587eeb9-a484-4cfc-a4c8-0b5b54294c76",
+    "stage": "started",
+    "provider": "google",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:51:56.238+00"
+  },
+  {
+    "attempt_id": "2587eeb9-a484-4cfc-a4c8-0b5b54294c76",
+    "stage": "cancelled",
+    "provider": "google",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:52:08.278+00"
+  },
+  {
+    "attempt_id": "de33ce62-f6ae-472a-b2e6-76f7374b7d7a",
+    "stage": "started",
+    "provider": "google",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:52:09.388+00"
+  }
+]

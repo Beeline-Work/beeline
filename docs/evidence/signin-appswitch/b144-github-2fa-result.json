@@ -1,0 +1,64 @@
+{
+  "started": "2026-11-03T01:21:55.696054+00:00",
+  "ended": "2026-11-03T01:22:37.362873+00:00",
+  "codeReadInAegis": true,
+  "return": "real home-screen icon tap",
+  "after": [
+    {
+      "text": "",
+      "description": "Beeline logo",
+      "hint": "",
+      "id": "",
+      "bounds": "[393,833][687,1127]"
+    },
+    {
+      "text": "beeline.",
+      "description": "",
+      "hint": "",
+      "id": "onboarding-wordmark",
+      "bounds": "[63,1137][1017,1221]"
+    },
+    {
+      "text": "workspace for all intelligence",
+      "description": "",
+      "hint": "",
+      "id": "onboarding-tagline",
+      "bounds": "[120,1242][960,1303]"
+    },
+    {
+      "text": "",
+      "description": "busy",
+      "hint": "",
+      "id": "onboarding-github-sign-in",
+      "bounds": "[63,1388][1017,1503]"
+    },
+    {
+      "text": "Continue with GitHub",
+      "description": "",
+      "hint": "",
+      "id": "",
+      "bounds": "[107,1415][973,1476]"
+    },
+    {
+      "text": "RECOMMENDED",
+      "description": "",
+      "hint": "",
+      "id": "",
+      "bounds": "[720,1367][996,1407]"
+    },
+    {
+      "text": "",
+      "description": "Continue with Google",
+      "hint": "",
+      "id": "onboarding-google-sign-in",
+      "bounds": "[63,1525][1017,1641]"
+    },
+    {
+      "text": "Continue with Google",
+      "description": "",
+      "hint": "",
+      "id": "",
+      "bounds": "[341,1552][739,1613]"
+    }
+  ]
+}

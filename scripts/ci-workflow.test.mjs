@@ -281,19 +281,19 @@ test('the network admission CI command runs without duplicate package-script wor
   assert.equal(result.status, 0, result.stdout + result.stderr);
 });
 
-test('prepared consumers cannot fan out cold installs or builds after a preparation failure', () => {
+test('prepared consumers cannot fan out cold dependency installs after a preparation failure', () => {
   const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
   const directory = mkdtempSync(join(tmpdir(), 'ci-preparation-'));
   try {
     const marker = join(directory, 'npm-called');
     writeFileSync(join(directory, 'npm'), '#!/bin/sh\nprintf "%s\\n" "$*" > "$NPM_MARKER"\n', { mode: 0o755 });
-    const steps = action.runs.steps.filter(step => /\bnpm (?:ci|run build)\b/.test(step.run ?? ''));
-    assert.equal(steps.length, 3, 'root, build and mobile fallbacks must be covered');
+    const steps = action.runs.steps.filter(step => /\bnpm ci\b/.test(step.run ?? ''));
+    assert.equal(steps.length, 2, 'root and mobile dependency fallbacks must be covered');
     for (const step of steps) {
       const env = { ...process.env, PATH: `${directory}:${process.env.PATH}`, NPM_MARKER: marker, CI_PREPARED: 'true' };
       const missing = spawnSync('bash', ['-c', step.run], { env, encoding: 'utf8' });
       assert.equal(missing.status, 1, `prepared consumer must fail before ${step.run}`);
-      assert.equal(existsSync(marker), false, 'a consumer must never install or rebuild');
+      assert.equal(existsSync(marker), false, 'a consumer must never install dependencies');
       assert.equal(step.env.CI_PREPARED, '${{ inputs.prepared }}');
       const producer = spawnSync('bash', ['-c', step.run], { env: { ...env, CI_PREPARED: 'false' }, encoding: 'utf8' });
       assert.equal(producer.status, 0, producer.stderr);
@@ -364,4 +364,58 @@ test('compiled cache snapshots reject missing exports before publishing', () => 
     const complete = spawnSync('bash', ['-c', check.run], { cwd: directory, encoding: 'utf8' });
     assert.equal(complete.status, 0, complete.stderr);
   } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('a prepared rerun rebuilds missing compiled exports when its build cache disappeared', () => {
+  const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
+  const build = action.runs.steps.find(step => /npm run build/.test(step.run ?? ''));
+  const verify = action.runs.steps.find(step => step.id === 'verify-builds');
+  assert.equal(build.if, "steps.builds.outputs.cache-hit != 'true'", 'warm consumers keep reusing the exact-commit cache');
+  const directory = mkdtempSync(join(tmpdir(), 'ci-evicted-build-'));
+  try {
+    const pkg = join(directory, 'packages/api-contract');
+    mkdirSync(pkg, { recursive: true });
+    writeFileSync(join(pkg, 'package.json'), JSON.stringify({ exports: { './mobile-minimum': {
+      import: './dist/mobile-minimum.js', types: './dist/mobile-minimum.d.ts',
+    } } }));
+    const before = spawnSync('bash', ['-c', verify.run], { cwd: directory, encoding: 'utf8' });
+    assert.notEqual(before.status, 0, 'the fresh checkout must reproduce the missing export');
+    const marker = join(directory, 'build-arguments');
+    writeFileSync(join(directory, 'npm'), `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" > "$BUILD_MARKER"
+mkdir -p "$FIXTURE_PACKAGE/dist"
+printf 'export {};\\n' > "$FIXTURE_PACKAGE/dist/mobile-minimum.js"
+printf 'export {};\\n' > "$FIXTURE_PACKAGE/dist/mobile-minimum.d.ts"
+`, { mode: 0o755 });
+    const env = { ...process.env, PATH: `${directory}:${process.env.PATH}`,
+      CI_PREPARED: 'true', FIXTURE_PACKAGE: pkg, BUILD_MARKER: marker };
+    const rebuilt = spawnSync('bash', ['-c', build.run], { cwd: directory, env, encoding: 'utf8' });
+    assert.equal(rebuilt.status, 0, rebuilt.stderr);
+    assert.equal(readFileSync(marker, 'utf8').trim(), 'run build -- --concurrency=1');
+    const after = spawnSync('bash', ['-c', verify.run], { cwd: directory, encoding: 'utf8' });
+    assert.equal(after.status, 0, after.stderr);
+    writeFileSync(join(directory, 'npm'), '#!/bin/sh\nexit 23\n', { mode: 0o755 });
+    assert.equal(spawnSync('bash', ['-c', build.run], { cwd: directory, env }).status, 23,
+      'a failed rebuild must still fail setup');
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('integration survives an ordinary test failure but never runs against failed workspace setup', () => {
+  const steps = jobs['server-suite-shard'].steps;
+  const workspace = steps.find(step => step.uses === './.github/actions/ci-workspace');
+  const integration = steps.find(step => step.name === 'Run one bounded integration batch');
+  assert.equal(workspace.id, 'workspace');
+  const evaluate = new Function('cancelled', 'github', 'inputs', 'steps',
+    `return (${integration.if.replace(/^\$\{\{\s*|\s*\}\}$/g, '')});`);
+  for (const workspaceOutcome of ['success', 'failure', 'skipped']) {
+    for (const suiteOutcome of ['success', 'failure']) {
+      assert.equal(evaluate(() => false, { event_name: 'pull_request' }, {}, {
+        workspace: { outcome: workspaceOutcome }, suite: { outcome: suiteOutcome },
+      }), workspaceOutcome === 'success');
+    }
+  }
+  assert.equal(evaluate(() => true, { event_name: 'pull_request' }, {}, {
+    workspace: { outcome: 'success' },
+  }), false, 'cancellation still stops integration');
 });

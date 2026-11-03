@@ -27,14 +27,20 @@ capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
 | Privileged Body setup, PostgreSQL timing, Docker build/lint, corpus replay | `ubuntu-latest` | `ubuntu-latest` |
 
 Each server shard runs its balanced file assignment and one of the existing
-eight integration batches. Held voice playback and durable socket replay run in fresh worker processes.
-On PRs, width, room-read latency and completion-latency budgets run with one
-worker in the existing
-hosted PRODUCTION-CORPUS REPLAY job, outside the shared quota. A shard moves
+eight integration batches. Held voice playback and durable socket replay run
+in fresh worker processes. On PRs, width, room-read latency and completion
+latency budgets run with one worker in the existing hosted PRODUCTION-CORPUS
+REPLAY job, outside the shared quota. A shard moves
 them only when that required hosted gate is enabled; merge/dispatch runs
-retain isolated shard coverage. The replay fixture still delivers all 300
-missed messages, checks their order and deduplication, and retains its original
-deadlines. Its engine and sockets start in a fresh process. Timing limits stay unchanged.
+retain isolated shard coverage. Socket replay retains all 300 messages,
+ordering/deduplication checks and its original deadlines. Completion tracing
+matches the exact real pre-query clock read rather than requiring two clock
+observations within ten milliseconds; its 500 ms budget stays unchanged.
+The feedback-triage scope fixture keeps seven external workspaces and 201
+internal messages (more than its 200-row page), preserving receipt and privacy
+assertions without seeding 29,650 unrelated internal messages. Its original
+job consumed 13m34s in this file and timed out during integration; the smaller
+fixture removes that setup bottleneck without raising a deadline.
 PRs consume SELECT SERVER TESTS; an unavailable selection fails closed to the
 full suite. Main coverage remains full. No integration batch is removed or
 repeated.

@@ -92,6 +92,7 @@
     "prove:brief-deadlock": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-brief-deadlock.mjs",
     "review:exact-head": "node scripts/review-exact-head.mjs",
     "prove:fanout-fixes": "node scripts/prove-fanout-fixes.mjs",
+    "prove:router-group-b": "node --import tsx scripts/prove-router-group-b-remaining.mjs",
     "prove:push-backlog": "npm run build -w @beeline/server && node --import tsx scripts/prove-push-backlog.mjs",
     "prove:rooms-mcp-events": "npm run build -w @beeline/server && node --import tsx scripts/prove-rooms-mcp-events.mjs",
     "prove:connected-app-reports": "npx turbo run build --filter=@beeline/server... --concurrency=2 && node scripts/prove-connected-app-reports.mjs",

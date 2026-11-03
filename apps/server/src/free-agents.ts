@@ -98,7 +98,6 @@ CREATE INDEX IF NOT EXISTS free_agent_events_agent ON free_agent_events(agent_id
 `;
 
 /** How often the background leader sweeps free agents at most. */
-export const FREE_AGENT_SWEEP_MS = 15_000;
 
 export const FREE_AGENT_HARNESS = 'pi';
 
@@ -949,7 +948,7 @@ export class FreeAgentService {
    * forgotten running Machines to sleep, and delete Machines idle for the
    * retention window. Returns how many agents it acted on.
    */
-  async nextDelayMs(): Promise<number | undefined> {
+  async nextDelayMs(admittedAt?:string): Promise<number | undefined> {
     return (await import('./background-deadline-clock.js')).backgroundNextDelay(this.database,
       `SELECT GREATEST(f.last_activity_at,COALESCE(f.wake_requested_at,f.created_at),
          (SELECT max(completed_at) FROM agent_commands WHERE agent_id=f.agent_id))
@@ -971,7 +970,7 @@ export class FreeAgentService {
        UNION ALL SELECT GREATEST(command.startup_wake_after,command.wake_after) FROM agent_commands command
          JOIN free_agents f ON f.agent_id=command.agent_id WHERE f.removed_at IS NULL AND command.state='pending'
        UNION ALL SELECT provision_started_at+interval '2 minutes' FROM free_agents
-         WHERE provision_started_at IS NOT NULL AND provision_error IS NULL AND removal_cleaned_at IS NULL`);
+         WHERE provision_started_at IS NOT NULL AND provision_error IS NULL AND removal_cleaned_at IS NULL`,admittedAt);
   }
 
   async sweep(): Promise<number> {

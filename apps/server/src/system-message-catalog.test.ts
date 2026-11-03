@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { Worker } from 'node:worker_threads';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
@@ -28,13 +29,34 @@ const files = () =>
     ...systemMessageSources(resolve(root, 'packages/api-contract/src')),
   ]);
 
+// A Vitest timeout cannot interrupt synchronous TypeScript graph traversal.
+// The parent owns this deadline even if analysis stops servicing its event loop.
+const SCAN_TIMEOUT_MS = 90_000;
+function assertSourceUsage(sources: Map<string, string>): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('../scripts/system-message-scan-worker.mjs', import.meta.url), {
+      workerData: [...sources],
+    });
+    const timer = setTimeout(() => {
+      void worker.terminate();
+      reject(new Error(`System-message source scan exceeded ${SCAN_TIMEOUT_MS}ms`));
+    }, SCAN_TIMEOUT_MS);
+    worker.once('message', () => { clearTimeout(timer); resolve(); });
+    worker.once('error', error => { clearTimeout(timer); reject(error); });
+    worker.once('exit', code => {
+      clearTimeout(timer);
+      reject(new Error(`System-message source scan exited before reporting success (code ${code})`));
+    });
+  });
+}
+
 it('locks catalog wording only; new or changed wording requires owner approval', () => {
   assertWordingLock(readWordingCatalog(catalogSource()), locked);
 });
 
-it('requires every System writer to use catalog keys for fixed text', () => {
-  assertCatalogUsage(scanSystemMessageWording(files()));
-}, 30_000);
+it('requires every System writer to use catalog keys for fixed text', async () => {
+  await assertSourceUsage(files());
+}, SCAN_TIMEOUT_MS + 10_000);
 
 type Legacy = Record<
   string,
@@ -96,7 +118,7 @@ it('does not lock variable descriptions, source formatting, or declaration order
   );
 });
 
-it('an unrelated edit to each formerly locked method passes the real source scan', () => {
+it('an unrelated edit to each formerly locked method passes the real source scan', async () => {
   const changed = files();
   for (const [file, method] of [
     ['daemon-service.ts', 'postRoomMessage'],
@@ -124,8 +146,8 @@ it('an unrelated edit to each formerly locked method passes the real source scan
     );
   }
   assertWordingLock(readWordingCatalog(catalogSource()), locked);
-  assertCatalogUsage(scanSystemMessageWording(changed));
-}, 30_000);
+  await assertSourceUsage(changed);
+}, SCAN_TIMEOUT_MS + 10_000);
 
 function fixture(source: string, helper = '') {
   return new Map([

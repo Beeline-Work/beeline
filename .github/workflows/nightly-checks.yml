@@ -17,6 +17,7 @@ on:
 permissions:
   contents: read
   actions: write
+  checks: read
   issues: write
 concurrency:
   group: ${{ github.event_name == 'workflow_run' && format('main-checks-report-{0}', github.event.workflow_run.id) || 'nightly-checks' }}

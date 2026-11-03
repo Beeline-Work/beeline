@@ -74,9 +74,22 @@ export async function runNightly({ api, pause, save, now = () => new Date(), man
         job.failingTests = [...new Set(log.split('\n').filter(l => /(?:not ok \d+|FAIL\s|✕|×)/.test(l)).map(l => l.replace(/\u001b\[[0-9;]*m/g, '').slice(0, 1000)))].slice(0, 100);
       } catch (error) { job.logError = error.message; }
     }
+    let timedOut = false;
+    if (state.conclusion === 'cancelled') {
+      for (const job of jobs.jobs.filter(j => j.conclusion === 'cancelled')) {
+        // Cancellation alone also covers people and concurrency. Only GitHub's
+        // explicit runner annotation establishes a job execution timeout.
+        for (let page = 1; ; page++) {
+          const annotations = await api('GET', `check-runs/${job.id}/annotations?per_page=100&page=${page}`);
+          if (annotations.some(a => a.annotation_level === 'failure'
+            && /^The job has exceeded the maximum execution time of \d+(?:h\d+)?m\d+s$/.test(a.message))) timedOut = true;
+          if (annotations.length < 100) break;
+        }
+      }
+    }
     attempts.push({ attempt, sha: state.head_sha, url: `${run.html_url}/attempts/${attempt}`, conclusion: state.conclusion, jobs: jobs.jobs });
     save(classify(attempts));
-    if (attempt === 1 && state.conclusion === 'failure') await api('POST', `actions/runs/${run.id}/rerun-failed-jobs`);
+    if (attempt === 1 && (state.conclusion === 'failure' || timedOut)) await api('POST', `actions/runs/${run.id}/rerun-failed-jobs`);
     else break;
   }
   const result = { ...classify(attempts), requestedSha: sha };

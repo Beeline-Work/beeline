@@ -77,3 +77,38 @@ declared migration boundaries still need real route ownership and executable
 closure. Passing the inventory ratchet does not mean every boundary is owned.
 Runtime SDK/native captures, all supported cohorts, equal-workload CPU/WAL/
 wire budgets and the complete migration/rollback matrix remain required.
+
+## Trusted scanner enforcement
+
+`scripts/check-network-base.mjs` loads scanner source from an exact resolved
+base commit, scans the proposed tree, and applies the base inventory ratchets.
+It does not evaluate proposed scanner modules. TYPECHECK retains both existing
+head checks and additionally runs this base check; once present at the base,
+the driver itself is also loaded from that base. Temporary modules stay under
+the worktree and use its installed dependencies. No packages are downloaded.
+
+Nine adversarial/CLI cases pass, including blank proposed scanners, a moved
+helper leaf with a rewritten manifest, absent base refs, a missing trusted
+phone scanner, and running the copied driver outside the target tree. The
+existing router-boundary26 and CI orchestration22 cases pass. Workflow paths
+(122), shell parsing and ShellCheck pass.
+
+The combined source at `8c218d88e` passes its own trusted-base extraction. The
+actual main base `f43bd3f86` correctly returns ten refusals for existing staged
+changes below. These are not waived. Under firstmate instruction028, a relaxing
+change stays red for owner disposition; this worker does not merge it.
+
+| Existing staged difference rejected by main | Count | Removal condition |
+| --- | --- | --- |
+| Body activation, turn and usage channel imports of their private codecs | 3 | Complete and review the exact owned adapters; retain private import restrictions. |
+| Phone router and command owner imports of `@beeline/net/owner` | 2 | Complete and review the trusted owner boundary; feature access remains prohibited. |
+| Phone route observation import of `@beeline/net/phone-inputs` | 1 | Remove shadow migration observation after complete owned dispatch. |
+| Server machine ingress imports of the same three private helper codecs | 3 | Complete and review the exact machine ingress adapters. |
+| MCP `undici` dispatcher import classified as a network boundary | 1 | Prove the exact timeout-only wrapper or remove it; do not authorize generic dispatcher use. |
+
+The read-only GitHub main-protection response observed during this work has
+TYPECHECK required, no required PR review configuration, and administrator
+enforcement disabled. Thus protected code review for registry/scanner/manifest/
+budget changes is not established by CODEOWNERS or by this new check. The
+specification's enforceable-review requirement remains an explicit rollout
+gap; no live repository protection was changed.

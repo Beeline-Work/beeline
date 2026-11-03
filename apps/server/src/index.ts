@@ -1,3 +1,4 @@
+import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
 import { sentryEligibilityKey } from './sentry-wake-source.js';
 import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
@@ -499,7 +500,7 @@ async function main() {
     const due = await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
     if (due.ok) return due.value;
   });
-  work.add('deadlines', reconciliationMs, async (newLeader) => {
+  work.addDeadline('deadlines', async (newLeader) => {
     const due = await backgroundJobs.run('deadline-expiry', () => deadlineExpiry.runOnce(newLeader));
     if (due.ok && due.value !== null) return Math.max(0, due.value);
   });
@@ -550,6 +551,10 @@ async function main() {
   const stopConnectorOfferWake = subscribeCommandCompletion(CONNECTOR_OFFER_DUE_KEY, wakeConnectorOffers);
   const stopConnectorOfferRecovery = jobsDatabase.onRecovery(wakeConnectorOffers);
   const stopConnectorOfferResync = live.subscribeResync(wakeConnectorOffers);
+  const wakeDisplayDeadlines = () => wakeWork('deadlines', 'display-deadline');
+  const stopDisplayDeadline = subscribeCommandCompletion(DISPLAY_DEADLINE_KEY, wakeDisplayDeadlines);
+  const stopDisplayRecovery = jobsDatabase.onRecovery(wakeDisplayDeadlines);
+  const stopDisplayResync = live.subscribeResync(wakeDisplayDeadlines);
   const wakeSentry = () => wakeWork('sentry', 'sentry-eligibility');
   const stopSentryRecipient = subscribeCommandCompletion(sentryEligibilityKey(sentryWakeAgentId), wakeSentry);
   const stopSentryRoom = subscribeCommandCompletion(sentryEligibilityKey('sentry'), wakeSentry);
@@ -570,7 +575,7 @@ async function main() {
   const stopSystemDmRecovery=jobsDatabase.onRecovery(wakeSystemDms);
   if (push) liveListener.setPushWake(() => wakeWork('push'));
   liveListener.setXSignupDeliveryWake(()=>wakeWork('x-conversions','signup-delivery'));
-  liveListener.setOwedWake((source) => wakeWork(source === 'sentry' ? 'sentry' : 'deadlines', source));
+  liveListener.setOwedWake((source) => { if (source === 'sentry') wakeWork('sentry', source); });
   // Receiver latency must not block unrelated leader jobs. Existing atomic
   // per-delivery claims serialize overlapping instances and rolling versions.
   const mcpWork = new BackgroundWork();
@@ -589,12 +594,6 @@ async function main() {
   // A committed wake for a sleeping free agent starts its Machine at once;
   // the leader sweep retries anything this misses.
   const stopFreeAgentWake = freeAgents?.subscribeToWakes(live);
-  const stopBackgroundWake = live.subscribeAll((event) => {
-    if (event.type !== 'invalidate') return;
-    if (event.reason === 'postgres:messages') {
-      wakeWork('deadlines', 'messages');
-    }
-  });
   const port = Number(process.env.PORT ?? '8080');
   const host = process.env.HOST ?? '127.0.0.1';
   await listenAfterBestEffortRecovery(server, async () => {
@@ -618,7 +617,7 @@ async function main() {
     await leader.stop();
     await mcpStopped;
     stopComputerExpiry();
-    stopBackgroundWake();
+    stopDisplayDeadline();stopDisplayRecovery();stopDisplayResync();
     stopFreeAgentWake?.();
     await voice?.close();
     await connectionPresence.stop();

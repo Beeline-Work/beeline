@@ -353,3 +353,12 @@ The Sentry owner no longer runs a minute reconciliation sweep. It returns only t
 The eligibility fixture waits for both subscription recovery hints before counting committed writes. Renames, unrelated membership, rollback and an empty queue do not wake it. The clock-skew assertion runs only against separate loopback PostgreSQL because PGlite shares JavaScript's clock; the isolated CI lane explicitly runs that assertion and deadline tests. No production Workspace or provider was used.
 
 Validation: local Sentry13, isolated PostgreSQL deadline/clock3, committed eligibility1, the other listener43, shutdown10, server types, workspace build8, dead-code (five existing/zero introduced), router inventory158, phone inventory72 and workflow paths120 pass. Full route ownership/generations, bounded digest ingestion, source costs and released-cohort gates remain open. No whole finding is newly closed.
+
+
+## D098 — Legacy display expiry has no recurring discovery
+
+The supported legacy expiry owner now runs once at acquisition, from changed stored deadline inputs, actual recovery, or its returned database-clock deadline. The minute fallback and blanket message invalidation subscription are removed. Committed source capture covers question classification/creation, seen/clear clocks, approval expiry and owed expiry. Ordinary messages, question wording with the same clock, irrelevant card metadata and rolled-back changes do not admit a query. Expiry notifications themselves do not rediscover deadlines.
+
+The existing legacy notices and takeover semantics are preserved. This is not selection of the staged Tray clock owner or a claim that legacy display classification meets the final modern ownership contract. Full production composition, clock generations, workload and cohort gates remain open.
+
+Validation: listener45 plus corrected focused source/idle2, shutdown10, server types, build8, dead-code (five existing/zero introduced), router158/phone72 inventories and workflow paths120 pass. The first source fixture omitted required workspace_id; it was corrected without changing production constraints. No whole finding is newly closed.

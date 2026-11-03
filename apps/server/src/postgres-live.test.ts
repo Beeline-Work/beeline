@@ -1,3 +1,5 @@
+import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
+import { BackgroundWork } from './background-work.js';
 import { SENTRY_TRIAGE_ROOM, sentryEligibilityKey } from './sentry-wake-source.js';
 import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
@@ -121,6 +123,51 @@ describe('Postgres live fanout', () => {
     await Promise.all(listeners.map((listener) => listener.stop()));
     await database.close();
     vi.restoreAllMocks();
+  });
+
+  it('DISPLAY-DEADLINE: committed deadline changes admit work; ordinary messages and rollback do not', async () => {
+    const live = new LiveHub(), events: LiveEvent[] = [];
+    live.subscribeAll(event => events.push(event));
+    const client = new PgliteListenClient(database), listener = new PostgresLiveListener(database, live, () => client);
+    const wake = vi.fn();
+    completionReleases.push(subscribeCommandCompletion(DISPLAY_DEADLINE_KEY, wake));listeners.push(listener);
+    void listener.run();await eventually(() => wake.mock.calls.length === 1);wake.mockClear();
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('deadline-source',$1,$2,'ordinary')`,[ROOM,AUTHOR]);
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await database.query("UPDATE messages SET text='Please help' WHERE id='deadline-source'");
+    await eventually(() => wake.mock.calls.length === 1);wake.mockClear();
+    await database.query("UPDATE messages SET text='Please review' WHERE id='deadline-source'");
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await expect(database.transaction(async db => {
+      await db.query("UPDATE messages SET text='ordinary' WHERE id='deadline-source'");
+      throw new Error('rollback');
+    })).rejects.toThrow('rollback');
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await database.query(`INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,first_seen_at) VALUES($1,'deadline-source',$2,now())`,[AUTHOR,WORKSPACE]);
+    await eventually(() => wake.mock.calls.length === 1);wake.mockClear();
+    await database.query("UPDATE messages SET text='ordinary' WHERE id='deadline-source'");
+    await eventually(() => wake.mock.calls.length === 1);wake.mockClear();
+    // A pre-existing metadata timestamp only becomes a deadline when its card type does.
+    await database.query(`UPDATE messages SET card=jsonb_build_object('expiresAt',1234567890000) WHERE id='deadline-source'`);
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await database.query("UPDATE messages SET card_type='squire-approval' WHERE id='deadline-source'");
+    await eventually(() => wake.mock.calls.length === 1);
+  });
+
+  it('DISPLAY-IDLE: empty and failed deadline owners do no work over an idle day', async () => {
+    let now = 0;
+    const query = vi.fn(database.query.bind(database));
+    const expiry = new DeadlineExpiry({query});
+    const work = new BackgroundWork(() => now, () => {});
+    work.addDeadline('display', async fresh => (await expiry.runOnce(fresh)) ?? undefined);
+    expect(await work.run(true)).toBe(Infinity);
+    const initial = query.mock.calls.length;
+    now += 86_400_000;expect(await work.run(false)).toBe(Infinity);expect(query).toHaveBeenCalledTimes(initial);
+    query.mockRejectedValueOnce(new Error('unavailable'));
+    work.wake('display');await expect(work.run(false)).rejects.toThrow('unavailable');
+    now += 86_400_000;expect(await work.run(false)).toBe(Infinity);expect(query).toHaveBeenCalledTimes(initial + 1);
+    work.wake('display','actual-recovery');expect(await work.run(false)).toBe(Infinity);
+    expect(query.mock.calls.length).toBeGreaterThan(initial + 1);
   });
 
   it('SENTRY-ELIGIBILITY: only committed recipient or triage authority changes wake a pending digest', async () => {

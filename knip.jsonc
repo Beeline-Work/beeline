@@ -6,9 +6,11 @@
   "include": ["files", "exports", "types"],
   "includeEntryExports": true,
   "ignoreExportsUsedInFile": true,
-  // Only proof adapters: bundlers supply these exports through runtime aliases.
+  // Explicit bundler boundaries: runtime loaders consume these exported interfaces.
   // Keep file reachability and production export enforcement enabled.
   "ignoreIssues": {
+    // esbuild exposes start/submit through demo.js, which the static homepage lazy-loads.
+    "web/marketing/demo-source.mjs": ["exports"],
     // CONNECT-RING-1 selects router/transport aliases and the temporary Metro adapter.
     "apps/mobile/scripts/connect-ring-proof/{state.ts,metro.cjs}": ["exports"],
     // Metro selects the fitted web title implementation through this platform export.
@@ -31,6 +33,10 @@
       // Shell hooks and device harnesses invoke these by path, outside the
       // JavaScript module graph Knip can follow.
       "entry": [
+        // The static homepage loads this module; its documented JS build bundles the demo.
+        "web/marketing/boot.mjs",
+        "web/marketing/demo-source.mjs",
+        "scripts/marketing/build.mjs",
         // TYPECHECK runs the base commit's copy of the architecture guard by path.
         "scripts/check-architecture.mjs",
         // The CI baseline runbook invokes this read-only GitHub measurement CLI by path.
@@ -111,6 +117,8 @@
         "!web/join/invite.js",
         // Generated browser bundle; source is web/x-attribution-source.ts.
         "!web/x-attribution.js",
+        // Generated browser bundle; source is web/marketing/demo-source.mjs.
+        "!web/marketing/demo.js",
       ],
     },
     "apps/*": {

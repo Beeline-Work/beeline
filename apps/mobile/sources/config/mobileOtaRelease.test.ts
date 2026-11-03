@@ -34,6 +34,10 @@ const serverWorkflow = readFileSync(
   resolve(mobileRoot, '../../.github/actions/server-leg/action.yml'),
   'utf8',
 );
+const serverImageScript = readFileSync(
+  resolve(mobileRoot, '../../scripts/server-release-image.sh'),
+  'utf8',
+);
 
 // The canary and Maestro scripts run from an isolated app directory.
 const fixtureParent = resolve(mobileRoot, '../../.voice-proof');
@@ -789,7 +793,12 @@ esac
       'Build the exact Fly image and capture the two-Machine rollback plan',
     );
     expect(serverWorkflow).toContain('test "$(git rev-parse HEAD)" = "$RELEASE_SHA"');
-    expect(serverWorkflow).toContain('--build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA"');
+    expect(serverWorkflow).toContain('bash scripts/server-release-image.sh release "$RELEASE_SHA" "$RELEASE_VERSION"');
+    // Both the prebuilt-image path and the source-build fallback must retain
+    // the exact release identity after extracting image preparation.
+    expect(serverImageScript).toContain('test "$actual_sha" = "$sha"');
+    expect(serverImageScript).toContain('ENV BEELINE_RELEASE_VERSION=$version BEELINE_RELEASE_SHA=$sha');
+    expect(serverImageScript).toContain('--build-arg "BEELINE_RELEASE_SHA=$sha"');
     expect(serverWorkflow).toContain(
       'Canary one Machine for ninety seconds, then update its peer',
     );

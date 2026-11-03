@@ -24,8 +24,9 @@ const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime
 const timingFiles = [isolated[0], isolated[2], isolated[3]];
 const hostedTiming = process.env.SERVER_HOSTED_TIMING || 'false';
 assert.ok(['true', 'false'].includes(hostedTiming), 'SERVER_HOSTED_TIMING must be true or false');
-assert.ok(hostedTiming === 'false' || process.env.GITHUB_EVENT_NAME === 'pull_request',
-  'only PRs can move timing coverage to the required hosted replay gate');
+assert.ok(hostedTiming === 'false' || process.env.GITHUB_EVENT_NAME === 'pull_request'
+  || (process.env.GITHUB_EVENT_NAME === 'push' && process.env.GITHUB_REF === 'refs/heads/main'),
+  'only PRs and main pushes can move timing coverage to the required hosted replay gate');
 const exclusions = ['src/production-corpus-hot-reads.test.ts', 'src/integration.test.ts', 'src/agent-command.scaling.test.ts', ...isolated]
   .flatMap((file) => ['--exclude', file]);
 function list(files = [], exclude = exclusions) {
@@ -41,16 +42,23 @@ const selection = readSelection();
 const discovered = list();
 const files = discovered.filter((file) => chosen(selection, file));
 const timingData = JSON.parse(readFileSync(new URL('./ci-test-timings.json', import.meta.url), 'utf8'));
-const shards = balanceFiles(files, timingData.files, count);
-const selected = shards[position - 1];
 const hostedFiles = hostedTiming === 'true' ? timingFiles.filter(file => chosen(selection, file)) : [];
-const isolatedFiles = isolated.filter((file, index) => !hostedFiles.includes(file)
-  && position === index % count + 1 && chosen(selection, file));
+const isolatedFor = shard => isolated.filter((file, index) => !hostedFiles.includes(file)
+  && shard === index % count + 1 && chosen(selection, file));
+// Account for work that runs after the ordinary files too. Previously the
+// voice shard and the slower integration batches received a full ordinary load.
+const reservedMilliseconds = Array.from({ length: count }, (_, index) =>
+  isolatedFor(index + 1).reduce((sum, file) => sum + (timingData.files[file] || 0), 0)
+  + (count === 8 && chosen(selection, 'src/integration.test.ts')
+    ? timingData.integrationBatches?.[index + 1] || 0 : 0));
+const shards = balanceFiles(files, timingData.files, count, reservedMilliseconds);
+const selected = shards[position - 1];
+const isolatedFiles = isolatedFor(position);
 assert.deepEqual(list(isolated, []).sort(), [...isolated].sort(), 'isolated suites must remain discoverable');
 if (selection.mode === 'full') assert.ok(selected.files.length > 0, 'server shard has no files');
 if (selected.files.length) assert.deepEqual(list(selected.files).sort(), [...selected.files].sort(), 'Vitest must select exactly the assigned files');
 console.log(JSON.stringify({ shard: `${position}/${count}`, totalFiles: discovered.length + isolated.length, selection: selection.mode,
-  ...selected, isolatedFiles, hostedFiles }, null, 2));
+  ...selected, reservedMilliseconds: reservedMilliseconds[position - 1], isolatedFiles, hostedFiles }, null, 2));
 if (!process.argv.includes('--list')) {
   let status = 0;
   if (selected.files.length) {

@@ -3,7 +3,7 @@ import { promisify } from 'node:util';
 import assert from 'node:assert/strict';
 import { execFile, execFileSync, spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, chmodSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,8 @@ import {
 } from './unified-release.mjs';
 
 import { encodeReleaseOutput, decodeReleaseOutput } from './release-job-output.mjs';
+import { liveDelivery, recordDelivery } from './release-delivery.mjs';
+import { NATIVE_CARGO_BUILD_FLAGS, nativeCacheIdentity } from './native-agent-cache.mjs';
 
 const OLD_SHA = '1'.repeat(40);
 const MID_SHA = '3'.repeat(40);
@@ -606,6 +608,8 @@ test('R-release-timeout: workflow completes promotion and refuses unrequested na
     for (const storeTrack of ['', 'none', 'production', 'beta']) {
       for (const selection of ['', 'auto', 'all', 'mobile-native']) {
         const expression = condition
+          .replaceAll('cancelled()', 'false')
+          .replaceAll('needs.initialize.result', "'success'")
           .replaceAll('needs.initialize.outputs.run_mobile_native', "'true'")
           .replaceAll(`needs.initialize.outputs.native_${platform}`, "'true'")
           .replaceAll('inputs.store_track', JSON.stringify(storeTrack))
@@ -1098,7 +1102,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
     const cap = job['timeout-minutes'];
     if (cap === undefined) continue;
     if (slowLegs.has(name)) continue;
-    assert.ok(name === 'helper' ? cap <= jobCeilingMinutes : cap < jobCeilingMinutes, `${name} timeout-minutes ${cap} exceeds the job ceiling`);
+    assert.ok(['helper', 'helper_linux'].includes(name) ? cap <= jobCeilingMinutes : cap < jobCeilingMinutes, `${name} timeout-minutes ${cap} exceeds the job ceiling`);
   }
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
@@ -1136,8 +1140,8 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
     assert.deepEqual(running, [expected], `pin changed ${pinChanged}, proof ${proof}`);
   }
   assert.deepEqual(workflow.jobs.release_result.needs, [
-    'initialize', 'server', 'helper_macos', 'helper', 'mobile_ota', 'mobile_ota_after_proof',
-    'mobile_native_android', 'mobile_native_ios', 'desktop_installers', 'website', 'release_proof',
+    'initialize', 'server', 'helper_linux', 'helper_macos', 'helper', 'mobile_ota', 'mobile_ota_after_proof',
+    'mobile_native_android', 'mobile_native_ios', 'desktop_installers', 'website', 'release_proof', 'delivery_result',
   ]);
   assert.equal(workflow.jobs.desktop_checkpoint, undefined);
   assert.doesNotMatch(source, /needs\.mobile_native\.result/);
@@ -1250,18 +1254,11 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(serverRollback, /flyctl machine update/);
   assert.match(serverLeg, /MIGRATION_DATABASE_URL/);
   const setupNodeIndex = workflow.jobs.server.steps.findIndex((step) => step.uses === 'actions/setup-node@v4');
-  const prepareMigrationIndex = workflow.jobs.server.steps.findIndex((step) => step.name === 'Prepare the server migration CLI once');
   const promoteIndex = workflow.jobs.server.steps.findIndex((step) => step.uses === './.github/actions/server-leg');
-  assert.ok(setupNodeIndex > 0 && setupNodeIndex < prepareMigrationIndex && prepareMigrationIndex < promoteIndex);
+  assert.ok(setupNodeIndex > 0 && setupNodeIndex < promoteIndex);
   assert.equal(workflow.jobs.server.steps.filter((step) => step.uses === 'actions/setup-node@v4').length, 1);
   assert.equal(workflow.jobs.server.steps[setupNodeIndex].with['node-version'], 22);
-  assert.equal(workflow.jobs.server.steps[setupNodeIndex].with.cache, 'npm');
-  const prepareMigration = workflow.jobs.server.steps[prepareMigrationIndex].run;
-  assert.match(prepareMigration, /^bash scripts\/npm-ci-timed\.sh$/m);
-  assert.doesNotMatch(prepareMigration, /--ignore-scripts|@beeline\/gate/);
-  for (const workspace of ['nostr', 'api-contract', 'buzz-client', 'body', 'auth', 'server']) {
-    assert.match(prepareMigration, new RegExp(`npm run build -w @beeline/${workspace}`));
-  }
+  assert.doesNotMatch(JSON.stringify(workflow.jobs.server.steps), /npm-ci-timed|npm run build/);
   const migrationStep = serverLegAction.runs.steps.find((step) => step.name === 'Run schema migrations and backfills once before Machine updates');
   const migrate = migrationStep.run;
   // Production Postgres is on Neon, reached directly by MIGRATION_DATABASE_URL; no Fly private-network proxy.
@@ -1272,8 +1269,9 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(migrate, /to_regclass\('public\.messages'\) IS NOT NULL AS has_messages/);
   assert.match(migrate, /database !== 'fly-db' \|\| hasMessages !== true/);
   assert.match(migrate, /MIGRATION_DATABASE_URL does not point at the production database/);
-  assert.ok(migrate.indexOf('database !== \'fly-db\'') < migrate.indexOf('npm run migrate -w @beeline/server'));
-  assert.match(migrate, /npm run migrate -w @beeline\/server/);
+  assert.ok(migrate.indexOf('database !== \'fly-db\'') < migrate.indexOf('run migrate -w @beeline/server'));
+  assert.match(migrate, /--entrypoint npm "\$image_ref" run migrate -w @beeline\/server/);
+  assert.match(migrate, /docker run --rm -i --env MIGRATION_DATABASE_URL/);
   assert.doesNotMatch(migrate, /npm ci|npm run build/);
   assert.match(serverLeg, /seq 0 6/);
   assert.match(serverLeg, /sleep 15/);
@@ -1745,7 +1743,7 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
   const ios = workflow.jobs.mobile_native_ios;
   assert.match(android.if, /run_mobile_native == 'true'/);
   assert.match(android.if, /native_android == 'true'/);
-  assert.equal(android.needs, 'initialize');
+  assert.deepEqual(android.needs, ['initialize', 'delivery_result']);
   assert.deepEqual(android['runs-on'], ['self-hosted', 'beeline-android']);
   assert.equal(android['timeout-minutes'], 60);
   assert.match(ios.if, /run_mobile_native == 'true'/);
@@ -1883,18 +1881,17 @@ test('ios-review-node: App Review establishes the runner Node PATH before submis
 
 test('all helper builds pin compatible Rust before cache restore and keep locked builds', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
-  for (const name of ['helper', 'helper_macos']) {
+  for (const name of ['helper_linux', 'helper_macos']) {
     const steps = workflow.jobs[name].steps;
     const setupIndex = steps.findIndex((step) => /rust-toolchain/.test(step.uses ?? ''));
     assert.ok(setupIndex >= 0, `${name} must provision Rust even when old distro tools exist`);
     assert.equal(steps[setupIndex].uses, 'dtolnay/rust-toolchain@1.95.0');
     assert.ok(setupIndex < steps.findIndex((step) => step.uses === './.github/actions/buzz-agent-cache'));
-    assert.equal(steps[setupIndex].if, name === 'helper'
-      ? "needs.helper_macos.outputs.shipped != 'true'"
-      : "steps.shipped.outputs.shipped != 'true'");
+    assert.equal(steps[setupIndex].if, "steps.shipped.outputs.shipped != 'true'");
   }
   const builder = readFileSync(new URL('./build-beeline-bundle.mjs', import.meta.url), 'utf8');
-  assert.match(builder, /'--locked'/);
+  assert.ok(NATIVE_CARGO_BUILD_FLAGS.includes('--locked'));
+  assert.match(builder, /\.\.\.NATIVE_CARGO_BUILD_FLAGS/);
 });
 
 
@@ -1915,7 +1912,7 @@ test('both native builds apply the one resolved store version before EAS, with n
       const job = workflow.jobs[name];
       const apply = job.steps.find((step) => step.name === 'Apply the resolved native store version');
       const build = job.steps.find((step) => step.name?.startsWith('Build immutable'));
-      assert.equal(job.needs, 'initialize');
+      assert.deepEqual(job.needs, name === 'mobile_native_android' ? ['initialize', 'delivery_result'] : 'initialize');
       assert.ok(job.steps.indexOf(apply) < job.steps.indexOf(build));
       assert.equal(apply.env.NATIVE_APP_VERSION, '${{ needs.initialize.outputs.native_app_version }}');
       writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '0.2.22' }));
@@ -2022,15 +2019,15 @@ test('the helper asks Pages what shipped; a Mac bundle is carried from the publi
     shipped: { outputs: { shipped: 'true' } }, previous_bundle: { outcome: 'skipped' }, carry_bundle: { outcome: 'skipped' },
   } };
   assert.equal(evaluateWorkflowCondition(cold.if, shippedContext), false);
-  for (const phase of ['build', 'promote']) {
+  for (const phase of ['collect', 'promote']) {
     const leg = helper.steps.find((step) => step.uses === './.github/actions/daemon-leg' && step.with?.phase === phase);
-    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_macos: { outputs: { shipped: 'true' } } } }), false);
-    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_macos: { outputs: { shipped: 'false' } } } }), true);
+    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_linux: { outputs: { shipped: 'true' } } } }), false);
+    assert.equal(evaluateWorkflowCondition(leg.if, { inputs: {}, steps: {}, needs: { helper_linux: { outputs: { shipped: 'false' } } } }), true);
   }
   // A failed Mac build never promotes a helper with missing bytes.
   const initialize = { result: 'success', outputs: { run_helper: 'true' } };
-  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_macos: { result: 'failure' } } }), false);
-  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_macos: { result: 'success' } } }), true);
+  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_linux: { result: 'success' }, helper_macos: { result: 'failure' } } }), false);
+  assert.equal(evaluateWorkflowCondition(helper.if, { inputs: {}, steps: {}, needs: { initialize, helper_linux: { result: 'success' }, helper_macos: { result: 'success' } } }), true);
   const upload = macos.steps.find((step) => step.uses === 'actions/upload-artifact@v4');
   assert.match(upload.with.path, /mac-helper-inputs\.json/);
   assert.match(upload.with.path, /beeline-bootstrap\.mjs\n/);
@@ -2215,3 +2212,249 @@ esac
     }
   });
 }
+
+test('live delivery finishes independently of native builds and fails closed on missing evidence', () => {
+  const trigger = 1_800_000_000;
+  const needs = {
+    initialize: { result: 'success', outputs: { run_server: 'true', run_mobile_ota: 'true', run_website: 'true' } },
+    server: { result: 'success', outputs: { completed_at: String(trigger + 390) } },
+    mobile_ota: { result: 'success', outputs: { completed_at: String(trigger + 240) } },
+    mobile_ota_after_proof: { result: 'skipped' },
+    website: { result: 'success', outputs: { completed_at: String(trigger + 180) } },
+    helper_macos: { result: 'queued' }, desktop_installers: { result: 'in_progress' },
+  };
+  const report = liveDelivery(needs, { triggerEpoch: trigger, finishedEpoch: trigger + 1800 });
+  assert.equal(report.state, 'success');
+  assert.equal(report.elapsedSeconds, 390); // Result-runner queue time is not live delivery time.
+  assert.equal(report.withinTarget, true);
+  needs.delivery_result = { outputs: { report: encodeReleaseOutput(report) } };
+  const state = { delivery: { state: 'failure', failureClass: 'component:helper' } };
+  recordDelivery(state, needs);
+  assert.equal(state.delivery.state, 'failure'); // A fast delivery cannot green an unfinished native leg.
+  assert.equal(state.delivery.live.elapsedSeconds, 390);
+  assert.equal(state.delivery.background.helper_macos, 'queued');
+  for (const invalid of ['', 'not-a-clock', String(trigger - 1), String(trigger + 1801)]) {
+    needs.server.outputs.completed_at = invalid;
+    assert.equal(liveDelivery(needs, { triggerEpoch: trigger, finishedEpoch: trigger + 1800 }).state, 'failure');
+  }
+  needs.server = { result: 'failure' };
+  assert.equal(liveDelivery(needs, { triggerEpoch: trigger, finishedEpoch: trigger + 1800 }).state, 'failure');
+  needs.initialize.outputs.run_server = 'false';
+  needs.mobile_ota = { result: 'failure' };
+  needs.mobile_ota_after_proof = { result: 'success', outputs: { completed_at: String(trigger + 600) } };
+  const slow = liveDelivery(needs, { triggerEpoch: trigger, finishedEpoch: trigger + 1800 });
+  assert.equal(slow.state, 'success'); // Duration never removes a delivery gate or fails a valid release.
+  assert.equal(slow.withinTarget, false); // Strictly under ten minutes.
+  assert.equal(slow.components.server.state, 'carried');
+  delete needs.initialize.outputs.run_website;
+  assert.throws(() => liveDelivery(needs, { triggerEpoch: trigger, finishedEpoch: trigger + 1800 }), /selection/);
+  assert.throws(() => liveDelivery(needs, { triggerEpoch: 0, finishedEpoch: trigger }), /clock/);
+});
+
+test('native/helper completion cannot hold the live checkpoint or steal the production runners', () => {
+  const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  assert.deepEqual(workflow.jobs.delivery_result.needs, ['initialize', 'server', 'mobile_ota', 'mobile_ota_after_proof', 'website', 'release_proof']);
+  for (const name of ['server', 'mobile_ota', 'website']) assert.equal(workflow.jobs[name].needs, 'initialize');
+  assert.ok(workflow.jobs.helper.needs.includes('delivery_result'));
+  assert.ok(workflow.jobs.mobile_native_android.needs.includes('delivery_result'));
+  assert.equal(workflow.jobs.website.steps.find(step => step.uses === './.github/actions/pages-leg').if, undefined);
+  assert.equal(workflow.jobs.website.concurrency.group, workflow.jobs.helper.concurrency.group);
+  for (const name of ['server', 'website']) {
+    assert.equal(workflow.jobs[name].outputs.completed_at, '${{ steps.complete.outputs.completed_at }}');
+    assert.equal(workflow.jobs[name].steps.at(-1).id, 'complete');
+  }
+  const finalize = workflow.jobs.release_result.steps.find(step => step.name === 'Finalize the release record');
+  assert.match(finalize.run, /release-delivery.mjs record/);
+  assert.ok(finalize.run.indexOf('finalize') < finalize.run.indexOf('release-delivery.mjs record'));
+  const prebuild = parse(readFileSync('.github/workflows/server-image.yml', 'utf8'));
+  assert.deepEqual(prebuild.on.push.branches, ['main']);
+  assert.doesNotMatch(JSON.stringify(prebuild), /machine update|run migrate|server-leg|workflow_dispatch/);
+});
+
+test('server prebuild promotion verifies source, stamps identity, and keeps a cold-build fallback', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'server-image-proof-'));
+  const sha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+  const log = join(directory, 'calls');
+  const stub = `#!/usr/bin/env bash
+set -eu
+printf '%s %s\\n' "$(basename "$0")" "$*" >> "$IMAGE_TEST_LOG"
+if [ "$(basename "$0")" = docker ]; then
+  case "$1 $2" in
+    'pull registry.fly.io/beeline-server:source-'*) [ "$IMAGE_TEST_MODE" != missing ] ;;
+    'image inspect')
+      if [[ "$*" = *RepoDigests* ]]; then echo 'registry.fly.io/beeline-server@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      elif [ "$IMAGE_TEST_MODE" = mismatch ]; then echo wrong;
+      else echo "$IMAGE_TEST_SHA"; fi ;;
+    'build --pull=false') cat >> "$IMAGE_TEST_LOG" ;;
+    'push '*) [ "$IMAGE_TEST_MODE" != push-failure ] ;;
+  esac
+fi
+`;
+  for (const command of ['docker', 'flyctl']) {
+    writeFileSync(join(directory, command), stub);
+    chmodSync(join(directory, command), 0o755);
+  }
+  const run = (mode, phase = 'release') => {
+    writeFileSync(log, '');
+    const result = spawnSync('bash', ['scripts/server-release-image.sh', phase, sha, 'v0.1.999'], {
+      encoding: 'utf8', env: { ...process.env, PATH: `${directory}:${process.env.PATH}`, IMAGE_TEST_LOG: log, IMAGE_TEST_MODE: mode, IMAGE_TEST_SHA: sha },
+    });
+    return { ...result, calls: readFileSync(log, 'utf8') };
+  };
+  try {
+    const warm = run('warm');
+    assert.equal(warm.status, 0, warm.stderr);
+    assert.match(warm.calls, /FROM registry.fly.io\/beeline-server@sha256:/);
+    assert.match(warm.calls, /ENV BEELINE_RELEASE_VERSION=v0.1.999 BEELINE_RELEASE_SHA=/);
+    assert.doesNotMatch(warm.calls, /flyctl deploy/);
+    const cold = run('missing');
+    assert.equal(cold.status, 0, cold.stderr);
+    assert.match(cold.calls, /flyctl deploy .*--build-only --push --yes/);
+    assert.match(cold.calls, new RegExp(`BEELINE_RELEASE_SHA=${sha}`));
+    for (const mode of ['mismatch', 'push-failure']) {
+      const failed = run(mode);
+      assert.notEqual(failed.status, 0);
+      assert.doesNotMatch(failed.calls, /flyctl deploy/);
+    }
+    const prebuild = run('warm', 'prebuild');
+    assert.equal(prebuild.status, 0, prebuild.stderr);
+    assert.match(prebuild.calls, /BEELINE_RELEASE_VERSION=development/);
+    assert.match(prebuild.calls, /--build-only --push --yes/);
+    assert.doesNotMatch(prebuild.calls, /machine update|migrate/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('container migration guard and migration errors stop promotion without exposing connection values', () => {
+  const action = parse(readFileSync('.github/actions/server-leg/action.yml', 'utf8'));
+  const migration = action.runs.steps.find(step => step.id === 'migrate');
+  const image = 'registry.fly.io/beeline-server:0.1.999-123456789abc';
+  const script = migration.run.replace('${{ steps.fleet.outputs.image_ref }}', image);
+  const directory = mkdtempSync(join(tmpdir(), 'migration-container-proof-'));
+  const log = join(directory, 'calls');
+  writeFileSync(join(directory, 'docker'), `#!/usr/bin/env bash
+set -eu
+printf '%s\\n' "$*" >> "$IMAGE_TEST_LOG"
+if [[ "$*" = *'--entrypoint node'* ]]; then
+  cat >/dev/null
+  [ "$IMAGE_TEST_MODE" != guard-failure ]
+else
+  [ "$IMAGE_TEST_MODE" != migration-failure ]
+fi
+`);
+  chmodSync(join(directory, 'docker'), 0o755);
+  try {
+    for (const mode of ['success', 'guard-failure', 'migration-failure']) {
+      writeFileSync(log, '');
+      const result = spawnSync('bash', ['-c', script], { encoding: 'utf8', env: {
+        ...process.env, PATH: `${directory}:${process.env.PATH}`, IMAGE_TEST_LOG: log, IMAGE_TEST_MODE: mode,
+        MIGRATION_DATABASE_URL: 'postgres://synthetic-proof-value', BEELINE_RETIRE_WELCOME_GREETER_ID: 'synthetic-greeter',
+      } });
+      const calls = readFileSync(log, 'utf8');
+      assert.equal(result.status === 0, mode === 'success', result.stderr);
+      assert.equal(calls.includes('--entrypoint npm'), mode !== 'guard-failure');
+      assert.match(calls, new RegExp(image));
+      assert.doesNotMatch(calls, /synthetic-proof-value|synthetic-greeter/);
+      if (mode === 'success') assert.equal(calls.trim().split('\n').length, 2);
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('Linux helper compilation overlaps the Macs while one final job retains every publish gate', () => {
+  const { jobs } = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  assert.equal(jobs.helper_linux.needs, 'initialize');
+  assert.equal(jobs.helper_linux['runs-on'], 'ubuntu-22.04');
+  assert.ok(jobs.helper_linux.steps.some(step => step.run?.includes('bundle:beeline -- --platform linux-x64')));
+  assert.ok(jobs.helper_linux.steps.some(step => step.run?.includes('npm run build -w usebeeline')));
+  assert.deepEqual(jobs.helper.needs, ['initialize', 'helper_linux', 'helper_macos', 'delivery_result']);
+  for (const [linux, mac, allowed] of [['success', 'success', true], ['failure', 'success', false], ['success', 'failure', false], ['skipped', 'success', false]]) {
+    assert.equal(evaluateWorkflowCondition(jobs.helper.if, { inputs: {}, steps: {}, needs: {
+      initialize: { result: 'success', outputs: { run_helper: 'true' } },
+      helper_linux: { result: linux }, helper_macos: { result: mac },
+    } }), allowed);
+  }
+  for (const name of ['helper_linux', 'helper_macos']) {
+    const steps = jobs[name].steps;
+    const lookup = steps.find(step => step.uses === './.github/actions/buzz-agent-cache');
+    const verified = steps.find(step => step.name?.startsWith('Build and install-verify'));
+    assert.equal(lookup['continue-on-error'], true);
+    assert.equal(lookup['timeout-minutes'], 2);
+    assert.equal(verified['continue-on-error'], undefined);
+  }
+  assert.ok(!jobs.helper.steps.some(step => /rust-toolchain|buzz-agent-cache/.test(step.uses ?? '')));
+  const collect = jobs.helper.steps.find(step => step.with?.phase === 'collect');
+  assert.match(collect.with.linux_bundle_dir, /helper-linux\/bundle/);
+  const daemon = parse(readFileSync('.github/actions/daemon-leg/action.yml', 'utf8'));
+  assert.doesNotMatch(JSON.stringify(daemon), /bundle:beeline/);
+  assert.match(daemon.runs.steps.find(step => step.name === 'Collect daemon artifact').run, /-z "\$linux_dir"/);
+  const pack = jobs.helper.steps.find(step => step.id === 'helper_package');
+  const publish = jobs.helper.steps.find(step => step.name === 'Publish the exact helper CLI package');
+  assert.ok(jobs.helper.steps.indexOf(collect) < jobs.helper.steps.indexOf(pack));
+  assert.ok(jobs.helper.steps.indexOf(pack) < jobs.helper.steps.indexOf(publish));
+});
+
+test('native cache keys ignore release identity but bind platform, pinned source, toolchain and flags', () => {
+  const captureVersion = (command, args) => `${command} ${args.join(' ')} version-1`;
+  const key = env => nativeCacheIdentity('darwin-x64', { env, captureVersion }).key;
+  assert.equal(key({}), key({ BEELINE_BUNDLE_COMMIT: 'a'.repeat(40), BEELINE_BUNDLE_VERSION: 'v0.1.999' }));
+  assert.notEqual(key({}), key({ BEELINE_BUZZ_REF: 'b'.repeat(40) }));
+  assert.notEqual(key({}), key({ RUSTFLAGS: '-C target-cpu=native' }));
+  assert.notEqual(key({}), key({ CARGO_PROFILE_RELEASE_OPT_LEVEL: 's' }));
+  assert.notEqual(key({}), nativeCacheIdentity('darwin-arm64', { env: {}, captureVersion }).key);
+  assert.notEqual(key({}), nativeCacheIdentity('darwin-x64', { env: {}, captureVersion: () => 'version-2' }).key);
+  assert.throws(() => key({ BEELINE_BUZZ_REF: 'main' }), /pinned/);
+  assert.throws(() => nativeCacheIdentity('darwin-x64', { env: {}, captureVersion: () => '' }), /incomplete/);
+});
+
+test('Linux build artifact has one stable layout on fresh builds and already-shipped reruns', () => {
+  const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  const stage = workflow.jobs.helper_linux.steps.find(step => step.name === 'Stage only the Linux archive and compiled CLI');
+  const files = ['beeline-linux-x64.tar.gz', 'beeline-linux-x64.tar.gz.sha256', 'manifest.json', 'beeline-bootstrap.mjs', 'beeline-bootstrap.mjs.sha256'];
+  const directory = mkdtempSync(join(tmpdir(), 'linux-helper-layout-'));
+  try {
+    for (const shipped of ['true', 'false']) {
+      const fixture = join(directory, shipped);
+      mkdirSync(join(fixture, 'packages/usebeeline/dist'), { recursive: true });
+      writeFileSync(join(fixture, 'packages/usebeeline/dist/usebeeline.mjs'), 'compiled CLI');
+      if (shipped === 'false') {
+        mkdirSync(join(fixture, 'web/dl'), { recursive: true });
+        for (const name of files) writeFileSync(join(fixture, 'web/dl', name), name);
+      }
+      const temp = join(fixture, 'temporary');
+      const result = spawnSync('bash', ['-c', stage.run], { cwd: fixture, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: temp, SHIPPED: shipped } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(readFileSync(join(temp, 'helper-linux/cli/usebeeline.mjs'), 'utf8'), 'compiled CLI');
+      for (const name of files) assert.equal(existsSync(join(temp, 'helper-linux/bundle', name)), shipped === 'false');
+      if (shipped === 'false') {
+        rmSync(join(fixture, 'web/dl/manifest.json'));
+        const missing = spawnSync('bash', ['-c', stage.run], { cwd: fixture, encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: temp, SHIPPED: shipped } });
+        assert.notEqual(missing.status, 0); // Missing proof inputs cannot become a successful artifact upload.
+      }
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('native compiler cache uses Actions only and exposes binaries only on a hit', () => {
+  const action = parse(readFileSync('.github/actions/buzz-agent-cache/action.yml', 'utf8'));
+  assert.deepEqual(Object.keys(action.inputs), ['platform']);
+  const workflow = parse(readFileSync('.github/workflows/unified-release.yml', 'utf8'));
+  for (const name of ['helper_linux', 'helper_macos']) assert.equal(workflow.jobs[name].permissions.contents, 'read');
+  assert.deepEqual(action.runs.steps.filter(step => step.uses).map(step => step.uses), ['actions/cache@v4']);
+  assert.doesNotMatch(readFileSync('scripts/native-agent-cache.mjs', 'utf8'), /getRelease|createRelease|uploadRelease|deleteRelease/);
+  const exporter = action.runs.steps.find(step => step.id === 'export');
+  const directory = mkdtempSync(join(tmpdir(), 'actions-native-cache-'));
+  try {
+    for (const hit of ['true', 'false']) {
+      const output = join(directory, `output-${hit}`), environment = join(directory, `env-${hit}`), summary = join(directory, `summary-${hit}`);
+      writeFileSync(environment, '');
+      const result = spawnSync('bash', ['-c', exporter.run], { encoding: 'utf8', env: {
+        ...process.env, ACTIONS_HIT: hit, DIRECTORY: '.beeline-tools/target/linux-x64/release',
+        GITHUB_WORKSPACE: directory, GITHUB_OUTPUT: output, GITHUB_ENV: environment, GITHUB_STEP_SUMMARY: summary,
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(readFileSync(output, 'utf8'), new RegExp(`source=${hit === 'true' ? 'actions' : 'miss'}`));
+      const exported = readFileSync(environment, 'utf8');
+      assert.equal(exported.includes('BUZZ_AGENT_BIN='), hit === 'true');
+      assert.equal(exported.includes('BUZZ_DEV_MCP_BIN='), hit === 'true');
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});

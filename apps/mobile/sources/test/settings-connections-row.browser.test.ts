@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CHROME, runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, CHROME, runBrowserProof, webProofShims } from './browserProof';
 
 function fontsCss(mobile: string) {
   return ['SpaceGrotesk-Regular', 'SpaceGrotesk-Medium', 'IBMPlexMono-Regular']
@@ -23,7 +23,7 @@ describe.skipIf(!existsSync(CHROME))('Settings Your connections row', () => {
     [360, 1], [390, 1], [412, 1], [360, 1.2], [390, 1.2], [412, 1.2],
   ])('shows the whole title at %spx, text scale %s', async (width, scale) => {
     const mobile = process.cwd();
-    const directory = await mkdtemp(path.join(mobile, 'sources/test/connections-row-proof-'));
+    const directory = await createBrowserProofDirectory("connections-row-proof-");
     try {
       const entry = path.join(directory, 'proof.jsx');
       await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client';

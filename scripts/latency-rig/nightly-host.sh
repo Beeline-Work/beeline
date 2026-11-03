@@ -91,6 +91,8 @@ fi
 phase="emulator lease"
 check_lane
 before="$(device_list)"
+# The parent reads this immediately; background redirection may not have run yet.
+: >"$state/host-emulator.log"
 setsid beeline emulator -avd se_api35 -no-window -gpu swiftshader_indirect \
   -no-snapshot -memory 2560 -cores 4 >"$state/host-emulator.log" 2>&1 9>&- &
 emulator_pid=$!

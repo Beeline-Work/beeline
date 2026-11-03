@@ -109,8 +109,10 @@ async function runReleaseMigration(): Promise<void> {
     // live on every supported client (docs/welcome-retirement.md).
     const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();
     if (greeterAgentId) {
-      const retirement = await retireWelcomeWorkspace(database, { greeterAgentId });
-      console.log(`[migration] welcome retirement: ${JSON.stringify(retirement)}`);
+      await retryMigrationStep('welcome retirement', async () => {
+        const retirement = await retireWelcomeWorkspace(database, { greeterAgentId });
+        console.log(`[migration] welcome retirement: ${JSON.stringify(retirement)}`);
+      });
     }
     // This is deliberately last: boot may proceed only after both schema owners
     // and every data backfill completed successfully.

@@ -2,14 +2,27 @@ name: Reuse CI workspace
 description: Restore dependencies by lockfile and workspace builds by exact commit
 inputs:
   prepared:
-    description: Require prepared dependencies; recover missing exact-commit builds locally
+    description: Expect prepared dependencies; recover evicted caches within runner limits
     default: 'false'
+  preparation-result:
+    description: Shared preparation result; prepared consumers require success
+    default: ''
   mobile:
     description: Install the isolated mobile dependency tree
     default: 'false'
 runs:
   using: composite
   steps:
+    - name: Require successful shared preparation
+      if: inputs.prepared == 'true'
+      shell: bash
+      env:
+        CI_PREPARATION_RESULT: ${{ inputs.preparation-result }}
+      run: |
+        if [ "$CI_PREPARATION_RESULT" != success ]; then
+          echo "::error::Shared workspace preparation did not succeed; refusing dependency recovery."
+          exit 1
+        fi
     # Both the CI producer and its consumers serialize archive operations.
     - if: startsWith(runner.name, 'beeline-ci-squire-')
       shell: bash
@@ -30,26 +43,65 @@ runs:
       shell: bash
       env:
         CI_PREPARED: ${{ inputs.prepared }}
+        npm_config_jobs: '1'
+        UV_THREADPOOL_SIZE: '1'
       run: |
         if [ "$CI_PREPARED" = true ]; then
-          echo "::error::Missing prepared root dependencies cache; refusing a cold install/build on a consumer."
-          exit 1
+          echo "::warning::Prepared root dependency cache is unavailable; recovering from the lockfile within runner limits."
         fi
-        npm ci --no-audit --no-fund
+        # Eviction can affect every shard together. Serialize cold installs
+        # on squire while retaining the existing per-job and pool limits.
+        if [[ "$RUNNER_NAME" == beeline-ci-squire-* ]]; then
+          flock --no-fork "$HOME/.beeline-ci-dependency-install.lock" \
+            npm ci --no-audit --no-fund --prefer-offline
+        else
+          npm ci --no-audit --no-fund --prefer-offline
+        fi
     - uses: actions/cache/restore@v4
       id: builds
       with:
         path: |
           packages/*/dist/**
           apps/*/dist/**
-          .turbo
-        key: ci-build-v2-${{ runner.os }}-node22-${{ github.sha }}
+          .beeline-ci-build.json
+        key: ci-build-v3-${{ runner.os }}-node22-${{ github.sha }}
+    # Task caches are input-addressed; final dist archives remain exact-SHA.
+    # Warm test-only consumers need no task archive; cache misses still recover.
+    # Job-specific writes let TYPECHECK publish its completed task cache after
+    # preparation has already published the build task cache for the same head.
+    - uses: actions/cache@v4
+      if: steps.builds.outputs.cache-hit != 'true' || contains(fromJSON('["typecheck","dead-code","mac-helper-acceptance"]'), github.job)
+      with:
+        path: .turbo/cache
+        key: ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-${{ github.job }}-${{ github.sha }}
+        restore-keys: |
+          ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-${{ github.job }}-
+          ci-turbo-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'turbo.json') }}-
+    - uses: actions/cache@v4
+      if: inputs.mobile == 'true' && github.job == 'typecheck'
+      with:
+        path: apps/mobile/tsconfig.tsbuildinfo
+        key: ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-${{ github.job }}-${{ github.sha }}
+        restore-keys: |
+          ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-${{ github.job }}-
+          ci-ts-state-v1-${{ runner.os }}-node22-${{ hashFiles('package-lock.json', 'apps/mobile/package-lock.json', 'apps/mobile/tsconfig.json') }}-
     - if: steps.builds.outputs.cache-hit != 'true'
       shell: bash
       run: |
         # The cache can disappear after preparation, including before a failed
         # job is rerun. Rebuild this checkout instead of requiring its survival.
         npm run build -- --concurrency=1
+    - name: Record exact-head compiled output provenance
+      if: steps.builds.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        CI_BUILD_SHA: ${{ github.sha }}
+      run: node scripts/ci-build-provenance.mjs write "$CI_BUILD_SHA"
+    - name: Verify exact-head compiled output provenance
+      shell: bash
+      env:
+        CI_BUILD_SHA: ${{ github.sha }}
+      run: node scripts/ci-build-provenance.mjs verify "$CI_BUILD_SHA"
     - name: Verify compiled API exports
       id: verify-builds
       shell: bash
@@ -75,7 +127,7 @@ runs:
         path: |
           packages/*/dist/**
           apps/*/dist/**
-          .turbo
+          .beeline-ci-build.json
         key: ${{ steps.builds.outputs.cache-primary-key }}
     - uses: actions/cache@v4
       if: inputs.mobile == 'true'
@@ -89,9 +141,17 @@ runs:
       shell: bash
       env:
         CI_PREPARED: ${{ inputs.prepared }}
+        npm_config_jobs: '1'
+        UV_THREADPOOL_SIZE: '1'
       run: |
         if [ "$CI_PREPARED" = true ]; then
-          echo "::error::Missing prepared mobile dependencies cache; refusing a cold install/build on a consumer."
-          exit 1
+          echo "::warning::Prepared mobile dependency cache is unavailable; recovering from the lockfile within runner limits."
         fi
-        npm ci --prefix apps/mobile --no-audit --no-fund
+        # Eviction can affect every shard together. Serialize cold installs
+        # on squire while retaining the existing per-job and pool limits.
+        if [[ "$RUNNER_NAME" == beeline-ci-squire-* ]]; then
+          flock --no-fork "$HOME/.beeline-ci-dependency-install.lock" \
+            npm ci --prefix apps/mobile --no-audit --no-fund --prefer-offline
+        else
+          npm ci --prefix apps/mobile --no-audit --no-fund --prefer-offline
+        fi

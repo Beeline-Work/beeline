@@ -1,17 +1,17 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 it('Reproduction sign-in-notice-1: the @agent login command shows on a collapsed failure line at 390px', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/sign-in-notice-'));
+  const directory = await createBrowserProofDirectory("sign-in-notice-");
   try {
     const entry = path.join(directory, 'proof.jsx');
     await writeFile(entry, `import React from 'react';
       import { createRoot } from 'react-dom/client';
       import { LedgerSystemLine } from '@/components/buzz/Ledger';
-      import { phraseTurnSilence } from '../../../../../packages/api-contract/src/turn-silence';
+      import { phraseTurnSilence } from ${JSON.stringify(path.resolve(mobile, '../../packages/api-contract/src/turn-silence'))};
       import { useUnistyles } from 'react-native-unistyles';
       import regularFont from '@/assets/fonts/SpaceGrotesk-Regular.ttf';
       import mediumFont from '@/assets/fonts/SpaceGrotesk-Medium.ttf';

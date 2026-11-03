@@ -80,13 +80,24 @@ describe('owned timer chains', () => {
   it('keeps connection cadence and cancels the next tick when its owner closes', async () => {
     vi.useFakeTimers();
     try {
+      // Other worker activity may own timers while this connection closes.
+      const unrelated = setTimeout(() => {}, 60_000);
+      const unrelatedCount = vi.getTimerCount();
       const run = vi.fn();
-      const stop = startConnectionWork(() => { run(); if (run.mock.calls.length === 2) stop(); }, 1000);
+      const stop = startConnectionWork(() => {
+        run();
+        if (run.mock.calls.length === 2) {
+          stop();
+        }
+      }, 1000);
       await vi.advanceTimersByTimeAsync(999);
       expect(run).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(2001);
       expect(run).toHaveBeenCalledTimes(2);
-      expect(vi.getTimerCount()).toBe(0);
+      expect(vi.getTimerCount()).toBe(unrelatedCount);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(run).toHaveBeenCalledTimes(2);
+      clearTimeout(unrelated);
     } finally { vi.useRealTimers(); }
   });
 

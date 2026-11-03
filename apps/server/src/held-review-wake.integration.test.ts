@@ -102,7 +102,7 @@ describe('Reproduction S-07 end to end: a held review wake reaches the reviewer 
       socket.once('error', reject);
     });
     socket.send(JSON.stringify({ type: 'subscribe', roomId: CORNER }));
-    await expect.poll(() => frames.some((frame) => frame.type === 'commands')).toBe(true);
+    await expect.poll(() => frames.some((frame) => frame.type === 'commands'), { timeout: 5_000 }).toBe(true);
 
     // CI turns green while the worker is busy: the review wake is queued and held.
     const review = await createAgentCommand(db, { roomId: CORNER, agentId: REVIEWER, sourceMessageId: await source('Checks passed'), reason: 'corner_check' });

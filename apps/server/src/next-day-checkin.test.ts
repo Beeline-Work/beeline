@@ -4,8 +4,7 @@ import { TokenAuth } from './auth.js';
 import type { AddressInfo } from 'node:net';
 import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PgliteDatabase } from './test-support.js';
-import { migrate } from './database.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { NextDayCheckin, checkinDueAt, renderCheckinEmail, type CheckinEmail } from './next-day-checkin.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
@@ -40,7 +39,7 @@ async function record() { return (await db.query(`SELECT * FROM next_day_checkin
 
 beforeEach(async()=>{
   vi.stubEnv('BEELINE_NEXT_DAY_CHECKIN','on');
-  db=new PgliteDatabase(); await migrate(db);
+  db=await migratedDatabase();
   clock=new Date('2026-10-27T13:00:00Z'); emails=[];
   await db.query(`INSERT INTO push_delivery_floors(id,started_at) VALUES('message-delivery','2026-01-01')`);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Outside','outside'),($2,'agent','Beebee','beebee')`,[U,A]);

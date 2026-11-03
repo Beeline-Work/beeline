@@ -1,7 +1,7 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 /**
  * The real Workbench and Wallet screens in the desktop web renderer, over the
@@ -12,7 +12,7 @@ import { runBrowserProof, webProofShims } from './browserProof';
 describe('wallet connect in the desktop web renderer', () => {
   it.each(['obsidian', 'bone'])('wallet-2593: connects and disconnects Wallet in %s', async (theme) => {
     const mobile = process.cwd();
-    const directory = await mkdtemp(path.join(mobile, 'sources/test/wallet-proof-'));
+    const directory = await createBrowserProofDirectory("wallet-proof-");
     try {
       const entry = path.join(directory, 'proof.jsx');
       await writeFile(

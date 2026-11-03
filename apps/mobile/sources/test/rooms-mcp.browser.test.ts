@@ -1,11 +1,11 @@
-import { mkdtemp, writeFile, rm, mkdir, readFile } from 'node:fs/promises';
+import { writeFile, rm, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import sharp from 'sharp';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 it.each(['clients', 'sheet', 'message', 'disconnect', 'failure'])('renders connector %s with production controls', async frame => {
   const mobile = process.cwd();
-  const dir = await mkdtemp(path.join(mobile, 'sources/test/mcp-proof-'));
+  const dir = await createBrowserProofDirectory("mcp-proof-");
   const evidence = path.join(mobile, 'evidence/rooms-mcp');
   await mkdir(evidence, { recursive: true });
   const logos = await Promise.all(['grok', 'muse'].map(async name => 'data:image/png;base64,' +

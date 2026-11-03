@@ -1,0 +1,42 @@
+
+> @beeline/server@0.0.0 test
+> vitest run src/phone-service.read-room-latency.test.ts --maxWorkers=2 --minWorkers=1
+
+
+ RUN  v2.1.9 /home/lunchbox/.treehouse/buzzy-655f97/17/buzzy/apps/server
+
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+stdout | src/phone-service.read-room-latency.test.ts > PhoneService.readRoom latency
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+
+stdout | src/phone-service.read-room-latency.test.ts > PhoneService.readRoom latency > a corner open > reads a corner in one core and one optional statement, with SQL caps
+[corner-open] {"durationMs":475,"queries":2,"mentionPasses":1,"largestRead":1}
+
+stderr | src/phone-service.read-room-latency.test.ts > PhoneService.readRoom latency > a corner open > holds two statements per corner at concurrency four
+[slow-operation] {"operation":"phone.read_room","durationMs":575,"spans":{"data":266,"enrichment":304,"app-metadata":0,"projection":0}}
+[slow-operation] {"operation":"phone.read_room","durationMs":587,"spans":{"data":365,"enrichment":220,"app-metadata":0,"projection":0}}
+
+stderr | src/phone-service.read-room-latency.test.ts > PhoneService.readRoom latency > a corner open > holds two statements per corner at concurrency four
+[slow-operation] {"operation":"phone.read_room","durationMs":654,"spans":{"data":453,"enrichment":191,"app-metadata":3,"projection":0}}
+
+stdout | src/phone-service.read-room-latency.test.ts > PhoneService.readRoom latency > a corner open > holds two statements per corner at concurrency four
+[corner-open-concurrent] {"p50Ms":587,"p95Ms":742,"queries":8}
+
+stderr | src/phone-service.read-room-latency.test.ts > PhoneService.readRoom latency > a corner open > holds two statements per corner at concurrency four
+[slow-operation] {"operation":"phone.read_room","durationMs":742,"spans":{"data":552,"enrichment":186,"app-metadata":0,"projection":0}}
+
+ ✓ src/phone-service.read-room-latency.test.ts (18 tests) 101830ms
+   ✓ PhoneService.readRoom latency > a corner open > reads a corner in one core and one optional statement, with SQL caps 483ms
+   ✓ PhoneService.readRoom latency > a corner open > caps corner members in SQL while retaining the viewer 4098ms
+   ✓ PhoneService.readRoom latency > a corner open > holds two statements per corner at concurrency four 746ms
+   ✓ PhoneService.readRoom latency > does not restore the serial waterfall at concurrency four 447ms
+
+ Test Files  1 passed (1)
+      Tests  18 passed (18)
+   Start at  00:19:27
+   Duration  118.23s (transform 4.91s, setup 23ms, collect 3.19s, tests 101.83s, environment 0ms, prepare 81ms)
+

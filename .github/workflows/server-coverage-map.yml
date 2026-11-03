@@ -1,17 +1,16 @@
-# Runs the whole server suite on every push to main and records which
+# On-demand full server coverage; main Checks records coverage on every merge.
+# This workflow records which
 # functions and files each server test file runs. The `server-coverage-map`
 # artifact is what SERVER SUITE on a pull request reads to run only the tests
 # its diff touches (apps/server/scripts/test-selection.mjs). Because PRs run a
-# subset, this is also where the full server suite runs after every merge.
+# subset, main Checks records full coverage after every merge; this is the manual path.
 #
-# No schedule: it follows main pushes, and a newer push cancels an older run.
+# No schedule or push trigger: main coverage is produced by checks.yml.
 # `gh workflow run checks.yml --ref <branch> -f suite=coverage-map` builds a
 # map for a branch; only PRs into that branch, or from it, will use it.
 name: Server coverage map
 
 on:
-  push:
-    branches: [main]
   workflow_call: {}
 
 permissions:

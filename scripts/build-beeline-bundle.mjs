@@ -3,6 +3,7 @@
 import { createHash } from 'node:crypto';
 import {
   access,
+  appendFile,
   chmod,
   copyFile,
   cp,
@@ -19,6 +20,7 @@ import { spawnSync } from 'node:child_process';
 import { validateBundleDirectory } from './pages-site.mjs';
 import { macHelperInputs } from './mac-helper-inputs.mjs';
 import { writeBeelineArchive } from './beeline-archive.mjs';
+import { NATIVE_CARGO_BUILD_FLAGS } from './native-agent-cache.mjs';
 
 const UPSTREAM_REF = process.env.BEELINE_BUZZ_REF ?? '07a3c768d619db31fee3f0590f9433cdd1213e8f';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -115,19 +117,21 @@ async function resolveAgentBinaries(platform) {
     }
     run('git', ['-C', upstreamRoot, 'fetch', '--depth', '1', 'origin', UPSTREAM_REF]);
     run('git', ['-C', upstreamRoot, 'checkout', '--detach', '--force', 'FETCH_HEAD']);
+    const cargoStarted = process.hrtime.bigint();
     run('cargo', [
       'build',
       '--manifest-path',
       resolve(upstreamRoot, 'Cargo.toml'),
-      '--release',
-      '--locked',
-      '--package',
-      'buzz-agent',
-      '--package',
-      'buzz-dev-mcp',
+      ...NATIVE_CARGO_BUILD_FLAGS,
       '--target-dir',
       targetRoot,
     ]);
+    const cargoSeconds = Math.round(Number(process.hrtime.bigint() - cargoStarted) / 1e9);
+    console.log(`build-beeline-bundle: Cargo build ${cargoSeconds}s (${platform}; binary cache ${process.env.BEELINE_NATIVE_CACHE_SOURCE ?? 'not-configured'})`);
+    if (process.env.GITHUB_STEP_SUMMARY) {
+      await appendFile(process.env.GITHUB_STEP_SUMMARY, `Native Cargo build: ${cargoSeconds}s (${platform}; binary cache ${process.env.BEELINE_NATIVE_CACHE_SOURCE ?? 'not-configured'})\n`)
+        .catch(() => console.warn('build-beeline-bundle: timing summary unavailable'));
+    }
     agent = resolve(targetRoot, 'release', 'buzz-agent');
     mcp = resolve(targetRoot, 'release', 'buzz-dev-mcp');
   }

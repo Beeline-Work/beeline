@@ -1,0 +1,61 @@
+{
+  "name": "b144-github-launcher",
+  "provider": "github",
+  "route": "launcher",
+  "started": "2026-11-03T00:58:49.961861+00:00",
+  "ended": "2026-11-03T00:59:36.911843+00:00",
+  "before": [],
+  "after": [
+    {
+      "text": "",
+      "description": "Beeline logo",
+      "id": "",
+      "bounds": "[393,833][687,1127]"
+    },
+    {
+      "text": "beeline.",
+      "description": "",
+      "id": "onboarding-wordmark",
+      "bounds": "[63,1137][1017,1221]"
+    },
+    {
+      "text": "workspace for all intelligence",
+      "description": "",
+      "id": "onboarding-tagline",
+      "bounds": "[120,1242][960,1303]"
+    },
+    {
+      "text": "",
+      "description": "busy",
+      "id": "onboarding-github-sign-in",
+      "bounds": "[63,1388][1017,1503]"
+    },
+    {
+      "text": "Continue with GitHub",
+      "description": "",
+      "id": "",
+      "bounds": "[107,1415][973,1476]"
+    },
+    {
+      "text": "RECOMMENDED",
+      "description": "",
+      "id": "",
+      "bounds": "[723,1367][996,1407]"
+    },
+    {
+      "text": "",
+      "description": "Continue with Google",
+      "id": "onboarding-google-sign-in",
+      "bounds": "[63,1525][1017,1641]"
+    },
+    {
+      "text": "Continue with Google",
+      "description": "",
+      "id": "",
+      "bounds": "[320,1552][760,1613]"
+    }
+  ],
+  "foreground": [
+    "topResumedActivity=ActivityRecord{209743732 u0 app.usebeeline/.MainActivity t28}"
+  ]
+}

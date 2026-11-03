@@ -7,7 +7,8 @@ describe('auth browser session', () => {
       authSessionOptions('android', 'https://usebeeline.app/auth/github/mobile-callback'),
     ).toEqual({
       preferUniversalLinks: true,
-      createTask: true,
+      createTask: false,
+      showInRecents: true,
       useProxyActivity: false,
     });
   });

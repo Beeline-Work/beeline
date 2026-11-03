@@ -226,3 +226,9 @@ Commander206, owned/legacy idle-day2 and server types pass. Brief fault injectio
 The archival fixture now admits a new webhook explicitly after a rolled-back transaction. Its concurrency barrier observes the authority lock before command rows; the peer claims its command before asserting a stop, because pending commands are cancelled without a helper stop. Isolated schema migration setup has a bounded 60-second hook window.
 
 Real loopback PostgreSQL rollback3 and concurrency3 pass. Tagged final replies and merge-webhook/agent-close/phone-close archival all commit with zero SQL errors, one stop for the active peer and no pending/working leftovers. Synthetic providers only; no real merge or lifecycle operation.
+
+## D082 — One storage-delete attempt per explicit account deletion
+
+ObjectService no longer immediately retries a failed delete three times. Each owned key gets one attempt in the existing eight-item batches, and all in-flight batch results settle before refusal. Failed storage deletion preserves the account and durable object keys; a separate explicit deletion can finish idempotently.
+
+Account-deletion18 and server types pass. The failure proof checks one dispatch for the refused key, no more work over 24 hours, retained account/object rows and successful later explicit deletion. Synthetic storage only; no real account is deleted. Route ownership remains open.

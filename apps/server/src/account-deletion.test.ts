@@ -633,13 +633,19 @@ describe('deleteAccount', () => {
     const key = `media/${OWNER}/${'n'.repeat(64)}`;
     const original = storage.deleteObject.bind(storage);
     const deleting = vi.spyOn(storage, 'deleteObject')
-      .mockRejectedValueOnce(new Error('storage unavailable'))
-      .mockRejectedValueOnce(new Error('storage unavailable'))
-      .mockRejectedValueOnce(new Error('storage unavailable'));
+      .mockImplementation(async candidate => {
+        if (candidate === key) throw new Error('storage unavailable');
+        await original(candidate);
+      });
     await expect(phone.execute('deleteAccount', {}, OWNER)).rejects.toThrow('storage unavailable');
     await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 1);
     await expectRowCount(`SELECT 1 FROM objects WHERE key=$1`, [key], 1);
     expect(storage.blobs.has(key)).toBe(true);
+    expect(deleting.mock.calls.filter(([candidate]) => candidate === key)).toHaveLength(1);
+    const attempts = deleting.mock.calls.length;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try { await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000); } finally { vi.useRealTimers(); }
+    expect(deleting).toHaveBeenCalledTimes(attempts);
     deleting.mockImplementation(original);
     await phone.execute('deleteAccount', {}, OWNER);
     expect(storage.blobs.has(key)).toBe(false);

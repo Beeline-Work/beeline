@@ -72,7 +72,7 @@ it('E10: a Google member opens a corner on another manager’s repo and uses its
 
 it('E11: a Google owner records the merge yes on the current head; a regular member cannot', async () => {
   const corner = await phone.execute('createHumanCorner', { roomId, title: 'merge-approval' }, owner);
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr}',$2::jsonb) WHERE corner_id=$1`, [corner.id, JSON.stringify({ number: 1, headSha: '1'.repeat(40) })]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr}',$2::jsonb) WHERE corner_id=$1`, [corner.id, JSON.stringify({ number: 1, headSha: '1'.repeat(40) })]);
   await expect(recordPersonMergeYes(db, corner.id, owner)).resolves.toMatchObject({ recorded: true, headSha: '1'.repeat(40) });
   await expect(recordPersonMergeYes(db, corner.id, member)).rejects.toThrow('owner or admin');
 });

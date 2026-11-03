@@ -1934,7 +1934,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             expect(
               (
                 await database.query<{ lifecycle: string }>(
-                  `SELECT lifecycle->>'lifecycle' lifecycle FROM corner_facts WHERE corner_id=$1`,
+                  `SELECT lifecycle->>'lifecycle' lifecycle FROM corner_github_cache WHERE corner_id=$1`,
                   [cornerId],
                 )
               ).rows[0]?.lifecycle,

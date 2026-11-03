@@ -1,0 +1,205 @@
+[
+  {
+    "text": "Two-factor authentication \u00b7 GitHub",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[0,283][1080,1635]"
+  },
+  {
+    "text": "",
+    "description": "Skip to content",
+    "hint": "",
+    "id": "",
+    "bounds": "[0,283][5,288]"
+  },
+  {
+    "text": "Skip to content",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[0,288][23,994]"
+  },
+  {
+    "text": "Two-factor authentication",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[233,563][847,647]"
+  },
+  {
+    "text": "Enter the code from your two-factor authentication app or browser extension below.",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[42,663][1042,779]"
+  },
+  {
+    "text": "Enter the verification code",
+    "description": "",
+    "hint": "",
+    "id": "session-otp-input-label",
+    "bounds": "[538,836][543,844]"
+  },
+  {
+    "text": "",
+    "description": "",
+    "hint": "Enter the verification code",
+    "id": "app_totp",
+    "bounds": "[42,836][1042,947]"
+  },
+  {
+    "text": "Verify",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[42,1004][1042,1115]"
+  },
+  {
+    "text": "More options ",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[42,1151][1042,1262]"
+  },
+  {
+    "text": "",
+    "description": "Terms",
+    "hint": "",
+    "id": "",
+    "bounds": "[493,1635][588,1635]"
+  },
+  {
+    "text": "Terms",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[493,1635][588,1635]"
+  },
+  {
+    "text": "",
+    "description": "Privacy",
+    "hint": "",
+    "id": "",
+    "bounds": "[488,1635][593,1635]"
+  },
+  {
+    "text": "Privacy",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[488,1635][593,1635]"
+  },
+  {
+    "text": "",
+    "description": "Docs",
+    "hint": "",
+    "id": "",
+    "bounds": "[504,1635][577,1635]"
+  },
+  {
+    "text": "Docs",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[504,1635][577,1635]"
+  },
+  {
+    "text": "",
+    "description": "Contact GitHub Support",
+    "hint": "",
+    "id": "",
+    "bounds": "[372,1635][708,1635]"
+  },
+  {
+    "text": "Contact GitHub Support",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[372,1635][708,1635]"
+  },
+  {
+    "text": "Manage cookies",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[422,1635][658,1635]"
+  },
+  {
+    "text": "Do not share my personal information",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[275,1635][805,1635]"
+  },
+  {
+    "text": "",
+    "description": "Close tab",
+    "hint": "",
+    "id": "com.android.chrome:id/close_button",
+    "bounds": "[0,136][126,283]"
+  },
+  {
+    "text": "",
+    "description": "Minimize tab",
+    "hint": "",
+    "id": "com.android.chrome:id/custom_tabs_minimize_button",
+    "bounds": "[126,136][252,283]"
+  },
+  {
+    "text": "",
+    "description": "Connection is secure",
+    "hint": "",
+    "id": "com.android.chrome:id/security_button",
+    "bounds": "[252,146][378,272]"
+  },
+  {
+    "text": "github.com",
+    "description": "",
+    "hint": "",
+    "id": "com.android.chrome:id/url_bar",
+    "bounds": "[378,146][595,272]"
+  },
+  {
+    "text": "",
+    "description": "Share",
+    "hint": "",
+    "id": "",
+    "bounds": "[845,136][970,283]"
+  },
+  {
+    "text": "",
+    "description": "Customize and control Google Chrome",
+    "hint": "",
+    "id": "com.android.chrome:id/menu_button",
+    "bounds": "[970,136][1080,283]"
+  },
+  {
+    "text": "Save password?",
+    "description": "",
+    "hint": "",
+    "id": "com.android.chrome:id/message_title",
+    "bounds": "[168,294][678,358]"
+  },
+  {
+    "text": "To Google Password Manager on this device",
+    "description": "",
+    "hint": "",
+    "id": "com.android.chrome:id/message_description",
+    "bounds": "[168,358][678,447]"
+  },
+  {
+    "text": "",
+    "description": "More options in the Save password?",
+    "hint": "",
+    "id": "com.android.chrome:id/message_secondary_button",
+    "bounds": "[678,307][804,433]"
+  },
+  {
+    "text": "Save",
+    "description": "",
+    "hint": "",
+    "id": "com.android.chrome:id/message_primary_button",
+    "bounds": "[807,262][1038,479]"
+  }
+]

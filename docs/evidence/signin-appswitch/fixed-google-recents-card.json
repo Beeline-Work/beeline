@@ -1,0 +1,38 @@
+[
+  {
+    "text": "",
+    "description": "Beeline",
+    "id": "com.google.android.apps.nexuslauncher:id/snapshot",
+    "bounds": "[173,379][907,2010]"
+  },
+  {
+    "text": "",
+    "description": "Selectable URL",
+    "id": "com.google.android.apps.nexuslauncher:id/url_indicator",
+    "bounds": "[749,411][875,537]"
+  },
+  {
+    "text": "",
+    "description": "Aegis",
+    "id": "com.google.android.apps.nexuslauncher:id/snapshot",
+    "bounds": "[949,379][1080,2010]"
+  },
+  {
+    "text": "",
+    "description": "Home",
+    "id": "com.google.android.apps.nexuslauncher:id/accessibility_action_view",
+    "bounds": "[0,136][1080,2337]"
+  },
+  {
+    "text": "Screenshot",
+    "description": "",
+    "id": "com.google.android.apps.nexuslauncher:id/action_screenshot",
+    "bounds": "[212,2073][534,2199]"
+  },
+  {
+    "text": "Select",
+    "description": "",
+    "id": "com.google.android.apps.nexuslauncher:id/action_select",
+    "bounds": "[629,2073][867,2199]"
+  }
+]

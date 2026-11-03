@@ -128,13 +128,13 @@ async function cornerTurn() {
 it.each(['done', 'blocked', 'failed', 'needs_decision'])('Reproduction report-commander-refused: repair %s reaches its ordering agent after a new head', async status => {
   const incoming = await cornerTurn();
   const context = { cornerId: incoming.roomId, headSha: 'old-head', pullRequest: 42, briefRevision: 1 };
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha','old-head')) WHERE corner_id=$1`, [incoming.roomId]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha','old-head')) WHERE corner_id=$1`, [incoming.roomId]);
   await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`, [incoming.id, JSON.stringify(context)]);
   const receipt = await daemon.execute('order', { roomId: incoming.roomId, requestId: incoming.turnRequestId,
     generationId: 'guard', address: incoming.roomId, agent: 'baby', text: 'Repair this head' }, CANDY);
   const assigned = (await daemon.execute('getAgentCommands', { roomId: incoming.roomId }, BABY)).commands.find(c => c.id === receipt.id)!;
   await daemon.execute('claimAgentCommand', { roomId: assigned.roomId, commandId: assigned.id, generationId: 'repair' }, BABY);
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"new-head"') WHERE corner_id=$1`, [incoming.roomId]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"new-head"') WHERE corner_id=$1`, [incoming.roomId]);
   const text = `${status.replace('_', '-')}: repair result`;
   await daemon.execute('report', { roomId: assigned.roomId, requestId: assigned.turnRequestId,
     generationId: 'repair', status, text }, BABY);
@@ -156,7 +156,7 @@ it.each(['done', 'blocked', 'failed', 'needs_decision'])('Reproduction report-co
 
 it('Reproduction report-commander-refused: a current reviewer report keeps its own head across an older repair parent', async () => {
   const incoming = await cornerTurn();
-  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha','new-head')) WHERE corner_id=$1`, [incoming.roomId]);
+  await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha','new-head')) WHERE corner_id=$1`, [incoming.roomId]);
   const context = { cornerId: incoming.roomId, headSha: 'new-head', pullRequest: 42, briefRevision: 1 };
   await db.query(`UPDATE agent_commands SET review_context=$2::jsonb WHERE id=$1`, [incoming.id, JSON.stringify(context)]);
   const receipt = await daemon.execute('order', { roomId: incoming.roomId, requestId: incoming.turnRequestId,
@@ -214,7 +214,7 @@ it.each(['done', 'blocked', 'failed', 'needs_decision'].flatMap(status => [false
   await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, BABY]);
   const { createAgentCommand } = await import('./agent-command.js');
   const context = { cornerId: incoming.roomId, headSha: 'head', pullRequest: 42, briefRevision: 1 };
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [incoming.roomId, JSON.stringify({ pr: { number: 42, headSha: 'head' } })]);
   if (commander !== JELLYBEAN) await createAgentCommand(db, { id: randomBytes(32).toString('hex'),
     roomId: incoming.roomId, agentId: CANDY, sourceMessageId: null, reason: 'order',

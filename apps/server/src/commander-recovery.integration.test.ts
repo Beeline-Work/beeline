@@ -425,7 +425,7 @@ it('routes zero-check completion through a durable lifecycle fact', async () => 
     turn = await worker(opened.cornerId),
     head = '7'.repeat(40);
   await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, RUBY]);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
     opened.cornerId,
     JSON.stringify({ checks: 'pending', pr: { number: 21, headSha: head, mergeability: 'clean' } }),
   ]);
@@ -646,7 +646,7 @@ it('commits terminal failure when the commander has left', async () => {
 it.each([false, true])('the commander revises from its DM after a check wake (cited approval: %s)', async citedApproval => {
   const opened = await open();
   const head = '9'.repeat(40);
-  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+  await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
     opened.cornerId,
     JSON.stringify({ checks: 'failing', pr: { number: 21, headSha: head } }),
   ]);

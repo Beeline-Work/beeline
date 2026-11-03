@@ -30,7 +30,7 @@ export async function deleteArchivedCornerBranch(
       `SELECT repository.repository_id,repository.installation_id,repository.full_name,corner.archived_at,
          ${cornerRunStateSql('corner.id')}='landed' merged,
          fact.lifecycle->'pr'->>'headSha' merged_head,fact.lifecycle->'pr'->>'mergedAt' merged_at
-       FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
+       FROM rooms corner JOIN corner_github_cache fact ON fact.corner_id=corner.id
        JOIN rooms parent ON parent.id=corner.parent_id
        LEFT JOIN github_repositories repository ON repository.installation_id=parent.github_installation_id
          AND repository.active AND (parent.repository_key='github:'||repository.repository_id::text

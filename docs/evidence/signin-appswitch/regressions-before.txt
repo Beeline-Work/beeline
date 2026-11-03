@@ -1,0 +1,181 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/0933f8b4999c555c7d04cde528cd5d817b973e797398c4c16b5d23a2aaaf458c/apps/mobile
+
+ ❯ sources/auth/google-auth-session.test.ts (27 tests | 3 failed | 24 skipped) 36ms
+   × Google sign-in continuation > Reproduction signin-appswitch: Android cancel on foreground keeps the link and recovery alive 26ms
+     → expected true to be false // Object.is equality
+   × Google sign-in continuation > Reproduction signin-appswitch: Android dismiss on foreground keeps the link and recovery alive 3ms
+     → expected true to be false // Object.is equality
+   ↓ Google sign-in continuation > Reproduction 6c548392: dismiss checks pending server state and promptly cancels
+   ↓ Google sign-in continuation > Reproduction 6c548392: cancel checks pending server state and promptly cancels
+   × Google sign-in continuation > Reproduction signin-appswitch: replacing a waiting Android attempt revokes only the old token 4ms
+     → expected true to be false // Object.is equality
+   ↓ Google sign-in continuation > Reproduction 6c548392: dismiss with completed server state signs in
+   ↓ Google sign-in continuation > R-signin-native: uses the native picker and preserves the recovery token and account-link target
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after unregistered signing key
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after DEVELOPER_ERROR
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after no Google account
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after native user cancel
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after unexpected native failure
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after missing native start route
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after missing Android client configuration
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after missing native complete route
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after rejected native proof
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after malformed native configuration
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after malformed native completion
+   ↓ Google sign-in continuation > R-signin-fallback: completes browser sign-in after failed native cleanup
+   ↓ Google sign-in continuation > recovers a lost callback with the persisted secret, then clears it after exchange
+   ↓ Google sign-in continuation > recovers a committed native ticket when the completion response is lost, without opening a browser
+   ↓ Google sign-in continuation > rejects a mismatched callback before polling or spending a ticket
+   ↓ Google sign-in continuation > waits on an unfinished flow and expires damaged or old local state
+   ↓ Google sign-in continuation > opens a state-bound OAuth flow and completes through recovery when the browser stays open
+   ↓ Google sign-in continuation > R-onb-1: recovers after interrupted completion reads with browser opened
+   ↓ Google sign-in continuation > R-onb-1: recovers after interrupted completion reads with browser dismiss
+   ↓ Google sign-in continuation > R-onb-21: recovers and cancels on Hermes without AbortSignal.timeout
+ ❯ sources/auth/github-auth-session.test.ts (56 tests | 3 failed | 53 skipped) 35ms
+   ↓ GitHub sign-in without a network > reports offline without opening a browser when the auth server is unreachable
+   ↓ GitHub sign-in without a network > stops polling and reports offline once completion reads keep failing to reach the server
+   ↓ GitHub sign-in without a network > keeps a stale recovery token and reports offline when its revocation cannot reach the server
+   ↓ GitHub sign-in without a network > stops cold callback recovery offline without background retries
+   ↓ GitHub sign-in without a network > refuses a cold callback if another sign-in replaces its pending state while polling
+   ↓ GitHub auth session redirects > uses the installed app scheme for sign-in completion
+   ↓ GitHub auth session redirects > keeps the Expo web callback on the page origin
+   ↓ GitHub auth session redirects > keeps monolith authorization on the monolith so GitHub returns there
+   ↓ GitHub auth session redirects > recovers a completed authorization when the initiating app receives no deep link
+   ↓ GitHub auth session redirects > keeps the ordinary deep-link path prompt without waiting for recovery
+   ↓ GitHub auth session redirects > uses an immediate completion check when the current server deep link arrives
+   ↓ GitHub auth session redirects > retries after the first completion read crosses the three-second request limit
+   ↓ GitHub auth session redirects > retries a 503 completion read and accepts the next completed response
+   ↓ GitHub auth session redirects > keeps polling through repeated pending responses
+   × GitHub auth session redirects > Reproduction signin-appswitch: Android cancel on foreground keeps the link and recovery alive 29ms
+     → expected true to be false // Object.is equality
+   × GitHub auth session redirects > Reproduction signin-appswitch: Android dismiss on foreground keeps the link and recovery alive 2ms
+     → expected true to be false // Object.is equality
+   × GitHub auth session redirects > Reproduction signin-appswitch: replacing a waiting Android attempt preserves the newer recovery 2ms
+     → expected true to be false // Object.is equality
+   ↓ GitHub auth session redirects > Reproduction gh3: frees sign-in within 2 s when the person leaves GitHub and the server stays pending
+   ↓ GitHub auth session redirects > Reproduction gh3: still signs in when the browser closed and the completion lands after a pending read
+   ↓ GitHub auth session redirects > treats a 410 completion response as terminal expiry and cancels recovery
+   ↓ GitHub auth session redirects > cancels instead of retrying a terminal completion protocol failure
+   ↓ GitHub auth session redirects > cancels a timed-out recovery so retry cannot inherit a reusable credential
+   ↓ GitHub auth session redirects > keeps a recovered token until downstream failure cancellation is confirmed
+   ↓ GitHub auth session redirects > preserves recovery state across a retryable resume read failure
+   ↓ GitHub auth session redirects > does not let a late recovery overwrite a newer sign-in session
+   ↓ GitHub auth session redirects > cancels explicitly and clears recovery only after the server confirms it
+   ↓ GitHub auth session redirects > uses the installed app scheme for GitHub App installation completion
+   ↓ GitHub auth session redirects > registers both app-generated deep links as Expo Router screens
+   ↓ GitHub auth session redirects > keeps the previous callback routes registered during the transition
+   ↓ GitHub auth session redirects > cold-starts from getInitialURL and validates the persisted sign-in state
+   ↓ GitHub auth session redirects > ignores an unrelated cold-start URL
+   ↓ GitHub auth session redirects > ignores a completed launch callback retained across OTA reload when the device is signed in
+   ↓ GitHub auth session redirects > keeps state validation for a new pending flow even on a signed-in device
+   ↓ GitHub auth session redirects > rejects a cold callback whose state does not match without consuming the real state
+   ↓ GitHub auth session redirects > reports an expired cold callback as SESSION EXPIRED and clears it for a clean restart
+   ↓ GitHub auth session redirects > finishes installation from a warm Linking event when the browser reports dismiss
+   ↓ GitHub auth session redirects > R-onb-11: connects GitHub and returns to /beeline/channels
+   ↓ GitHub auth session redirects > R-onb-11: connects GitHub and returns to /beeline/settings/identity
+   ↓ GitHub auth session redirects > R-onb-11: connects GitHub and returns to /beeline/settings
+   ↓ GitHub auth session redirects > R-onb-11: connects GitHub and returns to /beeline/chat/room-1?repositoryPicker=card-1
+   ↓ GitHub auth session redirects > retains installation resume state when the browser is canceled
+   ↓ GitHub auth session redirects > rejects an untrusted installation return path: /beeline/settings/identity?next=elsewhere
+   ↓ GitHub auth session redirects > rejects an untrusted installation return path: /beeline/settings/identity/extra
+   ↓ GitHub auth session redirects > rejects an untrusted installation return path: //evil.example/settings
+   ↓ GitHub auth session redirects > rejects an untrusted installation return path: https://evil.example/beeline/settings
+   ↓ GitHub auth session redirects > R-onb-11: retains Settings through a cold GitHub installation callback
+   ↓ GitHub auth session redirects > R-onb-11: explains that a GitHub account already belongs to another identity
+   ↓ GitHub auth session redirects > keeps the web Room path when the opener reports cancel before its landing tab finishes
+   ↓ GitHub auth session redirects > keeps the web Room path when the opener reports dismiss before its landing tab finishes
+   ↓ GitHub auth session redirects > acknowledges a successful web landing without any pending installation key
+   ↓ GitHub auth session redirects > continues to require pending state for native installation completion
+   ↓ GitHub auth session redirects > refreshes repositories on foreground return and treats dismissal as an unknown completion
+   ↓ GitHub auth session redirects > does not report an awaiting or refreshing repository list as a configuration error
+   ↓ GitHub auth session redirects > rejects an installation callback that does not report completion
+   ↓ GitHub auth session redirects > resumes a cold installation callback at the repo picker that launched it
+   ↓ retains reconnect intent across callback recovery and clears it with the one-use state
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 6 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/auth/github-auth-session.test.ts > GitHub auth session redirects > Reproduction signin-appswitch: Android cancel on foreground keeps the link and recovery alive
+ FAIL  sources/auth/github-auth-session.test.ts > GitHub auth session redirects > Reproduction signin-appswitch: Android dismiss on foreground keeps the link and recovery alive
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ sources/auth/github-auth-session.test.ts:430:85
+    428|       const outcome = result.then(value => ({ value }), error => ({ er…
+    429|       await vi.advanceTimersByTimeAsync(21_000);
+    430|       expect(fetchImpl.mock.calls.some(([url]) => String(url).endsWith…
+       |                                                                                     ^
+    431|       expect(link).toBeDefined();
+    432|       expect(closed).toHaveBeenCalledOnce();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/6]⎯
+
+ FAIL  sources/auth/github-auth-session.test.ts > GitHub auth session redirects > Reproduction signin-appswitch: replacing a waiting Android attempt preserves the newer recovery
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ sources/auth/github-auth-session.test.ts:459:83
+    457|       const old = runResilientGitHubSignInSession({ ...input, state: S…
+    458|       await vi.advanceTimersByTimeAsync(3_000);
+    459|       expect(fetcher.mock.calls.some(([url]) => String(url).endsWith('…
+       |                                                                                   ^
+    460|       controller.abort();
+    461|       const next = runResilientGitHubSignInSession({ ...input, state: …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/6]⎯
+
+ FAIL  sources/auth/google-auth-session.test.ts > Google sign-in continuation > Reproduction signin-appswitch: Android cancel on foreground keeps the link and recovery alive
+ FAIL  sources/auth/google-auth-session.test.ts > Google sign-in continuation > Reproduction signin-appswitch: Android dismiss on foreground keeps the link and recovery alive
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ sources/auth/google-auth-session.test.ts:35:75
+     33|       const outcome = result.then(value => ({ value }), error => ({ er…
+     34|       await vi.advanceTimersByTimeAsync(21_000);
+     35|       expect(fetcher.mock.calls.some(([url]) => url.endsWith('/cancel'…
+       |                                                                           ^
+     36|       expect(removed).not.toHaveBeenCalled();
+     37|       expect(closed).toHaveBeenCalledOnce();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/6]⎯
+
+ FAIL  sources/auth/google-auth-session.test.ts > Google sign-in continuation > Reproduction signin-appswitch: replacing a waiting Android attempt revokes only the old token
+AssertionError: expected true to be false // Object.is equality
+
+- Expected
++ Received
+
+- false
++ true
+
+ ❯ sources/auth/google-auth-session.test.ts:78:75
+     76|       const old = runGoogleSignIn({ ...open, state, recoveryToken, sig…
+     77|       await vi.advanceTimersByTimeAsync(3_000);
+     78|       expect(fetcher.mock.calls.some(([url]) => url.endsWith('/cancel'…
+       |                                                                           ^
+     79|       controller.abort();
+     80|       const next = runGoogleSignIn({ ...open, state: nextState, recove…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/6]⎯
+
+
+ Test Files  2 failed (2)
+      Tests  6 failed | 77 skipped (83)
+   Start at  20:53:40
+   Duration  1.76s (transform 964ms, setup 327ms, collect 2.03s, tests 71ms, environment 1ms, prepare 378ms)
+

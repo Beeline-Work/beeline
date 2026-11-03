@@ -1,0 +1,23 @@
+[
+  {
+    "text": "Allow Beeline to send you notifications?",
+    "description": "",
+    "hint": "",
+    "id": "com.android.permissioncontroller:id/permission_message",
+    "bounds": "[133,1042][947,1175]"
+  },
+  {
+    "text": "Allow",
+    "description": "",
+    "hint": "",
+    "id": "com.android.permissioncontroller:id/permission_allow_button",
+    "bounds": "[133,1243][947,1390]"
+  },
+  {
+    "text": "Don\u2019t allow",
+    "description": "",
+    "hint": "",
+    "id": "com.android.permissioncontroller:id/permission_deny_button",
+    "bounds": "[133,1400][947,1547]"
+  }
+]

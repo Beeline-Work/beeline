@@ -1,7 +1,32 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
 import { QueryProfiler, QueryWindow } from './query-profile.js';
 
 describe('query profiler', () => {
+  it('logs a bounded normalized SQL preview only for slow queries without retaining it in profiles', () => {
+    const profiler = new QueryProfiler();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sql = `\n SELECT $1::text,\n $2::text FROM messages\n WHERE ${'id=$3 OR '.repeat(80)}id=$3 `;
+    const normalizedSql = sql.replace(/\s+/g, ' ').trim();
+    const fingerprint = createHash('sha256').update(normalizedSql).digest('hex').slice(0, 16);
+    try {
+      profiler.record(sql, 499);
+      expect(warn).not.toHaveBeenCalled();
+      profiler.record(sql, 500, { code: '57014' });
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith('[database] slow query', {
+        fingerprint, durationMs: 500, code: '57014', sqlPreview: normalizedSql.slice(0, 300),
+      });
+      expect(warn.mock.calls[0]![1].sqlPreview).toHaveLength(300);
+      expect(profiler.snapshot().top).toEqual([{
+        fingerprint, calls: 2, totalMs: 999, maxMs: 500, errors: 1, timeouts: 1, deadlocks: 0,
+      }]);
+      expect(JSON.stringify(profiler.snapshot())).not.toContain('SELECT');
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it('ranks fingerprints by total DB time without retaining SQL parameters or unbounded keys', () => {
     const profiler = new QueryProfiler();
     vi.spyOn(console, 'warn').mockImplementation(() => {});

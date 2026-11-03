@@ -1,0 +1,31 @@
+{
+  "name": "fixed-github-recents",
+  "started": "2026-11-03T01:47:25.123052+00:00",
+  "ended": "2026-11-03T01:48:39.102837+00:00",
+  "return": "recents",
+  "codeReadInAegis": true,
+  "tabRestored": true,
+  "after": [
+    {
+      "text": "Allow Beeline to send you notifications?",
+      "description": "",
+      "hint": "",
+      "id": "com.android.permissioncontroller:id/permission_message",
+      "bounds": "[133,1042][947,1175]"
+    },
+    {
+      "text": "Allow",
+      "description": "",
+      "hint": "",
+      "id": "com.android.permissioncontroller:id/permission_allow_button",
+      "bounds": "[133,1243][947,1390]"
+    },
+    {
+      "text": "Don\u2019t allow",
+      "description": "",
+      "hint": "",
+      "id": "com.android.permissioncontroller:id/permission_deny_button",
+      "bounds": "[133,1400][947,1547]"
+    }
+  ]
+}

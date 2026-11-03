@@ -5,6 +5,7 @@ import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
 import { releaseArchivedCornerHolds } from './corner-holds.js';
+import { cornerOwnerSql } from './corner-worker.js';
 
 /**
  * Cancels every pending or claimed input/resume/restart command for a corner, and any
@@ -93,7 +94,7 @@ export async function closeCornerPullRequestBestEffort(
   closePullRequest?: (cornerId: string) => Promise<{ status: string; blocker?: string }>,
 ): Promise<void> {
   const pending = await database.query(
-    `SELECT 1 FROM corner_facts WHERE corner_id=$1
+    `SELECT 1 FROM corner_github_cache WHERE corner_id=$1
        AND lifecycle->'pr'->>'number' IS NOT NULL
        AND lifecycle->'pr'->>'mergedAt' IS NULL
        AND ${cornerRunStateSql('$1::uuid')} IS DISTINCT FROM 'landed'`,
@@ -127,7 +128,7 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
     [cornerId],
   );
   await database.query(
-    `UPDATE corner_facts SET lifecycle=lifecycle||'{"lifecycle":"done","checks":"unknown"}'::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=lifecycle||'{"lifecycle":"done","checks":"unknown"}'::jsonb WHERE corner_id=$1`,
     [cornerId],
   );
   await abandonCornerWorkflowRuns(database, cornerId);
@@ -135,4 +136,13 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
   await releaseArchivedCornerHolds(database, [cornerId]);
   await advanceCorner(database, cornerId, { kind: 'closed' });
   return { parentId: corner.parent_id, archived: Boolean(changed.rowCount) };
+}
+
+/** Account deletion: the deleted agents' corners settle as done/abandoned, with the reason. */
+export async function markOwnedCornersAbandoned(database: SqlDatabase, agentIds: string[], reason: string): Promise<void> {
+  await database.query(
+    `UPDATE corner_github_cache SET lifecycle=lifecycle||$2::jsonb
+     WHERE ${cornerOwnerSql('corner_github_cache.corner_id')}=ANY($1)`,
+    [agentIds, JSON.stringify({ lifecycle: 'done', outcome: 'abandoned', reason })],
+  );
 }

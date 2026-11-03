@@ -44,6 +44,7 @@ export function subscribeToOnboardingNotices(listener: OnboardingNoticeListener)
 }
 
 let signInInFlight = false;
+let activeSignIn: AbortController | undefined;
 
 /**
  * True from the press that opens the browser until that flow settles.
@@ -59,7 +60,23 @@ export function isSignInInFlight(): boolean {
 }
 
 export function markSignInInFlight(inFlight: boolean): void {
+  if (!inFlight) {
+    activeSignIn?.abort();
+    activeSignIn = undefined;
+  }
   signInInFlight = inFlight;
+}
+
+/** A new press replaces a waiting sign-in, including across callback remounts. */
+export function beginSignInAttempt(): AbortController {
+  activeSignIn?.abort();
+  activeSignIn = new AbortController();
+  signInInFlight = true;
+  return activeSignIn;
+}
+
+export function finishSignInAttempt(attempt: AbortController): void {
+  if (activeSignIn === attempt) markSignInInFlight(false);
 }
 
 type OnboardingEvent = 'callback_received' | 'bind_succeeded';

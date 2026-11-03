@@ -27,11 +27,20 @@ capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
 | Privileged Body setup, PostgreSQL timing, Docker build/lint, corpus replay | `ubuntu-latest` | `ubuntu-latest` |
 
 Each server shard runs its balanced file assignment and one of the existing
-eight integration batches. Held voice playback runs alone on shard two. On
-PRs, width and room-read latency budgets run with one worker in the existing
-hosted PRODUCTION-CORPUS REPLAY job, outside the shared quota. A shard moves
+eight integration batches. Held voice playback and durable socket replay run
+in fresh worker processes. On PRs, width, room-read latency and completion
+latency budgets run with one worker in the existing hosted PRODUCTION-CORPUS
+REPLAY job, outside the shared quota. A shard moves
 them only when that required hosted gate is enabled; merge/dispatch runs
-retain their original isolated shard coverage. Timing limits stay unchanged.
+retain isolated shard coverage. Socket replay retains all 300 messages,
+ordering/deduplication checks and its original deadlines. Completion tracing
+matches the exact real pre-query clock read rather than requiring two clock
+observations within ten milliseconds; its 500 ms budget stays unchanged.
+The feedback-triage scope fixture keeps seven external workspaces and 201
+internal messages (more than its 200-row page), preserving receipt and privacy
+assertions without seeding 29,650 unrelated internal messages. Its original
+job consumed 13m34s in this file and timed out during integration; the smaller
+fixture removes that setup bottleneck without raising a deadline.
 PRs consume SELECT SERVER TESTS; an unavailable selection fails closed to the
 full suite. Main coverage remains full. No integration batch is removed or
 repeated.
@@ -64,11 +73,13 @@ Detection precedes a cache-only producer on the reserved control listener.
 Preparation installs/builds once and publishes verified exact-commit builds
 before shared tests start. Linux consumers wait for preparation rather than
 independent shared-test completion, and the workspace lane restores its
-root/mobile/build caches once for all five checks. Consumers require those
-lockfile/manifest-keyed root/mobile and exact-commit build caches; a failed
-producer cannot fan out cold installs/builds. Compiled outputs never fall back
-to another commit. Build cache v2 uses explicit dist globs and validates API
-exports. TYPECHECK already runs the isolated mobile typecheck, so mobile does
+root/mobile/build caches once for all five checks. Consumers require the
+lockfile/manifest-keyed root/mobile dependency caches, so a failed producer
+cannot fan out cold installs. Exact-commit build caches can disappear after
+preparation or before a failed-job rerun; a miss rebuilds the checked-out
+commit with one Turbo task at a time and verifies API exports before use or
+publication. Compiled outputs never fall back to another commit. Build cache
+v2 uses explicit dist globs and validates API exports. TYPECHECK already runs the isolated mobile typecheck, so mobile does
 not repeat it. Required check names and platform routes remain unchanged.
 
 All CI-only workspace jobs prepend `.github/actions/ci-workspace/bin` to PATH.

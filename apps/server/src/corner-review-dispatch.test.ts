@@ -104,7 +104,7 @@ beforeEach(async () => {
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
   await db.query(
-    `UPDATE corner_facts SET lifecycle='{"checks":"unknown"}'::jsonb`,
+    `UPDATE corner_github_cache SET lifecycle='{"checks":"unknown"}'::jsonb`,
   );
   await seedCornerOpening(db, { cornerId: C, commissionedBy: H });
 });
@@ -112,7 +112,7 @@ beforeEach(async () => {
 /** Put the corner in the state a green transition leaves it in. */
 async function greenHead(number: number, headSha: string, checks = 'passing') {
   await db.query(
-    `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+    `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
     [
       C,
       JSON.stringify({
@@ -173,7 +173,7 @@ describe('corner message attribution', () => {
     await db.query(`UPDATE corner_brief_revisions SET revision=2 WHERE corner_id=$1`, [C]);
     await expect(read('review-approval')).rejects.toThrow('message access denied');
     await db.query(`UPDATE corner_brief_revisions SET revision=1 WHERE corner_id=$1`, [C]);
-    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"') WHERE corner_id=$1`, [C]);
+    await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"') WHERE corner_id=$1`, [C]);
     await expect(read('review-approval')).rejects.toThrow('message access denied');
     await db.query(`DELETE FROM rooms WHERE id=$1`, [source]);
   });
@@ -249,7 +249,7 @@ describe('corner message attribution', () => {
     await db.query('UPDATE corner_brief_revisions SET revision=revision+1 WHERE corner_id=$1',[C]);
     await expect(transcript()).rejects.toThrow();
     await db.query('UPDATE corner_brief_revisions SET revision=revision-1 WHERE corner_id=$1',[C]);
-    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"') WHERE corner_id=$1`,[C]);
+    await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"') WHERE corner_id=$1`,[C]);
     await expect(transcript()).rejects.toThrow();
     await db.query('DELETE FROM rooms WHERE id=$1',[source]);
     await db.query('UPDATE agents SET owner_id=$2 WHERE agent_id=$1',[B,H]);
@@ -349,7 +349,7 @@ describe('corner message attribution', () => {
       checkGate,
     );
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
       C,
       JSON.stringify({
         checks: 'unknown',
@@ -396,7 +396,7 @@ describe('corner message attribution', () => {
   await db.query(`DELETE FROM agent_commands`);
     headSha = '2'.repeat(40);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle-'checksSummary','{checks}','"unknown"'),
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(jsonb_set(lifecycle-'checksSummary','{checks}','"unknown"'),
        '{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
       [C, headSha],
     );
@@ -475,7 +475,7 @@ describe('corner message attribution', () => {
     // GitHub moves before the synchronize webhook. Exercise the daemon's
     // provider-refresh seam; the provider implementation has its own fixture.
     const refreshed = vi.fn(async () => {
-      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`, [C, '2'.repeat(40)]);
+      await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`, [C, '2'.repeat(40)]);
     });
     Object.assign(daemon, { github: { refreshCornerReviewHead: refreshed } });
     await result(repair!, '@goosy The fix is pushed; please review.');
@@ -492,7 +492,7 @@ describe('corner message attribution', () => {
     // subscription — the production review flow.
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
       [
         C,
         JSON.stringify({
@@ -560,7 +560,7 @@ describe('corner message attribution', () => {
     const [review] = await commands(B, C);
     await claim(review!);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`,
       [C],
     );
     // What the check webhook reports when a re-run starts on the same head.
@@ -602,7 +602,7 @@ describe('corner message attribution', () => {
       await result(review!, verdict);
       // A pending/green cycle writes new lifecycle cards, losing the old
       // outstanding-command window. The source event has no head field.
-      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [C]);
+      await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [C]);
       await advanceCorner(db, C, { kind: 'checks-pending' });
       await greenHead(71, head);
       for (let cycle = 0; cycle < 3; cycle++) await reconcileConfiguredCornerReviewers(db, R);
@@ -626,7 +626,7 @@ describe('corner message attribution', () => {
     const [review] = await commands(B, C);
     await claim(review!);
     await result(review!, 'FAIL: required evidence is missing.');
-    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',
+    await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checksSummary}',
       '{"checks":[{"name":"new-required-check","status":"passed"}]}') WHERE corner_id=$1`, [C]);
     await reconcileConfiguredCornerReviewers(db, R);
     expect(await commands(B, C)).toEqual([]);
@@ -956,7 +956,7 @@ describe('corner message attribution', () => {
     const headA = '3'.repeat(40), headB = '4'.repeat(40);
     const green = async (number: number, headSha: string) => {
       await db.query(
-        `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+        `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
         [C, JSON.stringify({ checks: 'passing', lifecycle: 'in-review', pr: { number, url: `https://github.com/acme/repo/pull/${number}`, headSha } })],
       );
       await systemLine(db, { roomId: C, authorId: H, subject: { kind: 'github', name: 'GitHub' },
@@ -997,10 +997,10 @@ describe('corner message attribution', () => {
     const verdict = async (kind: 'check-passed' | 'rerun') => {
       if (kind === 'rerun') {
         await db.query(
-          `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [C]);
+          `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [C]);
         await advanceCorner(db, C, { kind: 'checks-pending' });
         await db.query(
-          `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"passing"') WHERE corner_id=$1`, [C]);
+          `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','"passing"') WHERE corner_id=$1`, [C]);
       }
       await systemLine(db, { roomId: C, authorId: H, subject: { kind: 'github', name: 'GitHub' },
         verb: 'passed a check', kind: 'check-passed', object: { text: 'ci', headSha: head } });
@@ -1008,7 +1008,7 @@ describe('corner message attribution', () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
       VALUES($1,1,'Brief','Brief',$2,$3)`, [C, A, R]);
-    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
+    await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
       JSON.stringify({ checks: 'passing', lifecycle: 'in-review', pr: { number: 30, headSha: head } })]);
     await verdict('check-passed');
     const [review] = await commands(B, C);
@@ -1133,7 +1133,7 @@ describe('corner message attribution', () => {
     const push = new PushDeliveryLoop(db, { send });
     await push.runOnce();
     const head = '7'.repeat(40);
-    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
       C,
       JSON.stringify({
         checks: 'failing',
@@ -1223,7 +1223,7 @@ describe('corner message attribution', () => {
 
   it('does not call a corner blocked once a new head replaces the failing one', async () => {
     const head = '8'.repeat(40);
-    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
       C,
       JSON.stringify({ checks: 'failing', pr: { number: 22, headSha: head } }),
     ]);
@@ -1242,7 +1242,7 @@ describe('corner message attribution', () => {
       `UPDATE agent_commands SET completed_at=now()-interval '3 minutes' WHERE id=$1`,
       [fix!.id],
     );
-    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+    await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
       C,
       JSON.stringify({ checks: 'pending', pr: { number: 22, headSha: '9'.repeat(40) } }),
     ]);
@@ -1261,7 +1261,7 @@ describe('corner message attribution', () => {
       B,
     ]);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
       [
         C,
         JSON.stringify({
@@ -1296,7 +1296,7 @@ describe('corner message attribution', () => {
       B,
     ]);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
       [
         C,
         JSON.stringify({
@@ -1383,7 +1383,7 @@ describe('corner message attribution', () => {
         await createAgentCommand(db, { roomId: C, agentId: B, sourceMessageId: sourceId, reason });
       }
       await routeSystemCommand(db, { roomId: C, sourceMessageId: sourceId, kind: 'check-passed', targets: [B] });
-      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','\"pending\"') WHERE corner_id=$1`, [C]);
+      await db.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checks}','\"pending\"') WHERE corner_id=$1`, [C]);
       await advanceCorner(db, C, { kind: 'checks-pending' });
       await greenHead(95, head);
       await reconcileConfiguredCornerReviewers(db, R);
@@ -1521,7 +1521,7 @@ describe('the corner implementer the workflow wakes follows a person hand-over',
   it('a blocked-checks line keys on the current implementer, not the opener', async () => {
     const head = 'a'.repeat(40);
     await assignCornerWorker(db, C, B);
-    await db.query(`UPDATE corner_facts SET lifecycle=$3::jsonb WHERE corner_id=$1 AND $2::text IS NOT NULL`, [
+    await db.query(`UPDATE corner_github_cache SET lifecycle=$3::jsonb WHERE corner_id=$1 AND $2::text IS NOT NULL`, [
       C,
       B,
       JSON.stringify({
@@ -1576,7 +1576,7 @@ describe('the corner implementer the workflow wakes follows a person hand-over',
     );
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
     await assignCornerWorker(db, C, B);
-    await db.query(`UPDATE corner_facts SET lifecycle=$3::jsonb WHERE corner_id=$1 AND $2::text IS NOT NULL`, [
+    await db.query(`UPDATE corner_github_cache SET lifecycle=$3::jsonb WHERE corner_id=$1 AND $2::text IS NOT NULL`, [
       C,
       B,
       JSON.stringify({

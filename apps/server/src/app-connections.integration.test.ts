@@ -521,16 +521,16 @@ describe('connect_app', () => {
     const authorization = new URL(signIn.authorizationUrl);
     expect(authorization.origin).toBe('https://login.link.com');
     await wallet.complete(authorization.searchParams.get('state')!, 'fixture-code');
-    const settled = await database.query<{ card: { status: string } }>(
-      `SELECT card FROM messages WHERE card_type='app-sign-in'`);
-    expect(settled.rows[0]!.card.status).toBe('connected');
+    const settled = (await phone.readRoom(ROOM, OWNER))!.messages;
+    expect(settled.filter(message => message.text.includes('connected Link'))).toHaveLength(1);
+    expect(settled.some(message => message.appSignIn?.appKey === 'link')).toBe(false);
     const resumed = await database.query(`SELECT id FROM agent_commands WHERE reason='app_connected'`);
     expect(resumed.rows).toHaveLength(1);
     expect(await daemon.execute('connect', { ...turn, service: 'Link', reason: 'Add a payment card' }, HELPER))
       .toMatchObject({ status: 'ready', appKey: 'link' });
     expect(await daemon.execute('connectApp', { ...turn, app: 'Link', reason: 'Add a payment card' }, HELPER))
       .toMatchObject({ status: 'connected', appKey: 'link' });
-    expect((await database.query(`SELECT id FROM messages WHERE card_type='app-sign-in'`)).rows).toHaveLength(1);
+    expect((await database.query(`SELECT id FROM messages WHERE card_type='app-sign-in'`)).rows).toHaveLength(0);
     expect(await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER))
       .toMatchObject({ firstPartyIntegrations: [{ key: 'link', status: 'connected' }] });
     console.info('Reproduction link-route-1: Stripe Link -> one Link sign-in card -> login.link.com -> verified callback -> request resumed -> Link ready with no new card');
@@ -814,6 +814,33 @@ describe('connect_app', () => {
     expect(row).toEqual({ registry_server_name: 'app.linear/linear', status: 'installing' });
   });
 
+  it('R-YOUTUBE-CONNECTED: one sign-in becomes one catalog notice and one resume', async () => {
+    const provider = fakeComposio('youtube');
+    provider.supportsOAuth.mockResolvedValue(true);
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const first = await daemon.execute('connectApp',
+      { ...turn, app: 'YouTube', reason: 'Make a welcome video' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
+    const pending = (await phone.readRoom(ROOM, OWNER))!.messages.find(
+      message => message.appSignIn?.appId === first.appId)!;
+    await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: first.appId! }, OWNER);
+    // A rejected callback replay must not add a notice or resume twice.
+    await expect(phone.execute('completeAppSignIn',
+      { sessionUri: 'session-fixture', appId: first.appId! }, OWNER)).rejects.toThrow('no longer pending');
+    const messages = (await phone.readRoom(ROOM, OWNER))!.messages;
+    const notices = messages.filter(message => message.appSignIn?.appId === first.appId
+      || message.text.includes('connected YouTube'));
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ id: pending.id, presentation: 'system',
+      text: '@owner connected YouTube · The request can continue.' });
+    expect(notices[0]!.appSignIn).toBeUndefined();
+    const commands = (await database.query<{ source_message_id: string }>(
+      `SELECT source_message_id FROM agent_commands WHERE reason='app_connected'`)).rows;
+    expect(commands).toEqual([{ source_message_id: pending.id }]);
+  });
+
   it('posts one route-neutral Room card and resumes the original request after sign-in', async () => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);
@@ -843,12 +870,12 @@ describe('connect_app', () => {
     expect(provider.link).toHaveBeenCalledWith(OWNER, 'slack');
     await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: first.appId! }, OWNER);
     expect(provider.completeAuth).toHaveBeenCalledWith('session-fixture', OWNER);
-    expect((await database.query<{ card: { status: string; continuation?: string } }>(
-      `SELECT card FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM],
-    )).rows[0]?.card).toMatchObject({ status: 'connected', continuation });
+    expect((await database.query(
+      `SELECT id FROM messages WHERE room_id=$1 AND card_type='app-sign-in'`, [ROOM],
+    )).rows).toHaveLength(0);
     const connectedRoom = await phone.readRoom(ROOM, OWNER);
-    expect(connectedRoom?.messages.find((message) => message.appSignIn?.appId === first.appId)
-      ?.appSignIn).toMatchObject({ status: 'connected', continuation });
+    expect(connectedRoom?.messages.filter(message => message.text.includes('connected Slack')))
+      .toHaveLength(1);
     expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
       AND agent_id=$2 AND reason='app_connected'`, [ROOM, HELPER])).rowCount).toBe(1);
     const neverUsed = (await readOwnerApps(database, OWNER, provider))[0]!;
@@ -1462,11 +1489,8 @@ describe('connect_app', () => {
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     await phone.execute('beginAppSignIn', { appId: first.appId! }, OWNER);
-    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: first.appId! }, OWNER);
     const expected = { logo: `https://cdn.composio.dev/${app.toLowerCase()}.png`,
       domain: `${app.toLowerCase()}.com` };
-    const workbench = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
-    expect(workbench.apps).toContainEqual(expect.objectContaining({ appId: first.appId, ...expected }));
     const cardMessage = (await phone.readRoom(ROOM, OWNER))?.messages.find(message =>
       message.appSignIn?.appId === first.appId);
     const card = readRoomViewMessage(cardMessage)?.appSignIn;
@@ -1474,6 +1498,13 @@ describe('connect_app', () => {
     const historyCard = (await phone.readHistory(ROOM, OWNER))?.messages.find(message =>
       message.appSignIn?.appId === first.appId)?.appSignIn;
     expect(historyCard).toMatchObject(expected);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: first.appId! }, OWNER);
+    const workbench = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
+    expect(workbench.apps).toContainEqual(expect.objectContaining({ appId: first.appId, ...expected }));
+    for (const view of [await phone.readRoom(ROOM, OWNER), await phone.readHistory(ROOM, OWNER)]) {
+      expect(view?.messages.some(message => message.appSignIn?.appId === first.appId)).toBe(false);
+      expect(view?.messages.filter(message => message.text.includes(`connected ${app}`))).toHaveLength(1);
+    }
     if (process.env.BEELINE_SIGN_IN_PROOF === '1')
       console.log(`CARD-1 ${app}: Room and history cards show ${expected.logo}, matching Workbench`);
   });
@@ -1556,8 +1587,9 @@ describe('connect_app', () => {
     expect((await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER)).apps)
       .toContainEqual(expect.objectContaining({ appId, status: 'connected' }));
     if (route === 'card') {
-      expect((await phone.readRoom(ROOM, OWNER))?.messages.find(message =>
-        message.appSignIn?.appId === appId)?.appSignIn?.status).toBe('connected');
+      const messages = (await phone.readRoom(ROOM, OWNER))!.messages;
+      expect(messages.some(message => message.appSignIn?.appId === appId)).toBe(false);
+      expect(messages.filter(message => message.text.includes('connected Instagram'))).toHaveLength(1);
       expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
         AND agent_id=$2 AND reason='app_connected'`, [ROOM, HELPER])).rowCount).toBe(1);
     }

@@ -58,7 +58,7 @@ test asserts that no command or stale snapshot reaches it. Its first failed
 run acknowledged only the short sync frame; the fixture was corrected to
 match the historical workspace-cursor sync path before retaining the result.
 
-The current main image at `f43bd3f86e4c7a30aa75378df82fcbda10027c72`
+The main source at `f43bd3f86e4c7a30aa75378df82fcbda10027c72`
 requires schema 46; this candidate requires schema 61. Both boot checks require
 an exact marker. A previous image therefore cannot simply restart after the
 candidate migration's final marker. The passing tests above must not be used as
@@ -66,6 +66,44 @@ evidence for that image rollback. Before activation, a ledger-preserving image
 floor and compatible schema rollout must be established for both serving
 machines and the release recovery path. Neither the native runtime number nor
 the presence of the command table establishes that floor.
+
+### Why the existing image rollback cannot establish the floor
+
+`router-schema-rollback.test.ts` executes the verbatim historical marker/boot
+functions retained in `fixtures/schema46-readiness.source.txt` against isolated
+PGlite and the candidate's actual functions. The fixture records the source
+commit and complete historical file hash. It exercises successful marker reads;
+any historical connection-error/retry helper invocation fails the test.
+
+| Shared database marker | Historical source boot | Candidate boot |
+| --- | --- | --- |
+| 46, before candidate migration | Accepts | Rejects: expected 61, found 46 |
+| 61, after candidate migration | Rejects: expected 46, found 61 | Accepts |
+| 46, after marker-only rewind | Accepts marker | Rejects: expected 61, found 46 |
+
+The release planner `planServerCanaryDeployment` in
+`scripts/unified-release.mjs` migrates before replacing the first machine.
+`runReleaseMigration` in `apps/server/src/index.ts` writes the marker last,
+after server/auth schema and data work. Automatic rollback changes the canary's
+image back; the manual `.github/workflows/server-rollback.yml` also only changes
+images. Neither restores a compatible schema/marker. An already-running old
+process is not evidence that the old image can restart against marker 61.
+Disabling the router capability does not bypass either boot check.
+
+Changing the marker to 46 would fail the candidate's boot and would certify
+neither backwards-compatible DDL/data nor historical command interpretation.
+The historical phone dispatcher also has no router command ledger integration:
+retaining ledger tables alone cannot make that code replay durable outcomes.
+A pre-migration database restore would lose writes made since the backup, so it
+does not satisfy this task's retained-outcome rollback requirement either.
+
+Thus **the supplied image-only rollback cannot satisfy T7**. A separately
+validated compatibility release must first accept the shared schema transition
+and retain/interpret command outcomes and generations on both serving machines;
+its exact immutable image must then be the recovery floor. No such deployed
+floor or image provenance has been established here. This proof neither builds
+an old server image nor tests all migration DDL, PostgreSQL concurrency or live
+Machines. No marker, release workflow, safety check or deployment was changed.
 
 ## Native runtime 40
 

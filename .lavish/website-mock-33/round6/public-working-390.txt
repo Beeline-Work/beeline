@@ -1,3 +1,0 @@
-result: "{\"width\":390,\"height\":844,\"playing\":true,\"scrollY\":0,\"overflow\":false,\"pages\":[{\"id\":\"hero\",\"height\":844},{\"id\":\"bring\",\"height\":844},{\"id\":\"context\",\"height\":844},{\"id\":\"download\",\"height\":844}],\"snap\":\"y mandatory\",\"playButtons\":0,\"community\":false,\"download\":\"Download for Linux\"}"
-help[1]:
-  Run `chrome-devtools-axi snapshot` to see current page state

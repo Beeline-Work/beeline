@@ -1,3 +1,0 @@
-result: "{\"width\":390,\"dpr\":2.5999999046325684,\"overflow\":false,\"working\":\"https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/site/round6/index.html?v=phone-stack-2\",\"proof\":true,\"brokenImages\":0,\"videos\":[{\"src\":\"https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round6/sequence-1440.mp4?v=phone-stack-2\",\"duration\":55.2,\"plays\":true},{\"src\":\"https://rides-analyses-ecommerce-gospel.trycloudflare.com/artifact/617a34f50233f5cc/round6/sequence-390.mp4?v=phone-stack-2\",\"duration\":55.2,\"plays\":true}]}"
-help[1]:
-  Run `chrome-devtools-axi snapshot` to see current page state

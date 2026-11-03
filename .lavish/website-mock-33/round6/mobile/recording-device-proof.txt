@@ -1,3 +1,0 @@
-result: "{\"landed\":\"download\",\"width\":390,\"height\":844,\"dpr\":2.5999999046325684,\"touch\":5,\"small\":732}"
-help[1]:
-  Run `chrome-devtools-axi snapshot` to see current page state

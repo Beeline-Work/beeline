@@ -62,7 +62,6 @@
       "sha256": "ee1b710bfb5bd40416e27b415835b3671cd28ce8b5adc8e58f69c786ced918c5"
     }
   ],
-  "renderer": "scripts/marketing/export-ui.py",
   "runtime": "dependency-free DOM controller",
-  "fontBytes": 353852
+  "fontBytes": 327392
 }

@@ -1,3 +1,0 @@
-result: "{\"width\":1440,\"started\":true,\"loop\":1,\"playing\":true}"
-help[1]:
-  Run `chrome-devtools-axi snapshot` to see current page state

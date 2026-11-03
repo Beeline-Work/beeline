@@ -1,9 +1,0 @@
-{
-  "frames": 32,
-  "overflow_failures": 0,
-  "active_node_overlap_failures": 0,
-  "harness_overlap_failures": 0,
-  "one_active_node_and_edge": true,
-  "excluded_word_visible": false,
-  "png_dimensions_match": true
-}

@@ -1,6 +1,6 @@
 import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
-import { backgroundDatabaseCut, backgroundDatabaseNow, backgroundNextDelay } from './background-deadline-clock.js';
-import { BackgroundRecordDeadlines, backgroundSourceFamilies, maintenanceDeadlineFamilies, registerBackgroundDeadlineFamilies, subscribeBackgroundFamilies } from './background-deadlines.js';
+import { backgroundDatabaseCut } from './background-deadline-clock.js';
+import { BackgroundRecordDeadlines, backgroundSourceFamilies, repairDeadlineFamilies, registerBackgroundDeadlineFamilies, subscribeBackgroundFamilies } from './background-deadlines.js';
 import { sentryEligibilityKey } from './sentry-wake-source.js';
 import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
@@ -45,8 +45,6 @@ import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
 import { subscribeCommandCompletion } from './command-completion.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
-import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers } from './agent-command.js';
-import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { clearStalePhoneViews } from './phone-viewing.js';
 import { createFirebasePushSender } from './firebase-push.js';
@@ -72,7 +70,6 @@ import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
 import { INSTITUTIONAL_MEMORY_ON } from './institutional-memory-shadow.js';
-import { runInstitutionalCuratorCycle } from './institutional-curator.js';
 import {
   backfillInstitutionalMemoryEmbeddingsOnce,
   warnIfEmbeddingKeyMissing,
@@ -544,27 +541,9 @@ async function main() {
   });
   const voiceDeadlines=new BackgroundRecordDeadlines('voice-call-recovery',work,()=>leader.wake());
   const stopVoiceDeadlines=voiceDeadlines.subscribe();
-  registerBackgroundDeadlineFamilies(work,[
-    ...maintenanceDeadlineFamilies(jobsDatabase),
-    ...(voice?[{name:'voice-call-recovery',run:async()=>{
-      voiceDeadlines.consume();await voice.recover();
-      await voiceDeadlines.capture(async()=>(await jobsDatabase.query<{id:string;due:number|null}>(
-        `SELECT id,(extract(epoch FROM runtime_until)*1000)::float8 due FROM voice_calls WHERE ended_at IS NULL`)).rows);
-    },next:async()=>voiceDeadlines.next()}]:[]),
-    {name:'corner-reviewers',run:async()=>{await reconcileConfiguredCornerReviewers(jobsDatabase);}},
-    {name:'media-expiry',run:()=>mediaExpiry.runDeadline(),next:cut=>mediaExpiry.nextDelayMs(cut)},
-    {name:'corner-checks-blocked',run:async()=>{await noteBlockedCornerChecks(jobsDatabase);},next:cut=>backgroundNextDelay(jobsDatabase,
-      `SELECT created_at+interval '2 minutes' due_at FROM agent_commands WHERE state='pending' AND action='input'
-       UNION ALL SELECT to_timestamp((lifecycle->'checksSummary'->>'updatedAt')::double precision)+interval '1 hour'
-       FROM corner_github_cache WHERE lifecycle->>'checks'='failing' AND lifecycle->'checksSummary'->>'updatedAt' IS NOT NULL`,cut)},
-    {name:'expired-command-leases',run:async()=>{await reclaimExpiredCommandLeases(jobsDatabase,live);},next:cut=>backgroundNextDelay(jobsDatabase,
-      `SELECT lease_expires_at+interval '5 minutes' due_at FROM agent_commands WHERE state='claimed' AND turn_owner_connection_id IS NULL`,cut)},
-    {name:'mention-notices',run:async()=>{await phone.flushPendingMentionNotices();},next:cut=>backgroundNextDelay(jobsDatabase,
-      `SELECT due_at FROM pending_mention_notices WHERE notified_at IS NULL`,cut)},
-    {name:'institutional-curator',run:async()=>{await runInstitutionalCuratorCycle(jobsDatabase,institutionalMemory,await backgroundDatabaseNow(jobsDatabase),{
-      ...(institutionalAnchors?{anchors:institutionalAnchors}:{}),
-    });}},
-  ],(name,run)=>backgroundJobs.run(name,run),jobsDatabase);
+  registerBackgroundDeadlineFamilies(work,repairDeadlineFamilies(jobsDatabase,{
+    live,phone,mediaExpiry,institutionalMemory,institutionalAnchors,voice,voiceDeadlines,
+  }),(name,run)=>backgroundJobs.run(name,run),jobsDatabase);
   const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader));
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   const stopBackgroundSources=subscribeBackgroundFamilies(jobsDatabase,live,backgroundSourceFamilies(),name=>wakeWork(name,'committed-family-source'));

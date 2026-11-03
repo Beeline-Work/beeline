@@ -16,7 +16,10 @@ export function assessNight({ current, baseline, commits = [], head, rerun, reru
     result.capture.pass = result.capture.failures.length === 0;
     result.load = summarizeLoad(observations);
     result.contended = contention(result.load);
-    const status = !result.capture.pass ? 'invalid' : result.contended === true ? 'contended' : result.contended === null ? 'missing-load' : undefined;
+    const skippedForLoad = !report && result.contended === true && observations.at?.(-1)?.captureSkipped === 'host-contended';
+    if (skippedForLoad)
+      result.capture.failures = ['Capture skipped: host contended; see measured host load'];
+    const status = skippedForLoad ? 'contended' : !result.capture.pass ? 'invalid' : result.contended === true ? 'contended' : result.contended === null ? 'missing-load' : undefined;
     result.regression = status ? { pass: null, status, rows: [], failures: [] } : compareDrift(report, history, { night, runId, firstBaseline: fixed });
     result.drift = result.regression;
     result.failures = [result.capture, result.budget, result.contract, result.regression].flatMap((item) => item.failures);

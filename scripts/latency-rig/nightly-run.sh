@@ -11,8 +11,12 @@ head_sha="$(git rev-parse HEAD)"
 night="$(TZ=America/New_York date +%Y-%m-%d)"
 run_id="$(basename "$run_dir")"
 node scripts/latency-rig/commit-range.mjs "$PWD" "$head_sha" "$run_dir/commits.json"
+# Never hold an already-acquired emulator lease while waiting for CPU.
+if [[ -n "${LATENCY_RIG_DEVICE:-}" ]]; then export LATENCY_RIG_LOAD_WAIT_MS=0; fi
 # Setup/capture failures are compared as missing reports, then retried once.
-timeout --signal=TERM --kill-after=60s 90m bash scripts/latency-rig/local-attempt.sh "$run_dir/attempt-1" || true
+if node scripts/latency-rig/load-gate.mjs "$run_dir/attempt-1/capture/host-load.json"; then
+  timeout --signal=TERM --kill-after=60s 90m bash scripts/latency-rig/local-attempt.sh "$run_dir/attempt-1" || true
+fi
 verdict=0
 node scripts/latency-rig/nightly-local.mjs \
   --night "$night" --run-id "$run_id" \
@@ -20,7 +24,9 @@ node scripts/latency-rig/nightly-local.mjs \
   --commits "$run_dir/commits.json" --head "$head_sha" \
   --load "$run_dir/attempt-1/capture/host-load.json" --out "$run_dir/nightly.json" || verdict=$?
 if [[ "$verdict" == 2 ]]; then
-  timeout --signal=TERM --kill-after=60s 90m bash scripts/latency-rig/local-attempt.sh "$run_dir/attempt-2" || true
+  if node scripts/latency-rig/load-gate.mjs "$run_dir/attempt-2/capture/host-load.json"; then
+    timeout --signal=TERM --kill-after=60s 90m bash scripts/latency-rig/local-attempt.sh "$run_dir/attempt-2" || true
+  fi
   verdict=0
   node scripts/latency-rig/nightly-local.mjs \
     --night "$night" --run-id "$run_id" \

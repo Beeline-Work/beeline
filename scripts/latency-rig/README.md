@@ -701,3 +701,22 @@ capture. `LATENCY_RIG_SMOKE=1` permits one sample (the ordinary minimum stays
 20); it never relaxes nightly analysis coverage and cannot establish a passing
 nightly verdict. With no entry filter smoke mode captures the arrival cases too;
 use the explicit entry filter for these bounded proofs.
+
+### Readiness and load waits
+
+`nightly-run.sh` gates each attempt on the existing `contention(summarizeLoad())`
+rule, recording observations in that attempt's `capture/host-load.json`.
+It waits at most 45 minutes, stops waiting in the 04:00 Eastern replay window,
+and records a contended verdict without starting setup if no window opens.
+`LATENCY_RIG_LOAD_WAIT_MS` bounds a manual proof (zero performs one real sample).
+No measurement or clock-calibration threshold changes.
+
+Before acquiring an emulator lease, callers should run
+`node scripts/latency-rig/load-gate.mjs <output-load.json>` and acquire it only
+on success. The attempt checks again immediately before capture without waiting,
+so a build that leaves the host busy skips capture rather than holding the lease
+through a second wait. Callers that already acquired an emulator before invoking
+`nightly-run.sh` must move that acquisition after the preflight gate.
+The attempt waits for both TCP listeners before its first health request, with
+a bounded readiness error if setup exits or never listens. The fixture runner
+retains its child-listener ownership checks.

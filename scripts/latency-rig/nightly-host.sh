@@ -88,6 +88,12 @@ if [[ "$lock_hashes" != "$previous_hashes" ]]; then
   printf '%s\n' "$lock_hashes" >"$state/dependencies-head"
 fi
 
+phase="host load gate"
+if ! node "$repo_dir/scripts/latency-rig/load-gate.mjs" "$state/preflight-host-load.json"; then
+  # Produce the normal journaled contended verdict without taking an emulator.
+  LATENCY_RIG_LOAD_WAIT_MS=0 bash scripts/latency-rig/nightly-run.sh >"$state/host-nightly.log" 2>&1
+  exit $?
+fi
 phase="emulator lease"
 check_lane
 before="$(device_list)"

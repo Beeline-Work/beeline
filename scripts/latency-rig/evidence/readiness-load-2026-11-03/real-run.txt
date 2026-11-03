@@ -1,0 +1,19 @@
+Host load gate: load=37, cpus=20, contended=true
+Capture skipped: host remained contended before the load gate deadline
+Nightly squire emulator rig 2026-11-03: rerun required
+Capture: invalid; budget: pass; contract: pass; regression: contended
+Capture skipped: host contended; see measured host load
+Regression not assessed: contended
+No valid reference yet; PR regression range unavailable
+Measured main: 15baa6eeb2ba9a39074c478590cbd91b8463668a
+Host load: mean=37, max=37, cpus=20; contended=true
+Host load gate: load=37, cpus=20, contended=true
+Capture skipped: host remained contended before the load gate deadline
+Nightly squire emulator rig 2026-11-03: failed or skipped
+Capture: invalid; budget: pass; contract: pass; regression: contended
+Capture skipped: host contended; see measured host load
+Regression not assessed: contended
+No valid reference yet; PR regression range unavailable
+Measured main: 15baa6eeb2ba9a39074c478590cbd91b8463668a
+Host load: mean=37, max=37, cpus=20; contended=true
+Nightly result: /home/lunchbox/.local/state/beeline/corners/56b125fc2c6380e47a1ac26f15a35c143f7692d22001a6de133230b425a54edd/.beeline-proof/latency-waits/proof-state/night-2026-11-03-HeCbQH/nightly.json

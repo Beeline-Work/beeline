@@ -67,11 +67,8 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 bash scripts/latency-rig/run-local.sh >"$output/server.log" 2>&1 &
 server_pid=$!
-for _ in {1..180}; do
-  kill -0 "$server_pid" 2>/dev/null || { echo 'Local server exited before readiness' >&2; exit 1; }
-  if curl -fsS "http://127.0.0.1:$LATENCY_RIG_PORT/healthz" >/dev/null 2>&1; then break; fi
-  sleep 1
-done
+node scripts/latency-rig/wait-ready.mjs "$LATENCY_RIG_SERVER_PORT" "$server_pid"
+node scripts/latency-rig/wait-ready.mjs "$LATENCY_RIG_PORT" "$server_pid"
 curl -fsS "http://127.0.0.1:$LATENCY_RIG_PORT/healthz" >/dev/null
 # Build all mobile SDK entry points before Metro on a fresh checkout.
 npx turbo run build --filter=@beeline/buzz-client... --filter=@beeline/nostr... --filter=@beeline/api-contract... >"$output/sdk-build.log" 2>&1
@@ -99,6 +96,8 @@ for _ in {1..30}; do
 done
 if [[ "$signed_in" != true ]]; then echo 'Fixture sign-in did not reach the Room list' >&2; exit 1; fi
 # Builds and migrations have ended before timers start.
+# The caller already holds the emulator: do not keep its lease while waiting.
+LATENCY_RIG_LOAD_WAIT_MS=0 node scripts/latency-rig/load-gate.mjs "$output/capture/host-load.json" || exit $?
 LATENCY_RIG_NIGHTLY=1 node scripts/latency-rig/capture-arrivals.mjs "$output/capture" >"$output/capture.log" 2>&1
 node scripts/latency-rig/join.mjs --moments "$output/capture/moments.ndjson" \
   --proxy "$LATENCY_RIG_PROXY_LOG" --sql "$LATENCY_RIG_SQL_LOG" --out "$output/samples.ndjson"

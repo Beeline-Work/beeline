@@ -13,6 +13,8 @@ const head = 'a'.repeat(40);
 // Exercise the real selection loop without opening sockets in the test sandbox.
 const netStub = `
 import net from 'node:net';
+import os from 'node:os';
+os.loadavg = () => [0, 0, 0];
 import { EventEmitter } from 'node:events';
 import { appendFileSync } from 'node:fs';
 const held = new Set();

@@ -1,3 +1,4 @@
+import { cornerLifecycleSql } from './corner-github-cache.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { NotificationWork } from './notification-work.js';
@@ -24,7 +25,7 @@ import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contra
 import type { CornerPullRequestResult } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
 import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js';
-import { recordPersonMergeYes } from './corner-merge-approval.js';
+import { recordPersonMergeYes, withdrawPullRequestMergeApprovals } from './corner-merge-approval.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { currentCornerBrief, assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cancelCornerAgentCommands } from './corner-close.js';
@@ -912,7 +913,7 @@ export class GitHubOperations {
   /** Read every PR commit, including coauthors, using the repository installation. */
   async assertCornerReviewerNotAuthor(cornerId: string, agentId: string, database: SqlDatabase = this.database): Promise<void> {
     const pr = (await database.query<{ number: number | null; head_sha: string | null }>(
-      `SELECT lifecycle->'pr'->>'headSha' head_sha,(lifecycle->'pr'->>'number')::int number FROM corner_facts WHERE corner_id=$1`, [cornerId],
+      `SELECT lifecycle->'pr'->>'headSha' head_sha,(lifecycle->'pr'->>'number')::int number FROM corner_github_cache WHERE corner_id=$1`, [cornerId],
     )).rows[0];
     if (!pr?.number) return;
     const target = await this.roomAnchorTarget(cornerId, database);
@@ -1005,7 +1006,7 @@ export class GitHubOperations {
        JOIN corner_facts fact ON fact.corner_id=room.id
        WHERE room.id=$1 AND room.archived_at IS NULL
          AND ${cornerImplementerSql('fact', 'room')}=$2
-         AND fact.lifecycle->'pr'->>'number' IS NULL`, [cornerId, agentId],
+         AND ${cornerLifecycleSql('fact.corner_id')}->'pr'->>'number' IS NULL`, [cornerId, agentId],
     )).rows[0];
     if (!corner || (await currentCornerBrief(this.database, cornerId))?.repositoryWork === false) return;
     const target = await this.roomWorkflowTarget(corner.parent_id);
@@ -1016,7 +1017,7 @@ export class GitHubOperations {
     await this.database.transaction(async db => {
       await lockCornerLifecycle(db, cornerId);
       // A webhook or close may have won while the provider read was in flight.
-      await db.query(`UPDATE corner_facts fact SET lifecycle=lifecycle || $3::jsonb
+      await db.query(`UPDATE corner_github_cache fact SET lifecycle=lifecycle || $3::jsonb
         FROM rooms room WHERE fact.corner_id=$1 AND room.id=fact.corner_id AND room.archived_at IS NULL
           AND ${cornerFeatureBranchSql('room')}=$2 AND fact.lifecycle->'pr'->>'number' IS NULL`,
       [cornerId, corner.branch, JSON.stringify({ lifecycle: 'in-review',
@@ -1032,7 +1033,7 @@ export class GitHubOperations {
     const stored = (await this.database.query<{ parent_id: string; number: number; head: string }>(
       `SELECT room.parent_id,(fact.lifecycle->'pr'->>'number')::int number,
          fact.lifecycle->'pr'->>'headSha' head
-       FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
+       FROM rooms room JOIN corner_github_cache fact ON fact.corner_id=room.id
        WHERE room.id=$1 AND room.archived_at IS NULL
          AND fact.lifecycle->'pr'->>'number' IS NOT NULL`, [cornerId],
     )).rows[0];
@@ -1047,7 +1048,7 @@ export class GitHubOperations {
     await this.database.transaction(async db => {
       await lockCornerLifecycle(db, cornerId);
       const changed = await db.query(
-        `UPDATE corner_facts SET lifecycle=jsonb_set(
+        `UPDATE corner_github_cache SET lifecycle=jsonb_set(
            jsonb_set(lifecycle-'checksSummary'-'checkRefreshRetry','{pr,headSha}',to_jsonb($4::text)),
            '{checks}','"pending"')
          WHERE corner_id=$1 AND lifecycle->'pr'->>'number'=$2
@@ -1090,7 +1091,7 @@ export class GitHubOperations {
                 corner_member.identity_id corner_reviewer_id,
                 reviewer_identity.handle reviewer_handle
          FROM rooms r
-         JOIN corner_facts f ON f.corner_id=r.id
+         JOIN corner_github_cache f ON f.corner_id=r.id
          JOIN rooms parent ON parent.id=r.parent_id
          LEFT JOIN identities reviewer_identity ON reviewer_identity.id=${cornerReviewerSql('r')}
            AND reviewer_identity.kind='agent'
@@ -1271,7 +1272,7 @@ export class GitHubOperations {
     const corner = (
       await this.database.query<{ archived: boolean; lifecycle: CornerLifecycleView }>(
         `SELECT corner.archived_at IS NOT NULL archived,fact.lifecycle
-         FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
+         FROM rooms corner JOIN corner_github_cache fact ON fact.corner_id=corner.id
          WHERE corner.id=$1`,
         [input.cornerId],
       )
@@ -1342,11 +1343,11 @@ export class GitHubOperations {
         const target = await this.roomWorkflowTarget(parent.parent_id);
         await this.app.markPullRequestReadyForReview(target.token, target.repository,
           Number(status.pullRequest.split('/').at(-1)), status.headSha);
-        await this.database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'draftReadyFailure' WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`, [cornerId, status.headSha]);
+        await this.database.query(`UPDATE corner_github_cache SET lifecycle=lifecycle-'draftReadyFailure' WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`, [cornerId, status.headSha]);
         status = await this.prChecksStatus({ cornerId });
         if (status.blockedReason?.includes('PR is a draft')) throw new Error(status.blockedReason);
       } catch (error) {
-        await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle,
+        await this.database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(jsonb_set(lifecycle,
           '{pr,mergeability}','"draft"'::jsonb),'{draftReadyFailure}',jsonb_build_object('headSha',$2::text)) WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`,
           [cornerId, draftHeadSha]);
         await reconcileCornerMergeBlockers(this.database, cornerId);
@@ -1366,7 +1367,7 @@ export class GitHubOperations {
            COALESCE(${cornerOwnerSql('corner.id')},corner.created_by,parent.created_by) author_id,${cornerObjectiveSql('corner')} summary
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
-         JOIN corner_facts fact ON fact.corner_id=corner.id
+         JOIN corner_github_cache fact ON fact.corner_id=corner.id
          JOIN github_repositories repository ON repository.installation_id=parent.github_installation_id
            AND repository.active AND lower(repository.full_name)=lower(regexp_replace(regexp_replace(
              COALESCE(parent.repository_remote,parent.repository_key,''),
@@ -1389,7 +1390,7 @@ export class GitHubOperations {
       );
       if (result === 'queued') {
         await this.database.query(
-          `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
+          `UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
              jsonb_build_object('headSha',$2::text))
            WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`, [cornerId, status.headSha],
         );
@@ -1414,7 +1415,7 @@ export class GitHubOperations {
           const queue = await this.app.readPullRequestQueue(token.token, target.full_name, target.number);
           confirmedUnqueued = !queue.entry;
           if (queue.entry && queue.headSha === status.headSha) {
-            await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
+            await this.database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
               jsonb_build_object('headSha',$2::text)) WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`,
               [cornerId, status.headSha]);
             await this.reconcileQueuedCorners(cornerId);
@@ -1486,7 +1487,7 @@ export class GitHubOperations {
            repository.repository_id,repository.installation_id,repository.full_name
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
-         JOIN corner_facts fact ON fact.corner_id=corner.id
+         JOIN corner_github_cache fact ON fact.corner_id=corner.id
          LEFT JOIN github_repositories repository ON repository.installation_id=parent.github_installation_id
            AND repository.active AND lower(repository.full_name)=lower(regexp_replace(regexp_replace(
              COALESCE(parent.repository_remote,parent.repository_key,''),
@@ -1525,7 +1526,7 @@ export class GitHubOperations {
     await database.transaction(async db => {
       await lockCornerLifecycle(db, cornerId);
       const removed = await db.query<{ archived: boolean }>(
-        `UPDATE corner_facts fact SET
+        `UPDATE corner_github_cache fact SET
            lifecycle=(lifecycle-'pr'-'mergeQueue'-'checksSummary')||
              CASE WHEN corner.archived_at IS NULL THEN '{"lifecycle":"working","checks":"unknown"}'::jsonb
                ELSE '{}'::jsonb END
@@ -1537,7 +1538,7 @@ export class GitHubOperations {
       );
       if (!removed.rowCount) return;
       changed = true;
-      await db.query(`DELETE FROM corner_merge_approvals WHERE corner_id=$1 AND pull_request_number=$2`, [cornerId, number]);
+      await withdrawPullRequestMergeApprovals(db, cornerId, number);
       if (!removed.rows[0]!.archived)
         await advanceCorner(db, cornerId, { kind: 'pull-request-closed', number });
     });
@@ -1549,7 +1550,7 @@ export class GitHubOperations {
     const corner = (
       await this.database.query<{ parent_id: string; number: number | null }>(
         `SELECT corner.parent_id,(fact.lifecycle->'pr'->>'number')::int number
-         FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
+         FROM rooms corner JOIN corner_github_cache fact ON fact.corner_id=corner.id
          WHERE corner.id=$1 AND corner.parent_id IS NOT NULL`,
         [cornerId],
       )
@@ -1727,7 +1728,7 @@ export class GitHubOperations {
               fact.lifecycle->'pr'->>'title' title,fact.lifecycle->'pr'->>'url' url,
               fact.lifecycle->'pr'->>'baseSha' base_sha,
               fact.lifecycle->'pr'->>'targetBranch' target_branch
-       FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+       FROM corner_github_cache fact JOIN rooms corner ON corner.id=fact.corner_id
        JOIN rooms parent ON parent.id=corner.parent_id
        JOIN github_repositories github ON github.installation_id=parent.github_installation_id
          AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
@@ -1765,7 +1766,7 @@ export class GitHubOperations {
         await this.database.transaction(async (tx) => {
           const current = (
             await tx.query<{ lifecycle: CornerLifecycleView }>(
-              `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+              `SELECT lifecycle FROM corner_github_cache WHERE corner_id=$1 FOR UPDATE`,
               [row.corner_id],
             )
           ).rows[0]?.lifecycle;
@@ -1830,7 +1831,7 @@ export class GitHubOperations {
       COALESCE(fact.lifecycle->'mergeQueue'->>'headSha',fact.lifecycle->'pr'->>'headSha') head_sha,
       fact.lifecycle->'mergeQueue'->>'combinedSha' combined_sha,
       fact.lifecycle ? 'mergeQueue' cached
-      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+      FROM corner_github_cache fact JOIN rooms corner ON corner.id=fact.corner_id
       JOIN rooms parent ON parent.id=corner.parent_id
       JOIN github_repositories repository ON repository.installation_id=parent.github_installation_id
         AND repository.active AND lower(repository.full_name)=lower(regexp_replace(regexp_replace(
@@ -1854,7 +1855,7 @@ export class GitHubOperations {
         if (!queue.entry && !row.cached) continue;
         const gate = await cornerMergeGate(this.database, row.corner_id, { number: row.number, headSha: row.head_sha });
         if (queue.entry && gate.open && queue.headSha === row.head_sha) {
-          await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
+          await this.database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{mergeQueue}',
               jsonb_build_object('headSha',$2::text,'combinedSha',$3::text))
             WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2`,
             [row.corner_id, row.head_sha, queue.entry.headCommit?.oid ?? row.combined_sha ?? '']);
@@ -1867,7 +1868,7 @@ export class GitHubOperations {
           : `Removed from the merge queue: ${rollup?.failing.join(', ') || 'GitHub removed the entry before merging'}`;
         await this.database.transaction(async db => {
           await lockCornerLifecycle(db, row.corner_id);
-          const changed = await db.query(`UPDATE corner_facts SET lifecycle=lifecycle-'mergeQueue'
+          const changed = await db.query(`UPDATE corner_github_cache SET lifecycle=lifecycle-'mergeQueue'
             WHERE corner_id=$1 AND COALESCE(lifecycle->'mergeQueue'->>'headSha',lifecycle->'pr'->>'headSha')=$2
             RETURNING 1`, [row.corner_id, row.head_sha]);
           if (!changed.rowCount) return;
@@ -1915,7 +1916,7 @@ export class GitHubOperations {
               fact.lifecycle->'pr'->>'targetBranch' target_branch
        FROM rooms corner
        JOIN rooms parent ON parent.id=corner.parent_id
-       JOIN corner_facts fact ON fact.corner_id=corner.id
+       JOIN corner_github_cache fact ON fact.corner_id=corner.id
        JOIN github_repositories github ON github.installation_id=parent.github_installation_id
          AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
            COALESCE(parent.repository_remote,parent.repository_key,''),
@@ -1989,7 +1990,7 @@ export class GitHubOperations {
       `SELECT fact.corner_id,github.repository_id,
               fact.lifecycle->'pr'->>'baseSha' base_sha,
               fact.lifecycle->'pr'->>'headSha' head_sha
-       FROM corner_facts fact
+       FROM corner_github_cache fact
        JOIN rooms corner ON corner.id=fact.corner_id
        JOIN rooms parent ON parent.id=corner.parent_id
        JOIN github_repositories github ON github.installation_id=$1
@@ -2013,7 +2014,7 @@ export class GitHubOperations {
       await this.database.transaction(async (tx) => {
         const lifecycle = (
           await tx.query<{ lifecycle: CornerLifecycleView }>(
-            `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+            `SELECT lifecycle FROM corner_github_cache WHERE corner_id=$1 FOR UPDATE`,
             [row.corner_id],
           )
         ).rows[0]?.lifecycle;
@@ -2154,7 +2155,7 @@ export class GitHubOperations {
          github.repository_id,github.installation_id
        FROM rooms corner
        JOIN rooms parent ON parent.id=corner.parent_id
-       JOIN corner_facts fact ON fact.corner_id=corner.id
+       JOIN corner_github_cache fact ON fact.corner_id=corner.id
        JOIN github_repositories github ON github.installation_id=$1
          AND lower(github.full_name)=lower($2) AND github.active
        -- Opening a corner copies the parent's memberships, roles included, so an
@@ -2230,7 +2231,7 @@ export class GitHubOperations {
           await database.transaction(async (tx) => {
             const previous = (
               await tx.query<{ lifecycle: CornerLifecycleView }>(
-                `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+                `SELECT lifecycle FROM corner_github_cache WHERE corner_id=$1 FOR UPDATE`,
                 [target.corner_id],
               )
             ).rows[0]?.lifecycle;
@@ -2388,7 +2389,7 @@ export class GitHubOperations {
         github.repository_id,github.installation_id,
         fact.lifecycle->'pr'->>'number' pr_number,
         fact.lifecycle->'checkRefreshRetry'->>'headSha' head_sha
-      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+      FROM corner_github_cache fact JOIN rooms corner ON corner.id=fact.corner_id
       JOIN rooms parent ON parent.id=corner.parent_id
       JOIN github_repositories github ON github.installation_id=parent.github_installation_id
         AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
@@ -2402,7 +2403,7 @@ export class GitHubOperations {
       ORDER BY (fact.lifecycle->'checkRefreshRetry'->>'after')::double precision,fact.corner_id LIMIT 20`);
     for (const target of rows.rows) {
       // Lease the item in one committed statement; no lock spans a provider read.
-      const claimed = await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(
+      const claimed = await this.database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(
           lifecycle,'{checkRefreshRetry,after}',to_jsonb(extract(epoch FROM clock_timestamp())+300))
         WHERE corner_id=$1 AND lifecycle->'checkRefreshRetry'->>'headSha'=$2
           AND lifecycle->'pr'->>'headSha'=$2
@@ -2415,7 +2416,7 @@ export class GitHubOperations {
           { name: 'Pull request checks', status: 'pending', headSha: target.head_sha }, this.database);
       } catch (error) {
         if (!transientGitHubError(error)) {
-          await this.database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'checkRefreshRetry'
+          await this.database.query(`UPDATE corner_github_cache SET lifecycle=lifecycle-'checkRefreshRetry'
             WHERE corner_id=$1 AND lifecycle->'checkRefreshRetry'->>'headSha'=$2`,
             [target.corner_id, target.head_sha]);
         }
@@ -2441,7 +2442,7 @@ export class GitHubOperations {
         github.repository_id,github.installation_id,
         fact.lifecycle->'pr'->>'number' pr_number,
         fact.lifecycle->'pr'->>'headSha' head_sha
-      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+      FROM corner_github_cache fact JOIN rooms corner ON corner.id=fact.corner_id
       JOIN rooms parent ON parent.id=corner.parent_id
       JOIN github_repositories github ON github.installation_id=parent.github_installation_id
         AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
@@ -2584,7 +2585,7 @@ export class GitHubOperations {
             await database.query<{ lifecycle: CornerLifecycleView & {
               checksSummary?: { fetchStartedAt?: number };
             } }>(
-              `SELECT lifecycle FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+              `SELECT lifecycle FROM corner_github_cache WHERE corner_id=$1 FOR UPDATE`,
               [target.corner_id],
             )
           ).rows[0];
@@ -2599,7 +2600,7 @@ export class GitHubOperations {
           if (fetchStartedAt < latestFetch) return;
           // An empty rollup is only "no checks" once GitHub says so; a null
           // rollup (state pending) is the race before workflows register.
-          await database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'checkRefreshRetry'
+          await database.query(`UPDATE corner_github_cache SET lifecycle=lifecycle-'checkRefreshRetry'
             WHERE corner_id=$1 AND COALESCE((lifecycle->'checkRefreshRetry'->>'failedAt')::double precision,0)<=$2`,
             [target.corner_id, fetchStartedAt]);
           const summary = {
@@ -2763,7 +2764,7 @@ export class GitHubOperations {
         if (noteInserted) this.onRoomChanged?.(target.corner_id);
     } catch (error) {
       if (transientGitHubError(error)) {
-        await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(
+        await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(
             jsonb_set(jsonb_set(lifecycle,'{checks}','"pending"'::jsonb),
               '{checksSummary}',jsonb_build_object('total',0,'failing','[]'::jsonb,
                 'checks','[]'::jsonb,'updatedAt',floor(extract(epoch FROM clock_timestamp()))) ||
@@ -2788,7 +2789,7 @@ export class GitHubOperations {
     return (
       (
         await database.query<{ lifecycle: CornerLifecycleView }>(
-          `SELECT lifecycle-'branch' lifecycle FROM corner_facts WHERE corner_id=$1`,
+          `SELECT lifecycle-'branch' lifecycle FROM corner_github_cache WHERE corner_id=$1`,
           [cornerId],
         )
       ).rows[0]?.lifecycle ?? { lifecycle: 'unknown', checks: 'unknown' }
@@ -2803,7 +2804,7 @@ export class GitHubOperations {
     const previous = await this.lifecycle(cornerId, database);
     const { branch: _branch, ...lifecycle } = { ...previous, ...patch };
     await database.query(
-      `UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+      `UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`,
       [cornerId, JSON.stringify(lifecycle)],
     );
   }
@@ -2867,7 +2868,9 @@ export class GitHubOperations {
       await lockCornerLifecycle(database, target.corner_id);
       const current = (
         await database.query<{ lifecycle: CornerLifecycleView; locked: boolean }>(
-          `SELECT lifecycle,locked FROM corner_facts WHERE corner_id=$1 FOR UPDATE`,
+          `SELECT gh.lifecycle,fact.locked FROM corner_facts fact
+           JOIN corner_github_cache gh ON gh.corner_id=fact.corner_id
+           WHERE fact.corner_id=$1 FOR UPDATE OF gh,fact`,
           [target.corner_id],
         )
       ).rows[0];
@@ -2916,7 +2919,7 @@ export class GitHubOperations {
       if (!locked) await deleteCornerWakeSources(database, [target.corner_id]);
       if (!locked) await releaseArchivedCornerHolds(database, [target.corner_id]);
       await database.query(
-        `UPDATE corner_facts SET
+        `UPDATE corner_github_cache SET
            lifecycle=((lifecycle-'mergeQueue') -
              CASE WHEN $3 THEN ARRAY['pr','outcome','checksSummary'] ELSE ARRAY[]::text[] END)||$2::jsonb WHERE corner_id=$1`,
         [

@@ -157,7 +157,7 @@ it('GH-CHECK-REFUSAL: check refresh preserves permission diagnostics and blocks 
         assert.equal(merges,0);
         assert.equal(actionsReads,3);
         // Queue recovery uses the same real error and capture boundary.
-        await db.query("UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry}',$2::jsonb) WHERE corner_id=$1",[corner,JSON.stringify({headSha:head,after:0})]);
+        await db.query("UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry}',$2::jsonb) WHERE corner_id=$1",[corner,JSON.stringify({headSha:head,after:0})]);
         await operations.refreshQueuedChecks();
         const stored=(await db.query("SELECT lifecycle FROM corner_facts WHERE corner_id=$1",[corner])).rows[0].lifecycle;
         assert.equal(stored.checks,'passing'); // Historical evidence never bypasses the live merge read.

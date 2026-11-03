@@ -1,0 +1,72 @@
+[
+  {
+    "text": "Welcome,\njellybean-signup-proof-1029",
+    "description": "",
+    "hint": "",
+    "id": "choice-title",
+    "bounds": "[63,372][1017,562]"
+  },
+  {
+    "text": "Start a Workspace, or join one you were invited to.",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[63,583][1017,633]"
+  },
+  {
+    "text": "WORKSPACE NAME",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[63,759][1017,809]"
+  },
+  {
+    "text": "jellybean-signup-proof-1029's team",
+    "description": "Workspace name",
+    "hint": "",
+    "id": "choice-workspace-name",
+    "bounds": "[106,857][974,918]"
+  },
+  {
+    "text": "",
+    "description": "Create Workspace. Uses the name above",
+    "hint": "",
+    "id": "choice-create",
+    "bounds": "[63,967][1017,1158]"
+  },
+  {
+    "text": "Create Workspace",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[179,1004][547,1065]"
+  },
+  {
+    "text": "Uses the name above",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[179,1070][913,1120]"
+  },
+  {
+    "text": "",
+    "description": "Join with an invite link. Paste the link someone sent you",
+    "hint": "",
+    "id": "choice-join",
+    "bounds": "[63,1178][1017,1368]"
+  },
+  {
+    "text": "Join with an invite link",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[179,1215][629,1276]"
+  },
+  {
+    "text": "Paste the link someone sent you",
+    "description": "",
+    "hint": "",
+    "id": "",
+    "bounds": "[179,1281][913,1331]"
+  }
+]

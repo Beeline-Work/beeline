@@ -1,0 +1,20 @@
+[
+  {
+    "attempt_id": "96889099-0644-4738-bc16-71b36e100c52",
+    "stage": "started",
+    "provider": "github",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:19:14.494+00"
+  },
+  {
+    "attempt_id": "96889099-0644-4738-bc16-71b36e100c52",
+    "stage": "cancelled",
+    "provider": "github",
+    "platform": "android",
+    "version": "0.2.22",
+    "error_code": null,
+    "occurred_at": "2026-11-03 01:22:31.408+00"
+  }
+]

@@ -53,7 +53,7 @@ import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { PER_ITEM_EVENT_KINDS, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
-import { backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
+import { CORNER_GITHUB_CACHE_MIRROR_SQL, backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
 import { backfillFeedbackTriageWorkflow, backfillFeedbackSignalWalk, backfillWorkspaceWalkHistory } from './feedback-triage-workflow.js';
 import { backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
 import { retireAgentClasses } from './agent-class-retirement.js';
@@ -1970,6 +1970,21 @@ ALTER TABLE corner_facts
   DROP COLUMN IF EXISTS open_idempotency_key, DROP COLUMN IF EXISTS title_generated, DROP COLUMN IF EXISTS objective,
   DROP COLUMN IF EXISTS updated_at, DROP COLUMN IF EXISTS feedback_triage, DROP COLUMN IF EXISTS lane;
 ALTER TABLE rooms DROP COLUMN IF EXISTS reviewer_class, DROP COLUMN IF EXISTS reviewer_fallback_ids;
+
+-- GitHub's display cache for a corner (PR, checks, mergeability), written only
+-- from GitHub and helper remote-state reports. Disposable: it is never corner
+-- state, and it moves out of corner_facts.lifecycle (expand, switch, contract).
+CREATE TABLE IF NOT EXISTS corner_github_cache (
+  corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
+  lifecycle jsonb NOT NULL DEFAULT '{"lifecycle":"working","checks":"unknown"}'::jsonb,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE OR REPLACE FUNCTION corner_github_cache_touch() RETURNS trigger LANGUAGE plpgsql AS $touch$
+BEGIN NEW.updated_at=now(); RETURN NEW; END $touch$;
+DROP TRIGGER IF EXISTS corner_github_cache_touch ON corner_github_cache;
+CREATE TRIGGER corner_github_cache_touch BEFORE UPDATE OF lifecycle ON corner_github_cache
+  FOR EACH ROW EXECUTE FUNCTION corner_github_cache_touch();
+${CORNER_GITHUB_CACHE_MIRROR_SQL}
 
 CREATE TABLE IF NOT EXISTS corner_watches (
   watcher_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

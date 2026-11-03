@@ -4,6 +4,7 @@
 // Queue label removed: lunchboxfortwo message 44451dd4e1ed1d4e7f3e50c3dc4af769ad9c189b283f2bd97325815e3bd1a674.
 // A pending check stays review: lunchboxfortwo message f33288d32e5c70141c1e670672a60128bdd6eeb4e8bd70189120b1283131f480.
 // Minimal corner state (cornerWorkSql: derived worker, run state and no reviewer fallbacks; cornerBlockerSql: derived report waits): lunchboxfortwo, 2026-11-02 ("Yes, do it": update the hash-locked cornerRowState/cornerWorkSql/cornerBlockerSql for the minimal corner state).
+// GitHub display cache in its own table (cornerWorkSql reads gh.lifecycle, the corner_github_cache join, for f.lifecycle): lunchboxfortwo, 2026-11-02 ("Yes, do it" for the minimal corner state, widened by the captain's order "Also give the same treatment to the corner transition function": the GitHub display cache moves to its own table).
 {
   "entries": [
     {
@@ -39,7 +40,7 @@
     {
       "file": "apps/server/src/chat-corner-counts.ts",
       "declaration": "cornerWorkSql",
-      "sha256": "810ed670484188821d425811d5511e4fd5e9cd71c9b7ba1499019ae9086cd00f"
+      "sha256": "b5cb6e93c6957acb176659e0fee88e3ccb4de757fceb36c14e755b07268f8ac1"
     },
     {
       "file": "apps/server/src/chat-corner-counts.ts",

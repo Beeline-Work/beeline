@@ -2261,7 +2261,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     }
     async function cornerWorking(corner: string) {
       return (await db.query<{ worker_active: boolean }>(`SELECT activity.worker_active FROM rooms c
-        JOIN corner_facts f ON f.corner_id=c.id ${cornerWorkSql()} WHERE c.id=$1`, [corner])).rows[0]!.worker_active;
+        JOIN corner_facts f ON f.corner_id=c.id
+        LEFT JOIN corner_github_cache gh ON gh.corner_id=c.id ${cornerWorkSql()} WHERE c.id=$1`, [corner])).rows[0]!.worker_active;
     }
     // Reproduction (R-MCP-PROGRESS): an outside agent could only post whole messages, so a corner showed none of
     // its work while it ran; created agents' narration lands as corner activity.

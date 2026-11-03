@@ -496,7 +496,7 @@ export async function systemLine(
       ],
     );
     if (result.rowCount) {
-      const watched = watches.length ? (await db.query<{ name: string; merge_sha: string | null }>(`SELECT room.name,fact.lifecycle->'pr'->>'mergeCommitSha' merge_sha FROM rooms room LEFT JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`, [input.card?.cornerId ?? input.roomId])).rows[0] : undefined;
+      const watched = watches.length ? (await db.query<{ name: string; merge_sha: string | null }>(`SELECT room.name,fact.lifecycle->'pr'->>'mergeCommitSha' merge_sha FROM rooms room LEFT JOIN corner_github_cache fact ON fact.corner_id=room.id WHERE room.id=$1`, [input.card?.cornerId ?? input.roomId])).rows[0] : undefined;
       for (const watch of watches)
         await createAgentCommand(db, {
           roomId: watch.watcher_room_id,
@@ -639,6 +639,20 @@ export async function restateSystemLine(
     [messageId, text, JSON.stringify(event), card ? JSON.stringify(card) : null],
   );
   return { text, event, updated: Boolean(result.rowCount) };
+}
+
+/** Replace an actionable card with its one catalog completion line, retaining its id. */
+export async function settleSystemCard(
+  database: SqlDatabase,
+  messageId: string,
+  phrase: SystemPhrase & { readonly authorId: string },
+): Promise<{ id: string; text: string; event: SystemEvent }> {
+  const { text, event } = await restateSystemLine(database, messageId, phrase);
+  await database.query(
+    `UPDATE messages SET author_id=$2,presentation='system',card_type=NULL,card=NULL WHERE id=$1`,
+    [messageId, phrase.authorId],
+  );
+  return { id: messageId, text, event };
 }
 
 /**

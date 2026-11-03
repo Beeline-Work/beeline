@@ -1,3 +1,4 @@
+import { cornerLifecycleSql } from './corner-github-cache.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import { commanderReportAddress } from './commander.js';
@@ -64,7 +65,7 @@ export async function recordPersonMergeYes(
     const target = (await db.query<{ number: number | null; head_sha: string | null }>(
       `SELECT (fact.lifecycle->'pr'->>'number')::int number,
               fact.lifecycle->'pr'->>'headSha' head_sha
-       FROM corner_facts fact WHERE fact.corner_id=$1`,
+       FROM corner_github_cache fact WHERE fact.corner_id=$1`,
       [cornerId],
     )).rows[0];
     if (!target?.number || !target.head_sha) throw new Error('corner has no pull request to merge');
@@ -107,9 +108,9 @@ export async function isZeroCheckCommander(db: SqlDatabase, cornerId: string, ac
      WHERE corner.id=$1 AND corner.archived_at IS NULL
        AND ${cornerReviewerSql()} IS NULL
        AND $2 IS DISTINCT FROM ${cornerImplementerSql('fact', 'corner')}
-       AND fact.lifecycle->>'checks'='passing'
-       AND fact.lifecycle->'checksSummary'->>'total'='0'
-       AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+       AND ${cornerLifecycleSql('fact.corner_id')}->>'checks'='passing'
+       AND ${cornerLifecycleSql('fact.corner_id')}->'checksSummary'->>'total'='0'
+       AND ${cornerLifecycleSql('fact.corner_id')}->'pr'->>'headSha' IS NOT NULL
        AND EXISTS (SELECT 1 FROM room_access reachable WHERE reachable.room_id IN (corner.id,parent.id)
          AND reachable.identity_id=$2 AND reachable.removed_at IS NULL)`, [cornerId, actorId]);
   if (!eligible.rowCount) return false;
@@ -121,4 +122,20 @@ export async function isZeroCheckCommander(db: SqlDatabase, cornerId: string, ac
      WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
        AND identity.kind='agent'`, [returnRoom, actorId]);
   return Boolean(member.rowCount);
+}
+
+/** A changed corner reviewer never inherits an earlier agent's PASS. */
+export async function withdrawAgentMergeApprovals(db: SqlDatabase, cornerId: string): Promise<void> {
+  await db.query(`DELETE FROM corner_merge_approvals approval USING identities identity
+    WHERE approval.corner_id=$1 AND identity.id=approval.approved_by AND identity.kind='agent'`, [cornerId]);
+}
+
+/** A closed pull request takes its yeses with it. */
+export async function withdrawPullRequestMergeApprovals(db: SqlDatabase, cornerId: string, number: number): Promise<void> {
+  await db.query(`DELETE FROM corner_merge_approvals WHERE corner_id=$1 AND pull_request_number=$2`, [cornerId, number]);
+}
+
+/** Account deletion: a deleted identity's yeses no longer stand. */
+export async function withdrawMergeApprovalsBy(db: SqlDatabase, identityIds: string[]): Promise<void> {
+  await db.query(`DELETE FROM corner_merge_approvals WHERE approved_by=ANY($1)`, [identityIds]);
 }

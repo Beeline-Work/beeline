@@ -81,7 +81,8 @@ DROP TRIGGER IF EXISTS corner_activity_turn ON agent_turns;
 CREATE TRIGGER corner_activity_turn AFTER INSERT OR UPDATE OF status OR DELETE ON agent_turns
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
 DROP TRIGGER IF EXISTS corner_activity_facts ON corner_facts;
-CREATE TRIGGER corner_activity_facts AFTER INSERT OR UPDATE OF lifecycle ON corner_facts
+DROP TRIGGER IF EXISTS corner_activity_github ON corner_github_cache;
+CREATE TRIGGER corner_activity_github AFTER INSERT OR UPDATE OF lifecycle ON corner_github_cache
  FOR EACH ROW EXECUTE FUNCTION notify_corner_activity();
 DROP TRIGGER IF EXISTS corner_activity_hold ON corner_merge_holds;
 CREATE TRIGGER corner_activity_hold AFTER INSERT OR UPDATE OR DELETE ON corner_merge_holds

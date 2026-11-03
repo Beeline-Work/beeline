@@ -21,6 +21,9 @@ type Timing = {
   messageWriteStartedAt?: number;
   messageWriteEndedAt?: number;
   messageWriteStartedAtWall?: number;
+  messageWriteTraceStartedAtWall?: number;
+  wallClockReads?: number[];
+  restoreWallClock?: () => void;
   messageWriteEndedAtWall?: number;
   transactionQueries?: number;
   messageWriteQueries?: number;
@@ -48,6 +51,8 @@ class DelayedDatabase implements SqlDatabase {
     );
     if (messageWrite) {
       this.timing.messageWriteQueries = (this.timing.messageWriteQueries ?? 0) + 1;
+      this.timing.messageWriteTraceStartedAtWall = this.timing.wallClockReads?.at(-1);
+      this.timing.restoreWallClock?.();
       this.timing.messageWriteStartedAt = performance.now();
       this.timing.messageWriteStartedAtWall = Date.now();
     }
@@ -109,10 +114,17 @@ describe('agent reply completion latency', () => {
     await claimAgentCommand(database, ROOM, AGENT, command!.id, GENERATION);
   });
 
-  afterEach(async () => database.close());
+  afterEach(async () => { vi.restoreAllMocks(); await database.close(); });
 
   it('dispatches the committed reply without a serial transaction tail', async () => {
-    const timing: Timing = {};
+    const timing: Timing = { wallClockReads: [] };
+    const realNow = Date.now.bind(Date);
+    const wallClock = vi.spyOn(Date, 'now').mockImplementation(() => {
+      const now = realNow();
+      timing.wallClockReads!.push(now);
+      return now;
+    });
+    timing.restoreWallClock = () => wallClock.mockRestore();
     const delayed = new DelayedDatabase(database, timing);
     const live = new LiveHub();
     const publish = vi.spyOn(live, 'publish');
@@ -160,9 +172,11 @@ describe('agent reply completion latency', () => {
     });
     if (committedEvent?.type !== 'invalidate' || !committedEvent.trace)
       throw new Error('committed trace missing');
-    expect(committedEvent.trace.startedAt!).toBeGreaterThanOrEqual(
-      timing.messageWriteStartedAtWall! - 10,
-    );
+    // A quota or scheduler pause can land between the production clock read
+    // and the wrapper's entry. Match that exact pre-query read instead of
+    // assuming the two observations must be within ten wall-clock milliseconds.
+    expect(timing.messageWriteTraceStartedAtWall).toBeDefined();
+    expect(committedEvent.trace.startedAt!).toBe(timing.messageWriteTraceStartedAtWall);
     expect(committedEvent.trace.startedAt!).toBeLessThanOrEqual(timing.messageWriteEndedAtWall!);
     expect(timing.messageWriteEndedAtWall!).toBeLessThanOrEqual(committedEvent.trace.emittedAt);
     expect(committedEvent.trace.databaseAt).toBeLessThanOrEqual(committedEvent.trace.emittedAt);

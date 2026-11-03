@@ -1,0 +1,74 @@
+[
+  {
+    "attempt_id": "757cd8cd-b50d-4305-85f9-58814effb5e3",
+    "stage": "started",
+    "provider": "github",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:43:29.211+00"
+  },
+  {
+    "attempt_id": "757cd8cd-b50d-4305-85f9-58814effb5e3",
+    "stage": "provider_returned",
+    "provider": "github",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:45:00.37+00"
+  },
+  {
+    "attempt_id": "757cd8cd-b50d-4305-85f9-58814effb5e3",
+    "stage": "provider_returned",
+    "provider": "github",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:45:47.518+00"
+  },
+  {
+    "attempt_id": "757cd8cd-b50d-4305-85f9-58814effb5e3",
+    "stage": "ticket_issued",
+    "provider": "github",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:45:48.119+00"
+  },
+  {
+    "attempt_id": "757cd8cd-b50d-4305-85f9-58814effb5e3",
+    "stage": "ticket_exchanged",
+    "provider": "github",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:45:49.825+00"
+  },
+  {
+    "attempt_id": "3133dbbc-4377-4de2-baee-90d239a7dac8",
+    "stage": "started",
+    "provider": "github",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:46:33.329+00"
+  },
+  {
+    "attempt_id": "3133dbbc-4377-4de2-baee-90d239a7dac8",
+    "stage": "provider_returned",
+    "provider": "github",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:48:21.256+00"
+  },
+  {
+    "attempt_id": "3133dbbc-4377-4de2-baee-90d239a7dac8",
+    "stage": "ticket_issued",
+    "provider": "github",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:48:21.941+00"
+  },
+  {
+    "attempt_id": "3133dbbc-4377-4de2-baee-90d239a7dac8",
+    "stage": "ticket_exchanged",
+    "provider": "github",
+    "version": null,
+    "platform": null,
+    "occurred_at": "2026-11-03 01:48:24.605+00"
+  }
+]

@@ -361,7 +361,7 @@ BEGIN
         UNION SELECT ${humanReportCornerSql('report')} FROM messages report
           WHERE report.room_id=answer_room AND report.card->>'reportToId' IS NOT NULL
       )))
-      AND (TG_TABLE_NAME='corner_facts'
+      AND (TG_TABLE_NAME='corner_github_cache'
         OR (TG_TABLE_NAME='agent_commands' AND waiting.commander_id=answer_author)
         OR (TG_TABLE_NAME='messages' AND waiting.created_at<answer_at
           AND (waiting.corner_id=answer_room OR waiting.return_room_id=answer_room)
@@ -384,7 +384,8 @@ DROP TRIGGER IF EXISTS corner_report_restart ON agent_turns;
 DROP TRIGGER IF EXISTS corner_report_order ON agent_commands;
 CREATE TRIGGER corner_report_order AFTER INSERT ON agent_commands FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
 DROP TRIGGER IF EXISTS corner_report_push ON corner_facts;
-CREATE TRIGGER corner_report_push AFTER UPDATE OF lifecycle ON corner_facts FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
+DROP TRIGGER IF EXISTS corner_report_push ON corner_github_cache;
+CREATE TRIGGER corner_report_push AFTER UPDATE OF lifecycle ON corner_github_cache FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
 -- A queued automatic wake predating the report is not new input either.
 CREATE OR REPLACE FUNCTION quiet_corner_report_wakes() RETURNS trigger LANGUAGE plpgsql AS $quiet$
 DECLARE corner uuid;

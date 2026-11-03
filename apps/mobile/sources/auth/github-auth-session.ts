@@ -510,6 +510,9 @@ async function awaitCompletedGitHubBindChallenge(expectedState: string): Promise
 
 interface ResilientGitHubSessionInput {
   funnelContext?: SigninFunnelEvent;
+  platform?: string;
+  signal?: AbortSignal;
+  onBrowserClosed?: () => void;
   state: string;
   recoveryToken: string;
   purpose?: 'signin' | 'reconnect';
@@ -529,6 +532,9 @@ interface ResilientGitHubSessionInput {
 /** Keep the deep link fast path, then recover the same one-use proof by app-held secret. */
 export async function runResilientGitHubSignInSession({
   funnelContext,
+  platform,
+  signal,
+  onBrowserClosed,
   state,
   recoveryToken,
   purpose = 'signin',
@@ -536,14 +542,20 @@ export async function runResilientGitHubSignInSession({
   openAuthSession,
   subscribeToUrls,
   fetchImpl = githubAuthFetch,
-  recoveryWaitMs = GITHUB_RECOVERY_WAIT_MS,
+  recoveryWaitMs = platform === 'android' ? 5 * 60_000 : GITHUB_RECOVERY_WAIT_MS,
   recoveryPollMs = 200,
   offlineGiveUpMs = GITHUB_OFFLINE_GIVE_UP_MS,
   closedPendingMs = GITHUB_CLOSED_PENDING_MS,
   callbackGraceMs,
 }: ResilientGitHubSessionInput): Promise<OidcBindChallenge> {
+  const assertCurrent = () => {
+    if (signal?.aborted) throw new OidcBindError('browser_canceled', 'This sign-in was replaced');
+  };
+  assertCurrent();
   await assertAuthServerReachable(runtime, fetchImpl);
+  assertCurrent();
   const previousRecoveryToken = (await readPendingSession())?.recoveryToken;
+  assertCurrent();
   if (
     previousRecoveryToken &&
     previousRecoveryToken !== recoveryToken &&
@@ -562,92 +574,112 @@ export async function runResilientGitHubSignInSession({
     authorization.searchParams.set('onboarding', '1');
     start.authorizationUrl = authorization.toString();
   }
+  assertCurrent();
   await persistGitHubSignInState(state, purpose, recoveryToken);
   let callbackUrl: string | null = null;
   let browserSettledAt: number | null = null;
   let browserClosedAt: number | null = null;
+  let continuation: GitHubAuthUrlSubscription | undefined;
+  const replaced = async (): Promise<never> => {
+    await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl)
+      .then(() => clearPendingGitHubSignInState(state)).catch(() => undefined);
+    throw new OidcBindError('browser_canceled', 'This sign-in was replaced');
+  };
   try {
-    callbackUrl = await waitForAuthCallbackResult({
-      redirectUri: start.redirectUri,
-      openAuthSession: () =>
-        openAuthSession(start.authorizationUrl, start.redirectUri).then((result) => {
-          // A desktop shell only reports that it opened the system browser.
-          if (result.type !== 'opened') browserSettledAt = Date.now();
-          return result;
-        }),
-      subscribeToUrls,
-      ...(callbackGraceMs === undefined ? {} : { callbackGraceMs }),
-    }).then((result) => result.url);
-  } catch (error) {
-    if (!(error instanceof OidcBindError) || error.code !== 'browser_canceled') {
-      await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
-      throw error;
-    }
-    browserClosedAt = browserSettledAt ?? Date.now();
-  }
-
-  if (callbackUrl) {
     try {
-      if (!recoverySignal(callbackUrl, state)) {
-        return resumeGitHubSignInCallback(callbackUrl);
-      }
+      callbackUrl = await waitForAuthCallbackResult({
+        redirectUri: start.redirectUri,
+        signal,
+        openAuthSession: () => {
+          assertCurrent();
+          return openAuthSession(start.authorizationUrl, start.redirectUri).then((result) => {
+            // A desktop shell only reports that it opened the system browser.
+            if (result.type !== 'opened') browserSettledAt = Date.now();
+            if (platform === 'android' && (result.type === 'cancel' || result.type === 'dismiss')) onBrowserClosed?.();
+            return result;
+          });
+        },
+        subscribeToUrls,
+        ...(callbackGraceMs === undefined ? {} : { callbackGraceMs }),
+      }).then((result) => result.url);
     } catch (error) {
-      await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
-      throw error;
-    }
-  }
-
-  const deadline = Date.now() + recoveryWaitMs;
-  let unreachableSince: number | null = null;
-  do {
-    let serverPending = false;
-    try {
-      const recovered = await fetchGitHubRecoveryChallenge(
-        recoveryToken,
-        state,
-        runtime,
-        fetchImpl,
-      );
-      if (recovered) {
-        await persistPendingCallback(challengeCallbackUrl(recovered, state), state);
-        return recovered;
-      }
-      unreachableSince = null;
-      serverPending = true;
-    } catch (error) {
-      // A slow or interrupted completion read says nothing about the proof. Keep
-      // the app-held recovery secret and retry while the server ticket can live.
-      if (!(error instanceof OidcBindError) || !error.retryable) {
+      if (!(error instanceof OidcBindError) || error.code !== 'browser_canceled') {
         await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
         throw error;
       }
-      // A server that keeps not answering at all means the device went offline:
-      // say so now instead of spinning until the ticket expires.
-      if (isUnreachable(error)) {
-        unreachableSince ??= Date.now();
-        if (Date.now() - unreachableSince >= offlineGiveUpMs) {
+      if (platform === 'android') {
+        // App switching can dismiss Android's tab before its sign-in returns.
+        // Keep accepting the link while recovering the same server completion.
+        continuation = await subscribeToUrls((url) => {
+          if (isCallbackFor(url, start.redirectUri)) callbackUrl = url;
+        });
+      } else browserClosedAt = browserSettledAt ?? Date.now();
+    }
+
+    const deadline = Date.now() + recoveryWaitMs;
+    let unreachableSince: number | null = null;
+    do {
+      if (signal?.aborted) {
+        return replaced();
+      }
+      if (callbackUrl) {
+        try {
+          if (!recoverySignal(callbackUrl, state)) return await resumeGitHubSignInCallback(callbackUrl);
+        } catch (error) {
           await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
           throw error;
         }
-      } else {
-        unreachableSince = null;
       }
-    }
-    // The browser closed without a callback and the server still has no
-    // completion: the person left GitHub. Free the sign-in buttons, as Google does.
-    if (serverPending && browserClosedAt !== null && Date.now() - browserClosedAt >= closedPendingMs) {
-      // Revoke in the background so the buttons free without waiting on the network.
-      void cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
-      const left = new OidcBindError('browser_canceled', 'GitHub sign-in was canceled');
-      leftGitHubSignIns.add(left);
-      throw left;
-    }
-    const remainingMs = deadline - Date.now();
-    if (remainingMs <= 0) break;
-    await new Promise((resolve) => setTimeout(resolve, Math.min(recoveryPollMs, remainingMs)));
-  } while (Date.now() <= deadline);
-  await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
-  throw new OidcBindError('ticket_expired', 'The GitHub completion expired', 410);
+      let serverPending = false;
+      try {
+        const recovered = await fetchGitHubRecoveryChallenge(
+          recoveryToken,
+          state,
+          runtime,
+          fetchImpl,
+        );
+        if (signal?.aborted) return replaced();
+        if (recovered) {
+          await persistPendingCallback(challengeCallbackUrl(recovered, state), state);
+          return recovered;
+        }
+        unreachableSince = null;
+        serverPending = true;
+      } catch (error) {
+        // A slow or interrupted completion read says nothing about the proof. Keep
+        // the app-held recovery secret and retry while the server ticket can live.
+        if (!(error instanceof OidcBindError) || !error.retryable) {
+          await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+          throw error;
+        }
+        // A server that keeps not answering at all means the device went offline:
+        // say so now instead of spinning until the ticket expires.
+        if (isUnreachable(error)) {
+          unreachableSince ??= Date.now();
+          if (Date.now() - unreachableSince >= offlineGiveUpMs) {
+            await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+            throw error;
+          }
+        } else {
+          unreachableSince = null;
+        }
+      }
+      // The browser closed without a callback and the server still has no
+      // completion: the person left GitHub. Free the sign-in buttons, as Google does.
+      if (serverPending && browserClosedAt !== null && Date.now() - browserClosedAt >= closedPendingMs) {
+        // Revoke in the background so the buttons free without waiting on the network.
+        void cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+        const left = new OidcBindError('browser_canceled', 'GitHub sign-in was canceled');
+        leftGitHubSignIns.add(left);
+        throw left;
+      }
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(recoveryPollMs, remainingMs)));
+    } while (Date.now() <= deadline);
+    await cancelGitHubRecovery(recoveryToken, runtime, fetchImpl).catch(() => undefined);
+    throw new OidcBindError('ticket_expired', 'The GitHub completion expired', 410);
+  } finally { continuation?.remove(); }
 }
 
 /** Reload the signed bind challenge if Expo Router remounted during callback handling. */

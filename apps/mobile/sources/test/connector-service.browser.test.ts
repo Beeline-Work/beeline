@@ -1,12 +1,12 @@
-import { mkdtemp, writeFile, rm, mkdir, readFile } from 'node:fs/promises';
+import { writeFile, rm, mkdir, readFile } from 'node:fs/promises';
 import path from 'node:path';
 import { it, expect } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 const origin = process.env.CONNECTOR_PROOF_ORIGIN;
 it.skipIf(!origin)('disconnects through PhoneService and refreshes the rendered list', async () => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/service-proof-'));
+  const directory = await createBrowserProofDirectory("service-proof-");
   const evidence = path.join(mobile, 'evidence/connector-removal');
   await mkdir(evidence, { recursive: true });
   const fonts = await Promise.all(['SpaceGrotesk-Regular','SpaceGrotesk-Medium','SpaceGrotesk-SemiBold','IBMPlexMono-Regular'].map(async name =>

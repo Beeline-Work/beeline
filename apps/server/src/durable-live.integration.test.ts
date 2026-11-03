@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import type { AddressInfo } from 'node:net';
+import { performance } from 'node:perf_hooks';
 import type { TokenAuth } from './auth.js';
 import type { DaemonService } from './daemon-service.js';
 import { migrate } from './database.js';
@@ -26,8 +27,10 @@ describe('R-DURABLE-REPLAY: database writes → reconnect → phone socket', () 
   const servers: ReturnType<typeof createBeelineServer>[] = [];
   const sockets: WebSocket[] = [];
   const unlisten: Array<() => Promise<void>> = [];
+  let connectionNumber = 0;
 
   beforeEach(async () => {
+    connectionNumber = 0;
     database = PgliteDatabase.fromSnapshot(snapshot);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Reader')`, [VIEWER]);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
@@ -61,18 +64,32 @@ describe('R-DURABLE-REPLAY: database writes → reconnect → phone socket', () 
     return { server, live, port: (server.address() as AddressInfo).port };
   }
   async function connect(port: number) {
+    const connection = ++connectionNumber;
     const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
     sockets.push(socket);
     const frames: Frame[] = [];
     const waiters = new Set<() => void>();
+    let lastCommand: { type?: unknown; resume?: boolean } = {};
+    let closed: { code: number; reason: string } | undefined;
+    socket.on('close', (code, reason) => { closed = { code, reason: reason.toString() }; });
     socket.on('message', raw => { frames.push(JSON.parse(raw.toString())); for (const wake of waiters) wake(); });
     await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
     const wait = (predicate: (frames: Frame[]) => boolean) => new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(() => { waiters.delete(check); reject(new Error(`frames: ${frames.length}`)); }, 30_000);
+      const started = performance.now();
+      const timer = setTimeout(() => {
+        waiters.delete(check);
+        reject(new Error(`frames: ${frames.length}; ${JSON.stringify({ connection, lastCommand,
+          socketState: socket.readyState, closed, elapsedMs: Math.round(performance.now() - started),
+          lastFrame: frames.at(-1)?.type })}`));
+      }, 30_000);
       const check = () => { if (!predicate(frames)) return; clearTimeout(timer); waiters.delete(check); resolve(); };
       waiters.add(check); check();
     });
-    return { socket, frames, wait, send: (value: unknown) => socket.send(JSON.stringify(value)),
+    return { socket, frames, wait, send: (value: unknown) => {
+      const item = value as Frame;
+      lastCommand = { type: item.type, resume: Boolean(item.cursors || item.workspaceCursors) };
+      socket.send(JSON.stringify(value));
+    },
       close: () => new Promise<void>(resolve => { socket.once('close', () => resolve()); socket.close(); }) };
   }
   async function post(count: number) {

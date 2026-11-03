@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { migrate } from './database.js';
-import { PgliteDatabase, type SqlDatabase } from './test-support.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { migratedDatabase, type PgliteDatabase } from './test-support.js';
 import { ObjectService, isArtifactMimeType } from './object-service.js';
 import type { ObjectStorage } from './object-storage.js';
 import { ARTIFACT_TTL_HOURS, MEDIA_TTL_HOURS } from './media-ttl.js';
@@ -44,8 +43,7 @@ function sha256(bytes: Uint8Array): string {
 }
 
 async function fixture() {
-  const database = new PgliteDatabase() as unknown as SqlDatabase;
-  await migrate(database);
+  const database = await migratedDatabase();
   await database.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Hoots','hoots'),($2,'agent','Goosy','goosy')`,
     [AGENT, OTHER],
@@ -54,7 +52,7 @@ async function fixture() {
 }
 
 describe('ObjectService', () => {
-  let database: SqlDatabase;
+  let database: PgliteDatabase;
   let fake: FakeStorage;
   let storage: ObjectStorage;
   let service: ObjectService;
@@ -64,6 +62,8 @@ describe('ObjectService', () => {
     ({ storage, fake } = fakeStorage());
     service = new ObjectService(database, storage, 'https://server.usebeeline.app', 25 * 1024 * 1024);
   });
+
+  afterEach(async () => { await database.close(); });
 
   it('streams a small artifact: storage put, ready row, canonical url', async () => {
     const result = await service.uploadArtifact(AGENT, Buffer.from(HTML), 'text/html', 'Mock Page');

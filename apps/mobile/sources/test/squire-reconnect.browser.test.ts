@@ -1,11 +1,11 @@
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 it.each(['obsidian', 'bone'])('Reproduction squire-spinner: card and Settings reconnect reach a bounded sign-in error (%s)', async theme => {
   const mobile = process.cwd();
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/squire-proof-'));
+  const directory = await createBrowserProofDirectory("squire-proof-");
   try {
     const entry = path.join(directory, 'proof.jsx');
     await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client';

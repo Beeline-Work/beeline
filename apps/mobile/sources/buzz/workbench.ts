@@ -386,6 +386,22 @@ const SQUIRE_STAGE_MATCH: readonly [SquireStageKey, RegExp][] = [
 const squireStageKey = (label: string) =>
   SQUIRE_STAGE_MATCH.find(([, pattern]) => pattern.test(label.trim()))?.[0];
 
+/** Keep helper error envelopes from older installs out of the connect screen. */
+export function connectorSetupErrorCopy(reason: string): string {
+  const failureCopy = 'Could not connect. Try again.';
+  const start = reason.indexOf('{');
+  if (start >= 0) {
+    try {
+      const payload = JSON.parse(reason.slice(start));
+      const cause = payload?.error ?? payload;
+      if (cause?.code === 'reconnect_required') return 'Trusty Squire needs account sign-in. Try again.';
+      return typeof cause?.message === 'string' && !/[{}\[\]]/.test(cause.message)
+        ? cause.message : failureCopy;
+    } catch { return failureCopy; }
+  }
+  return /[\[\]]/.test(reason) ? failureCopy : reason;
+}
+
 /**
  * The helper reports steps in the order it reaches them, and the server seeds
  * two placeholders, so the raw list changes length and order mid-run. The

@@ -1,0 +1,41 @@
+{
+  "schema": "router-group-b-idle-evidence.v1",
+  "before": {
+    "integrationBase": "81a921351",
+    "elapsedMs": 60000,
+    "directMaintenanceStatements": 21,
+    "directCheckinStatements": 2,
+    "requiredSettledIdleStatements": 0,
+    "recurringFamilies": [
+      "next-day-checkin",
+      "push",
+      "free-agents",
+      "repair"
+    ]
+  },
+  "after": {
+    "runtimeProof": "apps/server/src/background-deadlines.postgres.test.ts",
+    "runtimeFactory": "repairDeadlineFamilies",
+    "idleMs": 86400000,
+    "statements": 0,
+    "providerCalls": 0,
+    "onlySourceFamilyRuns": true,
+    "leaderInitializationOncePerAcquisition": true,
+    "admissionCut": "PostgreSQL timestamp text retaining microseconds",
+    "strictAudit": "npm run prove:router-group-b",
+    "strictAuditRecurringRegistrations": 0,
+    "strictAuditFailures": 0
+  },
+  "capabilityEnabledInProduction": false,
+  "wholeFindingsClosed": [],
+  "wholeFindingsOpen": [
+    "F01",
+    "F12",
+    "F14",
+    "F15",
+    "F16",
+    "F17",
+    "F19",
+    "F22"
+  ]
+}

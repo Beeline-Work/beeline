@@ -6,10 +6,9 @@ import {
   routeHumanMessage,
 } from './agent-command.js';
 import { announceAgentLifecycle } from './connection-presence.js';
-import { migrate } from './database.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -22,9 +21,8 @@ describe('tagged agent lifecycle commands', () => {
   let live: LiveHub;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
+    database = await migratedDatabase();
     live = new LiveHub();
-    await migrate(database);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES
        ($1,'human','Owner','owner'),($2,'human','Member','member'),($3,'agent','Bee','bee')`,

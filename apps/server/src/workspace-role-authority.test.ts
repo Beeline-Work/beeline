@@ -7,7 +7,6 @@ import { computerViewToken, createComputerSession } from './computer-session.js'
 import { announceAgentLifecycle } from './connection-presence.js';
 import { setCornerHold } from './corner-holds.js';
 import { recordPersonMergeYes } from './corner-merge-approval.js';
-import { migrate } from './database.js';
 import { LiveHub } from './live.js';
 import {
   AGENT_OWNER_AUTHORITY_MESSAGE,
@@ -15,7 +14,7 @@ import {
   SPENDING_OWNER_AUTHORITY_MESSAGE,
   WORKSPACE_ADMIN_AUTHORITY_MESSAGE,
 } from './phone-service.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { humanRoomAdmin, humanRoomMember } from './workflow-admin.js';
 
 // Permissions come from three places only: the agent's owner, the Workspace
@@ -45,9 +44,8 @@ describe('permissions: agent owner, Workspace admin, or anyone in the Room', () 
   ] as const;
 
   beforeEach(async () => {
-    database = new PgliteDatabase();
+    database = await migratedDatabase();
     live = new LiveHub();
-    await migrate(database);
     phone = new PhoneService(database, 'http://local.test', undefined, undefined, live);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES

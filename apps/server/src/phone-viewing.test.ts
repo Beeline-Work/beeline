@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
-import { migrate } from './database.js';
 import { PushDeliveryLoop } from './background.js';
 import { clearStalePhoneViews, PhoneViewing } from './phone-viewing.js';
-import { PgliteDatabase } from './test-support.js';
+import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { createBeelineServer } from './server.js';
 import { LiveHub } from './live.js';
 import type { TokenAuth } from './auth.js';
@@ -41,10 +40,9 @@ async function views(): Promise<{ session_id: string; instance_id: string | null
 }
 
 beforeEach(async () => {
-  db = new PgliteDatabase();
+  db = await migratedDatabase();
   sequence = 0;
   send.mockClear();
-  await migrate(db);
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES ($1,'human','Owner','owner'),($2,'human','Stranger','stranger'),($3,'agent','Bee','bee')`,
     [person, stranger, agent],

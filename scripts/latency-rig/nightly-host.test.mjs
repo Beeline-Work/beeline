@@ -97,7 +97,7 @@ async function fixture(t) {
     LATENCY_HOST_NIGHTLY_RUN: script, NIGHTLY_EXIT: '0', NODE_OPTIONS: `--import=${preload}` };
   for (const name of ['LATENCY_RIG_SERVER_PORT', 'LATENCY_RIG_PORT']) delete env[name];
   return { dir, state,
-    run: (extra = {}) => spawnSync('bash', [runner, state], { env: { ...env, ...extra }, encoding: 'utf8', timeout: 30000 }),
+    run: (extra = {}, script = runner) => spawnSync('bash', [script, state], { env: { ...env, ...extra }, encoding: 'utf8', timeout: 30000 }),
     json: async (name) => JSON.parse(await readFile(join(state, name), 'utf8')),
     commands: async () => (await readFile(join(dir, 'commands'), 'utf8').catch(() => '')).trim().split('\n').filter(Boolean).map(JSON.parse) };
 }
@@ -166,6 +166,24 @@ for (const code of [0, 7]) test(`nightly exit ${code}: choose/export bind-tested
   assert.ok(commands.some((row) => row.command === 'adb' && row.args.join(' ') === '-s emulator-5582 emu kill'));
   assert.ok(commands.some((row) => row.command === 'git' && row.args.join(' ') === 'fetch origin main'));
   assert.ok(commands.some((row) => row.command === 'git' && row.args.join(' ') === 'checkout --detach FETCH_HEAD'));
+});
+
+test('a delayed background launcher cannot race the first log read', async (t) => {
+  const f = await fixture(t);
+  // Delay scheduling of the whole background command, including its shell
+  // redirection. Delaying the beeline stub itself would already open the log.
+  const delayedDir = join(f.dir, 'scripts/latency-rig');
+  await mkdir(delayedDir, { recursive: true });
+  const delayedRunner = join(delayedDir, 'nightly-host.sh');
+  const source = readFileSync(runner, 'utf8');
+  const delayed = source.replace('setsid beeline emulator', '( sleep 0.2; exec setsid beeline emulator')
+    .replace('2>&1 9>&- &', '2>&1 9>&- ) &');
+  assert.notEqual(delayed, source);
+  await writeFile(delayedRunner, delayed);
+  const result = f.run({}, delayedRunner);
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(await readFile(join(f.dir, 'exports.json'))).device, 'emulator-5582');
+  assert.ok(!existsSync(join(f.dir, 'device')));
 });
 
 test('one-shot CLI without a serial uses the adb before/after diff', async (t) => {

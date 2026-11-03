@@ -60,7 +60,7 @@ const downloadEvents = {
 test('each landing tile sends its platform conversion only for X visitors without preventing navigation', async () => {
   const html = await readFile(new URL('../web/index.html', import.meta.url), 'utf8');
   const platforms = [...html.matchAll(/data-platform="([^"]+)"/g)].map((match) => match[1]);
-  assert.deepEqual(platforms, Object.keys(downloadEvents));
+  assert.deepEqual(platforms, [...Object.keys(downloadEvents), ...Object.keys(downloadEvents)]);
   const bundle = await readFile(new URL('../web/x-attribution.js', import.meta.url), 'utf8');
   for (const search of ['', '?utm_source=x&twclid=test', '?utm_source=x&code=oauth-secret']) {
     const tiles = platforms.map((platform) => {

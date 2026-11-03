@@ -1,7 +1,7 @@
-import { mkdtemp, readFile, writeFile, rm } from 'node:fs/promises';
+import { readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
 
 // Execute the production surface's hooks and empty-state JSX together. Network,
 // navigation and the rest of the chat screen are outside this focused proof.
@@ -14,7 +14,7 @@ it('empty corner surface fills its first agent mention, focuses, and preserves d
   expect(source).toContain('ListEmptyComponent={emptyLedger}');
   expect(source).toContain('{transcriptMessages.length > 0 && emptyLedger}');
   expect(source).toContain('{emptyLedger}\n                    {transcriptMessages.length > 0');
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/empty-corner-'));
+  const directory = await createBrowserProofDirectory("empty-corner-");
   try {
     const entry = path.join(directory, 'proof.tsx');
     await writeFile(entry, `import React, { useMemo, useCallback, useRef, useState } from 'react';

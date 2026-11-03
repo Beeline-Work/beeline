@@ -1,8 +1,8 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
-import { CHROME, runBrowserProof, webProofShims } from './browserProof';
+import { createBrowserProofDirectory, CHROME, runBrowserProof, webProofShims } from './browserProof';
 
 /**
  * Captures each Connectors tap case at phone width: the real Connectors list,
@@ -27,7 +27,7 @@ const CASES = ['suggest', 'list', 'coinbase', 'openrouter', 'github', 'github-ac
 it.skipIf(!out || !existsSync(CHROME))('captures every Connectors tap case', async () => {
   const mobile = process.cwd();
   await mkdir(out!, { recursive: true });
-  const directory = await mkdtemp(path.join(mobile, 'sources/test/one-tap-proof-'));
+  const directory = await createBrowserProofDirectory("one-tap-proof-");
   try {
     const entry = path.join(directory, 'proof.jsx');
     await writeFile(entry, `import React from 'react'; import { createRoot } from 'react-dom/client';

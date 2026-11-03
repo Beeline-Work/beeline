@@ -1,14 +1,14 @@
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { CHROME, runBrowserProof } from './browserProof';
+import { createBrowserProofDirectory, CHROME, runBrowserProof } from './browserProof';
 import { identitySettingsProofShims } from './identitySettingsProofShims';
 
 describe.skipIf(!existsSync(CHROME))('onboarding account settings', () => {
   it.each([false,true])('R-onb-10/11: opens GitHub from Google and explains an existing-account conflict (%s)', async conflict => {
     const mobile = process.cwd();
-    const directory = await mkdtemp(path.join(mobile, 'sources/test/onboarding-settings-proof-'));
+    const directory = await createBrowserProofDirectory("onboarding-settings-proof-");
     const output = process.env.ONBOARDING_EVIDENCE_DIR ?? '/tmp/jellybean-onboarding';
     mkdirSync(output, { recursive: true });
     try {

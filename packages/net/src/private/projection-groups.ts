@@ -97,6 +97,9 @@ export class ProjectionGroups<T extends GroupCell>{
     for(const cell of this.cells.values()){
       if(!current())return{proposals:[],unavailable:[]};
       if(this.joint(cell)||cell.view.state==='PARKED')continue;
+      // Sealed roster windows depend on their server revision/control floor,
+      // not unrelated message intervals. Only a new gesture opens a window.
+      if(cell.request.family==='workspace-roster'&&cell.request.query)continue;
       const held=cell.snapshot??cell.baseline;
       const group=held?.atomicGroup??this.group(cell.request.workspaceId!);
       if(openingGroups.has(group)){
@@ -156,7 +159,7 @@ export class ProjectionGroups<T extends GroupCell>{
   ready():LaneBatch[]{
     const ready=new Map<string,LaneBatch>();
     for(const cell of this.cells.values()){
-      if(this.joint(cell)||cell.flight||cell.view.state==='PARKED')continue;
+      if(this.joint(cell)||cell.flight||cell.view.state==='PARKED'||cell.request.family==='workspace-roster'&&cell.request.query)continue;
       const cut=cell.classified??cell.snapshot?.cut??cell.baseline?.cut;if(!cut)continue;
       for(const[id,{batch}]of cell.queued){
         if(batch.from.through>cut.through)continue;cell.queued.delete(id);

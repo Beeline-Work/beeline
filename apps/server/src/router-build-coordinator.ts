@@ -56,6 +56,7 @@ export class RouterBuildCoordinator{
   async build(ticket:RouterBuildTicket,builder:RouterValueBuilder):Promise<RouterSnapshot>{
     const db=transactions.get(ticket);if(!db)throw new RouterProjectionUnavailable('dependency');
     const key=JSON.stringify([ticket.reader,ticket.input.family,ticket.input.workspaceId,ticket.input.agentId??ticket.input.roomId??'',
+      'query'in ticket.input?ticket.input.query??null:null,
       ticket.input.family==='needs-you-saved-page'?ticket.input.before??null:null,
       ticket.trayClockVersion??null,
       ticket.cut.stream,ticket.cut.epoch,ticket.cut.through,ticket.cut.protocol,ticket.authority.digest,

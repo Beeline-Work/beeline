@@ -10,10 +10,10 @@ import { RouterProjectionUnavailable } from './router-projections.js';
  * mean 'refresh everything'. This table is not a claim of schema closure. */
 const dependencies: Readonly<Record<string, readonly RouterFamily[]>> = {
   messages: ['room-list','needs-you','needs-you-tray','needs-you-count','room-head'],
-  memberships: ['room-list','needs-you','needs-you-tray','needs-you-count','room-head','workspace-roster','room-workflows'],
-  identities: ['room-list','needs-you','needs-you-tray','needs-you-count','room-head','workspace-roster','room-workflows'],
-  rooms: ['room-list','needs-you','needs-you-tray','needs-you-count','room-head','workspace-roster','room-workflows'],
-  workspaces: ['room-list','workspace-roster'],
+  memberships: ['room-list','needs-you','needs-you-tray','needs-you-count','room-head','room-workflows'],
+  identities: ['room-list','needs-you','needs-you-tray','needs-you-count','room-head','room-workflows'],
+  rooms: ['room-list','needs-you','needs-you-tray','needs-you-count','room-head','room-workflows'],
+  workspaces: ['room-list'],
   room_read_marks: ['room-list','room-head'],
   needs_you_marks: ['needs-you','needs-you-tray','needs-you-count'],
   agent_commands: ['room-list','room-head'],
@@ -40,7 +40,8 @@ const dependencies: Readonly<Record<string, readonly RouterFamily[]>> = {
   'scheduled-work-projection':['room-scheduled-work'],
   'tray-saved-window':['needs-you-saved-page'],
   'tray-saved-source':['needs-you-saved-page'],
-  'profile-projection':['agent-profile','workspace-roster'],
+  'profile-projection':['agent-profile'],
+  'roster-projection':['workspace-roster'],
 };
 export function routerSourcePlan(causes: readonly Record<string,unknown>[], viewer: string, workspaceId?:string) {
   const families = new Set<RouterFamily>(), rooms = new Set<string>(), removedRooms = new Set<string>();

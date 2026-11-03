@@ -1,5 +1,10 @@
 import { defineConfig } from 'vitest/config';
 
-// Deliberately separate from regression CI: these are whole-finding closure
-// assertions. Open findings must remain executable and red, never xfail/skip.
-export default defineConfig({ test: { include: ['proofs/router-group-a-open-gates.ts'], testTimeout: 20_000 } });
+// Standalone closure assertions require real PostgreSQL and never xfail/skip.
+export default defineConfig({
+  // These portable phone proof modules have no Expo runtime dependency. Keep
+  // server transforms on the repository's ES2022 class-field semantics instead
+  // of resolving the mobile tsconfig in server-only CI installations.
+  esbuild: {tsconfigRaw:{compilerOptions:{useDefineForClassFields:true}}},
+  test: {include:['proofs/router-group-a-open-gates.ts'],testTimeout:20_000},
+});

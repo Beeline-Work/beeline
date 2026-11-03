@@ -15,6 +15,7 @@ import { commandCompletionSchema } from './command-completion.js';
 import { ROUTER_PROJECTION_SCHEMA, ROUTER_EXTRA_CAPTURE_SCHEMA } from './router-projection-schema.js';
 import { ROUTER_PROFILE_SCHEMA } from './router-profile-source.js';
 import { ROUTER_OWNER_SCHEMA } from './router-owner-source.js';
+import { ROUTER_ROSTER_SCHEMA } from './router-roster-source.js';
 import { SCHEDULED_WORK_AUTHORITY_SCHEMA } from './scheduled-work-authority.js';
 import { ROOM_SCHEDULES_CAPTURE_SCHEMA } from './room-schedules-capture.js';
 import { ROUTER_COMMAND_SCHEMA } from './router-command-ledger.js';
@@ -3565,6 +3566,7 @@ export async function migrate(
   await ddlScript('router projection extra sources', ROUTER_EXTRA_CAPTURE_SCHEMA);
   await ddlScript('router profile sources', ROUTER_PROFILE_SCHEMA);
   await ddlScript('router owner sources', ROUTER_OWNER_SCHEMA);
+  await ddlScript('router roster source',ROUTER_ROSTER_SCHEMA);
   await ddlScript('scheduled work authority', SCHEDULED_WORK_AUTHORITY_SCHEMA);
   await ddlScript('scheduled work sources', ROOM_SCHEDULES_CAPTURE_SCHEMA);
   await ddlScript('server lease deadlines', SERVER_LEASE_DEADLINE_SCHEMA);

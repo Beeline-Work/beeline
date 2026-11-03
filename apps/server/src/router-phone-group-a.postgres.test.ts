@@ -27,6 +27,31 @@ describe.skipIf(!url)('P3/P5 Group A phone read closure', () => {
   afterEach(async () => { await fixture?.closeServers(); });
   afterAll(async () => { await fixture?.close(); });
 
+  it('F03: sealed search windows share a server revision, unrelated messages read no roster and a committed membership retires stale windows',async()=>{
+    const server=await fixture.server(fixture.a,['workspace-roster']);
+    const head={family:'workspace-roster' as const,workspaceId:workspace(10)};
+    await server.demand(head);
+    const value=server.lanes.peek(head).value as import('@beeline/api-contract/router-protocol').RouterValues['workspace-roster'];
+    const search={...head,query:{revision:value.revision,q:'Reader'}};
+    await server.demand(search);
+    expect(server.lanes.peek(search).value).toMatchObject({revision:value.revision,members:[{identity:{pubkey:reader}}]});
+    const sealed=await server.protocol.snapshot(search);
+    const reads=server.reads();server.builds.length=0;
+    await fixture.b.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Unrelated message')`,['3b'.repeat(32),room(10),peer]);
+    await server.barrier();expect(server.builds).toEqual([]);expect(server.reads()).toBe(reads);
+    expect(server.lanes.peek(search).state).toBe('LIVE');
+    await fixture.b.query(`UPDATE memberships SET role='spectator' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,[workspace(10),peer]);
+    await server.barrier();
+    expect(server.lanes.peek(search)).toMatchObject({state:'PARKED',value:null});
+    expect((server.lanes.peek(head).value as typeof value).members.find(member=>member.identity.pubkey===peer)?.role).toBe('spectator');
+    expect(server.reads()).toBe(reads);
+    await expect(server.protocol.snapshot(search)).rejects.toThrow(JSON.stringify({code:'unavailable',message:'Router projection unavailable: dependency',retryable:true}));
+    const enqueue=vi.fn(()=>undefined);
+    await expect(fenceRouterEnqueue(fixture.a,search,reader,
+      sealed.authority,enqueue)).rejects.toThrow('authority');
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
   it('F08: owner snapshots write/provider/queue zero, survive Workspace removal and keep connector commits independent of wallet reads',async()=>{
     const source=fakeCdpWalletSource(),created=await createWallet(fixture.a,reader,workspace(7),source);
     source.state.holdings.set(created.address,new Map([['usdc',123],['eth',0]]));

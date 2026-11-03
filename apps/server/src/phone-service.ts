@@ -1239,10 +1239,14 @@ export class PhoneService {
       return value;
     }
     if (input.family === 'workspace-roster') {
-      const value = await reader.readWorkspace(input.workspaceId, viewerId);
+      const revision=(await database.query<{epoch:string}>('SELECT epoch::text FROM router_authority WHERE scope=$1',
+        [`roster:${input.workspaceId}`])).rows[0]?.epoch;
+      if(!revision)throw new RouterProjectionUnavailable('dependency');
+      if(input.query&&input.query.revision!==revision)throw new RouterProjectionUnavailable('dependency');
+      const value = await reader.readWorkspace(input.workspaceId, viewerId,input.query);
       if (value && (value.members.length + value.agents.length > 100 ||
           Buffer.byteLength(JSON.stringify(value)) > 64 * 1024)) throw new RouterProjectionUnavailable('budget');
-      return value;
+      return value?{...value,revision}:null;
     }
     if (input.family === 'room-list') return reader.readChats(input.workspaceId, viewerId);
     if (input.family === 'room-head') {
@@ -1846,8 +1850,8 @@ export class PhoneService {
     };
   }
 
-  async readWorkspace(workspaceId: string, viewerId: string): Promise<WorkspaceView | null> {
-    const roster = await this.workspaceRoster(workspaceId, viewerId);
+  async readWorkspace(workspaceId: string, viewerId: string,query:WorkspaceMemberListQuery={}): Promise<WorkspaceView | null> {
+    const roster = await this.workspaceRoster(workspaceId, viewerId,query);
     if (!roster) return null;
     const row = roster.workspaceRow;
     const managedRooms = row.role === 'owner' || row.role === 'admin'
@@ -10513,7 +10517,7 @@ export class PhoneService {
           agent.selected_model,agent.model_catalog,
           ${mcpClientIdentitySql('agent.agent_id')} mcp_client,
           owner.id owner_id,owner.name owner_name,owner.handle owner_handle,
-          ${agentUsageColumns('agent', '$7')}
+          ${this.pureProjection?'NULL::jsonb usage_snapshot':agentUsageColumns('agent', '$7')}
         FROM memberships m JOIN identities i ON i.id=m.identity_id
         LEFT JOIN agents agent ON agent.agent_id=i.id
         LEFT JOIN identities owner ON owner.id=agent.owner_id
@@ -10557,7 +10561,7 @@ export class PhoneService {
       ...peoplePage.slice(0, WORKSPACE_MEMBER_PAGE_SIZE),
       ...agentPage.slice(0, WORKSPACE_MEMBER_PAGE_SIZE),
     ];
-    if (pageRows.length) {
+    if (pageRows.length&&!this.pureProjection) {
       const presence = await this.optionalEnrichment(
         'member-presence',
         this.enrichmentDatabase.query<{
@@ -10603,7 +10607,7 @@ export class PhoneService {
         ? mcpClientName(config.mcp_client.name, config.mcp_client.redirects)
         : config ? selectedModelLabel(config.selected_model, config.model_catalog ?? []) : undefined;
       // Usage columns are owner-filtered in SQL; other viewers' rows carry nulls.
-      const usage = config ? projectAgentUsage(config) : undefined;
+      const usage = config&&!this.pureProjection ? projectAgentUsage(config) : undefined;
       return {
         ...member,
         ...(model ? { model } : {}),

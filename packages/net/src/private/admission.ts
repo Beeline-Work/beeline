@@ -336,6 +336,33 @@ export class AdmissionOwner {
     try{return handler(pass);}finally{lifetime.active=false;}
   }
 
+  /** Existing Room picker button only, bound to its held Room residency. */
+  openRoster<T>(generation:number,roomId:string,workspaceId:string,
+    handler:(pass:Pass<'phone.readRouterSnapshot'>)=>T):T{
+    const residency=[...this.residencies.values()].find(value=>value.generation===generation&&value.screen==='Room'&&value.lifetime.active&&
+      value.keys.some(key=>key===this.key({route:'phone.readRouterSnapshot',input:{family:'room-head',roomId,workspaceId}})||
+        key===this.key({route:'phone.readRouterSnapshot',input:{family:'room-head',roomId}})));
+    if(!this.foreground||!residency)return this.deny('inactive roster picker');
+    const request={route:'phone.readRouterSnapshot' as const,input:{family:'workspace-roster' as const,workspaceId}};
+    this.validateRequests([request]);const lifetime={active:true},pass=this.mint(request,lifetime);
+    this.states.get(pass)!.completionLifetime=residency.lifetime;
+    try{return handler(pass);}finally{lifetime.active=false;}
+  }
+
+  /** Search submission / Load More only. The trusted adapter binds the
+   * ordinary version anchor to its held canonical default roster. */
+  queryRoster<T>(generation:number,input:Extract<RouteInput<'phone.readRouterSnapshot'>,{family:'workspace-roster'}>,
+    handler:(pass:Pass<'phone.readRouterSnapshot'>)=>T):T{
+    const head={route:'phone.readRouterSnapshot' as const,input:{family:'workspace-roster' as const,workspaceId:input.workspaceId}};
+    const residency=[...this.residencies.values()].find(value=>value.generation===generation&&value.screen==='AppShell'&&
+      value.lifetime.active&&value.keys.includes(this.key(head)));
+    if(!this.foreground||!residency||!input.query)return this.deny('inactive roster action');
+    const request={route:'phone.readRouterSnapshot' as const,input};this.validateRequests([request]);
+    const lifetime={active:true},pass=this.mint(request,lifetime);
+    this.states.get(pass)!.completionLifetime=residency.lifetime;
+    try{return handler(pass);}finally{lifetime.active=false;}
+  }
+
   /** Explicit Retry's synchronous prefix. The spent read remains fenced by
    * its existing navigation residency after the gesture has returned.
    */

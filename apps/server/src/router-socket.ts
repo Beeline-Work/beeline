@@ -17,6 +17,8 @@ import { routerSourcePlan } from './router-source-plan.js';
 import {readRouterRoomAudience} from './router-room-audience.js';
 import {readRouterProfileAudience} from './router-profile-audience.js';
 import {profileDomain} from './router-profile-source.js';
+import {readRosterQuery} from './router-roster-query.js';
+import {subscribeRosterAuthority} from './router-roster-authority.js';
 import {ownerFamily,ownerAuthority,buildOwnerSnapshot,fenceOwnerProjection,fenceOwnerProjections,ownerFact} from './router-owner-projections.js';
 import {scheduledWorkAudience} from './scheduled-work-audience.js';
 import {scheduledRoomDomain} from './scheduled-work-authority.js';
@@ -89,6 +91,10 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
         && (negotiated.length>0||sources?.mediaMetadataV1===true);
       usageCellV1 = message.protocol === 1 && message.usageCellV1 === true && helperUsageEnabled() && !!sources && policy?.listenerReady() === true;
       try {
+      if(sources&&negotiated.includes('workspace-roster'))releases.push(subscribeRosterAuthority(database,sources.live,viewer,()=>subscribedWorkspaces,
+        frame=>{if(!stopped&&generation===currentGeneration&&send(JSON.stringify(frame))===false)throw new RouterProjectionUnavailable('budget');return undefined;},
+        reason=>{if(!stopped&&generation===currentGeneration)for(const workspace of subscribedWorkspaces)
+          send(JSON.stringify({kind:'router-unavailable',stream:`workspace:${workspace}`,families:['workspace-roster'],reason}));},ready));
       if(sources&&negotiated.some(ownerFamily)){
         releases.push(await new RouterProjectionDrain(database,sources.live).subscribeStream(`owner:${viewer}`,async(db,from,to,causes)=>{
           const changed=new Set(causes.map(cause=>cause.ownerFamily));
@@ -308,7 +314,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
                   continue;
                 }
                 if(!changed){
-                  const group=routerAtomicGroup(input,viewer),domain=roomScoped?`room:${scope}`:`reader:${viewer}:workspace:${workspace}:visibility`;
+                  const group=routerAtomicGroup(input,viewer),domain=roomScoped?`room:${scope}`:family==='workspace-roster'?`roster:${workspace}`:`reader:${viewer}:workspace:${workspace}:visibility`;
                   if(!facts.some(fact=>fact.atomicGroup===group&&fact.payload.kind==='authority-fence'))
                     facts.push({atomicGroup:group,authority,payload:{kind:'authority-fence',scope:roomScoped?scope:workspace,authorityScope:domain,mode:'advance'}});
                   continue;
@@ -395,6 +401,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
       if (!usageCellV1 || !policy?.listenerReady()) throw new PhoneOperationError(409, { error: 'usage_cell_unavailable' });
     },
     requireSnapshot(args: Record<string, unknown>): void {
+      if(args.family==='workspace-roster')readRosterQuery(args.query);
       if(negotiated.includes('needs-you-saved-page')&&typeof args.family==='string'&&args.family.startsWith('needs-you')&&
         policy?.trayClockAvailability?.ready()!==true)throw new PhoneOperationError(503,{error:'router_projection_unavailable'});
       if (!policy?.listenerReady() || !negotiated.includes(args.family as RouterFamily))

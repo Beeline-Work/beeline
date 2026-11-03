@@ -145,3 +145,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F16/F18/F22 legacy display expiry removes minute discovery and blanket message wakes. Committed stored-clock changes and actual recovery admit work; empty/failure observations remain idle. Source/idle2 and existing listener45 pass, including cross-machine expiry and database-clock behavior. Modern Tray ownership selection and complete workload/cohort gates remain open.
 
 - F16/F22 configured-reviewer repair no longer accepts or invokes a GitHub refresh callback. Reviewer93 and server types pass; verified events and explicit command head checks remain. Event scoping of the database repair and whole-finding gates remain open.
+
+- Native40 continuation under instruction036 uses the explicitly labeled historical-source APK after exact release-artifact expiry was verified. Current scoped viewer/store/digest/cache assertions pass with seven native launches and no fallback. The higher-level byte admission owner was absent from the fixture source map and is not covered. See the current-candidate native evidence; full T7 remains open.

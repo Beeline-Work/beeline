@@ -369,3 +369,10 @@ Validation: listener45 plus corrected focused source/idle2, shutdown10, server t
 Removed the optional provider-refresh callback from configured-reviewer reconciliation and its minute job caller. Repair uses already committed exact-head facts. Verified GitHub events and explicit helper commands retain their existing head-refresh paths, including before claim. A missed provider event does not authorize periodic discovery.
 
 The full reviewer suite93 and server types pass; the actual job wiring regression requires the database-only call. Lost-wake repair, explicit-wait release, delivered/stale verdict suppression, head changes and existing explicit command refresh remain covered. The periodic database repair itself still needs event scoping and is not claimed closed. No whole finding is newly closed.
+
+
+## D100 — Native40 artifact lookup and current scoped launch
+
+Firstmate036 resolved the artifact lookup blocker: query the matching release run rather than the repository-wide artifact list. Run40028613502/job120671174743 built runtime40/versionCode138; its one-day AAB artifact12533408754 is no longer retained (404). The instruction explicitly permits the historical-source local native40 APK, labeled as such, and says not to block T7 on the Play binary.
+
+Current production viewer/store/digest/cache code was exported into that unchanged native APK in a fresh private network/PID namespace. Seven successful native launches, zero failed launches and no emergency/embedded fallback were recorded. Scoped cache/byte/visibility/PDF assertions pass; source-map inspection correctly excludes the unbundled higher-level byte-admission owner from coverage. Full evidence and limits: [current native40 candidate](../../apps/mobile/evidence/network-router-native40/current-candidate/README.md). The guest, fixture server and private ADB server were stopped; no production state was accessed. Whole router cohort, family selection and workload gates remain open.

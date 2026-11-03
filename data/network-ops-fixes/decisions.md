@@ -265,3 +265,10 @@ MCP webhook delivery leaves the maintenance sweep. An independent instance-local
 The existing finite signed-delivery attempts and stable event identity remain, as explicitly permitted for persisted webhook dispatch by spec §10. Each next-deadline lookup reads one indexed candidate per queue using an immutable UTC claim-expiry expression. Legacy member routing repair remains separate and open.
 
 MCP delivery24, worker11, shutdown9 and server types pass. A real isolated PostgreSQL proof with 10,000 pending rows per queue in a non-UTC session uses both due indexes, no sequential scan/sort and fewer than 20 shared blocks. Empty/failed owners stay silent over an idle day; shutdown leaves the next delivery unclaimed. These proofs do not close the full background, route, provider or cohort findings.
+
+
+## D088 — An ambiguous invitation receipt does not authorize replay
+
+`monolithPhoneOperation` no longer repeats invite redemption after a lost socket or request deadline. It retains the existing unconfirmed-join message; a separate explicit Join action can submit the same token. Known refusals and operation deadlines remain intact.
+
+Operation8 and mobile types pass. Lost-socket/deadline cases assert one dispatch, no dispatch over an idle day, then a separately admitted successful action. Complete durable join command ownership and released-cohort gates remain open.

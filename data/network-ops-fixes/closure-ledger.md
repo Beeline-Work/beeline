@@ -125,3 +125,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F17/F22 voice runtime listeners stop blanket same-Room participant/work refresh. Voice integration30 and server types pass with exact call-card/command routing and zero work for unrelated read-mark/bookmark/device/other-Room events. Authority revalidation remains separate; recurring recovery and whole-finding gates stay open.
 
 - F18/F22 MCP webhook delivery replaces maintenance scans with committed wakes and persisted finite dispatch/claim deadlines. Delivery24, worker11, shutdown9, isolated PostgreSQL indexed-deadline1 and server types pass. Empty/failed queues stay idle for 24 hours; bounded batches continue only for existing obligations; shutdown drains without claiming the next row. Legacy routing repair and complete route/cohort gates remain open.
+
+- F18 invite redemption stops automatic replay after an ambiguous receipt. Operation8 and mobile types pass, including idle-day silence and a separate explicit same-token Join. Durable command migration/cohort gates remain open.

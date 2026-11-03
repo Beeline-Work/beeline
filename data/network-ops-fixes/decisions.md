@@ -297,3 +297,12 @@ Schedule23, workflow-view31 plus focused microsecond1, workflow-schedule25, live
 Published CI found two attachment fixtures and two real-PostgreSQL incident proofs still expecting the retired automatic retries. The attachment fixtures now fail one fetch, retain successful files and verify a separately admitted delivery. The incident harness still creates actual PostgreSQL deadlocks: each victim returns40P01 after one transaction, rolled-back brief state stays unchanged, and a separate action/event commits the intended result without duplicate notices or commands.
 
 Room-turn attachment9, historical MCP attachment6 and isolated PostgreSQL incident2 pass. No production retry was restored and no gate was removed. These update D080/D083's integration evidence; full CI on the new head and T7 remain open.
+
+
+## D092 — Pending attachment retention follows stored deadlines
+
+The hourly throttle and minute repair call are removed. Existing bounded deletion and active request protections remain; the deadline-only owner reads the minimum eligible retention timestamp with the database clock. Empty and active-only queues park. Existing command-completion transport carries one fixed private hint for committed attachment, Room archive, command-eligibility and turn-eligibility changes. Names, unchanged progress and rolled-back writes do not wake cleanup. Actual feed/database recovery reopens observation; shutdown detaches its sources before draining the aggregate owner.
+
+The next-candidate query waits for its writer rather than spinning on a skipped locked row or losing an obligation when that writer rolls back. An isolated PostgreSQL proof holds that lock, observes the wait and rolls back before verifying cleanup. The same proof sets host time to2099 and uses10,000 later rows to check the production due index and fewer than60 shared blocks for the future-candidate lookup. This is a minimal physical/concurrency fixture, not full production workload or rollout evidence. Mixed active-request costs, whole-generation ownership, all retention families and released-cohort gates remain open.
+
+Validation: cleanup7, live listener43 plus the extended focused command-source case, isolated PostgreSQL1, shutdown10, server types, workspace build8, dead-code (five existing/zero new), phone scanner72 and workflow paths118 pass. No whole finding is newly closed.

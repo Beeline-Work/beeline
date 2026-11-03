@@ -1,3 +1,4 @@
+import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
 import { failConnectingOffers } from './connector-offer-completion.js';
 import { StarterOnboardingService } from './starter-onboarding-run.js';
@@ -472,6 +473,12 @@ async function main() {
     const due = await backgroundJobs.run('push-next-due', () => push.nextDueAt());
     if (due.ok && due.value) return Math.max(1000, due.value.getTime() - Date.now());
   });
+  work.addDeadline('pending-attachment-cleanup', async () => {
+    const swept = await backgroundJobs.run('pending-attachment-cleanup', () => pendingAttachmentCleanup.runOnce());
+    if (!swept.ok) return;
+    const due = await backgroundJobs.run('pending-attachment-next-due', () => pendingAttachmentCleanup.nextDelayMs());
+    if (due.ok) return due.value;
+  });
   work.addDeadline('schedules', async () => {
     const fired = await backgroundJobs.run('schedules', () => schedules.runOnce());
     if (!fired.ok) return;
@@ -520,7 +527,6 @@ async function main() {
         githubJobs ? id => githubJobs.refreshCornerReviewHead(id) : undefined));
     const now = Date.now();
     await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
-    await backgroundJobs.run('pending-attachment-cleanup', () => pendingAttachmentCleanup.runOnce(now));
     await backgroundJobs.run('connector-offer-expiry', () => jobsDatabase.transaction(db => failConnectingOffers(db, { expired: true })));
     await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
     await backgroundJobs.run('corner-checks-blocked', () =>
@@ -539,6 +545,10 @@ async function main() {
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   const wakeSystemDms=()=>wakeWork('operator-system-dms','committed-system-dm');
   const wakeChoices = () => wakeWork('choices', 'choice-expiry');
+  const wakeAttachments = () => wakeWork('pending-attachment-cleanup', 'attachment-source');
+  const stopAttachmentWake = subscribeCommandCompletion(PENDING_ATTACHMENT_DUE_KEY, wakeAttachments);
+  const stopAttachmentRecovery = jobsDatabase.onRecovery(wakeAttachments);
+  const stopAttachmentResync = live.subscribeResync(wakeAttachments);
   const wakeSchedules = () => wakeWork('schedules', 'schedule-source');
   const stopScheduleWake = subscribeCommandCompletion(AGENT_SCHEDULE_DUE_KEY, wakeSchedules);
   const stopScheduleRecovery = jobsDatabase.onRecovery(wakeSchedules);
@@ -590,6 +600,7 @@ async function main() {
     const mcpStopped = stopMcpWebhooks();
     stopSystemDmWake();stopSystemDmRecovery();
     stopChoiceWake();stopChoiceRecovery();
+    stopAttachmentRecovery();stopAttachmentResync();stopAttachmentWake();
     stopScheduleRecovery();stopScheduleResync();stopScheduleWake();
     await leader.stop();
     await mcpStopped;

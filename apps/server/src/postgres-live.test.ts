@@ -1,3 +1,4 @@
+import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
 import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
 import { COMMAND_COMPLETION_CHANNEL, subscribeCommandCompletion } from './command-completion.js';
 import { EventEmitter } from 'node:events';
@@ -119,6 +120,49 @@ describe('Postgres live fanout', () => {
     await Promise.all(listeners.map((listener) => listener.stop()));
     await database.close();
     vi.restoreAllMocks();
+  });
+
+  it('ATTACHMENT-DUE-SOURCE: committed queue and eligibility changes wake privately; progress and rollback do not', async () => {
+    const agent = 'b'.repeat(64);
+    await database.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Agent')", [agent]);
+    const live = new LiveHub(), events: LiveEvent[] = [];
+    live.subscribeAll(event => events.push(event));
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client);
+    const wake = vi.fn(); completionReleases.push(subscribeCommandCompletion(PENDING_ATTACHMENT_DUE_KEY, wake)); listeners.push(listener);
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(`INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id)
+      VALUES($1,$2,'/v1/media/test','test','text/plain',1,'request')`, [ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+      VALUES($1,'request',$2,'working','generation')`, [ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query("UPDATE rooms SET name='Renamed' WHERE id=$1", [ROOM]);
+    await database.query("UPDATE agent_pending_attachments SET name='renamed' WHERE room_id=$1", [ROOM]);
+    await database.query("UPDATE agent_turns SET generation_id='replacement' WHERE room_id=$1", [ROOM]);
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await expect(database.transaction(async db => {
+      await db.query("UPDATE agent_turns SET status='complete' WHERE room_id=$1", [ROOM]);
+      throw new Error('rollback');
+    })).rejects.toThrow('rollback');
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await database.query("UPDATE agent_turns SET status='complete' WHERE room_id=$1", [ROOM]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('attachment-source',$1,$2,'work')`, [ROOM,agent]);
+    await database.query(`INSERT INTO agent_commands
+      (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth)
+      VALUES('attachment-command',$1,$2,'attachment-source','request','input','test','attachment-command','attachment-source',0)`, [ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query("UPDATE agent_commands SET reason='progress' WHERE id='attachment-command'");
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await database.query("UPDATE agent_commands SET state='cancelled' WHERE id='attachment-command'");
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query("UPDATE rooms SET archived_at=now() WHERE id=$1", [ROOM]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query("DELETE FROM agent_pending_attachments WHERE room_id=$1", [ROOM]);
+    await eventually(() => wake.mock.calls.length === 1);
+    expect(client.payloads.some(payload => payload.includes('attachment_due'))).toBe(false);
   });
 
   it('SCHEDULE-DUE-SOURCE: only committed calendar and eligibility changes wake its private owner', async () => {

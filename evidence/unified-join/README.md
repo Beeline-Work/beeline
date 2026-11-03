@@ -114,7 +114,7 @@ Separate HTTP tests use the literal production Host header `join.usebeeline.app`
 - `npm run build` — PASS.
 - `npm run dead-code` — PASS (`5 existing findings, 0 introduced`); both proof tools are referenced by package scripts.
 - `npm run typecheck` — PASS after temporarily setting aside ignored local screenshot-source `.tsx` archives under `apps/mobile/evidence/composer-hint-center/local/selectall`; archives restored afterwards. Those files are absent from a clean checkout and CI. Workspace, mobile source and scripts checks also pass independently.
-- `npm run test -w @beeline/server -- src/rooms-mcp.test.ts --maxWorkers=2 --minWorkers=1` — 147 passed.
+- `npm run test -w @beeline/server -- src/rooms-mcp.test.ts --maxWorkers=2 --minWorkers=1` — 153 passed.
 - `npm run test -w @beeline/server -- src/rooms-mcp-join.test.ts --maxWorkers=2 --minWorkers=1` — 7 passed.
 - `npm run test -w @beeline/server -- src/app-connections.integration.test.ts --maxWorkers=2 --minWorkers=1 -t onboarding-connect-1` — 4 passed.
 - `npm run test --prefix apps/mobile -- run sources/components/buzz/MemberPickerSheet.test.tsx --maxWorkers=2 --minWorkers=1` — 10 passed.

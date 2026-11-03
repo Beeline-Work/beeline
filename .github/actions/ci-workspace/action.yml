@@ -2,7 +2,7 @@ name: Reuse CI workspace
 description: Restore dependencies by lockfile and workspace builds by exact commit
 inputs:
   prepared:
-    description: Require the dependency and build caches published by shared preparation
+    description: Require prepared dependencies; recover missing exact-commit builds locally
     default: 'false'
   mobile:
     description: Install the isolated mobile dependency tree
@@ -46,13 +46,9 @@ runs:
         key: ci-build-v2-${{ runner.os }}-node22-${{ github.sha }}
     - if: steps.builds.outputs.cache-hit != 'true'
       shell: bash
-      env:
-        CI_PREPARED: ${{ inputs.prepared }}
       run: |
-        if [ "$CI_PREPARED" = true ]; then
-          echo "::error::Missing prepared exact-commit builds cache; refusing a cold install/build on a consumer."
-          exit 1
-        fi
+        # The cache can disappear after preparation, including before a failed
+        # job is rerun. Rebuild this checkout instead of requiring its survival.
         npm run build -- --concurrency=1
     - name: Verify compiled API exports
       id: verify-builds

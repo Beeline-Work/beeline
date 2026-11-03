@@ -117,3 +117,5 @@ These counts identify the staged validation run; later changes must rerun affect
 - F18 account object deletion removes immediate retries. Account-deletion18 passes, including one attempt for the failed key, an idle day with no dispatch, durable account/key preservation and a later explicit deletion. Server types pass; full route ownership remains open.
 
 - F18 helper attachment preparation removes immediate three-attempt fetch retries. Attachment19 and Body types pass, including HTTP408/429/503/network first failure, idle-day silence, a separate successful delivery, expiry/size/cache/sibling behavior. Complete media ownership and cohort gates remain open.
+
+- F18 helper GitHub token lookup removes blocking 250/500ms retries and automatic authentication-refresh command replay. Generated-wrapper84 and Body types pass, preserving exact Room credentials, local command behavior, exit status and separately invoked recovery. Host/REST adapter migration and full provider ownership remain open.

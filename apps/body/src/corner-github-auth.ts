@@ -329,12 +329,8 @@ function needsToken(args) {
   return !local.has(args[index]);
 }
 function token() {
-  let result;
-  for (let attempt = 0; attempt < 3; attempt += 1) {
-    result = spawnSync(config.node, [config.cli, 'corner-read-token', '--config', config.config, '--room', config.room], { encoding: 'utf8' });
-    if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
-    if (attempt < 2) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 250 * (attempt + 1));
-  }
+  const result = spawnSync(config.node, [config.cli, 'corner-read-token', '--config', config.config, '--room', config.room], { encoding: 'utf8' });
+  if (result.status === 0 && result.stdout.trim()) return result.stdout.trim();
   process.stderr.write(result.stderr || 'Beeline could not refresh the repository credential.\\n');
   process.exitCode = result.status || 1;
   return undefined;
@@ -663,11 +659,7 @@ if (!refusal) {
   const authenticated = needsToken(argv);
   const value = authenticated ? token() : '';
   if (value !== undefined) {
-    let result = await execute(argv, value);
-    if (authenticated && result.status !== 0 && result.authenticationFailed) {
-      const refreshed = token();
-      if (refreshed !== undefined) result = await execute(argv, refreshed);
-    }
+    const result = await execute(argv, value);
     if (config.launcher === 'git' && result.status === 0 && isPushCommand(argv))
       await publishTrackingRef(value);
     process.exitCode ??= result.status ?? 1;

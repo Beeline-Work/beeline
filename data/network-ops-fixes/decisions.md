@@ -238,3 +238,9 @@ Account-deletion18 and server types pass. The failure proof checks one dispatch 
 Helper attachment preparation now makes one bounded fetch for each uncached file. HTTP408/429/5xx and network failures return the existing per-file failure; expiry, size limits, cache reuse and sibling delivery retain their behavior. Only a separate admitted delivery can fetch again.
 
 Attachment19 and Body types pass. Refusal/network cases observe one fetch, no dispatch over an idle day and success on a separate delivery. Media owner/routing and released-cohort gates remain open.
+
+## D084 — One credential lookup and command attempt per GitHub launcher invocation
+
+The helper launcher no longer sleeps/retries token lookup three times or refreshes and replays a command after authentication failure. A separate invocation obtains fresh Room-scoped credentials; local commands still require no token and refusal exit codes remain intact. Existing host/REST adapter selection is unchanged and remains part of the final route migration.
+
+Wrapper84 and Body types pass. Actual generated child launchers prove one refused token read per invocation, fresh lookup on a later action, first 401/403 return, and no replay of failed remote commands. Local fixture pushes and synthetic providers only.

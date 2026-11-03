@@ -2632,11 +2632,11 @@ it('R-ACTIVITY-DEADLOCK: never replays another daemon operation', async () => {
 });
 
 it.each([
-  ['recover', '40P01', 1, 2],
-  ['exhaust', '40P01', 10, 3],
-  ['other error', '23505', 1, 1],
-  ['authorization changes', '40P01', 1, 1],
-])('R-ACTIVITY-DEADLOCK: %s at the owning transaction boundary', async (scenario, code, failures, expectedAttempts) => {
+  ['recover on explicit request', '40P01', 1],
+  ['persistent failure', '40P01', 10],
+  ['other error', '23505', 1],
+  ['authorization changes', '40P01', 1],
+])('R-ACTIVITY-DEADLOCK: %s at the owning transaction boundary', async (scenario, code, failures) => {
   await send('@hoots inspect recovery', C);
   const [command] = await commands(A, C);
   await claim(command!);
@@ -2673,20 +2673,28 @@ it.each([
     },
   };
   const watched = new DaemonService(wrapped, hub);
-  if (scenario === 'recover') {
+  // A failed observation is parked. A new caller invocation, not an internal
+  // retry/backoff loop, owns any later attempt and must recheck authority.
+  await expect(watched.execute('postAgentActivity', input, A)).rejects.toBe(failure);
+  expect(attempts).toBe(1);
+  expect(events).toHaveLength(0);
+  expect((await db.query(`SELECT 1 FROM messages WHERE request_id=$1 AND presentation='activity'`,
+    [input.requestId])).rowCount).toBe(0);
+  if (scenario === 'recover on explicit request') {
     const saved = await watched.execute('postAgentActivity', input, A);
-    expect(attempts).toBe(expectedAttempts);
+    expect(attempts).toBe(2);
     expect(events).toHaveLength(1);
     expect((await phone.readRoom(C, H))?.toolRows?.find(row => row.id === saved.id)?.activity).toEqual(input.activity);
     expect(await watched.execute('postAgentActivity', input, A)).toEqual(saved);
     expect(events).toHaveLength(1);
-  } else {
-    await expect(watched.execute('postAgentActivity', input, A)).rejects.toThrow(
-      scenario === 'authorization changes' ? /access|member|authority/i : failure.message);
-    expect(attempts).toBe(expectedAttempts);
+  } else if (scenario === 'authorization changes') {
+    await expect(watched.execute('postAgentActivity', input, A)).rejects.toThrow(/access|member|authority/i);
+    expect(attempts).toBe(1);
     expect(events).toHaveLength(0);
-    expect((await db.query(`SELECT 1 FROM messages WHERE request_id=$1 AND presentation='activity'`,
-      [input.requestId])).rowCount).toBe(0);
+  } else if (scenario === 'persistent failure') {
+    await expect(watched.execute('postAgentActivity', input, A)).rejects.toBe(failure);
+    expect(attempts).toBe(2);
+    expect(events).toHaveLength(0);
   }
 });
 

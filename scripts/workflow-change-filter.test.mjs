@@ -282,6 +282,7 @@ test('representative PRs request fewer hosted runners without hiding check conte
   for (const example of examples) {
     const { gates } = evaluate(example.files).checks;
     const needs = Object.fromEntries(Object.keys(checksWorkflow.jobs).map((name) => [name, { result: 'success', outputs: gates }]));
+    needs['prepare-workspace'].outputs = { ...gates, mode: 'subset' };
     let runners = 0;
     const selectedJobs = [];
     for (const [name, job] of Object.entries(checksWorkflow.jobs)) {
@@ -373,4 +374,12 @@ test('full history is limited to ancestry consumers', () => {
       if (String(step.with?.['fetch-depth']) === '0') assert.ok(reasons[name], `${name} needs a documented history reason`);
     }
   }
+});
+
+test('every main merge requests every Linux suite even when the changed paths are documentation', () => {
+  const outputs = filterOutputs(['docs/note.md'], checksWorkflow.filters);
+  const { gates, runEverything } = runDecide(checksWorkflow.decide, outputs, { eventName: 'push' });
+  assert.equal(runEverything, 'true');
+  for (const gate of ['body', 'serverSuite', 'serverIntegration', 'mobileSuite', 'mobileExportReachability',
+    'productionCorpusReplay', 'frameBudget', 'stateUpgrade', 'nativeFingerprint', 'workflows', 'authImage']) assert.equal(gates[gate], 'true', gate);
 });

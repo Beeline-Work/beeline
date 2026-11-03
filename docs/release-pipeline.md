@@ -206,22 +206,33 @@ exists; only an explicitly requested device proof routes the OTA through
 Every self-hosted job first checks its runner has the tools it needs
 (`.github/actions/require-tools`) and fails with one clear line if not.
 
-Each job sets up Node 22 once and installs once with `scripts/npm-ci-timed.sh`,
-which prints the install's wall time, cache misses, and slowest registry
-fetches. The pinned eas-cli installs from `tools/eas-cli`'s lockfile. Helper
-builds cache `buzz-agent` and `buzz-dev-mcp` per pinned block/buzz commit,
-rustc, and platform. Typecheck and tests ran in CI and do not rerun inside the
-release.
+Jobs that compile source set up Node 22 once and install once with
+`scripts/npm-ci-timed.sh`, which prints the install's wall time, cache misses, and slowest registry
+fetches. The pinned eas-cli installs from `tools/eas-cli`'s lockfile.
+
+Helper builds cache `buzz-agent` and `buzz-dev-mcp` only in Actions cache,
+keyed by the pinned block/buzz commit, platform, Rust/C/C++ toolchain, SDK and
+build flags. `scripts/native-agent-cache.mjs` owns the shared Cargo recipe and
+cache identity. A miss compiles the pinned upstream. Cache lookup is optional
+and bounded to two minutes; native build/install proofs and publication still
+fail normally. No native cache is published to GitHub Releases.
+
+The job summary distinguishes `actions` and `miss`; an invoked Cargo build
+reports its duration separately. A verified full Mac payload carry is another
+path, distinct from a native-binary cache hit. Typecheck and tests ran in CI
+and do not rerun inside the release.
 
 ### Server migration, canary, and rollback
 
-Server boot never runs migrations or backfills. The release job builds the
-server packages and runs `npm run migrate -w @beeline/server` once with the
-owner-scoped `MIGRATION_DATABASE_URL`, before either Fly Machine is changed.
+Server boot never runs migrations or backfills. The release job runs
+`npm run migrate -w @beeline/server` inside the exact release image once with
+the owner-scoped `MIGRATION_DATABASE_URL`, before either Fly Machine is changed.
+The production-database guard runs in that same image first. Migration secrets
+are passed by environment name, never as image build arguments or command-line
+values. No host dependency install or duplicate TypeScript build is needed.
 The migration writes the base `beeline_schema_state` and additive
-`beeline_router_schema_state` only after both the server and auth schemas and
-all backfills finish. Current boot uses `DATABASE_URL` only to read those
-markers and exits with an explicit release-migration error when the schema
+`beeline_router_schema_state` only after both the server and auth schemas and all
+backfills finish. Current boot uses `DATABASE_URL` only to read those markers and exits with an explicit release-migration error when the schema
 is absent or stale. A Machine restart therefore cannot rerun or queue a
 migration behind live traffic. Each release-owned SQL step runs once. Lock
 timeout/deadlock returns the original failure with bounded lock diagnostics;
@@ -241,9 +252,14 @@ image recovery floor before enabling commands. The combined router draft is
 not a schema-only prerequisite release. See the [T7 release sequence and proof
 limits](../data/network-ops-fixes/t7-compatibility.md).
 
-The promotion records the two current Machine image refs, builds and pushes one
-tagged Fly image (the image that ships; there is no separate build), and
-chooses the lexically first Machine as the canary. The Dockerfile stamps the
+`Prebuild server image` compiles and pushes a registry image for every merge
+to main. It changes no Machines and runs no migrations. The promotion records
+the two current Machine image refs and asks the registry for that exact source
+SHA. It verifies the image's source label, pins its digest, adds only the release
+identity metadata, and pushes the release image. An unavailable prebuild falls
+back to the full source build; a mismatched SHA or a failed push fails closed.
+`scripts/server-release-image.sh` owns both paths. The release then chooses the
+lexically first Machine as the canary. The Dockerfile stamps the
 release identity after the dependency layers, so a new version reuses the
 cached `npm ci`. The promotion updates only the canary, pinning probes to it
 with `fly-force-instance-id`. Seven samples, 15 seconds apart (90 seconds),
@@ -308,15 +324,46 @@ Trusted in-repo preview builds exercise the same signed verification path.
 One-time certificate and App Store Connect setup is documented in [macOS
 desktop signing and notarization](./macos-desktop-signing.md).
 
+The user-visible critical path is `initialize` → server / phone OTA / website
+in parallel → `delivery_result`. The checkpoint needs no helper, macOS,
+desktop or store build. The website always deploys its Pages content with the
+previous verified helper channel, even when a helper build is selected; the
+helper publishes its new channel later under the same Pages deployment lock.
+`helper_linux` starts directly after `initialize` on the existing standard
+`ubuntu-22.04` runner type, alongside both Mac builds. It builds and
+install-verifies Linux and compiles the CLI once, then hands only those build
+outputs to the final `helper` job through a same-run artifact. The final job
+requires Linux and both Mac jobs to succeed, verifies and merges the three
+platforms, runs the Pages update proof, packs and smoke-tests the exact compiled
+CLI tarball, and publishes once. It never recompiles a native bundle.
+
+The helper publication and Android store build still wait for the live
+checkpoint to free the production runners. Mac and desktop builds can run
+concurrently. No larger or reserved runner type is required.
+
+`delivery_result` measures dispatch to the last successful live-leg completion,
+using timestamps emitted after the server's two-Machine proof, OTA promotion,
+and both website origins' checks. It records a strict under-600-second target;
+missing timestamps or a failed selected leg fail the checkpoint. A delayed
+checkpoint runner cannot inflate the measured delivery time. Its summary is
+available while native work is still queued or running.
+
+`release_result` still waits for and checks every selected native/helper job,
+attaches stable downloads, and publishes the one authoritative release record.
+No component check or release-success gate is bypassed. The record separates
+`delivery.live` (all three visible legs and their elapsed times) from
+`delivery.background` (native/helper job outcomes) and the whole-run duration.
+A successful live checkpoint does not green a failed native component. The
+workflow and its concurrency lock remain open until this finalization finishes;
+a subsequent dispatch still waits for the running workflow.
+
 A release that shipped every selected component is a success, however long it
-took. Duration never fails an attempt. The summary reports the fix-to-phone time
-(dispatch to the `mobile_ota` completion checkpoint, or the whole run when no
-OTA completion checkpoint exists) and the whole-run time. A whole run over the
-45-minute soft limit is marked **slow** in the summary; it still publishes the
-release record. Component jobs have explicit timeouts and network smoke checks
-have second-scale limits. The release record records outcome, duration,
-selected/carried components, and, for a failed attempt, the unfinished
-component list as its failure class.
+took. Duration never fails an attempt. The summary also reports fix-to-phone
+time and the whole-run time. A whole run over the 45-minute soft limit is marked
+**slow**; it still publishes the release record. Component jobs have explicit
+timeouts and network smoke checks have second-scale limits. The release record
+records outcome, duration, selected/carried components, and, for a failed
+attempt, the unfinished component list as its failure class.
 
 Review the planner without deploying by running:
 

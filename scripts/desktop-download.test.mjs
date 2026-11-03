@@ -113,14 +113,14 @@ test('unknown visitors leave every platform tile muted', async () => {
   assert.equal(selectPlatform({ userAgent: 'ExampleBrowser/1.0', platform: '' }), undefined);
 });
 
-test('landing markup exposes one main flow and one accessible animation description', () => {
+test('landing markup exposes an accessible interactive demo and compact download chooser', () => {
   assert.match(html, /<main>[\s\S]*<\/main>/);
   assert.match(html, /<figure class="stage-wrap" aria-labelledby="stage-caption">/);
-  assert.match(html, /<div class="stage" id="stage" aria-hidden="true" inert>/);
-  assert.match(html, /<figcaption class="sr-only" id="stage-caption">/);
-  assert.match(html, /a:focus-visible/);
-  assert.match(html, /\.platform-tile\{[^}]*min-height:82px/);
-  assert.match(html, /footer a\{display:inline-flex;align-items:center;min-height:44px/);
+  assert.match(html, /<div class="stage" id="stage">/);
+  assert.match(html, /id="stage-caption"/);
+  assert.match(html, /aria-label="Message"/);
+  assert.match(html, /class="other-platforms" aria-expanded="false"/);
+  assert.doesNotMatch(html, /id="stage"[^>]*(?:inert|aria-hidden)/);
 });
 
 test('the chooser contains only stable installable release assets', () => {
@@ -145,8 +145,8 @@ test('the chooser contains only stable installable release assets', () => {
   for (const asset of ['Beeline-universal.dmg', 'Beeline-x86_64-setup.exe', 'Beeline-x86_64.AppImage']) {
     assert.match(html, new RegExp(`releases/latest/download/${asset.replace('.', '\\.')}`));
   }
-  assert.equal(html.match(/data-platform=/g)?.length, 5);
-  assert.match(html, /src="\/desktop-download\.mjs\?v=platform-row"/);
+  assert.equal(html.match(/data-platform=/g)?.length, 10);
+  assert.match(html, /src="\/marketing\/boot\.mjs\?v=1"/);
 });
 
 test('the unified release publishes every stable website installer name', () => {

@@ -85,3 +85,6 @@ agent-home/
 
 # Helper dependency requests for disposable copies
 .beeline-extra-dependencies/
+
+# Exact-head CI build archive metadata
+.beeline-ci-build.json

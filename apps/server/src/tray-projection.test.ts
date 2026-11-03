@@ -75,6 +75,13 @@ describe('pure complete Tray projection',()=>{
   });
   it('refuses Workspace revocation and oversized content instead of returning a partial snapshot',async()=>{
     await db.query(`UPDATE messages SET text=$2 WHERE id=$1`,['ask','x'.repeat(65*1024)]);
+    const bounded=await build();
+    expect(bounded.saved.rows[0]!.value.text).toBeDefined();
+    expect(Buffer.byteLength(bounded.saved.rows[0]!.value.text!)).toBeLessThanOrEqual(1024);
+    expect(Buffer.byteLength(JSON.stringify(bounded))).toBeLessThanOrEqual(64*1024);
+    // Saved message text is a bounded excerpt. Oversized unbounded metadata
+    // must still park the complete projection, never silently drop a row.
+    await db.query(`UPDATE rooms SET name=$2 WHERE id=$1`,[room,'x'.repeat(65*1024)]);
     await expect(build()).rejects.toMatchObject({reason:'budget'});
     await db.query(`UPDATE memberships SET removed_at=clock_timestamp() WHERE room_id IS NULL AND workspace_id=$1 AND identity_id=$2`,[workspace,viewer]);
     await expect(build()).rejects.toThrow('workspace membership required');

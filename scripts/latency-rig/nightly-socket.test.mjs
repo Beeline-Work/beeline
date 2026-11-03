@@ -72,12 +72,16 @@ test('real socket requests retain request/reply and SQL identity without logging
     const { WebSocketServer } = require('ws');
     const server = http.createServer();
     const sockets = new WebSocketServer({ noServer: true });
+    let readReplied;
+    const readReply = new Promise(resolve => { readReplied = resolve; });
     server.on('upgrade', (request, socket, head) => sockets.handleUpgrade(request, socket, head, peer => peer.on('message', async data => {
       const frame = JSON.parse(String(data));
       if (frame.t !== 'req' || frame.op === 'readHistory') return;
-      await new Promise(resolve => setTimeout(resolve, frame.op === 'readRoom' ? 1 : 25));
+      // Enforce out-of-order replies even when the write arrives in an earlier I/O turn.
+      if (frame.op !== 'readRoom') await readReply;
       await new pg.Client().query('not sent to a database');
       peer.send(JSON.stringify({ t: 'res', id: frame.id, ok: true, result: { secret: 'response-secret'.repeat(6000) } }));
+      if (frame.op === 'readRoom') readReplied();
     })));
     server.listen(0, '127.0.0.1', () => console.log(server.address().port));
   `], { env: { ...process.env, NODE_ENV: 'development', DATABASE_URL: 'postgresql://localhost/latency_rig_socket_test',

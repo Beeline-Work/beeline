@@ -872,7 +872,7 @@
     {
       "file": "app/(app)/beeline/tray.tsx",
       "beforeLine": 851,
-      "afterLine": 852,
+      "afterLine": 958,
       "id": "sweep-30",
       "label": "app/(app)/beeline/tray.tsx:851",
       "before": {
@@ -890,11 +890,11 @@
         "selectors": [
           {
             "tag": "SettingsRow",
-            "hash": "5b4fcbc822a43da5b5c9e6fdb6343245063e4b12fa340ab25d8a3cacfd565acd",
+            "hash": "d1b68a3cebccf9450ae2aa8410313cc2322957926e19c6f3957fcc9485480027",
             "occurrence": 0
           }
         ],
-        "sourceLine": 852
+        "sourceLine": 958
       }
     },
     {

@@ -171,7 +171,7 @@ wordingHashes helper. It is a nonblocking review snapshot: shape/source guards
 remain active, while new/changed phrases pass for weekly after-the-fact review.
 The old System .jsonc fingerprint and corner declaration locks remain retired.
 
-Validation after integration with main 776405f0c: all eight server suites passed
+Validation after integration with main 525dfedb5: all eight server suites passed
 (1,407 tests: integration 263, corner lifecycle 234, GitHub operations 136, MCP
 162, schedules 24, feedback workflow 23, cleanup 9, System catalog 556). Follow-up
 corner state/reference, push-outbox and storage coverage passed 52 tests, with

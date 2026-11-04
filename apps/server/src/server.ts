@@ -516,6 +516,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   const vaultSaveRelay = new VaultSaveRelay();
   let shuttingDown = false;
   const daemonLive: DaemonLiveDependencies = {
+    operationErrorStatus: requestErrorStatus,
     auth: options.auth,
     phone: options.phone,
     daemon: options.daemon,
@@ -2906,6 +2907,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     json(response, 200, { owedMentions: await owedMentions(options.database, agentId) });
     return;
   }
+  // Supported installed helpers still use this ingress: HelperVersionGate has
+  // no mandatory minimum. Keep wire translation here, sharing DaemonService.
   match = url.pathname.match(/^\/v1\/daemon\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
   if (method === 'POST' && match) {
     const agentId = await daemonIdentity(request, options);

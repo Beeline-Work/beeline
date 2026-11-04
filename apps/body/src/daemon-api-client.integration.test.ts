@@ -86,6 +86,9 @@ describe('daemon API client against the local monolith', () => {
       });
       await claimAgentCommand(tx, ROOM, AGENT, c!.id, 'generation-1');
     });
+    // This fixture claims directly in SQL, before the client negotiates a
+    // source. Record its real legacy ownership as production intake does.
+    client.noteLegacyTurnClaim({roomId: ROOM, requestId, generationId: 'generation-1'});
   };
 
   it.each(['createRoomSchedule', 'updateRoomSchedule'])(

@@ -313,6 +313,8 @@ function callServer(server, request, signal, timeoutMs) {
 }
 
 // Read the turn file for each call: a live Pi session serves multiple requesters.
+// This generated harness child has no machine registration; keep its closed
+// Squire permission check at the server's command-authorized HTTP ingress.
 async function authorizeSquire(signal) {
   const env = SERVERS.find((server) => server.name === 'beeline-agent')?.env;
   if (!env?.BEELINE_DAEMON_BASE_URL || !env.BEELINE_DAEMON_TOKEN || !env.BEELINE_TURN_CONTEXT_FILE)

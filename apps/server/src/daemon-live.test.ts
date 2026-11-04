@@ -536,3 +536,98 @@ it('F14 unrelated turn/activity/usage changes make zero daemon inbox reads', asy
   expect(vi.mocked(daemon.execute).mock.calls.filter(([name])=>name==='getRoomInbox')).toHaveLength(1);
   expect(vi.mocked(daemon.execute).mock.calls.filter(([name])=>name==='getAgentCommands')).toHaveLength(0);
 });
+
+it('carries ordinary daemon families through the registered machine owner with no HTTP, sharing old-wire service behavior', async () => {
+  const {DaemonApiClient} = await import('../../body/src/daemon-api-client.js');
+  const daemon = daemonStub();
+  const token = `bdt_${'a'.repeat(43)}`;
+  const tokenAuth = auth();
+  vi.mocked(tokenAuth.authenticateDaemon).mockImplementation(async candidate => candidate === token ? AGENT_A : null);
+  const {port} = await start({daemon, auth: tokenAuth});
+  const origin = `http://127.0.0.1:${port}`;
+  const http = vi.fn<typeof fetch>();
+  const api = new DaemonApiClient(origin, token, AGENT_A, http);
+  try {
+    const input = {agentId: AGENT_A};
+    await api.execute('getAgentConfiguration', input);
+    await api.execute('listRooms', input);
+    await api.execute('postAgentMachineReport', {agentId: AGENT_A, report: {}} as never);
+    expect(http).not.toHaveBeenCalled();
+    expect(vi.mocked(daemon.execute).mock.calls.map(call => [call[0], call[2]]))
+      .toEqual([['getAgentConfiguration', AGENT_A], ['listRooms', AGENT_A], ['postAgentMachineReport', AGENT_A]]);
+    const old = await fetch(`${origin}/v1/daemon/operations/getAgentConfiguration`, {
+      method: 'POST', headers: {authorization: `Bearer ${token}`, 'content-type': 'application/json'}, body: JSON.stringify(input),
+    });
+    expect(old.status).toBe(200);
+    expect(vi.mocked(daemon.execute).mock.calls.at(-1)).toEqual(['getAgentConfiguration', input, AGENT_A]);
+  } finally { api.closeLive(); }
+});
+
+it('serves controls and subscriptions while an ordinary operation awaits external work', async () => {
+  let finish!: (value: unknown) => void;
+  const held = new Promise(resolve => { finish = resolve; });
+  const daemon = daemonStub();
+  vi.mocked(daemon.execute).mockImplementation(async (name: string) => {
+    if (name === 'waitForCornerWake') return held;
+    if (name === 'getAgentCommands') return {commandProtocol: 1, commands: []};
+    return {id: 'done', createdAt: 1};
+  });
+  const {port} = await start({daemon});
+  const client = await machine(port);
+  client.send({type: 'register', agentId: AGENT_A, token: 'bdt_a', daemonOperationsV1: true});
+  expect(await client.next(frame => frame.type === 'registered')).toMatchObject({capabilities: {daemonOperationsV1: true}});
+  try {
+    client.send({type: 'daemon-operation', agentId: AGENT_A, requestId: 'held', operation: 'waitForCornerWake', input: {cornerId: 'corner'}});
+    client.send({type: 'daemon-operation', agentId: AGENT_A, requestId: 'stop', operation: 'stopAgentTurn', input: {roomId: 'room'}});
+    expect(await client.next(frame => frame.requestId === 'stop')).toMatchObject({type: 'daemon-operation-result', result: {id: 'done'}});
+    client.send({type: 'subscribe', agentId: AGENT_A, requestId: 'subscribe', roomId: 'room', inbox: false});
+    await client.next(frame => frame.type === 'subscribed');
+    expect(client.frames.some(frame => frame.requestId === 'held')).toBe(false);
+  } finally { finish({id: 'wake', createdAt: 1}); }
+  expect(await client.next(frame => frame.requestId === 'held')).toMatchObject({result: {id: 'wake'}});
+});
+
+it('rejects unknown operations and dedicated activation on ordinary machine dispatch before effects', async () => {
+  const daemon = daemonStub();
+  const {port} = await start({daemon});
+  const client = await machine(port);
+  client.send({type: 'register', agentId: AGENT_A, token: 'bdt_a', daemonOperationsV1: true});
+  await client.next(frame => frame.type === 'registered');
+  for (const [operation, status] of [['notAnOperation', 400], ['readCommandActivation', 409]] as const) {
+    client.send({type: 'daemon-operation', agentId: AGENT_A, requestId: operation, operation, input: {}});
+    expect(await client.next(frame => frame.requestId === operation)).toMatchObject({status});
+  }
+  expect(daemon.execute).not.toHaveBeenCalled();
+});
+
+it('rechecks token revocation before an ordinary operation on an already registered socket', async () => {
+  const tokenAuth = auth(), daemon = daemonStub();
+  const {port} = await start({auth: tokenAuth, daemon});
+  const client = await machine(port);
+  client.send({type: 'register', agentId: AGENT_A, token: 'bdt_a', daemonOperationsV1: true});
+  await client.next(frame => frame.type === 'registered');
+  vi.mocked(tokenAuth.authenticateDaemon).mockResolvedValue(null);
+  vi.mocked(tokenAuth.retiredDaemonAgent).mockResolvedValue(AGENT_A);
+  client.send({type: 'daemon-operation', agentId: AGENT_A, requestId: 'revoked', operation: 'listRooms', input: {agentId: AGENT_A}});
+  expect(await client.next(frame => frame.requestId === 'revoked')).toMatchObject({error: 'agent_removed', status: 403});
+  expect(daemon.execute).not.toHaveBeenCalled();
+});
+
+it('rejects selected turn and usage controls on the ordinary channel before dispatch', async () => {
+  vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', '1');
+  try {
+    const daemon = {execute: vi.fn(), negotiateOwnedModel: vi.fn(async () => ({freeAgent: false}))} as unknown as DaemonService;
+    const database = {query: vi.fn(async () => ({rows: [{owner_id: 'e'.repeat(64)}], rowCount: 1})), transaction: vi.fn()} as unknown as SqlDatabase;
+    const presence = {instanceId: 'operation-gate', holdServerConnection: () => () => undefined,
+      claimConnection: vi.fn(async () => 7), releaseConnection: vi.fn(async () => undefined)} as unknown as ConnectionPresence;
+    const {port} = await start({daemon, database, connectionPresence: presence});
+    const client = await machine(port);
+    client.send({type: 'register', agentId: AGENT_A, token: 'bdt_a', daemonOperationsV1: true, turnOwnershipV1: true, usageAccountV1: true});
+    expect(await client.next(frame => frame.type === 'registered')).toMatchObject({capabilities: {turnOwnershipV1: true, usageAccountV1: true}});
+    for (const operation of ['claimAgentCommand', 'acknowledgeAgentCommand', 'publishAgentUsageAccount', 'attachAgentUsageAccount', 'postAgentUsage']) {
+      client.send({type: 'daemon-operation', agentId: AGENT_A, requestId: operation, operation, input: {}});
+      expect(await client.next(frame => frame.requestId === operation)).toMatchObject({error: 'dedicated_machine_channel_required', status: 409});
+    }
+    expect(daemon.execute).not.toHaveBeenCalled();
+  } finally { vi.unstubAllEnvs(); }
+});

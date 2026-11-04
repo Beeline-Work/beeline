@@ -3,6 +3,8 @@ import { HelperActivationChannel } from './helper-activation-channel.js';
 import { HelperOverlayChannel } from './helper-overlay-channel.js';
 import { HelperTurnChannel } from './helper-turn-channel.js';
 import WebSocket from 'ws';
+import { randomUUID } from 'node:crypto';
+import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { helperVersion } from './helper-version.js';
 import { unknownServerEventLogger } from './unknown-server-event.js';
 import { LIVE_LINK_TIMING, LiveLink, type LiveLinkTiming, type LiveSocketFactory } from './live-link.js';
@@ -45,6 +47,63 @@ export class AgentChannel {
   usageAccountScope():{origin:string;ownerId:string;generation:number;source:{connectionId:string;epoch:number}}|undefined{
     return this.#usageOwnerId&&this.#usageSource&&this.isOpen()?{origin:this.machine.origin,ownerId:this.#usageOwnerId,generation:this.reconnects,source:this.#usageSource}:undefined;
   }
+  /** Sticky selection: a reconnect cannot downgrade an operation to HTTP. */
+  #operationsSelected = false;
+  #operationsAvailable = false;
+  get operationsSelected(): boolean { return this.#operationsSelected; }
+  readonly #operationWaiters = new Set<(open: boolean) => void>();
+  readonly #operationRequests = new Map<string, {
+    resolve: (value: unknown) => void; reject: (error: Error) => void;
+    deadline: ReturnType<typeof setTimeout>;
+  }>();
+
+  /** Only the daemon operation owner may acquire this transport capability. */
+  async operationReady(): Promise<void> {
+    if (this.isOpen() || this.operationsSelected) return;
+    await new Promise<void>((resolve, reject) => {
+      const settle = (open: boolean) => {
+        clearTimeout(deadline);
+        this.#operationWaiters.delete(settle);
+        if (open) resolve();
+        else reject(new Error('Machine operation registration unavailable'));
+      };
+      const deadline = setTimeout(() => settle(false), 30_000);
+      deadline.unref?.();
+      this.#operationWaiters.add(settle);
+      this.start();
+    });
+  }
+
+  /** Correlation only; command/generation authority remains in DaemonService. */
+  requestOperation<N extends keyof DaemonOperationMap>(operation: N, input: DaemonOperationMap[N]['input'], deadlineAt = Date.now() + 30_000): Promise<DaemonOperationMap[N]['output']> {
+    if (!this.#operationsAvailable || !this.isOpen() || this.#operationRequests.size >= 64)
+      return Promise.reject(new Error('Machine operation outcome is UNKNOWN; no HTTP fallback'));
+    const requestId = randomUUID();
+    const frame = { type: 'daemon-operation', requestId, operation, input };
+    if (Buffer.byteLength(JSON.stringify(frame)) > 1024 * 1024 + 1024)
+      return Promise.reject(new Error('Machine operation request exceeds capacity'));
+    return new Promise((resolve, reject) => {
+      const deadline = setTimeout(() => {
+        this.#operationRequests.delete(requestId);
+        reject(Object.assign(new Error('Machine operation outcome is UNKNOWN; no HTTP fallback'),
+          {status: 408, code: 'deadline_exceeded'}));
+      }, Math.max(1, deadlineAt - Date.now()));
+      deadline.unref?.();
+      this.#operationRequests.set(requestId, { resolve: value => resolve(value as DaemonOperationMap[N]['output']), reject, deadline });
+      if (!this.send(frame)) this.#suspendOperations();
+    });
+  }
+
+  #suspendOperations(): void {
+    this.#operationsAvailable = false;
+    for (const settle of this.#operationWaiters) settle(false);
+    for (const pending of this.#operationRequests.values()) {
+      clearTimeout(pending.deadline);
+      pending.reject(new Error('Machine operation outcome is UNKNOWN; no HTTP fallback'));
+    }
+    this.#operationRequests.clear();
+  }
+
   #wanted = false;
   #registered = false;
   /** A register frame is in flight on the current socket. */
@@ -91,6 +150,7 @@ export class AgentChannel {
   stop(): void {
     if (!this.#wanted) return;
     this.#wanted = false;
+    this.#suspendOperations();
     this.turn.suspend();
     this.#activationSource=undefined;this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;
@@ -129,7 +189,7 @@ export class AgentChannel {
     this.#pending = true;
     this.#armIntakeDeadline();
     if (!this.machine.link.send(JSON.stringify({
-      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true, usageAccountV1:true, activationContextV1:true, turnOwnershipV1:true,
+      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true, usageAccountV1:true, activationContextV1:true, turnOwnershipV1:true, daemonOperationsV1:true,
     }))) this.#pending = false;
   }
 
@@ -145,6 +205,8 @@ export class AgentChannel {
         return;
       }
       this.#registered = true;
+      this.#operationsAvailable = (event.capabilities as {daemonOperationsV1?: unknown} | undefined)?.daemonOperationsV1 === true;
+      if (this.#operationsAvailable) this.#operationsSelected = true;
       this.initialSnapshotsV1 = (event.capabilities as {initialSnapshotsV1?:unknown}|undefined)?.initialSnapshotsV1 === true;
       const turnCapabilities = event.capabilities as { turnOwnershipV1?: unknown; turnConnectionId?: unknown; turnConnectionEpoch?: unknown } | undefined;
       this.turn.negotiate(turnCapabilities?.turnOwnershipV1 === true && typeof turnCapabilities.turnConnectionId === 'string' &&
@@ -169,6 +231,7 @@ export class AgentChannel {
       this.#clearIntakeDeadline();
       if (this.#intakeHeartbeat) this.#armIntakeDeadline();
       this.#registrations += 1;
+      for (const settle of this.#operationWaiters) settle(true);
       this.handlers.onOpen();
       this.machine.registered();
       for (const listener of [...this.#openListeners]) {
@@ -187,6 +250,7 @@ export class AgentChannel {
     if (event.type === 'register-refused') {
       if (this.#refused) return;
       this.#pending = false;
+      this.#suspendOperations();
       this.#clearIntakeDeadline();
       const code = typeof event.code === 'string' ? event.code : 'refused';
       console.warn(`[machine-link] server refused agent ${this.agentId}: ${code}`);
@@ -208,12 +272,27 @@ export class AgentChannel {
       if(recovered && !this.#replacementSpent){this.#replacementSpent=true;this.register();}
       return;
     }
+    if (this.#registered && event.type === 'daemon-operation-result') {
+      const pending = typeof event.requestId === 'string' ? this.#operationRequests.get(event.requestId) : undefined;
+      if (!pending) return;
+      this.#operationRequests.delete(event.requestId as string);
+      clearTimeout(pending.deadline);
+      if (typeof event.error === 'string') {
+        const error = Object.assign(new Error(event.error), {
+          status: typeof event.status === 'number' ? event.status : 503,
+          code: event.error,
+        });
+        pending.reject(error);
+      } else pending.resolve(event.result);
+      return;
+    }
     if(this.#registered&&(this.turn.receive(event)||this.overlay.receive(event)||this.usage.receive(event)||this.activation.receive(event)))return;
     if (this.#registered) this.handlers.onMessage(event);
   }
 
   /** @internal The machine socket closed: every registration ended with it. */
   socketClosed(): void {
+    this.#suspendOperations();
     this.turn.suspend();
     this.#activationSource=undefined;this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;
@@ -261,6 +340,7 @@ export class AgentChannel {
   }
 
   #ended(): void {
+    this.#suspendOperations();
     this.turn.suspend();
     this.#activationSource=undefined;this.activation.suspend();
     this.#usageOwnerId=undefined;this.#usageSource=undefined;

@@ -423,6 +423,7 @@ describe('DaemonApiClient', () => {
         usageAccountV1:true,
         activationContextV1:true,
         turnOwnershipV1:true,
+        daemonOperationsV1:true,
         agentId: 'b'.repeat(64),
         token: `bdt_${'y'.repeat(43)}`,
         lifecycleId: expect.any(String),

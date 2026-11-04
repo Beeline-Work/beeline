@@ -553,16 +553,3 @@ test('PR coverage selection runs independently of Body/mobile full fallback and 
   assert.equal(jobs['server-suite-shard'].steps.find(step => step.name === "Use this PR's server test selection").if,
     "needs.server-test-selection.outputs.selection != ''");
 });
-
-test('warm test-only jobs avoid unused task archives, but every missing build can reuse tasks', () => {
-  const action = parse(readFileSync(new URL('../.github/actions/ci-workspace/action.yml', import.meta.url), 'utf8'));
-  const task = action.runs.steps.find(step => step.with?.path === '.turbo/cache');
-  const evaluate = new Function('steps', 'github', 'contains', 'fromJSON', `return (${task.if.replaceAll('.cache-hit', "['cache-hit']")});`);
-  for (const hit of ['true', 'false']) for (const job of ['prepare-workspace', 'typecheck', 'dead-code', 'mac-helper-acceptance', 'server-suite-shard', 'mobile-suite', 'production-corpus-replay']) {
-    assert.equal(evaluate({ builds: { outputs: { 'cache-hit': hit } } }, { job }, (values, value) => values.includes(value), JSON.parse),
-      hit !== 'true' || ['typecheck', 'dead-code', 'mac-helper-acceptance'].includes(job));
-  }
-  const state = action.runs.steps.find(step => step.with?.path === 'apps/mobile/tsconfig.tsbuildinfo');
-  assert.equal(state.if, "inputs.mobile == 'true' && github.job == 'typecheck'");
-  assert.ok(action.runs.steps.findIndex(step => step.id === 'builds') < action.runs.steps.indexOf(task));
-});

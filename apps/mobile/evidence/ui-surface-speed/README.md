@@ -51,6 +51,16 @@ For message arrival, unchanged Room-row bodies fall from **30 / 30 to 0 / 0**, a
 **Budget result:** these captures demonstrate less JavaScript work and a sub-150-ms p95 arrival/update proxy. They do **not** establish the universal 150/450-ms painted-time invariant. The tray proxy tail remains above 450 ms, navigation/foreground proxies exceed 150 ms, Room first paint is unresolved, and the shared-host/account drift prevents a calibrated navigation claim. Physical-device or compositor/optical paint proof and the independently owned transcript work remain necessary. No timing pass is inferred from a missing sample.
 
 
+## Exact-candidate native behavioral validation
+
+The [fresh native evidence packet](live-candidate/README.md) records the seven requested scenarios on candidate `ca54fc4c9534e94e4508ba482f1023d4b377c33e`, with all four phone SDKs freshly compiled from that revision. Its provenance identifies the installed runtime-40 bundle on reserved emulator-5628. The retained screenshots show actual native paint, not test-renderer output. Controller and host source copies are evidence only; they are not installed routes or shipped implementation.
+
+**Re-evaluation of test-2:** the earlier authentication/device evidence blocker is resolved by the driver's exact-candidate packet. Inspection supports passing outcomes for Room arrival/refusal presentation, gestures, corner summary/archive isolation, current member destinations and Tray updates. The working-line counter and latest Stop callback pass at the native component interface in a controlled streaming host; server-agent cancellation remains untested. Refusals are set through the real durable outbox owner, rather than a new server rejection path. Logs include independent age-label updates and preceding navigation work; whole-file render totals must not be treated as the render count for a single command. Stale working-host accessibility dumps are excluded.
+
+Scenario seven uses the authorized same-session A/B records above; no fresh timing run is claimed. Arrival/update native-frame proxy p95 **115.3/40.3 ms meets 150 ms**. Room-list return **292.5**, members **381.3**, corners **394.8** and foreground **434.9 ms** are below 450 ms but above 150 ms. Tray **495.7 ms exceeds 450 ms**, and Room first paint remains unproven. These are proxies, not certified painted deadlines. This is the explicitly accepted measured partial improvement; remaining budget work belongs to a separate worker.
+
+The packet records cleanup of outbox fixtures, pin and bookmark, with the created corner archived. This test-phase update only retains and assesses supplied evidence; it does not rerun device actions or change production implementation or tests.
+
 ## Regression coverage
 
 - `ConversationRow.preview.test.tsx`: a single changed DTO among 12 freshly cloned Room DTOs renders only its row; an unrelated outbox notification renders none; a refusal in the matching Room still appears and clears.

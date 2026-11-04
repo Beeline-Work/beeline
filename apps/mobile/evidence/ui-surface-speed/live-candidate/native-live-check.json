@@ -1,0 +1,54 @@
+{
+  "name": "native-live-check",
+  "kind": "check",
+  "selfOnly": true,
+  "done": true,
+  "details": {
+    "roomId": "392e6046-9224-4fce-8224-72a734fd4abe",
+    "workspaceId": "bee11e00-0000-4000-8000-000000000105",
+    "memberCount": 1,
+    "agents": [
+      {
+        "id": "0125f50bf84d65ffc37446ee594c0f5e7adb15f74692175424ce8055dd60fd76",
+        "name": "Fathom",
+        "keys": [
+          "identity",
+          "role",
+          "presence",
+          "owner"
+        ]
+      },
+      {
+        "id": "ec6ca9196411cdf4bc220bb20ae3ab116a82fa2d41c88e0f69d15b4429882a6d",
+        "name": "Foxy",
+        "keys": [
+          "identity",
+          "role",
+          "presence",
+          "model",
+          "owner"
+        ]
+      },
+      {
+        "id": "efb49353604b93ebb2c40e054012d88a89e0428c215fa339aaaa2f9762caa7ae",
+        "name": "Inky",
+        "keys": [
+          "identity",
+          "role",
+          "presence",
+          "model",
+          "owner"
+        ]
+      }
+    ],
+    "members": [
+      {
+        "id": "a20051619213d49342620f14e5dfbf5bd73c4c794c835e6cab4f8e1e050645b9",
+        "name": "Play Review",
+        "kind": "human"
+      }
+    ],
+    "turns": [],
+    "listVisible": true
+  }
+}

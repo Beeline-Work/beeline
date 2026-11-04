@@ -2688,6 +2688,17 @@ export class GitHubOperations {
     database: SqlDatabase = this.database,
     expectedPrNumber?: number,
   ) {
+    // Match webhook order: commit the repository fact before archival takes
+    // any locks. Its message ID precedes the AFTER trigger's Workspace journal;
+    // waiting for that ID while owning the journal forms a deadlock cycle.
+    // A note failure leaves the corner open, so it cannot skip branch cleanup
+    // for an already committed archival. Already archived corners can repair it.
+    await this.processRepositoryEvent('pull_request', {
+      action: 'closed', repository: { full_name: pullRequest.repository },
+      ...(pullRequest.mergedBy ? { sender: { login: pullRequest.mergedBy } } : {}),
+      pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
+        head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },
+    }, Number(target.installation_id));
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
     let updated = false;
     let archived = false;
@@ -2794,22 +2805,10 @@ export class GitHubOperations {
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
       });
     });
-    // The webhook inserts this deterministic message before its AFTER trigger
-    // locks the Workspace journal. Do not wait for that message ID while the
-    // archival transaction still owns the journal (message -> journal versus
-    // journal -> message). Each repository note now has its own transaction.
-    // Reconciliation also repairs the note when archival already committed.
-    await this.processRepositoryEvent('pull_request', {
-      action: 'closed', repository: { full_name: pullRequest.repository },
-      ...(pullRequest.mergedBy ? { sender: { login: pullRequest.mergedBy } } : {}),
-      pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
-        head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },
-    }, Number(target.installation_id));
-    if (updated) {
-      this.onRoomChanged?.(target.corner_id);
-      this.onRoomChanged?.(target.parent_id);
-      if (archived) await this.deleteCornerBranch(target.corner_id);
-    }
+    if (!updated) return;
+    this.onRoomChanged?.(target.corner_id);
+    this.onRoomChanged?.(target.parent_id);
+    if (archived) await this.deleteCornerBranch(target.corner_id);
   }
 
   /** One post-commit attempt; no persistent branch cleanup queue or retry. */

@@ -146,14 +146,14 @@ test('the chooser contains only stable installable release assets', () => {
     assert.match(html, new RegExp(`releases/latest/download/${asset.replace('.', '\\.')}`));
   }
   assert.equal(html.match(/data-platform=/g)?.length, 10);
-  assert.match(html, /src="\/marketing\/boot\.mjs\?v=1"/);
+  assert.match(html, /src="\/marketing\/boot\.mjs\?v=[a-zA-Z0-9._-]+"/);
 });
 
 test('the unified release publishes every stable website installer name', () => {
   assert.match(desktopWorkflow, /workflow_call:/);
   assert.match(desktopWorkflow, /if: inputs\.variant == 'production'/);
   assert.match(releaseWorkflow, /desktop_installers:/);
-  assert.match(releaseWorkflow, /needs: \[initialize, server, helper_macos, helper, mobile_ota, mobile_ota_after_proof, mobile_native_android, mobile_native_ios, desktop_installers/);
+  assert.match(releaseWorkflow, /needs: \[initialize, server, helper_linux, helper_macos, helper, mobile_ota, mobile_ota_after_proof, mobile_native_android, mobile_native_ios, desktop_installers/);
   for (const { asset } of DESKTOP_INSTALLERS) {
     assert.match(desktopWorkflow, new RegExp(asset.replace('.', '\\.')));
   }

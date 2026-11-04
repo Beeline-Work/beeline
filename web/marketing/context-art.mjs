@@ -1,0 +1,10 @@
+
+const section=document.querySelector('#context'),viewport=section.querySelector('.drift-window'),items=[...section.querySelectorAll('[data-task]')],reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+let started=0,elapsed=0,visible=false,frame=0;
+const clamp=v=>Math.max(0,Math.min(1,v));const smooth=v=>{v=clamp(v);return v*v*(3-2*v)};
+function dimensions(){return {height:viewport.clientHeight,spacing:innerWidth<=760?190:170}}
+function paint(ms){elapsed=ms;const {height,spacing}=dimensions(),total=items.length*spacing,distance=ms/7000*spacing-60;items.forEach((item,i)=>{const y=((i*spacing-distance+spacing)%total+total)%total-spacing;const cycle=Math.round((y-i*spacing+distance)/total),left=(i+cycle*items.length)%2===0;item.classList.toggle('on-left',left);item.classList.toggle('on-right',!left);const opacity=smooth((y+100)/100)*(1-smooth((y-(height-160))/120));item.style.transform='translate3d(0,'+y+'px,0)';item.style.opacity=opacity;item.setAttribute('aria-hidden',String(opacity<.5||y>height-30||y+item.offsetHeight<0));item.classList.toggle('is-current',y>=height*.28&&y<=height*.7);item.classList.toggle('is-done',y<height*.28);const output=smooth((height*.76-y)/140)*smooth((y+15)/85);item.querySelector('.drift-output').style.opacity=output;})}
+function tick(now){if(!visible)return;paint(now-started);frame=requestAnimationFrame(tick)}
+new IntersectionObserver(entries=>{const next=entries[0].isIntersecting;if(next===visible)return;visible=next;cancelAnimationFrame(frame);if(reduced){paint(28000);return}if(visible){started=performance.now();tick(started)}},{threshold:.35}).observe(section);
+addEventListener('resize',()=>paint(elapsed));paint(reduced?28000:0);
+window.beelineShipping={seek(ms){cancelAnimationFrame(frame);paint(ms)},state:()=>({elapsed,visible,reduced,tasks:items.map(n=>({task:n.dataset.task,owner:n.dataset.owner,visible:n.getAttribute('aria-hidden')==='false',opacity:Number(n.style.opacity),output:n.querySelector('.drift-output').textContent,outputOpacity:Number(n.querySelector('.drift-output').style.opacity)}))})};

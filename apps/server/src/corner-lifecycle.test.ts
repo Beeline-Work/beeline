@@ -1,5 +1,5 @@
 import { cornerKindSql } from './corner-opening.js';
-import { setRoomEventSubscriptions } from './corner-person-state.js';
+import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
@@ -1010,16 +1010,16 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     await db.query(`INSERT INTO agent_schedule_occurrences(schedule_id,scheduled_for,message_id)
       VALUES($1,now(),$2)`, [id, randomUUID()]);
     await db.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt)
-      VALUES($1,$2,$3,$4,'room','message','wake')`, [randomUUID(), W, roomId, A]);
+      VALUES($1,$2,$3,$4,'room','joined','wake')`, [randomUUID(), W, roomId, A]);
     await db.query(`INSERT INTO work_schedules(schedule_id,agent_id,room_id,revision,schedule)
       VALUES($1,$2,$3,1,'{}')`, [id, A, roomId]);
-    for (const member of [A,B,H]) await setRoomEventSubscriptions(db,roomId,member,['message']);
+    for (const member of [A,B,H]) await setRoomEventSubscriptions(db,roomId,member,['joined']);
     return id;
   }
 
   async function expectWakeSources(roomId: string, count: number) {
     for (const table of ['agent_schedules', 'agent_subscriptions', 'work_schedules'])
-      expect((await db.query(`SELECT 1 FROM ${table} WHERE room_id=$1`, [roomId])).rowCount).toBe(count);
+      expect((await db.query(`SELECT 1 FROM ${table} WHERE room_id=$1 ${table === 'agent_subscriptions' && count ? "AND event='joined'" : ''}`, [roomId])).rowCount).toBe(table === 'agent_subscriptions' ? count * 3 : count);
     expect((await db.query(`SELECT 1 FROM room_access WHERE room_id=$1 AND event_subscriptions<>'[]'::jsonb`,
       [roomId])).rowCount).toBe(count ? 3 : 0);
   }
@@ -1028,11 +1028,15 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     const cornerId = path === 'close' ? await open() : await inReview();
     const scheduleId = await seedWakeSources(cornerId);
     const liveScheduleId = await seedWakeSources(R);
+    const liveSubscriptions = (await db.query(`SELECT * FROM agent_subscriptions WHERE room_id=$1 ORDER BY id`, [R])).rows;
+    const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
     if (path === 'close') await phone.execute('requestCornerClose', { roomId: cornerId }, H);
     else await mergedWebhook(cornerId, 7, SHA);
     expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0].archived_at).not.toBeNull();
     await expectWakeSources(cornerId, 0);
     await expectWakeSources(R, 1);
+    expect((await db.query(`SELECT * FROM agent_subscriptions WHERE room_id=$1 ORDER BY id`, [R])).rows).toEqual(liveSubscriptions);
+    expect((await db.query(`SELECT released_at IS NOT NULL released FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]!.released).toBe(true);
     expect((await db.query(`SELECT 1 FROM agent_schedule_occurrences WHERE schedule_id=$1`, [scheduleId])).rowCount).toBe(0);
     expect((await db.query(`SELECT 1 FROM agent_schedule_occurrences WHERE schedule_id=$1`, [liveScheduleId])).rowCount).toBe(1);
   });

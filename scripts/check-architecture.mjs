@@ -6,11 +6,11 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import {
-  INVARIANTS_PATH, invariantsAtRef, judgeTree, readInvariants, relaxations, validateRules,
+  INVARIANTS_PATH, invariantsAtRef, judgeTree, readInvariants, relaxations, strictRelaxations, validateRules,
 } from './architecture-invariants.mjs';
 import { judgeStorage, storageRelaxations } from './architecture-storage.mjs';
 
-/** The guard itself. CI runs the base copy, so a change to it is a relaxation. */
+/** CI executes the candidate guard; changes remain visible in the weekly review. */
 const RUNNER_FILES = ['scripts/check-architecture.mjs', 'scripts/architecture-invariants.mjs', 'scripts/architecture-storage.mjs'];
 
 function changedRunnerFiles(root, base) {
@@ -38,6 +38,7 @@ async function main() {
   const root = rootFlag === -1 ? path.resolve(fileURLToPath(new URL('..', import.meta.url))) : path.resolve(args[rootFlag + 1]);
   const head = readInvariants(root);
   const errors = validateRules(head);
+  if (base) errors.push(...strictRelaxations(root, invariantsAtRef(root, base), head).map(item => `Strict architecture boundary: ${item}`));
   if (!errors.length) errors.push(...judgeTree(root, head), ...judgeStorage(root, head.storage));
   const relaxed = base ? [
     ...relaxations(root, invariantsAtRef(root, base), head),

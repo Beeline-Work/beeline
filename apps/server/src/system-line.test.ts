@@ -1,3 +1,5 @@
+import { MAX_TURNS_PER_ROOT } from '@beeline/api-contract/phone';
+import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
@@ -135,6 +137,7 @@ describe('who an event line mentions', () => {
              ($1,$2,$5,'member','["merged"]'::jsonb)`,
       [WORKSPACE, ROOM, HUMAN, GREETER, QUIET_AGENT],
     );
+    await setRoomEventSubscriptions(database, ROOM, GREETER, ['joined']);
   });
   afterEach(() => database.close());
 
@@ -236,16 +239,27 @@ describe('who an event line mentions', () => {
     expect(await wokenBy(written.id)).toEqual([QUIET_AGENT]);
   });
 
+  it('counts subscribed wakes against the cascade limit and rolls back a refused fact', async () => {
+    const cause='d'.repeat(64),attempt='e'.repeat(64);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,event_root_cause_id,event_depth,event_woken)
+      VALUES($1,$2,$3,'Cause',$1,0,$4)`,[cause,ROOM,HUMAN,MAX_TURNS_PER_ROOT-1]);
+    await expect(systemLine(database,{id:attempt,roomId:ROOM,subject:{kind:'person',id:HUMAN,name:'Ada'},
+      verb:'joined',kind:'joined',causeId:cause,wakes:[QUIET_AGENT]})).rejects.toThrow();
+    expect((await database.query(`SELECT 1 FROM messages WHERE id=$1`,[attempt])).rowCount).toBe(0);
+    expect(await wokenBy(attempt)).toEqual([]);
+    expect((await database.query(`SELECT event_woken FROM messages WHERE id=$1`,[cause])).rows[0]!.event_woken).toBe(MAX_TURNS_PER_ROOT-1);
+  });
+
   it('still writes the line when the subscriber lookup fails', async () => {
     // The caller is a real membership write. Losing a join to a subscription
     // lookup would be a silent partial join, so the fill is best-effort.
-    const failing: SqlDatabase = {
-      query: async (sql: string, values?: unknown[]) => {
-        if (sql.includes('event_subscriptions')) throw new Error('column is gone');
-        return database.query(sql, values ?? []);
-      },
-      transaction: (work) => database.transaction(work),
-    };
+    const withFailedLookup = (db: SqlDatabase): SqlDatabase => ({
+      query: ((sql: string, values?: unknown[]) => sql.includes('FROM room_event_subscriptions subscription')
+        ? db.query('SELECT missing_subscription_column FROM agent_subscriptions')
+        : db.query(sql, values ?? [])) as SqlDatabase['query'],
+      transaction: work => db.transaction(tx => work(withFailedLookup(tx))),
+    });
+    const failing = withFailedLookup(database);
     const written = await systemLine(failing, {
       roomId: ROOM,
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },

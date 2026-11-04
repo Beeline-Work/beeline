@@ -9,6 +9,11 @@ test('B1 dry-run changes nothing; apply detaches cascade and preserves skill ver
     await db.exec(`CREATE TABLE institutional_memory_jobs(id integer PRIMARY KEY);
       CREATE TABLE workspace_skill_versions(id integer PRIMARY KEY,source_job_id integer
         CONSTRAINT workspace_skill_versions_source_job_id_fkey REFERENCES institutional_memory_jobs(id) ON DELETE CASCADE);
+      CREATE TABLE rooms_mcp_audit(id integer); INSERT INTO rooms_mcp_audit VALUES(1),(2);
+      CREATE TABLE agent_turn_traces(id integer); INSERT INTO agent_turn_traces VALUES(1);
+      CREATE TABLE messages(id integer PRIMARY KEY,card_type text,card jsonb);
+      INSERT INTO messages VALUES(1,'github-corner-note','{"source":"github","dedupe":"old","other":true}'),
+        (2,'other-card','{"source":"github","dedupe":"keep"}');
       INSERT INTO institutional_memory_jobs VALUES(1),(2);
       INSERT INTO workspace_skill_versions VALUES(1,1),(2,2),(3,NULL);`);
     const queries = [];
@@ -23,6 +28,9 @@ test('B1 dry-run changes nothing; apply detaches cascade and preserves skill ver
     assert.equal((await db.query('SELECT count(*)::int count FROM institutional_memory_jobs')).rows[0].count, 2);
     const applied = await cleanup(client, true);
     assert.equal(applied.linkedVersionsPreserved, 2);
+    assert.deepEqual(applied.retainedTelemetry, { before: { rooms_mcp_audit: 2, agent_turn_traces: 1 }, after: { rooms_mcp_audit: 2, agent_turn_traces: 1 } });
+    assert.deepEqual((await db.query('SELECT card FROM messages WHERE id=1')).rows, [{ card: { other: true } }]);
+    assert.deepEqual((await db.query('SELECT card FROM messages WHERE id=2')).rows, [{ card: { source: 'github', dedupe: 'keep' } }]);
     assert.deepEqual((await db.query('SELECT id,source_job_id FROM workspace_skill_versions ORDER BY id')).rows,
       [{ id: 1, source_job_id: null }, { id: 2, source_job_id: null }, { id: 3, source_job_id: null }]);
     assert.equal((await cleanup(client, true)).linkedVersionsPreserved, 0);

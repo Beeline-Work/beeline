@@ -61,3 +61,13 @@ All four rows remain stored. `max_runs` now equals `run_count`:
 Every `next_run_at` is 9999-12-31 00:00:00+00, and no workflow is running on
 these rows. An independent READ ONLY transaction matched the update receipt.
 B1 deletion and the B8 column contract were not run.
+
+## B1 execution authorization update
+
+Firstmate inbox 002 relayed the captain's explicit yes to apply B1, EXCLUDING
+`rooms_mcp_audit` and `agent_turn_traces`. The script now omits both from its
+deletion list and records their before/after counts in one consistent snapshot;
+normal concurrent telemetry writes may appear on a later independent read.
+A Neon branch of beeline-prod is required as the restore point before applying.
+The initial `b1-dry-run.json` is historical: its two telemetry counts are retained
+classes, not approved deletions. All other listed D1 predicates remain approved.

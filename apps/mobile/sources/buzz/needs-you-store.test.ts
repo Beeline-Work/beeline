@@ -5,10 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
+vi.mock('react-native', () => ({ AppState: { currentState: 'active' } }));
 const protocol = vi.hoisted(() => ({ mode: 'legacy' as 'legacy' | 'router' | 'pending', acquire: vi.fn(), release: vi.fn() }));
 vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => protocol.mode, holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+
 vi.mock('@/buzz/router-owner', () => ({
+  subscribeRouterOwner: () => () => {},
   routerFamilyMode: () => protocol.mode,
   acquireRouterLane: () => { protocol.acquire(); return { current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: protocol.release,
     subscribe: () => () => {}, refreshVisibility: () => {} }; },
@@ -38,6 +40,9 @@ vi.mock('@/buzz/surface-storage', () => ({
   },
 }));
 vi.mock('@/sync/transport/monolith-operation', () => ({
+  readServerSurface: (_authority: unknown, name: string) => name === 'readNeedsYou'
+    ? new Promise(resolve => { fixture.reads.push(items => resolve({ items })); })
+    : name === 'listMessageBookmarks' ? new Promise(resolve => { fixture.savedReads.push(bookmarks => resolve({ bookmarks })); }) : Promise.resolve(undefined),
   monolithPhoneOperation: (name: string) => name === 'readNeedsYou'
     ? new Promise((resolve) => { fixture.reads.push((items) => resolve({ items })); })
     : name === 'listMessageBookmarks'
@@ -57,19 +62,24 @@ vi.mock('@/sync/transport/live-connection', () => ({
 import { resetClientState } from '@/sync/client-reset';
 import {
   useNeedsYouCount,
-  applyNeedsYouLiveDelta,
-  applyBookmarkDelta,
   forgetTray,
   loadSavedList,
   loadNeedsYouList,
   removeNeedsYou,
   seedNeedsYouList,
-  updateSavedList,
+  hideSavedItems,
   useTrayList,
   loadTrayList,
   subscribeTrayGap,
 } from './needs-you-store';
 
+// Committed deltas enter only through the live adapter, never a feature export.
+function applyNeedsYouLiveDelta(delta: unknown) {
+  for (const registration of fixture.registrations) registration.receive({ monolithLive: { ...(delta as object), type: 'needs-you-delta' } });
+}
+function applyBookmarkDelta(delta: unknown) {
+  for (const registration of fixture.registrations) registration.receive({ monolithLive: { ...(delta as object), type: 'bookmark-delta' } });
+}
 function need(messageId: string, roomId = 'room-1') {
   return { messageId, workspaceId: 'ws', roomId, roomName: 'Room', text: 'ask', createdAt: 1 };
 }
@@ -179,7 +189,7 @@ describe('Needs-you disk copy', () => {
 });
 
 describe('Needs-you read replay', () => {
-  it('keeps a pending clear after a later Room delta during the read', async () => {
+  it('replays committed deltas without persisting a pending clear', async () => {
     const read = loadNeedsYouList('ws');
     await settle();
     removeNeedsYou('ws', ['ask-1']);
@@ -187,8 +197,47 @@ describe('Needs-you read replay', () => {
       items: [need('ask-1'), need('ask-2')] as never });
     fixture.reads[0]!([need('ask-1')]);
     const items = await read;
-    expect(items.map((item) => item.messageId)).toEqual(['ask-2']);
+    expect(items.map((item) => item.messageId)).toEqual(['ask-1', 'ask-2']);
+    expect(fixture.disk.get(diskA)).toMatchObject({ items: [{ messageId: 'ask-1' }, { messageId: 'ask-2' }] });
   });
+});
+
+it('does not dispatch an old gesture completion after an account reset', async () => {
+  const read = loadNeedsYouList('ws'); await settle(); fixture.reads[0]!([need('ask-1')]); await read;
+  const removal = removeNeedsYou('ws', ['ask-1']);
+  fixture.viewer = 'viewer-b'; resetClientState(); removal.settle(); await settle();
+  expect(fixture.reads).toHaveLength(1);
+  expect(fixture.disk.has(diskB)).toBe(false);
+});
+
+it('keeps server ordering and refuses an invalid response without replacing committed rows', async () => {
+  const initial = loadNeedsYouList('ws'); await settle();
+  fixture.reads[0]!([{ ...need('z'), createdAt: 20 }, { ...need('a'), createdAt: 1 }]);
+  await expect(initial).resolves.toMatchObject([{ messageId: 'z' }, { messageId: 'a' }]);
+  const invalid = loadNeedsYouList('ws'); await settle(); fixture.reads[1]!([{ invalid: true }]);
+  await expect(invalid).rejects.toThrow('Invalid Needs you response');
+  expect(fixture.disk.get(diskA)).toMatchObject({ items: [{ messageId: 'z' }, { messageId: 'a' }] });
+});
+
+it('hides only transient intent and reveals the latest committed DTO on refusal', async () => {
+  let visible: ReturnType<typeof useTrayList> | undefined;
+  function Tray() { visible = useTrayList('ws'); return null; }
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(React.createElement(Tray)); await settle(); });
+  const read = loadNeedsYouList('ws');
+  await settle();
+  const removal = removeNeedsYou('ws', ['ask-1']);
+  await act(async () => {
+    applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-1', count: 2,
+      items: [need('ask-1'), { ...need('ask-2'), text: 'new committed text' }] });
+    fixture.reads[0]!([need('ask-1')]); await read; await settle();
+  });
+  expect(visible?.needs?.map(item => item.messageId)).toEqual(['ask-2']);
+  expect(fixture.disk.get(diskA)).toMatchObject({ items: [{ messageId: 'ask-1' }, { messageId: 'ask-2', text: 'new committed text' }] });
+  await act(async () => { removal.restore(); });
+  expect(visible?.needs?.map(item => item.messageId)).toEqual(['ask-1', 'ask-2']);
+  expect(visible?.needs?.[1]?.text).toBe('new committed text');
+  await act(async () => { tree.unmount(); });
 });
 
 describe('one tray clock and registration', () => {
@@ -206,27 +255,27 @@ describe('one tray clock and registration', () => {
       .toMatchObject({ bookmarks: [{ messageId: 'saved-2' }] });
   });
 
-  it('keeps a pending Saved removal through a stale server read', async () => {
+  it('never persists a pending Saved removal, including through stale server reads', async () => {
     const saved = { messageId: 'saved-1', workspaceId: 'ws', roomId: 'room-1',
       roomName: 'Room', bookmarkedAt: 2, available: true, messageCreatedAt: 1 };
     const first = loadSavedList('ws');
     await settle();
     fixture.savedReads[0]!([saved]);
     await first;
-    const edit = updateSavedList('ws', (items) => items.filter((item) => item.messageId !== 'saved-1'));
+    const edit = hideSavedItems('ws', ['saved-1']);
     const stale = loadSavedList('ws');
     await settle();
     fixture.savedReads[1]!([saved]);
     await stale;
     expect(fixture.disk.get('https://server.test|viewer-a|/workspace/:id/bookmarks|ws'))
-      .toMatchObject({ bookmarks: [] });
+      .toMatchObject({ bookmarks: [{ messageId: 'saved-1' }] });
     const staleAgain = loadSavedList('ws');
     await settle();
     fixture.savedReads[2]!([saved]);
     await staleAgain;
     expect(fixture.disk.get('https://server.test|viewer-a|/workspace/:id/bookmarks|ws'))
-      .toMatchObject({ bookmarks: [] });
-    edit.settle();
+      .toMatchObject({ bookmarks: [{ messageId: 'saved-1' }] });
+    edit.cancel();
   });
 
   it('does not revive either section from reads completed after membership loss', async () => {

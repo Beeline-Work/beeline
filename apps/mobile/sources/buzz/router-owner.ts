@@ -25,7 +25,7 @@ type Negotiation = { generation: number; families: readonly LaneFamily[];
   execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> };
 type Slot = { request: LaneRequest; consumers: Map<() => void, () => boolean>; listeners: Set<() => void>;
   validate?:(value:unknown)=>boolean;
-  generation?: number; expectedWorkspace?: string; token?: object; release?: () => void; stop?: () => void };
+  generation?: number; forwardGeneration?: number; expectedWorkspace?: string; token?: object; release?: () => void; stop?: () => void };
 const navigation = new NavigationOwner();
 const listeners = new Set<() => void>();
 const slots = new Set<Slot>();
@@ -44,7 +44,6 @@ let initialized: Promise<void> | undefined;
 let listPanelVisible = false;
 let modeKnown = false;
 let principal: string | undefined;
-let authorityUnavailable = false;
 let scheduledAuthority: ScheduledWorkAuthority | undefined;
 let instance = 0;
 const slotNames = new WeakMap<Slot, string>();
@@ -82,8 +81,7 @@ function validValue(request: LaneRequest, value: unknown): boolean {
   if (request.family === 'room-head') return readRoomView(value) !== null;
   if (!value || typeof value !== 'object') return false;
   const count = (value as { count?: unknown }).count;
-  return request.family === 'needs-you-count' && Number.isSafeInteger(count) && Number(count) >= 0 &&
-    utf8ToBytes(JSON.stringify(value)).length <= 1024;
+  return request.family === 'needs-you-count' && Number.isSafeInteger(count) && Number(count) >= 0;
 }
 function validCertificate(snapshot: LaneSnapshot): boolean {
   const scopes = snapshot.authority.scopes;
@@ -149,7 +147,7 @@ function eligible(slot: Slot): boolean {
   if(slot.request.family==='workspace-roster')return focused.screen==='AppShell'||focused.screen==='AgentProfile'||focused.screen==='Room';
   if(slot.request.family==='agent-profile')return focused.screen==='AgentProfile'&&focused.agentId===slot.request.agentId;
   if (slot.request.family === 'room-head') return focused.screen === 'Room' && focused.roomId === slot.request.roomId;
-  if (slot.request.family === 'room-list') return focused.screen === 'AppShell' || listPanelVisible;
+  if (slot.request.family === 'room-list') return focused.screen === 'AppShell' || listPanelVisible || focused.screen === 'Room' && slot.forwardGeneration === focused.generation;
   return slot.request.family === 'needs-you-count';
 }
 function release(slot: Slot): void {
@@ -164,7 +162,7 @@ function focus(slot: Slot): void {
   if (!admission || !lanes || !residency || !eligible(slot) || !lanes.supports(slot.request.family)) {
     release(slot); return;
   }
-  if(slot.request.family==='needs-you-saved-page'||slot.request.family==='workspace-roster'&&(slot.request.query||residency.screen==='Room'))return; // only its actual continuation gesture or connection recovery admits demand
+  if(slot.request.family==='needs-you-saved-page'||slot.request.family==='room-list'&&residency.screen==='Room'&&!listPanelVisible||slot.request.family==='workspace-roster'&&(slot.request.query||residency.screen==='Room'))return; // only its actual continuation gesture or connection recovery admits demand
   if (slot.generation === residency.generation) {
     if (!slot.release && slot.token) {
       const permit = admission.resumeObservation(slotNames.get(slot)!, residency.generation);
@@ -244,7 +242,7 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
   if (version !== instance) return;
   next={...next,families:next.families.filter(family=>!['room-scheduled-work','needs-you-tray','needs-you-saved-page'].includes(family)||routerCommandStorageReady()&&next.authorityFencesV1===true)};
   if(negotiation)scheduledAuthority?.disconnected(negotiation.generation);
-  negotiation = next; modeKnown = true; authorityUnavailable = false;
+  negotiation = next; modeKnown = true;
   if(next.scheduledWorkCoverageV1){
     if(next.scheduledWorkCoverageV1.version!==1||!authorityPosition(next.scheduledWorkCoverageV1.authorityStart)||
       !next.families.includes('room-scheduled-work'))throw new Error('Invalid Scheduled Work coverage negotiation.');
@@ -291,7 +289,7 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
     const recovery = permits.get(lanes.key(slot.request));
     if (!recovery) continue;
     const residency = navigation.current()!;
-    if(slot.request.family==='needs-you-saved-page'||slot.request.family==='workspace-roster'&&residency.screen==='Room'){ /* already gesture-admitted; connection pass owns recovery */ }
+    if(slot.request.family==='needs-you-saved-page'||['workspace-roster','room-list'].includes(slot.request.family)&&residency.screen==='Room'){ /* already gesture-admitted; connection pass owns recovery */ }
     else if (slot.generation === residency.generation && slot.token) admission.resumeObservation(slotNames.get(slot)!, residency.generation);
     else {
       const request = { route: 'phone.readRouterSnapshot' as const, input: slot.request };
@@ -342,7 +340,7 @@ function fact(value: unknown): boolean {
   if (typeof payload.scope !== 'string' || payload.scope.length > 256) return false;
   if(payload.kind==='tray-classification')return payload.version===1&&typeof payload.clockVersion==='string'&&
     /^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion)&&Object.keys(payload).length===4;
-  if(payload.kind==='tray-needs-replace')return record(payload.value)&&Array.isArray(payload.value.items)&&payload.value.items.length<=30;
+  if(payload.kind==='tray-needs-replace')return record(payload.value)&&Array.isArray(payload.value.items);
   if(payload.kind==='saved-row-replace')return record(payload.row);
   if(payload.kind==='saved-row-remove')return typeof payload.bookmarkId==='string'&&typeof payload.messageId==='string';
   if (payload.kind === 'group-unavailable') return payload.reason === 'authority' || payload.reason === 'dependency';
@@ -352,7 +350,7 @@ function fact(value: unknown): boolean {
     typeof payload.family === 'string' && families.includes(payload.family) && Object.hasOwn(payload, 'value');
 }
 /** Socket input is untrusted at runtime even when a transport callback has a
- * static protocol type. Malformed frames park locally, never throw or refetch.
+ * static protocol type. Malformed frames re-read only their affected lanes.
  */
 export function routerOwnerReceive(value: unknown): void {
   if (!negotiation || !record(value)) return;
@@ -364,12 +362,14 @@ export function routerOwnerReceive(value: unknown): void {
     return;
   }
   const failAuthority = () => {
-    scheduledAuthority?.sourceLost(negotiation!.generation);
-    authorityUnavailable = true; assembly.reset(); lanes?.disconnected();
-    mediaDemand?.disconnected(); suspendMediaCacheConnection(); notify();
+    assembly.reset();
+    const affected = Array.isArray(value.families) && value.families.length ? value.families : negotiation!.families;
+    invalidateMediaCacheDemand();
+    lanes?.refresh(request => affected.includes(request.family) &&
+      (typeof value.scope !== 'string' || request.roomId === value.scope || request.workspaceId === value.scope || value.scope === principal), true);
   };
   if (value.kind === 'authority-fence') {
-    if (!negotiation.authorityFencesV1 || authorityUnavailable) return;
+    if (!negotiation.authorityFencesV1) return;
     const domain = value.authorityScope;
     const profileDomain=negotiation.families.includes('agent-profile')&&typeof domain==='string'&&
       /^profile:[0-9a-f-]{36}:[^:]{1,128}$/.test(domain)&&domain.endsWith(`:${value.scope}`);
@@ -380,8 +380,7 @@ export function routerOwnerReceive(value: unknown): void {
           `scheduled-work-manager:${principal}:workspace:${value.scope}`,`scheduled-work-member:${principal}:room:${value.scope}`,
           `scheduled-work-room:${value.scope}`,...(value.scope===principal?[`scheduled-work-principal:${principal}`]:[]) ].includes(domain)&&!profileDomain&&!ownerDomain&&!rosterDomain ||
         (value.mode !== undefined && value.mode !== 'deny' && value.mode !== 'advance') ||
-        !certificate(value.authority) || !validCertificate({ authority: value.authority } as LaneSnapshot) ||
-        utf8ToBytes(JSON.stringify(value)).length > 4096) { failAuthority(); return; }
+        !certificate(value.authority) || !validCertificate({ authority: value.authority } as LaneSnapshot)) { failAuthority(); return; }
     const epoch = (value.authority as LaneSnapshot['authority']).scopes.find(scope => scope.authorityScope === domain)?.epoch;
     if (!epoch) { failAuthority(); return; }
     // A content-free current-authority fence carries no data coverage/cursor.
@@ -396,17 +395,15 @@ export function routerOwnerReceive(value: unknown): void {
     return;
   }
   if(value.kind==='router-unavailable'&&value.stream===ROUTER_TRAY_CLOCK_STREAM){
-    // A shared control loss parks only Tray state, across local held scopes.
-    // It carries no client inventory and admits no read or socket replacement.
-    for(const family of negotiation.families)if(family.startsWith('needs-you'))lanes?.hideFamily(family);
+    // A shared control loss re-reads only held Tray state on this socket.
+    lanes?.refresh(request => request.family.startsWith('needs-you'));
     return;
   }
   if (value.kind === 'router-unavailable' && value.stream === `authority:${principal}`) {
-    if(negotiation.scheduledWorkCoverageV1&&Array.isArray(value.families)&&value.families.length===1&&value.families[0]==='room-scheduled-work')scheduledAuthority?.sourceLost(negotiation.generation);
+    if(negotiation.scheduledWorkCoverageV1&&Array.isArray(value.families)&&value.families.length===1&&value.families[0]==='room-scheduled-work')lanes?.refresh(request => request.family === 'room-scheduled-work');
     else failAuthority();
     return;
   }
-  if (authorityUnavailable) return;
   const stream = typeof value.stream === 'string' ? value.stream : record(value.to) && typeof value.to.stream === 'string' ? value.to.stream : undefined;
   const fail = () => { if (stream) for (const family of negotiation?.families ?? []) lanes?.unavailable(stream, family); };
   if (value.kind === 'router-unavailable') {
@@ -421,6 +418,11 @@ export function routerOwnerReceive(value: unknown): void {
   // fact() accepts only this owner's implemented lane/fact vocabulary, which
   // may be narrower than additive server-side protocol contracts.
   try { assembly.accept(value as Parameters<RouterBatchAssembly['accept']>[0]); } catch { fail(); }
+}
+
+/** Cover only the data named by a missed delivery on the retained socket. */
+export function routerOwnerRefresh(roomId?: string): void {
+  lanes?.refresh(request => roomId ? request.roomId === roomId : !request.roomId);
 }
 
 export function routerFamilyMode(family: LaneFamily): RouterFamilyMode {
@@ -459,7 +461,7 @@ export function acquireRouterLane(request: LaneRequest, visible: () => boolean, 
     // observer, so StrictMode setup/cleanup cannot mint or cancel a focus pass.
     release: () => {
       held.consumers.delete(listener);held.listeners.delete(listener);
-      if(held.request.family==='workspace-roster'&&!held.consumers.size&&navigation.current()?.screen==='Room')release(held);
+      if(['workspace-roster','room-list'].includes(held.request.family)&&!held.consumers.size&&navigation.current()?.screen==='Room')release(held);
       if((held.request.family==='needs-you-saved-page'||held.request.family==='workspace-roster'&&held.request.query)&&!held.consumers.size){release(held);slots.delete(held);slotsByKey.delete(key);}
     },
   };
@@ -487,6 +489,29 @@ export function acquireRouterSavedContinuation(workspaceId:string,before:string,
       slot.stop=lanes!.subscribe(request,()=>{for(const notify of slot.listeners)notify();});
     });
     return handle;
+  }catch(error){handle.release();throw error;}
+}
+
+/** The actual Forward picker gesture uses the same read lanes. An absent
+ * sidebar never authorizes a direct readChats request from the transcript. */
+export function acquireRouterForwardList(workspaceId:string,visible:()=>boolean,listener:()=>void){
+  const focused=navigation.current(),owner=admission;
+  if(!owner||!lanes||!focused||focused.screen!=='Room'||!focused.roomId||routerFamilyMode('room-list')!=='router')
+    throw new Error('Forward picker is unavailable.');
+  const room=[...slots].find(slot=>slot.request.family==='room-head'&&slot.request.roomId===focused.roomId&&
+    slot.generation===focused.generation&&slot.release);
+  const value=room?lanes.peek(room.request).value as RouterValues['room-head']|null:null;
+  if(!value||value.room.workspaceId!==workspaceId)throw new Error('Forward Workspace is not held.');
+  const request={family:'room-list' as const,workspaceId};
+  const handle=acquireRouterLane(request,visible,listener),slot=slotsByKey.get(slotKey(request))!;
+  slot.forwardGeneration=focused.generation;
+  if(slot.release&&slot.generation===focused.generation)return handle;
+  try{
+    owner.openForwardList(focused.generation,focused.roomId,workspaceId,pass=>{
+      const read={route:'phone.readRouterSnapshot' as const,input:request},permit=owner.spend(read,pass);
+      slot.generation=focused.generation;slot.token=pass;slot.release=lanes!.demand(request,pass,permit);
+      slot.stop=lanes!.subscribe(request,()=>{for(const notify of slot.listeners)notify();});
+    });return handle;
   }catch(error){handle.release();throw error;}
 }
 
@@ -675,7 +700,7 @@ subscribeClientReset(() => {
   trayActions=undefined;
   if(negotiation)scheduledAuthority?.disconnected(negotiation.generation);
   scheduledAuthority=undefined;
-  instance += 1; modeKnown = false; negotiation = undefined; principal = undefined; authorityUnavailable = false; assembly.reset();
+  instance += 1; modeKnown = false; negotiation = undefined; principal = undefined; assembly.reset();
   for (const slot of slots) { release(slot); slot.generation = undefined; }
   stopFences?.(); stopFences = undefined;
   stopFloors?.(); stopFloors = undefined;
@@ -697,7 +722,7 @@ export function readRouterToolPage(input:PhoneOperationMap['readRoomTools']['inp
   const joined=toolFlights.get(key);if(joined)return joined;
   if(toolFlights.size>=16)throw new Error('Too many tool pages are opening.');
   const flight=connection.executeTools(JSON.parse(permit.wire.input)).then(result=>{
-    if(!permit.isCurrent()||negotiation!==connection||authorityUnavailable)throw new Error('Tool output is no longer visible.');
+    if(!permit.isCurrent()||negotiation!==connection)throw new Error('Tool output is no longer visible.');
     return result;
   });
   toolFlights.set(key,flight);void flight.finally(()=>{if(toolFlights.get(key)===flight)toolFlights.delete(key);}).catch(()=>{});

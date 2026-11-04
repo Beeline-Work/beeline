@@ -1,6 +1,8 @@
-vi.mock('@/buzz/command-message-gesture', () => ({ prepareRouterMessageGesture: () => undefined }));
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-owner', () => ({ routerFamilyMode: () => 'legacy', routerLaneSnapshot: () => ({state:'ABSENT',value:null,error:null,cut:null}), acquireRouterLane: () => ({current:()=>({state:'ABSENT',value:null,error:null,cut:null}),release:()=>{},subscribe:()=>()=>{},refreshVisibility:()=>{}}), retryRouterLane: () => {}, routerOwnerArtifactAction: () => {}, routerOwnerArtifactViewport: () => {}, routerOwnerUsageProfile: () => {} }));
+vi.mock('@/buzz/router-family',()=>({useRouterFamily:()=> 'router',holdRouterConnection:()=>()=>{}}));
+vi.mock('@/buzz/router-owner',async()=> (await import('@/test/canonical-router-fixture')).canonicalRouterFixture(async()=>{
+  const {RoomViewClient}=await import('../../../../../offline-proof/adapters/services.js');
+  try{return await new RoomViewClient().room();}catch{throw new Error('Couldn’t reach Beeline');}
+}));
 vi.mock('@/buzz/use-artifact-recovery', () => ({ useArtifactRecoveryGeneration: () => 0 }));
 vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 import React from 'react';
@@ -139,19 +141,21 @@ async function settle() {
       await new Promise((resolve) => setTimeout(resolve, 20));
     });
 }
-it('page-offline-1: renders the cached transcript without an offline notice after a failed refresh', async () => {
+it('page-offline-1: retains the verified canonical transcript without an offline notice after a failed refresh', async () => {
   const { resetProof, failRefresh, controls, fixture } =
     await import('../../../../../offline-proof/adapters/services.js');
   expect(isRoomView(fixture)).toBe(true);
   resetProof();
+  (await import('@/buzz/router-owner') as any).resetFixture();
+  (await import('@/buzz/router-owner') as any).publish({family:'room-head',roomId:fixture.room.id},fixture);
   const { default: Page } = await import('./[channelId]');
   await act(async () => {
     renderer = create(<Page />);
   });
   await settle();
   expect(renderedText()).toContain('The saved conversation is still here.');
-  expect(controls.reads).toBeGreaterThan(0);
-  await act(async () => failRefresh());
+  expect(controls.reads).toBe(0);
+  await act(async () => { failRefresh(); (await import('@/buzz/router-owner') as any).park({family:'room-head',roomId:fixture.room.id},'Couldn’t reach Beeline',true); });
   await settle();
   expect(renderedText()).toContain('The saved conversation is still here.');
   expect(renderedText()).not.toMatch(/Offline|last saved response/);
@@ -161,6 +165,7 @@ it('page-offline-1: failed initial load renders the production error screen and 
   const { resetProof, recoverServer } =
     await import('../../../../../offline-proof/adapters/services.js');
   resetProof(false);
+  (await import('@/buzz/router-owner') as any).resetFixture();
   const { default: Page } = await import('./[channelId]');
   await act(async () => {
     renderer = create(<Page />);

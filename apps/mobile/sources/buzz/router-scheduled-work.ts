@@ -25,8 +25,8 @@ export function useRoutedScheduledWork(roomId:string|undefined,focused:boolean){
 /** Admission and durable reservation happen before the caller's first await.
  * Known completion navigates normally; uncertain outcome remains parked in
  * the existing durable command owner, with no read or provider replay. */
-export function prepareScheduledStop(operation:'deleteRoomSchedule'|'deleteRoomSubscription',roomId:string,id:string):Promise<void>|undefined{
-  if(routerFamilyMode('room-scheduled-work')!=='router')return;
+export function prepareScheduledStop(operation:'deleteRoomSchedule'|'deleteRoomSubscription',roomId:string,id:string):Promise<void>{
+  if(routerFamilyMode('room-scheduled-work')!=='router')throw new Error('Scheduled Work command delivery is unavailable.');
   const owner=activeCommandOwner();
   if(!owner?.canPrepare())throw new Error('Scheduled Work command delivery is unavailable.');
   const prepared=owner.prepare(admitRouterScheduledStop(operation,roomId,id));

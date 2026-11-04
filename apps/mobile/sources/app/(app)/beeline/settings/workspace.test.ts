@@ -4,19 +4,16 @@ vi.mock('react-native-keyboard-controller', async () => { const R = await import
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// These fixtures exercise the negotiated legacy compatibility path. The actual
-// router owner/negotiation path has independent integration coverage.
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
-vi.mock('@/buzz/router-owner', () => ({
-  routerFamilyMode: () => 'legacy',
-  acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
-    subscribe: () => () => {}, refreshVisibility: () => {} }),
-  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: () => {}, routerOwnerListPanel: () => {},
-}));
+// UI fixture supplies canonical list DTOs; owner admission has separate real tests.
+const listSource=vi.hoisted(()=>({owner:null as any}));
+vi.mock('@/buzz/router-family',()=>({useRouterFamily:()=> 'router',holdRouterConnection:()=>()=>{}}));
+vi.mock('@/buzz/router-owner',async()=>{
+  const {canonicalListFixture}=await import('@/test/canonical-list-fixture');
+  listSource.owner=canonicalListFixture(workspace=>roomViews.chats(workspace));
+  return {...listSource.owner,retryRouterLane:()=>{},routerOwnerListPanel:()=>{}};
+});
 
 const platform = vi.hoisted(() => ({ OS: 'android' }));
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
@@ -45,7 +42,8 @@ const client = vi.hoisted(() => ({
   setCommunityVisibility: vi.fn(),
 }));
 
-vi.mock('@beeline/buzz-client', () => ({
+vi.mock('@beeline/buzz-client', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@beeline/buzz-client')>(),
   RoomViewClient: class {
     workspace = roomViews.workspace;
     chats = roomViews.chats;
@@ -82,7 +80,7 @@ vi.mock('@beeline/buzz-client', () => ({
 vi.mock('expo-router', () => ({
   router: navigation,
   useFocusEffect: (effect: () => void | (() => void)) => React.useEffect(effect, [effect]),
-  useLocalSearchParams: () => ({ communityId: 'workspace-1' }),
+  useLocalSearchParams: () => ({ communityId: '00000001-1111-4111-8111-111111111111' }),
 }));
 vi.mock('react-native-safe-area-context', () => ({
   useSafeAreaInsets: () => ({ top: 0, right: 0, bottom: 0, left: 0 }),
@@ -238,10 +236,12 @@ beforeAll(() => {
   });
 });
 
+const mounted:ReactTestRenderer[]=[];
+afterEach(async()=>{await act(async()=>{for(const renderer of mounted.splice(0))renderer.unmount();});});
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   vi.clearAllMocks();
-  resetChatListStoresForTest();
+  resetChatListStoresForTest();listSource.owner.reset();
   hotSurfaces.values.clear();
   hotSurfaces.listeners.clear();
   roomViews.workspace.mockResolvedValue(workspaceView());
@@ -263,7 +263,7 @@ function workspaceView(
 ) {
   return {
     workspace: {
-      id: 'workspace-1',
+      id: '00000001-1111-4111-8111-111111111111',
       name: 'Hull',
       avatar,
       visibility: 'invite-only',
@@ -302,7 +302,7 @@ function room(id: string, name: string, createdAt: number, archived = false, dir
   return {
     room: {
       id,
-      workspaceId: 'workspace-1',
+      workspaceId: '00000001-1111-4111-8111-111111111111',
       name,
       visibility: 'public',
       archived,
@@ -325,7 +325,7 @@ function room(id: string, name: string, createdAt: number, archived = false, dir
 function chatListView(chats: ReturnType<typeof room>[] = []) {
   return {
     workspace: {
-      id: 'workspace-1',
+      id: '00000001-1111-4111-8111-111111111111',
       name: 'Hull',
       visibility: 'invite-only',
       role: 'owner',
@@ -343,7 +343,8 @@ async function render(
 ): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
-    renderer = create(React.createElement(WorkspaceSettings, { workspaceId: 'workspace-1', ...props }));
+    renderer = create(React.createElement(WorkspaceSettings, { workspaceId: '00000001-1111-4111-8111-111111111111', ...props }));
+    mounted.push(renderer);
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -428,7 +429,7 @@ describe('Workspace Settings authority', () => {
     });
 
     expect(avatarUpload.pickAndUploadAvatar).toHaveBeenCalledWith(client);
-    expect(client.setCommunityAvatar).toHaveBeenCalledWith('workspace-1', pictureUrl);
+    expect(client.setCommunityAvatar).toHaveBeenCalledWith('00000001-1111-4111-8111-111111111111', pictureUrl);
     expect(renderer.root.findByProps({ testID: 'workspace-picture-clear' })).toBeDefined();
   });
 
@@ -446,7 +447,7 @@ describe('Workspace Settings authority', () => {
       await Promise.resolve();
     });
 
-    expect(client.setCommunityAvatar).toHaveBeenCalledWith('workspace-1', '');
+    expect(client.setCommunityAvatar).toHaveBeenCalledWith('00000001-1111-4111-8111-111111111111', '');
     expect(renderer.root.findAllByProps({ testID: 'workspace-picture-clear' })).toHaveLength(0);
   });
 
@@ -494,7 +495,7 @@ describe('Workspace Settings authority', () => {
     await act(async () => {
       await renderer.root.findByProps({ testID: 'workspace-visibility-public' }).props.onPress();
     });
-    expect(client.setCommunityVisibility).toHaveBeenCalledWith('workspace-1', 'public');
+    expect(client.setCommunityVisibility).toHaveBeenCalledWith('00000001-1111-4111-8111-111111111111', 'public');
   });
 
   it('renames through the row editor and keeps the save affordance with it', async () => {
@@ -508,7 +509,7 @@ describe('Workspace Settings authority', () => {
       await renderer.root.findByProps({ testID: 'workspace-name-save' }).props.onPress();
     });
 
-    expect(client.renameCommunity).toHaveBeenCalledWith('workspace-1', 'Atlas');
+    expect(client.renameCommunity).toHaveBeenCalledWith('00000001-1111-4111-8111-111111111111', 'Atlas');
     expect(renderer.root.findAllByProps({ testID: 'workspace-name-editor' })).toHaveLength(0);
   });
 
@@ -540,7 +541,7 @@ describe('Workspace Settings authority', () => {
 
     expect(navigation.push).toHaveBeenCalledWith({
       pathname: '/beeline/members',
-      params: { communityId: 'workspace-1' },
+      params: { communityId: '00000001-1111-4111-8111-111111111111' },
     });
   });
 
@@ -571,13 +572,13 @@ describe('Workspace Settings authority', () => {
 
   it('excludes deterministic Direct Messages from Room visibility', async () => {
     roomViews.chats.mockResolvedValue(
-      chatListView([room('room-1', 'atlas', 1), room('dm-1', 'Direct message', 2, false, true)]),
+      chatListView([room('00000002-1111-4111-8111-111111111111', 'atlas', 1), room('00000005-1111-4111-8111-111111111111', 'Direct message', 2, false, true)]),
     );
 
     const renderer = await render();
 
-    expect(renderer.root.findByProps({ testID: 'room-visibility-room-1' })).toBeDefined();
-    expect(renderer.root.findAllByProps({ testID: 'room-visibility-dm-1' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'room-visibility-00000002-1111-4111-8111-111111111111' })).toBeDefined();
+    expect(renderer.root.findAllByProps({ testID: 'room-visibility-00000005-1111-4111-8111-111111111111' })).toHaveLength(0);
   });
 
   it('uses the manager index so an unjoined private Room remains configurable', async () => {
@@ -642,10 +643,10 @@ describe('Workspace Settings authority', () => {
 
   it.each([false, true])('opens duplicate Room Details when embedded=%s', async (embedded) => {
     roomViews.chats.mockResolvedValue(
-      chatListView([room('11111111-room', 'beeline', 1), room('22222222-room', 'beeline', 2)]),
+      chatListView([room('00000006-1111-4111-8111-111111111111', 'beeline', 1), room('00000007-1111-4111-8111-111111111111', 'beeline', 2)]),
     );
 
-    const renderer = await render({ embedded, workspaceId: 'workspace-1' });
+    const renderer = await render({ embedded, workspaceId: '00000001-1111-4111-8111-111111111111' });
     const visibleText = renderer.root.findAllByType('Text').map((node) => node.children.join(''));
 
     expect(visibleText).toContain('Created Jan 1, 1970 · 00:00:01 UTC');
@@ -653,24 +654,24 @@ describe('Workspace Settings authority', () => {
     expect(visibleText.join(' ')).not.toContain('ID 11111111');
     expect(visibleText.join(' ')).not.toContain('ID 22222222');
 
-    act(() => renderer.root.findByProps({ testID: 'room-details-11111111-room' }).props.onPress());
+    act(() => renderer.root.findByProps({ testID: 'room-details-00000006-1111-4111-8111-111111111111' }).props.onPress());
     // Details opens the one Room sheet; there is no second Room sheet.
     expect(modal.actionSheet).not.toHaveBeenCalled();
     const sheet = renderer.root.findByProps({ testID: 'room-sheet' });
     expect(sheet.props).toMatchObject({ visible: true, title: '#beeline' });
     const copy = renderer.root.findByProps({ testID: 'room-sheet-copy-id' });
-    expect(copy.props).toMatchObject({ label: 'Copy Room ID', metadata: '11111111-room' });
+    expect(copy.props).toMatchObject({ label: 'Copy Room ID', metadata: '00000006-1111-4111-8111-111111111111' });
     await act(async () => copy.props.onPress());
-    expect(clipboard.setStringAsync).toHaveBeenCalledWith('11111111-room');
+    expect(clipboard.setStringAsync).toHaveBeenCalledWith('00000006-1111-4111-8111-111111111111');
   });
 
   // Reproduction R1: a row tap flipped visibility and offered no way to join.
   it('opens the Room sheet on row tap without changing visibility (R1)', async () => {
-    roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
+    roomViews.chats.mockResolvedValue(chatListView([room('00000002-1111-4111-8111-111111111111', 'atlas', 1)]));
 
     const renderer = await render();
     const row = renderer.root.findAll(
-      (node) => node.type === 'Pressable' && node.props.testID === 'room-visibility-room-1',
+      (node) => node.type === 'Pressable' && node.props.testID === 'room-visibility-00000002-1111-4111-8111-111111111111',
     )[0]!;
     expect(row.props).toMatchObject({
       accessibilityLabel: 'Show actions for Room #atlas',
@@ -741,7 +742,7 @@ describe('Workspace Settings authority', () => {
     });
     expect(navigation.push).toHaveBeenCalledWith({
       pathname: '/beeline/chat/[channelId]',
-      params: { channelId: 'fantastik', communityId: 'workspace-1' },
+      params: { channelId: 'fantastik', communityId: '00000001-1111-4111-8111-111111111111' },
     });
     expect(renderer.root.findByProps({ testID: 'room-sheet' }).props.visible).toBe(false);
     expect(phoneOperation).not.toHaveBeenCalledWith('updateRoom', expect.anything());
@@ -770,10 +771,10 @@ describe('Workspace Settings authority', () => {
   });
 
   it('offers Open room and no Join for a Room the viewer belongs to', async () => {
-    roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
+    roomViews.chats.mockResolvedValue(chatListView([room('00000002-1111-4111-8111-111111111111', 'atlas', 1)]));
 
     const renderer = await render();
-    const row = renderer.root.findByProps({ testID: 'room-visibility-room-1' });
+    const row = renderer.root.findByProps({ testID: 'room-visibility-00000002-1111-4111-8111-111111111111' });
     expect(row.props.description).toBeUndefined();
 
     act(() => row.props.onPress());
@@ -787,13 +788,13 @@ describe('Workspace Settings authority', () => {
     act(() => renderer.root.findByProps({ testID: 'room-sheet-open' }).props.onPress());
     expect(navigation.push).toHaveBeenCalledWith({
       pathname: '/beeline/chat/[channelId]',
-      params: { channelId: 'room-1', communityId: 'workspace-1' },
+      params: { channelId: '00000002-1111-4111-8111-111111111111', communityId: '00000001-1111-4111-8111-111111111111' },
     });
     expect(phoneOperation).not.toHaveBeenCalled();
   });
 
   it('renders Room rows with the # channel mark while stored names stay unmarked', async () => {
-    roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
+    roomViews.chats.mockResolvedValue(chatListView([room('00000002-1111-4111-8111-111111111111', 'atlas', 1)]));
 
     const renderer = await render();
     const openRow = renderer.root.findByProps({
@@ -856,7 +857,7 @@ describe('Workspace Settings authority', () => {
 
     expect(phoneOperation).toHaveBeenCalledWith(
       'deleteWorkspace',
-      { workspaceId: 'workspace-1' },
+      { workspaceId: '00000001-1111-4111-8111-111111111111' },
       { timeoutMs: expect.any(Number) },
     );
     expect(navigation.replace).toHaveBeenCalledWith('/beeline/channels');
@@ -964,7 +965,7 @@ describe('public Workspace join links', () => {
     const token = `inv_${'d'.repeat(64)}`;
     phoneOperation.mockResolvedValueOnce({ token, expiresAt: 0 });
     const renderer = await render();
-    expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1' });
+    expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: '00000001-1111-4111-8111-111111111111' });
     const copy = renderer.root.findByProps({ testID: 'workspace-public-join-copy' });
     expect([copy.props.title, copy.props.description, copy.props.action])
       .toEqual(['Public join link', 'Anyone with the link can join', 'Copy']);
@@ -987,7 +988,7 @@ describe('public Workspace join links', () => {
     const token = `inv_${'e'.repeat(64)}`;
     phoneOperation.mockResolvedValueOnce({ token, expiresAt: 0 });
     renderer = await render();
-    expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1' });
+    expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: '00000001-1111-4111-8111-111111111111' });
     await act(async () => renderer.root.findByProps({ testID: 'workspace-public-join-copy' }).props.onPress());
     expect(clipboard.setStringAsync).toHaveBeenCalledWith(`https://usebeeline.app/join/${token}`);
     await act(async () => renderer.unmount());

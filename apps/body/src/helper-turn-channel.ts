@@ -15,10 +15,8 @@ const same = (a: HelperTurnOwnershipSource | undefined, b: HelperTurnOwnershipSo
 /** Existing AgentChannel controls only. Source identity comes from registration;
  * unknown requests retain their command/generation and never downgrade to HTTP. */
 export class HelperTurnChannel {
-  selected = false;
   private source?: HelperTurnOwnershipSource;
   private readonly owned = new Map<string, Owned>();
-  private readonly legacy = new Set<string>();
   private readonly pending = new Map<string, {
     operation: HelperTurnOperation; resolve: (value: unknown) => void; reject: (error: Error) => void;
     deadline: ReturnType<typeof setTimeout>;
@@ -26,12 +24,10 @@ export class HelperTurnChannel {
   constructor(private readonly send: (frame: Record<string, unknown>) => boolean, private readonly open: () => boolean) {}
 
   scope(): HelperTurnOwnershipSource | undefined { return this.open() ? this.source : undefined; }
-  negotiate(source: HelperTurnOwnershipSource | undefined, advertised = source !== undefined): void {
-    if (advertised) this.selected = true;
+  negotiate(source: HelperTurnOwnershipSource | undefined, _advertised = source !== undefined): void {
     if (source && source.connectionId.length <= 128 && source.connectionId.length > 0 &&
         Number.isSafeInteger(source.epoch) && source.epoch > 0) {
       if (!same(this.source, source)) this.suspend();
-      this.selected = true;
       this.source = source;
     } else this.suspend();
   }
@@ -49,11 +45,6 @@ export class HelperTurnChannel {
     }
     this.pending.clear();
   }
-  isLegacy(turn: Turn): boolean { return this.legacy.has(key(turn)); }
-  claimedLegacy(turn: Turn): void {
-    if (this.legacy.size >= 8_192) throw new Error('Legacy turn ownership capacity');
-    this.legacy.add(key(turn));
-  }
   claimed(turn: Turn, source: HelperTurnOwnershipSource, onLost: () => void): void {
     const id = key(turn), previous = this.owned.get(id);
     if (previous && !same(previous.source, source)) throw new Error('Turn generation cannot change owner');
@@ -66,18 +57,15 @@ export class HelperTurnChannel {
     const owned: Owned = previous ?? { source, active: true, lost: false };
     owned.onLost = onLost;
     this.owned.set(id, owned);
-    this.legacy.delete(id);
     if (!same(source, this.scope())) this.lose(owned);
   }
   release(turn: Turn): void {
-    this.legacy.delete(key(turn));
     const owned = this.owned.get(key(turn));
     if (owned) { owned.active = false; owned.onLost = undefined; }
   }
-  runOwned<T>(turn: Turn, task: () => Promise<T>, onLost?: () => void): Promise<T> | undefined {
+  runOwned<T>(turn: Turn, task: () => Promise<T>, onLost?: () => void): Promise<T> {
     const owned = this.owned.get(key(turn));
-    if (!owned) return !this.selected || this.isLegacy(turn)
-      ? undefined : Promise.reject(new Error('Turn ownership was not admitted'));
+    if (!owned) return Promise.reject(new Error('Turn ownership was not admitted'));
     if (!owned.active) return Promise.reject(new Error('Turn generation already ended'));
     owned.onLost ??= onLost;
     if (owned.lost || !same(owned.source, this.scope())) {

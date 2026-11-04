@@ -1,16 +1,11 @@
-import { isUsageCellOnlyChange } from './agent-usage-cell';
-import { appErrorCopy } from '@/buzz/app-error-copy';
 import { isWorkbenchCompanyIndex } from './workbench-company-validation';
-import { useCallback, useEffect } from 'react';
-import { useFocusEffect } from 'expo-router';
+import { useCallback } from 'react';
 import type { SurfaceCacheAddress } from '@beeline/buzz-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { getWorkbenchSource } from './workbench-source';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
-import { useFreshWorkbenchSurface, useSharedSurface } from './use-shared-surface';
+import { useFreshWorkbenchSurface } from './use-shared-surface';
 import type { ConnectionDetailView, WorkbenchView } from './workbench';
-import { sharedLiveConnection } from '@/sync/transport/live-connection';
-import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import {useRoutedResource} from './router-resource';
 import {useSurfaceFocus} from './use-surface-focus';
 
@@ -35,102 +30,13 @@ export const isWorkbenchView = (value: unknown): value is WorkbenchView => {
       Number.isFinite(client.connectedAt) && (client.lastUsedAt === null || Number.isFinite(client.lastUsedAt)) &&
       (client.logo === undefined || (typeof client.logo === 'string' && client.logo.length <= 400000 && client.logo.startsWith('data:image/png;base64,'))))));
 };
-const heldWorkbench = new Map<string, { address: SurfaceCacheAddress; scope: WorkbenchScope; consumers: number; dirty: boolean }>();
-/** Workbench views the server answered this session; a stored view outside it may be stale. */
-const answeredWorkbench = new Set<string>();
-const ownerErrors = new Map<string, Set<(error: string | null) => void>>();
-let workbenchStop: (() => void) | undefined;
-let workbenchStarting = false;
-subscribeClientReset(() => {
-  heldWorkbench.clear(); answeredWorkbench.clear(); workbenchStop?.(); workbenchStop = undefined;
-  workbenchStarting = false;
-});
-/** A server answer written outside this module, such as the one inside the Settings read. */
-export function noteWorkbenchAnswer(address: SurfaceCacheAddress) {
-  answeredWorkbench.add(JSON.stringify(address));
-}
-function reportOwnerError(key: string, error: string | null) {
-  for (const listener of ownerErrors.get(key) ?? []) listener(error);
-}
-export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: WorkbenchScope) {
-  const key = JSON.stringify(address);
-  const owner = heldWorkbench.get(key) ?? { address, scope, consumers: 0, dirty: false };
-  owner.consumers++;
-  heldWorkbench.set(key, owner);
-  const release = () => {
-    owner.consumers = Math.max(0, owner.consumers - 1);
-    if (!owner.consumers) owner.dirty = true;
-    for (const [heldKey, held] of heldWorkbench) {
-      if (heldWorkbench.size <= 8) break;
-      if (held.consumers) continue;
-      heldWorkbench.delete(heldKey);
-      answeredWorkbench.delete(heldKey);
-    }
-  };
-  // Focus reconciles changes missed while hidden, including a disconnected socket.
-  if (!answeredWorkbench.has(key) || owner.dirty) {
-    answeredWorkbench.add(key);
-    owner.dirty = false;
-    void mobileSurfaceCache.read(address, isWorkbenchView).then((stored) => {
-      if (!owner.consumers) { owner.dirty = true; return; }
-      if (stored) return mobileSurfaceCache.fetch(address, isWorkbenchView, () => readWorkbenchWithTimeout(scope))
-        .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, appErrorCopy(cause)));
-    });
-  }
-  if (workbenchStop || workbenchStarting) return release;
-  workbenchStarting = true;
-  const generation = clientResetGeneration();
-  void sharedLiveConnection().register([], (event) => {
-    if (!('monolithLive' in event)) return;
-    const live = event.monolithLive;
-    if (isUsageCellOnlyChange(live)) return;
-    if ((live.type === 'resource-change' &&
-        ['workbench', 'install', 'agent'].includes(live.resource)) ||
-        (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')) {
-      for (const [key, owner] of heldWorkbench) {
-        owner.dirty = true;
-        if (!owner.consumers) continue;
-        owner.dirty = false;
-        void mobileSurfaceCache.fetch(owner.address, isWorkbenchView,
-          () => readWorkbenchWithTimeout(owner.scope))
-          .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, appErrorCopy(cause)));
-      }
-    }
-  }).then((stop) => { if (generation !== clientResetGeneration()) stop();
-    else { workbenchStarting = false; workbenchStop = stop; } },
-    () => { if (generation === clientResetGeneration()) workbenchStarting = false; });
-  return release;
-}
-
 export function useSharedWorkbench(scope: WorkbenchScope | null) {
-  const focused=useSurfaceFocus();
-  const routed=useRoutedResource('owner-workbench',scope?{family:'owner-workbench'}:undefined,focused&&!!scope,isWorkbenchView);
-  const request = useCallback(() => readWorkbenchWithTimeout(scope!),
-    [scope?.workspaceId, scope?.viewerId]);
-  const resource = useSharedSurface('/workspace/:id/workbench', scope ?? undefined,
-    isWorkbenchView, request, Boolean(scope?.viewerId)&&focused&&routed.mode==='legacy');
-  useFocusEffect(useCallback(() => {
-    if (routed.mode==='legacy'&&scope && resource.address) return holdSharedWorkbench(resource.address, scope);
-  }, [routed.mode,resource.address, scope?.workspaceId, scope?.viewerId]));
-  useEffect(() => {
-    if (!resource.address) return;
-    const key = JSON.stringify(resource.address);
-    const listeners = ownerErrors.get(key) ?? new Set<(error: string | null) => void>();
-    listeners.add(resource.setError);
-    ownerErrors.set(key, listeners);
-    return () => { listeners.delete(resource.setError); if (!listeners.size) ownerErrors.delete(key); };
-  }, [resource.address, resource.setError]);
-  // A mutation must not reuse a read that started before its commit.
-  const refreshAfterChange = useCallback(async () => {
-    if(routed.mode!=='legacy')return null;
-    if (!resource.address) return null;
-    const next = await readWorkbenchWithTimeout(scope!);
-    await mobileSurfaceCache.write(resource.address, next, isWorkbenchView);
-    return next;
-  }, [routed.mode,resource.address, scope?.workspaceId, scope?.viewerId]);
-  if(routed.mode==='legacy')return { ...resource, refreshAfterChange };
-  return {...resource,value:routed.value,
-    loading:routed.loading,error:routed.error,refresh:async()=>{routed.retry();return null;},refreshAfterChange};
+  const focused = useSurfaceFocus();
+  const routed = useRoutedResource('owner-workbench', scope ? { family: 'owner-workbench' } : undefined,
+    focused && !!scope, isWorkbenchView);
+  return { value: routed.value, loading: routed.loading, error: routed.error,
+    refresh: async () => { routed.retry(); return null; },
+    refreshAfterChange: async () => null };
 }
 
 const isConnectionDetail = (value: unknown): value is ConnectionDetailView => Boolean(
@@ -160,8 +66,6 @@ export async function readSharedWorkbench(scope: WorkbenchScope, options?: {
   if (!identity) throw new Error('Identity unavailable');
   const address = surfaceAddress(relay, identity.publicKey, '/workspace/:id/workbench', scope);
   // Imperative reads do not keep a hidden screen subscribed.
-  const owner = heldWorkbench.get(JSON.stringify(address));
-  if (owner) owner.dirty = true;
   if (!options?.refresh) {
     const held = await mobileSurfaceCache.read(address, isWorkbenchView);
     if (held) return held;

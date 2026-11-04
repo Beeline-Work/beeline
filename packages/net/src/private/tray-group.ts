@@ -22,7 +22,7 @@ export function checkTraySnapshot(cell:GroupCell,snapshot:LaneSnapshot,reader:st
   if(cell.request.family==='needs-you-tray'&&!validateSavedWindow((snapshot.value as {saved?:unknown})?.saved,workspace))throw new Error('Invalid Tray Saved head');
 }
 /** Closed Tray value algebra only. All lifecycle, receipts, interval retention
- * and commit proposals are owned by ProjectionGroups for both cohorts. */
+ * and commit proposals are owned by ProjectionGroups for each supported wire version. */
 export function foldTray<T extends GroupCell>(members:readonly CellSnapshot<T>[],batch:LaneBatch,priorClock:string,workspace:string,
   valid:(request:LaneRequest,value:unknown)=>boolean):CellSnapshot<T>[]{
     const marker=batch.facts.find(fact=>fact.payload.kind==='tray-classification')!;

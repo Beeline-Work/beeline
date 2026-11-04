@@ -19,7 +19,7 @@ type Proof = typeof window & {
     failClear: boolean;
     countDelayMs: number;
   };
-  __emit: (live: unknown) => void;
+  __routerFixture: {pushServer(input: unknown): Promise<void>};
   __switchViewer: (viewer: string) => void;
 };
 const proof = window as Proof;
@@ -102,9 +102,9 @@ async function run() {
   proof.__server.items.alice = [...alice.filter((item) => item.messageId !== 'item-a3'),
     { ...alice[0]!, messageId: 'item-a4', roomId: 'room-4', text: 'Missed while offline?' }];
   record('5 deltas lost, before the gap signal', { badge: 2, list: 2 });
-  proof.__emit({ type: 'invalidate', reason: 'needs-you-gap' });
+  await Promise.all(['needs-you-count','needs-you-tray'].map(family=>proof.__routerFixture.pushServer({family,workspaceId:'workspace-1'})));
   await pause(500);
-  record('6 needs-you-gap reload', { badge: 2, list: 2 });
+  record('6 canonical catch-up', { badge: 2, list: 2 });
 
   setTrayOpen(false);
   await pause();
@@ -112,7 +112,7 @@ async function run() {
   proof.__server.countDelayMs = 400;
   for (const reason of ['postgres:memberships', 'reconnect', 'needs-you-gap']) {
     const observed = new Set<number>();
-    proof.__emit({ type: 'invalidate', reason });
+    void proof.__routerFixture.pushServer({family:'needs-you-count',workspaceId:'workspace-1'});
     for (let tick = 0; tick < 10; tick += 1) {
       await pause(50);
       observed.add(badge());

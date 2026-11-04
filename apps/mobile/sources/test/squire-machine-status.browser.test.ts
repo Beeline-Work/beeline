@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '@/test-fixtures/router-proof';
 import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -35,7 +35,7 @@ describe('Reproduction squire-machine-status-2 in Connectors', () => {
         }, 3100);`);
       const result = await runBrowserProof({ entry, mobile, width, budgetMs: 4000,
         shims: {
-          ...webProofShims(mobile), ...legacyRouterProofShims(),
+          ...webProofShims(mobile), ...canonicalRouterProofShims(['owner-workbench']),
           '@expo/vector-icons': 'export const Ionicons = () => null;',
           'expo-router': `import { useEffect } from 'react';
             export const useLocalSearchParams = () => globalThis.__params;

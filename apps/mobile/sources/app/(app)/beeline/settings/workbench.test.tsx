@@ -1,6 +1,6 @@
-// This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+// UI fixtures provide complete DTOs at the canonical lane boundary.
+vi.mock('@/buzz/router-owner', async () => (await import('@/test/canonical-resource-fixture')).createCanonicalWorkbenchFixture());
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'router', holdRouterConnection: () => () => {} }));
 import * as React from 'react';
 import * as WebBrowser from 'expo-web-browser';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -163,7 +163,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 afterEach(() => vi.useRealTimers());
 
-beforeEach(() => {
+beforeEach(async () => {
+  (await import('@/buzz/router-owner') as any).resetFixture();
   vi.clearAllMocks();
   resetClientState();
   mobileSurfaceCache.clear();
@@ -225,15 +226,15 @@ describe('Connectors server-owned settings screen', () => {
     await act(async () => suggestion.props.onPress());
     expect(navigation.push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ connectorId: 'trusty-squire' }) }));
   });
-  it('re-reads after a committed live change without client regrouping', async () => {
+  it('paints a canonical live change without client regrouping or another read', async () => {
     const source = new MockWorkbenchSource();
     let value = companyWorkbench([companyRow('vercel', 'Vercel')]);
     const read = vi.spyOn(source, 'readWorkbench').mockImplementation(async () => value);
     setWorkbenchSource(source);
     const renderer = await render();
     value = companyWorkbench([companyRow('sentry', 'Sentry', 'attention')]);
-    await act(async () => { for (const listener of liveListeners) listener({ monolithLive: { type: 'resource-change', roomId: '', resource: 'workbench' } }); await Promise.resolve(); });
-    expect(read.mock.calls.length).toBeGreaterThan(1);
+    await act(async () => (await import('@/buzz/router-owner') as any).publish({ family: 'owner-workbench' }, value));
+    expect(read).toHaveBeenCalledTimes(1);
     expect(renderer.root.findByType('SettingsRow').props.title).toBe('Sentry');
   });
   it('refreshes a stale stored server answer once per session', async () => {

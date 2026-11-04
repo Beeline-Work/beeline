@@ -336,7 +336,7 @@ export class MonolithRigTransport {
 
   async publishPreparedMessage(event: NostrEvent): Promise<AgentMessageWriteResult> {
     const { operation, input } = preparedMessageOperation(event);
-    // Legacy no-envelope clients preserve prepared message replay semantics.
+    // The durable outbox and prepared message ID already own replay and deduplication.
     return (await this.operation(operation, input, { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS })) as AgentMessageWriteResult;
   }
 

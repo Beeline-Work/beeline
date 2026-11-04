@@ -5,14 +5,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
-const protocol = vi.hoisted(() => ({ mode: 'legacy' as 'legacy' | 'router' | 'pending', acquire: vi.fn(), release: vi.fn() }));
+const protocol = vi.hoisted(() => ({ mode: 'legacy' as 'legacy' | 'router' | 'pending',count:2,listeners:new Set<()=>void>(),acquire:vi.fn() }));
 vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => protocol.mode, holdRouterConnection: () => () => {} }));
 vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
 vi.mock('@/buzz/router-owner', () => ({
   routerFamilyMode: () => protocol.mode,
-  acquireRouterLane: () => { protocol.acquire(); return { current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: protocol.release,
-    subscribe: () => () => {}, refreshVisibility: () => {} }; },
-  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
+  acquireRouterLane: (request:unknown,_visible:()=>boolean,listener:()=>void) => {
+    protocol.acquire(request);protocol.listeners.add(listener);return {release:()=>protocol.listeners.delete(listener)};
+  },
+  routerLaneSnapshot: () => ({ state: 'LIVE', value: {count:protocol.count}, cut: null, error: null }),
   retryRouterLane: () => {}, routerOwnerListPanel: () => {},
 }));
 
@@ -55,20 +56,7 @@ vi.mock('@/sync/transport/live-connection', () => ({
 }));
 
 import { resetClientState } from '@/sync/client-reset';
-import {
-  useNeedsYouCount,
-  applyNeedsYouLiveDelta,
-  applyBookmarkDelta,
-  forgetTray,
-  loadSavedList,
-  loadNeedsYouList,
-  removeNeedsYou,
-  seedNeedsYouList,
-  updateSavedList,
-  useTrayList,
-  loadTrayList,
-  subscribeTrayGap,
-} from './needs-you-store';
+import { useNeedsYouCount } from './needs-you-store';
 
 function need(messageId: string, roomId = 'room-1') {
   return { messageId, workspaceId: 'ws', roomId, roomName: 'Room', text: 'ask', createdAt: 1 };
@@ -82,7 +70,7 @@ async function settle() {
 }
 
 beforeEach(() => {
-  protocol.mode = 'legacy'; protocol.acquire.mockClear(); protocol.release.mockClear();
+  protocol.mode = 'legacy';protocol.count=2;protocol.listeners.clear();protocol.acquire.mockClear();
   resetClientState();
   fixture.viewer = 'viewer-a';
   fixture.disk.clear();
@@ -92,220 +80,26 @@ beforeEach(() => {
   fixture.holdRegistration = false;
 });
 
-describe('Tray family ownership gate', () => {
-  it('the count attaches only its negotiated owner and releases the router lane on pending', async () => {
-    protocol.mode = 'pending';
-    let count = -1;
-    function Badge() { count = useNeedsYouCount('ws', 'surface'); return null; }
-    let tree: ReturnType<typeof create>;
-    await act(async () => { tree = create(React.createElement(Badge)); await settle(); });
-    expect(count).toBe(0); expect(protocol.acquire).not.toHaveBeenCalled(); expect(fixture.reads).toHaveLength(0);
-    protocol.mode = 'router';
-    await act(async () => { tree.update(React.createElement(Badge)); await settle(); });
-    expect(protocol.acquire).toHaveBeenCalledTimes(1); expect(fixture.reads).toHaveLength(0);
-    protocol.mode = 'pending';
-    await act(async () => { tree.update(React.createElement(Badge)); await settle(); });
-    expect(protocol.release).toHaveBeenCalledTimes(1); expect(fixture.reads).toHaveLength(0);
-    protocol.mode = 'legacy';
-    await act(async () => { tree.update(React.createElement(Badge)); await settle(); });
-    expect(protocol.acquire).toHaveBeenCalledTimes(1); expect(fixture.reads).toHaveLength(1);
-    await act(async () => { fixture.reads[0]!([]); await settle(); tree.unmount(); });
+describe('Room-list badges consume only the canonical count lane',()=>{
+  it('two badges share count facts without attaching the full Tray reader',async()=>{
+    protocol.mode='router';const values:number[]=[];
+    function Badge(){const count=useNeedsYouCount('ws','surface');values.push(count);return React.createElement('badge',{count});}
+    let root!:ReturnType<typeof create>;
+    await act(async()=>{root=create(React.createElement(React.Fragment,null,React.createElement(Badge),React.createElement(Badge)));});
+    expect(values).toEqual([2,2]);
+    expect(protocol.acquire.mock.calls.every(([request])=>request.family==='needs-you-count')).toBe(true);
+    expect(fixture.reads).toHaveLength(0);expect(fixture.registrations).toHaveLength(0);
+    await act(async()=>{protocol.count=1;for(const listener of protocol.listeners)listener();});
+    expect(values.slice(-2)).toEqual([1,1]);expect(values).not.toContain(0);
+    expect(fixture.reads).toHaveLength(0);
+    await act(async()=>root.unmount());expect(protocol.listeners.size).toBe(0);
   });
-
-  it.each(['pending', 'router'] as const)('does not attach the legacy Tray store or read while %s', async mode => {
-    protocol.mode = mode;
-    let current: ReturnType<typeof useTrayList> | undefined;
-    function Probe() { current = useTrayList('ws', false); return null; }
-    let tree: ReturnType<typeof create>;
-    await act(async () => { tree = create(React.createElement(Probe)); await settle(); });
-    expect(current).toEqual({ needs: null, bookmarks: [], next: undefined });
-    expect(fixture.registrations).toHaveLength(0);
-    await loadTrayList('ws', true); await loadSavedList('ws', 'cursor');
-    expect(fixture.reads).toHaveLength(0); expect(fixture.savedReads).toHaveLength(0);
-    expect(fixture.registrations).toHaveLength(0);
-    const gap = vi.fn(); const stop = subscribeTrayGap('ws', gap); stop();
-    expect(gap).not.toHaveBeenCalled();
-    act(() => { tree.unmount(); });
+  it.each(['pending','legacy'] as const)('does not fall back to the full Tray list in %s mode',async mode=>{
+    protocol.mode=mode;let count=-1;
+    function Badge(){count=useNeedsYouCount('ws','surface');return null;}
+    let root!:ReturnType<typeof create>;
+    await act(async()=>{root=create(React.createElement(Badge));await settle();});
+    expect(count).toBe(0);expect(fixture.reads).toHaveLength(0);expect(fixture.registrations).toHaveLength(0);
+    await act(async()=>root.unmount());
   });
-});
-
-describe('Needs-you disk copy', () => {
-  it('keeps the read and its later changes on disk for the viewer that read it', async () => {
-    const read = loadNeedsYouList('ws');
-    await settle();
-    fixture.reads[0]!([need('ask-1')]);
-    await read;
-    applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-2', count: 2, items: [need('ask-2', 'room-2')] as never });
-    await settle();
-    expect(fixture.disk.get(diskA)).toMatchObject({ items: [{ messageId: 'ask-1' }, { messageId: 'ask-2' }] });
-  });
-
-  it('never stores the previous account\'s read under the new account', async () => {
-    const read = loadNeedsYouList('ws');
-    await settle();
-    fixture.viewer = 'viewer-b';
-    resetClientState();
-    fixture.reads[0]!([need('ask-a')]);
-    await read;
-    await settle();
-    expect(fixture.disk.has(diskA)).toBe(false);
-    expect(fixture.disk.has(diskB)).toBe(false);
-  });
-
-  it('paints the disk copy only while nothing changed during the disk read', async () => {
-    fixture.disk.set(diskA, { items: [need('ask-old')] });
-    await expect(seedNeedsYouList('ws')).resolves.toBe(true);
-    const read = loadNeedsYouList('ws');
-    await settle();
-    fixture.reads[0]!([need('ask-new')]);
-    await expect(read).resolves.toMatchObject([{ messageId: 'ask-new' }]);
-    // A later disk read does not replace the server's list.
-    await seedNeedsYouList('ws');
-    expect(fixture.disk.get(diskA)).toMatchObject({ items: [{ messageId: 'ask-new' }] });
-  });
-
-  it('removes the disk copy when membership is lost and does not write it back', async () => {
-    const read = loadNeedsYouList('ws');
-    await settle();
-    fixture.reads[0]!([need('ask-1')]);
-    await read;
-    await settle();
-    expect(fixture.disk.has(diskA)).toBe(true);
-    forgetTray('ws');
-    applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-2', count: 1, items: [need('ask-2', 'room-2')] as never });
-    await settle();
-    expect(fixture.disk.has(diskA)).toBe(false);
-  });
-});
-
-describe('Needs-you read replay', () => {
-  it('keeps a pending clear after a later Room delta during the read', async () => {
-    const read = loadNeedsYouList('ws');
-    await settle();
-    removeNeedsYou('ws', ['ask-1']);
-    applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-1', count: 2,
-      items: [need('ask-1'), need('ask-2')] as never });
-    fixture.reads[0]!([need('ask-1')]);
-    const items = await read;
-    expect(items.map((item) => item.messageId)).toEqual(['ask-2']);
-  });
-});
-
-describe('one tray clock and registration', () => {
-  it('replays a Saved delta that arrived during its read', async () => {
-    const read = loadSavedList('ws');
-    await settle();
-    applyBookmarkDelta({ workspaceId: 'ws', messageId: 'saved-2', bookmark: {
-      messageId: 'saved-2', workspaceId: 'ws', roomId: 'room-1', roomName: 'Room',
-      bookmarkedAt: 2, available: true, messageCreatedAt: 1,
-    } as never });
-    fixture.savedReads[0]!([]);
-    await read;
-    await settle();
-    expect(fixture.disk.get('https://server.test|viewer-a|/workspace/:id/bookmarks|ws'))
-      .toMatchObject({ bookmarks: [{ messageId: 'saved-2' }] });
-  });
-
-  it('keeps a pending Saved removal through a stale server read', async () => {
-    const saved = { messageId: 'saved-1', workspaceId: 'ws', roomId: 'room-1',
-      roomName: 'Room', bookmarkedAt: 2, available: true, messageCreatedAt: 1 };
-    const first = loadSavedList('ws');
-    await settle();
-    fixture.savedReads[0]!([saved]);
-    await first;
-    const edit = updateSavedList('ws', (items) => items.filter((item) => item.messageId !== 'saved-1'));
-    const stale = loadSavedList('ws');
-    await settle();
-    fixture.savedReads[1]!([saved]);
-    await stale;
-    expect(fixture.disk.get('https://server.test|viewer-a|/workspace/:id/bookmarks|ws'))
-      .toMatchObject({ bookmarks: [] });
-    const staleAgain = loadSavedList('ws');
-    await settle();
-    fixture.savedReads[2]!([saved]);
-    await staleAgain;
-    expect(fixture.disk.get('https://server.test|viewer-a|/workspace/:id/bookmarks|ws'))
-      .toMatchObject({ bookmarks: [] });
-    edit.settle();
-  });
-
-  it('does not revive either section from reads completed after membership loss', async () => {
-    const needs = loadNeedsYouList('ws');
-    const saved = loadSavedList('ws');
-    await settle();
-    forgetTray('ws');
-    fixture.reads[0]!([need('ask-old')]);
-    fixture.savedReads[0]!([{ messageId: 'saved-old' }]);
-    await Promise.all([needs, saved]);
-    await settle();
-    expect(fixture.disk.has(diskA)).toBe(false);
-    expect(fixture.disk.has('https://server.test|viewer-a|/workspace/:id/bookmarks|ws')).toBe(false);
-  });
-
-  it('re-registers after reset while the old registration is still starting', async () => {
-    fixture.holdRegistration = true;
-    await seedNeedsYouList('ws');
-    expect(fixture.registrations).toHaveLength(1);
-    fixture.viewer = 'viewer-b';
-    fixture.disk.set(diskB, { items: [] });
-    resetClientState();
-    await seedNeedsYouList('ws');
-    expect(fixture.registrations).toHaveLength(2);
-    fixture.registrations[0]!.receive({ monolithLive: { type: 'needs-you-delta',
-      workspaceId: 'ws', sourceRoomId: 'room-1', count: 1, items: [need('old-account')] } });
-    await settle();
-    expect(fixture.disk.get(diskB)).toEqual({ items: [] });
-    fixture.registrations[0]!.finish();
-    await settle();
-    expect(fixture.registrations[0]!.stop).toHaveBeenCalledOnce();
-    fixture.registrations[1]!.finish();
-    await settle();
-    expect(fixture.registrations[1]!.stop).not.toHaveBeenCalled();
-    fixture.registrations[1]!.receive({ monolithLive: { type: 'needs-you-delta',
-      workspaceId: 'ws', sourceRoomId: 'room-1', count: 1, items: [need('new-account')] } });
-    await settle();
-    expect(fixture.disk.get(diskB)).toMatchObject({ items: [{ messageId: 'new-account' }] });
-  });
-});
-
-(globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-
-describe('Reproduction NEEDS-YOU-FLICKER: Room-list badge invalidations', () => {
-  it.each(['postgres:memberships', 'reconnect', 'needs-you-gap'].flatMap((reason) =>
-    [true, false].map((mounted) => ({ reason, mounted }))))(
-    'keeps every badge render nonzero during a held $reason refetch (mounted=$mounted)', async ({ reason, mounted }) => {
-      const first = loadNeedsYouList('ws');
-      await settle();
-      fixture.reads[0]!([need('ask-1'), need('ask-2')]);
-      await first;
-      if (!mounted) {
-        fixture.registrations[0]!.receive({ monolithLive: { type: 'invalidate', reason } });
-        await settle();
-        expect(fixture.reads).toHaveLength(1);
-      }
-      const values: number[] = [];
-      function Badge() {
-        const count = useNeedsYouCount('ws', 'surface');
-        values.push(count);
-        return React.createElement('badge', { count });
-      }
-      let root: ReturnType<typeof create>;
-      await act(async () => { root = create(React.createElement(React.Fragment, null,
-        React.createElement(Badge), React.createElement(Badge))); });
-      try {
-        await act(async () => {
-          if (mounted) fixture.registrations[0]!.receive({ monolithLive: { type: 'invalidate', reason } });
-          await settle();
-        });
-        expect(fixture.reads).toHaveLength(2);
-        const heldValues = [...values];
-        await act(async () => { fixture.reads[1]!([need('ask-new')]); await settle(); });
-        expect(heldValues.every((value) => value === 2)).toBe(true);
-        expect(values.at(-1)).toBe(1);
-        expect(values).not.toContain(0);
-        await act(async () => { forgetTray('ws'); await settle(); });
-        expect(values.at(-1)).toBe(0);
-        expect(fixture.reads).toHaveLength(2);
-      } finally { await act(async () => root!.unmount()); }
-    });
 });

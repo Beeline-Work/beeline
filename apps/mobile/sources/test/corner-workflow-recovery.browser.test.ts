@@ -2,9 +2,9 @@ import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
-import { legacyRouterProofShims } from '../test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '../test-fixtures/router-proof';
 
-it('CR1: failed workflow fetch leaves a clean objective and recovers on an event', async () => {
+it('CR1: failed workflow fetch leaves a clean objective and recovers on a canonical push', async () => {
   const mobile = process.cwd();
   const directory = await createBrowserProofDirectory("workflow-recovery-");
   const evidence = process.env.CORNER_WORKFLOW_EVIDENCE;
@@ -33,15 +33,15 @@ it('CR1: failed workflow fetch leaves a clean objective and recovers on an event
           retry: !!panel()?.querySelector('[role="button"]'), alert: !!panel()?.querySelector('[role="alert"]'), reads: window.reads };
         document.querySelector('[data-testid="corner-objective-line-brief"]')?.click();
       }, 400);
-      setTimeout(() => window.listener({ monolithLive: { roomId: 'corner', type: 'subscribed' } }), 500);
-      setTimeout(() => { if (location.search) return; window.recover = true; window.listener({ monolithLive: { roomId: 'corner', type: 'subscribed', resumed: false } }); }, 1200);
+      setTimeout(() => window.__routerFixture.park({family:'room-workflows',roomId:'corner'},'offline'), 500);
+      setTimeout(() => { if (location.search) return; window.__routerFixture.publish({family:'room-workflows',roomId:'corner'}, {workflows:[{roomId:'corner',runId:'run',status:'live',workflowSlug:'review',state:'approve',updatedAt:1}]}); }, 1200);
       setTimeout(() => {
         document.getElementById('result').textContent = JSON.stringify({ failed: window.failed,
           reads: window.reads, recovered: panel()?.textContent.includes('Review · Approve'), briefOpened: window.briefOpened });
       }, 1600);`);
     for (const theme of ['obsidian', 'bone']) {
       for (const width of [390, 1180]) {
-        const shims = { ...webProofShims(mobile), ...legacyRouterProofShims() };
+        const shims = { ...webProofShims(mobile), ...canonicalRouterProofShims(['room-workflows']) };
         shims['react-native-unistyles'] = shims['react-native-unistyles']!.replace('beelineThemes.obsidian', `beelineThemes.${theme}`);
         const options = { entry, mobile, width, head, budgetMs: 1900,
           
@@ -60,7 +60,7 @@ it('CR1: failed workflow fetch leaves a clean objective and recovers on an event
         expect(result.status, result.stderr).toBe(0);
         expect(JSON.parse(result.result)).toEqual({ failed: {
           text: 'Keep workflow status quiet when the connection hiccupsRead brief', retry: false, alert: false, reads: 1,
-        }, reads: 2, recovered: true, briefOpened: true });
+        }, reads: 1, recovered: true, briefOpened: true });
       }
     }
   } finally { await rm(directory, { recursive: true, force: true }); }

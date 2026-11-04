@@ -2,12 +2,12 @@ import { helperUsageCodecs } from '@beeline/net/helper-codecs';
 import { helperActivationCodecs } from '@beeline/net/helper-activation-codecs';
 import { helperTurnCodecs } from '@beeline/net/helper-turn-codecs';
 import { HELPER_TURN_MAX_FRAME_BYTES } from '@beeline/api-contract/helper-turn-ownership';
-import { turnOwnershipEnabled } from './turn-ownership.js';
-import { helperActivationEnabled,fenceCommandActivationEnqueue } from './helper-activation.js';
+
+import { fenceCommandActivationEnqueue } from './helper-activation.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { HELPER_OVERLAY_MAX_FRAME_BYTES } from '@beeline/api-contract/helper-overlay';
-import { helperUsageEnabled } from './helper-usage.js';
-import { applyHelperOverlay, helperOverlayEnabled, subscribeHelperOverlayDemand } from './helper-overlay.js';
+
+import { applyHelperOverlay, subscribeHelperOverlayDemand } from './helper-overlay.js';
 import { changesDaemonInbox } from './daemon-inbox-cause.js';
 import { randomUUID } from 'node:crypto';
 import type { VaultSaveRelay } from './vault-save-relay.js';
@@ -138,9 +138,9 @@ export class DaemonAgentSession {
 
   readonly #overlayReleases=new Map<string,()=>void>();
   usageOwnerId:string|undefined;
-  get usageAccountV1():boolean{return this.presence.usageAccountV1===true&&helperUsageEnabled()&&this.usageOwnerId!==undefined&&this.epoch!==undefined;}
-  get overlayV1():boolean{return this.presence.overlayV1===true&&helperOverlayEnabled()&&this.epoch!==undefined;}
-  get activationContextV1():boolean{return this.presence.activationContextV1===true&&helperActivationEnabled()&&this.epoch!==undefined;}
+  get usageAccountV1():boolean{return this.presence.usageAccountV1===true&&this.usageOwnerId!==undefined&&this.epoch!==undefined;}
+  get overlayV1():boolean{return this.presence.overlayV1===true&&this.epoch!==undefined;}
+  get activationContextV1():boolean{return this.presence.activationContextV1===true&&this.epoch!==undefined;}
   get turnOwnershipV1():boolean{return this.#turnOwnershipAccepted&&Number.isSafeInteger(this.epoch)&&Number(this.epoch)>0;}
   get ownedModelV1():boolean{return this.turnOwnershipV1&&this.#ownedModelCapability!==undefined&&this.deps.daemon.ownedModelReady();}
 
@@ -282,13 +282,13 @@ export class DaemonAgentSession {
         return;
       }
       this.epoch = epoch;
-      const requested = this.presence.turnOwnershipV1 === true && turnOwnershipEnabled();
+      const requested = this.presence.turnOwnershipV1 === true;
       const model = requested ? await this.deps.daemon.negotiateOwnedModel(this.agentId,
         { connectionId: this.connectionId, epoch }, this.presence.ownedModelV1 === true) : undefined;
       this.#ownedModelCapability = model?.capability;
       this.#turnOwnershipAccepted = requested && (model?.freeAgent !== true || model.capability !== undefined);
       this.deps.registry.settled(this);
-      if(this.presence.usageAccountV1&&helperUsageEnabled())this.usageOwnerId=(await this.deps.database.query<{owner_id:string|null}>(
+      if(this.presence.usageAccountV1)this.usageOwnerId=(await this.deps.database.query<{owner_id:string|null}>(
         'SELECT owner_id FROM agents WHERE agent_id=$1',[this.agentId])).rows[0]?.owner_id??undefined;
     } catch (error) {
       console.error('[presence] connection claim failed', error instanceof Error ? error.message : String(error));

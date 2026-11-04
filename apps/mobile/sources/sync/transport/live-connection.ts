@@ -2,7 +2,6 @@ import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import type { MediaMetadata, MediaLink } from '@beeline/api-contract/phone';
 import { parseRouterCommandIdentity, type RouterCommandIdentity, type RouterCommandReceipt } from '@beeline/api-contract/router-command';
 import type { RouterFamily, RouterSnapshotInput, RouterSnapshot, RouterPushFrame, RouterUnavailable, RouterAuthorityFence, RouterCapabilities } from '@beeline/api-contract/router-protocol';
-import { RouteObservation } from './route-observation';
 import { PHONE_SOCKET_MAX_IN_FLIGHT, PHONE_SOCKET_MAX_FRAME_BYTES, type PhoneOperationMap } from '@beeline/api-contract/phone';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { MonolithRequestTimeoutError, MonolithSessionChangedError } from '@/auth/monolith-session';
@@ -171,7 +170,6 @@ export class LiveConnection {
   private readonly connectedListeners = new Set<() => void>();
   private readonly disconnectedListeners = new Set<() => void>();
   private readonly requests = new Map<string, PendingRequest>();
-  private readonly routeObservation = new RouteObservation();
   private nextRequestId = 0;
   private socket: WebSocket | undefined;
   /** True only after this socket's `onopen`. A failed handshake stays false. */
@@ -293,7 +291,6 @@ export class LiveConnection {
       if (utf8ToBytes(frame).length > PHONE_SOCKET_MAX_FRAME_BYTES)
         return Promise.reject(new PhoneSocketError('invalid_request', 'Phone request is too large', false));
     } catch (error) { return Promise.reject(error); }
-    this.routeObservation.observe(op, args);
     const generation = this.generation;
     return new Promise((resolve, reject) => {
       const finish = () => {
@@ -418,10 +415,8 @@ export class LiveConnection {
   }
 
   /** Local shadow evidence only; intentionally separate from telemetry diagnostics. */
-  routeDiagnostics() { return this.routeObservation.snapshot(); }
 
   dispose(): void {
-    this.routeObservation.clear();
     this.dropConnection();
     for (const registration of this.registrations.values()) registration.closed = true;
     this.registrations.clear();
@@ -611,7 +606,6 @@ export class LiveConnection {
    * again as the new identity.
    */
   private handleIdentityChanged(): void {
-    this.routeObservation.clear();
     this.dropConnection();
     this.refcount.clear();
     for (const registration of this.registrations.values()) {

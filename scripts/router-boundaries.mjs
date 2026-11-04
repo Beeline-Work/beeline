@@ -99,7 +99,6 @@ const OWNER_CALLERS = {
   routerOwnerNavigation: ['buzz/use-router-navigation.ts'],
   routerOwnerListPanel: ['components/SidebarNavigator.tsx'],
   readRouterToolPage: ['components/buzz/ActivityTimeline.tsx'],
-  admitRouterPreparedMessage: ['buzz/command-message-gesture.ts'],
   admitRouterScheduledStop: ['buzz/router-scheduled-work.ts'],
   acquireRouterSavedContinuation: ['buzz/router-tray.ts'],
   acquireRouterRosterQuery: ['buzz/use-routed-roster.ts'],
@@ -263,6 +262,15 @@ export function inspectSource(file, text) {
       }
     }
   }
+  // Physical browser/voice adapters keep their existing scoped sessions. Every
+  // Beeline control/data socket belongs to the phone or machine front door.
+  const socketOwners = new Set([
+    'apps/mobile/sources/sync/transport/live-connection.ts',
+    'apps/body/src/machine-link.ts', 'apps/body/src/browser-share.ts',
+    'apps/server/src/computer-session.ts', 'apps/server/src/voice-providers.ts',
+  ]);
+  if (hits.some(hit => ['websocket', 'xhr', 'event-source'].includes(hit.kind)) && !socketOwners.has(file))
+    errors.push(`${file}: socket lifecycle belongs to the existing front door or its scoped media adapter`);
   if (inCore && hits.length) errors.push(`${file}: router core must be transport-free (${hits.map(x => x.kind).join(', ')})`);
   return { hits, errors };
 }
@@ -299,8 +307,7 @@ export function scanRouterTree(root) {
     errors.push(...result.errors);
     for (const hit of result.hits) {
       const id = `${file}::${hit.kind}`;
-      const entry = sites.get(id) ?? { id, file, kind: hit.kind, count: 0, compatibility: 'legacy-only',
-        phase: file.startsWith('apps/body/') ? 'M5' : file.startsWith('apps/server/') ? 'M2' : 'M4' };
+      const entry = sites.get(id) ?? { id, file, kind: hit.kind, count: 0 };
       entry.count++;
       sites.set(id, entry);
     }
@@ -340,12 +347,11 @@ export function judgeInventory(sites, inventory, baseline) {
   const errors = [];
   const entries = new Map();
   for (const entry of inventory.entries ?? []) {
-    if (entries.has(entry.id)) errors.push(`duplicate migration entry: ${entry.id}`);
+    if (entries.has(entry.id)) errors.push(`duplicate network entry: ${entry.id}`);
     entries.set(entry.id, entry);
-    if (entry.id !== `${entry.file}::${entry.kind}` || !Number.isInteger(entry.count) || entry.count < 1 ||
-      entry.compatibility !== 'legacy-only' || !['M2', 'M4', 'M5'].includes(entry.phase))
-      errors.push(`invalid migration entry: ${entry.id}`);
-    if (sites.get(entry.id)?.count !== entry.count) errors.push(`stale migration count: ${entry.id}`);
+    if (entry.id !== `${entry.file}::${entry.kind}` || !Number.isInteger(entry.count) || entry.count < 1)
+      errors.push(`invalid network entry: ${entry.id}`);
+    if (sites.get(entry.id)?.count !== entry.count) errors.push(`stale network count: ${entry.id}`);
   }
   for (const [id, site] of sites) if (!entries.has(id)) errors.push(`undeclared network boundary: ${id} (${site.count})`);
   if (baseline) {

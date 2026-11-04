@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '@/test-fixtures/router-proof';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
@@ -60,7 +60,7 @@ function workflowRunShims(
 ): Record<string, string> {
   const view = detail as { contract: unknown; run: unknown };
   return {
-    ...webProofShims(mobile), ...legacyRouterProofShims(),
+    ...webProofShims(mobile), ...canonicalRouterProofShims(['room-workflows']),
     '@/sync/transport/live-connection': `const draftRows = new Map();
     export const sharedLiveConnection = () => ({
       liveDrafts: () => draftRows,

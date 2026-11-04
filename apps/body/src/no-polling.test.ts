@@ -122,7 +122,6 @@ describe('no timer-driven helper server reads', () => {
       'session-scheduler.ts', // idle session sweep (local)
       'shared-asset-capacity.ts', // private recovery reserve check (local disk)
       'systemd.ts', // local watchdog feed
-      'turn-receipt-heartbeat.ts', // receipt heartbeat while a turn runs
     ]);
   });
 

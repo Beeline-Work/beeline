@@ -5,7 +5,7 @@ const agent='a'.repeat(64),owner='b'.repeat(64);
 const sessions:DaemonAgentSession[]=[];
 afterEach(()=>{for(const session of sessions.splice(0))session.close();vi.unstubAllEnvs();});
 async function fixture(){
-  vi.stubEnv('BEELINE_NETWORK_ROUTER_V1','1');const execute=vi.fn(async()=>({id:'ok',createdAt:1}));
+  const execute=vi.fn(async()=>({id:'ok',createdAt:1}));
   const replies:Record<string,unknown>[]=[],waiters:Array<(reply:Record<string,unknown>)=>void>=[];
   const database={query:vi.fn(async()=>({rows:[{owner_id:owner}],rowCount:1}))};
   const deps={database,live:new LiveHub(),daemon:{execute},registry:new DaemonConnectionRegistry(),

@@ -6,7 +6,6 @@ import type WebSocket from 'ws';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { DaemonApiClient, type DaemonWebSocketFactory } from './daemon-api-client.js';
-import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { CommandExecutionContext } from './server-command-intake.js';
 
 const agent = 'a'.repeat(64), source = { connectionId: 'synthetic-turn-owner', epoch: 1 };
@@ -52,7 +51,9 @@ describe('actual owned turn machine adapter', () => {
     await api.execute('claimAgentCommand', { roomId: turn.roomId, commandId: 'command', generationId: turn.generationId });
     const lost = vi.fn(); api.noteOwnedTurnClaim(turn, source, lost);
     const task = deferred<string>();
-    const running = withTurnReceiptHeartbeat(api, turn, () => task.promise, vi.fn(), lost);
+    const running = api.runWithTurnOwnership(turn,
+() => task.promise,
+lost);
     const applicationFrames = socket.frames.length;
     for (let i = 0; i < 20; i += 1) { await vi.advanceTimersByTimeAsync(30_000); socket.emit('ping'); }
     expect(socket.frames).toHaveLength(applicationFrames);
@@ -65,19 +66,14 @@ describe('actual owned turn machine adapter', () => {
     expect(fetcher).not.toHaveBeenCalled();
   });
 
-  it('retains the explicit legacy claim adapter without treating negotiation alone as a successful owned claim', async () => {
-    vi.useFakeTimers();
+  it('refuses an unsupported server without HTTP claim or freshness fallback', async () => {
     const { api, socket, fetcher } = fixture(false);
-    await api.execute('claimAgentCommand', { roomId: 'room', commandId: 'legacy', generationId: 'generation' });
-    api.noteLegacyTurnClaim(turn);
-    const task = deferred<void>();
-    const running = withTurnReceiptHeartbeat(api, turn, () => task.promise, vi.fn());
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(fetcher).toHaveBeenCalledTimes(2); // Explicit old claim plus its compatibility receipt.
+    await expect(api.execute('claimAgentCommand', { roomId: 'room', commandId: 'unsupported', generationId: 'generation' }))
+      .rejects.toThrow('UNKNOWN');
+    expect(fetcher).not.toHaveBeenCalled();
     expect(socket.frames.some(frame => frame.type === 'turn-operation')).toBe(false);
-    task.resolve(); await running;
     const selected = fixture(); const neverStarted = vi.fn(async () => undefined);
-    await expect(withTurnReceiptHeartbeat(selected.api, turn, neverStarted, vi.fn())).rejects.toThrow('not admitted');
+    await expect(selected.api.runWithTurnOwnership(turn, neverStarted)).rejects.toThrow('not admitted');
     expect(neverStarted).not.toHaveBeenCalled(); expect(selected.fetcher).not.toHaveBeenCalled();
   });
 
@@ -85,7 +81,9 @@ describe('actual owned turn machine adapter', () => {
     const { api, fetcher } = fixture();
     await api.execute('claimAgentCommand', { roomId: 'room', commandId: 'command', generationId: 'generation' });
     const lost = vi.fn(); api.noteOwnedTurnClaim(turn, source, lost);
-    const task = deferred<void>(), running = withTurnReceiptHeartbeat(api, turn, () => task.promise, vi.fn(), lost);
+    const task = deferred<void>(), running = api.runWithTurnOwnership(turn,
+() => task.promise,
+lost);
     api.closeLive(); api.closeLive(); expect(lost).toHaveBeenCalledTimes(1);
     await expect(api.execute('postAgentTurnReceipt', { ...turn, status: 'complete' })).rejects.toThrow('UNKNOWN');
     expect(fetcher).not.toHaveBeenCalled(); task.resolve(); await running;

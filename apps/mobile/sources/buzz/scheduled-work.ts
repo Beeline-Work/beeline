@@ -1,21 +1,12 @@
-import { useCallback, useEffect, useMemo } from 'react';
-import { AppState } from 'react-native';
+import { useMemo, useState } from 'react';
 import { useSurfaceFocus } from './use-surface-focus';
 import {
   cornerShortTitle,
   type RoomScheduleView,
   type RoomSubscriptionView,
-  type ScheduledWorkResult,
 } from '@beeline/api-contract/phone';
-import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { scheduleCadenceLabel } from '@/buzz/schedule-cadence';
 import { workflowDisplayName } from '@/buzz/workflow-graph';
-import { monolithPhoneOperation, MonolithPhoneOperationError } from '@/sync/transport/monolith-operation';
-import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
-import { useSharedSurface } from './use-shared-surface';
-import { sharedLiveConnection } from '@/sync/transport/live-connection';
-import { subscribeClientReset } from '@/sync/client-reset';
-import type { SurfaceCacheAddress } from '@beeline/buzz-client';
 import {useRoutedScheduledWork,prepareScheduledStop} from './router-scheduled-work';
 
 
@@ -167,121 +158,26 @@ export type ScheduledWork = {
   subscriptions: readonly RoomSubscriptionView[];
 };
 
-const isScheduledWork = (value: unknown): value is ScheduledWorkResult => {
-  if (!value || typeof value !== 'object') return false;
-  const view = value as Partial<ScheduledWorkResult>;
-  return (view.roomName === null || typeof view.roomName === 'string') &&
-    (view.isDirectMessage === undefined || typeof view.isDirectMessage === 'boolean') &&
-    Array.isArray(view.agentNames) && Array.isArray(view.schedules) &&
-    Array.isArray(view.subscriptions);
-};
-const scheduledWorkAddress = (relay: string, pubkey: string, roomId: string) =>
-  surfaceAddress(relay, pubkey, '/room/:id/scheduled-work', { roomId });
-const watched = new Map<string, { address: SurfaceCacheAddress; refs: number; stop?: () => void }>();
-subscribeClientReset(() => {
-  for (const entry of watched.values()) entry.stop?.();
-  watched.clear();
-});
-function holdScheduledWork(roomId: string, address: SurfaceCacheAddress): { first: boolean; release(): void } {
-  const key = JSON.stringify([address.relayOrigin, address.viewerPubkey, roomId]);
-  const held = watched.get(key);
-  const entry = held ?? { address, refs: 0, stop: undefined as (() => void) | undefined };
-  entry.refs += 1;
-  if (!held) {
-    watched.set(key, entry);
-    void sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
-      if (watched.get(key) !== entry || !entry.refs || AppState.currentState !== 'active' || !('monolithLive' in event)) return;
-      const live = event.monolithLive;
-      if (live.type === 'invalidate' &&
-          ((live.roomId === roomId &&
-            ['postgres:agent_schedules', 'postgres:agent_subscriptions', 'postgres:memberships'].includes(live.reason)) ||
-           (live.roomId === '' && live.reason === 'reconnect')))
-        void mobileSurfaceCache.fetch(address, isScheduledWork,
-          () => monolithPhoneOperation('readScheduledWork', { roomId })).catch(() => undefined);
-    }).then(stop => { if (watched.get(key) === entry) entry.stop = stop; else stop(); },
-      () => { if (watched.get(key) === entry) watched.delete(key); });
-  }
-  let released = false;
-  return { first: !held, release: () => {
-    if (released) return;
-    released = true;
-    entry.refs -= 1;
-    if (!entry.refs && watched.get(key) === entry) { watched.delete(key); entry.stop?.(); }
-  } };
-}
-
-/**
- * One server projection and one registry entry shared by the list and details.
- * Only focused consumers retain a live observer. A new visible residency
- * makes one covering read; retained/unmounted screens make no requests.
- */
-export function useScheduledWork(roomId: string | undefined,legacyTargetValid=true) {
+/** Observe the one router-owned Scheduled Work projection. */
+export function useScheduledWork(roomId: string | undefined, _targetValid = true) {
   const focused = useSurfaceFocus();
-  const routed=useRoutedScheduledWork(roomId,focused);
-  const request = useCallback(() => monolithPhoneOperation('readScheduledWork', { roomId: roomId! }), [roomId]);
-  const { value, address, loading, error, setError, refresh } = useSharedSurface(
-    '/room/:id/scheduled-work', roomId&&legacyTargetValid ? { roomId } : undefined, isScheduledWork, request, Boolean(roomId)&&legacyTargetValid&&focused&&routed.mode==='legacy', true);
-  useEffect(() => {
-    if (routed.mode!=='legacy'||!focused || !roomId || !address) return;
-    const owner = holdScheduledWork(roomId, address);
-    if (owner.first && AppState.currentState === 'active') void refresh();
-    return owner.release;
-  }, [address, roomId, focused, refresh,routed.mode]);
-  const selected=routed.mode==='legacy'?value:routed.value;
-  const work = useMemo<ScheduledWork | null>(() => selected && ({roomName:selected.roomName,isDirectMessage:selected.isDirectMessage===true,
-    agentNames:new Map(selected.agentNames),schedules:selected.schedules,subscriptions:selected.subscriptions}),[selected]);
-  return { work,routed:routed.mode==='router',loading:routed.mode==='legacy'?loading&&!value:routed.loading,
-    error:roomId&&(routed.mode!=='legacy'||legacyTargetValid)?(routed.mode==='legacy'?error:routed.error):'Schedules target is missing.',
-    setError,retry:()=>{if(routed.mode==='router')routed.retry();else if(routed.mode==='legacy'&&focused&&AppState.currentState==='active')void refresh();} };
+  const routed = useRoutedScheduledWork(roomId, focused);
+  const [error, setError] = useState<string | null>(null);
+  const work = useMemo<ScheduledWork | null>(() => routed.value && ({
+    roomName: routed.value.roomName, isDirectMessage: routed.value.isDirectMessage === true,
+    agentNames: new Map(routed.value.agentNames), schedules: routed.value.schedules,
+    subscriptions: routed.value.subscriptions,
+  }), [routed.value]);
+  return { work, routed: routed.mode === 'router', loading: routed.loading,
+    error: roomId ? error ?? routed.error : 'Schedules target is missing.',
+    setError, retry: () => { setError(null); routed.retry(); } };
 }
 
-/**
- * How a stop ended: `stopped`, or `already-stopped` when the server no longer
- * has that row, so what the person wanted is already true. Only the server's
- * own not-found answer for the row counts; a missing Room still fails.
- */
-export type StopOutcome = 'stopped' | 'already-stopped';
-
-async function stopRow(
-  operation: () => Promise<unknown>,
-  notFound: 'schedule not found' | 'subscription not found',
-): Promise<StopOutcome> {
-  try {
-    await operation();
-    return 'stopped';
-  } catch (error) {
-    if (error instanceof MonolithPhoneOperationError && error.status === 404 && error.code === notFound)
-      return 'already-stopped';
-    throw error;
-  }
+/** Durable stop commands express the desired state and are idempotent on the server. */
+export async function stopSchedule(roomId: string, scheduleId: string): Promise<void> {
+  await prepareScheduledStop('deleteRoomSchedule', roomId, scheduleId);
 }
 
-export async function stopSchedule(roomId: string, scheduleId: string): Promise<StopOutcome> {
-  const command=prepareScheduledStop('deleteRoomSchedule',roomId,scheduleId);
-  if(command){await command;return 'stopped';}
-  const outcome = await stopRow(
-    () => monolithPhoneOperation('deleteRoomSchedule', { roomId, scheduleId }), 'schedule not found');
-  const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
-  if (!identity) return outcome;
-  const address = scheduledWorkAddress(relay, identity.publicKey, roomId);
-  const current = mobileSurfaceCache.peek(address, isScheduledWork);
-  if (current) await mobileSurfaceCache.write(address, {
-    ...current, schedules: current.schedules.filter((item) => item.id !== scheduleId),
-  }, isScheduledWork);
-  return outcome;
-}
-
-export async function stopSubscription(roomId: string, subscriptionId: string): Promise<StopOutcome> {
-  const command=prepareScheduledStop('deleteRoomSubscription',roomId,subscriptionId);
-  if(command){await command;return 'stopped';}
-  const outcome = await stopRow(
-    () => monolithPhoneOperation('deleteRoomSubscription', { roomId, subscriptionId }), 'subscription not found');
-  const [identity, relay] = await Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]);
-  if (!identity) return outcome;
-  const address = scheduledWorkAddress(relay, identity.publicKey, roomId);
-  const current = mobileSurfaceCache.peek(address, isScheduledWork);
-  if (current) await mobileSurfaceCache.write(address, {
-    ...current, subscriptions: current.subscriptions.filter((item) => item.id !== subscriptionId),
-  }, isScheduledWork);
-  return outcome;
+export async function stopSubscription(roomId: string, subscriptionId: string): Promise<void> {
+  await prepareScheduledStop('deleteRoomSubscription', roomId, subscriptionId);
 }

@@ -6,8 +6,7 @@ import { CornerAccessDatabase } from './corner-access-database.js';
 import type { SqlDatabase } from './database.js';
 import { isCommandOwnerLive } from './turn-ownership.js';
 
-/** Protocol negotiation preserves old helper setup reads during the shared rollout. */
-export { networkRouterEnabled as helperActivationEnabled } from './network-router-rollout.js';
+/** Protocol negotiation preserves setup compatibility for installed helpers. */
 export type ActivationValues=Pick<CommandActivationSnapshot,'configuration'|'roster'|'grants'|'repository'|'corner'>;
 export type ActivationReader=(db:SqlDatabase,command:CommandRow,isCorner:boolean)=>Promise<ActivationValues>;
 

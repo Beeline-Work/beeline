@@ -86,9 +86,9 @@ describe('independent canonical usage cells', () => {
     expect(usageCellSnapshot(agentId)).toEqual({ mode: 'pending', cell: null }); expect(read).toHaveBeenCalledTimes(1);
     installed(read, 3, true); await drain(); expect(read).toHaveBeenCalledTimes(2);
   });
-  it('legacy selection has one active path and retains compatibility hints', async () => {
+  it('capability absence parks usage until a capable connection arrives', async () => {
     const read = vi.fn(async () => fact(1)); installed(read, 1, false); setUsageCellProfile(agentId); await drain();
-    expect(read).not.toHaveBeenCalled(); expect(usageCellSnapshot(agentId).mode).toBe('legacy');
+    expect(read).not.toHaveBeenCalled(); expect(usageCellSnapshot(agentId).mode).toBe('pending');
     const usage = { type: 'resource-change', resource: 'agent', resourceId: agentId, usageOnly: true };
     expect(isUsageCellOnlyChange(usage)).toBe(false); installed(read, 2, true); await drain();
     expect(isUsageCellOnlyChange(usage)).toBe(true);

@@ -24,11 +24,9 @@ export function startMessageOutbox(): Promise<void> {
     };
     const commands = activateCommandOwner(getBuzzRuntimeConfig().monolithUrl, identity.publicKey, commandConnection);
     configureMessageOutboxDelivery({
-      send: async (event, cause) => {
+      send: async event => {
         try {
-          const result = commands.find(event.id)
-            ? await commands.deliver(event.id, cause)
-            : await transport.publishPreparedMessage(event);
+          const result = await transport.publishPreparedMessage(event);
           markDictatedMessageAccepted(event.id);
           return result;
         }

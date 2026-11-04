@@ -299,3 +299,12 @@ test('a new reference to a host already approved as a link is listed as a link, 
   asException.entries.find((entry) => entry.file === 'packages/api-contract/src/system-message-catalog.ts').fate = 'exception';
   assert.ok(judgeChannels(sites, asException, base).some((error) => /system-message-catalog\.ts::origin:github\.com is new/.test(error)));
 });
+
+test('listing a new socket as an exception cannot bypass the one front door', () => {
+  for (const kind of ['websocket', 'xhr', 'event-source']) {
+    const file = 'apps/mobile/sources/feature-connection.ts';
+    const entry = { file, kind, count: 1, fate: 'exception', why: 'An invented feature exception' };
+    const sites = new Map([[`${file}::${kind}`, { file, kind, lines: [1] }]]);
+    assert.ok(judgeChannels(sites, { entries: [entry] }).some(error => error.includes('connection lifecycle')));
+  }
+});

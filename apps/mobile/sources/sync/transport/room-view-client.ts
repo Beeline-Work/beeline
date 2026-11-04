@@ -158,11 +158,6 @@ class MonolithRoomViewClient {
   }
 }
 
-/** A push can begin this read before the Room identity/relay setup completes. */
-export function readPushedMonolithRoom(roomId: string): Promise<RoomView> {
-  return new MonolithRoomViewClient().room(roomId);
-}
-
 /** A Room or history response keeps its read-start clock for live identity and viewer state. */
 function stamped<T>(read: Promise<T>, stamp = currentSurfaceStamp()): Promise<T> {
   return read.then((value) => {

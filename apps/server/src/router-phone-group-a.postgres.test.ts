@@ -210,7 +210,7 @@ describe.skipIf(!url)('P3/P5 Group A phone read closure', () => {
     const cells = await Promise.all(agents.map(agent => readAgentUsageCell(fixture.a, agent, reader)));
     // Enable only this isolated process's fixture negotiation; the deployment
     // default and repository capability stay disabled.
-    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', '1');
+
     try {
       const left = await fixture.server(fixture.a, [], true), right = await fixture.server(fixture.b, [], true);
       expect(left.frames.at(-1)).toMatchObject({ usageCellV1: true });

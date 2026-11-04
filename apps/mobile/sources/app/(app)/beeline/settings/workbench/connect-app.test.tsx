@@ -1,6 +1,6 @@
-// This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+// UI fixtures provide complete DTOs at the canonical lane boundary.
+vi.mock('@/buzz/router-owner', async () => (await import('@/test/canonical-resource-fixture')).createCanonicalWorkbenchFixture());
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'router', holdRouterConnection: () => () => {} }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
@@ -128,7 +128,8 @@ afterAll(() => vi.restoreAllMocks());
 afterEach(() => vi.clearAllMocks());
 
 let source: MockWorkbenchSource;
-beforeEach(() => {
+beforeEach(async () => {
+  (await import('@/buzz/router-owner') as any).resetFixture();
   mobileSurfaceCache.clear();
   source = new MockWorkbenchSource();
   source.readWorkbench = async () => companyWorkbench([], [companyOption('resend', 'Resend')]);
@@ -193,7 +194,7 @@ it('MCP-DISCOVERY-1: a committed discovery refreshes the current query without c
   await search(renderer, 'fly');
   expect(renderer.root.findAllByType('SettingsRow').map((row: any) => row.props.title)).toEqual(['Vercel']);
   discovered = true;
-  await act(async () => { discoveryLive.listener?.({ monolithLive: { type: 'resource-change', roomId: '', resource: 'workbench' } }); await Promise.resolve(); });
+  await act(async () => (await import('@/buzz/router-owner') as any).publish({ family: 'owner-workbench' }, await source.readWorkbench({workspaceId: 'workspace-1', viewerId: 'human-dani'})));
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
   expect(renderer.root.findAllByType('SettingsRow').map((row: any) => row.props.title)).toEqual(['Vercel', 'Fly.io']);
   const count = calls.mock.calls.length;

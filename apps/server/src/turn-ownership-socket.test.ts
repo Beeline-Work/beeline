@@ -68,8 +68,7 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     await listener?.stop(); await listening; listener = undefined; listening = undefined;
     await Promise.all(releases.splice(0)); await presence?.stop(); vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllEnvs(); await closeDatabase?.();
   });
-  async function connect(enabled = true, identity = agent) {
-    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', enabled ? '1' : '0');
+  async function connect(identity = agent) {
     if (!server) {
       server = createBeelineServer({ database: db, live, daemon, connectionPresence: presence, liveHeartbeatMs: 30_000,
         connectionWork,
@@ -165,7 +164,7 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     const client = await connect();
     client.send({ type: 'subscribe', roomId: room, inbox: false });
     expect(await client.next(frame => frame.type === 'subscribed')).toMatchObject({ capabilities: { inboxSnapshot: false } });
-    const other = await connect(true, peer);
+    const other = await connect(peer);
     other.send({ type: 'subscribe', roomId: room, inbox: false }); await other.next(frame => frame.type === 'subscribed');
     const execute = vi.spyOn(daemon, 'execute');
     for (let i = 0; i < 1000; i++) live.publish({ type: 'invalidate', roomId: room,
@@ -198,15 +197,9 @@ describe.each(['pglite', ...(postgresUrl ? ['postgres'] : [])])('P12 actual sele
     expect(queries.mock.calls.slice(before)).toEqual([]);
   });
 
-  it('keeps the disabled cohort legacy and refuses closed-shape/source forgery before dispatch', async () => {
-    const legacy = await connect(false), execute = vi.spyOn(daemon, 'execute');
-    expect(legacy.registered.capabilities).not.toHaveProperty('turnOwnershipV1');
-    legacy.send({ type: 'turn-operation', operation: 'claimAgentCommand', requestId: 'unsupported',
-      input: { roomId: room, commandId: command.id, generationId: 'generation' } });
-    legacy.send({ type: 'subscribe', roomId: room });
-    await legacy.next(frame => frame.type === 'subscribed');
-    expect(execute.mock.calls.some(([name]) => name === 'claimAgentCommand')).toBe(false);
-    const selected = await connect(true); execute.mockClear();
+  it('refuses closed-shape and source forgery before dispatch', async () => {
+    const execute = vi.spyOn(daemon, 'execute');
+    const selected = await connect(); execute.mockClear();
     selected.send({ type: 'turn-operation', operation: 'claimAgentCommand', requestId: 'forged',
       input: { roomId: room, commandId: command.id, generationId: 'generation', source: { connectionId: 'forged', epoch: 1 } } });
     expect(await selected.next(frame => frame.requestId === 'forged')).toHaveProperty('error');

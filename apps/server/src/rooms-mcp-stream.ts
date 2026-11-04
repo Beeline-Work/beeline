@@ -7,9 +7,6 @@ import { subscribeCommandCompletion } from './command-completion.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import type { WorkTimers } from './background-work.js';
 
-/** Separate rollout floor; enable only after real-PG source/authority proofs. */
-export { networkRouterEnabled as memberStreamEnabled } from './network-router-rollout.js';
-
 /** Compact causes share the existing commit-ordered journal and listener. No
  * personalized DTO or client cache inventory is recorded in the journal. */
 export const MCP_MEMBER_STREAM_SCHEMA = `

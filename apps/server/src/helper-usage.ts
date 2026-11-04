@@ -7,7 +7,6 @@ import { applyAccountRead, accountRecord, agentUsageColumns, projectAgentUsage, 
 import type { SqlDatabase } from './database.js';
 import { subscribeCommandCompletion } from './command-completion.js';
 
-export { networkRouterEnabled as helperUsageEnabled } from './network-router-rollout.js';
 export const HELPER_USAGE_SCHEMA=`
 ${committedCommandNotificationSchema()}
 ALTER TABLE usage_accounts ADD COLUMN IF NOT EXISTS source_revision text;

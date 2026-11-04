@@ -1,65 +1,67 @@
 import * as React from 'react';
+import { readFileSync } from 'node:fs';
 import { SurfaceRegistry } from '@/buzz/surface-registry';
 import { roomTransitionWork } from '@/buzz/room-transition-work';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
-import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, create as createRenderer, type ReactTestRenderer } from 'react-test-renderer';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatListView, NostrEvent, RoomView } from '@beeline/buzz-client';
 import { SurfaceResponseCache, visibleLiveOverlays } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
-import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { loadBuzzIdentity, loadBuzzViewerPubkey } from '@/auth/buzz-identity-storage';
 
+import { resetClientState } from '@/sync/client-reset';
+
+const mountedTrees = new Set<ReactTestRenderer>();
+function create(...args: Parameters<typeof createRenderer>): ReactTestRenderer {
+  const tree = createRenderer(...args); mountedTrees.add(tree); return tree;
+}
+afterEach(async () => {
+  await act(async () => { for (const tree of mountedTrees) tree.unmount(); });
+  mountedTrees.clear();
+});
+
 type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 
-// These fixtures exercise the negotiated legacy compatibility path. The actual
-// router owner/negotiation path has independent integration coverage.
-vi.mock('@/sync/transport/live-connection', () => ({
-  reconnectNow: () => {
-    controls.explicitReconnects += 1;
-  },
-}));
-vi.mock('@/buzz/router-family', () => ({
-  useRouterFamily: () => controls.routerMode,
-  holdRouterConnection: () => () => {},
-}));
-vi.mock('@/buzz/router-chat-list', () => ({
-  acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy(),
-}));
+// Canonical lane fixtures exercise the Room UI. Wire sequencing and persistence
+// are covered by the router owner integration suites.
+vi.mock('@/sync/transport/live-connection', () => ({ reconnectNow: () => { controls.explicitReconnects += 1; } }));
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => controls.routerMode, holdRouterConnection: () => () => {} }));
+vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
 vi.mock('@/buzz/router-owner', () => ({
-  routerFamilyMode: () => 'legacy',
-  acquireRouterLane: () => ({
-    current: () => ({
-      state: controls.routerValue ? 'LIVE' : 'ABSENT',
-      value: controls.routerValue,
-      cut: null,
-      error: null,
-    }),
-    release: () => {},
-    subscribe: () => () => {},
-    refreshVisibility: () => {},
-  }),
+  routerFamilyMode: () => controls.routerMode,
+  acquireRouterLane: (_input: unknown, _visible: unknown, changed: () => void) => {
+    const lane = {
+      fetch: async () => { controls.roomReads++; return controls.roomResponse!; },
+      apply: (view: RoomView) => { controls.routerValue = view; changed(); },
+      error: (error: unknown) => { controls.routerError = String(error); changed(); },
+      disposed: false, expectations: [], forceCalls: 0, followUpCalls: 0,
+      refreshNowCalls: 0, signalCalls: 0, started: true,
+    };
+    controls.lanes.push(lane);
+    return { current: () => ({ state: controls.routerError ? 'PARKED' : (controls.routerValue ?? controls.initialView) ? 'LIVE' : 'ABSENT',
+      value: controls.routerValue ?? controls.initialView, cut: null, error: controls.routerError }), release: () => { lane.disposed = true; },
+      subscribe: () => () => {}, refreshVisibility: () => {} };
+  },
   routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: () => {},
-  routerOwnerListPanel: () => {},
+  retryRouterLane: () => { controls.retryCalls++; }, routerOwnerListPanel: () => {},
 }));
 
 const controls = vi.hoisted(() => ({
-  routeChannelId: 'room-a',
-  scopeProbe: null as null | ((session: any, overlay: any, history: any) => void),
   focused: true,
-  routerMode: 'legacy' as 'legacy' | 'pending' | 'router',
+  routerMode: 'router' as 'pending' | 'router',
   routerValue: null as RoomView | null,
+  routerError: null as string | null,
   navigationListeners: new Map<string, Set<() => void>>(),
   interactionTasks: new Set<() => void>(),
   focusListeners: new Set<() => void>(),
   surfaceRenders: 0,
-  cached: null as RoomView | null,
+  initialView: null as RoomView | null,
   hotViewer: false,
   cacheListeners: new Set<() => void>(),
   viewerRead: null as Promise<string | null> | null,
-  schedulers: [] as Array<{
+  lanes: [] as Array<{
     fetch(): Promise<RoomView>;
     apply(view: RoomView): void;
     error(error: unknown): void;
@@ -92,6 +94,7 @@ const controls = vi.hoisted(() => ({
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
   traceSetItem: vi.fn(async (_key: string, _value: string) => undefined),
   roomResponse: null as RoomView | null,
+  retryCalls: 0,
   roomReads: 0,
   roomError: null as unknown,
   liveList: null as ChatListView | null,
@@ -144,7 +147,7 @@ vi.mock('react-native-reanimated', () => ({
 
 vi.mock('expo-router', () => ({
   router: { replace: vi.fn() },
-  useLocalSearchParams: () => ({ channelId: controls.routeChannelId }),
+  useLocalSearchParams: () => ({ channelId: '11111111-1111-4111-8111-111111111111' }),
 }));
 const navigation = {
   isFocused: () => controls.focused,
@@ -152,78 +155,30 @@ const navigation = {
     const listeners = controls.navigationListeners.get(name) ?? new Set<() => void>();
     listeners.add(listener);
     controls.navigationListeners.set(name, listeners);
-    return () => {
-      listeners.delete(listener);
-    };
+    return () => { listeners.delete(listener); };
   },
 };
 vi.mock('@/buzz/room-transition-work', async () => {
   const { TransitionWork } = await import('@/buzz/transition-work');
-  return {
-    roomTransitionWork: new TransitionWork((work) => {
-      controls.interactionTasks.add(work);
-      return () => {
-        controls.interactionTasks.delete(work);
-      };
-    }),
-  };
+  return { roomTransitionWork: new TransitionWork((work) => {
+    controls.interactionTasks.add(work);
+    return () => { controls.interactionTasks.delete(work); };
+  }) };
 });
 vi.mock('@react-navigation/native', () => ({
   useNavigation: () => navigation,
-  useIsFocused: () =>
-    React.useSyncExternalStore(
-      (listener) => {
-        controls.focusListeners.add(listener);
-        return () => {
-          controls.focusListeners.delete(listener);
-        };
-      },
-      () => controls.focused,
-    ),
+  useIsFocused: () => React.useSyncExternalStore(
+    (listener) => { controls.focusListeners.add(listener); return () => { controls.focusListeners.delete(listener); }; },
+    () => controls.focused,
+  ),
 }));
 vi.mock('@/components/buzz/RoomOpenTraceOverlay', () => ({ RoomOpenTraceOverlay: () => null }));
-vi.mock('./_chat-surface', async () => {
-  const { useRoomSendFrame } = await import('@/buzz/room-send-frame');
-  const { useRoomMessageStore } = await import('@/buzz/room-message-store');
-  function ScopeProbe({ session, bindingsRef }: any) {
-    const overlay = useRoomSendFrame([], new Set());
-    const history = useRoomMessageStore({
-      roomId: controls.routeChannelId,
-      tailMessages: session.roomSurface?.messages,
-      roomClient: session.roomClient,
-      enabled: true,
-      initialVisibleCount: 30,
-    });
-    bindingsRef.current = {
-      resetTranscript: () => {
-        overlay.clear();
-        history.reset();
-      },
-      restoreOutboxMessages: overlay.append,
-      dismissOptimisticMessage: overlay.remove,
-      observeRoomSurface: () => {},
-    };
-    controls.scopeProbe?.(session, overlay, history);
-    const rows = [
-      ...(session.roomSurface?.messages ?? []),
-      ...history.rows,
-      ...overlay.frame.optimistic,
-    ];
-    return React.createElement(
-      'room-root',
-      null,
-      ...rows.map((row, index) => React.createElement('probe-row', { key: index }, row.text)),
-    );
-  }
-  return {
-    BuzzChatSurface: (props: any) => {
-      controls.surfaceRenders++;
-      return controls.scopeProbe
-        ? React.createElement(ScopeProbe, props)
-        : React.createElement('room-root');
-    },
-  };
-});
+vi.mock('./_chat-surface', () => ({
+  BuzzChatSurface: () => {
+    controls.surfaceRenders++;
+    return React.createElement('room-root');
+  },
+}));
 
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: vi.fn(
@@ -232,10 +187,7 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
       Promise.resolve({ publicKey: 'viewer', secretKey: new Uint8Array(32) }),
   ),
   loadBuzzViewerPubkey: vi.fn(async () => controls.viewerRead ?? controls.viewerPubkey),
-  peekBuzzViewerContext: () =>
-    controls.hotViewer
-      ? { relayUrl: 'https://relay.test', viewerPubkey: controls.viewerPubkey! }
-      : null,
+  peekBuzzViewerContext: () => controls.hotViewer ? { relayUrl: 'https://relay.test', viewerPubkey: controls.viewerPubkey! } : null,
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
 }));
 
@@ -245,29 +197,21 @@ vi.mock('@/buzz/community-storage', () => ({
 }));
 
 vi.mock('@/buzz/surface-storage', () => ({
-  restoreStoredSurface: (path: string) => path.startsWith('/room/') ? controls.cached : null,
   mobileSurfaceCache: {
-    peek: vi.fn((path: string) => (path.startsWith('/room/') ? controls.cached : null)),
-    read: vi.fn(async () => controls.cached),
+    peek: vi.fn((path: string) => path.startsWith('/room/') ? controls.initialView : null),
+    read: vi.fn(async () => controls.initialView),
     write: vi.fn(async () => undefined),
-    publish: vi.fn((_address: unknown, view: RoomView) => {
-      controls.cached = view;
-      return view;
-    }),
+    publish: vi.fn((_address: unknown, view: RoomView) => { controls.initialView = view; return view; }),
     subscribe: vi.fn((_address: unknown, listener: () => void) => {
       controls.cacheListeners.add(listener);
-      return () => {
-        controls.cacheListeners.delete(listener);
-      };
+      return () => { controls.cacheListeners.delete(listener); };
     }),
     persist: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
   },
   surfaceAddress: vi.fn((_relay: string, _viewer: string, path: string) => path),
   createRoomOutbox: vi.fn(() => ({
-    restore: vi.fn(async () => {
-      await controls.outboxRestore;
-    }),
+    restore: vi.fn(async () => { await controls.outboxRestore; }),
     list: vi.fn(() => []),
     subscribe: () => () => undefined,
     state: () => undefined,
@@ -342,84 +286,14 @@ vi.mock('@/sync/transport/room-view-client', async () => {
   };
 });
 
-vi.mock('@beeline/buzz-client', async () => {
-  const actual =
-    await vi.importActual<typeof import('@beeline/buzz-client')>('@beeline/buzz-client');
-  return {
-    ...actual,
-    SurfaceRefreshScheduler: class {
-      private readonly options: {
-        fetch(): Promise<RoomView>;
-        apply(view: RoomView): void;
-        onError(error: unknown): void;
-      };
-      private readonly control: (typeof controls.schedulers)[number];
-      constructor(options: {
-        fetch(): Promise<RoomView>;
-        apply(view: RoomView): void;
-        onError(error: unknown): void;
-      }) {
-        this.options = options;
-        this.control = {
-          fetch: () => this.options.fetch(),
-          apply: (view) => this.options.apply(view),
-          error: (error) => this.options.onError(error),
-          disposed: false,
-          expectations: [],
-          forceCalls: 0,
-          followUpCalls: 0,
-          refreshNowCalls: 0,
-          signalCalls: 0,
-          started: false,
-        };
-        controls.schedulers.push(this.control);
-      }
-      async startAfter(watch: Promise<void>) {
-        await watch;
-        this.control.started = true;
-      }
-      signal() {
-        this.control.signalCalls += 1;
-      }
-      signalUntil(expectation: (view: RoomView) => boolean) {
-        this.control.expectations.push(expectation);
-      }
-      force() {
-        this.control.forceCalls += 1;
-      }
-      followUp() {
-        this.control.followUpCalls += 1;
-      }
-      refreshNow() {
-        this.control.refreshNowCalls += 1;
-      }
-      dispose() {
-        this.control.disposed = true;
-      }
-    },
-  };
-});
-
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
-import {
-  abandonRoomDraw,
-  beginRoomDraw,
-  finishRoomDraw,
-  observeVisibleRoomRows,
-  waitForRoomDraw,
-  roomDrawGeneration,
-} from '@/buzz/room-draw-barrier';
+import { abandonRoomDraw, beginRoomDraw, finishRoomDraw, observeVisibleRoomRows, waitForRoomDraw, roomDrawGeneration } from '@/buzz/room-draw-barrier';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
-import {
-  roomMessageRecord,
-  useRoomMessageRecords,
-  writeRoomBookmark,
-} from '@/buzz/room-message-records';
+import { roomMessageRecord, useRoomMessageRecords, writeRoomBookmark } from '@/buzz/room-message-records';
 import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
 import {
-  LIVE_TRACE_STORAGE_KEY,
   useRoomSurfaceSession,
   type RoomSurfaceSessionBindings,
   type UseRoomSurfaceSessionResult,
@@ -478,16 +352,10 @@ function Harness({
     bindingsRef,
   });
   capture(result);
-  return React.createElement(
-    'room-surface',
-    {
-      roomId: result.roomSurface?.room.id,
-      error: result.hydrationError,
-    },
-    ...(result.roomSurface?.messages ?? []).map((message) =>
-      React.createElement('message-row', { key: message.id }, message.text),
-    ),
-  );
+  return React.createElement('room-surface', {
+    roomId: result.roomSurface?.room.id,
+    error: result.hydrationError,
+  }, ...(result.roomSurface?.messages ?? []).map((message) => React.createElement('message-row', { key: message.id }, message.text)));
 }
 
 function stubFrameScheduler(): {
@@ -541,10 +409,9 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
-  controls.routeChannelId = 'room-a';
-  controls.scopeProbe = null;
-  controls.routerMode = 'legacy';
-  controls.routerValue = null;
+  resetClientState();
+  controls.routerMode = 'router';
+  controls.routerValue = null; controls.routerError = null;
   vi.useRealTimers();
   vi.unstubAllGlobals();
   abandonRoomDraw(roomDrawGeneration());
@@ -554,11 +421,11 @@ beforeEach(() => {
   controls.navigationListeners.clear();
   controls.interactionTasks.clear();
   controls.surfaceRenders = 0;
-  controls.cached = null;
+  controls.initialView = null;
   controls.hotViewer = false;
   controls.cacheListeners.clear();
   controls.viewerRead = null;
-  controls.schedulers.length = 0;
+  controls.lanes.length = 0;
   controls.subscriptions.length = 0;
   controls.transportCount = 0;
   controls.reconnects = 0;
@@ -572,7 +439,7 @@ beforeEach(() => {
   controls.outboxRestore = null;
   controls.viewerPubkey = 'viewer';
   controls.roomResponse = null;
-  controls.roomReads = 0;
+  controls.roomReads = 0; controls.retryCalls = 0;
   controls.roomError = null;
   controls.liveList = null;
   controls.liveListKeys.length = 0;
@@ -585,20 +452,13 @@ it('uses the existing pending Room Retry for one transport attempt without manuf
   controls.routerMode = 'pending';
   let current!: UseRoomSurfaceSessionResult;
   let renderer!: ReactTestRenderer;
-  await act(async () => {
-    renderer = create(
-      React.createElement(Harness, {
-        channelId: 'room-a',
-        capture: (value: UseRoomSurfaceSessionResult) => {
-          current = value;
-        },
-      }),
-    );
-  });
+  await act(async () => { renderer = create(React.createElement(Harness, {
+    channelId: '11111111-1111-4111-8111-111111111111', capture: (value: UseRoomSurfaceSessionResult) => { current = value; },
+  })); });
   await act(async () => current.retryHydration());
   expect(controls.explicitReconnects).toBe(1);
   expect(controls.roomReads).toBe(0);
-  expect(controls.schedulers).toHaveLength(0);
+  expect(controls.lanes).toHaveLength(0);
   await act(async () => renderer.unmount());
 });
 
@@ -609,24 +469,16 @@ it('hides retained negotiated Room data synchronously when connection capability
   let current!: UseRoomSurfaceSessionResult;
   const paints: Array<RoomView | null> = [];
   let renderer: ReactTestRenderer | undefined;
-  const props = {
-    channelId: roomId,
-    capture: (value: UseRoomSurfaceSessionResult) => {
-      current = value;
-      paints.push(value.roomSurface);
-    },
-  };
+  const props = { channelId: roomId, capture: (value: UseRoomSurfaceSessionResult) => { current = value; paints.push(value.roomSurface); } };
   try {
-    await act(async () => {
-      renderer = create(React.createElement(Harness, props));
-    });
+    await act(async () => { renderer = create(React.createElement(Harness, props)); });
     await flushEffects();
     expect(current.roomSurface?.room.id).toBe(roomId);
     paints.length = 0;
     controls.routerMode = 'pending';
     await act(async () => renderer!.update(React.createElement(Harness, props)));
     expect(paints.length).toBeGreaterThan(0);
-    expect(paints.every((value) => value === null)).toBe(true);
+    expect(paints.every(value => value === null)).toBe(true);
     expect(current.liveOverlays).toEqual([]);
     expect(current.heartbeatPresences).toEqual({});
   } finally {
@@ -638,24 +490,20 @@ describe('reopening a dismissed Room', () => {
   function chatList(closed: boolean): ChatListView {
     return {
       workspace: { id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 },
-      chats: [
-        { room: roomView('room-a').room, unread: false, ...(closed ? { closed: true } : {}) },
-      ],
+      chats: [{ room: roomView('11111111-1111-4111-8111-111111111111').room, unread: false, ...(closed ? { closed: true } : {}) }],
       viewer: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
       truncated: false,
-      watchFilters: [{ '#h': ['room-a'] }],
+      watchFilters: [{ '#h': ['11111111-1111-4111-8111-111111111111'] }],
     };
   }
 
   async function openRoom(): Promise<void> {
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
+      renderer = create(React.createElement(Harness, { channelId: '11111111-1111-4111-8111-111111111111', capture: () => undefined }));
     });
     await flushEffects();
-    await act(async () => controls.schedulers[0]!.apply(roomView('room-a')));
+    await act(async () => controls.lanes[0]!.apply(roomView('11111111-1111-4111-8111-111111111111')));
     await flushEffects();
     await act(async () => renderer.unmount());
   }
@@ -666,13 +514,13 @@ describe('reopening a dismissed Room', () => {
     expect(controls.liveListKeys).toEqual([
       { relayUrl: 'https://relay.test', viewerPubkey: 'viewer', workspaceId: 'workspace' },
     ]);
-    expect(controls.reopenChat).toHaveBeenCalledWith('room-a');
+    expect(controls.reopenChat).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111');
   });
 
   it('lets the server decide when no live Room list is held', async () => {
     controls.liveList = null;
     await openRoom();
-    expect(controls.reopenChat).toHaveBeenCalledWith('room-a');
+    expect(controls.reopenChat).toHaveBeenCalledWith('11111111-1111-4111-8111-111111111111');
   });
 
   it('skips the reopen call for a Room the live list shows open', async () => {
@@ -683,60 +531,27 @@ describe('reopening a dismissed Room', () => {
 });
 
 describe('useRoomSurfaceSession', () => {
-  it('keeps tap-owned cached Room setup behind its visible-row draw, without delaying the first DTO', async () => {
-    controls.hotViewer = true;
-    controls.cached = { ...roomView('room-a'), messages: [{ id: 'target', text: 'Already received', createdAt: 10,
-      presentation: 'message', author: { pubkey: 'viewer', kind: 'human', name: 'Viewer' } }] };
-    prefetchPushRoom('cached-tap', 'room-a', 'target');
-    await flushEffects();
-    let session!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(Harness, {
-      channelId: 'room-a', notificationResponseId: 'cached-tap', capture: (value) => { session = value; },
-    })); });
-    await flushEffects();
-    expect(session.roomSurface?.messages[0]?.id).toBe('target');
-    expect(controls.transportCount).toBe(0);
-    await act(async () => {
-      observeVisibleRoomRows('room-a', ['target']);
-      finishRoomDraw('target', 'room-a');
-    });
-    await flushEffects();
-    expect(controls.transportCount).toBe(1);
-    await act(async () => renderer.unmount());
+  it('keeps the heavy Room surface free of its own render-triggering focus subscription', () => {
+    const source = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
+    expect(source).not.toMatch(/\buseIsFocused\s*\(/);
   });
+
   it('releases Room conversion and saves only after the actual route transition ends', async () => {
-    controls.cached = roomView('room-a');
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
     let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(BuzzChat));
-    });
+    await act(async () => { renderer = create(React.createElement(BuzzChat)); });
     await flushEffects();
     const normalize = vi.fn((value: unknown) => value);
     const set = vi.fn(async () => {});
-    const guard = vi.fn(
-      (value: unknown): value is { count: number } =>
-        typeof value === 'object' && value !== null && 'count' in value,
-    );
-    const registry = new SurfaceRegistry(
-      new SurfaceResponseCache({
-        get: async () => null,
-        set,
-        remove: async () => {},
-      }),
-      normalize,
-      undefined,
-      (key, work) => roomTransitionWork.enqueue(key, work),
-    );
-    const emit = (name: string) =>
-      controls.navigationListeners.get(name)?.forEach((listener) => listener());
+    const guard = vi.fn((value: unknown): value is { count: number } =>
+      typeof value === 'object' && value !== null && 'count' in value);
+    const registry = new SurfaceRegistry(new SurfaceResponseCache({
+      get: async () => null, set, remove: async () => {},
+    }), normalize, undefined, (key, work) => roomTransitionWork.enqueue(key, work));
+    const emit = (name: string) => controls.navigationListeners.get(name)?.forEach(listener => listener());
     emit('transitionStart');
-    const saved = registry.write(
-      { relayOrigin: 'https://relay.test', viewerPubkey: 'viewer', endpoint: '/room/busy' },
-      { count: 1 },
-      guard,
-    );
-    controls.interactionTasks.forEach((work) => work());
+    const saved = registry.write({ relayOrigin: 'https://relay.test', viewerPubkey: 'viewer', endpoint: '/room/busy' }, { count: 1 }, guard);
+    controls.interactionTasks.forEach(work => work());
     expect(normalize).not.toHaveBeenCalled();
     expect(guard).not.toHaveBeenCalled();
     expect(set).not.toHaveBeenCalled();
@@ -744,7 +559,7 @@ describe('useRoomSurfaceSession', () => {
     expect(set).not.toHaveBeenCalled();
     const work = [...controls.interactionTasks];
     controls.interactionTasks.clear();
-    work.forEach((run) => run());
+    work.forEach(run => run());
     await saved;
     expect(normalize).toHaveBeenCalledTimes(1);
     expect(set).toHaveBeenCalledTimes(1);
@@ -752,20 +567,18 @@ describe('useRoomSurfaceSession', () => {
   });
 
   it('does not render the Room surface boundary when pushing and popping a corner', async () => {
-    controls.cached = roomView('room-a');
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
     let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(BuzzChat));
-    });
+    await act(async () => { renderer = create(React.createElement(BuzzChat)); });
     await flushEffects();
     const before = controls.surfaceRenders;
     await act(async () => {
       controls.focused = false;
-      controls.focusListeners.forEach((listener) => listener());
+      controls.focusListeners.forEach(listener => listener());
     });
     await act(async () => {
       controls.focused = true;
-      controls.focusListeners.forEach((listener) => listener());
+      controls.focusListeners.forEach(listener => listener());
     });
     await flushEffects();
     expect(controls.surfaceRenders - before).toBe(0);
@@ -773,22 +586,15 @@ describe('useRoomSurfaceSession', () => {
   });
 
   it('reuses the Room state and transcript when a corner is pushed and popped', async () => {
-    controls.cached = roomView('room-a');
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
     let current!: UseRoomSurfaceSessionResult;
     const reset = vi.fn();
-    const render = (isFocused: boolean) =>
-      React.createElement(Harness, {
-        channelId: 'room-a',
-        isFocused,
-        onResetTranscript: reset,
-        capture: (result: UseRoomSurfaceSessionResult) => {
-          current = result;
-        },
-      });
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(render(true));
+    const render = (isFocused: boolean) => React.createElement(Harness, {
+      channelId: '11111111-1111-4111-8111-111111111111', isFocused, onResetTranscript: reset,
+      capture: (result: UseRoomSurfaceSessionResult) => { current = result; },
     });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(render(true)); });
     await flushEffects();
     const before = current.roomSurface;
     const resets = reset.mock.calls.length;
@@ -802,91 +608,24 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it.each(['background', 'inactive'])(
-    'flushes a pending delta save on %s during a corner transition without advancing timers',
-    async (state) => {
-      vi.useFakeTimers();
-      controls.cached = roomView('room-a');
-      let renderer!: ReactTestRenderer;
-      await act(async () => {
-        renderer = create(React.createElement(BuzzChat));
-      });
-      await flushEffects();
-      vi.mocked(mobileSurfaceCache.write).mockClear();
-      await act(async () =>
-        controls.subscriptions.at(-1)!.emit({
-          monolithLive: {
-            type: 'message-delta',
-            roomId: 'room-a',
-            message: {
-              id: 'before-background',
-              roomId: 'room-a',
-              text: 'latest committed arrival',
-              createdAt: 100,
-              author: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
-              tags: [],
-              attachments: [],
-              reactions: [],
-            },
-          },
-        } as MonolithSurfaceEvent),
-      );
-      await act(async () => {
-        controls.navigationListeners.get('transitionStart')?.forEach((listener) => listener());
-        controls.focused = false;
-        controls.focusListeners.forEach((listener) => listener());
-      });
-      expect(mobileSurfaceCache.write).not.toHaveBeenCalled();
-      await act(async () => {
-        controls.appState = state;
-        controls.appStateListeners.forEach((listener) => listener(state));
-      });
-      expect(mobileSurfaceCache.write).toHaveBeenCalledTimes(1);
-      const saved = vi.mocked(mobileSurfaceCache.write).mock.calls[0]![1] as RoomView;
-      expect(saved.messages.at(-1)?.id).toBe('before-background');
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(1_000);
-      });
-      expect(mobileSurfaceCache.write).toHaveBeenCalledTimes(1);
-      await act(async () => renderer.unmount());
-      expect(controls.appStateListeners.size).toBe(0);
-    },
-  );
-
   it('does not save the Room during a corner push or pop', async () => {
-    controls.cached = roomView('room-a');
-    const render = (isFocused: boolean) =>
-      React.createElement(Harness, {
-        channelId: 'room-a',
-        isFocused,
-        capture: () => undefined,
-      });
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(render(true));
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
+    const render = (isFocused: boolean) => React.createElement(Harness, {
+      channelId: '11111111-1111-4111-8111-111111111111', isFocused, capture: () => undefined,
     });
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(render(true)); });
     await flushEffects();
     vi.mocked(mobileSurfaceCache.write).mockClear();
     // A canonical message arrival queues a Room save; navigation must not flush it.
     const subscription = controls.subscriptions.at(-1)!;
-    await act(async () =>
-      subscription.emit({
-        monolithLive: {
-          type: 'message-delta',
-          roomId: 'room-a',
-          message: {
-            id: 'during-transition',
-            roomId: 'room-a',
-            text: 'new arrival',
-            createdAt: 100,
-            author: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
-            tags: [],
-            attachments: [],
-            reactions: [],
-          },
-        },
-      } as MonolithSurfaceEvent),
-    );
+    await act(async () => subscription.emit({ monolithLive: {
+      type: 'message-delta', roomId: '11111111-1111-4111-8111-111111111111', message: {
+        id: 'during-transition', roomId: '11111111-1111-4111-8111-111111111111', text: 'new arrival',
+        createdAt: 100, author: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
+        tags: [], attachments: [], reactions: [],
+      },
+    } } as MonolithSurfaceEvent));
     await act(async () => renderer.update(render(false)));
     expect(mobileSurfaceCache.write).not.toHaveBeenCalled();
     await act(async () => renderer.update(render(true)));
@@ -903,12 +642,12 @@ describe('useRoomSurfaceSession', () => {
     const rows = ['m1', 'm2', 'm3'].map(
       (id) => ({ id, text: id, isUser: false, timestamp: 0 }) as ChatDisplayMessage,
     );
-    controls.cached = roomView('room-a');
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     const render = (isFocused: boolean) =>
       React.createElement(Harness, {
-        channelId: 'room-a',
+        channelId: '11111111-1111-4111-8111-111111111111',
         isFocused,
         capture: (result: UseRoomSurfaceSessionResult) => (current = result),
       });
@@ -954,22 +693,21 @@ describe('useRoomSurfaceSession', () => {
   });
 
   it('keeps the first unread boundary from the opening read for the whole visit', async () => {
-    controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           capture: (result: UseRoomSurfaceSessionResult) => (current = result),
         }),
       );
     });
     await flushEffects();
 
-    const opening = roomView('room-a');
+    const opening = roomView('11111111-1111-4111-8111-111111111111');
     await act(async () => {
-      controls.schedulers[0]!.apply({
+      controls.lanes[0]!.apply({
         ...opening,
         viewer: {
           ...opening.viewer,
@@ -980,7 +718,7 @@ describe('useRoomSurfaceSession', () => {
     expect(current.firstUnreadMessageId).toBe('first-new');
 
     await act(async () => {
-      controls.schedulers[0]!.apply({
+      controls.lanes[0]!.apply({
         ...opening,
         viewer: {
           ...opening.viewer,
@@ -995,10 +733,10 @@ describe('useRoomSurfaceSession', () => {
 
   it('does not capture or advance unread state for a corner', async () => {
     const corner = {
-      ...roomView('corner-a'),
-      room: { ...roomView('corner-a').room, parentId: 'room-a' },
+      ...roomView('22222222-2222-4222-8222-222222222222'),
+      room: { ...roomView('22222222-2222-4222-8222-222222222222').room, parentId: '11111111-1111-4111-8111-111111111111' },
       viewer: {
-        ...roomView('corner-a').viewer,
+        ...roomView('22222222-2222-4222-8222-222222222222').viewer,
         readCursor: {
           messageId: 'read',
           firstUnreadMessageId: 'first-new',
@@ -1006,19 +744,19 @@ describe('useRoomSurfaceSession', () => {
         },
       },
     };
-    controls.cached = corner;
+    controls.initialView = corner;
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'corner-a',
+          channelId: '22222222-2222-4222-8222-222222222222',
           capture: (result: UseRoomSurfaceSessionResult) => (current = result),
         }),
       );
     });
     await flushEffects();
-    await act(async () => controls.schedulers[0]!.apply(corner));
+    await act(async () => controls.lanes[0]!.apply(corner));
     expect(current.firstUnreadMessageId).toBeNull();
     const rows: ChatDisplayMessage[] = [
       { id: 'first-new', text: 'new', isUser: false, timestamp: 1 },
@@ -1032,13 +770,13 @@ describe('useRoomSurfaceSession', () => {
   });
 
   it('routes presence snapshots outside transcript overlays', async () => {
-    controls.cached = roomView('room-a');
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           capture: (result: UseRoomSurfaceSessionResult) => (current = result),
         }),
       );
@@ -1051,7 +789,7 @@ describe('useRoomSurfaceSession', () => {
         controls.subscriptions[0]!.emit({
           monolithLive: {
             type: 'presence',
-            roomId: 'room-a',
+            roomId: '11111111-1111-4111-8111-111111111111',
             agentId: 'agent-a',
             status: 'online',
             observedAt: 1_000 + index,
@@ -1072,8 +810,8 @@ describe('useRoomSurfaceSession', () => {
 
   it('lets a fresh pushed fact replace an older Room presence in seconds', async () => {
     const observedAt = Math.floor(Date.now() / 1_000);
-    controls.cached = {
-      ...roomView('room-a'),
+    controls.initialView = {
+      ...roomView('11111111-1111-4111-8111-111111111111'),
       members: [
         {
           identity: { pubkey: 'agent-a', kind: 'agent', name: 'Monarch' },
@@ -1082,30 +820,31 @@ describe('useRoomSurfaceSession', () => {
         },
       ],
     };
+    controls.routerValue = controls.initialView;
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           capture: (result: UseRoomSurfaceSessionResult) => (current = result),
         }),
       );
     });
     await flushEffects();
     expect(current.heartbeatPresences['agent-a']?.status).toBe('offline');
-    expect(current.presenceResolved).toBe(false);
+    expect(current.presenceResolved).toBe(true);
 
     await act(async () => {
-      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } });
-      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } });
+      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: '11111111-1111-4111-8111-111111111111' } });
+      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: '11111111-1111-4111-8111-111111111111' } });
     });
 
     await act(async () => {
       controls.subscriptions[0]!.emit({
         monolithLive: {
           type: 'presence',
-          roomId: 'room-a',
+          roomId: '11111111-1111-4111-8111-111111111111',
           agentId: 'agent-a',
           status: 'online',
           observedAt,
@@ -1117,11 +856,11 @@ describe('useRoomSurfaceSession', () => {
       observedAt,
     });
     await act(async () =>
-      controls.schedulers[0]!.apply({
-        ...controls.cached!,
+      controls.lanes[0]!.apply({
+        ...controls.initialView!,
         members: [
           {
-            ...controls.cached!.members[0]!,
+            ...controls.initialView!.members[0]!,
             presence: { status: 'online', observedAt },
           },
         ],
@@ -1129,27 +868,17 @@ describe('useRoomSurfaceSession', () => {
     );
     expect(current.presenceResolved).toBe(true);
     await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'presence',
-          roomId: 'room-a',
-          agentId: 'agent-a',
-          status: 'offline',
-          observedAt: observedAt + 1,
-        },
-      });
+      controls.subscriptions[0]!.emit({ monolithLive: {
+        type: 'presence', roomId: '11111111-1111-4111-8111-111111111111', agentId: 'agent-a',
+        status: 'offline', observedAt: observedAt + 1,
+      } });
     });
     expect(current.heartbeatPresences['agent-a']?.status).toBe('offline');
     await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'presence',
-          roomId: 'room-a',
-          agentId: 'agent-a',
-          status: 'online',
-          observedAt: observedAt + 2,
-        },
-      });
+      controls.subscriptions[0]!.emit({ monolithLive: {
+        type: 'presence', roomId: '11111111-1111-4111-8111-111111111111', agentId: 'agent-a',
+        status: 'online', observedAt: observedAt + 2,
+      } });
     });
     expect(current.heartbeatPresences['agent-a']?.status).toBe('online');
     await act(async () => renderer.unmount());
@@ -1157,26 +886,27 @@ describe('useRoomSurfaceSession', () => {
 
   it('paints a canonical send receipt without a timer or follow-up Room read', async () => {
     vi.useFakeTimers();
-    controls.cached = roomView('room-a');
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
+    controls.routerValue = controls.initialView;
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           capture: (result: UseRoomSurfaceSessionResult) => (current = result),
         }),
       );
     });
     await flushEffects();
-    const scheduler = controls.schedulers[0]!;
+    const scheduler = controls.lanes[0]!;
 
     // Its delta lands first: nothing is read.
     await act(async () => {
       controls.subscriptions[0]!.emit({
         monolithLive: {
           type: 'message-delta',
-          roomId: 'room-a',
+          roomId: '11111111-1111-4111-8111-111111111111',
           message: {
             id: 'delivered-message',
             text: 'hello',
@@ -1192,18 +922,14 @@ describe('useRoomSurfaceSession', () => {
     expect(scheduler.expectations).toEqual([]);
 
     // The write receipt itself settles a send whose live delta was missed.
-    await act(async () =>
-      current.applyRoomMessageResult({
-        id: 'accepted-message',
-        text: 'accepted',
-        createdAt: 2,
-        author: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
-        presentation: 'message',
-      }),
-    );
-    expect(current.roomSurface?.messages.some((message) => message.id === 'accepted-message')).toBe(
-      true,
-    );
+    await act(async () => current.applyRoomMessageResult({
+      id: 'accepted-message',
+      text: 'accepted',
+      createdAt: 2,
+      author: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
+      presentation: 'message',
+    }));
+    expect(current.roomSurface?.messages.some((message) => message.id === 'accepted-message')).toBe(true);
     await act(async () => vi.advanceTimersByTimeAsync(60_000));
     expect(scheduler.signalCalls).toBe(0);
     expect(controls.outboxFail).not.toHaveBeenCalled();
@@ -1212,126 +938,12 @@ describe('useRoomSurfaceSession', () => {
     vi.useRealTimers();
   });
 
-  it('paints a committed turn delta without a follow-up Room read', async () => {
-    controls.cached = roomView('room-a');
-    let current!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-        }),
-      );
-    });
-    await flushEffects();
-
-    const claimedAt = Math.floor(Date.now() / 1_000);
-    const startedAt = performance.now();
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'turn-delta',
-          roomId: 'room-a',
-          turn: {
-            requestId: 'request-a',
-            agentPubkey: 'agent-a',
-            status: 'working',
-            createdAt: claimedAt,
-          },
-        },
-      });
-    });
-    expect(performance.now() - startedAt).toBeLessThan(500);
-    expect(current.roomSurface?.latestAgentTurns).toEqual([
-      expect.objectContaining({ requestId: 'request-a', status: 'working' }),
-    ]);
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
-    await act(async () => renderer.unmount());
-  });
-
-  it('keeps a retry turn delta that lands while a same-second Room read is in flight', async () => {
-    const at = Math.floor(Date.now() / 1_000);
-    const finished = {
-      requestId: 'request-a',
-      agentPubkey: 'agent-a',
-      status: 'complete' as const,
-      createdAt: at,
-    };
-    const retry = { ...finished, requestId: 'request-b', status: 'working' as const };
-    controls.cached = { ...roomView('room-a'), latestAgentTurns: [finished] };
-    controls.roomResponse = { ...roomView('room-a'), latestAgentTurns: [finished] };
-    let current!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-        }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => {
-      const read = controls.schedulers[0]!.fetch();
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'turn-delta', roomId: 'room-a', turn: retry },
-      });
-      controls.schedulers[0]!.apply(await read);
-    });
-
-    expect(current.roomSurface?.latestAgentTurns).toEqual([retry]);
-    await act(async () => renderer.unmount());
-  });
-
-  it('paints one committed reply exactly once without a follow-up Room read', async () => {
-    controls.cached = roomView('room-a');
-    let current!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-        }),
-      );
-    });
-    await flushEffects();
-    const reply = {
-      id: 'reply-message',
-      text: 'Done',
-      createdAt: 3,
-      author: { pubkey: 'agent-a', kind: 'agent' as const, name: 'Greeter' },
-      presentation: 'message' as const,
-    };
-    const emitReply = () =>
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'message-delta', roomId: 'room-a', message: reply },
-      });
-
-    await act(async () => emitReply());
-    expect(current.roomSurface?.messages.map((message) => message.id)).toEqual(['reply-message']);
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
-
-    await act(async () => emitReply());
-    expect(current.roomSurface?.messages.map((message) => message.id)).toEqual(['reply-message']);
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
-
-    const full = { ...roomView('room-a'), messages: [reply] };
-    await act(async () => controls.schedulers[0]!.apply(full));
-    expect(current.roomSurface).toEqual(full);
-    expect(current.roomSurface?.messages).toHaveLength(1);
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
-    await act(async () => renderer.unmount());
-  });
-
   it('schedules no Room read from the socket while the app is backgrounded', async () => {
-    controls.cached = roomView('room-a');
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+        React.createElement(Harness, { channelId: '11111111-1111-4111-8111-111111111111', capture: () => undefined }),
       );
     });
     await flushEffects();
@@ -1339,977 +951,52 @@ describe('useRoomSurfaceSession', () => {
     controls.appState = 'background';
     await act(async () => {
       controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'activity' },
+        monolithLive: { type: 'invalidate', roomId: '11111111-1111-4111-8111-111111111111', reason: 'activity' },
       });
-      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } });
-      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } });
+      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: '11111111-1111-4111-8111-111111111111' } });
+      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: '11111111-1111-4111-8111-111111111111' } });
     });
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
-    expect(controls.schedulers[0]!.forceCalls).toBe(0);
+    expect(controls.lanes[0]!.signalCalls).toBe(0);
+    expect(controls.lanes[0]!.forceCalls).toBe(0);
 
     controls.appState = 'active';
     await act(async () => {
-      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } });
+      controls.subscriptions[0]!.emit({ monolithLive: { type: 'subscribed', roomId: '11111111-1111-4111-8111-111111111111' } });
     });
-    expect(controls.schedulers[0]!.forceCalls).toBe(1);
-    await act(async () => renderer.unmount());
-  });
-
-  it('paints a covering read with a previously missed message while retaining the socket', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    let current!: UseRoomSurfaceSessionResult;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: (result: UseRoomSurfaceSessionResult) => (current = result) }),
-      );
-    });
-    await flushEffects();
-    const missed = {
-      id: 'missed-message',
-      text: 'you missed me',
-      createdAt: 5,
-      author: { pubkey: 'agent-a', kind: 'agent' as const, name: 'Greeter' },
-      presentation: 'message' as const,
-    };
-
-    await act(async () => controls.schedulers[0]!.apply(roomView('room-a')));
-    expect(controls.reconnects).toBe(0);
-    await act(async () =>
-      controls.schedulers[0]!.apply({ ...roomView('room-a'), messages: [missed] }),
-    );
-    expect(controls.reconnects).toBe(0);
-    expect(current.roomSurface?.messages).toContainEqual(missed);
-    await act(async () => renderer.unmount());
-  });
-
-  it('keeps the socket when it delivered frames since the previous read', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => controls.schedulers[0]!.apply(roomView('room-a')));
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'activity' },
-      });
-    });
-    await act(async () =>
-      controls.schedulers[0]!.apply({
-        ...roomView('room-a'),
-        messages: [
-          {
-            id: 'signalled-message',
-            text: 'announced',
-            createdAt: 5,
-            author: { pubkey: 'agent-a', kind: 'agent', name: 'Greeter' },
-            presentation: 'message',
-          },
-        ],
-      }),
-    );
-    expect(controls.reconnects).toBe(0);
-    await act(async () => renderer.unmount());
-  });
-
-  it('yields a paint turn after cache apply before installing the live watch', async () => {
-    const { queued, receivers } = stubFrameScheduler();
-    controls.cached = roomView('room-a');
-    controls.roomResponse = null;
-    let current!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-        }),
-      );
-    });
-    await flushMicrotasks();
-    expect(current.roomSurface?.room.id).toBe('room-a');
-    expect(controls.subscriptions).toHaveLength(0);
-    expect(controls.transportCount).toBe(0);
-
-    await act(async () => {
-      const first = queued.splice(0);
-      first.forEach((callback) => callback(0));
-      const second = queued.splice(0);
-      second.forEach((callback) => callback(0));
-    });
-    await flushMicrotasks();
-    expect(controls.subscriptions).toHaveLength(1);
-    expect(controls.transportCount).toBe(1);
-    expect(receivers.length).toBeGreaterThan(0);
-    expect(receivers.every((receiver) => receiver === globalThis)).toBe(true);
-    await act(async () => renderer.unmount());
-  });
-
-  it('renders the hot target before the asynchronous session has even read its identity', async () => {
-    controls.hotViewer = true;
-    controls.viewerRead = new Promise(() => undefined);
-    controls.cached = {
-      ...roomView('room-a'),
-      messages: [
-        {
-          id: 'target',
-          text: 'Newest received row',
-          createdAt: 10,
-          author: { pubkey: 'author', kind: 'human', name: 'Author' },
-          presentation: 'message',
-        },
-      ],
-    };
-    const { queued } = stubFrameScheduler();
-    const reset = vi.fn();
-    const props = { channelId: 'room-a', capture: () => undefined, onResetTranscript: reset };
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(Harness, props));
-    });
-    expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe(
-      'Newest received row',
-    );
-    expect(reset).not.toHaveBeenCalled();
-    expect(loadBuzzViewerPubkey).not.toHaveBeenCalled();
-    await act(async () => {
-      queued.splice(0).forEach((frame) => frame(0));
-    });
-    expect(controls.transportCount).toBe(0);
-    expect(controls.roomReads).toBe(0);
-    await act(async () =>
-      renderer.update(React.createElement(Harness, { ...props, isFocused: false })),
-    );
-    await act(async () => renderer.update(React.createElement(Harness, props)));
-    expect(reset).not.toHaveBeenCalled();
-    await act(async () => renderer.unmount());
-  });
-
-  it('paints an opening reply while cached-frame callbacks and identity setup are still pending', async () => {
-    controls.hotViewer = true;
-    controls.viewerRead = new Promise(() => undefined);
-    controls.cached = roomView('room-a');
-    stubFrameScheduler();
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: () => undefined,
-        }),
-      );
-    });
-    await act(async () => {
-      controls.cached = {
-        ...roomView('room-a'),
-        messages: [
-          {
-            id: 'arrived',
-            text: 'Arrived during opening',
-            createdAt: 10,
-            author: { pubkey: 'author', kind: 'human', name: 'Author' },
-            presentation: 'message',
-          },
-        ],
-      };
-      controls.cacheListeners.forEach((listener) => listener());
-    });
-    expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe(
-      'Arrived during opening',
-    );
-    expect(loadBuzzViewerPubkey).not.toHaveBeenCalled();
     expect(controls.roomReads).toBe(0);
     await act(async () => renderer.unmount());
-    expect(controls.cacheListeners.size).toBe(0);
   });
 
-  it('paints a missing-row publish after disk read while identity and then outbox remain pending', async () => {
-    controls.hotViewer = true;
-    controls.cached = roomView('room-a');
-    let resolveIdentity!: (identity: { publicKey: string; secretKey: Uint8Array }) => void;
-    controls.identityPromise = new Promise((resolve) => {
-      resolveIdentity = resolve;
-    });
-    controls.outboxRestore = new Promise(() => undefined);
-    const { queued } = stubFrameScheduler();
+  it('Corner: a direct open keeps optional requests behind the canonical response and its paint', async () => {
+    beginRoomDraw('11111111-1111-4111-8111-111111111111');
     let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          notificationResponseId: 'late-opening-reply',
-          capture: () => undefined,
-        }),
-      );
-    });
-    await act(async () => {
-      queued.splice(0).forEach((frame) => frame(0));
-      queued.splice(0).forEach((frame) => frame(0));
-    });
-    await flushMicrotasks();
-    expect(mobileSurfaceCache.read).toHaveBeenCalled();
-    expect(loadBuzzIdentity).toHaveBeenCalled();
-    const publish = async (text: string) => {
-      await act(async () => {
-        controls.cached = {
-          ...roomView('room-a'),
-          messages: [
-            {
-              id: text,
-              text,
-              createdAt: 10,
-              author: { pubkey: 'author', kind: 'human', name: 'Author' },
-              presentation: 'message',
-            },
-          ],
-        };
-        controls.cacheListeners.forEach((listener) => listener());
-      });
-      expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe(text);
-    };
-    try {
-      await publish('Reply after disk read, identity pending');
-      expect(controls.transportCount).toBe(0);
-      await act(async () =>
-        resolveIdentity({ publicKey: 'viewer', secretKey: new Uint8Array(32) }),
-      );
-      await flushMicrotasks();
-      expect(controls.transportCount).toBe(1);
-      expect(controls.schedulers).toHaveLength(0);
-      await publish('Reply while outbox restore is pending');
-      expect(controls.roomReads).toBe(0);
-    } finally {
-      await act(async () => renderer.unmount());
-    }
-    expect(controls.cacheListeners.size).toBe(0);
-  });
-
-  it.each([1, 5])(
-    'paints %i received messages on the first frame before any network read',
-    async (count) => {
-      controls.hotViewer = true;
-      const { queued } = stubFrameScheduler();
-      controls.cached = {
-        ...roomView('room-a'),
-        messages: Array.from({ length: count }, (_, n) => ({
-          id: `received-${n}`,
-          text: `received ${n}`,
-          createdAt: 10 + n,
-          author: { pubkey: 'author', kind: 'human' as const, name: 'Author' },
-          presentation: 'message' as const,
-        })),
-      };
-      let current!: UseRoomSurfaceSessionResult;
-      let renderer!: ReactTestRenderer;
-      await act(async () => {
-        renderer = create(
-          React.createElement(Harness, {
-            channelId: 'room-a',
-            capture: (result: UseRoomSurfaceSessionResult) => {
-              current = result;
-            },
-          }),
-        );
-      });
-      expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe(
-        `received ${count - 1}`,
-      );
-      expect(controls.roomReads).toBe(0);
-      await flushMicrotasks();
-      await act(async () => {
-        queued.splice(0).forEach((frame) => frame(0));
-      });
-      expect(current.roomSurface?.messages.at(-1)?.id).toBe(`received-${count - 1}`);
-      expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe(
-        `received ${count - 1}`,
-      );
-      expect(controls.transportCount).toBe(0);
-      expect(controls.roomReads).toBe(0);
-      expect(controls.subscriptions).toHaveLength(0);
-      await act(async () => renderer.unmount());
-    },
-  );
-
-  it('paints cached newest row before authorization occupies the session', async () => {
-    const { queued, receivers } = stubFrameScheduler();
-    let resolveAuth!: (identity: { publicKey: string; secretKey: Uint8Array }) => void;
-    controls.identityPromise = new Promise((resolve) => {
-      resolveAuth = resolve;
-    });
-    controls.cached = roomView('room-a');
-    let current!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-        }),
-      );
-    });
-    await flushMicrotasks();
-    expect(current.roomSurface?.room.id).toBe('room-a');
-    expect(controls.transportCount).toBe(0);
-
-    await act(async () => {
-      queued.splice(0).forEach((callback) => callback(0));
-      queued.splice(0).forEach((callback) => callback(0));
-    });
-    await flushMicrotasks();
-    expect(controls.transportCount).toBe(0);
-
-    await act(async () => {
-      resolveAuth({ publicKey: 'viewer', secretKey: new Uint8Array(32) });
-    });
-    await flushMicrotasks();
-    expect(controls.transportCount).toBe(1);
-    expect(receivers.length).toBeGreaterThan(0);
-    expect(receivers.every((receiver) => receiver === globalThis)).toBe(true);
-    await act(async () => renderer.unmount());
-  });
-
-  it('acknowledges every burst delta after its committed render without a follow-up read', async () => {
-    controls.cached = roomView('room-a');
-    let current!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-        }),
-      );
-    });
-    await flushEffects();
-    const acknowledgements: string[] = [];
-    const first = {
-      id: 'reply-one',
-      text: 'one',
-      createdAt: 1,
-      author: { pubkey: 'agent-a', kind: 'agent' as const, name: 'Greeter' },
-      presentation: 'message' as const,
-    };
-    const second = { ...first, id: 'reply-two', text: 'two', createdAt: 2 };
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'message-delta',
-          roomId: 'room-a',
-          message: first,
-          trace: { id: 'trace-one', startedAt: 10, databaseAt: 11, emittedAt: 12 },
-        },
-        acknowledgePaint: () => acknowledgements.push('one'),
-      });
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'message-delta',
-          roomId: 'room-a',
-          message: second,
-          trace: { id: 'trace-two', startedAt: 20, databaseAt: 21, emittedAt: 22 },
-        },
-        acknowledgePaint: () => acknowledgements.push('two'),
-      });
-      expect(acknowledgements).toEqual([]);
-    });
-
-    expect(current.roomSurface?.messages.map((message) => message.id)).toEqual([
-      'reply-one',
-      'reply-two',
-    ]);
-    expect(acknowledgements).toEqual(['one', 'two']);
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
-
-    const full = { ...roomView('room-a'), messages: [first, second] };
-    await act(async () => controls.schedulers[0]!.apply(full));
-    expect(current.roomSurface).toEqual(full);
-    await act(async () => renderer.unmount());
-  });
-
-  it('acknowledges an idempotent delta immediately because its row is already painted', async () => {
-    const reply = {
-      id: 'reply-existing',
-      text: 'done',
-      createdAt: 1,
-      author: { pubkey: 'agent-a', kind: 'agent' as const, name: 'Greeter' },
-      presentation: 'message' as const,
-    };
-    controls.cached = { ...roomView('room-a'), messages: [reply] };
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-    const acknowledgePaint = vi.fn();
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'message-delta',
-          roomId: 'room-a',
-          message: reply,
-          trace: { id: 'trace-existing', startedAt: 10, databaseAt: 11, emittedAt: 12 },
-        },
-        acknowledgePaint,
-      });
-    });
-
-    expect(acknowledgePaint).toHaveBeenCalledOnce();
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
-    await act(async () => renderer.unmount());
-  });
-
-  it('records the same-server pre-write-to-paint upper bound returned by the server', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'trace-painted',
-          id: 'trace-bound',
-          startedAt: 1_000,
-          databaseAt: 1_025,
-          serverReceivedAt: 1_240,
-          upperBoundMs: 240,
-        },
-      });
-    });
-    await vi.waitFor(() =>
-      expect(controls.traceSetItem).toHaveBeenCalledWith(
-        LIVE_TRACE_STORAGE_KEY,
-        expect.stringContaining('"upperBoundMs":240'),
-      ),
-    );
-    const stored = String(controls.traceSetItem.mock.calls.at(-1)?.[1]);
-    expect(stored).toContain('"startedAt":1000');
-    expect(stored).toContain('"databaseAt":1025');
-    expect(stored).toContain('"serverReceivedAt":1240');
-    await act(async () => renderer.unmount());
-  });
-
-  it('Corner: a direct open keeps optional requests behind the fresh response, past stale cache paint', async () => {
-    beginRoomDraw('room-a');
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: () => undefined,
-        }),
-      );
-    });
+    await act(async () => { renderer = create(React.createElement(Harness, {
+      channelId: '11111111-1111-4111-8111-111111111111', capture: () => undefined,
+    })); });
     await flushEffects();
     const sent = vi.fn();
     const waiting = waitForRoomDraw()?.then(sent);
-    observeVisibleRoomRows('room-a', ['old-row']);
-    finishRoomDraw('old-row', 'room-a');
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    });
+    observeVisibleRoomRows('11111111-1111-4111-8111-111111111111', ['old-row']);
+    finishRoomDraw('old-row', '11111111-1111-4111-8111-111111111111');
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 150)); });
     expect(sent).not.toHaveBeenCalled();
-    const fresh = {
-      ...roomView('room-a'),
-      messages: [
-        {
-          id: 'fresh-row',
-          createdAt: 2,
-          text: 'new corner contents',
-          presentation: 'message',
-          author: { pubkey: 'viewer', kind: 'human' as const, name: 'Viewer' },
-        },
-      ],
-    };
-    await act(async () => controls.schedulers[0]!.apply(fresh));
-    observeVisibleRoomRows('room-a', ['fresh-row']);
-    finishRoomDraw('fresh-row', 'room-a');
+    const fresh = { ...roomView('11111111-1111-4111-8111-111111111111'), messages: [{ id: 'fresh-row', createdAt: 2, text: 'new corner contents', presentation: 'message',
+      author: { pubkey: 'viewer', kind: 'human' as const, name: 'Viewer' } }] };
+    await act(async () => controls.lanes[0]!.apply(fresh));
+    observeVisibleRoomRows('11111111-1111-4111-8111-111111111111', ['fresh-row']);
+    finishRoomDraw('fresh-row', '11111111-1111-4111-8111-111111111111');
     await waiting;
     expect(sent).toHaveBeenCalledOnce();
     await act(async () => renderer.unmount());
   });
 
-  it('Send: pushed queued commands paint without a follow-up Room read', async () => {
-    controls.cached = roomView('room-a');
-    let current!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: (result) => {
-            current = result;
-          },
-        }),
-      );
-    });
-    await flushEffects();
-    const commands = [{ requestId: 'sent', agentPubkey: 'agent-a', createdAt: 1 }];
-    await act(async () =>
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'room-commands',
-          roomId: 'room-a',
-          commands,
-        },
-      } as unknown as MonolithSurfaceEvent),
-    );
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
-    expect(controls.schedulers[0]!.forceCalls).toBe(0);
-    expect(current.roomSurface?.pendingAgentCommands).toEqual(commands);
-    await act(async () => renderer.unmount());
-  });
-
-  it('signals a targetless phone-write so an open Room can paint without remounting', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'phone-write' },
-      });
-    });
-
-    expect(controls.schedulers[0]!.signalCalls).toBe(1);
-    await act(async () => renderer.unmount());
-  });
-
-  it('still waits for the committed-row delta when a phone-write names its message', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'invalidate',
-          roomId: 'room-a',
-          reason: 'phone-write',
-          messageId: 'posted-message',
-        },
-      });
-    });
-
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
-    await act(async () => renderer.unmount());
-  });
-
-  it.each([
-    [
-      'SYNC-01',
-      {
-        type: 'invalidate' as const,
-        roomId: 'room-a',
-        reason: 'postgres:messages',
-        messageId: 'message-stalled',
-        deliveryId: 'delivery-sync',
-      },
-    ],
-    [
-      'STOP-01',
-      {
-        type: 'invalidate' as const,
-        roomId: 'room-a',
-        reason: 'postgres:agent_turns',
-        agentId: 'agent-a',
-        requestId: 'request-a',
-        deliveryId: 'delivery-stop',
-      },
-    ],
-  ])('reads nothing for the %s hint whose delta follows', async (_id, event) => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-    const openingReads = controls.schedulers[0]!.refreshNowCalls;
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({ monolithLive: event });
-    });
-
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads);
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
-    expect(controls.schedulers[0]!.forceCalls).toBe(0);
-    await act(async () => renderer.unmount());
-  });
-
-  it('STOP-01 clears the working turn from its turn delta, with no Room read', async () => {
-    controls.cached = {
-      ...roomView('room-a'),
-      latestAgentTurns: [
-        {
-          requestId: 'request-a',
-          agentPubkey: 'agent-a',
-          status: 'working',
-          createdAt: 1,
-        },
-      ],
-    };
-    let current!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-        }),
-      );
-    });
-    await flushEffects();
-    const openingReads = controls.schedulers[0]!.refreshNowCalls;
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'invalidate',
-          roomId: 'room-a',
-          reason: 'postgres:agent_turns',
-          agentId: 'agent-a',
-          requestId: 'request-a',
-          deliveryId: 'delivery-stop',
-        },
-      });
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'turn-delta',
-          roomId: 'room-a',
-          reconcilesDelivery: 'delivery-stop',
-          turn: {
-            requestId: 'request-a',
-            agentPubkey: 'agent-a',
-            status: 'cancelled',
-            createdAt: 1,
-          },
-        },
-      });
-    });
-
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads);
-    expect(controls.schedulers[0]!.forceCalls).toBe(0);
-    expect(current.roomSurface?.latestAgentTurns).toEqual([
-      expect.objectContaining({ requestId: 'request-a', status: 'cancelled' }),
-    ]);
-    await act(async () => renderer.unmount());
-  });
-
-  it('paints a paired delta and reads no Room for it', async () => {
-    controls.cached = roomView('room-a');
-    let current!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-        }),
-      );
-    });
-    await flushEffects();
-    const openingReads = controls.schedulers[0]!.refreshNowCalls;
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'invalidate',
-          roomId: 'room-a',
-          reason: 'postgres:messages',
-          messageId: 'message-a',
-          deliveryId: 'delivery-a',
-        },
-      });
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'message-delta',
-          roomId: 'room-a',
-          reconcilesDelivery: 'delivery-a',
-          message: {
-            id: 'message-a',
-            text: 'Done',
-            createdAt: 2,
-            author: { pubkey: 'agent-a', kind: 'agent', name: 'Greeter' },
-            presentation: 'message',
-          },
-        },
-      });
-    });
-
-    expect(current.roomSurface?.messages.map((message) => message.id)).toEqual(['message-a']);
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads);
-    expect(controls.schedulers[0]!.signalCalls).toBe(0);
-    await act(async () => renderer.unmount());
-  });
-
-  it('reconciles immediately when a committed delta cannot be delivered', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'invalidate',
-          roomId: 'room-a',
-          reason: 'delta-fallback:postgres:messages',
-        },
-      });
-    });
-
-    expect(controls.schedulers[0]!.signalCalls).toBe(1);
-    await act(async () => renderer.unmount());
-  });
-
-  it('reads the Room once for the fallback of a delivery the server could not read', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-    const openingReads = controls.schedulers[0]!.refreshNowCalls;
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'invalidate',
-          roomId: 'room-a',
-          reason: 'postgres:messages',
-          messageId: 'message-deleted',
-          deliveryId: 'delivery-deleted',
-        },
-      });
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'invalidate',
-          roomId: 'room-a',
-          reason: 'delta-fallback:postgres:messages',
-          messageId: 'message-deleted',
-          reconcilesDelivery: 'delivery-deleted',
-        },
-      });
-    });
-
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(openingReads);
-    expect(controls.schedulers[0]!.signalCalls).toBe(1);
-    await act(async () => renderer.unmount());
-  });
-
-  it('starts the single opening Room read after its subscribe', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-
-    // No subscribed frame yet: the cache paints while the read waits for coverage.
-    expect(controls.subscriptions).toHaveLength(1);
-    expect(controls.schedulers[0]!.started).toBe(false);
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(0);
-    expect(controls.schedulers[0]!.followUpCalls).toBe(0);
-    await act(async () =>
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'subscribed', roomId: 'room-a' },
-      }),
-    );
-    expect(controls.schedulers[0]!.started).toBe(true);
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(1);
-    await act(async () => renderer.unmount());
-  });
-
-  it('reads once on its first handshake and rereads on an unresumed resubscribe', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'subscribed', roomId: 'room-a' },
-      });
-    });
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(1);
-    expect(controls.schedulers[0]!.followUpCalls).toBe(0);
-    expect(controls.schedulers[0]!.forceCalls).toBe(0);
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'subscribed', roomId: 'room-a' },
-      });
-    });
-    expect(controls.schedulers[0]!.followUpCalls).toBe(0);
-    expect(controls.schedulers[0]!.forceCalls).toBe(1);
-    await act(async () => renderer.unmount());
-  });
-
-  it('covers the opening read when the subscribe lands after the handshake wait', async () => {
-    vi.useFakeTimers();
-    controls.cached = null;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
-      );
-    });
-    await flushEffects();
-    expect(controls.schedulers[0]!.started).toBe(false);
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(2_000);
-    });
-    await flushEffects();
-    expect(controls.schedulers[0]!.followUpCalls).toBe(0);
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'subscribed', roomId: 'room-a' },
-      });
-    });
-    expect(controls.schedulers[0]!.followUpCalls).toBe(1);
-    expect(controls.schedulers[0]!.forceCalls).toBe(0);
-    await act(async () => renderer.unmount());
-    vi.useRealTimers();
-  });
-
-  it('paints a pushed Room before a slow watch setup and covers that read afterward', async () => {
-    vi.useFakeTimers();
-    controls.cached = null;
-    controls.roomResponse = roomView('room-a');
-    let releaseClient!: () => void;
-    controls.ensureClientPromise = new Promise<void>((resolve) => {
-      releaseClient = resolve;
-    });
-    let session!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          notificationResponseId: 'response-1',
-          capture: (value) => {
-            session = value;
-          },
-        }),
-      );
-    });
-    await flushEffects();
-
-    expect(controls.subscriptions).toHaveLength(0);
-    expect(controls.schedulers[0]!.started).toBe(true);
-    expect(controls.schedulers[0]!.refreshNowCalls).toBe(1);
-    await act(async () => {
-      controls.schedulers[0]!.apply(await controls.schedulers[0]!.fetch());
-    });
-    expect(session.roomSurface?.room.id).toBe('room-a');
-    expect(controls.schedulers[0]!.followUpCalls).toBe(0);
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(0);
-    });
-
-    await act(async () => {
-      releaseClient();
-    });
-    await flushEffects();
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'subscribed', roomId: 'room-a' },
-      });
-    });
-    expect(controls.schedulers[0]!.followUpCalls).toBe(1);
-    await act(async () => renderer.unmount());
-    controls.ensureClientPromise = null;
-    controls.outboxRestore = null;
-    vi.useRealTimers();
-  });
-
-  it('uses the push read already started before route mount, then covers its watch gap', async () => {
-    controls.roomResponse = roomView('room-a');
-    prefetchPushRoom('response-prefetched', 'room-a');
-    await flushMicrotasks();
-    expect(controls.roomReads).toBe(1);
-    let session!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          notificationResponseId: 'response-prefetched',
-          capture: (value) => {
-            session = value;
-          },
-        }),
-      );
-    });
-    await flushEffects();
-    await act(async () => controls.schedulers[0]!.apply(await controls.schedulers[0]!.fetch()));
-    expect(session.roomSurface?.room.id).toBe('room-a');
-    expect(controls.roomReads).toBe(1);
-    expect(controls.subscriptions).toHaveLength(0);
-    // The headless harness has no native viewport. Supply its empty-Room draw
-    // and settle navigation before the optional watch can cover the read gap.
-    await act(async () => {
-      finishRoomDraw(undefined, 'room-a');
-      const tasks = [...controls.interactionTasks];
-      controls.interactionTasks.clear();
-      tasks.forEach((work) => work());
-    });
-    await flushEffects();
-    await act(async () =>
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'subscribed', roomId: 'room-a' },
-      }),
-    );
-    expect(controls.schedulers[0]!.followUpCalls).toBe(1);
-    await act(async () => renderer.unmount());
-  });
-
   it('closes a watch still waiting on its subscribe when the reader leaves', async () => {
     vi.useFakeTimers();
-    controls.cached = roomView('room-a');
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+        React.createElement(Harness, { channelId: '11111111-1111-4111-8111-111111111111', capture: () => undefined }),
       );
     });
     await flushEffects();
@@ -2323,60 +1010,9 @@ describe('useRoomSurfaceSession', () => {
     vi.useRealTimers();
   });
 
-  it('records a bounded correlation trace when the phone socket receives an invalidation', async () => {
-    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: () => undefined,
-        }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => {
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'invalidate',
-          roomId: 'room-a',
-          reason: 'postgres:agent_turns',
-          trace: { id: 'trace-turn', databaseAt: 100, emittedAt: 125 },
-        },
-      });
-    });
-
-    expect(info).not.toHaveBeenCalled();
-    expect(controls.traceSetItem).not.toHaveBeenCalled();
-    controls.roomResponse = {
-      ...roomView('room-a'),
-      latestAgentTurns: [
-        {
-          requestId: 'request-a',
-          agentPubkey: 'agent-a',
-          status: 'working',
-          createdAt: Math.floor(Date.now() / 1_000),
-        },
-      ],
-    };
-    await act(async () => {
-      controls.schedulers[0]!.apply(await controls.schedulers[0]!.fetch());
-    });
-    await vi.waitFor(() => expect(controls.traceSetItem).toHaveBeenCalled());
-    const [key, stored] = controls.traceSetItem.mock.calls.at(-1)!;
-    expect(key).toBe('@beeline/live-event-trace-v1');
-    expect(stored).toContain('"phase":"socket-receipt"');
-    expect(stored).toContain('"id":"trace-turn"');
-    expect(stored).not.toContain('room-a');
-    info.mockRestore();
-    await act(async () => renderer.unmount());
-  });
-
   it('keeps a child corner’s monolith draft and thought lanes out of its parent Room', async () => {
-    const parent = roomView('room-a', [{ '#h': ['room-a', 'corner-a'] }]);
-    controls.cached = {
+    const parent = roomView('11111111-1111-4111-8111-111111111111', [{ '#h': ['11111111-1111-4111-8111-111111111111', '22222222-2222-4222-8222-222222222222'] }]);
+    controls.initialView = {
       ...parent,
       members: [{ identity: { pubkey: 'agent-a', kind: 'agent', name: 'Agent' }, role: 'member' }],
     };
@@ -2385,7 +1021,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           capture: (result: UseRoomSurfaceSessionResult) => (current = result),
         }),
       );
@@ -2396,7 +1032,7 @@ describe('useRoomSurfaceSession', () => {
       controls.subscriptions[0]!.emit({
         monolithLive: {
           type: 'draft',
-          roomId: 'corner-a',
+          roomId: '22222222-2222-4222-8222-222222222222',
           agentId: 'agent-a',
           turnId: 'corner-turn',
           text: 'This narration belongs only in the corner.',
@@ -2405,7 +1041,7 @@ describe('useRoomSurfaceSession', () => {
       controls.subscriptions[0]!.emit({
         monolithLive: {
           type: 'thought',
-          roomId: 'corner-a',
+          roomId: '22222222-2222-4222-8222-222222222222',
           agentId: 'agent-a',
           turnId: 'corner-turn',
           text: 'The parent must not render this thought.',
@@ -2424,16 +1060,16 @@ describe('useRoomSurfaceSession', () => {
     // and its parent, and the corner's live lane is the only place its prose
     // exists before the answer lands.
     const cornerFilters: RoomView['watchFilters'] = [
-      { kinds: [9], '#h': ['workspace', 'corner-a', 'room-a'] },
-      { kinds: [30078], '#d': ['agent-draft:corner-a', 'agent-thought:corner-a'] },
+      { kinds: [9], '#h': ['workspace', '22222222-2222-4222-8222-222222222222', '11111111-1111-4111-8111-111111111111'] },
+      { kinds: [30078], '#d': ['agent-draft:22222222-2222-4222-8222-222222222222', 'agent-thought:22222222-2222-4222-8222-222222222222'] },
     ];
-    controls.cached = { ...roomView('corner-a', cornerFilters), parent: roomView('room-a').room };
+    controls.initialView = { ...roomView('22222222-2222-4222-8222-222222222222', cornerFilters), parent: roomView('11111111-1111-4111-8111-111111111111').room };
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'corner-a',
+          channelId: '22222222-2222-4222-8222-222222222222',
           capture: (result: UseRoomSurfaceSessionResult) => (current = result),
         }),
       );
@@ -2443,10 +1079,10 @@ describe('useRoomSurfaceSession', () => {
     // The corner's own id has to reach the live subscription, or nothing the
     // turn writes can ever be delivered to the reader sitting in it. Family
     // ids in watchFilters must not become extra subscriptions.
-    expect(controls.subscriptions[0]!.filters).toEqual([{ '#h': ['corner-a'] }]);
+    expect(controls.subscriptions[0]!.filters).toEqual([{ '#h': ['22222222-2222-4222-8222-222222222222'] }]);
 
     const emit = (live: Record<string, unknown>) =>
-      controls.subscriptions[0]!.emit({ monolithLive: { roomId: 'corner-a', ...live } });
+      controls.subscriptions[0]!.emit({ monolithLive: { roomId: '22222222-2222-4222-8222-222222222222', ...live } });
     await act(async () => {
       emit({
         type: 'draft',
@@ -2487,9 +1123,9 @@ describe('useRoomSurfaceSession', () => {
     };
     await act(async () => {
       emit({ type: 'retract', kind: 'draft', agentId: 'agent-a', turnId: 'turn-c' });
-      controls.schedulers[0]!.apply({
-        ...roomView('corner-a', cornerFilters),
-        parent: roomView('room-a').room,
+      controls.lanes[0]!.apply({
+        ...roomView('22222222-2222-4222-8222-222222222222', cornerFilters),
+        parent: roomView('11111111-1111-4111-8111-111111111111').room,
         messages: [reply],
       });
     });
@@ -2498,14 +1134,14 @@ describe('useRoomSurfaceSession', () => {
   });
 
   it('keeps cumulative draft arrivals out of Room React state after opening the live row', async () => {
-    controls.cached = roomView('room-a');
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
     let current!: UseRoomSurfaceSessionResult;
     let roomRenders = 0;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           capture: (result: UseRoomSurfaceSessionResult) => {
             current = result;
             roomRenders += 1;
@@ -2519,7 +1155,7 @@ describe('useRoomSurfaceSession', () => {
       controls.subscriptions[0]!.emit({
         monolithLive: {
           type: 'draft',
-          roomId: 'room-a',
+          roomId: '11111111-1111-4111-8111-111111111111',
           agentId: 'agent-a',
           turnId: 'turn-a',
           text,
@@ -2547,13 +1183,13 @@ describe('useRoomSurfaceSession', () => {
     // and each has to land as its OWN transcript entry that later deltas edit
     // in place. Both agents were addressed by one message, so both turns
     // carry that message's id: the request alone cannot tell the rows apart.
-    controls.cached = roomView('room-a');
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           capture: (result: UseRoomSurfaceSessionResult) => (current = result),
         }),
       );
@@ -2561,7 +1197,7 @@ describe('useRoomSurfaceSession', () => {
     await flushEffects();
 
     const emit = (live: Record<string, unknown>) =>
-      controls.subscriptions[0]!.emit({ monolithLive: { roomId: 'room-a', ...live } });
+      controls.subscriptions[0]!.emit({ monolithLive: { roomId: '11111111-1111-4111-8111-111111111111', ...live } });
     await act(async () => {
       // The subscribe-time burst, in the order the snapshot serves it.
       emit({ type: 'draft', agentId: 'goosy', turnId: 'turn-x', text: 'goosy so far' });
@@ -2602,13 +1238,13 @@ describe('useRoomSurfaceSession', () => {
   });
 
   it('settles a retracted corner draft in place instead of blanking streamed chunks', async () => {
-    controls.cached = roomView('room-a');
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111');
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           capture: (result: UseRoomSurfaceSessionResult) => (current = result),
         }),
       );
@@ -2616,7 +1252,7 @@ describe('useRoomSurfaceSession', () => {
     await flushEffects();
 
     const emit = (live: Record<string, unknown>) =>
-      controls.subscriptions[0]!.emit({ monolithLive: { roomId: 'room-a', ...live } });
+      controls.subscriptions[0]!.emit({ monolithLive: { roomId: '11111111-1111-4111-8111-111111111111', ...live } });
     await act(async () => {
       emit({ type: 'draft', agentId: 'agent-a', turnId: 'turn-1', text: 'I' });
       emit({ type: 'draft', agentId: 'agent-a', turnId: 'turn-1', text: 'I will update only X,' });
@@ -2653,7 +1289,7 @@ describe('useRoomSurfaceSession', () => {
       requestId: 'turn-1',
     };
     await act(async () => {
-      controls.schedulers[0]!.apply({ ...roomView('room-a'), messages: [finalMessage] });
+      controls.lanes[0]!.apply({ ...roomView('11111111-1111-4111-8111-111111111111'), messages: [finalMessage] });
       await Promise.resolve();
     });
     expect(visibleLiveOverlays(current.liveOverlays, current.roomSurface!.messages)).toEqual([]);
@@ -2666,155 +1302,41 @@ describe('useRoomSurfaceSession', () => {
         kinds: [9],
         '#h': [
           'workspace',
-          'room-a',
+          '11111111-1111-4111-8111-111111111111',
           ...Array.from({ length: 58 }, (_, index) => `corner-${index}`),
         ],
       },
       {
         kinds: [30078],
-        '#d': ['agent-draft:room-a', 'agent-thought:room-a', 'agent-presence:room-a'],
+        '#d': ['agent-draft:11111111-1111-4111-8111-111111111111', 'agent-thought:11111111-1111-4111-8111-111111111111', 'agent-presence:11111111-1111-4111-8111-111111111111'],
       },
     ];
-    controls.cached = roomView('room-a', familyFilters);
+    controls.initialView = roomView('11111111-1111-4111-8111-111111111111', familyFilters);
+    controls.routerValue = controls.initialView;
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           capture: (result: UseRoomSurfaceSessionResult) => (current = result),
         }),
       );
     });
     await flushEffects();
 
-    expect(current.roomSurface).toBe(controls.cached);
+    expect(current.roomSurface).toBe(controls.initialView);
     expect(controls.subscriptions).toHaveLength(1);
-    expect(controls.subscriptions[0]!.filters).toEqual([{ '#h': ['room-a'] }]);
+    expect(controls.subscriptions[0]!.filters).toEqual([{ '#h': ['11111111-1111-4111-8111-111111111111'] }]);
     const firstStop = controls.subscriptions[0]!.stop;
 
     await act(async () => {
-      controls.schedulers[0]!.apply(roomView('room-a', [{ '#d': ['agent-a'] }]));
+      controls.lanes[0]!.apply(roomView('11111111-1111-4111-8111-111111111111', [{ '#d': ['agent-a'] }]));
       await Promise.resolve();
     });
     expect(controls.subscriptions).toHaveLength(1);
     expect(firstStop).not.toHaveBeenCalled();
     expect(current.roomSurface?.watchFilters).toEqual([{ '#d': ['agent-a'] }]);
-    await act(async () => renderer.unmount());
-  });
-
-  it('requests one reconciliation for a legacy live message', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: () => undefined,
-        }),
-      );
-    });
-    await flushEffects();
-
-    const event: NostrEvent = {
-      id: 'f'.repeat(64),
-      pubkey: 'a'.repeat(64),
-      created_at: 10,
-      kind: 9,
-      tags: [
-        ['h', 'room-a'],
-        ['t', 'agent-message'],
-      ],
-      content: 'Delivered after the index catches up',
-      sig: '0'.repeat(128),
-    };
-    await act(async () => controls.subscriptions[0]!.emit(event));
-
-    expect(controls.schedulers[0]!.signalCalls).toBe(1);
-    expect(controls.schedulers[0]!.expectations).toEqual([]);
-    await act(async () => renderer.unmount());
-  });
-
-  it('requests one reconciliation per legacy turn or lifecycle event', async () => {
-    controls.cached = roomView('room-a');
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: () => undefined,
-        }),
-      );
-    });
-    await flushEffects();
-
-    const turn = {
-      id: '1'.repeat(64),
-      pubkey: 'a'.repeat(64),
-      created_at: 10,
-      kind: 9,
-      tags: [
-        ['h', 'room-a'],
-        ['t', 'body-control'],
-        ['t', 'agent-turn'],
-        ['request', '2'.repeat(64)],
-        ['status', 'working'],
-      ],
-      content: '',
-      sig: '0'.repeat(128),
-    } satisfies NostrEvent;
-    await act(async () => controls.subscriptions[0]!.emit(turn));
-    expect(controls.schedulers[0]!.signalCalls).toBe(1);
-
-    const landed = {
-      ...turn,
-      id: '3'.repeat(64),
-      tags: [
-        ['h', 'room-a'],
-        ['t', 'daemon-fact'],
-        ['t', 'corner-branch-ended'],
-        ['subchannel', 'corner-a'],
-        ['outcome', 'landed'],
-      ],
-      content: 'Landed “Smoke lifecycle PR” into main.',
-    } satisfies NostrEvent;
-    await act(async () => controls.subscriptions[0]!.emit(landed));
-    expect(controls.schedulers[0]!.signalCalls).toBe(2);
-    expect(controls.schedulers[0]!.expectations).toEqual([]);
-    await act(async () => renderer.unmount());
-  });
-
-  it('covers a fresh replayed working receipt with the opening Corner GET', async () => {
-    controls.replayEvents.push({
-      id: '4'.repeat(64),
-      pubkey: 'a'.repeat(64),
-      created_at: Math.floor(Date.now() / 1_000),
-      kind: 9,
-      tags: [
-        ['h', 'corner-a'],
-        ['t', 'body-control'],
-        ['t', 'agent-turn'],
-        ['request', '5'.repeat(64)],
-        ['status', 'working'],
-      ],
-      content: '',
-      sig: '0'.repeat(128),
-    });
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'corner-a',
-          capture: () => undefined,
-        }),
-      );
-    });
-    await flushEffects();
-
-    expect(controls.schedulers[0]!.expectations).toEqual([]);
-    // The replay marks the not-yet-started scheduler dirty. startAfter folds
-    // that signal into its single opening read.
-    expect(controls.schedulers[0]!.signalCalls).toBe(1);
     await act(async () => renderer.unmount());
   });
 
@@ -2825,7 +1347,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           notificationResponseId: 'notice-1',
           capture: () => undefined,
         }),
@@ -2840,18 +1362,18 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => {
       renderer = create(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           notificationResponseId: 'notice-1',
           capture: () => undefined,
         }),
       );
     });
     await flushEffects();
-    const firstScheduler = controls.schedulers[0]!;
+    const firstScheduler = controls.lanes[0]!;
     await act(async () => {
       renderer.update(
         React.createElement(Harness, {
-          channelId: 'room-a',
+          channelId: '11111111-1111-4111-8111-111111111111',
           notificationResponseId: 'notice-2',
           capture: () => undefined,
         }),
@@ -2859,71 +1381,7 @@ describe('useRoomSurfaceSession', () => {
     });
     await flushEffects();
     expect(firstScheduler.disposed).toBe(true);
-    expect(controls.schedulers).toHaveLength(2);
-    await act(async () => renderer.unmount());
-  });
-
-  it('fails a first-load timeout into the retry screen, and RETRY repaints', async () => {
-    // The 18:47Z captain report: a hung connection left the Room on LOADING
-    // forever. The bounded request now rejects, and an unpainted Room shows
-    // the retryable error screen instead of an endless loader.
-    controls.roomError = new RoomViewHttpError(0, 'timeout');
-    let current!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-        }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => controls.schedulers[0]!.error(controls.roomError));
-    expect(current.roomSurface).toBeNull();
-    expect(current.hydrationFailed).toBe(true);
-    expect(current.hydrationError).toBe(
-      'The server did not respond. Check your connection and retry.',
-    );
-
-    // RETRY re-runs the read; a responding server paints the Room normally.
-    controls.roomError = null;
-    controls.roomResponse = roomView('room-a');
-    await act(async () => current.retryHydration());
-    await flushEffects();
-    expect(controls.schedulers).toHaveLength(2);
-    await act(async () => {
-      controls.schedulers[1]!.apply(await controls.schedulers[1]!.fetch());
-    });
-    expect(current.roomSurface?.room.id).toBe('room-a');
-    expect(current.hydrationFailed).toBe(false);
-    await act(async () => renderer.unmount());
-  });
-
-  it('keeps a cached page free of offline notices on network failure but still shows terminal errors', async () => {
-    controls.cached = roomView('room-a');
-    let current!: UseRoomSurfaceSessionResult;
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: (result: UseRoomSurfaceSessionResult) => (current = result),
-        }),
-      );
-    });
-    await flushEffects();
-
-    await act(async () => controls.schedulers[0]!.error(new TypeError('Network request failed')));
-    expect(current.roomSurface?.room.id).toBe('room-a');
-    expect(current.hydrationFailed).toBe(false);
-    expect(current.hydrationError).toBeNull();
-
-    await act(async () => controls.schedulers[0]!.error(new RoomViewHttpError(403, 'forbidden')));
-    expect(current.roomSurface).toBeNull();
-    expect(current.hydrationFailed).toBe(true);
-    expect(current.hydrationError).toContain('Could not load this conversation');
+    expect(controls.lanes).toHaveLength(2);
     await act(async () => renderer.unmount());
   });
 });
@@ -2955,18 +1413,18 @@ describe('Room history follows live row changes', () => {
       dismissOptimisticMessage: vi.fn(),
       observeRoomSurface: vi.fn(),
     });
-    const session = useRoomSurfaceSession({ channelId: 'room-a', bindingsRef });
+    const session = useRoomSurfaceSession({ channelId: '11111111-1111-4111-8111-111111111111', bindingsRef });
     const history = useRoomMessageStore({
-      roomId: 'room-a',
+      roomId: '11111111-1111-4111-8111-111111111111',
       tailMessages: session.roomSurface?.messages,
       roomClient: {
-        history: async (): Promise<RoomHistoryView> => ({ roomId: 'room-a', messages: [old] }),
+        history: async (): Promise<RoomHistoryView> => ({ roomId: '11111111-1111-4111-8111-111111111111', messages: [old] }),
       },
       enabled: true,
       initialVisibleCount: 30,
     });
     // The same groups the chat screen passes: the tail and the history rows.
-    const [tailRows, historyRows] = useRoomMessageRecords(session.messageRecordScope, 'room-a', [
+    const [tailRows, historyRows] = useRoomMessageRecords(session.messageRecordScope, '11111111-1111-4111-8111-111111111111', [
       session.roomSurface?.messages ?? [],
       history.rows,
     ]);
@@ -2975,7 +1433,8 @@ describe('Room history follows live row changes', () => {
   }
 
   async function openWithHistory() {
-    controls.cached = { ...roomView('room-a'), messages: tail };
+    controls.initialView = { ...roomView('11111111-1111-4111-8111-111111111111'), messages: tail };
+    controls.routerValue = controls.initialView;
     let current!: Surface;
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -2990,24 +1449,6 @@ describe('Room history follows live row changes', () => {
     return { current: () => current, renderer };
   }
 
-  it('shows an edit to a row older than the newest 30', async () => {
-    const { current, renderer } = await openWithHistory();
-    await act(async () =>
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'message-delta',
-          roomId: 'room-a',
-          message: { ...old, text: 'after' },
-        },
-      }),
-    );
-    expect(current().historyRows.find((message) => message.id === 'old-row')?.text).toBe('after');
-    expect(current().session.roomSurface?.messages.map((message) => message.id)).toEqual(
-      tail.map((message) => message.id),
-    );
-    await act(async () => renderer.unmount());
-  });
-
   it('keeps a delete on an older row once the server answers', async () => {
     const { current, renderer } = await openWithHistory();
     await act(async () =>
@@ -3017,33 +1458,14 @@ describe('Room history follows live row changes', () => {
     await act(async () => renderer.unmount());
   });
 
-  // A later unrelated delta re-renders every window with its old row objects.
+  // A later canonical head re-renders the windows with their retained history rows.
   async function emitUnrelatedDelta(id: string) {
-    await act(async () =>
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'message-delta', roomId: 'room-a', message: row(id, 300) },
-      }),
-    );
+    await act(async () => controls.lanes[0]!.apply({
+      ...controls.routerValue!, messages: [...tail, row(id, 300)],
+    }));
   }
   const byId = (rows: readonly RoomViewMessage[], id: string) =>
     rows.find((message) => message.id === id);
-
-  it('keeps a live edit on a tail row after the windows re-render', async () => {
-    const { current, renderer } = await openWithHistory();
-    await act(async () =>
-      controls.subscriptions[0]!.emit({
-        monolithLive: {
-          type: 'message-delta',
-          roomId: 'room-a',
-          message: { ...tail[29]!, text: 'edited' },
-        },
-      }),
-    );
-    await emitUnrelatedDelta('later-1');
-    await emitUnrelatedDelta('later-2');
-    expect(byId(current().tailRows, 'tail-29')?.text).toBe('edited');
-    await act(async () => renderer.unmount());
-  });
 
   it('keeps a delete on an older row after the windows re-render', async () => {
     const { current, renderer } = await openWithHistory();
@@ -3060,9 +1482,9 @@ describe('Room history follows live row changes', () => {
     const { current, renderer } = await openWithHistory();
     // The chat screen's bookmark settlement: the server value onto the record.
     await act(async () => {
-      writeRoomBookmark(current().session.messageRecordScope, 'room-a', 'old-row', true);
+      writeRoomBookmark(current().session.messageRecordScope, '11111111-1111-4111-8111-111111111111', 'old-row', true);
       current().session.applyRoomMessageResult({
-        ...roomMessageRecord(current().session.messageRecordScope, 'room-a', 'old-row')!,
+        ...roomMessageRecord(current().session.messageRecordScope, '11111111-1111-4111-8111-111111111111', 'old-row')!,
         bookmarked: true,
       });
     });
@@ -3071,108 +1493,59 @@ describe('Room history follows live row changes', () => {
     expect(byId(current().historyRows, 'old-row')?.bookmarked).toBe(true);
     await act(async () => renderer.unmount());
   });
-
-  it('writes a live delta to the Room disk cache', async () => {
-    const { mobileSurfaceCache } = await import('@/buzz/surface-storage');
-    vi.useFakeTimers();
-    const { renderer } = await openWithHistory();
-    vi.mocked(mobileSurfaceCache.write).mockClear();
-    const fresh = row('fresh-row', 200, 'new');
-    await act(async () =>
-      controls.subscriptions[0]!.emit({
-        monolithLive: { type: 'message-delta', roomId: 'room-a', message: fresh },
-      }),
-    );
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_000);
-    });
-    const written = vi.mocked(mobileSurfaceCache.write).mock.calls.at(-1)?.[1] as RoomView;
-    expect(written.messages.at(-1)?.id).toBe('fresh-row');
-    await act(async () => renderer.unmount());
-  });
-
-  it('writes a mutation result to the Room disk cache', async () => {
-    const { mobileSurfaceCache } = await import('@/buzz/surface-storage');
-    vi.useFakeTimers();
-    const { current, renderer } = await openWithHistory();
-    vi.mocked(mobileSurfaceCache.write).mockClear();
-    await act(async () =>
-      current().session.applyRoomMessageResult({ ...tail[29]!, text: 'edited', version: 2 }),
-    );
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(1_000);
-    });
-    const written = vi.mocked(mobileSurfaceCache.write).mock.calls.at(-1)?.[1] as RoomView;
-    expect(written.messages.at(-1)?.text).toBe('edited');
-    await act(async () => renderer.unmount());
-  });
-
-  it('ignores a delta frame older than the row it already shows', async () => {
-    const { current, renderer } = await openWithHistory();
-    const emit = (text: string, version: number) =>
-      act(async () =>
-        controls.subscriptions[0]!.emit({
-          monolithLive: {
-            type: 'message-delta',
-            roomId: 'room-a',
-            message: { ...tail[29]!, text },
-            version,
-          },
-        }),
-      );
-    await emit('second edit', 3);
-    await emit('first edit', 2);
-    expect(byId(current().tailRows, 'tail-29')?.text).toBe('second edit');
-    await act(async () => renderer.unmount());
-  });
 });
 
-it('isolates transcript windows, outbox and late send completion when a route changes Room', async () => {
-  let current!: {
-    session: UseRoomSurfaceSessionResult;
-    overlay: ReturnType<typeof import('@/buzz/room-send-frame').useRoomSendFrame>;
-    history: ReturnType<typeof useRoomMessageStore>;
-  };
-  controls.scopeProbe = (session, overlay, history) => {
-    current = { session, overlay, history };
-  };
-  let renderer!: ReactTestRenderer;
-  await act(async () => {
-    renderer = create(React.createElement(BuzzChat));
+describe('canonical Room updates', () => {
+  const roomId = '11111111-1111-4111-8111-111111111111';
+  async function open(initial: RoomView | null = roomView(roomId)) {
+    controls.routerValue = initial;
+    let current!: UseRoomSurfaceSessionResult;
+    await act(async () => { create(React.createElement(Harness, { channelId: roomId,
+      capture: value => { current = value; } })); });
+    await flushEffects();
+    return () => current;
+  }
+
+  it('paints committed turns, queued commands and replies from the same canonical head', async () => {
+    const current = await open();
+    const message = { id: 'reply', text: 'Done', createdAt: 2,
+      author: { pubkey: 'agent-a', kind: 'agent' as const, name: 'Agent' }, presentation: 'message' as const };
+    const view = { ...roomView(roomId), messages: [message],
+      latestAgentTurns: [{ agentPubkey: 'agent-a', requestId: 'request-a', status: 'complete' as const, createdAt: 2 }],
+      pendingAgentCommands: [{ requestId: 'next', agentPubkey: 'agent-a', createdAt: 3 }] };
+    await act(async () => controls.lanes[0]!.apply(view));
+    expect(current().roomSurface?.messages).toEqual([message]);
+    expect(current().roomSurface?.latestAgentTurns).toEqual(view.latestAgentTurns);
+    expect(current().roomSurface?.pendingAgentCommands).toEqual(view.pendingAgentCommands);
+    await act(async () => controls.lanes[0]!.apply(view));
+    expect(current().roomSurface?.messages).toHaveLength(1);
+    expect(controls.roomReads).toBe(0);
+    expect(mobileSurfaceCache.read).not.toHaveBeenCalled();
+    expect(mobileSurfaceCache.write).not.toHaveBeenCalled();
   });
-  await flushEffects();
-  const source = current;
-  const view = roomView('room-a');
-  const row = {
-    id: 'source-message',
-    text: 'source only',
-    createdAt: 1,
-    author: view.viewer.identity,
-    presentation: 'message',
-  } as RoomViewMessage;
-  await act(async () => controls.schedulers[0]!.apply({ ...view, messages: [row] }));
-  await act(async () =>
-    current.overlay.append([{ id: 'pending', text: 'pending source' } as ChatDisplayMessage]),
-  );
-  const visible = () =>
-    renderer.root.findAllByType('probe-row').map((node: any) => node.props.children);
-  expect(visible()).toEqual(['source only', 'pending source']);
-  const sourceOutbox = current.session.outbox.current();
-  controls.routeChannelId = 'room-b';
-  controls.cached = null;
-  await act(async () => renderer.update(React.createElement(BuzzChat)));
-  // Even before the destination responds, it must not draw the source tail.
-  expect(visible()).toEqual([]);
-  await flushEffects();
-  await act(async () => controls.schedulers.at(-1)!.apply(roomView('room-b')));
-  expect(visible()).toEqual([]);
-  expect(current.session.outbox.current()).not.toBe(sourceOutbox);
-  await act(async () => {
-    source.overlay.append([{ id: 'late-preview', text: 'late source' } as ChatDisplayMessage]);
-    source.session.applyRoomMessageResult({ ...row, id: 'late-ack', text: 'late acknowledgement' });
+
+  it('ignores legacy durable hints while retaining the canonical view', async () => {
+    const current = await open(), before = current().roomSurface;
+    await act(async () => {
+      for (const reason of ['phone-write', 'postgres:messages', 'postgres:agent_turns'])
+        controls.subscriptions[0]!.emit({ monolithLive: { type: 'invalidate', roomId, reason } });
+    });
+    expect(current().roomSurface).toBe(before);
+    expect(controls.roomReads).toBe(0);
   });
-  expect(visible()).toEqual([]);
-  expect(current.session.roomSurface?.room.id).toBe('room-b');
-  expect(current.session.roomSurface?.messages).toEqual([]);
-  await act(async () => renderer.unmount());
+
+  it('shows the parked error and retries through the existing lane', async () => {
+    const current = await open(null);
+    await act(async () => controls.lanes[0]!.error('The server did not respond. Check your connection and retry.'));
+    expect(current().roomSurface).toBeNull();
+    expect(current().hydrationFailed).toBe(true);
+    expect(current().hydrationError).toBe('The server did not respond. Check your connection and retry.');
+    await act(async () => current().retryHydration());
+    expect(controls.retryCalls).toBe(1);
+    expect(controls.lanes).toHaveLength(1);
+    await act(async () => { controls.routerError = null; controls.lanes[0]!.apply(roomView(roomId)); });
+    expect(current().roomSurface?.room.id).toBe(roomId);
+    expect(current().hydrationFailed).toBe(false);
+    expect(controls.roomReads).toBe(0);
+  });
 });

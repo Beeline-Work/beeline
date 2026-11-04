@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '@/test-fixtures/router-proof';
 import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -63,7 +63,7 @@ describe('wallet connect in the desktop web renderer', () => {
         }, 5800);
         }`,
       );
-      const shims = {...webProofShims(mobile), ...legacyRouterProofShims()};
+      const shims = {...webProofShims(mobile), ...canonicalRouterProofShims(['owner-workbench', 'owner-wallet'])};
       const result = await runBrowserProof({
         entry,
         mobile,
@@ -96,6 +96,10 @@ describe('wallet connect in the desktop web renderer', () => {
               : companyWorkbench([], [{ ...companyOption('wallet', 'Coinbase wallet', 'wallet'), providerId: 'coinbase' }]).companies;
             const wallet = () => ({ address: '0xabc', solanaAddress: null, totalUsd: '$0.00', coins: [], chains: [], sponsorship: null,
               delegation: { active: globalThis.__server.active, expiresAt: null } });
+            const publish = async () => {
+              globalThis.__routerFixture.publish({family:'owner-workbench'},await monolithPhoneOperation('readWorkbench'));
+              globalThis.__routerFixture.publish({family:'owner-wallet'},{wallet:wallet(),summary:null,observedAt:Date.now()});
+            };
             export class MonolithPhoneOperationError extends Error {}
             export const phoneOperationFailureReason = error => String(error?.message ?? error);
             export const monolithPhoneOperation = async (operation) => {
@@ -104,9 +108,9 @@ describe('wallet connect in the desktop web renderer', () => {
                 catalog: [{ connectorType: 'wallet', name: 'Wallet', available: true }],
                 ...(server.wallet ? { wallet: { createdAt: 1, delegationActive: server.active, delegationExpiresAt: null } } : {}) };
               if (operation === 'createWallet') { server.ops.push(operation); server.wallet = true; return wallet(); }
-              if (operation === 'grantWalletDelegation') { server.ops.push(operation); server.active = true; return { expiresAt: null }; }
+              if (operation === 'grantWalletDelegation') { server.ops.push(operation); server.active = true; await publish(); return { expiresAt: null }; }
               if (operation === 'revokeWalletDelegation') { server.ops.push(operation); server.active = false;
-                for (const listener of globalThis.__listeners ?? []) listener({ monolithLive: { type: 'resource-change', resource: 'workbench', roomId: '' } });
+                await publish();
                 return; }
               if (operation === 'readWallet') return wallet();
               if (operation === 'readWalletHistory') return { entries: [] };

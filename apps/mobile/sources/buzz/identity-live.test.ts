@@ -1,7 +1,7 @@
 vi.mock('react-native', () => ({ AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) }, Platform: { OS: 'ios' } }));
-// This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+// UI fixtures provide complete DTOs at the canonical lane boundary.
+vi.mock('@/buzz/router-owner', async () => (await import('@/test/canonical-router-fixture')).canonicalRouterFixture(async () => null));
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'router', holdRouterConnection: () => () => {} }));
 vi.mock('@/buzz/room-transition-work', () => ({
   deferRoomWrite: (_key: string, work: () => Promise<void>) => work(),
 }));
@@ -75,6 +75,7 @@ const detailAddress = surfaceAddress(relay, viewer, '/workspace/:id', { workspac
 
 describe('live Workspace and person changes', () => {
   beforeEach(async () => {
+  (await import('@/buzz/router-owner') as any).resetFixture();
     mobileSurfaceCache.clear();
     savedLevels.length = 0;
     savedNames.length = 0;

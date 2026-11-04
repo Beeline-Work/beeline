@@ -1,5 +1,4 @@
-import { phoneLiveOutput } from './phone-live-output.js';
-import { HelperOverlayViewer, helperOverlayEnabled, fenceHelperOverlayEnqueue } from './helper-overlay.js';
+import { HelperOverlayViewer, fenceHelperOverlayEnqueue } from './helper-overlay.js';
 import { syncXAdReports } from './x-ad-reports.js';
 import { syncXSiteVisits } from './x-site-visits.js';
 import { dashboardFinances } from './operator-finances.js';
@@ -11,6 +10,7 @@ import { owedMentions } from './owed-mentions.js';
 import { serveEmailImage } from './email-images.js';
 import { createPhoneOperationDispatcher, PhoneOperationError, type PhoneOperationDispatcher } from './phone-operations.js';
 import { phoneSocketRequests } from './phone-socket.js';
+import { PHONE_SOCKET_MAX_FRAME_BYTES } from '@beeline/api-contract/phone';
 import { parseMobileMinimum } from '@beeline/api-contract/mobile-minimum';
 import { readMobileMinimums, writeMobileMinimum } from './mobile-minimum.js';
 import { parseSiteDownloadTap, recordSiteDownloadTap } from './site-download-taps.js';
@@ -98,6 +98,7 @@ import {
   DaemonConnectionRegistry,
   LIVE_HEARTBEAT_MS,
   MACHINE_SOCKET_PROTOCOL,
+  MAX_LIVE_SUBSCRIBE_FRAME_ROOMS,
   serveAgentSocket,
   serveMachineSocket,
   type DaemonLiveDependencies,
@@ -118,6 +119,9 @@ export function maxLiveDbTasks(appConnections: number | undefined): number {
   return Math.max(MIN_LIVE_DB_TASKS, (appConnections ?? 0) - LIVE_DB_RESERVED_APP_CONNECTIONS);
 }
 const MAX_LIVE_WAITING_TASKS = 512;
+const MAX_LIVE_SOCKET_TASKS = 8_192;
+const MAX_LIVE_SOCKET_QUEUED_BYTES = 2 * 1024 * 1024;
+const MAX_LIVE_ROOMS_PER_SOCKET = 8_192;
 const MAX_LIVE_OUTBOUND_BUFFERED_BYTES = 16 * 1024 * 1024;
 /** Rows one socket remembers for `admitRow`; rows with a read in flight stay. */
 const SENT_ROW_LIMIT = 256;
@@ -460,7 +464,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   };
   const helperVersionGate =
     options.helperVersionGate ?? new HelperVersionGate(process.env.BEELINE_MIN_HELPER_VERSION);
-  const webSockets = new WebSocketServer({ noServer: true, maxPayload: 0 });
+  const webSockets = new WebSocketServer({ noServer: true, maxPayload: PHONE_SOCKET_MAX_FRAME_BYTES });
   const liveDbTaskLimit = maxLiveDbTasks(options.databaseBudget?.app);
   let liveDbTasks = 0;
   const liveDbWaiters: Array<() => void> = [];
@@ -816,9 +820,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         familyId?: string;
       },
     ) => {
-      const sendLive = principal.kind === 'phone'
-        ? phoneLiveOutput(client, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, () => { liveErrors.overload++; })
-        : (payload: string):boolean => {
+      const sendLive = (payload: string):boolean => {
         if (client.readyState !== client.OPEN) return false;
         if (client.bufferedAmount + Buffer.byteLength(payload) > MAX_LIVE_OUTBOUND_BUFFERED_BYTES) {
           liveErrors.overload++;
@@ -1057,6 +1059,8 @@ export function createBeelineServer(options: ServerOptions): Server {
         void fenceHelperOverlayEnqueue(options.database,event,()=>enqueueHelperOverlay(event),principal.identityId);
       });
       socketSubscriptions.set(client, () => releases.size);
+      let socketTasks = 0;
+      let socketQueuedBytes = 0;
       let socketTaskTail = Promise.resolve();
       const pendingPaintTraces = new Map<
         string,
@@ -1118,6 +1122,16 @@ export function createBeelineServer(options: ServerOptions): Server {
           liveErrors.invalid++;
           return;
         }
+        if (
+          socketTasks >= MAX_LIVE_SOCKET_TASKS ||
+          socketQueuedBytes + frameBytes > MAX_LIVE_SOCKET_QUEUED_BYTES
+        ) {
+          liveErrors.overload++;
+          client.close(1013, 'live admission overloaded');
+          return;
+        }
+        socketTasks++;
+        socketQueuedBytes += frameBytes;
         const processMessage = async () => {
           if (client.readyState !== client.OPEN) return;
           let message: unknown;
@@ -1151,6 +1165,7 @@ export function createBeelineServer(options: ServerOptions): Server {
               const checkpoint = (sequence: number, epoch: string, reload: boolean) => {
                 sendLive(JSON.stringify({ type: 'workspace-cursor', roomId: '',
                   workspaceId, sequence, epoch, reload }));
+                if (!epoch) client.close(1013, 'live replay unavailable');
               };
               const subscription = await options.replay.subscribe(
                 `workspace:${workspaceId}`, '', cursor,
@@ -1160,12 +1175,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                     reason: 'workspace-replay', workspaceId, sequence, epoch }));
                 }, checkpoint, async () => (await options.database.query(
                   `SELECT 1 FROM memberships WHERE workspace_id=$1 AND identity_id=$2
-                   AND room_id IS NULL AND removed_at IS NULL`, [workspaceId, principal.identityId])).rowCount > 0).catch(error => {
-                  console.error('[live] Workspace replay unavailable', error);
-                  checkpoint(0, '', true);
-                  return null;
-                });
-              if (!subscription) continue;
+                   AND room_id IS NULL AND removed_at IS NULL`, [workspaceId, principal.identityId])).rowCount > 0);
               if (client.readyState !== client.OPEN) { subscription.release(); return; }
               workspaceReleases.set(workspaceId, subscription.release);
               checkpoint(subscription.resumed ? cursor!.base : subscription.sequence,
@@ -1244,6 +1254,15 @@ export function createBeelineServer(options: ServerOptions): Server {
                 ? [item.roomId]
                 : [];
             if (requestedRoomIds.length === 0) return;
+            if (
+              requestedRoomIds.length > MAX_LIVE_SUBSCRIBE_FRAME_ROOMS ||
+              releases.size + requestedRoomIds.filter((id) => !releases.has(id)).length >
+                MAX_LIVE_ROOMS_PER_SOCKET
+            ) {
+              liveErrors.invalid++;
+              client.close(1008, 'live subscription limit');
+              return;
+            }
             const readableRooms = await options.phone.canReadRooms(
               requestedRoomIds,
               principal.identityId,
@@ -1283,7 +1302,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   if (event.type === 'draft') streamed.add(event.agentId);
                   if (event.type !== 'invalidate') {
                     if (client.readyState !== client.OPEN) return;
-                    if(helperOverlayEnabled() && 'overlayV1' in event && event.overlayV1){
+                    if('overlayV1' in event && event.overlayV1){
                       if(!viewedRooms.has(roomId)||!overlayViewer.accept(event))return;
                       return fenceHelperOverlayEnqueue(options.database,event,()=>enqueueHelperOverlay(event),principal.identityId);
                     }
@@ -1473,14 +1492,10 @@ export function createBeelineServer(options: ServerOptions): Server {
                 ? await options.replay.subscribe(`room:${roomId}`, roomId, readLiveCursor(cursor), forwardEvent,
                     (sequence, epoch, reload) => {
                       sendLive(JSON.stringify({ type: reload ? 'reload' : 'cursor', roomId, sequence, epoch }));
+                      if (!epoch) client.close(1013, 'live replay unavailable');
                     },
-                    async () => (await options.phone.canReadRooms([roomId], principal.identityId)).has(roomId)).catch(error => {
-                    console.error('[live] Room replay unavailable', error);
-                    sendLive(JSON.stringify({ type: 'reload', roomId }));
-                    return null;
-                  })
+                    async () => (await options.phone.canReadRooms([roomId], principal.identityId)).has(roomId))
                 : options.live.subscribeReplay(roomId, resume, forwardEvent);
-              if (!subscription) continue;
               if (client.readyState !== client.OPEN) { subscription.release(); return; }
               releases.set(roomId, subscription.release);
               sendLive(JSON.stringify({ type: 'subscribed', roomId,
@@ -1508,7 +1523,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                 if (event.type === 'draft' && streamed.has(event.agentId)) continue;
                 if (client.readyState === client.OPEN &&
                     (event.type === 'draft' || event.type === 'thought')) {
-                  if(helperOverlayEnabled() && event.overlayV1)continue;
+                  if(event.overlayV1)continue;
                   sendDraft(event);
                 }
               }
@@ -1523,31 +1538,31 @@ export function createBeelineServer(options: ServerOptions): Server {
             ROOM_ID_PATTERN.test(item.roomId) &&
             typeof item.viewing === 'boolean'
           ) {
-            if(helperOverlayEnabled()){
+
               if(item.viewing && !viewedRooms.has(item.roomId))overlayViewer.enter(item.roomId);
               else if(!item.viewing)overlayViewer.leave(item.roomId);
-            }
+
             if (item.viewing) viewedRooms.add(item.roomId);
             else viewedRooms.delete(item.roomId);
             if (!phoneViewClosed){
               try {
                 const revision=await phoneViewing.view(viewingSession, principal.identityId, item.roomId, item.viewing);
-                if(helperOverlayEnabled() && item.viewing) {
+                if(item.viewing) {
                   if(revision!==undefined)overlayViewer.commit(item.roomId,revision);
                   else { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
                 }
               } catch(error) {
-                if(helperOverlayEnabled() && item.viewing) { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
+                if(item.viewing) { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
                 throw error;
               }
             }
             return;
           }
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
-            if(helperOverlayEnabled()){
+
               overlayViewer.leave(item.roomId);
               if(viewedRooms.delete(item.roomId) && !phoneViewClosed)await phoneViewing.view(viewingSession,principal.identityId,item.roomId,false);
-            }
+
             releases.get(item.roomId)?.();
             releases.delete(item.roomId);
             previewRooms.delete(item.roomId);
@@ -1573,14 +1588,18 @@ export function createBeelineServer(options: ServerOptions): Server {
             const kind = retryable ? 'database' : code === '22P02' ? 'invalid' : 'internal';
             liveErrors[kind]++;
             console.error('[live] message failed', { kind, error });
-            if (client.readyState === client.OPEN) {
-              const failed = JSON.parse(raw.toString()) as { id?: string; roomId?: string; roomIds?: string[] };
-              const roomIds = failed.roomIds ?? (failed.roomId ? [failed.roomId] : []);
-              for (const roomId of roomIds) sendLive(JSON.stringify({ type: 'reload', roomId }));
-              if (!roomIds.length) sendLive(JSON.stringify(failed.id
-                ? { t: 'res', id: failed.id, ok: false, error: { code: 'unavailable', message: 'This request failed', retryable } }
-                : { type: 'invalidate', roomId: '', reason: 'reconnect' }));
-            }
+            if (client.readyState === client.OPEN)
+              client.close(
+                retryable ||
+                  (error instanceof Error && error.message === 'live admission overloaded')
+                  ? 1013
+                  : 1011,
+                'live request failed',
+              );
+          })
+          .finally(() => {
+            socketTasks--;
+            socketQueuedBytes -= frameBytes;
           });
       });
       const releasePhoneView = () => {
@@ -2795,7 +2814,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     try { command = commandValue === undefined ? undefined : parseRouterCommandIdentity(commandValue); }
     catch { throw new PhoneOperationError(400, { error: 'invalid_command_identity' }); }
     await operation(name, input, undefined,
-      () => options.phone.execute(name as never, input as never, identityId!, undefined, phoneFamilies.get(request), true), command);
+      () => options.phone.execute(name as never, input as never, identityId!, undefined, phoneFamilies.get(request)), command);
     return;
   }
 

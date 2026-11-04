@@ -7,7 +7,6 @@ import './sources/buzz/sentry';
 
 import './sources/polyfills/screenOrientation';
 import './sources/polyfills/webViewport';
-import './sources/push/early-room-prefetch-bootstrap';
 import './sources/unistyles';
 import 'expo-router/entry';
 import { installNotificationActions } from './sources/push/notification-action-runtime';

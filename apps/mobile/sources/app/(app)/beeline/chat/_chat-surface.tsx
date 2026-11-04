@@ -1,7 +1,6 @@
 import { artifactObjectIdsFromVisibleRows, observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
 import { routerOwnerArtifactViewport, routerOwnerUsageProfile } from '@/buzz/router-owner';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
-import { prepareRouterMessageGesture } from '@/buzz/command-message-gesture';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
@@ -172,7 +171,6 @@ import {
   type DesktopWorkPanePrimary,
 } from '@/buzz/desktop-workbench-state';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
-import { RoomSendList, RoomSendPreview } from '@/buzz/room-send-list';
 import { useChatList } from '@/buzz/chat-list-store';
 import { useRoomRepoReplacementGuard } from '@/buzz/room-repo-replacement';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
@@ -626,12 +624,6 @@ export function BuzzChatSurface({
     returnTo?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
-  const sendPreview = useMemo(() => new RoomSendPreview(), [decodedId]);
-  useEffect(() => {
-    sendPreview.activate();
-    return () => sendPreview.dispose();
-  }, [sendPreview]);
-
   const messageAnchorId = (notificationMessageId ?? notificationTarget ?? '').trim();
   const allowOlderHistoryRef = useRef(false);
   useEffect(() => {
@@ -666,9 +658,7 @@ export function BuzzChatSurface({
   // list caches a row's position by key, and a row kept from the rows a new
   // window replaced would keep its old position.
   const transcriptWindowIdRef = useRef(0);
-  const sendPreviewRef = useRef(sendPreview);
-  sendPreviewRef.current = sendPreview;
-  const phoneRowKey = (rowId: string) => `${transcriptWindowIdRef.current}:${sendPreviewRef.current.key(rowId)}`;
+  const phoneRowKey = (rowId: string) => `${transcriptWindowIdRef.current}:${rowId}`;
   const [measuredPhoneRowKeys] = useState(() => new Set<string>());
   const [phoneScrollList] = useState(() =>
     phoneTranscriptList(
@@ -901,7 +891,6 @@ export function BuzzChatSurface({
     hydrationFailed: transcriptHydrationFailed,
     hydrationError: transcriptHydrationError,
     retryHydration,
-    refreshSignal,
     outbox,
   } = session;
   useEffect(() => {
@@ -3533,7 +3522,7 @@ export function BuzzChatSurface({
         // A turn that settled while the press was in the air is the ordinary
         // race, not a failure worth a dialog: the line is already gone.
         if (err instanceof MonolithRequestTimeoutError) {
-          refreshSignal.force();
+
           Modal.alert('Stop result unknown', phoneOperationFailureReason(err));
         }
         console.warn('Stopping the turn failed:', err);
@@ -3965,6 +3954,19 @@ export function BuzzChatSurface({
         isArchived
       )
         return;
+      // Repository guidance is optional; the agent must still receive the request.
+      if (
+        !isDirectMessage &&
+        !isCorner &&
+        ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
+        looksLikeCornerOpenIntent(rawText)
+      ) {
+        setCornerOpenRepoPrompt(true);
+        if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
+          if (githubScope) void readGitHubAccess(transport, githubScope, true)
+            .catch(() => undefined);
+        }
+      }
       const preparedReply = activeReplyTarget
         ? prepareMessageReply(rawText, activeReplyTarget)
         : undefined;
@@ -3991,26 +3993,12 @@ export function BuzzChatSurface({
         isCorner ||
         Boolean(mentionedAgent) ||
         (roomAgents.length === 1 && roomParticipants.length <= 2);
-      // Prepare immutable final message bytes inside this existing gesture,
-      // before the paint yield. Upload-dependent legacy sends keep their path.
-      const routerPrepared = activePendingAttachments.length === 0 && !viewer?.screenshotBase64
-        ? prepareRouterMessageGesture({ roomId: decodedId, principal: userPubkey, text,
-            attachments: viewer?.artifact ? [viewer.artifact] : [],
-            mentions: [...new Set([...mentionedPubkeys, ...(mentionedAgent ? [mentionedAgent] : [])])],
-            ...(preparedReply?.reference ? { parentMessageId: preparedReply.reference.eventId } : {}),
-          }) : undefined;
-      // Retain this Room's delivery handle across first paint and navigation.
-      // Session cleanup may clear its ref while this send is still preparing.
-      let activeOutbox = outbox.current();
+      setReceivedSteer(null);
+      setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
+
       sendInFlightRef.current = true;
-      const phonePreview = !desktopTranscript && activePendingAttachments.length === 0;
-      const updateSendStatus = () => {
-        setReceivedSteer(null);
-        setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
-        setSending(true);
-        if (desktopExperience) setDesktopDeliveryState('sending');
-      };
-      if (!phonePreview) updateSendStatus();
+      setSending(true);
+      if (desktopExperience) setDesktopDeliveryState('sending');
       // Text feedback lands in the local overlay in this same turn. Signing,
       // transport startup and outbox persistence can all take longer than a
       // frame on a cold Android device.
@@ -4018,7 +4006,7 @@ export function BuzzChatSurface({
         ? `pending:${Date.now()}:${Math.random()}`
         : null;
       if (provisionalId) {
-        const provisional = {
+        addMessages([{
           id: provisionalId,
           text,
           isUser: true,
@@ -4031,37 +4019,15 @@ export function BuzzChatSurface({
           pubkey: userPubkey,
           ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
           ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
-        } satisfies ChatDisplayMessage;
-        if (phonePreview) {
-          // Only the list's new cell renders now. Window resets, status and
-          // the Room-wide projections wait until native layout and a frame.
-          const painted = sendPreview.show(provisional);
-          scrollController.request({ kind: 'newest' });
-          await painted;
-          updateSendStatus();
-          landAtOwnSend(provisionalId);
-        } else {
-          addMessages([provisional]);
-          landAtOwnSend(provisionalId);
-          await yieldToNextPaint();
-        }
-      }
-      // Repository guidance is optional; the agent must still receive the request.
-      if (
-        !isDirectMessage &&
-        !isCorner &&
-        ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
-        looksLikeCornerOpenIntent(rawText)
-      ) {
-        setCornerOpenRepoPrompt(true);
-        if (activeCommunityId && roomRepoCandidates.length === 0 && transport) {
-          if (githubScope) void readGitHubAccess(transport, githubScope, true)
-            .catch(() => undefined);
-        }
+        }]);
+        landAtOwnSend(provisionalId);
+        // Signing, the outbox write and the send request wait until this row
+        // has a frame. They used to occupy the JS thread first, so the row
+        // painted after the request had already left.
+        await yieldToNextPaint();
       }
       let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
       try {
-        if (routerPrepared) await routerPrepared.persisted;
         // A warm/partial snapshot can paint before the hydration effect has
         // published its transport state. Sending is still a valid operation:
         // construct the monolith transport on demand rather than
@@ -4076,12 +4042,8 @@ export function BuzzChatSurface({
         // ■ on a dictated message drops it at any step before it enters the Room.
         const dictationCancelled = () => {
           if (!dictated?.cancelled) return false;
-          if (routerPrepared) void routerPrepared.cancelBeforeSend().catch(() => undefined);
           setPendingAck(null);
-          if (provisionalId) {
-            sendPreview.remove(preparedEvent?.id ?? provisionalId);
-            removeOptimistic(preparedEvent?.id ?? provisionalId);
-          }
+          if (provisionalId) removeOptimistic(preparedEvent?.id ?? provisionalId);
           if (desktopExperience) setDesktopDeliveryState(null);
           return true;
         };
@@ -4111,7 +4073,7 @@ export function BuzzChatSurface({
         if (dictationCancelled()) return;
         // Sign before append. The authoritative event id is the optimistic row
         // identity and the durable outbox key from its first frame onward.
-        preparedEvent = routerPrepared?.event ?? (preparedReply?.reference
+        preparedEvent = preparedReply?.reference
           ? await sendTransport.composeReplyMessage(
               text,
               preparedReply.reference,
@@ -4127,16 +4089,13 @@ export function BuzzChatSurface({
                     ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
                   }
                 : undefined,
-            ));
+            );
         if (addressesAgent) {
           setPendingAck((current) =>
             current ? { ...current, requestId: preparedEvent!.id } : current,
           );
         }
-        if (provisionalId) {
-          if (phonePreview) sendPreview.reconcile(provisionalId, preparedEvent.id);
-          else reconcileOptimistic(provisionalId, preparedEvent.id);
-        }
+        if (provisionalId) reconcileOptimistic(provisionalId, preparedEvent.id);
         const optimistic = {
           id: preparedEvent.id,
           text,
@@ -4153,7 +4112,7 @@ export function BuzzChatSurface({
           ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
           ...(attachments.length ? { attachments } : {}),
         } satisfies ChatDisplayMessage;
-        activeOutbox ??= outbox.current();
+        const activeOutbox = outbox.current();
         if (!activeOutbox) throw new Error('Message outbox is unavailable');
         if (dictationCancelled()) return;
         if (dictated) {
@@ -4235,16 +4194,11 @@ export function BuzzChatSurface({
         return true;
       } catch (err) {
         console.warn('Send failed:', err);
-        if (phonePreview && provisionalId && (!preparedEvent || !activeOutbox?.get(preparedEvent.id))) {
-          sendPreview.remove(preparedEvent?.id ?? provisionalId);
-        }
-        if (provisionalId && !preparedEvent) {
-          removeOptimistic(provisionalId);
-        }
+        if (provisionalId && !preparedEvent) removeOptimistic(provisionalId);
         if (desktopExperience) setDesktopDeliveryState('failed');
         // Delivery errors stay in the outbox. Preparation errors keep the draft.
         setPendingAck(null);
-        if (isFocused() && (!preparedEvent || !activeOutbox?.get(preparedEvent.id))) {
+        if (isFocused() && (!preparedEvent || !outbox.current()?.get(preparedEvent.id))) {
           Modal.alert('Could not prepare message', appErrorCopy(err));
         }
         return false;
@@ -4266,9 +4220,6 @@ export function BuzzChatSurface({
       addMessages,
       reconcileOptimistic,
       removeOptimistic,
-      desktopTranscript,
-      sendPreview,
-      scrollController,
       isArchived,
       isCorner,
       activeAgentTurn,
@@ -4542,7 +4493,7 @@ export function BuzzChatSurface({
         if (picked?.options.find(option => option.optionId === optionId)?.label === 'Something else') focusComposer();
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
-        refreshSignal.force();
+
         console.warn('Choice answer failed:', err);
         Modal.alert('Could not answer', phoneOperationFailureReason(err));
       } finally {
@@ -4833,7 +4784,7 @@ export function BuzzChatSurface({
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         returnToRoomList();
       } catch (err) {
-        refreshSignal.force();
+
         setMembershipError(
           appErrorCopy(err, `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}.`),
         );
@@ -5298,12 +5249,12 @@ export function BuzzChatSurface({
       await transport.closeCorner(decodedId);
       handleBack();
     } catch (error) {
-      refreshSignal.force();
+
       Modal.alert('Could not close corner', appErrorCopy(error));
     } finally {
       closeCornerPending.current = false;
     }
-  }, [decodedId, handleBack, transport, refreshSignal]);
+  }, [decodedId, handleBack, transport]);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -6178,23 +6129,9 @@ export function BuzzChatSurface({
     isCorner,
     isReadOnlyDirectMessage,
   ]);
-  const pendingMessageContext = useCallback((item: ChatDisplayMessage) => {
-    const preceding = visibleMessages.at(-1);
-    const pair = preceding ? [preceding, item] : [item];
-    return {
-      immediatelyPrecedingMessage: preceding,
-      continued: continuedSpeakerIds(pair.map(message => ({
-        id: message.id,
-        speaker: ledgerSpeakerKey(message, knownAgentPubkeysFor(agentByPubkey)),
-        isMachine: message.isAgentActivity,
-        hasReplyReference: Boolean(message.replyToId),
-      }))).has(item.id),
-    };
-  }, [agentByPubkey, visibleMessages]);
   const renderItem = useRoomMessageRenderItem({
     render: renderMessage,
     presentationForMessage,
-    pendingContext: pendingMessageContext,
     continuedIds: continuedAttributionIds,
     precedingMessageById: immediatelyPrecedingVisibleMessageById,
     messageById: visibleMessageById,
@@ -6572,23 +6509,17 @@ export function BuzzChatSurface({
                   </View>
                 </View>
               ) : (
-                <RoomSendList
-                  preview={sendPreview}
+                <FlatList
                   testID="chat-messages"
                   ref={flatListRef}
                   inverted={transcriptMessages.length > 0}
-                  initialNumToRender={PHONE_FIRST_RENDER_ROWS}
-                  // Keep history outside the viewport from monopolizing the
-                  // JS thread while the newly opened Room accepts a gesture.
-                  maxToRenderPerBatch={4}
-                  windowSize={5}
                   data={transcriptMessages}
                   keyExtractor={(item: ChatDisplayMessage) => phoneRowKey(item.id)}
                   CellRendererComponent={PhoneTranscriptCell}
                   style={styles.messageList}
-                  emptyContentContainerStyle={styles.messageListContentEmpty}
                   contentContainerStyle={[
                     styles.messageListContent,
+                    transcriptMessages.length === 0 && styles.messageListContentEmpty,
                     // Inverted list: paddingTop is the visual tail. Always the
                     // ordinary speaker-change margin plus the fixed composer-top
                     // gap — the thinking line is absolute and paints over that
@@ -7489,9 +7420,9 @@ export function BuzzChatSurface({
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           handleBack();
         }}
-        onSaved={() => refreshSignal.force()}
+        onSaved={() => {}}
         onError={(error) => {
-          refreshSignal.force();
+
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           Modal.alert('Could not complete request', appErrorCopy(error));
         }}

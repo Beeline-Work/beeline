@@ -60,7 +60,7 @@ test('public barrel cannot leak factories; feature reexports cannot bypass priva
 test('native networking and moved networking remain declared boundaries', () => {
   assert.ok(inspectSource('apps/mobile/modules/example.swift', 'URLSession.shared.dataTask(with: url)').hits.length);
   assert.ok(inspectSource('apps/mobile/src-tauri/src/lib.rs', 'let client = reqwest::Client::new();').hits.length);
-  const entry = { id: 'apps/body/src/a.ts::fetch', file: 'apps/body/src/a.ts', kind: 'fetch', count: 1, compatibility: 'legacy-only', phase: 'M5' };
+  const entry = { id: 'apps/body/src/a.ts::fetch', file: 'apps/body/src/a.ts', kind: 'fetch', count: 1 };
   const sites = new Map([[entry.id, entry]]);
   assert.deepEqual(judgeInventory(sites, { entries: [entry] }, { entries: [entry] }), []);
   assert.ok(judgeInventory(sites, { entries: [entry] }, { entries: [] }).some(x => x.includes('cannot grow')));
@@ -254,4 +254,11 @@ test('roster query and Room picker gestures stay in their declared adapters and 
     assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts',source).errors.length);
     assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts',`export * from '@/buzz/${module}';`).errors.length);
   }
+});
+
+test('a migration entry cannot authorize a second phone or helper socket owner', () => {
+  for (const file of ['apps/mobile/sources/new-owner.ts', 'apps/body/src/new-link.ts', 'packages/buzz-client/src/socket.ts']) {
+    assert.ok(inspectSource(file, 'const connection = new WebSocket(url);').errors.some(error => error.includes('socket lifecycle')));
+  }
+  assert.deepEqual(inspectSource('apps/body/src/machine-link.ts', 'const connection = new WebSocket(url);').errors, []);
 });

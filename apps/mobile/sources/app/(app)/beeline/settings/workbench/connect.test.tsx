@@ -1,6 +1,6 @@
-// This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+// UI fixtures provide complete DTOs at the canonical lane boundary.
+vi.mock('@/buzz/router-owner', async () => (await import('@/test/canonical-resource-fixture')).createCanonicalWorkbenchFixture());
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'router', holdRouterConnection: () => () => {} }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -134,7 +134,8 @@ afterAll(() => {
   vi.restoreAllMocks();
 });
 
-beforeEach(() => {
+beforeEach(async () => {
+  (await import('@/buzz/router-owner') as any).resetFixture();
   mobileSurfaceCache.clear();
   vi.clearAllMocks();
   liveListeners.clear();
@@ -298,7 +299,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(renderer.root.findAllByProps({ testID: 'connect-machine-machine-b' })).toHaveLength(0);
     online = true;
     await act(async () => {
-      await readSharedWorkbench({ workspaceId: 'workspace-1', viewerId: 'human-dani' }, { refresh: true });
+      (await import('@/buzz/router-owner') as any).publish({ family: 'owner-workbench' }, await source.readWorkbench({ workspaceId: 'workspace-1', viewerId: 'human-dani' }));
     });
     expect(pairing).toHaveBeenCalledTimes(1);
     expect(pairing).toHaveBeenCalledWith({ workspaceId: 'workspace-1',
@@ -518,7 +519,7 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
       }));
       const renderer = await render();
       expect(renderer.root.findAllByProps({ testID: 'connect-loader' }).length).toBeGreaterThan(0);
-      await act(async () => { await vi.advanceTimersByTimeAsync(15_001); });
+      await act(async () => (await import('@/buzz/router-owner') as any).park({ family: 'owner-workbench' }, 'Helpers are unavailable right now'));
       expect(renderer.root.findAllByProps({ testID: 'connect-loader' })).toHaveLength(0);
       expect(renderer.root.findByProps({ testID: 'connect-error' }).props.children).toBe('Helpers are unavailable right now');
     });

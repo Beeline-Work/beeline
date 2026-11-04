@@ -1,5 +1,5 @@
 import { subscribeCommandCompletion, waitForCommittedChange } from './command-completion.js';
-import { memberStreamEnabled, serveMcpMemberStream, type McpStreamCursor } from './rooms-mcp-stream.js';
+import { serveMcpMemberStream, type McpStreamCursor } from './rooms-mcp-stream.js';
 import type { SqlDatabase } from './database.js';
 import { waitForConnection } from './connection-wait.js';
 import { mentionRouting, mentionReplyKey, mentionReplyId, owedMentions } from './owed-mentions.js';
@@ -148,7 +148,7 @@ export class RoomsMcp {
       response.setHeader('retry-after', '60'); mcpJson(response, 429, { error: 'rate_limited' }); return true;
     }
     if (url.pathname === '/mcp/member-stream' && request.method === 'GET') {
-      if(!memberStreamEnabled()||!this.memberStreamReady()){mcpJson(response,409,{error:'member_stream_unavailable'});return true;}
+      if(!this.memberStreamReady()){mcpJson(response,409,{error:'member_stream_unavailable'});return true;}
       let cursor: McpStreamCursor | undefined;
       try {
         const encoded=url.searchParams.get('cursor');
@@ -183,7 +183,7 @@ export class RoomsMcp {
       try {
         let result: object;
         if (input.method === 'server/discover') {
-          result = { resultType: 'complete', supportedVersions: ['2026-07-28'], capabilities: { tools: {}, events: {}, memberStreamV1: memberStreamEnabled()&&this.memberStreamReady() },
+          result = { resultType: 'complete', supportedVersions: ['2026-07-28'], capabilities: { tools: {}, events: {}, memberStreamV1: this.memberStreamReady() },
             serverInfo: { name: 'beeline-rooms', version: '1.0.0' }, instructions: INSTRUCTIONS };
         } else if (mcp2 && input.method === 'tools/list') {
           result = { tools: this.agentTools ? TOOLS : ROOM_TOOLS };

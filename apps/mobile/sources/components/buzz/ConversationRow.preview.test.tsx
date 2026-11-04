@@ -4,10 +4,6 @@ import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatListItem } from '@beeline/buzz-client';
 import { ConversationRow } from './ConversationRow';
-import { applyChatListCorners, resetRoomCornerStore } from '@/buzz/room-corner-store';
-import * as rowPresentation from '@/buzz/room-list-row';
-import { observeMessageOutbox } from '@/buzz/message-outbox-observer';
-import type { MessageOutbox, MessageOutboxRecord } from '@/buzz/message-outbox';
 
 vi.mock('react-native', () => {
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
@@ -22,13 +18,9 @@ vi.mock('react-native-reanimated', () => ({
   withTiming: (value: number) => value,
 }));
 vi.mock('react-native-unistyles', () => {
-  const token: any = new Proxy(
-    {},
-    {
-      get: (_target, key) =>
-        key === 'bgUnread' ? 'BG_UNREAD' : key === Symbol.toPrimitive ? () => 0 : token,
-    },
-  );
+  const token: any = new Proxy({}, {
+    get: (_target, key) => (key === 'bgUnread' ? 'BG_UNREAD' : key === Symbol.toPrimitive ? () => 0 : token),
+  });
   return {
     StyleSheet: { create: (factory: (theme: unknown) => unknown) => factory({ buzz: token }) },
   };
@@ -59,9 +51,6 @@ function renderRow(
     latestMessage,
     ...changes,
   } as ChatListItem;
-  // The row reads its corners from the corner store, as the Room list store fills it.
-  resetRoomCornerStore();
-  applyChatListCorners([item], -1);
   let tree: ReturnType<typeof create>;
   act(() => {
     tree = create(
@@ -85,113 +74,6 @@ function renderRow(
 }
 
 describe('ConversationRow preview', () => {
-  it('renders only the changed conversation when the server replaces a list', () => {
-    const render = vi.spyOn(rowPresentation, 'roomRowPreview');
-    const action = () => undefined;
-    const items = Array.from(
-      { length: 12 },
-      (_, index) =>
-        ({
-          room: { id: `row-${index}`, name: `Room ${index}`, updatedAt: 100 },
-          latestMessage,
-        }) as ChatListItem,
-    );
-    const rows = (values: ChatListItem[]) => (
-      <>
-        {values.map((item) => (
-          <ConversationRow
-            key={item.room.id}
-            item={item}
-            viewer="viewer"
-            now={100_000}
-            onPress={action}
-            onPin={action}
-            testID={item.room.id}
-          />
-        ))}
-      </>
-    );
-    let tree: ReturnType<typeof create>;
-    try {
-      act(() => {
-        tree = create(rows(items));
-      });
-      render.mockClear();
-      const replacement = structuredClone(items);
-      replacement[0] = {
-        ...replacement[0]!,
-        latestMessage: { ...latestMessage, text: 'New arrival' },
-      };
-      act(() => tree!.update(rows(replacement)));
-      expect(render).toHaveBeenCalledTimes(1);
-      expect(render.mock.calls[0]![0].latestMessage?.text).toBe('New arrival');
-    } finally {
-      act(() => tree?.unmount());
-      render.mockRestore();
-    }
-  });
-
-  it('does not render conversations when another Room changes its outbox', () => {
-    const render = vi.spyOn(rowPresentation, 'roomRowPreview');
-    let records: readonly MessageOutboxRecord[] = [];
-    let publish: () => void = () => undefined;
-    const stop = observeMessageOutbox({
-      snapshot: () => records,
-      subscribe: (listener: () => void) => {
-        publish = listener;
-        return () => undefined;
-      },
-    } as unknown as MessageOutbox);
-    const action = () => undefined;
-    let tree: ReturnType<typeof create>;
-    try {
-      act(() => {
-        tree = create(
-          <ConversationRow
-            item={
-              {
-                room: { id: 'unrelated', name: 'Unrelated', updatedAt: 100 },
-                latestMessage,
-              } as ChatListItem
-            }
-            viewer="viewer"
-            now={100_000}
-            onPress={action}
-            onPin={action}
-            testID="unrelated"
-          />,
-        );
-      });
-      render.mockClear();
-      records = [
-        {
-          event: { tags: [['h', 'other-room']] },
-          row: { text: 'Not sent' },
-          reason: 'Denied',
-        } as MessageOutboxRecord,
-      ];
-      act(() => publish());
-      expect(render).not.toHaveBeenCalled();
-      records = [
-        {
-          ...records[0]!,
-          event: { tags: [['h', 'unrelated']] },
-          row: { text: 'Own refusal' },
-        } as MessageOutboxRecord,
-      ];
-      act(() => publish());
-      expect(render).toHaveBeenCalledOnce();
-      render.mockClear();
-      records = [{ ...records[0]!, seen: true }];
-      act(() => publish());
-      expect(render).toHaveBeenCalledOnce();
-    } finally {
-      act(() => tree?.unmount());
-      stop();
-      observeMessageOutbox();
-      render.mockRestore();
-    }
-  });
   it.each([false, true])(
     'hides empty corner controls and keeps unread dots (desktop=%s)',
     (desktop) => {
@@ -294,60 +176,20 @@ describe('ConversationRow preview', () => {
 it('R2 renders an offscreen refusal on its Room row until that Room is opened', async () => {
   const { MessageOutbox } = await import('@/buzz/message-outbox');
   const { observeMessageOutbox } = await import('@/buzz/message-outbox-observer');
-  const e = {
-    id: 'a'.repeat(64),
-    pubkey: 'b'.repeat(64),
-    created_at: 1,
-    kind: 9,
-    sig: '',
-    content: 'Start with the server PR',
-    tags: [
-      ['h', 'room'],
-      ['monolith-attachments', '[]'],
-      ['monolith-mentions', '[]'],
-    ],
-  };
-  const owner = new MessageOutbox({
-    load: async () => [],
-    save: async () => undefined,
-    send: async () => {
-      throw new Error('The relay did not allow this message.');
-    },
-    rejection: (error) => (error as Error).message,
-  });
-  await owner.enqueue(e, {
-    id: e.id,
-    text: e.content,
-    createdAt: 1,
-    author: { pubkey: e.pubkey, kind: 'human', name: 'Kai' },
-    presentation: 'message',
-  });
+  const e = { id: 'a'.repeat(64), pubkey: 'b'.repeat(64), created_at: 1, kind: 9, sig: '', content: 'Start with the server PR', tags: [['h', 'room'], ['monolith-attachments', '[]'], ['monolith-mentions', '[]']] };
+  const owner = new MessageOutbox({ load: async () => [], save: async () => undefined,
+    send: async () => { throw new Error('The relay did not allow this message.'); }, rejection: error => (error as Error).message });
+  await owner.enqueue(e, { id: e.id, text: e.content, createdAt: 1, author: { pubkey: e.pubkey, kind: 'human', name: 'Kai' }, presentation: 'message' });
   await owner.connectionChanged(true);
   let stop!: () => void;
-  act(() => {
-    stop = observeMessageOutbox(owner);
-  });
+  act(() => { stop = observeMessageOutbox(owner); });
   const { root } = renderRow();
-  const text = (value: any): string =>
-    Array.isArray(value)
-      ? value.map(text).join('')
-      : typeof value === 'string'
-        ? value
-        : value?.props
-          ? text(value.props.children)
-          : '';
-  expect(text(root.findByProps({ testID: 'room-preview' }).props.children)).toBe(
-    ' Not sent: Start with the server PR',
-  );
+  const text = (value: any): string => Array.isArray(value) ? value.map(text).join('') : typeof value === 'string' ? value : value?.props ? text(value.props.children) : '';
+  expect(text(root.findByProps({ testID: 'room-preview' }).props.children)).toBe(' Not sent: Start with the server PR');
   console.log('R2 Room list after leaving: Not sent: Start with the server PR');
   await act(async () => owner.acknowledgeFailures('room'));
-  expect(text(root.findByProps({ testID: 'room-preview' }).props.children)).not.toContain(
-    'Not sent:',
-  );
+  expect(text(root.findByProps({ testID: 'room-preview' }).props.children)).not.toContain('Not sent:');
   expect(owner.state(e.id)?.kind).toBe('refused');
-  act(() => {
-    stop();
-    observeMessageOutbox();
-  });
+  act(() => { stop(); observeMessageOutbox(); });
   owner.dispose();
 });

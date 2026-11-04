@@ -3,9 +3,9 @@ import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql
 import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
 import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, isOwnedModelUnknownGenerationError } from './owned-model-credential.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
-import { attachUsageAccount, helperUsageEnabled, publishUsageAccount } from './helper-usage.js';
+import { attachUsageAccount, publishUsageAccount } from './helper-usage.js';
 import type { CommandActivationInput } from '@beeline/api-contract/helper-activation';
-import { captureCommandActivation, helperActivationEnabled } from './helper-activation.js';
+import { captureCommandActivation } from './helper-activation.js';
 import { restoreRoomMembership, ensureRoomMembership } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql, readCornerObjective, writeCornerObjective } from './corner-objective.js';
@@ -513,7 +513,7 @@ export class DaemonService {
   /** Narrow DB-only setup path. Every effect still uses execute's current
    * command/grant authorization; this value only replaces duplicate reads. */
   async readCommandActivation(input:CommandActivationInput,authenticatedAgentId:string){
-    if(!helperActivationEnabled()||input.agentId!==authenticatedAgentId)throw new Error('Activation capability unavailable');
+    if(input.agentId!==authenticatedAgentId)throw new Error('Activation capability unavailable');
     return captureCommandActivation(this.database,input,async(db,command,isCorner)=>{
       const scoped=new DaemonService(db,this.live,undefined,this.mediaMaximumBytes,true,command);
       const configuration=await scoped.configuration(authenticatedAgentId,input.roomId);
@@ -1957,12 +1957,12 @@ export class DaemonService {
       case 'getAgentUsage':
         return ((await agentUsage(this.database, authenticatedAgentId)) ?? null) as Output<Name>;
       case 'publishAgentUsageAccount': {
-        if(!helperUsageEnabled())throw new Error('usage_account_unavailable');
+
         const published=await publishUsageAccount(this.database,authenticatedAgentId,input as Input<'publishAgentUsageAccount'>);
         return {...this.writeResult(),...published} as Output<Name>;
       }
       case 'attachAgentUsageAccount': {
-        if(!helperUsageEnabled())throw new Error('usage_account_unavailable');
+
         await attachUsageAccount(this.database,authenticatedAgentId,input as Input<'attachAgentUsageAccount'>);
         return this.writeResult() as Output<Name>;
       }

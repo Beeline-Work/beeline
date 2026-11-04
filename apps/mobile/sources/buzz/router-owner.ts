@@ -16,7 +16,7 @@ import { AppState } from 'react-native';
 import { routerLaneStorage, routerAuthorityStorageReady,routerCommandStorageReady } from './surface-storage';
 import { installMediaCacheConnection, suspendMediaCacheConnection, receiveMediaAuthorityRemoval, invalidateMediaCacheDemand, activeMediaObjectIds } from './media-cache-connection';
 
-export type RouterFamilyMode = 'pending' | 'legacy' | 'router';
+export type RouterFamilyMode = 'pending' | 'router';
 type Negotiation = { generation: number; families: readonly LaneFamily[];
   usageCellV1?: boolean; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>;
   authorityFencesV1?: boolean; roomHeadContinuityV1?: boolean; scheduledWorkCoverageV1?: RouterCapabilities['scheduledWorkCoverageV1']; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>;
@@ -223,8 +223,8 @@ export function routerOwnerListPanel(visible: boolean): void {
   listPanelVisible = visible; reconcile();
 }
 
-/** Advertise persistent authority support before the server selects families.
- * Unsupported storage keeps the legacy cohort, without suppressing its hints. */
+/** Persistent authority support is required before private projections can be
+ * observed. Unsupported storage leaves the connection pending. */
 export function routerOwnerCapabilities(): { families: readonly LaneFamily[]; authorityFencesV1: boolean; scheduledWorkCoverageV1: boolean } {
   const ready = routerAuthorityStorageReady();
   return { families: ready ? ['room-list', 'needs-you-count', 'room-head','room-workflows','workspace-roster','agent-profile','owner-workbench','owner-wallet',...(routerCommandStorageReady()?['room-scheduled-work' as const,'needs-you-tray' as const,'needs-you-saved-page' as const]:[])] : [], authorityFencesV1: ready, scheduledWorkCoverageV1: ready&&routerCommandStorageReady() };
@@ -268,8 +268,7 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
     });
   } else {
     media?.disconnected();
-    if (next.mediaMetadataV1) suspendMediaCacheConnection();
-    else installMediaCacheConnection({ generation: next.generation, mediaMetadataV1: false });
+    suspendMediaCacheConnection();
   }
   if (!lanes || !admission) { notify(); return; }
   // Connection recovery authority replaces expired screen authority exactly once
@@ -426,7 +425,7 @@ export function routerOwnerRefresh(roomId?: string): void {
 }
 
 export function routerFamilyMode(family: LaneFamily): RouterFamilyMode {
-  return !modeKnown ? 'pending' : negotiation?.families.includes(family) ? 'router' : 'legacy';
+  return modeKnown && negotiation?.families.includes(family) ? 'router' : 'pending';
 }
 export function subscribeRouterOwner(listener: () => void): () => void { listeners.add(listener); return () => { listeners.delete(listener); }; }
 export function routerLaneSnapshot(request: LaneRequest): LaneView { return lanes?.peek(request) ?? empty; }
@@ -540,18 +539,6 @@ export function acquireRouterRosterQuery(input:Extract<RouterSnapshotInput,{fami
 /** Immutable prepared input is admitted on the actual composer's synchronous
  * gesture prefix. Command storage and delivery may finish after it returns.
  */
-export function admitRouterPreparedMessage<K extends 'sendRoomMessage' | 'sendRoomReply'>(operation: K,
-  input: PhoneOperationMap[K]['input']): AdmittedCommand {
-  const focused = navigation.current();
-  if (!admission || !focused || focused.screen !== 'Room' || focused.roomId !== input.roomId)
-    throw new Error('Message action is not focused.');
-  if (operation === 'sendRoomReply') {
-    const request = { route: 'phone.sendRoomReply' as const, input: input as PhoneOperationMap['sendRoomReply']['input'] };
-    return admission.tap('SendMessage', request, pass => admission!.spend(request, pass));
-  }
-  const request = { route: 'phone.sendRoomMessage' as const, input: input as PhoneOperationMap['sendRoomMessage']['input'] };
-  return admission.tap('SendMessage', request, pass => admission!.spend(request, pass));
-}
 export function admitRouterScheduledStop(operation:'deleteRoomSchedule'|'deleteRoomSubscription',roomId:string,id:string):AdmittedCommand{
   const focused=navigation.current();
   if(!admission||!focused||focused.screen!=='ScheduledWork'||focused.roomId!==roomId||routerFamilyMode('room-scheduled-work')!=='router')

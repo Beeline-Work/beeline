@@ -1,4 +1,4 @@
-import { helperOverlayDemand, helperOverlayEnabled } from './helper-overlay.js';
+import { helperOverlayDemand } from './helper-overlay.js';
 import type { SqlDatabase } from './database.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 
@@ -74,7 +74,7 @@ export class PhoneViewing {
       if (session.rooms.size === 0) this.sessions.delete(sessionId);
       return;
     }
-    if(helperOverlayEnabled())return (await helperOverlayDemand(this.database,roomId)).viewingRevision;
+    return (await helperOverlayDemand(this.database,roomId)).viewingRevision;
   }
 
   /** The socket closed: every Room it was viewing stops holding pushes. */

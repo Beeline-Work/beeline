@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '@/test-fixtures/router-proof';
 import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
@@ -78,8 +78,9 @@ it('Reproduction NET-WASTE-1: built browser navigation keeps hidden reads quiet'
     `);
     const result = await runBrowserProof({ entry, mobile, width: 1440, budgetMs: 12000,
       head: `<script>window.process={env:{NODE_ENV:'development'}};window.addEventListener('error',e=>{document.getElementById('result').textContent=JSON.stringify({error:e.message});});setTimeout(()=>{if(document.getElementById('result').textContent==='PENDING')document.getElementById('result').textContent=JSON.stringify({error:window.__console,html:document.getElementById('root').innerHTML});},10000);</script>`,
-      shims: { ...legacyRouterProofShims(),
+      shims: { ...canonicalRouterProofShims(['owner-workbench']),
         './workbench-source': `export const getWorkbenchSource=()=>({readWorkbench:()=>globalThis.fixtureRead('workbench',{apps:[],helpers:[{name:'squire'}],connectors:[],connections:[]})});`,
+        '@/buzz/workbench-source': `export const getWorkbenchSource=()=>({readWorkbench:()=>globalThis.fixtureRead('workbench',{apps:[],helpers:[{name:'squire'}],connectors:[],connections:[]})});`,
         './surface-storage': `export { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';`,
         'expo-router': `import { useEffect } from 'react'; export const useFocusEffect=effect=>useEffect(effect,[effect]);`,
         '@/auth/buzz-identity-storage': `export const loadBuzzIdentity=async()=>({publicKey:'owner'}); export const getEffectiveRelayUrl=async()=>'https://fixture.test';`,
@@ -94,7 +95,8 @@ it('Reproduction NET-WASTE-1: built browser navigation keeps hidden reads quiet'
     expect(output.counts.workspace).toBe(3);
     expect(output.settingsText).toContain('squire');
     expect(output.afterHidden.workbench).toBe(output.beforeHidden.workbench);
-    expect(output.afterReopen.workbench).toBe(output.afterHidden.workbench + 1);
+    expect(output.afterReopen.workbench).toBe(output.afterHidden.workbench);
+    expect(output.counts.workbench).toBe(1);
     expect(output.beforePane.parent).toBe(0);
     expect(output.counts.parent).toBe(1);
     expect(output.cornerText).toContain('Corner transcript');

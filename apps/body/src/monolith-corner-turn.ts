@@ -162,7 +162,6 @@ import { WarmTranscript } from './warm-transcript.js';
 import { harnessSupportsNativeSessionResume, harnessEnforcement } from './harness-capabilities.js';
 import { PromptSectionBaseline } from './prompt-section-baseline.js';
 import type { RoomSupervisor } from './room-supervisor.js';
-import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { installCornerGitHubWrappers, type CornerGitHubCli } from './corner-github-auth.js';
 import { agentGitIdentityEnv } from './agent-git-identity.js';
@@ -1871,10 +1870,7 @@ export class MonolithCornerTurnLoop {
     let deliberateNoReply = false;
     try {
       if (freeAgent) await this.freeContinuation.begin(this.commandContext.current?.source.body ?? trigger);
-      await withTurnReceiptHeartbeat(
-        api,
-        {
-          agentId: this.agent.publicKey,
+      await api.runWithTurnOwnership({
           roomId: cornerId,
           requestId,
           generationId: this.commandContext.generationId,
@@ -2645,15 +2641,13 @@ export class MonolithCornerTurnLoop {
             { priority: 'interactive', roomKey: this.options.parentRoomId },
           ));
         },
-        (error) => console.error(`[thin-core] corner ${cornerId} receipt heartbeat failed:`, error),
-        () => {
+() => {
           console.warn(
             `[thin-core] corner ${cornerId} turn ${requestId} dropped: ` +
               'the server revoked its output authority',
           );
           this.stopTurn(requestId);
-        },
-      );
+        });
       startTraceStats();
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,

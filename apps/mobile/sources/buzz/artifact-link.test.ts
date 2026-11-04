@@ -3,7 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   monolithUrl: 'https://server.usebeeline.app',
-  mediaMode: { value: 'legacy' as 'pending' | 'legacy' | 'router' },
+  mediaMode: { value: 'router' as 'pending' | 'router' },
+  bytes: new Uint8Array(), playback: vi.fn(), link: vi.fn(),
   authorization: vi.fn(),
   fetch: vi.fn(),
   openExternalUrl: vi.fn(),
@@ -25,7 +26,15 @@ vi.mock('@/auth/monolith-session', () => ({
   monolithSession: { authorization: mocks.authorization, fetch: mocks.fetch },
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: async () => ({ publicKey: 'synthetic-reader' }) }));
-vi.mock('./media-cache-connection', () => ({ retainMediaObjectDisplay: () => () => {}, mediaTransportMode: () => mocks.mediaMode.value, mediaMetadataAvailable: () => false, mediaMetadataFor: async () => undefined, mediaCertificateCurrent: () => false, mediaCacheFences: () => [], subscribeMediaCacheBoundary: () => () => {} }));
+vi.mock('./media-cache-connection', async () => {
+  const {sha256}=await import('@noble/hashes/sha2.js');const {bytesToHex}=await import('@noble/hashes/utils.js');
+  return {retainMediaObjectDisplay:()=>()=>{},mediaTransportMode:()=>mocks.mediaMode.value,
+    requestMediaPlayback:mocks.playback,requestMediaLink:mocks.link,
+    mediaMetadataAvailable:()=>true,mediaMetadataFor:async(_origin:string,_principal:string,objectId:string)=>({
+      objectId,sha256:bytesToHex(sha256(mocks.bytes)),size:mocks.bytes.length,mimeType:'image/jpeg',
+      expiresAt:Date.now()+60000,authority:{digest:'synthetic',scopes:[]}}),
+    mediaCertificateCurrent:()=>true,mediaCacheFences:()=>[],subscribeMediaCacheBoundary:()=>()=>{}};
+});
 vi.mock('./artifact-byte-store', () => ({ createArtifactByteStore: () => ({ get: async () => null, set: async () => {}, remove: async () => {}, clear: async () => {}, revoke: async () => [], localUri: async () => 'file:///cache/immutable-photo.jpg' }) }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn() }));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
@@ -53,6 +62,7 @@ function attachment(url: string) {
 
 /** A session response carrying the given bytes, as `fetchArtifactBytes` reads one. */
 function bytesResponse(bytes: Uint8Array) {
+  mocks.bytes=bytes;
   return {
     ok: true,
     arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength),
@@ -64,7 +74,7 @@ beforeEach(() => {
   mocks.fetch.mockReset();
   mocks.authorization.mockResolvedValue('access-token');
   mocks.platformOS.value = 'ios';
-  mocks.mediaMode.value = 'legacy';
+  mocks.mediaMode.value = 'router';mocks.playback.mockReset();mocks.link.mockReset();
 });
 
 describe('the artifact media url is rebuilt against the monolith origin', () => {
@@ -156,13 +166,13 @@ describe('the PDF bytes as a string for the hosts that take one', () => {
 describe('runnable capability URL', () => {
   it('mints through the configured session origin and rejects application-host execution', async () => {
     for (const origin of ['https://server.usebeeline.app', 'https://usebeeline.app', 'https://games.usebeeline.app', 'http://games.example.net']) {
-      mocks.fetch.mockResolvedValue({ok:true,json:async()=>({url:`${origin}/play/${ID}`})});
+      mocks.playback.mockResolvedValue({url:`${origin}/play/${ID}`});
       await expect(runnableArtifactUrl(attachment(`/v1/media/${ID}`))).rejects.toThrow(/not isolated/);
     }
     const url = `https://beeline-games.fly.dev/play/${ID}?token=opaque`;
-    mocks.fetch.mockResolvedValue({ok:true,json:async()=>({url})});
+    mocks.playback.mockResolvedValue({url});
     expect(await runnableArtifactUrl(attachment(`https://evil.example/v1/media/${ID}`))).toBe(url);
-    expect(mocks.fetch).toHaveBeenLastCalledWith(`${mocks.monolithUrl}/v1/media/${ID}/play`,{}, {timeoutMs:10_000});
+    expect(mocks.playback).toHaveBeenLastCalledWith(ID);expect(mocks.fetch).not.toHaveBeenCalled();
   });
 });
 

@@ -25,7 +25,7 @@ import { roomListSections } from '@/buzz/room-list-row';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { chatListSnapshot, refreshChatList, useChatList } from '@/buzz/chat-list-store';
+import { chatListSnapshot, useChatList } from '@/buzz/chat-list-store';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { ROOMS_LABEL, WORKSPACE_LABEL, WORKSPACES_LABEL } from '@/buzz/vocabulary';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
@@ -300,13 +300,6 @@ export const SidebarView = React.memo(function SidebarView() {
   const surface = useChatList(chatListKey, {
     onError: () => setNavigationError(`Could not load ${ROOMS_LABEL.toLowerCase()}.`),
   });
-  // An identity-wide change (a Room joined or left) reads the list again; the
-  // mounted deck already reads for its own Workspace watch.
-  React.useEffect(() => {
-    if (refreshNonce === 0 || !chatListKey || pathname.startsWith('/beeline/channels')) return;
-    refreshChatList(chatListKey);
-  }, [refreshNonce]);
-
   React.useEffect(() => {
     if (!identityPubkey) return;
     return subscribeActiveCommunityId(identityPubkey, (nextWorkspaceId) => {

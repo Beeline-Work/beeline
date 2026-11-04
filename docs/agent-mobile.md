@@ -13,6 +13,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ## Mobile client
 
+Network ownership and the reasons for retained local checks: [router ownership](network-router-ownership.md).
+
 - **A saved sign-in survives network failures and inactivity.** `loadBuzzIdentity` (`auth/buzz-identity-storage.ts`) restores the saved identity locally; operations renew access themselves. `TokenAuth.refresh` (`apps/server/src/auth.ts`) retains the device credential, recovering legacy sealed successors; only explicit device revocation or account deletion ends it. `runMaintenance` sweeps access tokens, never device sessions. Coverage: `buzz-identity-session.test.ts`, `monolith-session.test.ts`, `auth.test.ts`.
 - `apps/mobile` is vendored Happy, isolated from root workspaces (`npm run mobile:install`); `@beeline/*` resolves to built `dist/` via Metro. Android `app.usebeeline`, iOS `app.usebeeline.mobile`, scheme `beeline://`. Reads go through `RoomViewClient`; MMKV holds only scoped DTOs + outbox.
 - **Large router deliveries remain complete.** `router-large-workspace.integration.test.ts` runs the server socket dispatcher through the actual phone `router-owner.ts` at 1,900 mostly archived Rooms. Valid snapshots, authority fanout, multipart data and durable groups cannot be refused by count or byte budgets; packetization and LRU retention do not limit delivery.
@@ -54,4 +56,4 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ## File byte ownership
 
-The closed viewport/action bridge is `buzz/router-owner.ts` plus `packages/net/src/private/media-demand-owner.ts`. Immutable file flights and local disk authority live in `buzz/artifact-byte-owner.ts`, `immutable-byte-cache.ts` and `artifact-byte-store.ts`; consumers share these through `ArtifactMedia` and existing Open/Save controls. `media-cache-connection.ts` distinguishes pending, explicitly negotiated legacy, and router modes. A disconnected capable connection cannot fall back to HTTP metadata. The network-router closure ledger records activation and native-runtime proof gates.
+The closed viewport/action bridge is `buzz/router-owner.ts` plus `packages/net/src/private/media-demand-owner.ts`. Immutable file flights and local disk authority live in `buzz/artifact-byte-owner.ts`, `immutable-byte-cache.ts` and `artifact-byte-store.ts`; consumers share these through `ArtifactMedia` and existing Open/Save controls. `media-cache-connection.ts` keeps metadata pending until the main socket can serve it. Metadata has no HTTP fallback; immutable file bytes retain their declared download path. The phone channel manifest and router boundary check enforce network ownership.

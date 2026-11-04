@@ -1,5 +1,6 @@
 vi.mock('@/buzz/use-surface-focus',()=>({useSurfaceFocus:()=>true}));
-vi.mock('@/buzz/router-resource',()=>({useRoutedResource:()=>({mode:'legacy',value:null,error:null,loading:false,retry:()=>{}})}));
+vi.mock('@/buzz/router-family',()=>({useRouterFamily:()=> 'router',holdRouterConnection:()=>()=>{}}));
+vi.mock('@/buzz/router-owner',async()=>(await import('@/test/canonical-resource-fixture')).createCanonicalWalletFixture());
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
@@ -156,7 +157,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('Wallet screens (mock §Screens, pass 4)', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    (await import('@/buzz/router-owner') as any).resetFixture();
     vi.clearAllMocks();
     mobileSurfaceCache.clear();
     route.workspaceId = 'workspace-1';

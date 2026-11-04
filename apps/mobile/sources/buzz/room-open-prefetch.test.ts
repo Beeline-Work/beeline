@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('@/push/push-room-prefetch', () => ({ prefetchRoomOpen: vi.fn() }));
 
 import { dispatchRoomOpenTap } from './room-open-prefetch';
 

@@ -4,8 +4,7 @@ import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 
 // Explicit leaves: additions to either wire contract must be reviewed here.
-// Legacy entries authorize no router dispatch. M2/M3 replace entries only after
-// family negotiation, concrete codecs and executable closure proofs exist.
+// The private adapters dispatch these closed operations through their existing links.
 const phoneOperations = {
   acceptConnectorOffer: true,
   actOnRepositoryCard: true,
@@ -364,19 +363,17 @@ export type RouteInput<K extends RouteId> = K extends `phone.${infer N extends k
 export type RouteOutput<K extends RouteId> = K extends `phone.${infer N extends keyof PhoneOperationMap}`
   ? PhoneOperationMap[N]['output'] : K extends `daemon.${infer N extends keyof DaemonOperationMap}`
     ? DaemonOperationMap[N]['output'] : never;
-type LegacyRoute<K extends RouteId> = Readonly<{
+type RouteDefinition<K extends RouteId> = Readonly<{
   id: K;
   operation: K extends `${string}.${infer N}` ? N : never;
-  compatibility: 'legacy-only';
   transport: K extends 'phone.uploadMedia' ? 'file-bytes' : K extends PhoneId ? 'main-socket' : 'machine-socket';
   params: Codec<RouteInput<K>>;
   result: Codec<WireOutput<K>>;
   exception?: { id: 'file-bytes'; existingSite: string; reason: string };
-  migration: 'M2-M4' | 'M5';
 }>;
-function legacyEntries(prefix: 'phone' | 'daemon', operations: object) {
+function operationEntries(prefix: 'phone' | 'daemon', operations: object) {
   return Object.keys(operations).map(operation => [`${prefix}.${operation}`, Object.freeze({
-    id: `${prefix}.${operation}`, operation, compatibility: 'legacy-only',
+    id: `${prefix}.${operation}`, operation,
     ...routeCodecs(`${prefix}.${operation}` as RouteId),
     transport: prefix === 'phone' && operation === 'uploadMedia' ? 'file-bytes' : prefix === 'phone' ? 'main-socket' : 'machine-socket',
     ...(prefix === 'phone' && operation === 'uploadMedia' ? { exception: Object.freeze({
@@ -384,10 +381,9 @@ function legacyEntries(prefix: 'phone' | 'daemon', operations: object) {
       existingSite: 'apps/mobile/sources/sync/transport/monolith-rig-transport.ts::session-fetch',
       reason: 'Documented media upload exception: binary file bodies use HTTP /v1/phone/media, not the JSON socket.',
     }) } : {}),
-    migration: prefix === 'phone' ? 'M2-M4' : 'M5',
   })]);
 }
 // Exhaustive source maps above establish the key/value relationship that entries loses.
 export const routes = Object.freeze(Object.fromEntries([
-  ...legacyEntries('phone', phoneOperations), ...legacyEntries('daemon', daemonOperations),
-])) as { readonly [K in RouteId]: LegacyRoute<K> };
+  ...operationEntries('phone', phoneOperations), ...operationEntries('daemon', daemonOperations),
+])) as { readonly [K in RouteId]: RouteDefinition<K> };

@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '../test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '../test-fixtures/router-proof';
 import { mkdtemp, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
@@ -56,7 +56,7 @@ it('Demonstration draft-send-R1: browser composer retains and submits only appen
     `,
     );
     const shims = {
-      ...webProofShims(mobile), ...legacyRouterProofShims(),
+      ...webProofShims(mobile), ...canonicalRouterProofShims([]),
       'react-native-unistyles': webProofShims(mobile)['react-native-unistyles'].replace(
         'const theme = { buzz: beelineThemes.obsidian };',
         'const theme = { buzz: beelineThemes.obsidian, colors: { groupped: { background: "#14091a" }, divider: "#333", text: "#fff", textSecondary: "#aaa", textLink: "#b08a4a", surface: "#190e21" } };',

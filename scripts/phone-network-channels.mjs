@@ -448,6 +448,8 @@ export function judgeChannels(sites, allowlist, baseAllowlist) {
   }
   for (const [key, site] of sites) {
     const entry = allowed.get(key);
+    if (['websocket', 'xhr', 'event-source'].includes(site.kind) && site.file !== TRANSPORT_FILE)
+      errors.push(`${site.file}: connection lifecycle belongs to the main live socket; manifest entries cannot authorize another socket`);
     const at = site.lines.map((line) => `${site.file}:${line}`).join(', ');
     if (!entry)
       errors.push(`new phone network call site (${site.kind}) at ${at}. Send it over the main live socket in ${TRANSPORT_FILE} instead.`);

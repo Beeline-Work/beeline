@@ -43,7 +43,6 @@ import {
 } from '@/push/notification-response';
 import { resolveBuzzNotificationDestination } from '@/push/notification-destination';
 import { routeVoiceResumeNotification } from '@/buzz/voice-transport';
-import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import {
   markInitialLandingResolved,
   suppressInitialLandingNavigation,
@@ -482,7 +481,6 @@ export default function RootLayout() {
         suppressPendingInitialLanding: suppressInitialLandingNavigation,
         clearLastResponse: Notifications.clearLastNotificationResponseAsync,
         resolveTarget: resolveBuzzNotificationDestination,
-        prefetchRoom: prefetchPushRoom,
         consumedResponses: consumedNotificationResponses,
         log: (message) => console.warn(message),
       });

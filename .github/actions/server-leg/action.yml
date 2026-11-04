@@ -100,16 +100,20 @@ runs:
         node - "$RUNNER_TEMP/server-release/machines-before.json" "${{ steps.fleet.outputs.image_ref }}" > "$RUNNER_TEMP/server-release/previous-refs" <<'NODE'
         const machines = require(process.argv[2]);
         const tag = image => String(image ?? '').replace(/@sha256:[a-f0-9]+$/, '');
+        // Fly retags deployed images as deployment-<id>, so the serving source comes from the image's release label.
         const previous = machines.map(machine => {
           const image = tag(machine.config?.image ?? machine.imageRef);
-          return image === tag(process.argv[3]) ? machine.config?.metadata?.beeline_replaced_image : image;
+          if (image === tag(process.argv[3])) return { image: machine.config?.metadata?.beeline_replaced_image };
+          return { image, sha: machine.image_ref?.labels?.['app.usebeeline.release.sha'] };
         });
-        previous.push(...[process.env.PUBLISHED_SERVER_IMAGE, process.env.ROLLBACK_SERVER_IMAGE].filter(Boolean));
-        for (const image of new Set(previous)) {
-          const sha = image?.match(/-([a-f0-9]{12,40})(?:@sha256:[a-f0-9]+)?$/)?.[1];
+        previous.push(...[process.env.PUBLISHED_SERVER_IMAGE, process.env.ROLLBACK_SERVER_IMAGE].filter(Boolean).map(image => ({ image })));
+        const shas = new Set();
+        for (const { image, sha: labelled } of previous) {
+          const sha = labelled ?? image?.match(/-([a-f0-9]{12,40})(?:@sha256:[a-f0-9]+)?$/)?.[1];
           if (!sha) throw new Error('Cannot identify the previous server source; refusing schema changes');
-          console.log(sha);
+          shas.add(sha);
         }
+        for (const sha of shas) console.log(sha);
         NODE
         git fetch --unshallow origin || git fetch origin main
         while IFS= read -r previous; do

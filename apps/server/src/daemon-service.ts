@@ -158,7 +158,6 @@ import {
   type CommittedTurnLiveRow,
   type LiveEvent,
 } from './live.js';
-import { CORNER_WAKE_MIN_INTERVAL_MS, CORNER_WAKE_TIMEOUT_MS, wakesCorner } from './corner-wake.js';
 import {
   directMessageRoomId,
   restateSystemLine,
@@ -279,7 +278,6 @@ import {
 type Input<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['input'];
 type Output<Name extends keyof DaemonOperationMap> = DaemonOperationMap[Name]['output'];
 const id = () => randomBytes(32).toString('hex');
-export const INBOX_REPLAY_REWIND_MS = 5_000;
 
 /**
  * A system line's subject is spoken in the Ledger's own voice, so it is the
@@ -394,7 +392,6 @@ const CORNER_CLEANUP_OPERATIONS = new Set<string>([
   'getCornerCloseRequests',
   'getRoomInbox',
 ]);
-export { CORNER_WAKE_TIMEOUT_MS } from './corner-wake.js';
 
 /**
  * An expired attachment is named, not hidden: the agent is told the bytes are
@@ -576,8 +573,6 @@ export class DaemonService {
   /** Collects network work that must wait for the command transaction to commit. */
   private afterCommit: AfterCommit | undefined;
 
-  /** When each corner last woke, so `CORNER_WAKE_MIN_INTERVAL_MS` can be held. */
-  private readonly lastCornerWake = new Map<string, number>();
 
   async execute<Name extends keyof DaemonOperationMap>(
     name: Name,
@@ -1480,17 +1475,12 @@ export class DaemonService {
       case 'report': {
         const ask = candidate.ask === undefined
           ? undefined : normalizeAgentAsk(candidate.ask);
-        return await this.report(String(candidate.text), authenticatedAgentId, this.authorizedCommand!, this.database, false, candidate.status, ask, candidate.to) as Output<Name>;
+        return await this.report(typeof candidate.text === 'string' ? candidate.text : '', authenticatedAgentId, this.authorizedCommand!, this.database, false, candidate.status, ask, candidate.to) as Output<Name>;
       }
       case 'read': {
         const target = await commandAddress(this.database, String(candidate.address), authenticatedAgentId, true);
         return await this.inbox('getRoomConversation', { roomId: target.id, limit: candidate.limit as number | undefined }, authenticatedAgentId) as Output<Name>;
       }
-      case 'waitForCornerWake':
-        return (await this.waitForCornerWake(
-          (input as Input<'waitForCornerWake'>).cornerId,
-          authenticatedAgentId,
-        )) as Output<Name>;
       case 'getRoomAuthority':
         return (await this.roomAuthority(
           input as Input<'getRoomAuthority'>,
@@ -1502,12 +1492,6 @@ export class DaemonService {
         )) as Output<Name>;
       case 'getMissionAuthority':
         return (await this.missionAuthority()) as Output<Name>;
-      case 'listWorkSchedules':
-      case 'listAgentToolSchedules':
-        return (await this.schedules(
-          input as Input<'listAgentToolSchedules'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
       case 'getWorkScheduleAuthority':
         return (await this.scheduleAuthority(
           input as Input<'getWorkScheduleAuthority'>,
@@ -1913,21 +1897,6 @@ export class DaemonService {
       case 'postPermissionExecution':
         return (await this.permissionExecution(
           input as Input<'postPermissionExecution'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'postWorkSchedule':
-        return (await this.postSchedule(
-          input as Input<'postWorkSchedule'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'postWorkScheduleReceipt':
-        return (await this.scheduleReceipt(
-          input as Input<'postWorkScheduleReceipt'>,
-          authenticatedAgentId,
-        )) as Output<Name>;
-      case 'postAgentToolScheduleIndex':
-        return (await this.scheduleIndex(
-          input as Input<'postAgentToolScheduleIndex'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'postAgentToolMandate':
@@ -3426,56 +3395,6 @@ export class DaemonService {
         ...(await commandInbox(this.database, roomId, agentId)),
         ...(closeRequested !== undefined ? { closeRequested } : {}),
       };
-    if (input.startAtLatest) {
-      if (input.after) throw new Error('startAtLatest cannot be combined with after');
-      const latest = await this.database.query<{
-        id: string;
-        created_at: Date;
-        cursor_ms: string;
-      }>(
-        // A caused system line is stamped up to 1s into the future
-        // (`systemLine`'s ordering floor), so the newest row's stamp can sit
-        // ahead of the clock. A high-water mark must only ever name stamps the
-        // clock has reached: a future one swallows every real message written
-        // inside that window, and the daemon never sees them — no turn starts.
-        `SELECT id,created_at,${MESSAGE_CURSOR_MS_SQL} cursor_ms
-         FROM messages WHERE room_id=$1 AND created_at <= now()
-         ORDER BY cursor_ms DESC,id DESC LIMIT 1`,
-        [roomId],
-      );
-      const highWater = latest.rows[0];
-      // An empty Room still needs an activation position. Without one, a
-      // reconnect after its first messages calls startAtLatest again and
-      // silently declares those offline messages to be history.
-      const activationCursor = highWater
-        ? `${highWater.cursor_ms},${highWater.id}`
-        : `${
-            (
-              await this.database.query<{ now_ms: string }>(
-                `SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint now_ms`,
-              )
-            ).rows[0]!.now_ms
-          },${'f'.repeat(64)}`;
-      const rewindIds = highWater
-        ? (
-            await this.database.query<{ id: string }>(
-              `SELECT id FROM messages
-               WHERE room_id=$1
-                 AND ${MESSAGE_CURSOR_MS_SQL} >= $2::bigint - ${INBOX_REPLAY_REWIND_MS}
-                 AND (${MESSAGE_CURSOR_MS_SQL},id) <= ($2::bigint,$3)
-               ORDER BY ${MESSAGE_CURSOR_MS_SQL},id`,
-              [roomId, highWater.cursor_ms, highWater.id],
-            )
-          ).rows.map((row) => row.id)
-        : [];
-      return {
-        dispatchVersion: 1 as const,
-        items: [],
-        cursor: activationCursor,
-        rewindIds,
-        ...(closeRequested !== undefined ? { closeRequested } : {}),
-      };
-    }
     const limit = Math.max(1, Math.min(input.limit ?? 100, 200));
     const after = input.after?.match(/^(\d+),([0-9a-f]{64}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/);
     if (input.after && !after) throw new Error('invalid inbox cursor; pass the returned next object unchanged as read cursor');
@@ -3530,17 +3449,11 @@ export class DaemonService {
           : `${conversationColumns}
              FROM messages WHERE room_id=$1
                ${
-                 after
-                   ? input.rewind
-                     ? `AND ${MESSAGE_CURSOR_MS_SQL} >= $2::bigint - ${INBOX_REPLAY_REWIND_MS}`
-                     : `AND (${MESSAGE_CURSOR_MS_SQL},id) > ($2::bigint,$3)`
-                   : ''
+                 after ? `AND (${MESSAGE_CURSOR_MS_SQL},id) > ($2::bigint,$3)` : ''
                }
              ORDER BY cursor_ms,id LIMIT ${limit + 1}`,
       after
-        ? input.rewind
-          ? [roomId, after[1]]
-          : [roomId, after[1], after[2]]
+        ? [roomId, after[1], after[2]]
         : before
           ? [roomId, before[1], before[2]]
           : [roomId],
@@ -3563,8 +3476,7 @@ export class DaemonService {
             )
           ).rows.map((row) => row.text)
         : undefined;
-    // Same future-stamp rule as the startAtLatest high-water: the returned
-    // cursor advances only onto rows the clock has reached. A not-yet-settled
+    // The cursor advances only onto rows the clock has reached. A not-yet-settled
     // line is still DELIVERED (it mentions nobody whose daemon it could
     // double-wake) and simply re-delivers on the next poll, at most until its
     // stamp arrives — ≤1s.
@@ -3915,25 +3827,6 @@ export class DaemonService {
   private async missionAuthority() {
     // Nothing has ever written mission authority; this is the answer an absent row gave.
     return { status: 'unavailable' as const };
-  }
-  private async schedules(input: Input<'listAgentToolSchedules'>, agentId: string) {
-    const roomId = (input as { roomId?: string }).roomId;
-    const rows = await this.database.query<{
-      schedule_id: string;
-      revision: number;
-      schedule: { status: string; nextRunAt?: number };
-    }>(
-      `SELECT schedule_id,revision,schedule FROM work_schedules WHERE agent_id=$1 ${roomId ? 'AND room_id=$2' : ''} ORDER BY updated_at`,
-      roomId ? [agentId, roomId] : [agentId],
-    );
-    return {
-      schedules: rows.rows.map((row) => ({
-        scheduleId: row.schedule_id,
-        revision: row.revision,
-        status: row.schedule.status,
-        ...(row.schedule.nextRunAt ? { nextRunAt: row.schedule.nextRunAt } : {}),
-      })),
-    };
   }
   private async scheduleAuthority(input: Input<'getWorkScheduleAuthority'>, agentId: string) {
     if (input.agentId !== agentId) return { status: 'denied' as const };
@@ -5805,20 +5698,6 @@ export class DaemonService {
     );
     return this.writeResult();
   }
-  private async postSchedule(input: Input<'postWorkSchedule'>, agentId: string) {
-    await this.access(input.roomId, agentId);
-    await this.database.query(
-      `INSERT INTO work_schedules(schedule_id,agent_id,room_id,revision,schedule) VALUES($1,$2,$3,$4,$5::jsonb) ON CONFLICT(schedule_id,revision) DO UPDATE SET schedule=EXCLUDED.schedule,updated_at=now()`,
-      [
-        input.schedule.scheduleId,
-        agentId,
-        input.roomId,
-        input.schedule.revision,
-        JSON.stringify(input.schedule),
-      ],
-    );
-    return this.writeResult();
-  }
   /** Agent-driven schedules (beeline-agent create_schedule) run through the
    *  same agent_schedules loop as manager-created schedules, with the agent as
    *  both creator and beneficiary. */
@@ -6254,23 +6133,6 @@ export class DaemonService {
       nextRunAt: Math.floor(row.next_run_at.getTime() / 1_000),
     };
   }
-  private async scheduleReceipt(input: Input<'postWorkScheduleReceipt'>, agentId: string) {
-    await this.database.query(
-      `INSERT INTO schedule_receipts(schedule_id,occurrence_id,agent_id,room_id,status) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING`,
-      [input.scheduleId, input.occurrenceId, agentId, input.roomId, input.status],
-    );
-    return this.writeResult();
-  }
-  private async scheduleIndex(input: Input<'postAgentToolScheduleIndex'>, agentId: string) {
-    const member = await this.database.query(
-      `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
-      [input.workspaceId, agentId],
-    );
-    if (!member.rowCount) throw new Error('daemon workspace access denied');
-    // Old helpers still post their schedule index; nothing has read it since
-    // schedules moved to the server, so it is acknowledged without storing.
-    return this.writeResult();
-  }
   private async postMandate(input: Input<'postAgentToolMandate'>, agentId: string) {
     await this.database.query(
       `INSERT INTO agent_mandates(agent_id,room_id,generation,mandate) VALUES($1,$2,$3,$4::jsonb) ON CONFLICT(agent_id,room_id) DO UPDATE SET generation=EXCLUDED.generation,mandate=EXCLUDED.mandate,updated_at=now()`,
@@ -6494,15 +6356,16 @@ export class DaemonService {
            WHERE source.id=$1 AND author.kind='human' AND source.presentation='message' AND source.system_event IS NULL`, [incoming.source_message_id])).rowCount));
       if (!ownOrder) return { ...this.writeResult(), delivered: true, skipped: true };
     }
-    const receivedPrefix = text.match(/^([^\s:]{1,64}):/)?.[1];
-    const prefix = text.match(/^(done|blocked|failed|needs[-_]decision):\s*\S/)?.[1]?.replace('_', '-');
-    if (!automatic && (!['done', 'blocked', 'failed', 'needs_decision'].includes(String(status)) ||
-      String(status).replace('_', '-') !== prefix)) {
-      throw new CommandRefusalError(
-        `report received status ${JSON.stringify(status ?? null)} and text prefix ${JSON.stringify(receivedPrefix ? receivedPrefix + ':' : null)}; ` +
-        'expected status done, blocked, failed, or needs_decision matching a nonempty report (needs-decision: and needs_decision: are both accepted)', 400);
+    const prefix = automatic
+      ? text.match(/^(done|blocked|failed|needs[-_]decision):\s*\S/)?.[1]?.replace('_', '-')
+      : String(status).replace('_', '-');
+    if (!automatic) {
+      const body = text.replace(/^(?:done|blocked|failed|needs[-_]decision):\s*/, '').trim();
+      if (!['done', 'blocked', 'failed', 'needs_decision'].includes(String(status)) || !body)
+        throw new CommandRefusalError('report requires status done, blocked, failed, or needs_decision and nonempty text', 400);
+      text = `${prefix}: ${body}`;
     }
-    // Keep the established display prefix for commander delivery and waiting indexes.
+    // Keep automatic reports' established prefix without inventing a status.
     text = text.replace(/^needs_decision:/, 'needs-decision:');
     if (prefix === 'done') {
       const corner = (await database.query<{ worker: string; merged: boolean; has_pr: boolean }>(
@@ -9073,40 +8936,6 @@ export class DaemonService {
       name: row?.name ?? systemMessage("daemon-service.agent", agentId.slice(0, 8)),
     };
   }
-  /**
-   * Resolves on the corner's next live event the intake loop can act on
-   * (`wakesCorner`), or after the bounded timeout with nothing new — the
-   * daemon's poll is unaffected either way, so a missed or timed-out wake
-   * never loses an event; the next poll still catches it.
-   *
-   * Two consecutive wakes of one corner are held at least
-   * `CORNER_WAKE_MIN_INTERVAL_MS` apart, so a burst of qualifying events costs
-   * one poll for the whole burst instead of one poll each.
-   */
-  private async waitForCornerWake(cornerId: string, agentId: string): Promise<{ woken: boolean }> {
-    const horizon = Date.now() - CORNER_WAKE_TIMEOUT_MS;
-    for (const [corner, at] of this.lastCornerWake)
-      if (at < horizon) this.lastCornerWake.delete(corner);
-    return new Promise((resolvePromise) => {
-      let unsubscribe: (() => void) | undefined;
-      const timer = setTimeout(() => {
-        unsubscribe?.();
-        resolvePromise({ woken: false });
-      }, CORNER_WAKE_TIMEOUT_MS);
-      const wake = () => {
-        this.lastCornerWake.set(cornerId, Date.now());
-        resolvePromise({ woken: true });
-      };
-      unsubscribe = this.live.subscribe(cornerId, (event) => {
-        if (!wakesCorner(event, agentId)) return;
-        clearTimeout(timer);
-        unsubscribe?.();
-        const since = Date.now() - (this.lastCornerWake.get(cornerId) ?? 0);
-        if (since >= CORNER_WAKE_MIN_INTERVAL_MS) wake();
-        else setTimeout(wake, CORNER_WAKE_MIN_INTERVAL_MS - since);
-      });
-    });
-  }
   /** A review assignment lends transcript reads only in its current approval source. */
   private async reviewSourceAccess(roomId: string, agentId: string): Promise<void> {
     const result = await this.database.query(
@@ -9469,9 +9298,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getRoomAuthority: true,
   getPermissionAuthority: true,
   getMissionAuthority: true,
-  listWorkSchedules: true,
   getWorkScheduleAuthority: true,
-  listAgentToolSchedules: true,
   createAgentSchedule: true,
   setEventSubscriptions: true,
   setWakeDelivery: true,
@@ -9503,7 +9330,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   readCornerPullRequest: true,
   postCornerMessage: true,
   getCornerCloseRequests: true,
-  waitForCornerWake: true,
   listUntrackedCorners: true,
   getRoomRepositoryState: true,
   noteEmptyRoomRepository: true,
@@ -9535,9 +9361,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postSquireApprovalDecision: true,
   postPermissionRequest: true,
   postPermissionExecution: true,
-  postWorkSchedule: true,
-  postWorkScheduleReceipt: true,
-  postAgentToolScheduleIndex: true,
   postAgentToolMandate: true,
   getAgentAvatar: true,
   postAgentAvatar: true,

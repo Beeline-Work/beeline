@@ -71,7 +71,7 @@ export type LiveEvent =
   | { type: 'resource-change'; roomId: ''; ownerId: string; agentId?: undefined;
       resource: 'install' | 'workbench' | 'agent'; resourceId?: string; version?: string;usageOnly?:true }
   /** `agentId` names the author when one agent's own write caused it; a fact the
-   *  server itself publishes carries none. `corner-wake.ts` reads it. */
+   *  server itself publishes carries none. */
   | {
       type: 'invalidate';
       roomId: string;

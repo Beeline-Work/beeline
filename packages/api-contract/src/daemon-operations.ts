@@ -351,7 +351,6 @@ export type DaemonOperationMap = {
   getRoomAuthority: Operation<RoomPrincipalInput, RoomAuthorityResult>;
   getPermissionAuthority: Operation<PermissionAuthorityInput, AuthorityDecisionResult>;
   getMissionAuthority: Operation<MissionAuthorityInput, AuthorityDecisionResult>;
-  listWorkSchedules: Operation<AgentInput, WorkScheduleListResult>;
   createAgentSchedule: Operation<CreateAgentScheduleInput, AgentScheduleResult>;
   setEventSubscriptions: Operation<SetEventSubscriptionsInput, EventSubscriptionsResult>;
   setWakeDelivery: Operation<RoomInput & WakeDeliveryResult, WakeDeliveryResult>;
@@ -372,7 +371,6 @@ export type DaemonOperationMap = {
   deleteAgentSchedule: Operation<DeleteAgentScheduleInput, WriteResult>;
   updateAgentSchedule: Operation<UpdateAgentScheduleInput, AgentScheduleResult>;
   getWorkScheduleAuthority: Operation<WorkScheduleAuthorityInput, AuthorityDecisionResult>;
-  listAgentToolSchedules: Operation<AgentRoomInput, WorkScheduleListResult>;
   getAgentToolMandate: Operation<AgentRoomInput, AgentToolMandateResult>;
   getTargetAgentAuthority: Operation<TargetAgentAuthorityInput, AuthorityDecisionResult>;
   listRoomCorners: Operation<RoomInput & { activeOnly?: boolean }, CornerListResult>;
@@ -493,7 +491,6 @@ export type DaemonOperationMap = {
   >;
   getCornerCloseRequests: Operation<CornerCursorInput, RoomInboxResult>;
   /** Long-poll: resolves as soon as the corner has something new, or on a bounded timeout. */
-  waitForCornerWake: Operation<CornerInput, CornerWakeResult>;
   listUntrackedCorners: Operation<RoomInput, CornerListResult>;
   getRoomRepositoryState: Operation<RoomInput, RoomRepositoryStateResult>;
   noteEmptyRoomRepository: Operation<RoomInput, WriteResult>;
@@ -552,9 +549,6 @@ export type DaemonOperationMap = {
   postSquireApprovalDecision: Operation<PostSquireApprovalDecisionInput, WriteResult>;
   postPermissionRequest: Operation<PostPermissionRequestInput, WriteResult>;
   postPermissionExecution: Operation<PostPermissionExecutionInput, WriteResult>;
-  postWorkSchedule: Operation<PostWorkScheduleInput, WriteResult>;
-  postWorkScheduleReceipt: Operation<PostWorkScheduleReceiptInput, WriteResult>;
-  postAgentToolScheduleIndex: Operation<PostScheduleIndexInput, WriteResult>;
   postAgentToolMandate: Operation<PostAgentToolMandateInput, WriteResult>;
   getAgentAvatar: Operation<RoomInput, { readonly drawing: unknown; readonly soul: unknown }>;
   postAgentAvatar: Operation<RoomInput & { readonly drawing: unknown }, WriteResult>;
@@ -880,10 +874,6 @@ export type RequestInput = RoomInput & { readonly requestId: string };
 export type RoomCursorInput = RoomInput & {
   readonly after?: string;
   readonly limit?: number;
-  /** Re-read the five seconds before `after`; callers must de-duplicate by item id. */
-  readonly rewind?: boolean;
-  /** Establish a high-water mark without replaying pre-activation history. */
-  readonly startAtLatest?: boolean;
 };
 /**
  * A conversation read and an inbox read are two different needs on one server
@@ -906,11 +896,7 @@ export type RoomConversationInput = RoomCursorInput & {
 export type RoomPrincipalInput = RoomInput & { readonly principalId: string };
 export type CornerCursorInput = CornerInput & {
   readonly after?: string;
-  /** Re-read the five seconds before `after`; callers must de-duplicate by item id. */
-  readonly rewind?: boolean;
 };
-/** `woken` is false only when the timeout elapsed with nothing new. */
-export type CornerWakeResult = { readonly woken: boolean };
 export type PermissionAuthorityInput = RoomPrincipalInput & {
   readonly permissionId: string;
   readonly actionId?: string;
@@ -1001,8 +987,6 @@ export type RoomInboxResult = {
     readonly systemEvent?: SystemEvent;
   }[];
   readonly cursor?: string;
-  /** IDs in the replay window at activation; absent on servers without rewind support. */
-  readonly rewindIds?: readonly string[];
   /** Present on getCornerCloseRequests so helpers can reap an archived worktree. */
   readonly closeRequested?: boolean;
 };
@@ -1040,14 +1024,6 @@ export type AuthorityDecisionResult = {
   readonly status: 'authorized' | 'denied' | 'unavailable';
   readonly reason?: string;
   readonly generation?: number;
-};
-export type WorkScheduleListResult = {
-  readonly schedules: readonly {
-    readonly scheduleId: string;
-    readonly revision: number;
-    readonly status: string;
-    readonly nextRunAt?: number;
-  }[];
 };
 export type AgentToolMandateResult = {
   readonly status: 'valid' | 'invalid' | 'unavailable';
@@ -1382,16 +1358,6 @@ export type PostPermissionRequestInput = RoomPrincipalInput & {
 export type PostPermissionExecutionInput = PermissionAuthorityInput & {
   readonly status: 'started' | 'succeeded' | 'failed';
   readonly result?: string;
-};
-export type PostWorkScheduleInput = AgentRoomInput & { readonly schedule: DaemonWorkSchedule };
-export type PostWorkScheduleReceiptInput = AgentRoomInput & {
-  readonly scheduleId: string;
-  readonly occurrenceId: string;
-  readonly status: string;
-};
-export type PostScheduleIndexInput = AgentInput & {
-  readonly workspaceId: string;
-  readonly scheduleIds: readonly string[];
 };
 export type PostAgentToolMandateInput = AgentRoomInput & {
   readonly generation: number;
@@ -2167,15 +2133,6 @@ export type DaemonPermissionScope =
       readonly cornerOperations: readonly ('open' | 'close')[];
       readonly scheduleOperations: readonly ('create' | 'update' | 'pause' | 'delete' | 'fire')[];
     };
-export type DaemonWorkSchedule = {
-  readonly scheduleId: string;
-  readonly revision: number;
-  readonly status: 'active' | 'paused' | 'cancelled';
-  readonly expression: string;
-  readonly timezone: string;
-  readonly mandate: string;
-  readonly nextRunAt?: number;
-};
 export type DaemonAgentToolMandate = {
   readonly beneficiary: string;
   readonly action: string;

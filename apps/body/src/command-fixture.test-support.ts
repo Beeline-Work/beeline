@@ -13,8 +13,7 @@ export function commandFixtureApi(
 ): DaemonApiClient {
   const pending = new Map<string, AgentCommand>(),
     seen = new Set<string>();
-  let started = false,
-    settled = objective === null,
+  let settled = objective === null,
     closed = false;
   let notify: ((commands: readonly AgentCommand[]) => void) | undefined;
   let pumping = false;
@@ -91,9 +90,7 @@ export function commandFixtureApi(
         if (name === 'getAgentCommands') {
           const page = await target.execute('getRoomInbox', {
             roomId,
-            ...(!started ? { startAtLatest: true } : {}),
           });
-          started = true;
           closed ||= page.closeRequested === true;
           for (const source of page.items ?? []) add(source);
           return { commandProtocol: 1, commands: [...pending.values()] };

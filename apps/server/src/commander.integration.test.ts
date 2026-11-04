@@ -195,9 +195,10 @@ it('chain of command: a corner agent may tag the person who directed this turn',
   const reply = await daemon.execute('postRoomMessage', { ...authority(asked), text: '@captain v2. Keep it?' }, WORKER);
   expect((await db.query(`SELECT room_id FROM messages WHERE id=$1`, [reply.id])).rows[0]?.room_id).toBe(opened.cornerId);
 });
-it('R1 names both fields when report status and prefix disagree', async () => {
-  await expect(daemon.execute('report', { ...authority(order), status: 'done',
-    text: 'blocked: choose scope' }, RUBY)).rejects.toThrow('received status "done" and text prefix "blocked:"');
+it('uses terminal status to deliver the canonical prefix and preserves the body', async () => {
+  const result=await daemon.execute('report',{...authority(order),status:'blocked',text:'done: choose scope'},RUBY);
+  expect((await db.query(`SELECT text FROM messages WHERE id=$1`,[result.id])).rows)
+    .toEqual([{text:'blocked: choose scope'}]);
 });
 it('accepts needs-decision without an ask and validates optional asks', async () => {
   const reported = await daemon.execute('report', { status: 'needs_decision', ...authority(order), text: 'needs-decision: Which scope should we use? @captain' }, RUBY);

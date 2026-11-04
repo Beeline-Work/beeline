@@ -189,7 +189,8 @@ it('BG-TERMINAL: terminal guards preserve originating background completion wake
 });
 
 
-it.each(['no_reply_needed', 'mcp__beeline-agent__no_reply_needed'])(
+it.each(['no_reply_needed', 'mcp__beeline-agent__no_reply_needed', 'mcp__beeline_agent__no_reply_needed',
+  'beeline-agent__no_reply_needed', 'beeline_agent__no_reply_needed', 'mcp.beeline-agent.no_reply_needed'])(
   'SILENT-END-1: holds an end_turn until background %s settles without a continuation', async title => {
     const { client, wire, update } = harness();
     vi.mocked(wire.request).mockImplementation(async () => {

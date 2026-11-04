@@ -1840,7 +1840,7 @@ export class DaemonService {
           // Older helpers may detach the terminal MCP call before its result
           // arrives. Its result cannot add work to a turn already ended silently.
           // Preserve every other background job and every later generation.
-          if (/^(?:(?:mcp__)?beeline[-_]agent__)?no_reply_needed$/.test(completion.title) &&
+          if (/^(?:(?:mcp__)?beeline[-_]agent__|mcp\.beeline-agent\.)?no_reply_needed$/.test(completion.title) &&
               (await db.query(`SELECT 1 FROM agent_turns
                 WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4
                   AND completion_kind='no-reply'`,
@@ -7329,7 +7329,7 @@ export class DaemonService {
   /** Root command provenance is the authority even after delegation and resumes. */
   private async grantRequester(command = this.authorizedCommand) {
     if (!command) throw new Error('resource access requires an active command');
-    const requester = (
+    let requester = (
       await this.database.query<{
         id: string;
         kind: 'human' | 'agent';
@@ -7343,7 +7343,31 @@ export class DaemonService {
         [command.root_source_message_id],
       )
     ).rows[0];
-    if (!requester) throw new Error('resource requester not found');
+    if (!requester) {
+      // Automatic replay orders and idle reports have no source message. Only
+      // their stored System-authored, source-less self-root can supply provenance;
+      // a delegate's payload or the executing agent's owner cannot supply it.
+      requester = (await this.database.query<{
+        id: string;
+        kind: 'human' | 'agent';
+        name: string;
+        handle: string | null;
+        avatar: string | null;
+      }>(
+        `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar
+         FROM agent_commands root JOIN identities identity ON identity.id=root.private_payload->>'authorId'
+         WHERE root.id=$1 AND root.id=$2 AND root.root_command_id=root.id
+           AND root.root_source_message_id=root.id
+           AND root.source_message_id IS NULL AND root.parent_command_id IS NULL
+           AND identity.id=$3
+           AND ((root.reason='order' AND root.private_payload->>'kind'='order')
+             OR (root.reason='report' AND root.private_payload->>'kind'='report'
+               AND root.private_payload->>'automatic'='true'
+               AND NULLIF(root.private_payload->>'idleSince','') IS NOT NULL))`,
+        [command.root_command_id, command.root_source_message_id, SYSTEM_IDENTITY_ID],
+      )).rows[0];
+    }
+    if (!requester) throw new Error('resource requester not found: missing message or unverified command-only root');
     // A saved workflow run's turns answer to the run's person, not the wake
     // card's author: a handoff card is written by the agent handing off, and a
     // lease failover card by the system. `workflowRunRequester` returns the

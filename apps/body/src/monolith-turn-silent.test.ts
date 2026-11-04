@@ -75,10 +75,10 @@ createInterface({ input: process.stdin }).on('line', async line => {
 `;
 
 /** Run production session setup and publishing against a scripted ACP peer. */
-async function turnWrites(scope: 'room' | 'corner', agentKind: BodyConfig['agentKind'], shape = 'alone') {
+async function turnWrites(scope: 'room' | 'corner', agentKind: BodyConfig['agentKind'], shape = 'alone', title = 'mcp__beeline-agent__no_reply_needed') {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-publishing-'));
   const script = join(root, 'harness.mjs');
-  await writeFile(script, harnessSource([tool('silent', 'mcp__beeline-agent__no_reply_needed')[0]!, { silence: true, background: shape === 'background', parallel: shape === 'parallel' }, text('This closing text must disappear.')]));
+  await writeFile(script, harnessSource([tool('silent', title)[0]!, { silence: true, background: shape === 'background', parallel: shape === 'parallel' }, text('This closing text must disappear.')]));
   const identity = identityFromKey('11'.repeat(32), 'Bee');
   const human = '22'.repeat(32);
   const agent = {
@@ -166,4 +166,12 @@ it.each(['background', 'parallel'])('SILENT-END-1: production corner keeps autho
   const writes = await turnWrites('corner', 'claude', shape);
   expect(writes.filter(write => write.name === 'postRoomMessage' || write.name === 'postBackgroundToolCompletion')).toEqual([]);
   expect(writes).toContainEqual({ name: 'postAgentTurnReceipt', input: expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }) });
+}, 30_000);
+
+it('dotted terminal tool: pending → end_turn → result produces no continuation or failure notice', async () => {
+  const writes = await turnWrites('corner', 'claude', 'background', 'mcp.beeline-agent.no_reply_needed');
+  expect(writes.filter(write => ['postRoomMessage', 'postBackgroundToolCompletion'].includes(write.name))).toEqual([]);
+  expect(writes.filter(write => write.name === 'postAgentTurnReceipt')).toEqual([
+    expect.objectContaining({ input: expect.objectContaining({ status: 'complete', completionKind: 'no-reply' }) }),
+  ]);
 }, 30_000);

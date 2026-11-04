@@ -1,5 +1,5 @@
 import type { RouterAuthorityFence, ScheduledWorkAuthorityFrame, ScheduledWorkAuthorityPosition } from '@beeline/api-contract/router-protocol';
-import { jsonBytes as bytes, remember, stagingWithinBudget } from './staging-bounds.js';
+import { jsonBytes as bytes, remember } from './staging-bounds.js';
 import { Multipart, multipartIdentity, multipartRecords, positionKey, type MultipartBatch } from './batch-assembly.js';
 
 export type ScheduledAuthorityFence = RouterAuthorityFence & { readonly mode: 'deny' | 'advance' };
@@ -28,7 +28,6 @@ type State = {
   lost: boolean; failed: boolean; batches: Multipart<ScheduledAuthorityFence,ScheduledWorkAuthorityPosition,Proof>; completed: Map<string, Complete>;
   history: Map<string, string>; deferred: Map<string, Pending>; dirty: boolean; pumping: boolean; pump?: Promise<void>;
 };
-const LOGICAL = 1024 * 1024;
 const scalar = (value: unknown, max = 128): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const epoch = (value: unknown): value is string => typeof value === 'string' && /^(0|[1-9][0-9]{0,19})$/.test(value);
@@ -106,7 +105,7 @@ export class ScheduledWorkAuthority {
     if (!state || generation !== state.generation) { this.discard(deferred, 'generation'); return; }
     if (state.lost || state.failed) { this.discard(deferred, 'source-loss'); return; }
     if (!scalar(deferred.id, 256) || !['snapshot', 'batch'].includes(deferred.kind) || !this.validPosition(deferred.barrier) ||
-      !Number.isSafeInteger(deferred.bytes) || deferred.bytes < 0 || deferred.bytes > LOGICAL ||
+      !Number.isSafeInteger(deferred.bytes) || deferred.bytes < 0 ||
       typeof deferred.apply !== 'function' || typeof deferred.discard !== 'function') {
       this.discard(deferred, 'protocol'); this.fail(state, 'protocol'); return;
     }
@@ -122,9 +121,7 @@ export class ScheduledWorkAuthority {
     }
     const value = Object.freeze({ ...deferred, barrier: positionCopy(deferred.barrier) });
     state.deferred.set(key, { value, signature: identity });
-    if (!stagingWithinBudget(state.deferred.values(), item => item.value.bytes, item => item.value.barrier.through)) {
-      this.fail(state, 'budget'); return;
-    }
+
     if (!state.pumping) this.release(state);
   }
 
@@ -161,7 +158,7 @@ export class ScheduledWorkAuthority {
         !this.domain(scope.authorityScope) || domains.has(scope.authorityScope) || !epoch(scope.epoch)) return false;
       domains.add(scope.authorityScope);
     }
-    return domains.has(target) && bytes(value) <= 4096;
+    return domains.has(target);
   }
   private validFrame(value: unknown): value is Part | Commit {
     if (!record(value) || ![PART_KIND, COMMIT_KIND].includes(String(value.kind)) ||
@@ -170,7 +167,7 @@ export class ScheduledWorkAuthority {
     const keys = ['kind', 'batchId', 'from', 'to', 'partCount', 'contentDigest'];
     if (value.kind === COMMIT_KIND) return exact(value, keys);
     return exact(value, [...keys, 'partIndex', 'fences']) && Array.isArray(value.fences) &&
-      value.fences.length <= 256 && value.fences.every(fence => this.validFence(fence));
+      value.fences.every(fence => this.validFence(fence));
   }
   private schedule(state: State): Promise<void> {
     if (state.pumping) return state.pump!;
@@ -201,10 +198,8 @@ export class ScheduledWorkAuthority {
         }
         if(batch.verified)continue;
         const fences=multipartRecords(batch);if(!fences)continue;
-        const domains = new Set<string>(), targets = new Map<string, string>();
+        const targets = new Map<string, string>();
         for(const fence of fences){
-          for(const scope of fence.authority.scopes)domains.add(scope.authorityScope);
-          if(domains.size>256){this.fail(state,'budget');return;}
           const encoded=JSON.stringify(fence),prior=targets.get(fence.authorityScope);
           if(prior&&prior!==encoded){this.fail(state,'protocol');return;}
           targets.set(fence.authorityScope,encoded);

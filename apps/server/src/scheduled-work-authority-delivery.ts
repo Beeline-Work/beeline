@@ -1,6 +1,6 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {
-  ROUTER_MAX_AUTHORITY_FENCE_BYTES,ROUTER_MAX_BATCH_BYTES,ROUTER_MAX_PART_BYTES,ROUTER_MAX_PARTS,
+  ROUTER_MAX_PART_BYTES,
   type RouterAuthorityFence,type RouterFact,type RouterSnapshot,type RouterSnapshotInput,
   type RouterUnavailable,type ScheduledWorkAuthorityFrame,type ScheduledWorkAuthorityPosition,
 } from '@beeline/api-contract/router-protocol';
@@ -15,33 +15,29 @@ type Fence=RouterAuthorityFence&{readonly mode:'deny'|'advance'};
 type Head={epoch:string;sequence:string};
 type State='opening'|'live'|'lost'|'closed';
 
-/** Content-free controls obey the same physical/logical stage/commit bounds as
+/** Content-free controls share complete multipart delivery with
  * data batches. The commit/digest covers every fence, including empty intervals. */
 export function encodeScheduledWorkAuthority(from:ScheduledWorkAuthorityPosition,to:ScheduledWorkAuthorityPosition,
   fences:readonly Fence[]):ScheduledWorkAuthorityFrame[]{
   if(from.stream!==to.stream||from.epoch!==to.epoch||from.segment!==to.segment||to.through<from.through||
-    !Number.isSafeInteger(from.through)||!Number.isSafeInteger(to.through)||from.through<0||fences.length>256||
+    !Number.isSafeInteger(from.through)||!Number.isSafeInteger(to.through)||from.through<0||
     new Set(fences.map(f=>f.authorityScope)).size!==fences.length)throw new RouterProjectionUnavailable('dependency');
   if(!from.stream.startsWith('authority:')||from.stream.length>256||!from.epoch||from.epoch.length>128||!from.segment||from.segment.length>128||
     fences.some(f=>f.kind!=='authority-fence'||!['deny','advance'].includes(f.mode)||!f.authorityScope.startsWith('scheduled-work-')||
       !f.scope||f.scope.length>256||f.authorityScope.length>256||f.authority.scopes.length!==1||
       f.authority.scopes[0]!.authorityScope!==f.authorityScope||!/^\d{1,30}$/.test(f.authority.scopes[0]!.epoch)||
       createHash('sha256').update(JSON.stringify(f.authority.scopes)).digest('hex')!==f.authority.digest))throw new RouterProjectionUnavailable('authority');
-  if(fences.some(f=>Buffer.byteLength(JSON.stringify(f))>ROUTER_MAX_AUTHORITY_FENCE_BYTES))throw new RouterProjectionUnavailable('budget');
   const batchId=randomUUID(),contentDigest=createHash('sha256').update(JSON.stringify(fences)).digest('hex');
   const parts:Fence[][]=[[]];
   const size=(part:readonly Fence[])=>Buffer.byteLength(JSON.stringify({kind:'scheduled-work-authority-part',batchId,from,to,
-    partIndex:ROUTER_MAX_PARTS-1,partCount:ROUTER_MAX_PARTS,contentDigest,fences:part}));
+    partIndex:fences.length,partCount:fences.length,contentDigest,fences:part}));
   for(const fence of fences){
-    if(size([fence])>ROUTER_MAX_PART_BYTES)throw new RouterProjectionUnavailable('budget');
-    if(size([...parts.at(-1)!,fence])>ROUTER_MAX_PART_BYTES)parts.push([]);
+    if(parts.at(-1)!.length&&size([...parts.at(-1)!,fence])>ROUTER_MAX_PART_BYTES)parts.push([]);
     parts.at(-1)!.push(fence);
   }
-  if(parts.length>ROUTER_MAX_PARTS)throw new RouterProjectionUnavailable('budget');
   const frames:ScheduledWorkAuthorityFrame[]=parts.map((part,index)=>({kind:'scheduled-work-authority-part',batchId,from,to,
     partIndex:index,partCount:parts.length,contentDigest,fences:part}));
   frames.push({kind:'scheduled-work-authority-commit',batchId,from,to,partCount:parts.length,contentDigest});
-  if(frames.reduce((sum,frame)=>sum+Buffer.byteLength(JSON.stringify(frame)),0)>ROUTER_MAX_BATCH_BYTES)throw new RouterProjectionUnavailable('budget');
   return frames;
 }
 
@@ -54,7 +50,7 @@ export class ScheduledWorkAuthorityDelivery{
   private position:ScheduledWorkAuthorityPosition|undefined;
   private initial:ScheduledWorkAuthorityPosition|undefined;
   private serial:Promise<void>=Promise.resolve();
-  private dirty=false;private pumping=false;private recovering=false;private revision=0;private queued=0;
+  private dirty=false;private pumping=false;private recovering=false;private revision=0;
   private readonly releases:Array<()=>void>=[];
   private constructor(private readonly database:SqlDatabase,live:LiveHub,private readonly viewer:string,
     private readonly enqueue:(frame:RouterAuthorityFence|ScheduledWorkAuthorityFrame)=>undefined,
@@ -95,13 +91,10 @@ export class ScheduledWorkAuthorityDelivery{
   }
   private queue(work:()=>Promise<void>):Promise<void>{
     if(this.state==='closed')return Promise.reject(new RouterProjectionUnavailable('listener'));
-    if(this.queued>=256){this.lose('budget');return Promise.reject(new RouterProjectionUnavailable('budget'));}
-    this.queued++;
     const next=this.serial.then(work);
     // A stale datum/snapshot is a group refusal, not evidence that the control
     // source was lost. Only the control phase below can retire this actor.
     this.serial=next.catch(()=>{});
-    void next.finally(()=>{this.queued--;}).catch(()=>{});
     return next;
   }
   private pump():void{
@@ -136,13 +129,12 @@ export class ScheduledWorkAuthorityDelivery{
   private async flush(db:SqlDatabase,revision:number):Promise<ScheduledWorkAuthorityPosition>{
     this.assertLive(revision);const from=this.position!;
     const head=await this.head(db),to=this.makePosition(head,from.segment);
-    if(to.epoch!==from.epoch||to.through<from.through||to.through-from.through>1024)throw new RouterProjectionUnavailable('retention');
+    if(to.epoch!==from.epoch||to.through<from.through)throw new RouterProjectionUnavailable('retention');
     if(to.through===from.through){this.assertLive(revision);return from;}
     const rows=(await db.query<{sequence:string;event:{kind?:unknown;scope?:unknown;authorityScope?:unknown}}>(
       `SELECT sequence::text,event FROM live_journal WHERE stream_id=$1 AND sequence>$2 AND sequence<=$3 ORDER BY live_journal.sequence`,
       [from.stream,from.through,to.through])).rows;
     if(rows.length!==to.through-from.through||rows.some((row,index)=>Number(row.sequence)!==from.through+index+1))throw new RouterProjectionUnavailable('retention');
-    if(Buffer.byteLength(JSON.stringify(rows))>4*1024*1024)throw new RouterProjectionUnavailable('budget');
     const domains=new Map<string,string>();
     for(const {event}of rows){
       if(event.kind!=='authority-change'||typeof event.scope!=='string'||!event.scope||event.scope.length>256||
@@ -150,7 +142,6 @@ export class ScheduledWorkAuthorityDelivery{
       if(domains.has(event.authorityScope)&&domains.get(event.authorityScope)!==event.scope)throw new RouterProjectionUnavailable('dependency');
       domains.set(event.authorityScope,event.scope);
     }
-    if(domains.size>256)throw new RouterProjectionUnavailable('budget');
     const fences:Fence[]=[],other:RouterAuthorityFence[]=[];
     for(const [domain,scope]of domains){
       if(domain.startsWith('scheduled-work-')){
@@ -207,7 +198,6 @@ export class ScheduledWorkAuthorityDelivery{
       await this.fenced(async(db,barrier)=>{
         if((await readRouterAuthority(db,input,this.viewer)).digest!==snapshot.authority.digest)throw new RouterProjectionUnavailable('authority');
         const safe={...snapshot,authorityBarrier:barrier};
-        if(Buffer.byteLength(JSON.stringify(safe))>ROUTER_MAX_PART_BYTES)throw new RouterProjectionUnavailable('budget');
         enqueue(safe);
       });
     });

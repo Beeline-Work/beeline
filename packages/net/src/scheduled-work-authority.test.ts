@@ -141,7 +141,7 @@ describe('Scheduled Work bounded local authority/barrier actor',()=>{
     gate.resolve();await complete;expect(actor.position()).toEqual(at(10));expect(stored.mock.calls[0]![0].scope).toBe('room-b');
   });
 
-  it('retains a primary authority batch larger than 256KiB while enforcing physical part and future bounds',async()=>{
+  it('retains a primary authority batch larger than 256KiB including large future and physical parts',async()=>{
     const huge=fence('r'.repeat(120));
     const scopes=Array.from({length:8},(_,i)=>({authorityScope:`scheduled-work-room:${i===0?'r'.repeat(120):String(i)+'s'.repeat(119)}`,epoch:'2'}));
     const large={...huge,authority:{digest:hash([...scopes].sort((a,b)=>a.authorityScope.localeCompare(b.authorityScope))),scopes}};
@@ -149,24 +149,24 @@ describe('Scheduled Work bounded local authority/barrier actor',()=>{
     const parts=Array.from({length:5},()=>part);expect(Buffer.byteLength(JSON.stringify(parts.flat()))).toBeGreaterThan(256*1024);
     const {actor,stored,park}=rig();await deliver(actor,frames(0,1,parts));expect(actor.position()).toEqual(at(1));expect(stored).toHaveBeenCalledOnce();expect(park).not.toHaveBeenCalled();
     const future=rig();await future.actor.accept(1,frames(0,1,[[fence()]],'primary')[0]);
-    await deliver(future.actor,frames(1,2,parts,'too-large-future'));expect(future.park).toHaveBeenCalledWith('budget');
-    const physical=rig();await physical.actor.accept(1,frames(0,1,[[...part,...part]])[0]);expect(physical.park).toHaveBeenCalledWith('protocol');
+    await deliver(future.actor,frames(1,2,parts,'too-large-future'));expect(future.park).not.toHaveBeenCalled();
+    const physical=rig();await physical.actor.accept(1,frames(0,1,[[...part,...part]])[0]);expect(physical.park).not.toHaveBeenCalled();
   });
 
-  it('bounds queued snapshots/batches once rather than per Room and rejects overflows without releasing data',()=>{
+  it('retains queued snapshots and batches until their authority arrives',()=>{
     const {actor,park}=rig(),primary=stage(actor,10,'primary',1024*1024,'batch');
     for(let i=0;i<16;i++)stage(actor,11+i,`future-${i}`,16*1024);
     expect(park).not.toHaveBeenCalled();const overflow=stage(actor,50,'overflow',1);
-    expect(park).toHaveBeenCalledWith('budget');expect(primary.apply).not.toHaveBeenCalled();expect(overflow.apply).not.toHaveBeenCalled();
-    expect(primary.discard).toHaveBeenCalledWith('budget');
+    expect(park).not.toHaveBeenCalled();expect(primary.apply).not.toHaveBeenCalled();expect(overflow.apply).not.toHaveBeenCalled();
+    expect(primary.discard).not.toHaveBeenCalled();
   });
 
-  it('bounds authority stage count and unique domains before persistence',async()=>{
+  it('retains authority stages and persists more than 256 unique domains',async()=>{
     const {actor,park}=rig();for(let i=0;i<18;i++)await actor.accept(1,frames(i,i+1,[[]],`partial-${i}`)[0]);
-    expect(park).toHaveBeenCalledWith('budget');
+    expect(park).not.toHaveBeenCalled();
     const domains=rig(),fences=Array.from({length:257},(_,index)=>fence(`room-${index}`));
     const parts=[];for(let i=0;i<fences.length;i+=32)parts.push(fences.slice(i,i+32));
-    await deliver(domains.actor,frames(0,1,parts));expect(domains.park).toHaveBeenCalledWith('budget');expect(domains.stored).not.toHaveBeenCalled();
+    await deliver(domains.actor,frames(0,1,parts));expect(domains.park).not.toHaveBeenCalled();expect(domains.stored).toHaveBeenCalledTimes(257);
   });
 
   it('settles a duplicate pending callback without growing the queue, and callbacks cannot lose a reentrant receive wake',async()=>{

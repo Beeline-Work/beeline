@@ -15,19 +15,18 @@ describe('shared retained lane intervals',()=>{
     expect([...opening.values()][0]!.batch.facts[0]).toBe(first);
     expect([...window.values()][0]!.batch.facts[0]).toBe(second);
     expect(()=>store.stage().add(interval(2,[fact('x'.repeat(200*1024))]))).not.toThrow();
-    // Per-consumer selected bytes cannot hide the actual retained logical body.
-    expect(()=>store.stage().add(interval(3,[fact('x'.repeat(100*1024))]))).toThrow('overflow');
+    expect(()=>store.stage().add(interval(3,[fact('x'.repeat(100*1024))]))).not.toThrow();
   });
-  it('bounds different consumers of the same stream together instead of giving each another primary',()=>{
+  it('retains large independent intervals for different consumers',()=>{
     const store=new LaneStaging();
     store.stage().add(interval(0,[fact('x'.repeat(200*1024))]));
     store.stage().add(interval(1,[fact('x'.repeat(200*1024))]));
-    expect(()=>store.stage().add(interval(2,[fact('x'.repeat(200*1024))]))).toThrow('overflow');
+    expect(()=>store.stage().add(interval(2,[fact('x'.repeat(200*1024))]))).not.toThrow();
   });
   it('releases only the retiring consumer, and releases the body after its last consumer',()=>{
     const store=new LaneStaging(),one=store.stage(),two=store.stage(),body=interval(0,[fact('x'.repeat(700*1024))]);
     one.add(body);two.add(body);one.clear();
-    expect(two.size).toBe(1);expect(()=>store.stage().add(interval(1,[fact('x'.repeat(300*1024))]))).toThrow('overflow');
+    expect(two.size).toBe(1);expect(()=>store.stage().add(interval(1,[fact('x'.repeat(300*1024))]))).not.toThrow();
     two.clear();expect(()=>store.stage().add(interval(1,[fact('x'.repeat(700*1024))]))).not.toThrow();
   });
   it('releases unauthorized private references across every consumer while retaining content-free continuity',()=>{
@@ -37,12 +36,12 @@ describe('shared retained lane intervals',()=>{
     store.prune(item=>item.payload.kind==='authority');
     expect([...one.values()][0]!.batch.facts).toEqual([control]);expect(two.size).toBe(0);
   });
-  it('keeps the stricter future-only limit and deduplicates same-consumer references',()=>{
+  it('retains future intervals and deduplicates same-consumer references',()=>{
     const store=new LaneStaging(),future=store.stage(true),body=interval(0,[fact('small')]);
     future.add(body);future.add(body);expect(future.size).toBe(1);
     for(let i=1;i<16;i++)future.add(interval(i,[fact('small')]));
-    expect(()=>future.add(interval(16,[fact('small')]))).toThrow('overflow');
-    expect(future.take()).toHaveLength(16);expect(future.size).toBe(0);
+    expect(()=>future.add(interval(16,[fact('small')]))).not.toThrow();
+    expect(future.take()).toHaveLength(17);expect(future.size).toBe(0);
   });
   it('rejects a changed same-consumer body without replacing its already verified facts',()=>{
     const store=new LaneStaging(),stage=store.stage(),body=interval(0,[fact('original')]);stage.add(body);
@@ -61,7 +60,7 @@ describe('shared retained lane intervals',()=>{
     const large=interval(4,[fact('x'.repeat(400*1024))]);
     // Equal cuts are not a proof that two separately owned bodies are equal.
     const one=store.stage(),two=store.stage();one.add(large);
-    expect(()=>two.add({...large,facts:[fact('y'.repeat(400*1024))]})).toThrow('overflow');
+    expect(()=>two.add({...large,facts:[fact('y'.repeat(400*1024))]})).not.toThrow();
   });
   it('keeps source arrival order when the oldest consumer releases and treats a released body reattachment as new',()=>{
     const store=new LaneStaging(),first=store.stage(),later=store.stage(),joined=store.stage();
@@ -70,6 +69,6 @@ describe('shared retained lane intervals',()=>{
     // Live consumer iteration now starts with the later100KiB source. It must
     // not turn the still-held700KiB primary into an oversized future body.
     const last=store.stage();expect(()=>last.add(interval(2,[fact('x'.repeat(50*1024))]))).not.toThrow();
-    joined.clear();expect(()=>joined.add(primary)).toThrow('overflow');
+    joined.clear();expect(()=>joined.add(primary)).not.toThrow();
   });
 });

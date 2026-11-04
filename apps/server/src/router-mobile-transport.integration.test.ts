@@ -71,13 +71,13 @@ function capabilities(connection: Connection, matches: (state: ReturnType<Connec
     const finish = () => { clearTimeout(deadline); release(); };
     const check = () => { if (matches(connection.commandState())) { finish(); resolve(); } };
     const release = connection.subscribeCommandCapabilities(check);
-    const deadline = setTimeout(() => { finish(); reject(new Error('Capability transition deadline')); }, 5_000);
+    const deadline = setTimeout(() => { finish(); reject(new Error(`Capability transition deadline: ${JSON.stringify(connection.commandState())}`)); }, 5_000);
     check();
   });
 }
 
 it.each(['policy-off', 'legacy-sync'] as const)(
-  'P10: actual mobile transport parks a lost command on %s and preserves identity on explicit recovery', async replacementWire => {
+  'P10: actual mobile transport parks a lost command on %s and preserves identity on a later native recovery', async replacementWire => {
   const viewer = 'a'.repeat(64), workspace = '11111111-1111-4111-8111-111111111111';
   const room = '22222222-2222-4222-8222-222222222222', message = 'c'.repeat(64);
   const db = await migratedDatabase(), servers: Server[] = [], sockets: WebSocket[] = [];
@@ -159,7 +159,7 @@ it.each(['policy-off', 'legacy-sync'] as const)(
     const args = { roomId: room, messageId: message, emoji: '👍' };
     origin = origins[1]!; dropReceipt = true;
     const parked = capabilities(connection, state => state.ready && !state.commandDedupV1 && state.generation > initialGeneration);
-    await expect(connection.requestCommand('reactToMessage', args, command)).rejects.toThrow();
+    await expect(connection.requestCommand('reactToMessage', args, command)).rejects.toMatchObject({ name: 'PhoneSocketDisconnectedError' });
     await parked;
     expect(dropped).toBe(1); expect(sockets).toHaveLength(2);
     expect(sent.filter(frame => frame.t === 'req')).toHaveLength(2);
@@ -173,7 +173,13 @@ it.each(['policy-off', 'legacy-sync'] as const)(
 
     origin = origins[0]!;
     const recovered = capabilities(connection, state => state.ready && state.commandDedupV1);
-    connection.reconnectNow(); await recovered;
+    // Retry observes a healthy connection; it cannot replace an incapable
+    // socket. A later native close is the transport's recovery evidence.
+    connection.reconnectNow();
+    expect(sockets).toHaveLength(2);
+    expect(connection.commandState()).toMatchObject({ generation: initialGeneration + 1, ready: true, commandDedupV1: false });
+    sockets.at(-1)!.close();
+    await recovered;
     expect(await connection.requestCommand('reactToMessage', args, command)).toMatchObject({ state: 'committed', commandId: command.id });
     const requests = sent.filter(frame => frame.t === 'req' && frame.command);
     expect(requests).toHaveLength(2); expect(requests[1]!.command).toEqual(requests[0]!.command);

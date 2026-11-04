@@ -9,7 +9,7 @@ import type { ConnectorInstallState } from './workbench';
 type Snapshot<T> = { data: T | undefined; loading: boolean; error: string | null; installMissing?: boolean; successVersion: number };
 type Options<T> = {
   load(): Promise<T>;
-  subscribe?: (invalidate: () => void, reconnect: () => void,
+  subscribe?: (invalidate: () => void, refresh: () => void,
     replace: (data: T) => void, recover: () => void) => Promise<() => void>;
   missLimit?: number;
   /** Failed reads wait for explicit Retry, real reconnect or a new focus. */
@@ -75,10 +75,7 @@ class Resource<T> {
     this.dirty = false;
     this.publish({ ...this.snapshot, loading: this.snapshot.data === undefined });
     try {
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      const data = await Promise.race([this.options.load(), new Promise<never>((_, reject) => {
-        timeout = setTimeout(() => reject(new Error('The connection did not answer. Try again.')), 15_000);
-      })]).finally(() => clearTimeout(timeout));
+      const data = await this.options.load();
       if (this.listeners.size && version === this.version) {
         this.misses = 0;
         this.retryAfter = 0;
@@ -213,14 +210,14 @@ export function observeRoomResource(
   changes: (message: RoomViewMessage) => boolean = isSystemOrCardMessage,
   onTurn?: (turn: RoomViewAgentTurn) => void,
 ) {
-  return (invalidate: () => void, reconnect: () => void) => {
+  return (invalidate: () => void, refresh: () => void) => {
     let subscribed = false;
     return sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
       if (!('monolithLive' in event)) return;
       const live = event.monolithLive;
       if (!('roomId' in live) || live.roomId !== roomId) return;
       if (live.type === 'subscribed') {
-        if (subscribed && !live.resumed) reconnect();
+        if (subscribed && !live.resumed) refresh();
         subscribed = true;
       } else if (live.type === 'message-delta') {
         if (changes(live.message)) invalidate();
@@ -247,14 +244,14 @@ export function useInstallObserver(workspaceId: string, connectorId: string | un
         if (!state) throw new InstallMissingError('Lost track of the install — retry to reconnect');
         return state;
       },
-      subscribe: async (invalidate, reconnect) =>
+      subscribe: async (invalidate, refresh) =>
         sharedLiveConnection().register([], (event) => {
           if (!('monolithLive' in event)) return;
           const live = event.monolithLive;
           if (live.type === 'resource-change' && live.resource === 'install' &&
               live.resourceId === connectorId) void invalidate();
           else if (live.type === 'invalidate' && live.roomId === '' &&
-              live.reason === 'reconnect') void reconnect();
+              live.reason === 'reconnect') void refresh();
         }),
     },
   );

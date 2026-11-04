@@ -155,7 +155,7 @@ describe('uninstalled precise Saved source and sealed-row projection',()=>{
     expect((await plan()).savedTargets[0]!.bookmarkId).not.toBe((await plan(b)).savedTargets[0]!.bookmarkId);
   });
 
-  it('does not silently truncate >256 source targets and bounds an interval union before any row build',async()=>{
+  it('bounds each source capture while preserving a complete interval union without truncation',async()=>{
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) SELECT 'm-'||n,$1,$2,'Original' FROM generate_series(1,257)n`,[r1,author]);
     await db.query(`INSERT INTO message_bookmarks(identity_id,workspace_id,room_id,message_id,source_room_name,source_room_kind,message_created_at)
       SELECT $1,$2,$3,'m-'||n,'Remembered Room','room',now() FROM generate_series(1,257)n`,[a,w1,r1]);await reset();
@@ -165,7 +165,13 @@ describe('uninstalled precise Saved source and sealed-row projection',()=>{
     const pieces=Array.from({length:3},(_,batch)=>({sourceTable:'tray-saved-source',trayReaderId:a,trayWorkspaceId:w1,
       table:'messages',operation:'UPDATE',classification:'complete',targets:Array.from({length:100},(_,n)=>({
         bookmarkId:`00000000-0000-4000-8000-${String(batch*100+n).padStart(12,'0')}`,messageId:`m-${batch*100+n}`}))}));
-    expect(routerSourcePlan(pieces,a,w1)).toMatchObject({savedTargets:[],savedUnavailable:'budget'});
+    // Each source capture remains bounded. Combining complete captures must
+    // retain every target; Workspace size is not an invalidation budget.
+    const combined=routerSourcePlan(pieces,a,w1);
+    expect(combined.savedUnavailable).toBeUndefined();
+    expect(combined.savedTargets).toEqual(pieces.flatMap(piece=>piece.targets));
+    const conflict={...pieces[0]!,targets:[{...pieces[0]!.targets[0]!,messageId:'conflicting-message'}]};
+    expect(routerSourcePlan([...pieces,conflict],a,w1)).toMatchObject({savedTargets:[],savedUnavailable:'dependency'});
   });
 
   it('keeps source evidence transactional and strictly parses only bounded exact targets',async()=>{

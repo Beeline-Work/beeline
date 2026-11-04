@@ -27,10 +27,13 @@ import {
 import { subscribeClientReset } from '@/sync/client-reset';
 import { setRequestDeadlineHandler } from './request-deadline';
 
+type MissedUpdates = { type: 'missed-updates'; roomIds: string[]; streams: string[]; workspace: boolean };
+
 type PendingRequest = {
   frame: string;
   socket?: WebSocket;
   awaitedSocket?: WebSocket;
+  slow?: boolean;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
 };
@@ -75,6 +78,7 @@ type RouterOwnerBridge = {
   requestedCapabilities?: () => Promise<{ families: readonly RouterFamily[]; authorityFencesV1: boolean; scheduledWorkCoverageV1?:boolean }>;
   negotiated: (next: { generation: number; families: readonly RouterFamily[]; usageCellV1?: boolean; executeTools?: (input:PhoneOperationMap['readRoomTools']['input'])=>Promise<PhoneOperationMap['readRoomTools']['output']>; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>; authorityFencesV1?: boolean; roomHeadContinuityV1?: boolean; scheduledWorkCoverageV1?:RouterCapabilities['scheduledWorkCoverageV1']; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>; executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>; execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> }) => Promise<void>;
   disconnected: () => void;
+  refresh?: (roomId?: string) => void;
   receive: (frame: RouterPushFrame | RouterUnavailable | RouterAuthorityFence) => void;
 };
 
@@ -116,6 +120,7 @@ export function useConnectionState(): ConnectionState {
 /** Message ids recently delivered by the socket, to judge a later push. */
 const HEARD_MESSAGE_LIMIT = 256;
 const HEALTH_CHALLENGE_DEADLINE_MS = 5_000;
+const FOREGROUND_IDLE_MS = 30_000;
 /** Parent-Room invalidations that name a corner change without its rows. */
 const CORNER_LIST_REASONS: ReadonlySet<string> = new Set(['corner-status', 'corner', 'resync']);
 /** The same window the server's own `liveDraftSnapshot` is gated on: past it a
@@ -174,9 +179,10 @@ export class LiveConnection {
   private recoverySpent = false;
   private healthChallenge: { socket: WebSocket; timer: ReturnType<typeof setTimeout> } | undefined;
   private socketEpoch = 0;
+  private idleHealthTimer?: ReturnType<typeof setTimeout>;
+  private appActive = AppState.currentState === 'active';
   private routerState: 'waiting' | 'initializing' | 'ready' = 'waiting';
   private routerQueue: Array<RouterPushFrame | RouterUnavailable | RouterAuthorityFence> = [];
-  private routerQueueBytes = 0;
   private commandDedupV1 = false;
   private readonly commandCapabilityListeners = new Set<() => void>();
   private connectInFlight: Promise<void> | undefined;
@@ -198,7 +204,9 @@ export class LiveConnection {
     const appState = AppState.addEventListener('change', (state) => {
       if (state === previousAppState) return;
       previousAppState = state;
-      if (state === 'active') this.handleForeground();
+      this.appActive = state === 'active';
+      if (this.appActive) this.handleForeground();
+      else { this.clearIdleHealthCheck(); this.clearHealthChallenge(); }
     });
     this.unsubscribeAppState = () => appState.remove();
     this.unsubscribeIdentity = deps.subscribeIdentityChange(() => this.handleIdentityChanged());
@@ -235,7 +243,7 @@ export class LiveConnection {
     return Promise.resolve(() => this.stop(registration));
   }
 
-  /** Each call owns one deadline and one reply; reconnect never resends it. */
+  /** Each call owns one slow threshold and one reply; reconnect never resends it. */
   request<Name extends keyof PhoneOperationMap>(
     op: Name, args: PhoneOperationMap[Name]['input'], options: SocketRequestOptions = {},
   ): Promise<PhoneOperationMap[Name]['output']> {
@@ -299,7 +307,7 @@ export class LiveConnection {
       };
       const abort = () => request.reject(this.requestAbortError());
       const timer = setTimeout(() => {
-        request.reject(new MonolithRequestTimeoutError());
+        request.slow = true;
         const awaited = request.socket ?? request.awaitedSocket;
         if (generation === this.generation && awaited && awaited === this.socket)
           this.reportRequestDeadlineMissed();
@@ -325,9 +333,10 @@ export class LiveConnection {
       try {
         if (JSON.parse(request.frame).op === 'readRoom') markRoomOpen('wire-dispatch');
         socket.send(request.frame);
+        if (request.slow) this.reportRequestDeadlineMissed();
       } catch (error) {
         request.reject(error);
-        this.reconnectNow();
+        this.declareDead(socket);
         return;
       }
     }
@@ -387,19 +396,14 @@ export class LiveConnection {
         this.routerState = 'ready';
         for (const listener of this.commandCapabilityListeners) listener();
         for (const queued of this.routerQueue) this.deps.router!.receive(queued);
-        this.routerQueue = []; this.routerQueueBytes = 0;
+        this.routerQueue = [];
       }).catch(() => { if (this.socket === socket) this.deps.router?.disconnected(); });
     }
     if (frame.type === 'router-capabilities') return true;
     if (!['push-part', 'push-commit', 'scheduled-work-authority-part', 'scheduled-work-authority-commit', 'scheduled-work-authority-restart', 'router-unavailable', 'authority-fence', 'usage-cell', 'usage-unavailable'].includes(String(frame.kind))) return false;
     if (this.routerState === 'ready') this.deps.router.receive(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence);
     else {
-      const bytes = utf8ToBytes(JSON.stringify(value)).length;
-      if (this.routerQueue.length >= 32 || this.routerQueueBytes + bytes > 1024 * 1024) {
-        this.routerQueue = []; this.routerQueueBytes = 0;
-        this.deps.router.disconnected();
-        this.forgetSocket(); socket.close();
-      } else { this.routerQueue.push(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence); this.routerQueueBytes += bytes; }
+      this.routerQueue.push(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence);
     }
     return true;
   }
@@ -497,12 +501,11 @@ export class LiveConnection {
   }
 
   /**
-   * A push arrived for a message in a Room this socket carries. Replace the
-   * socket when that message has not already arrived on it.
+   * A push for an unheard message asks only its Room for a covering read.
    */
   notePushedMessage(roomId: string, messageId: string): void {
     if (!this.seenSubscribed.has(roomId) || this.heardMessages.has(messageId)) return;
-    this.reconnect();
+    this.refreshRoom(roomId);
   }
 
   /** Fires once per successful socket open, first connect and every
@@ -520,58 +523,43 @@ export class LiveConnection {
     return () => this.disconnectedListeners.delete(listener);
   }
 
-  /**
-   * Replace a socket proven suspect by a missed request or live event. The
-   * replacement resubscribes every surface with its committed replay cursor.
-   */
-  reconnect(): void {
-    this.reconnectNow();
+  /** Re-read data in place; data loss never replaces the transport. */
+  refreshRoom(roomId?: string): void {
+    this.deps.router?.refresh?.(roomId);
+    if (roomId) {
+      this.roomCursors.delete(roomId);
+      this.overlays.delete(roomId);
+      noteCornerLaneSubscribed(roomId, false);
+    }
+    for (const registration of this.registrations.values()) {
+      if (registration.closed || (roomId ? !registration.roomIds.has(roomId) : registration.roomIds.size > 0)) continue;
+      registration.listener({ monolithLive: { type: 'invalidate', roomId: roomId ?? '', reason: roomId ? 'resync' : 'reconnect' } });
+    }
   }
 
-  /**
-   * Next socket after evidence of a failure or an explicit Retry. Foreground
-   * and connectivity notifications use this only when no socket remains.
-   * Authorization and handshake failures each have one immediate recovery
-   * while the app is active and still has work, with no retry timer.
-   */
+  /** Explicit transport Retry only recovers an absent socket. */
   reconnectNow(): void {
-    this.recoverySpent = false;
-    this.handshakeRecoveryUsed = false;
-    this.authorizationRecoveryUsed = false;
-    this.reconnectSocket();
+    if (!this.socket && this.hasDemand()) {
+      this.recoverySpent = false;
+      this.handshakeRecoveryUsed = false;
+      this.authorizationRecoveryUsed = false;
+      void this.ensureSocket();
+    }
   }
 
-  private reconnectSocket(): void {
-    if (this.connectInFlight) {
-      // Registration can return while the first connect promise is still
-      // settling. Keep a foreground/read recovery request made in that gap.
-      if (this.socket) {
-        const generation = this.generation;
-        const socket = this.socket;
-        void this.connectInFlight.then(() => {
-          if (generation === this.generation && this.socket === socket) this.reconnectSocket();
-        });
-      }
-      return;
-    }
-    if (!this.socket) {
-      if (this.hasDemand()) void this.ensureSocket();
-      return;
-    }
-    const current = this.socket;
-    this.socket = undefined;
-    this.socketReachedOpen = false;
-    this.dropSocketState();
-    current.close();
-    void this.ensureSocket();
+  /** The only transport death path: native close/error or unanswered ping. */
+  private declareDead(socket: WebSocket, rejectedToken?: string): void {
+    if (this.socket !== socket) return;
+    const reachedOpen = this.socketReachedOpen;
+    this.forgetSocket();
+    socket.close();
+    if (reachedOpen) this.recoverOpenedSocket();
+    else if (rejectedToken) this.recoverRejectedHandshake(rejectedToken);
   }
 
-  /** A request deadline proves the shared socket suspect. */
+  /** A slow request asks whether the socket is alive, then keeps waiting. */
   reportRequestDeadlineMissed(): void {
-    if (this.recoverySpent || !this.socket) return;
-    this.recoverySpent = true;
-    this.roomCursors.clear();
-    this.reconnectSocket();
+    this.checkBoundaryHealth();
   }
 
   private handleForeground(): void {
@@ -579,25 +567,31 @@ export class LiveConnection {
   }
 
   private checkBoundaryHealth(): void {
-    if (!this.hasDemand() || this.healthChallenge) return;
-    this.recoverySpent = false;
+    if (!this.appActive || this.healthChallenge) return;
     const socket = this.socket;
-    if (!socket) {
-      this.reconnectNow();
-      return;
-    }
+    if (!socket) { this.reconnectNow(); return; }
     if (!isSocketOpen(socket)) return;
     const timer = setTimeout(() => {
-      if (this.healthChallenge?.socket !== socket) return;
-      this.clearHealthChallenge();
-      if (this.socket === socket && this.hasDemand()) this.reportRequestDeadlineMissed();
+      if (this.healthChallenge?.socket === socket) this.declareDead(socket);
     }, HEALTH_CHALLENGE_DEADLINE_MS);
     this.healthChallenge = { socket, timer };
     try { socket.send(JSON.stringify({ type: 'ping' })); }
-    catch {
-      this.clearHealthChallenge();
-      if (this.socket === socket) this.reportRequestDeadlineMissed();
-    }
+    catch { this.declareDead(socket); }
+  }
+
+  private clearIdleHealthCheck(): void {
+    clearTimeout(this.idleHealthTimer);
+    this.idleHealthTimer = undefined;
+  }
+
+  /** Foreground inactivity only; every inbound frame starts a fresh clock. */
+  private scheduleIdleHealthCheck(): void {
+    this.clearIdleHealthCheck();
+    if (!this.appActive || !this.socket || !isSocketOpen(this.socket)) return;
+    this.idleHealthTimer = setTimeout(() => {
+      this.idleHealthTimer = undefined;
+      this.checkBoundaryHealth();
+    }, FOREGROUND_IDLE_MS);
   }
 
   private clearHealthChallenge(): void {
@@ -607,7 +601,7 @@ export class LiveConnection {
 
   private handleNetworkChange(): void {
     if (AppState.currentState !== 'active') return;
-    this.checkBoundaryHealth();
+    this.reconnectNow();
   }
 
   /**
@@ -629,6 +623,7 @@ export class LiveConnection {
   }
 
   private dropConnection(): void {
+    this.clearIdleHealthCheck();
     this.clearHealthChallenge();
     this.resetRouterState();
     this.authorizationRecoveryUsed = false;
@@ -721,8 +716,8 @@ export class LiveConnection {
   }
 
   /**
-   * Opens one socket. An opening handshake has no transport cutoff; an
-   * existing request deadline can replace it. A socket that had opened
+   * Opens one socket. An opening handshake has no transport cutoff.
+   * A socket that had opened
    * and then closes or errors starts one new attempt immediately, with no
    * timer. Authorization failure and a rejected token each get one bounded
    * immediate retry; an unsuccessful replacement never starts a retry loop.
@@ -749,6 +744,7 @@ export class LiveConnection {
       next.onopen = () => {
         if (this.socket !== next) return;
         this.socketReachedOpen = true;
+        this.recoverySpent = false;
         this.handshakeRecoveryUsed = false;
         this.authorizationRecoveryUsed = false;
         setConnectionState('connected');
@@ -761,17 +757,24 @@ export class LiveConnection {
         this.sendSubscribe([...this.refcount.keys()]);
         this.sendWorkspaceSync();
         this.sendRequests(next);
+        if ([...this.registrations.values()].some(registration => registration.sawOpen))
+          for (const roomId of this.viewing.keys()) this.refreshRoom(roomId);
         this.coverRoomlessRegistrations();
         for (const listener of this.connectedListeners) listener();
+        this.scheduleIdleHealthCheck();
       };
       next.onmessage = (message) => {
         if (this.socket !== next) return;
-        let live: LiveWireEvent | { type: 'pong' };
+        this.scheduleIdleHealthCheck();
+        let live: LiveWireEvent | { type: 'pong' } | MissedUpdates;
         try {
-          live = JSON.parse(String(message.data)) as LiveWireEvent | { type: 'pong' };
+          live = JSON.parse(String(message.data)) as LiveWireEvent | { type: 'pong' } | MissedUpdates;
         } catch {
+          if (this.viewing.size) for (const roomId of this.viewing.keys()) this.refreshRoom(roomId);
+          else this.refreshRoom();
           return;
         }
+        if (!live || typeof live !== 'object') return;
         if (live.type === 'pong') {
           if (this.healthChallenge?.socket === next) this.clearHealthChallenge();
           return;
@@ -779,31 +782,25 @@ export class LiveConnection {
         if (this.receiveRouterFrame(live, next)) return;
         if (this.receiveReply(live, next)) return;
         if (live.type === 'sync-ok') return;
-        noteLiveFrame();
-        if (live.type === 'sidebar-preview' && !readSidebarPreview(live)) {
-          this.reconnect();
+        if (live.type === 'missed-updates') {
+          for (const roomId of live.roomIds) this.refreshRoom(roomId);
+          if (live.workspace) this.refreshRoom();
+          for (const stream of live.streams) this.deps.router?.receive({ kind: 'router-unavailable', stream, reason: 'listener',
+            families: ['room-list', 'needs-you-count', 'needs-you-tray', 'needs-you-saved-page', 'room-head', 'room-scheduled-work', 'workspace-roster', 'room-workflows', 'agent-profile', 'owner-workbench', 'owner-wallet'] } as RouterUnavailable);
           return;
         }
-        this.dispatch(live, next);
+        noteLiveFrame();
+        if (live.type === 'sidebar-preview' && !readSidebarPreview(live)) {
+          this.refreshRoom(typeof live.roomId === 'string' ? live.roomId : undefined);
+          return;
+        }
+        try { this.dispatch(live, next); }
+        catch {
+          if ('roomId' in live && typeof live.roomId === 'string') this.refreshRoom(live.roomId || undefined);
+        }
       };
-      next.onclose = () => {
-        if (this.socket !== next) return;
-        const reachedOpen = this.socketReachedOpen;
-        this.forgetSocket();
-        if (reachedOpen) this.recoverOpenedSocket();
-        else this.recoverRejectedHandshake(token);
-      };
-      next.onerror = () => {
-        if (this.socket !== next) return;
-        // Some WebSocket implementations emit another error while `close()`
-        // tears down a failed handshake. Drop ownership first so that error
-        // cannot recursively close the same socket.
-        const reachedOpen = this.socketReachedOpen;
-        this.forgetSocket();
-        next.close();
-        if (reachedOpen) this.recoverOpenedSocket();
-        else this.recoverRejectedHandshake(token);
-      };
+      next.onclose = () => this.declareDead(next, token);
+      next.onerror = () => this.declareDead(next, token);
     } catch (reason) {
       if (generation !== this.generation || attempt !== this.authorizationAttempt) return;
       setConnectionState('disconnected');
@@ -865,14 +862,14 @@ export class LiveConnection {
     this.commandDedupV1 = false;
     for (const listener of this.commandCapabilityListeners) listener();
     this.routerQueue = [];
-    this.routerQueueBytes = 0;
     this.deps.router?.disconnected();
   }
 
   private dropSocketState(): void {
+    this.clearIdleHealthCheck();
     this.clearHealthChallenge();
     this.resetRouterState();
-    // Unsent calls have no ambiguous server result and keep their own deadline.
+    // Unsent calls have no ambiguous server result and keep waiting to dispatch.
     // Only a call dispatched on the dropped socket belongs to the outbox to retry.
     this.rejectRequests(undefined, true);
     this.seenSubscribed.clear();
@@ -984,6 +981,7 @@ export class LiveConnection {
       });
       if (!live.epoch) this.workspaceCursors.delete(live.workspaceId);
       if (!live.reload) return;
+      this.deps.router?.refresh?.();
       live = { type: 'invalidate', roomId: '', reason: 'reconnect' };
     } else if ('roomId' in live && live.roomId === '' && live.workspaceId &&
         live.epoch && typeof live.sequence === 'number') {
@@ -1006,6 +1004,7 @@ export class LiveConnection {
       return;
     }
     if (live.type === 'reload') {
+      this.deps.router?.refresh?.(live.roomId);
       this.roomCursors.delete(live.roomId);
       this.overlays.delete(live.roomId);
       noteCornerLaneSubscribed(live.roomId, false);
@@ -1041,11 +1040,8 @@ export class LiveConnection {
         previous.text.length !== live.offset ||
         (previous.revision ?? 0) + 1 !== live.revision
       ) {
-        // An out-of-sequence append cannot paint. The reconnect's full
-        // subscribe snapshot restores this lane and covers other missed rows.
-        this.roomCursors.delete(live.roomId);
-        this.overlays.delete(live.roomId);
-        this.reconnect();
+        // Missing overlay data belongs to this Room, not the socket.
+        this.refreshRoom(live.roomId);
         return;
       }
       live = {
@@ -1111,9 +1107,9 @@ export class LiveConnection {
         noteCornerLaneSubscribed(live.roomId, false);
       }
       if (cursor && live.sequence > cursor.base) {
-        if (live.sequence > cursor.base + 1024) {
-          this.roomCursors.delete(live.roomId);
-          this.reconnect();
+        if (live.sequence > cursor.base + 1) {
+          this.refreshRoom(live.roomId);
+          if (live.epoch) this.roomCursors.set(live.roomId, { epoch: live.epoch, base: live.sequence, seen: new Set() });
           return;
         }
         cursor.seen.add(live.sequence);
@@ -1215,6 +1211,10 @@ function productionRouterBridge(): RouterOwnerBridge {
     disconnected: () => {
       const current = ++epoch;
       if (pending) void pending.then(owner => { if (current === epoch) owner.routerOwnerDisconnected(); }).catch(() => {});
+    },
+    refresh: roomId => {
+      const current = epoch;
+      if (pending) void pending.then(owner => { if (current === epoch) owner.routerOwnerRefresh(roomId); }).catch(() => {});
     },
     receive: frame => {
       const current = epoch;

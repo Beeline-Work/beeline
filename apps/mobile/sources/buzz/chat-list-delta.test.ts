@@ -1,14 +1,14 @@
+import type { ReadAuthority } from './read-authority';
 import { voiceCallHumanNames } from './voice-call-members';
 import { describe, expect, it } from 'vitest';
 import type { ChatListItem, ChatListView, RoomViewMessage } from '@beeline/buzz-client';
 import {
-  applyChatListDelta,
-  chatListDeltaNeedsRead,
+  applyChatListDelta as applyChatListDeltaOwned,
+  chatListDeltaNeedsRead as chatListDeltaNeedsReadOwned,
   chatWatchFiltersKey,
-  keepUnavailableChatFacts,
-  roomsMissedByLive,
-  withCornerFacts,
-  withoutCornerFacts,
+  keepUnavailableChatFacts as keepUnavailableChatFactsOwned,
+  withCornerFacts as withCornerFactsOwned,
+  withoutCornerFacts as withoutCornerFactsOwned,
 } from './chat-list-delta';
 
 const agent = { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' };
@@ -248,22 +248,7 @@ describe('chat list deltas', () => {
     expect(applyChatListDelta(needsYou, working)).toBe(needsYou);
   });
 
-  it('detects a newer read row the socket never announced', () => {
-    const held = deck(item('a', 20), item('b', 10));
-    const read = deck(item('a', 40), item('b', 30), item('fresh', 50));
 
-    expect(roomsMissedByLive(held, read, new Set(['a']))).toBe(true);
-    expect(roomsMissedByLive(held, held, new Set())).toBe(false);
-  });
-
-  it('detects a different latest message in the same second', () => {
-    const held = deck(item('a', 20));
-    const sameSecond = item('a', 20);
-    const read = deck({ ...sameSecond, latestMessage: { ...sameSecond.latestMessage!, id: 'a-other' } });
-
-    expect(roomsMissedByLive(held, read, new Set())).toBe(true);
-    expect(roomsMissedByLive(held, read, new Set(['a']))).toBe(false);
-  });
 });
 
 describe('keepUnavailableChatFacts', () => {
@@ -341,3 +326,13 @@ it('replaces the shared header and deck roster with the committed leave roster',
   expect(voiceCallHumanNames(left.chats[0]!.voiceCall!,viewer.pubkey)).toBe('Sam');
   expect(left.chats[0]!.latestMessage).toEqual(view.chats[0]!.latestMessage);
 });
+
+function withoutCornerFacts(...args: Parameters<typeof withoutCornerFactsOwned> extends [ReadAuthority, ...infer Args] ? Args : never) { return withoutCornerFactsOwned({} as ReadAuthority, ...args); }
+
+function withCornerFacts(...args: Parameters<typeof withCornerFactsOwned> extends [ReadAuthority, ...infer Args] ? Args : never) { return withCornerFactsOwned({} as ReadAuthority, ...args); }
+
+function applyChatListDelta(...args: Parameters<typeof applyChatListDeltaOwned> extends [ReadAuthority, ...infer Args] ? Args : never) { return applyChatListDeltaOwned({} as ReadAuthority, ...args); }
+
+function chatListDeltaNeedsRead(...args: Parameters<typeof chatListDeltaNeedsReadOwned> extends [ReadAuthority, ...infer Args] ? Args : never) { return chatListDeltaNeedsReadOwned({} as ReadAuthority, ...args); }
+
+function keepUnavailableChatFacts(...args: Parameters<typeof keepUnavailableChatFactsOwned> extends [ReadAuthority, ...infer Args] ? Args : never) { return keepUnavailableChatFactsOwned({} as ReadAuthority, ...args); }

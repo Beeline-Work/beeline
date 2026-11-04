@@ -1,60 +1,73 @@
-// Snapshot CI-only runner capacity once. Never wait for unavailable capacity:
-// public-repository overflow uses standard GitHub-hosted Ubuntu machines.
+// Compare queue pressure per slot for every job, including this plan's placements.
+// API/inventory failures still fall back to standard GitHub-hosted Ubuntu.
 import assert from 'node:assert/strict';
 import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
 const baseLabels = ['self-hosted', 'Linux', 'X64', 'beeline-ci'];
 const roles = ['control', 'heavy', 'workspace'];
-const controlJobs = ['serverSelection', 'serverSuite', 'serverIntegration', 'coverage',
-  'frameBudget', 'stateUpgrade', 'readme', 'appLinks'];
 const hosted = () => ['ubuntu-latest'];
 const yes = value => value === true || value === 'true';
+// Beeline-Work's /orgs API reports plan=free (2026-11-04). Standard hosted
+// concurrency is 20, not the larger-runner limits endpoint's public-IP quota.
+// https://docs.github.com/en/actions/reference/limits#job-concurrency-limits-for-github-hosted-runners
+export const DEFAULT_HOSTED_CAPACITY = 20;
+const emptyPressure = () => Object.fromEntries([...roles, 'hosted'].map(role =>
+  [role, { queued: 0, inProgress: 0 }]));
 
-export function routeRunners({ runners = [], flags = {}, event = 'pull_request', suite = 'all', inventoryError, reservations = {} } = {}) {
-  const available = Object.fromEntries(roles.map(role => [role, []]));
+export function routeRunners({ runners = [], flags = {}, event = 'pull_request', suite = 'all', inventoryError,
+  pressure = {}, hostedCapacity = DEFAULT_HOSTED_CAPACITY } = {}) {
+  const capacity = { ...Object.fromEntries(roles.map(role => [role, 0])), hosted: hostedCapacity };
+  const busy = Object.fromEntries(roles.map(role => [role, 0]));
   const seen = new Set();
   if (!inventoryError && ['pull_request', 'push'].includes(event)) {
     for (const runner of runners) {
-      if (!/^beeline-ci-squire-\d\d$/.test(runner.name ?? '') || runner.status !== 'online' || runner.busy !== false || seen.has(runner.name)) continue;
+      if (!/^beeline-ci-squire-\d\d$/.test(runner.name ?? '') || runner.status !== 'online' || typeof runner.busy !== 'boolean' || seen.has(runner.name)) continue;
       const labels = new Set((runner.labels ?? []).map(label => typeof label === 'string' ? label : label.name));
       if (!baseLabels.every(label => labels.has(label))) continue;
       const matches = roles.filter(role => labels.has(`beeline-ci-${role}`));
       if (matches.length !== 1) continue;
-      available[matches[0]].push(runner.name);
+      capacity[matches[0]]++;
+      if (runner.busy) busy[matches[0]]++;
       seen.add(runner.name);
     }
   }
-  for (const values of Object.values(available)) values.sort();
-  const idle = Object.fromEntries(roles.map(role => [role, available[role].length]));
-  const reserved = Object.fromEntries(roles.map(role => {
-    const count = Number.isInteger(reservations[role]) && reservations[role] > 0 ? reservations[role] : 0;
-    return [role, available[role].splice(0, count).length];
-  }));
+  assert.ok(Number.isInteger(hostedCapacity) && hostedCapacity > 0, 'Invalid hosted capacity');
+  const idle = Object.fromEntries(roles.map(role => [role, capacity[role] - busy[role]]));
+  const reserved = Object.fromEntries(roles.map(role => [role, pressure[role]?.queued ?? 0]));
+  // Busy inventory is a floor, not an extra running job: avoid counting a job
+  // twice when both the runner and Actions APIs see it.
+  const load = Object.fromEntries([...roles, 'hosted'].map(role => [role,
+    (pressure[role]?.queued ?? 0) + Math.max(pressure[role]?.inProgress ?? 0, busy[role] ?? 0)]));
   const placements = [];
   const take = (job, role, enabled = true) => {
-    const runner = enabled && available[role].shift();
-    const target = runner ? [...baseLabels, `beeline-ci-${role}`] : hosted();
-    placements.push({ job, role, target, ...(runner ? { observedIdleRunner: runner } : {}) });
+    const squireWait = capacity[role] ? load[role] / capacity[role] : null;
+    const hostedWait = load.hosted / hostedCapacity;
+    const squire = enabled && squireWait !== null && squireWait <= hostedWait;
+    const target = squire ? [...baseLabels, `beeline-ci-${role}`] : hosted();
+    if (enabled) load[squire ? role : 'hosted']++;
+    placements.push({ job, role, target, enabled, squireWait, hostedWait });
     return target;
   };
-  // Preparation owns at most the one observed control slot; small verdicts
-  // stay hosted instead of queuing behind preparation in another workflow.
+  const server = yes(flags.serverSuite) || yes(flags.serverIntegration);
   const targets = { prepare: take('prepare', 'control') };
-  for (const job of controlJobs) targets[job] = take(job, 'control', false);
+  const controls = { serverSelection: event === 'pull_request' && server,
+    serverSuite: server, serverIntegration: server, coverage: event === 'push',
+    frameBudget: yes(flags.frameBudget), stateUpgrade: yes(flags.stateUpgrade),
+    readme: yes(flags.readme), appLinks: yes(flags.appLinkAssociations) };
+  for (const [job, enabled] of Object.entries(controls)) targets[job] = take(job, 'control', enabled);
   const dispatched = value => event === 'workflow_dispatch' && ['all', value].includes(suite);
   targets.typecheck = take('typecheck', 'heavy');
   targets.shared = take('shared', 'heavy');
-  const server = yes(flags.serverSuite) || dispatched('server-suite') || dispatched('server-integration');
   const serverMatrix = Array.from({ length: 8 }, (_, index) => {
-    const target = take(`server-${index + 1}`, 'heavy', server);
+    const target = take(`server-${index + 1}`, 'heavy', server || dispatched('server-suite') || dispatched('server-integration'));
     return { shard: index + 1, target, hosted: target[0] === 'ubuntu-latest' };
   });
   targets.deadCode = take('deadCode', 'heavy', yes(flags.code) || dispatched('dead-code'));
   targets.native = take('native', 'heavy', yes(flags.nativeFingerprint) || yes(flags.mobileSuite) || dispatched('native-fingerprint') || dispatched('mobile-suite'));
   targets.mobileExport = take('mobileExport', 'heavy', yes(flags.mobileExportReachability) || dispatched('mobile-export-reachability'));
   targets.mobile = take('mobile', 'workspace', yes(flags.mobileSuite) || dispatched('mobile-suite'));
-  return { version: 1, idle, reserved, targets, serverMatrix, placements,
+  return { version: 1, idle, reserved, capacity, pressure, targets, serverMatrix, placements,
     ...(inventoryError ? { inventoryError } : {}) };
 }
 
@@ -71,37 +84,54 @@ export async function loadRunners({ request, repository }) {
   throw Error('Runner inventory exceeds bounded pagination');
 }
 
-// Account only for actual queued Squire requests from older runs. A preparing
-// workflow has no claim: its jobs may be hosted, skipped or not materialize for
-// minutes. Speculative reservations strand idle capacity behind hosted queues.
+// Count materialized queued/running jobs across all repository workflows and
+// all active runs (including current/newer runs). Future jobs claim no slots.
 export async function loadPressure({ request, repository, runId }) {
+  assert.match(repository, /^[\w.-]+\/[\w.-]+$/);
   assert.match(String(runId), /^\d+$/);
-  const pages = await Promise.all(['queued', 'in_progress', 'pending'].map(status =>
-    request(`/repos/${repository}/actions/workflows/checks.yml/runs?status=${status}&per_page=100`)));
+  const pages = await Promise.all(['queued', 'in_progress', 'pending', 'waiting', 'requested'].map(status =>
+    request(`/repos/${repository}/actions/runs?status=${status}&per_page=100`)));
   const listed = new Map();
   for (const page of pages) {
-    assert.ok(Array.isArray(page.workflow_runs) && page.total_count <= page.workflow_runs.length, 'Incomplete active workflow inventory');
+    assert.ok(Array.isArray(page.workflow_runs) && Number.isInteger(page.total_count) && page.total_count <= page.workflow_runs.length, 'Incomplete active workflow inventory');
     for (const run of page.workflow_runs) listed.set(run.id, run);
   }
   assert.ok(listed.has(Number(runId)), 'Active workflow inventory is not current yet');
-  const reservations = { heavy: 0, control: 0, workspace: 0 };
-  for (const run of listed.values()) {
-    if (run.id >= Number(runId) || run.status === 'completed') continue;
-    const result = await request(`/repos/${repository}/actions/runs/${run.id}/jobs?per_page=100`);
-    assert.ok(Array.isArray(result.jobs) && result.total_count <= result.jobs.length, 'Incomplete queued job inventory');
+  const pressure = emptyPressure();
+  const inventories = await Promise.all([...listed.values()].filter(run => run.status !== 'completed').map(run =>
+    request(`/repos/${repository}/actions/runs/${run.id}/jobs?per_page=100`)));
+  for (const result of inventories) {
+    assert.ok(Array.isArray(result.jobs) && Number.isInteger(result.total_count) && result.total_count <= result.jobs.length, 'Incomplete queued job inventory');
     for (const job of result.jobs) {
-      if (job.status !== 'queued' || job.runner_name || job.runner_id > 0) continue;
-      for (const role of roles) if (job.labels?.includes(`beeline-ci-${role}`)) reservations[role]++;
+      if (!['queued', 'in_progress'].includes(job.status)) continue;
+      const state = job.status === 'queued' ? 'queued' : 'inProgress';
+      const role = roles.find(role => job.labels?.includes(`beeline-ci-${role}`));
+      if (role) pressure[role][state]++;
+      else if (!job.labels?.includes('self-hosted') && job.labels?.some(label => /^(ubuntu|windows|macos)-/.test(label))) pressure.hosted[state]++;
     }
   }
-  return reservations;
+  return pressure;
+}
+
+export async function loadHostedCapacity({ request, repository }) {
+  // Organization metadata may omit plan for the workflow credential. This is
+  // optional: retain the documented org limit rather than disabling Squire.
+  try {
+    const org = await request(`/orgs/${repository.split('/')[0]}`);
+    const capacity = { free: 20, pro: 40, team: 60, enterprise: 500 }[org.plan?.name];
+    if (capacity) return { hostedCapacity: capacity, hostedCapacitySource: `org plan: ${org.plan.name}` };
+  } catch { /* No plan visibility; use the org's documented default below. */ }
+  return { hostedCapacity: DEFAULT_HOSTED_CAPACITY, hostedCapacitySource: 'documented Beeline-Work default' };
 }
 
 export async function planRouting({ request, actionsRequest = request, repository, runId, ...options }) {
   try {
-    const runners = await loadRunners({ request, repository });
-    const reservations = runId ? await loadPressure({ request: actionsRequest, repository, runId }) : {};
-    return routeRunners({ ...options, runners, reservations });
+    const [runners, pressure, hostedLimit] = await Promise.all([
+      loadRunners({ request, repository }),
+      runId ? loadPressure({ request: actionsRequest, repository, runId }) : {},
+      loadHostedCapacity({ request, repository }),
+    ]);
+    return { ...routeRunners({ ...options, ...hostedLimit, runners, pressure }), hostedCapacitySource: hostedLimit.hostedCapacitySource };
   } catch (error) { return routeRunners({ ...options, inventoryError: String(error.message).slice(0, 200) }); }
 }
 
@@ -122,8 +152,8 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const outputs = Object.entries(result.targets).map(([name, target]) => `runner_${name}=${JSON.stringify(target)}`);
   outputs.push(`serverMatrix=${JSON.stringify(result.serverMatrix)}`);
   appendFileSync(process.env.GITHUB_OUTPUT, outputs.join('\n') + '\n');
-  const rows = result.placements.map(row => `| ${row.job} | ${row.target.includes('self-hosted') ? 'squire' : 'ubuntu-latest'} | ${row.observedIdleRunner ?? 'hosted overflow'} |`);
+  const rows = result.placements.map(row => `| ${row.job} | ${row.target.includes('self-hosted') ? 'squire' : 'ubuntu-latest'} | ${row.squireWait ?? 'unavailable'} | ${row.hostedWait} | ${row.enabled ? 'shorter wait; ties to squire' : 'disabled; hosted fallback'} |`);
   appendFileSync(process.env.GITHUB_STEP_SUMMARY,
-    `Runner inventory: ${JSON.stringify(result.idle)}; queued Squire requests: ${JSON.stringify(result.reserved)}${result.inventoryError ? `; ${result.inventoryError}` : ''}\n\n| Job | Placement | Observed slot |\n| --- | --- | --- |\n${rows.join('\n')}\n`);
+    `Idle Squire: ${JSON.stringify(result.idle)}; capacity: ${JSON.stringify(result.capacity)}; hosted limit: ${result.hostedCapacitySource ?? 'fallback'}; queued/running jobs: ${JSON.stringify(result.pressure)}${result.inventoryError ? `; ${result.inventoryError}` : ''}\n\n| Job | Placement | Squire wait | Hosted wait | Reason |\n| --- | --- | --- | --- | --- |\n${rows.join('\n')}\n`);
   console.log(JSON.stringify(result));
 }

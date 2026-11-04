@@ -78,19 +78,19 @@ describe('shared DB-derived canonical projection builds',()=>{
     expect(coordinator.stats().flights).toBe(0);
     await coordinator.build(failure,build);expect(builds).toBe(5);
   });
-  it('bounds waiting sockets and active identities without cancelling admitted shared work',async()=>{
+  it('joins every admitted waiter and builds distinct active identities',async()=>{
     const coordinator=new RouterBuildCoordinator({flights:1,waiters:2}),blocked=deferred<{count:number}>();
     const current=await ticket(),other=await ticket(new ReadSnapshot(2));let builds=0;
     const first=coordinator.build(current,async()=>{builds++;return blocked.promise;});
     const joined=coordinator.build(current,async()=>{throw new Error('Unexpected duplicate');});
-    await expect(coordinator.build(current,async()=>({count:0}))).rejects.toMatchObject({reason:'budget'});
-    await expect(coordinator.build(other,async()=>({count:0}))).rejects.toMatchObject({reason:'budget'});
-    blocked.resolve({count:1});await Promise.all([first,joined]);expect(builds).toBe(1);
+    const third=coordinator.build(current,async()=>{throw new Error('Unexpected duplicate');});
+    await expect(coordinator.build(other,async()=>({count:0}))).resolves.toMatchObject({value:{count:0}});
+    blocked.resolve({count:1});await Promise.all([first,joined,third]);expect(builds).toBe(1);
   });
-  it('rejects a noncoherent transaction and an oversized physical snapshot',async()=>{
+  it('rejects a noncoherent transaction and delivers oversized snapshots',async()=>{
     await expect(ticket(new ReadSnapshot(1,'1','epoch','read committed'))).rejects.toMatchObject({reason:'dependency'});
-    const coordinator=new RouterBuildCoordinator();
-    await expect(coordinator.build(await ticket(),async()=>({count:1,padding:'x'.repeat(1024)}))).rejects.toMatchObject({reason:'budget'});
+    const coordinator=new RouterBuildCoordinator({bytes:512});
+    await expect(coordinator.build(await ticket(),async()=>({count:1,padding:'x'.repeat(1024)}))).resolves.toMatchObject({value:{count:1}});
     expect(coordinator.stats()).toMatchObject({entries:0,flights:0});
   });
   it('does not retain a stale in-flight result after a known authority invalidation',async()=>{

@@ -55,7 +55,8 @@ export function identitySettingsProofShims(mobile: string): Record<string, strin
         };
       }
     }`,
-    '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (name) => {
+    '@/sync/transport/monolith-operation': `export const readServerSurface=(_authority,...args)=>monolithPhoneOperation(...args);
+      export const monolithPhoneOperation = async (name) => {
       if (name === 'readIdentitySettings') return {
         identity: { personId: 'a'.repeat(64), face: 'fox', pushLevel: 'attention', handle: 'captain', name: 'Captain' },
         workspaces: { workspaces: [] },

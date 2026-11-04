@@ -59,7 +59,6 @@ export function routerSourcePlan(causes: readonly Record<string,unknown>[], view
     const old=savedKeys.get(target.bookmarkId);
     if(old&&old.messageId!==target.messageId){savedUnavailable='dependency';savedKeys.clear();return;}
     savedKeys.set(target.bookmarkId,target);
-    if(savedKeys.size>256){savedUnavailable='budget';savedKeys.clear();}
   };
   const addScheduled=(roomId:string,readers:readonly string[]|null)=>{
     const normalized=readers===null?null:[...new Set(readers)].sort();

@@ -1,7 +1,7 @@
 import type { SavedRowPayload, TrayGroupPayload, NeedsYouRoomsPayload,RouterFamily,RouterSnapshotInput } from '@beeline/api-contract/router-protocol';
 import { trayFamily } from './tray-group.js';
 import { ProjectionGroups, type GroupCell, type GroupProposal } from './projection-groups.js';
-import { jsonBytes as bytes, stagingWithinBudget } from './staging-bounds.js';
+import { jsonBytes as bytes } from './staging-bounds.js';
 import { LaneStaging, sameStream } from './lane-staging.js';
 /** Local state only. No transport, clock, scheduler, native module or server inventory. */
 export type LaneFamily=RouterFamily;
@@ -45,6 +45,7 @@ const roomFamily=(family:LaneFamily):boolean=>family==='room-head'||family===SCH
 /** An executor is installed only by the negotiated connection owner. Demand
  * arrives only after admission has atomically consumed a real owner pass.
  * Safe reads queue and recover on backoff while that owner remains current.
+ * Missed or unreadable updates re-read their affected demand in place.
  */
 const AUTHORITY_FENCE_KIND='authority-fence';
 const UNAVAILABLE='Projection unavailable; Retry.', ACCESS_REMOVED='Access removed.';
@@ -74,7 +75,7 @@ export class ReadLanes {
 
   constructor(private readonly identity: LaneIdentity,
     private readonly validate: (request: LaneRequest, value: unknown) => boolean,
-    private readonly storage?: LaneStorage) {this.groups=new ProjectionGroups(identity.principal,validate,authority=>this.authorized(authority),this.staging,(cell,error)=>this.park(cell,error));}
+    private readonly storage?: LaneStorage) {this.groups=new ProjectionGroups(identity.principal,validate,authority=>this.authorized(authority),this.staging,(cell,error)=>this.repair(cell,error));}
 
   key(request: LaneRequest): string {
     return JSON.stringify([this.identity.origin, this.identity.principal, this.identity.sessionEpoch,
@@ -210,11 +211,6 @@ export class ReadLanes {
       if(JSON.stringify(duplicate.batch)!==JSON.stringify(batch)){this.interrupted.add(stream);this.parkStream(stream,'Conflicting projection; Retry.');}
       return duplicate.promise;
     }
-    if(!stagingWithinBudget([...held.filter(item=>item.batch.to.stream===stream).map(item=>item.batch),batch],bytes)){
-      this.interrupted.add(stream);this.parkStream(stream,'Projection queue overflow; Retry.');
-      this.arrivals=this.arrivals.filter(item=>{if(item.batch.to.stream!==stream)return true;item.done();return false;});
-      return Promise.resolve();
-    }
     let done!:()=>void;const promise=new Promise<void>(resolve=>{done=resolve;});
     this.arrivals.push({batch,session:this.session,generation:this.generation,replay,done,promise});this.drainArrivals();return promise;
   }
@@ -302,11 +298,21 @@ export class ReadLanes {
       for(const future of this.groups.ready())void this.queueBatch(future,true);
   }
 
-  unavailable(stream: string, family: LaneFamily, reason = UNAVAILABLE): void {
-    if(this.jointMode()&&trayFamily(family)){this.parkTrayStream(stream);return;}
-    for (const entry of this.entries.values()) if (entry.request.family === family &&
-      (entry.snapshot?.cut.stream ?? `workspace:${entry.request.workspaceId}`) === stream) this.park(entry, reason);
+  /** Data recovery reuses the negotiated executor and current visible owners. */
+  refresh(matches: (request: LaneRequest, stream: string) => boolean = () => true, hide = false): void {
+    const affected = [...this.entries.values()].filter(entry => matches(entry.request,
+      entry.snapshot?.cut.stream ?? entry.baseline?.cut.stream ?? `workspace:${entry.request.workspaceId}`));
+    for (const entry of affected) {
+      if (hide) { this.transition(entry, { ...absent(), state: 'PARKED', error: UNAVAILABLE }); this.notify(entry); }
+      else this.parkItem(entry, UNAVAILABLE);
+    }
+    for (const entry of affected) if (liveOwner(entry)) this.open(entry);
   }
+
+  unavailable(stream: string, family: LaneFamily, _reason = UNAVAILABLE): void {
+    this.refresh((request, heldStream) => request.family === family && (!stream || heldStream === stream));
+  }
+
   /** Losing a control source invalidates all data depending on that source,
    * without disconnecting other families or admitting a new read. */
   hideFamily(family:LaneFamily,reason='Authority unavailable; Retry.'):void{
@@ -441,12 +447,12 @@ export class ReadLanes {
       const install = this.serial.then(async () => {
         if (!current()) return;
         let proposal:GroupProposal<Entry>|undefined;
-        try{proposal=this.groups.snapshot(entry,snapshot);}catch{this.park(entry,'Invalid snapshot; Retry.');return;}
+        try{proposal=this.groups.snapshot(entry,snapshot);}catch{this.parkItem(entry,'Invalid snapshot; Retry.');return;}
         if(proposal)await this.installGroup(proposal,session,generation);
       });
       this.serial = install.catch(() => { if (current()) this.park(entry, 'Projection storage failed; Retry.'); });
       await this.serial;
-    }).catch(() => { if (current()) this.park(entry, 'Connection interrupted; Retry.'); }).finally(() => {
+    }).catch(() => { if (current()) this.parkItem(entry, 'This item could not be loaded; Retry.'); }).finally(() => {
       if (entry.flight !== flight) return;
       entry.flight = undefined;
       for (const batch of entry.queued.take()) void this.queueBatch(batch,true);
@@ -538,8 +544,18 @@ export class ReadLanes {
       .map(entry=>this.groups.group(entry.request.workspaceId!)));
     for(const group of groups)this.parkTray(group);
   }
+  private repair(entry: Entry, _error: string): void {
+    if (entry.flight) return;
+    if (this.joint(entry)) {
+      this.parkTray(this.groups.group(entry.request.workspaceId!));
+      this.refresh(request => trayFamily(request.family) && request.workspaceId === entry.request.workspaceId);
+    } else this.refresh(request => this.key(request) === entry.key);
+  }
   private park(entry: Entry, error: string): void {
     if(this.joint(entry)){this.parkTray(this.groups.group(entry.request.workspaceId!));return;}
+    this.parkItem(entry, error);
+  }
+  private parkItem(entry: Entry, error: string): void {
     this.transition(entry,{...entry.view,state:'PARKED',error},'keep');this.notify(entry);this.scheduleRetry(entry);
   }
   private parkStream(stream: string, error: string): void {

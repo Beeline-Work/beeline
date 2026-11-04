@@ -44,7 +44,6 @@ let initialized: Promise<void> | undefined;
 let listPanelVisible = false;
 let modeKnown = false;
 let principal: string | undefined;
-let authorityUnavailable = false;
 let scheduledAuthority: ScheduledWorkAuthority | undefined;
 let instance = 0;
 const slotNames = new WeakMap<Slot, string>();
@@ -82,8 +81,7 @@ function validValue(request: LaneRequest, value: unknown): boolean {
   if (request.family === 'room-head') return readRoomView(value) !== null;
   if (!value || typeof value !== 'object') return false;
   const count = (value as { count?: unknown }).count;
-  return request.family === 'needs-you-count' && Number.isSafeInteger(count) && Number(count) >= 0 &&
-    utf8ToBytes(JSON.stringify(value)).length <= 1024;
+  return request.family === 'needs-you-count' && Number.isSafeInteger(count) && Number(count) >= 0;
 }
 function validCertificate(snapshot: LaneSnapshot): boolean {
   const scopes = snapshot.authority.scopes;
@@ -244,7 +242,7 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
   if (version !== instance) return;
   next={...next,families:next.families.filter(family=>!['room-scheduled-work','needs-you-tray','needs-you-saved-page'].includes(family)||routerCommandStorageReady()&&next.authorityFencesV1===true)};
   if(negotiation)scheduledAuthority?.disconnected(negotiation.generation);
-  negotiation = next; modeKnown = true; authorityUnavailable = false;
+  negotiation = next; modeKnown = true;
   if(next.scheduledWorkCoverageV1){
     if(next.scheduledWorkCoverageV1.version!==1||!authorityPosition(next.scheduledWorkCoverageV1.authorityStart)||
       !next.families.includes('room-scheduled-work'))throw new Error('Invalid Scheduled Work coverage negotiation.');
@@ -342,7 +340,7 @@ function fact(value: unknown): boolean {
   if (typeof payload.scope !== 'string' || payload.scope.length > 256) return false;
   if(payload.kind==='tray-classification')return payload.version===1&&typeof payload.clockVersion==='string'&&
     /^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion)&&Object.keys(payload).length===4;
-  if(payload.kind==='tray-needs-replace')return record(payload.value)&&Array.isArray(payload.value.items)&&payload.value.items.length<=30;
+  if(payload.kind==='tray-needs-replace')return record(payload.value)&&Array.isArray(payload.value.items);
   if(payload.kind==='saved-row-replace')return record(payload.row);
   if(payload.kind==='saved-row-remove')return typeof payload.bookmarkId==='string'&&typeof payload.messageId==='string';
   if (payload.kind === 'group-unavailable') return payload.reason === 'authority' || payload.reason === 'dependency';
@@ -352,7 +350,7 @@ function fact(value: unknown): boolean {
     typeof payload.family === 'string' && families.includes(payload.family) && Object.hasOwn(payload, 'value');
 }
 /** Socket input is untrusted at runtime even when a transport callback has a
- * static protocol type. Malformed frames park locally, never throw or refetch.
+ * static protocol type. Malformed frames re-read only their affected lanes.
  */
 export function routerOwnerReceive(value: unknown): void {
   if (!negotiation || !record(value)) return;
@@ -364,12 +362,14 @@ export function routerOwnerReceive(value: unknown): void {
     return;
   }
   const failAuthority = () => {
-    scheduledAuthority?.sourceLost(negotiation!.generation);
-    authorityUnavailable = true; assembly.reset(); lanes?.disconnected();
-    mediaDemand?.disconnected(); suspendMediaCacheConnection(); notify();
+    assembly.reset();
+    const affected = Array.isArray(value.families) && value.families.length ? value.families : negotiation!.families;
+    invalidateMediaCacheDemand();
+    lanes?.refresh(request => affected.includes(request.family) &&
+      (typeof value.scope !== 'string' || request.roomId === value.scope || request.workspaceId === value.scope || value.scope === principal), true);
   };
   if (value.kind === 'authority-fence') {
-    if (!negotiation.authorityFencesV1 || authorityUnavailable) return;
+    if (!negotiation.authorityFencesV1) return;
     const domain = value.authorityScope;
     const profileDomain=negotiation.families.includes('agent-profile')&&typeof domain==='string'&&
       /^profile:[0-9a-f-]{36}:[^:]{1,128}$/.test(domain)&&domain.endsWith(`:${value.scope}`);
@@ -380,8 +380,7 @@ export function routerOwnerReceive(value: unknown): void {
           `scheduled-work-manager:${principal}:workspace:${value.scope}`,`scheduled-work-member:${principal}:room:${value.scope}`,
           `scheduled-work-room:${value.scope}`,...(value.scope===principal?[`scheduled-work-principal:${principal}`]:[]) ].includes(domain)&&!profileDomain&&!ownerDomain&&!rosterDomain ||
         (value.mode !== undefined && value.mode !== 'deny' && value.mode !== 'advance') ||
-        !certificate(value.authority) || !validCertificate({ authority: value.authority } as LaneSnapshot) ||
-        utf8ToBytes(JSON.stringify(value)).length > 4096) { failAuthority(); return; }
+        !certificate(value.authority) || !validCertificate({ authority: value.authority } as LaneSnapshot)) { failAuthority(); return; }
     const epoch = (value.authority as LaneSnapshot['authority']).scopes.find(scope => scope.authorityScope === domain)?.epoch;
     if (!epoch) { failAuthority(); return; }
     // A content-free current-authority fence carries no data coverage/cursor.
@@ -396,17 +395,15 @@ export function routerOwnerReceive(value: unknown): void {
     return;
   }
   if(value.kind==='router-unavailable'&&value.stream===ROUTER_TRAY_CLOCK_STREAM){
-    // A shared control loss parks only Tray state, across local held scopes.
-    // It carries no client inventory and admits no read or socket replacement.
-    for(const family of negotiation.families)if(family.startsWith('needs-you'))lanes?.hideFamily(family);
+    // A shared control loss re-reads only held Tray state on this socket.
+    lanes?.refresh(request => request.family.startsWith('needs-you'));
     return;
   }
   if (value.kind === 'router-unavailable' && value.stream === `authority:${principal}`) {
-    if(negotiation.scheduledWorkCoverageV1&&Array.isArray(value.families)&&value.families.length===1&&value.families[0]==='room-scheduled-work')scheduledAuthority?.sourceLost(negotiation.generation);
+    if(negotiation.scheduledWorkCoverageV1&&Array.isArray(value.families)&&value.families.length===1&&value.families[0]==='room-scheduled-work')lanes?.refresh(request => request.family === 'room-scheduled-work');
     else failAuthority();
     return;
   }
-  if (authorityUnavailable) return;
   const stream = typeof value.stream === 'string' ? value.stream : record(value.to) && typeof value.to.stream === 'string' ? value.to.stream : undefined;
   const fail = () => { if (stream) for (const family of negotiation?.families ?? []) lanes?.unavailable(stream, family); };
   if (value.kind === 'router-unavailable') {
@@ -421,6 +418,11 @@ export function routerOwnerReceive(value: unknown): void {
   // fact() accepts only this owner's implemented lane/fact vocabulary, which
   // may be narrower than additive server-side protocol contracts.
   try { assembly.accept(value as Parameters<RouterBatchAssembly['accept']>[0]); } catch { fail(); }
+}
+
+/** Cover only the data named by a missed delivery on the retained socket. */
+export function routerOwnerRefresh(roomId?: string): void {
+  lanes?.refresh(request => roomId ? request.roomId === roomId : !request.roomId);
 }
 
 export function routerFamilyMode(family: LaneFamily): RouterFamilyMode {
@@ -658,7 +660,7 @@ AppState.addEventListener('change', state => {
 subscribeClientReset(() => {
   if(negotiation)scheduledAuthority?.disconnected(negotiation.generation);
   scheduledAuthority=undefined;
-  instance += 1; modeKnown = false; negotiation = undefined; principal = undefined; authorityUnavailable = false; assembly.reset();
+  instance += 1; modeKnown = false; negotiation = undefined; principal = undefined; assembly.reset();
   for (const slot of slots) { release(slot); slot.generation = undefined; }
   stopFences?.(); stopFences = undefined;
   stopFloors?.(); stopFloors = undefined;
@@ -687,7 +689,7 @@ export function readRouterToolPage(input:PhoneOperationMap['readRoomTools']['inp
       return await connection.executeTools!(JSON.parse(permit.wire.input));
     }finally{const next=waitingToolReads.shift();if(next)next();else activeToolReads--;}
   })().then(result=>{
-    if(!permit.isCurrent()||negotiation!==connection||authorityUnavailable)throw new Error('Tool output is no longer visible.');
+    if(!permit.isCurrent()||negotiation!==connection)throw new Error('Tool output is no longer visible.');
     return result;
   });
   toolFlights.set(key,flight);void flight.finally(()=>{if(toolFlights.get(key)===flight)toolFlights.delete(key);}).catch(()=>{});

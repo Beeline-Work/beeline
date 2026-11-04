@@ -141,7 +141,7 @@ afterEach(() => {
 });
 
 describe('ConnectorSignInScreen', () => {
-  it('Reproduction squire-spinner: a hung sign-in read ends with retry within 15 seconds', async () => {
+  it('a slow sign-in read waits for its socket response without overlapping reads', async () => {
     vi.useFakeTimers();
     searchParams.connectorName = 'Trusty Squire';
     searchParams.url = '';
@@ -150,12 +150,13 @@ describe('ConnectorSignInScreen', () => {
     let renderer!: ReactTestRenderer;
     try {
       await act(async () => { renderer = create(<ConnectorSignInScreen />); });
-      await act(async () => { await vi.advanceTimersByTimeAsync(15_001); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      expect(renderer.root.findAllByProps({ testID: 'signin-retry' })).toHaveLength(0);
+      expect(readInstallState).toHaveBeenCalledTimes(1);
+      await act(async () => releases[0]!(null));
       expect(renderer.root.findAllByProps({ testID: 'signin-retry' }).length).toBeGreaterThan(0);
       expect(renderer.root.findByType('PageHeader').props.title).toBe('Sign in to Google');
-      expect(JSON.stringify(renderer.toJSON())).toContain('Couldn’t reach Beeline');
-      await act(async () => { void renderer.root.findByProps({ testID: 'signin-retry' }).props.onPress(); });
-      expect(readInstallState).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(renderer.toJSON())).toContain('Lost track of the install');
     } finally { await act(async () => { renderer.unmount(); releases.forEach(resolve => resolve(null)); }); vi.useRealTimers(); }
   });
 

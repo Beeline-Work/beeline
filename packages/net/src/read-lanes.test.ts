@@ -33,6 +33,28 @@ describe('local read lanes (P2)', () => {
     lanes.demand(request,{},permit);await drain();
     expect(lanes.peek(request)).toMatchObject({state:'LIVE',value:{count:1}});expect(reads).toBe(1);
   });
+  it('unavailable re-reads only its lane and a failed read parks only that item', async () => {
+    const other = { ...request, workspaceId: 'other' };
+    const calls: string[] = [];
+    let failing = false;
+    const lanes = new ReadLanes(identity, () => true);
+    lanes.connected(1, [request.family], async input => {
+      calls.push(input.workspaceId!);
+      if (input.workspaceId === 'w' && failing) throw new Error('unavailable');
+      return { ...snapshot(), cut: { ...snapshot().cut, stream: `workspace:${input.workspaceId}` } };
+    });
+    lanes.demand(request, {}, permit); lanes.demand(other, {}, permit); await drain();
+    failing = true;
+    lanes.unavailable('workspace:w', request.family); await drain();
+    expect(calls).toEqual(['w', 'other', 'w']);
+    expect(lanes.peek(request)).toMatchObject({ state: 'PARKED', error: 'This item could not be loaded; Retry.' });
+    expect(lanes.peek(other)).toMatchObject({ state: 'LIVE', error: null });
+    failing = false;
+    lanes.unavailable('workspace:w', request.family); await drain();
+    expect(calls).toEqual(['w', 'other', 'w', 'w']);
+    expect(lanes.peek(request)).toMatchObject({ state: 'LIVE', error: null });
+  });
+
   it('coalesces two owners into one read; a second LIVE owner consumes no read', async () => {
     let reads = 0;
     const lanes = setup(async () => { reads++; return snapshot(); });

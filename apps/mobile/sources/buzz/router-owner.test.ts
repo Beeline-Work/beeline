@@ -119,7 +119,7 @@ describe('real mobile router owner', () => {
     expect(execute).not.toHaveBeenCalled();
     expect(fixture.storage.write).not.toHaveBeenCalled();
   });
-  it.each(['live','opening'] as const)('parks %s Tray on shared clock loss while keeping the visible Room list and issuing no read',async phase=>{
+  it.each(['live','opening'] as const)('re-reads %s Tray on shared clock loss while keeping the visible Room list',async phase=>{
     const workspace='11111111-1111-4111-8111-111111111111';
     const tray={family:'needs-you-tray',workspaceId:workspace} as const,list={family:'room-list',workspaceId:workspace} as const;
     const certScopes=[{authorityScope:`reader:ada:workspace:${workspace}`,epoch:'1'},
@@ -138,8 +138,8 @@ describe('real mobile router owner', () => {
     await routerOwnerNegotiated({generation:1,families:['room-list','needs-you-tray','needs-you-count','needs-you-saved-page'],authorityFencesV1:true,execute});await settle();
     expect(head.current().state).toBe(phase==='live'?'LIVE':'OPENING');expect(rooms.current().state).toBe('LIVE');const count=execute.mock.calls.length;
     routerOwnerReceive({kind:'router-unavailable',stream:'control:tray-clock',families:['needs-you-tray','needs-you-count','needs-you-saved-page'],reason:'dependency'});
-    expect(head.current()).toMatchObject({state:'PARKED',value:null});expect(rooms.current()).toMatchObject({state:'LIVE',value:listValue});
-    open();await settle();expect(head.current()).toMatchObject({state:'PARKED',value:null});expect(execute.mock.calls).toHaveLength(count);
+    expect(head.current().state).toBe('OPENING');expect(rooms.current()).toMatchObject({state:'LIVE',value:listValue});
+    open();await settle();expect(head.current().state).toBe('LIVE');expect(execute.mock.calls).toHaveLength(count+1);
     head.release();rooms.release();routerOwnerListPanel(false);
   });
   it('opens a Saved continuation only from its held cursor and never from an attached page observer',async()=>{
@@ -353,18 +353,18 @@ describe('real mobile router owner', () => {
     expect(execute).toHaveBeenCalledTimes(1);
     routerOwnerReceive({ kind: 'router-unavailable', stream: 'authority:ada', families: [], reason: 'listener' });
     retryRouterLane(request); await settle();
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(2);
     expect(lane.current().value).toBeNull();
     lane.release();
   });
-  it('malformed wire never throws, creates a pass, or issues a read', async () => {
+  it('malformed wire never throws and re-reads only its affected stream', async () => {
     const execute = vi.fn(async () => snapshot());
     routerOwnerNavigation(navigation());
     const lane = acquireRouterLane(request, () => true, () => {});
     await routerOwnerNegotiated({ generation: 1, families: ['needs-you-count'], execute }); await settle();
     for (const value of [null, {}, { kind: 'push-part' }, { kind: 'push-part', to: snapshot().cut, facts: null },
       { kind: 'router-unavailable', stream: 'workspace:w', families: null }]) expect(() => routerOwnerReceive(value)).not.toThrow();
-    await settle(); expect(execute).toHaveBeenCalledTimes(1); lane.release();
+    await settle(); expect(execute).toHaveBeenCalledTimes(2); lane.release();
   });
 });
 
@@ -457,7 +457,7 @@ describe('actual Tray gesture and painted ownership',()=>{
 
 
 
-it('a compact shared authority-source loss hides retained count and media, and a Scheduled Work restart cannot restore their trust',async()=>{
+it('authority-source loss re-reads current count and invalidates old media without losing the connection',async()=>{
   const execute=vi.fn(async()=>snapshot()),objectId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const mediaScopes=[{authorityScope:`object:${objectId}`,epoch:'1'},...scopes];
   const executeMetadata=vi.fn(async()=>({objectId,sha256:'a'.repeat(64),size:1,mimeType:'image/png',expiresAt:Date.now()+60_000,
@@ -470,10 +470,10 @@ it('a compact shared authority-source loss hides retained count and media, and a
   routerOwnerArtifactViewport('room',[objectId]);const media=await mediaMetadataFor('https://example.test','ada',objectId);
   expect(lane.current().value).toEqual({count:1});expect(mediaCertificateCurrent(media!)).toBe(true);
   routerOwnerReceive({kind:'router-unavailable',stream:'authority:ada',families:[],reason:'listener'});await settle();
-  expect(lane.current().value).toBeNull();expect(mediaCertificateCurrent(media!)).toBe(false);
+  expect(lane.current().value).toEqual({count:1});expect(mediaCertificateCurrent(media!)).toBe(false);
   routerOwnerReceive({kind:'scheduled-work-authority-restart',start:{...start,segment:'recovered',through:4}});await settle();
-  retryRouterLane(request);await settle();expect(lane.current().value).toBeNull();expect(mediaCertificateCurrent(media!)).toBe(false);
-  expect(execute).toHaveBeenCalledTimes(1);expect(executeMetadata).toHaveBeenCalledTimes(1);lane.release();
+  await settle();expect(lane.current().value).toEqual({count:1});expect(mediaCertificateCurrent(media!)).toBe(false);
+  expect(execute).toHaveBeenCalledTimes(2);expect(executeMetadata).toHaveBeenCalledTimes(1);lane.release();
 });
 
 it('admits only the exact three DB decision actions offered in the held canonical Tray, with no follow-up read',async()=>{

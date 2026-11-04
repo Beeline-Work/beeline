@@ -69,11 +69,12 @@ export async function readArtifactObject(attachment: AttachmentReference,
   const metadata = await mediaMetadataFor(origin, identity.publicKey, objectId);
   if (reset !== clientResetGeneration() || localEpoch !== epoch || options.signal?.aborted) throw new Error('The file is no longer visible.');
   const raster = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(attachment.mimeType);
+  // The image itself is its card preview when the server has no thumbnail.
   const source = options.thumbnail ? metadata?.thumbnail : options.preview && metadata && metadata.size > 16 * 1024
-    ? raster ? metadata.thumbnail : undefined : metadata;
+    ? raster ? metadata.thumbnail ?? metadata : undefined : metadata;
   if (options.thumbnail && !source) throw new ArtifactPreviewUnavailable();
   if (options.preview && metadata && !source) throw new ArtifactPreviewUnavailable();
-  if (options.preview && (!source && (!Number.isSafeInteger(attachment.size) || attachment.size > 16 * 1024) || source && source.size > 16 * 1024))
+  if (options.preview && !raster && (!source && (!Number.isSafeInteger(attachment.size) || attachment.size > 16 * 1024) || source && source.size > 16 * 1024))
     throw new ArtifactPreviewUnavailable();
   const id = source?.objectId ?? objectId;
   const mimeType = source?.mimeType ?? attachment.mimeType;
@@ -92,10 +93,10 @@ export async function readArtifactObject(attachment: AttachmentReference,
     new URL(getBuzzRuntimeConfig().monolithUrl).origin === origin && (!metadata || mediaCertificateCurrent(metadata));
   await adoptFences();
   const bytes = await cache.get(address, async signal => {
-    const bytes = await read(id, signal, options.preview ? 16 * 1024 : 25 * 1024 * 1024);
+    const bytes = await read(id, signal, options.preview && !raster ? 16 * 1024 : 25 * 1024 * 1024);
     return bytes;
   }, { signal: options.signal, restoreAuthorized: !!metadata, reuseAuthorized: !!metadata, isCurrent: current,
-    maxBytes: options.preview ? 16 * 1024 : 25 * 1024 * 1024 });
+    maxBytes: options.preview && !raster ? 16 * 1024 : 25 * 1024 * 1024 });
   if (!current() || options.signal?.aborted) throw new Error('The file is no longer visible.');
   return { bytes, key, address, mimeType, isCurrent: current };
 }

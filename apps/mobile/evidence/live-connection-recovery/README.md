@@ -237,3 +237,40 @@ Focused verification, from `apps/mobile`:
 R2/R3 focused review result: **125 tests passed across both files**
 (83 transport tests and 42 deck tests), with `--maxWorkers=2`.
 No native captures were repeated for these pipeline fixes.
+
+## Pipeline review fixes: in-flight reads and timer test quality
+
+R4 consumes pending Workspace and chat-list invalidations when a covering read
+starts, rather than when its response applies. An older in-flight response
+therefore cannot discard a background invalidation received after that read
+started. Activation uses the same existing covering reads and identity fences;
+there is no socket replacement, polling, or additional network channel.
+
+Deferred-response behavioral cases start a read, background the consumer,
+optionally receive a newer invalidation, and resolve the older DTO. They check
+that activation makes exactly one covering read returning the new DTO when
+needed, and no extra read when no later invalidation arrived. Both the rendered
+Workspace deck and the real `ChatListStore` are exercised. Repeated activation
+or catch-up and three-minute idle waits cannot add reads.
+
+R5 removes the source-text timer scanner and its synthetic-source test. The
+actual connection test now completes a socket request/reply before advancing
+30 minutes and asserting unchanged wire traffic, deliveries, and socket count.
+The real session refresh-timeout regression still proves the two-attempt bound
+across ten-minute waits, and a fresh bounded pair on a new foreground event.
+These are pipeline behavioral checks; no earlier native captures or latency
+measurements were repeated or extended.
+
+Focused verification, from `apps/mobile`:
+
+```sh
+./node_modules/.bin/vitest run \
+  sources/sync/transport/live-connection.test.ts \
+  sources/buzz/chat-list-store.test.ts \
+  'sources/app/(app)/beeline/channels.live.test.tsx' \
+  --maxWorkers=2
+```
+
+R4/R5 focused review result: **151 tests passed across three files**
+(81 transport, 26 chat-list store, and 44 deck tests), with `--maxWorkers=2`.
+These results are pipeline verification, not additional native measurements.

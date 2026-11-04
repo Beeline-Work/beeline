@@ -449,11 +449,13 @@ export default function BuzzChannels() {
       let startupTimeoutRetried = false;
 
       workspaceRefresh = new SurfaceRefreshScheduler({
-        fetch: () => mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () => http.workspaces()),
+        fetch: () => {
+          deckMissedRef.current.workspaces = false;
+          return mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () => http.workspaces());
+        },
         apply: (value) => {
           // Null: an eviction overtook the read; there is nothing to paint.
           if (!value) return;
-          deckMissedRef.current.workspaces = false;
           workspaceReadConfirmed = true;
           setConfirmedWorkspaceCount(value.workspaces.length);
           if (value.deletedNotices?.length) {

@@ -69,6 +69,7 @@ class ChatListStore {
     this.restore(this.current());
     this.scheduler = new SurfaceRefreshScheduler({
       fetch: async () => {
+        this.missed = false;
         this.reading = true;
         this.readStamp = currentSurfaceStamp();
         this.deltasDuringRead = [];
@@ -95,8 +96,7 @@ class ChatListStore {
         const missedLive = this.confirmedRead && held !== null && roomsMissedByLive(held, read, this.heard);
         this.openingReadFailed = false;
         this.confirmedRead = true;
-        this.missed = false;
-        this.heard.clear();
+        if (!this.missed) this.heard.clear();
         this.covered = new Set(this.watched);
         mobileSurfaceCache.publish(this.address, value, isChatListView, this.readStamp);
         void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);

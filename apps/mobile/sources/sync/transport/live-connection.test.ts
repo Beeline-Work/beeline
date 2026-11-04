@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -42,11 +42,6 @@ import { resetClientState } from '@/sync/client-reset';
 
 const ROOM_A = 'room-a';
 const ROOM_B = 'room-b';
-
-function assertNoRepeatingTransportTimers(files: Readonly<Record<string, string>>): void {
-  for (const [file, source] of Object.entries(files))
-    expect(source, file).not.toContain('setInterval');
-}
 
 type TestSocket = {
   autoPong: boolean;
@@ -1311,6 +1306,10 @@ describe('LiveConnection', () => {
     await connection.register([{ '#h': [ROOM_A] }], (event) => first.push(event));
     await connection.register([{ '#h': [ROOM_B] }], (event) => second.push(event));
     sockets[0]!.open();
+    const request = connection.request('readWorkspaces', {});
+    const frame = sockets[0]!.sent.map((value) => JSON.parse(value)).find((value) => value.t === 'req');
+    sockets[0]!.emit({ t: 'res', id: frame.id, ok: true, result: { workspaces: [] } });
+    await expect(request).resolves.toEqual({ workspaces: [] });
     const sent = [...sockets[0]!.sent];
 
     await vi.advanceTimersByTimeAsync(30 * 60_000);
@@ -1333,23 +1332,6 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('keeps setInterval out of every production transport source', () => {
-    const transportDirectory = new URL('./', import.meta.url);
-    const sources = Object.fromEntries(
-      readdirSync(transportDirectory)
-        .filter((file) => file.endsWith('.ts') && !file.endsWith('.test.ts'))
-        .map((file) => [file, readFileSync(new URL(file, transportDirectory), 'utf8')]),
-    );
-    assertNoRepeatingTransportTimers(sources);
-  });
-
-  it('detects a repeating timer introduced outside live-connection', () => {
-    expect(() =>
-      assertNoRepeatingTransportTimers({
-        'room-fetch.ts': 'const repeat = setInterval(fetchRooms, 1000);',
-      }),
-    ).toThrow();
-  });
   it('unsubscribes when the last holder leaves and keeps the socket open', async () => {
     const { connection } = createConnection();
     const stopFirst = await connection.register([{ '#h': [ROOM_A] }], () => undefined);

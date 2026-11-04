@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { AppState } from 'react-native';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -166,6 +167,7 @@ function join(chats: () => Promise<ChatListView>, consumer: { visible: () => boo
 
 beforeEach(() => {
   vi.useFakeTimers();
+  AppState.currentState = 'active';
   resetChatListStoresForTest();
   resetRoomCornerStore();
   disk.rows.clear();
@@ -418,6 +420,40 @@ describe('app-level Room list store', () => {
     await vi.advanceTimersByTimeAsync(2_000);
     expect(chats).toHaveBeenCalledTimes(2);
     handle.release();
+  });
+
+  it.each([false, true])('preserves a newer background invalidation across an older list read: %s', async (laterInvalidation) => {
+    const oldView = listOf([row('room-a', 10)]);
+    const newView = listOf([row('room-a', 20, {
+      latestMessage: { id: 'new', text: 'new reply', createdAt: 20, author: agent },
+    })]);
+    const chats = vi.fn(async () => oldView);
+    const handle = join(chats, { visible: () => AppState.currentState === 'active' });
+    try {
+      await vi.advanceTimersByTimeAsync(10);
+      let resolveRead!: (value: ChatListView) => void;
+      chats.mockImplementationOnce(() => new Promise<ChatListView>((resolve) => { resolveRead = resolve; }));
+      handle.force();
+      await vi.advanceTimersByTimeAsync(10);
+      expect(chats).toHaveBeenCalledTimes(2);
+      AppState.currentState = 'background';
+      chats.mockResolvedValue(newView);
+      if (laterInvalidation) emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'phone-write' } });
+      resolveRead(oldView);
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(chats).toHaveBeenCalledTimes(2);
+      expect(handle.current()?.chats[0]?.latestMessage?.text).toBe('hello');
+      AppState.currentState = 'active';
+      handle.catchUp();
+      await vi.advanceTimersByTimeAsync(10);
+      const expectedReads = laterInvalidation ? 3 : 2;
+      expect(chats).toHaveBeenCalledTimes(expectedReads);
+      expect(handle.current()?.chats[0]?.latestMessage?.text).toBe(laterInvalidation ? 'new reply' : 'hello');
+      handle.catchUp();
+      await vi.advanceTimersByTimeAsync(180_000);
+      expect(chats).toHaveBeenCalledTimes(expectedReads);
+      expect(live.reconnects).toBe(0);
+    } finally { handle.release(); }
   });
 
   it('never offers a stored copy as the live list a dismissed Room is checked against', async () => {

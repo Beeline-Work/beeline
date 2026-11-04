@@ -27,7 +27,7 @@ const deck = vi.hoisted(() => ({
   bottomInset: 0,
   renderRows: false,
   chatsReads: 0,
-  workspacesResponse: null as WorkspaceListView | null,
+  workspacesResponse: null as WorkspaceListView | Promise<WorkspaceListView> | null,
   workspaceFailures: [] as Error[],
   workspaceReads: 0,
   useRealWorkspaceRead: false,
@@ -1391,6 +1391,46 @@ describe('Retained socket deck activation', () => {
       await advance(180_000);
       expect(deck.workspaceReads).toBe(2);
       expect(deck.chatsReads).toBe(2);
+      expect(deck.reconnects).toBe(0);
+    } finally { await act(async () => renderer.unmount()); }
+  });
+
+  it.each([false, true])('preserves a newer Workspace invalidation across an older read: %s', async (laterInvalidation) => {
+    const renderer = await openDeck();
+    try {
+      const oldView: WorkspaceListView = {
+        workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }],
+        viewer, truncated: false, watchFilters: [],
+      };
+      let resolveRead!: (value: WorkspaceListView) => void;
+      deck.workspacesResponse = new Promise<WorkspaceListView>((resolve) => { resolveRead = resolve; });
+      const watch = deck.subscriptions.find((entry) => entry.filters.some((filter) => !filter['#h']))!;
+      await act(async () => watch.emit({ monolithLive: {
+        type: 'workspace-changed', roomId: '', workspace: { id: 'workspace', name: 'Work' },
+      } }));
+      await advance(600);
+      expect(deck.workspaceReads).toBe(2);
+      await activate('background');
+      deck.workspacesResponse = {
+        ...oldView, workspaces: [{ ...oldView.workspaces[0]!, name: 'Renamed Workspace', updatedAt: 2 }],
+      };
+      if (laterInvalidation) await act(async () => watch.emit({ monolithLive: {
+        type: 'workspace-changed', roomId: '', workspace: { id: 'workspace', name: 'Renamed Workspace' },
+      } }));
+      await act(async () => resolveRead(oldView));
+      await advance(180_000);
+      expect(deck.workspaceReads).toBe(2);
+      expect(renderer.root.findByType('BuzzCommunityShell').props.communities[0].name).toBe('Work');
+      await activate('active');
+      await advance();
+      const expectedReads = laterInvalidation ? 3 : 2;
+      expect(deck.workspaceReads).toBe(expectedReads);
+      expect(renderer.root.findByType('BuzzCommunityShell').props.communities[0].name)
+        .toBe(laterInvalidation ? 'Renamed Workspace' : 'Work');
+      await activate('active');
+      await advance(180_000);
+      expect(deck.workspaceReads).toBe(expectedReads);
+      expect(deck.chatsReads).toBe(1);
       expect(deck.reconnects).toBe(0);
     } finally { await act(async () => renderer.unmount()); }
   });

@@ -66,7 +66,7 @@ async function fixture(db:SqlDatabase,count:number){
       creator_id text NOT NULL,title text,max_runs integer,cadence jsonb NOT NULL,message text NOT NULL,next_run_at timestamptz NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(),workflow_slug text,run_count integer NOT NULL DEFAULT 0,workflow_run text);
     CREATE INDEX agent_schedules_room ON agent_schedules(room_id);`);
-  await db.query(CORNER_PERSON_STATE_SCHEMA);await db.query(AGENT_SUBSCRIPTIONS_SCHEMA);await db.query(SUBSCRIPTION_WEBHOOKS_SCHEMA);
+  await db.query(AGENT_SUBSCRIPTIONS_SCHEMA);await db.query(CORNER_PERSON_STATE_SCHEMA);await db.query(SUBSCRIPTION_WEBHOOKS_SCHEMA);
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Manager'),($2,'agent','Helper')`,[OWNER,AGENT]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Public managers'),($2,'Own DMs without Workspace membership')`,[WS,DM_WS]);
   for(const direct of [false,true]){

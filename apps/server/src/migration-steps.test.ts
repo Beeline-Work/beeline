@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { backfillAgentHandles, migrate, migrateData, MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
-import { alreadySatisfied, lockedTables, logLockHolders, normalizeTriggerDefinition, runMigrationStep, satisfiedCheck, splitMigrationStatements, triggerAlreadyCurrent, triggerPair } from './migration-steps.js';
+import { alreadyNoOp, alreadySatisfied, lockedTables, noOpCheck, logLockHolders, normalizeTriggerDefinition, runMigrationStep, satisfiedCheck, splitMigrationStatements, triggerAlreadyCurrent, triggerPair } from './migration-steps.js';
 
 const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
 if (postgresUrl && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgresUrl).hostname))
@@ -277,5 +277,38 @@ describe('already-current trigger pairs', () => {
     const absent = vi.fn(async () => ({ rows: [] }));
     await expect(triggerAlreadyCurrent({ query: absent }, drop, create)).resolves.toBe(false);
     await expect(triggerAlreadyCurrent({ query }, 'UPDATE t SET a=1', create)).resolves.toBe(false);
+  });
+});
+
+describe('already-done drops and nullability', () => {
+  it('reads back only drops and NOT NULL changes', () => {
+    expect(noOpCheck('-- why\nALTER TABLE messages DROP COLUMN IF EXISTS mention_ids;'))
+      .toEqual({ kind: 'alter', relation: 'messages', clauses: [{ kind: 'drop-column', name: 'mention_ids' }] });
+    expect(noOpCheck('ALTER TABLE t DROP CONSTRAINT IF EXISTS c, ALTER COLUMN a DROP NOT NULL')).toEqual({
+      kind: 'alter', relation: 't',
+      clauses: [{ kind: 'drop-constraint', name: 'c' }, { kind: 'not-null', name: 'a', notNull: false }],
+    });
+    expect(noOpCheck('DROP TABLE IF EXISTS old_rows')).toEqual({ kind: 'drop-relation', relation: 'old_rows' });
+    expect(noOpCheck('ALTER TABLE t DROP CONSTRAINT IF EXISTS c, ADD CONSTRAINT c CHECK (a > 0)')).toBeNull();
+    expect(noOpCheck('ALTER TABLE t ALTER COLUMN a SET DEFAULT now()')).toBeNull();
+    expect(noOpCheck('ALTER TABLE t DROP COLUMN a')).toBeNull();
+  });
+
+  it('skips only when there is nothing left to drop or change', async () => {
+    const catalog = (present: boolean, attribute: Record<string, unknown>[], constraint: Record<string, unknown>[] = []) =>
+      vi.fn(async (sql: string) => ({
+        rows: sql.includes('to_regclass($1) IS NOT NULL AS present') ? [{ present }]
+          : sql.includes('pg_constraint') ? constraint : sql.includes('pg_trigger') ? attribute : attribute,
+      }));
+    await expect(alreadyNoOp({ query: catalog(true, []) }, 'ALTER TABLE messages DROP COLUMN IF EXISTS mention_ids')).resolves.toBe(true);
+    await expect(alreadyNoOp({ query: catalog(true, [{ attnotnull: false }]) }, 'ALTER TABLE messages DROP COLUMN IF EXISTS mention_ids')).resolves.toBe(false);
+    await expect(alreadyNoOp({ query: catalog(true, [{ attnotnull: false }]) }, 'ALTER TABLE t ALTER COLUMN a DROP NOT NULL')).resolves.toBe(true);
+    await expect(alreadyNoOp({ query: catalog(true, [{ attnotnull: true }]) }, 'ALTER TABLE t ALTER COLUMN a DROP NOT NULL')).resolves.toBe(false);
+    await expect(alreadyNoOp({ query: catalog(true, [], [{ one: 1 }]) }, 'ALTER TABLE t DROP CONSTRAINT IF EXISTS c')).resolves.toBe(false);
+    await expect(alreadyNoOp({ query: catalog(false, []) }, 'DROP TABLE IF EXISTS old_rows')).resolves.toBe(true);
+    await expect(alreadyNoOp({ query: catalog(true, []) }, 'DROP TABLE IF EXISTS old_rows')).resolves.toBe(false);
+    await expect(alreadyNoOp({ query: catalog(false, []) }, 'ALTER TABLE t DROP COLUMN IF EXISTS a')).resolves.toBe(false);
+    await expect(alreadyNoOp({ query: catalog(true, []) }, 'DROP TRIGGER IF EXISTS x ON messages')).resolves.toBe(true);
+    await expect(alreadyNoOp({ query: catalog(true, [{ one: 1 }]) }, 'DROP TRIGGER IF EXISTS x ON messages')).resolves.toBe(false);
   });
 });

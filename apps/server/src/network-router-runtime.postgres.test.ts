@@ -22,7 +22,6 @@ describe.skipIf(!url)('production router composition on migrated PostgreSQL', ()
     let ready = true;
     const runtime = createNetworkRouterRuntime({ instanceId: 'activation-proof',
       publicOrigin: 'https://synthetic.invalid', listenerReady: () => ready })!;
-    let lock: Awaited<ReturnType<typeof db.connectDedicated>> | undefined;
     let protocol: ReturnType<typeof routerSocketProtocol> | undefined;
     try {
       // Only the real release migration: no private test schema installation.
@@ -44,7 +43,7 @@ describe.skipIf(!url)('production router composition on migrated PostgreSQL', ()
         commandDedupV1: true, mediaMetadataV1: true, authorityFencesV1: true, usageCellV1: true });
       ready = false; live.projectionUnavailable();
     } finally {
-      protocol?.close(); await runtime.close(); lock?.release(true); await db.close();
+      protocol?.close(); await runtime.close(); await db.close();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end();
     }
   }, 90_000);

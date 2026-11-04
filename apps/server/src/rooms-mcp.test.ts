@@ -165,6 +165,63 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     eventTransport = postMcpWebhook; vi.unstubAllEnvs();
     await db.query('DELETE FROM rooms_mcp_event_subscriptions');
   });
+  // Run the repeated global backfill proof before unrelated HTTP clients accumulate.
+  it('MCP-WORKSPACE-1: limits initial membership through exchange and refresh, and preserves memberships when reconnect deselects', async () => {
+    const secondWorkspace = randomUUID(), secondRoom = randomUUID();
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other eligible Workspace')`, [secondWorkspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [secondWorkspace, USER]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'Excluded public Room','public')`, [secondRoom, secondWorkspace]);
+    try {
+      const grant = await authorize();
+      expect(grant.consentHtml).toContain('Workspaces');
+      expect(grant.consentHtml).toContain('Other eligible Workspace');
+      const member = (await db.query<{ member_id: string; workspace_ids: string[] }>(
+        'SELECT member_id,workspace_ids FROM rooms_mcp_members WHERE client_id=$1 AND owner_id=$2', [grant.clientId, USER])).rows[0]!;
+      expect(member.workspace_ids).toEqual([WORKSPACE]);
+      const response = await exchange(grant);
+      expect(response.status).toBe(200);
+      const tokens = await response.json() as { access_token: string; refresh_token: string };
+      const client = new Client({ name: 'workspace-selection-proof', version: '1.0.0' }); clients.push(client);
+      await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${tokens.access_token}` } } }));
+      const activeWorkspaces = async () => (await db.query<{ workspace_id: string }>(
+        'SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id', [member.member_id])).rows.map(row => row.workspace_id);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE]);
+      expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).not.toContain(secondRoom);
+      expect((await client.callTool({ name: 'read_messages', arguments: { room: secondRoom } })).isError).toBe(true);
+      expect((await client.callTool({ name: 'send_message', arguments: { room: secondRoom, text: 'must not send' } })).isError).toBe(true);
+      expect((await post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: tokens.refresh_token,
+        client_id: grant.clientId, resource: origin + '/mcp' })).status).toBe(200);
+      await ensureMcpMember(db, { clientId: grant.clientId, ownerId: USER, modelLabel: 'Local MCP reviewer' });
+      await backfillMcpMemberRoomsAndAvatars(db);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE]);
+      // Reconnecting may add a Workspace; deselection preserves existing memberships.
+      const both = await authorize(undefined, 'allow', grant.clientId, undefined, { workspace_ids: [WORKSPACE, secondWorkspace] });
+      expect((await exchange(both)).status).toBe(200);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
+      const narrowed = await authorize(undefined, 'allow', grant.clientId, undefined, { workspace_ids: [secondWorkspace] });
+      expect((await exchange(narrowed)).status).toBe(200);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
+      expect((await db.query('SELECT 1 FROM memberships WHERE identity_id=$1 AND workspace_id=$2 AND removed_at IS NULL', [member.member_id, WORKSPACE])).rowCount).toBeGreaterThan(0);
+      expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM } })).isError).not.toBe(true);
+      await ensureMcpMember(db, { clientId: grant.clientId, ownerId: USER, modelLabel: 'Local MCP reviewer' });
+      await backfillMcpMemberRoomsAndAvatars(db);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
+      const reconnect = await prepareAuthorization(undefined, grant.clientId);
+      const checkboxes = reconnect.consentHtml.match(/<input\b[^>]*type="checkbox"[^>]*name="workspace_ids"[^>]*>/g) ?? [];
+      expect(checkboxes.find(input => input.includes(secondWorkspace))).toMatch(/\bchecked\b/);
+      expect(checkboxes).toHaveLength(2);
+      for (const checkbox of checkboxes) expect(checkbox).toMatch(/\bchecked disabled\b/);
+      expect(reconnect.consentHtml.match(/already connected/g)).toHaveLength(2);
+      // Disabled checkboxes submit their stable IDs through matching hidden fields.
+      const hidden = reconnect.consentHtml.match(/<input\b[^>]*type="hidden"[^>]*name="workspace_ids"[^>]*>/g) ?? [];
+      expect(hidden).toHaveLength(2);
+      const ids = hidden.map(input => /value="([^"]+)"/.exec(input)![1]);
+      expect((await post('/mcp/oauth/consent', { flow: reconnect.flow, decision: 'allow', workspace_selection: '1', workspace_ids: ids }, { cookie: reconnect.cookie, origin })).status).toBe(302);
+      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
+    } finally {
+      await db.query('DELETE FROM workspaces WHERE id=$1', [secondWorkspace]);
+    }
+  });
   it.each(['server/join', 'short', 'short/', 'short/join'])('JOIN-1: %s authorizes, initializes, reads and posts with the same resource', async alias => {
     const short = alias.startsWith('short');
     const host = short ? `localhost:${new URL(origin).port}` : new URL(origin).host;
@@ -1613,62 +1670,6 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM, member]);
     expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM } })).isError).toBe(true);
     expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).not.toContain(ROOM);
-  });
-  it('MCP-WORKSPACE-1: limits initial membership through exchange and refresh, and preserves memberships when reconnect deselects', async () => {
-    const secondWorkspace = randomUUID(), secondRoom = randomUUID();
-    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other eligible Workspace')`, [secondWorkspace]);
-    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [secondWorkspace, USER]);
-    await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'Excluded public Room','public')`, [secondRoom, secondWorkspace]);
-    try {
-      const grant = await authorize();
-      expect(grant.consentHtml).toContain('Workspaces');
-      expect(grant.consentHtml).toContain('Other eligible Workspace');
-      const member = (await db.query<{ member_id: string; workspace_ids: string[] }>(
-        'SELECT member_id,workspace_ids FROM rooms_mcp_members WHERE client_id=$1 AND owner_id=$2', [grant.clientId, USER])).rows[0]!;
-      expect(member.workspace_ids).toEqual([WORKSPACE]);
-      const response = await exchange(grant);
-      expect(response.status).toBe(200);
-      const tokens = await response.json() as { access_token: string; refresh_token: string };
-      const client = new Client({ name: 'workspace-selection-proof', version: '1.0.0' }); clients.push(client);
-      await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${tokens.access_token}` } } }));
-      const activeWorkspaces = async () => (await db.query<{ workspace_id: string }>(
-        'SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id', [member.member_id])).rows.map(row => row.workspace_id);
-      expect(await activeWorkspaces()).toEqual([WORKSPACE]);
-      expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).not.toContain(secondRoom);
-      expect((await client.callTool({ name: 'read_messages', arguments: { room: secondRoom } })).isError).toBe(true);
-      expect((await client.callTool({ name: 'send_message', arguments: { room: secondRoom, text: 'must not send' } })).isError).toBe(true);
-      expect((await post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: tokens.refresh_token,
-        client_id: grant.clientId, resource: origin + '/mcp' })).status).toBe(200);
-      await ensureMcpMember(db, { clientId: grant.clientId, ownerId: USER, modelLabel: 'Local MCP reviewer' });
-      await backfillMcpMemberRoomsAndAvatars(db);
-      expect(await activeWorkspaces()).toEqual([WORKSPACE]);
-      // Reconnecting may add a Workspace; deselection preserves existing memberships.
-      const both = await authorize(undefined, 'allow', grant.clientId, undefined, { workspace_ids: [WORKSPACE, secondWorkspace] });
-      expect((await exchange(both)).status).toBe(200);
-      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
-      const narrowed = await authorize(undefined, 'allow', grant.clientId, undefined, { workspace_ids: [secondWorkspace] });
-      expect((await exchange(narrowed)).status).toBe(200);
-      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
-      expect((await db.query('SELECT 1 FROM memberships WHERE identity_id=$1 AND workspace_id=$2 AND removed_at IS NULL', [member.member_id, WORKSPACE])).rowCount).toBeGreaterThan(0);
-      expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM } })).isError).not.toBe(true);
-      await ensureMcpMember(db, { clientId: grant.clientId, ownerId: USER, modelLabel: 'Local MCP reviewer' });
-      await backfillMcpMemberRoomsAndAvatars(db);
-      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
-      const reconnect = await prepareAuthorization(undefined, grant.clientId);
-      const checkboxes = reconnect.consentHtml.match(/<input\b[^>]*type="checkbox"[^>]*name="workspace_ids"[^>]*>/g) ?? [];
-      expect(checkboxes.find(input => input.includes(secondWorkspace))).toMatch(/\bchecked\b/);
-      expect(checkboxes).toHaveLength(2);
-      for (const checkbox of checkboxes) expect(checkbox).toMatch(/\bchecked disabled\b/);
-      expect(reconnect.consentHtml.match(/already connected/g)).toHaveLength(2);
-      // Disabled checkboxes submit their stable IDs through matching hidden fields.
-      const hidden = reconnect.consentHtml.match(/<input\b[^>]*type="hidden"[^>]*name="workspace_ids"[^>]*>/g) ?? [];
-      expect(hidden).toHaveLength(2);
-      const ids = hidden.map(input => /value="([^"]+)"/.exec(input)![1]);
-      expect((await post('/mcp/oauth/consent', { flow: reconnect.flow, decision: 'allow', workspace_selection: '1', workspace_ids: ids }, { cookie: reconnect.cookie, origin })).status).toBe(302);
-      expect(await activeWorkspaces()).toEqual([WORKSPACE, secondWorkspace].sort());
-    } finally {
-      await db.query('DELETE FROM workspaces WHERE id=$1', [secondWorkspace]);
-    }
   });
   it('MCP-WORKSPACE-1: legacy connections retain all-Workspace behavior until explicit re-consent', async () => {
     const grant = await authorize();

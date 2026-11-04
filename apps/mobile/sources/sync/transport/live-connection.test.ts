@@ -35,7 +35,7 @@ vi.mock('@/buzz/router-owner', () => ({
 import { AppState } from 'react-native';
 import { abandonRoomDraw, roomDrawGeneration, beginRoomDraw, finishRoomDraw, observeVisibleRoomRows } from '@/buzz/room-draw-barrier';
 import { LiveConnection, resetSharedLiveConnection, sharedLiveConnection } from './live-connection';
-import { monolithSession } from '@/auth/monolith-session';
+import { MonolithSession, MonolithRequestTimeoutError, monolithSession } from '@/auth/monolith-session';
 import { liveFrameEpoch } from './live-frame-epoch';
 import { getRoomCornerSummary, getRoomCorners } from '@/buzz/room-corner-store';
 import { resetClientState } from '@/sync/client-reset';
@@ -2191,6 +2191,47 @@ describe('native brief-drop recovery', () => {
     expect(sockets).toHaveLength(0);
     connection.dispose();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('bounds real refresh timeouts across request deadlines until a new foreground event', async () => {
+    const sockets = stubSockets();
+    const fetcher = vi.fn((_input: RequestInfo | URL, _init?: RequestInit) => new Promise<Response>(() => {}));
+    const session = new MonolithSession('https://server.example', fetcher, async () => ({
+      getItemAsync: async (key) => key === 'buzzy.monolith.refresh.v1' ? 'refresh-token'
+        : key === 'buzzy.monolith.identity.v1' ? 'viewer'
+        : key === 'buzzy.monolith.access.v1'
+          ? JSON.stringify({ token: 'expired', expiresAt: Date.now() - 1, identityId: 'viewer' }) : null,
+      setItemAsync: async () => {},
+      deleteItemAsync: async () => {},
+    }));
+    const authorization = vi.fn(() => session.authorization());
+    const { connection, foreground } = createConnection(authorization);
+    try {
+      await connection.register([], () => {});
+      const pending = connection.request('readWorkspaces', {}, { timeoutMs: 15_000 }).catch(error => error);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(fetcher.mock.calls.map(([url]) => url)).toEqual([
+        'https://server.example/v1/auth/refresh', 'https://server.example/v1/auth/refresh',
+      ]);
+      expect(fetcher.mock.calls[0]![1]!.signal!.aborted).toBe(true);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(await pending).toBeInstanceOf(MonolithRequestTimeoutError);
+      expect(fetcher.mock.calls[1]![1]!.signal!.aborted).toBe(true);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(authorization).toHaveBeenCalledTimes(2);
+      expect(fetcher).toHaveBeenCalledTimes(2);
+      expect(sockets).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+      foreground();
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(authorization).toHaveBeenCalledTimes(4);
+      expect(fetcher).toHaveBeenCalledTimes(4);
+      expect(sockets).toHaveLength(0);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      connection.dispose();
+    }
   });
 
   it('does not retry authorization while Android has the app in the background', async () => {

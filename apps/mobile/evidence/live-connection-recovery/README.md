@@ -200,3 +200,40 @@ Focused review verification, from `apps/mobile`:
 Review verification result: **80 tests passed across both focused files**
 (11 real-scheduler cases and 69 Room-session cases), with `--maxWorkers=2`.
 No native capture was repeated for this pipeline fix.
+
+## Pipeline review fixes: authorization bound and deck activation
+
+R2 keeps deadline recovery from replenishing the authorization retry budget.
+A refresh timeout has no socket to replace; the current authorization attempt
+owns its bounded recovery. Deadlines for an existing socket still replace it,
+without resetting that budget. A successful open or a new explicit Retry,
+foreground, or connectivity recovery starts a new budget.
+
+R3 invokes the visible deck's existing `refreshMissed()` and list `catchUp()`
+paths on AppState activation. It reads only skipped work, retaining the healthy
+socket and server-indexed DTO authority. The activation listener checks the
+client identity generation and is removed with its deck session.
+
+The R2 behavioral case uses the real `MonolithSession`, expired stored access,
+a stalled refresh endpoint, its 10-second timeout, the installed request-deadline
+handler, and a waiting socket request's separate deadline. It advances ten
+minutes to check that only two refresh attempts occur, then proves a new
+foreground event permits just two further attempts. R3 cases exercise the
+rendered deck and real list/scheduler: background Workspace rename and list
+invalidation, one activation catch-up, no reads without missed work, deferral
+under a Room until navigation focus, and no old-identity reads after reset.
+
+These pipeline regressions use fake time and mocked network edges. They do not
+extend or repeat the earlier native captures, traffic shaping, or send timings.
+Focused verification, from `apps/mobile`:
+
+```sh
+./node_modules/.bin/vitest run \
+  sources/sync/transport/live-connection.test.ts \
+  'sources/app/(app)/beeline/channels.live.test.tsx' \
+  --maxWorkers=2
+```
+
+R2/R3 focused review result: **125 tests passed across both files**
+(83 transport tests and 42 deck tests), with `--maxWorkers=2`.
+No native captures were repeated for these pipeline fixes.

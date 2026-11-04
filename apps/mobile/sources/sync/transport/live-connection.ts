@@ -531,17 +531,17 @@ export class LiveConnection {
     this.recoverySpent = false;
     this.handshakeRecoveryUsed = false;
     this.authorizationRecoveryUsed = false;
-    this.replaceSocket();
+    this.reconnectSocket();
   }
 
-  private replaceSocket(): void {
+  private reconnectSocket(): void {
     if (this.connectInFlight) {
       // Registration can return while the first connect promise is still
       // settling. Keep a foreground/read recovery request made in that gap.
       if (this.socket) {
         const generation = this.generation;
         void this.connectInFlight.then(() => {
-          if (generation === this.generation) this.replaceSocket();
+          if (generation === this.generation) this.reconnectSocket();
         });
       }
       return;
@@ -562,7 +562,8 @@ export class LiveConnection {
   reportRequestDeadlineMissed(): void {
     if (this.recoverySpent || !this.socket) return;
     this.recoverySpent = true;
-    this.replaceSocket();
+    this.roomCursors.clear();
+    this.reconnectSocket();
   }
 
   private handleForeground(): void {

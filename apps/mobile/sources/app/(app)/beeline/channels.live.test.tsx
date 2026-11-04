@@ -295,6 +295,7 @@ vi.mock('@/sync/transport/room-view-client', async () => ({
 import BuzzChannels from './channels';
 import { router } from 'expo-router';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
+import { resetClientState } from '@/sync/client-reset';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
@@ -1223,8 +1224,6 @@ describe('Room deck live path', () => {
       for (const listener of deck.appStateListeners) listener('active');
     });
     await quiet();
-    // Coming back reads nothing by itself: the replaced socket's resubscribe
-    // is the one covering read.
     expect(deck.chatsReads).toBe(readsAtRest);
     await act(async () =>
       roomWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } }),
@@ -1327,4 +1326,115 @@ it('R-GITHUB-LANDING: a confirmed nonempty response cannot redirect through a la
     console.log('R-GITHUB-LANDING cold empty-cache navigation trace:', JSON.stringify(vi.mocked(router.replace).mock.calls));
     await act(async () => renderer.unmount());
   } finally { deck.withholdWorkspaceSnapshot = false; }
+});
+
+
+describe('Retained socket deck activation', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    hotSurfaces.values.clear();
+  });
+  afterEach(() => vi.useRealTimers());
+
+  async function advance(ms = 100) {
+    await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+  }
+
+  async function openDeck() {
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await advance();
+    expect(deck.workspaceReads).toBe(1);
+    expect(deck.chatsReads).toBe(1);
+    return renderer;
+  }
+
+  async function activate(state: string) {
+    await act(async () => {
+      deck.appState = state;
+      for (const listener of deck.appStateListeners) listener(state);
+    });
+  }
+
+  async function missChanges() {
+    await activate('background');
+    deck.workspacesResponse = {
+      workspaces: [{ id: 'workspace', name: 'Renamed Workspace', role: 'member', updatedAt: 2 }],
+      viewer, truncated: false, watchFilters: [],
+    };
+    deck.chatsResponse = chatList({ id: 'm2', text: 'background reply', createdAt: 20 });
+    const workspaceWatch = deck.subscriptions.find((entry) => entry.filters.some((filter) => !filter['#h']));
+    expect(workspaceWatch).toBeDefined();
+    await act(async () => {
+      workspaceWatch!.emit({ monolithLive: {
+        type: 'workspace-changed', roomId: '', workspace: { id: 'workspace', name: 'Renamed Workspace' },
+      } });
+      roomWatch().emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'phone-write' } });
+    });
+    await advance(180_000);
+    expect(deck.workspaceReads).toBe(1);
+    expect(deck.chatsReads).toBe(1);
+  }
+
+  it('catches up skipped Workspace and Room list reads exactly once on activation', async () => {
+    const renderer = await openDeck();
+    try {
+      await missChanges();
+      expect(paintedRows(renderer)[0]!.latestMessage!.text).toBe('earlier');
+      await activate('active');
+      await advance();
+      expect(deck.workspaceReads).toBe(2);
+      expect(deck.chatsReads).toBe(2);
+      expect(paintedRows(renderer)[0]!.latestMessage!.text).toBe('background reply');
+      expect(renderer.root.findByType('BuzzCommunityShell').props.communities[0].name).toBe('Renamed Workspace');
+      await activate('active');
+      await advance(180_000);
+      expect(deck.workspaceReads).toBe(2);
+      expect(deck.chatsReads).toBe(2);
+      expect(deck.reconnects).toBe(0);
+    } finally { await act(async () => renderer.unmount()); }
+  });
+
+  it('does not read on activation when no incomplete delivery was missed', async () => {
+    const renderer = await openDeck();
+    try {
+      await activate('background');
+      await advance(180_000);
+      await activate('active');
+      await advance(180_000);
+      expect(deck.workspaceReads).toBe(1);
+      expect(deck.chatsReads).toBe(1);
+      expect(deck.reconnects).toBe(0);
+    } finally { await act(async () => renderer.unmount()); }
+  });
+
+  it('defers catch-up while the deck is covered by a Room', async () => {
+    const renderer = await openDeck();
+    try {
+      await missChanges();
+      await act(async () => deck.blur?.());
+      await activate('active');
+      await advance();
+      expect(deck.workspaceReads).toBe(1);
+      expect(deck.chatsReads).toBe(1);
+      await act(async () => { deck.blur = (deck.focusEffect?.() as (() => void) | undefined) ?? null; });
+      await advance();
+      expect(deck.workspaceReads).toBe(2);
+      expect(deck.chatsReads).toBe(2);
+      expect(deck.reconnects).toBe(0);
+    } finally { await act(async () => renderer.unmount()); }
+  });
+
+  it('does not catch up an old identity after a client reset', async () => {
+    const renderer = await openDeck();
+    try {
+      await missChanges();
+      await act(async () => resetClientState());
+      await activate('active');
+      await advance(180_000);
+      expect(deck.workspaceReads).toBe(1);
+      expect(deck.chatsReads).toBe(1);
+      expect(deck.reconnects).toBe(0);
+    } finally { await act(async () => renderer.unmount()); }
+  });
 });

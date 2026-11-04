@@ -20,3 +20,26 @@ document.addEventListener('keydown',e=>{if(!initialized&&e.key==='Enter'&&e.targ
 window.beelineReady=()=>load();
 
 document.addEventListener('click',e=>{const button=e.target.closest('[aria-label="Send message"]');if(!initialized&&button){e.preventDefault();const input=button.closest('.native-room').querySelector('textarea');load().then(m=>m.submit(input));}},{capture:true});
+
+// Keyboard viewport changes must not resize snap sections beneath a composer.
+let keyboardLayout, releaseKeyboard;
+const composer=element=>element?.matches?.('.native-room textarea,.codex-tui input');
+function restoreKeyboardLayout(){
+ if(!keyboardLayout)return;
+ for(const [element,height,minHeight] of keyboardLayout.sections){element.style.height=height;element.style.minHeight=minHeight;}
+ keyboardLayout.stage.style.setProperty('--phone-transcript-height',keyboardLayout.transcript);
+ document.documentElement.classList.remove('composing');keyboardLayout=null;
+}
+document.addEventListener('focusin',event=>{
+ if(!composer(event.target))return;
+ clearTimeout(releaseKeyboard);
+ if(keyboardLayout||!matchMedia('(max-width:760px)').matches)return;
+ const stage=document.querySelector('#stage');
+ keyboardLayout={stage,transcript:stage.style.getPropertyValue('--phone-transcript-height'),sections:[...document.querySelectorAll('.fullpage')].map(element=>{
+  const previous=[element,element.style.height,element.style.minHeight];
+  element.style.height=element.getBoundingClientRect().height+'px';element.style.minHeight=element.style.height;return previous;
+ })};
+ stage.style.setProperty('--phone-transcript-height',document.querySelector('#screen').getBoundingClientRect().height+'px');
+ document.documentElement.classList.add('composing');
+});
+document.addEventListener('focusout',()=>{releaseKeyboard=setTimeout(()=>{if(!composer(document.activeElement))restoreKeyboardLayout();},350);});

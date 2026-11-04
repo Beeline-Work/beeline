@@ -40,6 +40,7 @@ export class AgentChannel {
   readonly overlay=new HelperOverlayChannel(frame=>this.send(frame),()=>this.isOpen());
   #usageOwnerId:string|undefined;
   #usageSource:{connectionId:string;epoch:number}|undefined;
+  /** Selection survives disconnects; a missing current scope parks writes. */
   usageAccountSelected=false;
   usageAccountScope():{origin:string;ownerId:string;generation:number;source:{connectionId:string;epoch:number}}|undefined{
     return this.#usageOwnerId&&this.#usageSource&&this.isOpen()?{origin:this.machine.origin,ownerId:this.#usageOwnerId,generation:this.reconnects,source:this.#usageSource}:undefined;
@@ -92,7 +93,7 @@ export class AgentChannel {
     this.#wanted = false;
     this.turn.suspend();
     this.#activationSource=undefined;this.activation.suspend();
-    this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
+    this.#usageOwnerId=undefined;this.#usageSource=undefined;
     this.usage.suspend();
     this.overlay.suspend();
     this.#clearIntakeDeadline();
@@ -156,9 +157,10 @@ export class AgentChannel {
         Number.isSafeInteger(activationCapabilities.activationConnectionEpoch)&&Number(activationCapabilities.activationConnectionEpoch)>0
         ?{connectionId:activationCapabilities.activationConnectionId,epoch:Number(activationCapabilities.activationConnectionEpoch)}:undefined;
       const usageCapabilities=event.capabilities as {usageAccountV1?:unknown;usageOwnerId?:unknown;usageConnectionId?:unknown;usageConnectionEpoch?:unknown}|undefined;
-      this.usageAccountSelected=usageCapabilities?.usageAccountV1===true;
-      this.#usageOwnerId=this.usageAccountSelected&&typeof usageCapabilities?.usageOwnerId==='string'?usageCapabilities.usageOwnerId:undefined;
-      this.#usageSource=this.usageAccountSelected&&typeof usageCapabilities?.usageConnectionId==='string'&&Number.isSafeInteger(usageCapabilities.usageConnectionEpoch)&&Number(usageCapabilities.usageConnectionEpoch)>0
+      const usageSelected=usageCapabilities?.usageAccountV1===true;
+      if(usageSelected)this.usageAccountSelected=true;
+      this.#usageOwnerId=usageSelected&&typeof usageCapabilities?.usageOwnerId==='string'?usageCapabilities.usageOwnerId:undefined;
+      this.#usageSource=usageSelected&&typeof usageCapabilities?.usageConnectionId==='string'&&Number.isSafeInteger(usageCapabilities.usageConnectionEpoch)&&Number(usageCapabilities.usageConnectionEpoch)>0
         ?{connectionId:usageCapabilities.usageConnectionId,epoch:Number(usageCapabilities.usageConnectionEpoch)}:undefined;
       this.overlay.negotiate((event.capabilities as {overlayV1?:unknown}|undefined)?.overlayV1===true);
       this.#intakeHeartbeat = Boolean(
@@ -214,7 +216,7 @@ export class AgentChannel {
   socketClosed(): void {
     this.turn.suspend();
     this.#activationSource=undefined;this.activation.suspend();
-    this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
+    this.#usageOwnerId=undefined;this.#usageSource=undefined;
     this.usage.suspend();
     this.overlay.suspend();
     this.#clearIntakeDeadline();
@@ -261,7 +263,7 @@ export class AgentChannel {
   #ended(): void {
     this.turn.suspend();
     this.#activationSource=undefined;this.activation.suspend();
-    this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
+    this.#usageOwnerId=undefined;this.#usageSource=undefined;
     this.usage.suspend();
     this.overlay.suspend();
     this.#registered = false;

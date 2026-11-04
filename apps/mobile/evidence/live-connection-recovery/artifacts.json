@@ -1,0 +1,24 @@
+{
+  "nativeRuntime": "44",
+  "versionCode": 144,
+  "sourceBaseline": "d1672c746553a23bd6f4f7c4c224fcc5a4c9af04",
+  "fixedBase": "bfcd4ff873d52cae50aae1ca023a00dfb794cee8",
+  "files": {
+    "native-apk": {
+      "bytes": 216877143,
+      "sha256": "db3ef9243602daf129b329ef1f97819b9dc8b473f5c8afb1e9bc3e37c4d64488"
+    },
+    "saved-v142": {
+      "bytes": 13064012,
+      "sha256": "0814b713dcfa6ed20048aae18d4ce2a3b22af36d1a888b564c5b1af0cc0d6f0c"
+    },
+    "pre3424-source": {
+      "bytes": 18699044,
+      "sha256": "0aef721e4e49c54434bf8158d2559197f96152bdff4f6e222d5cfc742ddb931f"
+    },
+    "fixed-source": {
+      "bytes": 18704498,
+      "sha256": "d955a0a1b10d34db8b80f3bbd37ea5c5d2e41799e7cf22c4c3ff650abe54fe48"
+    }
+  }
+}

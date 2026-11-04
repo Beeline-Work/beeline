@@ -98,7 +98,8 @@ describe('desktop layout mode', () => {
     const room = source('app/(app)/beeline/chat/_chat-surface.tsx');
 
     expect(room).toContain('const isDesktop = useIsDesktop();');
-    expect(room).toContain('desktopLayout={isDesktop}');
+    expect(room).toContain('desktopLayout={rowDesktopLayout}');
+    expect(room).toContain('desktopLayout: isDesktop');
     expect(messages).toContain('onMouseEnter: () => setDesktopRowHovered(true)');
     expect(messages).toContain('onMouseLeave: () => setDesktopRowHovered(false)');
     expect(messages).toContain('desktopActionsVisible || desktopRowHovered || reactionPickerVisible');

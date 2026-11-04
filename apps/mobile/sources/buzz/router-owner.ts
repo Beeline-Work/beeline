@@ -1,9 +1,9 @@
 import {ROUTER_TRAY_CLOCK_STREAM} from '@beeline/api-contract/router-protocol';
-import {validateWorkflowProjection} from '@beeline/net';
+import {validateWorkflowProjection,validateScheduledWorkProjection} from '@beeline/net';
 import { validateNeedsRoomsPayload } from '@beeline/net/owner';
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import { installUsageCellConnection, suspendUsageCellConnection, receiveUsageCell, setUsageCellProfile } from './agent-usage-cell';
-import { AdmissionOwner, ReadLanes, RouterBatchAssembly, ScheduledWorkAuthority, NavigationOwner, MediaDemandOwner, UsageDemandOwner,validateScheduledWorkProjection,validateTrayProjection,validateSavedWindow,
+import { AdmissionOwner, ReadLanes, RouterBatchAssembly, ScheduledWorkAuthority, NavigationOwner, MediaDemandOwner, UsageDemandOwner,validateTrayProjection,validateSavedWindow,
   type MediaAction, type LaneFamily, type LaneRequest, type LaneSnapshot, type LaneView, type NavigationState, type AdmittedCommand } from '@beeline/net/owner';
 import { readChatListView, readRoomView, readWorkspaceView, isAgentDetailView } from '@beeline/api-contract/phone';
 import type { MediaMetadata, MediaLink, PhoneOperationMap } from '@beeline/api-contract/phone';
@@ -69,6 +69,8 @@ function validValue(request: LaneRequest, value: unknown): boolean {
   if(request.family==='workspace-roster'){
     const roster=readWorkspaceView(value);
     return !!roster&&roster.workspace.id===request.workspaceId&&roster.members.length+roster.agents.length<=100&&
+      typeof (value as RouterValues['workspace-roster']).revision==='string'&&/^[1-9][0-9]{0,19}$/.test((value as RouterValues['workspace-roster']).revision)&&
+      (!request.query||request.query.revision===(value as RouterValues['workspace-roster']).revision)&&
       utf8ToBytes(JSON.stringify(value)).length<=64*1024;
   }
   if(request.family==='room-workflows')return validateWorkflowProjection(value);
@@ -163,7 +165,7 @@ function eligible(slot: Slot): boolean {
   if(slot.request.family==='needs-you-tray')return focused.screen==='Tray';
   if(slot.request.family==='room-scheduled-work')return focused.screen==='ScheduledWork'&&focused.roomId===slot.request.roomId;
   if(slot.request.family==='room-workflows')return focused.screen==='Room'&&focused.roomId===slot.request.roomId;
-  if(slot.request.family==='workspace-roster')return focused.screen==='AppShell'||focused.screen==='AgentProfile';
+  if(slot.request.family==='workspace-roster')return focused.screen==='AppShell'||focused.screen==='AgentProfile'||focused.screen==='Room';
   if(slot.request.family==='agent-profile')return focused.screen==='AgentProfile'&&focused.agentId===slot.request.agentId;
   if (slot.request.family === 'room-head') return focused.screen === 'Room' && focused.roomId === slot.request.roomId;
   if (slot.request.family === 'room-list') return focused.screen === 'AppShell' || listPanelVisible;
@@ -181,7 +183,7 @@ function focus(slot: Slot): void {
   if (!admission || !lanes || !residency || !eligible(slot) || !lanes.supports(slot.request.family)) {
     release(slot); return;
   }
-  if(slot.request.family==='needs-you-saved-page')return; // only its actual continuation gesture or connection recovery admits demand
+  if(slot.request.family==='needs-you-saved-page'||slot.request.family==='workspace-roster'&&(slot.request.query||residency.screen==='Room'))return; // only its actual continuation gesture or connection recovery admits demand
   if (slot.generation === residency.generation) {
     if (!slot.release && slot.token) {
       const permit = admission.resumeObservation(slotNames.get(slot)!, residency.generation);
@@ -210,7 +212,7 @@ function reconcile(): void {
     if (!slot.consumers.size && slot.generation !== navigation.current()?.generation) {
       release(slot); slots.delete(slot);
       const request = slot.request;
-      slotsByKey.delete(JSON.stringify([request.family, roomScoped(request.family) ? '' : request.workspaceId, request.agentId??request.roomId ?? '']));
+      slotsByKey.delete(slotKey(request));
       admission?.forgetOwner(slotNames.get(slot)!);
       continue;
     }
@@ -246,7 +248,7 @@ export function routerOwnerListPanel(visible: boolean): void {
  * Unsupported storage keeps the legacy cohort, without suppressing its hints. */
 export function routerOwnerCapabilities(): { families: readonly LaneFamily[]; authorityFencesV1: boolean; scheduledWorkCoverageV1: boolean } {
   const ready = routerAuthorityStorageReady();
-  return { families: ready ? ['room-list', 'needs-you-count', 'room-head','room-workflows','agent-profile','owner-workbench','owner-wallet',...(routerCommandStorageReady()?['room-scheduled-work' as const]:[])] : [], authorityFencesV1: ready, scheduledWorkCoverageV1: ready&&routerCommandStorageReady() };
+  return { families: ready ? ['room-list', 'needs-you-count', 'room-head','room-workflows','workspace-roster','agent-profile','owner-workbench','owner-wallet',...(routerCommandStorageReady()?['room-scheduled-work' as const,'needs-you-tray' as const,'needs-you-saved-page' as const]:[])] : [], authorityFencesV1: ready, scheduledWorkCoverageV1: ready&&routerCommandStorageReady() };
 }
 
 /** Sole transport owner calls this only after authentication and negotiation.
@@ -294,7 +296,8 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
   // Connection recovery authority replaces expired screen authority exactly once
   // per demanded key, independently of component effects.
   lanes.disconnected();
-  const demanded = [...slots].filter(eligible);
+  for(const slot of slots)if(slot.request.family==='workspace-roster'&&slot.request.query)release(slot);
+  const demanded = [...slots].filter(slot=>eligible(slot)&&!(slot.request.family==='workspace-roster'&&slot.request.query));
   const unique = [...new Map(demanded.filter(slot => next.families.includes(slot.request.family))
     .map(slot => [lanes!.key(slot.request), slot.request])).values()];
   const requests = unique.map(input => ({ route: 'phone.readRouterSnapshot' as const, input }));
@@ -307,7 +310,7 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
     const recovery = permits.get(lanes.key(slot.request));
     if (!recovery) continue;
     const residency = navigation.current()!;
-    if(slot.request.family==='needs-you-saved-page'){ /* already gesture-admitted; connection pass owns recovery */ }
+    if(slot.request.family==='needs-you-saved-page'||slot.request.family==='workspace-roster'&&residency.screen==='Room'){ /* already gesture-admitted; connection pass owns recovery */ }
     else if (slot.generation === residency.generation && slot.token) admission.resumeObservation(slotNames.get(slot)!, residency.generation);
     else {
       const request = { route: 'phone.readRouterSnapshot' as const, input: slot.request };
@@ -398,10 +401,11 @@ export function routerOwnerReceive(value: unknown): void {
     const profileDomain=negotiation.families.includes('agent-profile')&&typeof domain==='string'&&
       /^profile:[0-9a-f-]{36}:[^:]{1,128}$/.test(domain)&&domain.endsWith(`:${value.scope}`);
     const ownerDomain=value.scope===principal&&negotiation.families.some(family=>family.startsWith('owner-')&&domain===`owner:${principal}:${family}`);
+    const rosterDomain=negotiation.families.includes('workspace-roster')&&domain===`roster:${value.scope}`;
     if (typeof value.scope !== 'string' || value.scope.length > 256 || typeof domain !== 'string' ||
         ![ `room:${value.scope}`, `object:${value.scope}`, `reader:${principal}:workspace:${value.scope}`, `reader:${principal}:workspace:${value.scope}:visibility`,
           `scheduled-work-manager:${principal}:workspace:${value.scope}`,`scheduled-work-member:${principal}:room:${value.scope}`,
-          `scheduled-work-room:${value.scope}`,...(value.scope===principal?[`scheduled-work-principal:${principal}`]:[]) ].includes(domain)&&!profileDomain&&!ownerDomain ||
+          `scheduled-work-room:${value.scope}`,...(value.scope===principal?[`scheduled-work-principal:${principal}`]:[]) ].includes(domain)&&!profileDomain&&!ownerDomain&&!rosterDomain ||
         (value.mode !== undefined && value.mode !== 'deny' && value.mode !== 'advance') ||
         !certificate(value.authority) || !validCertificate({ authority: value.authority } as LaneSnapshot) ||
         utf8ToBytes(JSON.stringify(value)).length > 4096) { failAuthority(); return; }
@@ -456,7 +460,7 @@ export function routerLaneSnapshot(request: LaneRequest): LaneView { return lane
  * authorize a read; the committed navigator and actual panel visibility gate it.
  */
 const slotKey=(request:LaneRequest)=>JSON.stringify([request.family,roomScoped(request.family)?'':request.workspaceId,
-  request.family==='needs-you-saved-page'?request.before??'':request.agentId??request.roomId??'']);
+  request.family==='workspace-roster'&&request.query?JSON.stringify(request.query):request.family==='needs-you-saved-page'?request.before??'':request.agentId??request.roomId??'']);
 export function acquireRouterLane(request: LaneRequest, visible: () => boolean, listener: () => void,validate?:(value:unknown)=>boolean) {
   request = Object.freeze({ ...request });
   const key = slotKey(request);
@@ -482,7 +486,8 @@ export function acquireRouterLane(request: LaneRequest, visible: () => boolean, 
     // observer, so StrictMode setup/cleanup cannot mint or cancel a focus pass.
     release: () => {
       held.consumers.delete(listener);held.listeners.delete(listener);
-      if(held.request.family==='needs-you-saved-page'&&!held.consumers.size){release(held);slots.delete(held);slotsByKey.delete(key);}
+      if(held.request.family==='workspace-roster'&&!held.consumers.size&&navigation.current()?.screen==='Room')release(held);
+      if((held.request.family==='needs-you-saved-page'||held.request.family==='workspace-roster'&&held.request.query)&&!held.consumers.size){release(held);slots.delete(held);slotsByKey.delete(key);}
     },
   };
 }
@@ -509,6 +514,51 @@ export function acquireRouterSavedContinuation(workspaceId:string,before:string,
       slot.stop=lanes!.subscribe(request,()=>{for(const notify of slot.listeners)notify();});
     });
     return handle;
+  }catch(error){handle.release();throw error;}
+}
+
+/** The actual Room picker gesture. Its Workspace comes from the held
+ * server Room DTO, never a stale roster or route parameter alone. */
+export function acquireRouterRoomRoster(workspaceId:string,visible:()=>boolean,listener:()=>void){
+  const focused=navigation.current(),owner=admission;
+  if(!owner||!lanes||!focused||focused.screen!=='Room'||!focused.roomId||routerFamilyMode('workspace-roster')!=='router')
+    throw new Error('Roster picker is unavailable.');
+  const room=[...slots].find(slot=>slot.request.family==='room-head'&&slot.request.roomId===focused.roomId&&
+    slot.generation===focused.generation&&slot.release);
+  const value=room?lanes.peek(room.request).value as RouterValues['room-head']|null:null;
+  if(!value||value.room.workspaceId!==workspaceId)throw new Error('Roster Workspace is not held.');
+  const request={family:'workspace-roster' as const,workspaceId};
+  const handle=acquireRouterLane(request,visible,listener),slot=slotsByKey.get(slotKey(request))!;
+  if(slot.release&&slot.generation===focused.generation)return handle;
+  try{
+    owner.openRoster(focused.generation,focused.roomId,workspaceId,pass=>{
+      const read={route:'phone.readRouterSnapshot' as const,input:request},permit=owner.spend(read,pass);
+      slot.generation=focused.generation;slot.token=pass;slot.release=lanes!.demand(request,pass,permit);
+      slot.stop=lanes!.subscribe(request,()=>{for(const notify of slot.listeners)notify();});
+    });return handle;
+  }catch(error){handle.release();throw error;}
+}
+
+/** Called synchronously by Search / Load More. A render or text change
+ * can attach an observer but cannot admit a query baseline. */
+export function acquireRouterRosterQuery(input:Extract<RouterSnapshotInput,{family:'workspace-roster'}>,visible:()=>boolean,listener:()=>void){
+  const focused=navigation.current(),owner=admission;
+  if(!owner||!lanes||!focused||focused.screen!=='AppShell'||focused.workspaceId!==input.workspaceId||
+    routerFamilyMode('workspace-roster')!=='router'||!input.query)throw new Error('Roster action is unavailable.');
+  const head=slotsByKey.get(slotKey({family:'workspace-roster',workspaceId:input.workspaceId}));
+  const value=head?.release&&head.generation===focused.generation?lanes.peek(head.request).value as RouterValues['workspace-roster']|null:null;
+  if(!value||value.revision!==input.query.revision)throw new Error('Roster version is no longer held.');
+  const windows=[...slots].filter(slot=>slot.request.family==='workspace-roster'&&slot.request.query&&slot.release);
+  if(!slotsByKey.has(slotKey(input))&&windows.length>=16)throw new Error('Roster window capacity reached.');
+  const handle=acquireRouterLane(input,visible,listener),slot=slotsByKey.get(slotKey(input))!;
+  if(slot.release&&slot.generation===focused.generation)return handle;
+  try{
+    owner.queryRoster(focused.generation,input,pass=>{
+      const read={route:'phone.readRouterSnapshot' as const,input},permit=owner.spend(read,pass);
+      slot.generation=focused.generation;slot.token=pass;
+      slot.release=lanes!.demand(input,pass,permit);
+      slot.stop=lanes!.subscribe(input,()=>{for(const notify of slot.listeners)notify();});
+    });return handle;
   }catch(error){handle.release();throw error;}
 }
 
@@ -632,7 +682,7 @@ export function admitRouterTrayPaint(workspaceId:string,messageIds:readonly stri
 /** Called directly from the existing Retry/pull gesture synchronous handler. */
 export function retryRouterLane(request: LaneRequest): void {
   if (!admission || !lanes) return;
-  const key = JSON.stringify([request.family, roomScoped(request.family) ? '' : request.workspaceId, request.family==='needs-you-saved-page'?request.before??'':request.agentId??request.roomId ?? '']);
+  const key = slotKey(request);
   const slot = slotsByKey.get(key);
   if (!slot || !eligible(slot)) return;
   const read = { route: 'phone.readRouterSnapshot' as const, input: slot.request };

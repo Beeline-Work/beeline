@@ -27,6 +27,29 @@ async function buildFixture(directory: string) {
   }
   visit(file);
   const styles = properties.filter(p => p.name && names.has(p.name.getText(file))).map(p => p.getText(file)).join(',');
+  // Use the actual Room's layout projection at its memo boundary. The roster
+  // and card-action fields do not participate in this resize reproduction.
+  const chatSource = readFileSync(path.join(mobile, 'sources/app/(app)/beeline/chat/_chat-surface.tsx'), 'utf8');
+  const chat = ts.createSourceFile('chat.tsx', chatSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+  let layoutProperties = '';
+  function readPresentation(node: ts.Node) {
+    if (ts.isVariableDeclaration(node) && node.name.getText(chat) === 'presentationForMessage' && node.initializer && ts.isCallExpression(node.initializer)) {
+      const callback = node.initializer.arguments[0];
+      if (ts.isArrowFunction(callback) && ts.isParenthesizedExpression(callback.body) && ts.isObjectLiteralExpression(callback.body.expression)) {
+        layoutProperties = callback.body.expression.properties.filter(property => {
+          let usesWidthClass = false;
+          function scan(n: ts.Node) {
+            if (ts.isIdentifier(n) && n.text === 'isDesktop') usesWidthClass = true;
+            ts.forEachChild(n, scan);
+          }
+          scan(property);
+          return usesWidthClass;
+        }).map(property => property.getText(chat)).join(',');
+      }
+    }
+    ts.forEachChild(node, readPresentation);
+  }
+  readPresentation(chat);
   const entry = path.join(directory, 'entry.tsx');
   await writeFile(entry, `
 import React,{useCallback,useEffect,useLayoutEffect,useRef,useState}from'react';
@@ -39,22 +62,29 @@ import{DesktopWorkspacePortal}from'@/components/buzz/DesktopWorkspacePortal';
 import{MESSAGE_REACTION_EMOJIS}from'@beeline/buzz-client';
 import{emojiTextStyle}from'@/buzz/emoji-text';
 import{GestureHandlerRootView}from'react-native-gesture-handler';
+import{useRoomMessageRenderItem}from'@/buzz/room-message-cell';
 import ReanimatedSwipeable from'react-native-gesture-handler/ReanimatedSwipeable';
 const CORNER_LABEL='corner',ALIVE_RING_PAD=4;const CornerGlyph=()=>null;
 const styles=StyleSheet.create(theme=>({${styles}}));
 ${swipe.getText(file)}
 function App(){
  const[reactions,setReactions]=useState({});
- const desktop=innerWidth>=800;
+ const[desktop,setDesktop]=useState(innerWidth>=800);
+ useEffect(()=>{const resize=()=>setDesktop(innerWidth>=800);addEventListener('resize',resize);return()=>removeEventListener('resize',resize)},[]);
+ const messages=React.useMemo(()=>new Map(['original','next','third','bottom'].map(id=>[id,{id,text:id,isUser:false,timestamp:1}])),[]);
  const row=id=><SwipeToReply key={id} messageId={id} isDesktop={desktop} onReply={()=>{throw Error('Wrong reply target: '+id)}} onLongPress={()=>{}} onActions={()=>{document.getElementById('actions').textContent='phone:'+id}} onReact={emoji=>setReactions(r=>({...r,[id]:emoji}))} onForward={()=>{}}>
  <Text style={{color:'#eee',paddingVertical:12}}>Message {id} {reactions[id]||''}</Text></SwipeToReply>;
+ const memoizedRow=useRoomMessageRenderItem({render:item=>row(item.id),continuedIds:new Set(),precedingMessageById:new Map(),messageById:messages,
+ presentationForMessage:()=>{const isDesktop=desktop;return{${layoutProperties}}}});
+ const draw=id=>location.search.includes('resize')?memoizedRow({item:messages.get(id)}):row(id);
  return <GestureHandlerRootView style={{height:'100vh',padding:32,backgroundColor:'#14091a'}}>
- <View testID="transcript" style={{height:160,overflow:'scroll'}}>{['original','next','third'].map(id=><View key={id} style={{marginBottom:8}}>{row(id)}</View>)}</View>
- <View style={{flex:1}}/>{row('bottom')}
+ <View testID="transcript" style={{height:160,overflow:'scroll'}}>{['original','next','third'].map(id=><View key={id} style={{marginBottom:8}}>{draw(id)}</View>)}</View>
+ <View style={{flex:1}}/>{draw('bottom')}
  <Text testID="reactions" style={{color:'#eee'}}>{JSON.stringify(reactions)}</Text><Text nativeID="actions"/>
  </GestureHandlerRootView>;
 }createRoot(document.getElementById('root')).render(<App/>);`);
   const shims = webProofShims(mobile);
+  shims['@/components/buzz/Ledger'] = 'export const withLedgerDayCaption = node => node;';
   await build({
     entryPoints: [entry], outfile: path.join(directory, 'bundle.js'), bundle: true,
     platform: 'browser', jsx: 'automatic', mainFields: ['browser', 'module', 'main'],
@@ -169,6 +199,23 @@ it.skipIf(!existsSync(CHROME))('desktop pointer React → every emoji → 👍 c
     await evaluate('document.querySelector("[data-testid=transcript]").dispatchEvent(new Event("scroll"))');
     await settle();
     expect(await evaluate('!!document.querySelector("[data-testid=reaction-picker-original]")')).toBe(false);
+    // A Room first opened compact must repaint cached rows when widened. The
+    // actual presentation projection above makes this fail if the Room forgets
+    // to pass its width class through RoomMessageCell's memo boundary.
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+    await send('Page.navigate', { url: pathToFileURL(path.join(directory, 'index.html')).href + '?resize' });
+    await new Promise(resolve => setTimeout(resolve, 500));
+    expect(await evaluate('document.querySelectorAll("[data-testid^=react-button-]").length')).toBe(0);
+    await send('Emulation.setDeviceMetricsOverride', { width: 1280, height: 840, deviceScaleFactor: 1, mobile: false });
+    await settle();
+    expect(await evaluate('!!document.querySelector("[data-testid=react-button-original]")')).toBe(true);
+    await open('original');
+    const resizedThumb = await rect('reaction-choice-original-👍');
+    await click(resizedThumb.x + resizedThumb.width / 2, resizedThumb.y + resizedThumb.height / 2);
+    expect(await evaluate('JSON.parse(document.querySelector("[data-testid=reactions]").textContent).original')).toBe('👍');
+    await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
+    await settle();
+    expect(await evaluate('document.querySelectorAll("[data-testid^=react-button-]").length')).toBe(0);
     // Compact web retains the phone long-press action sheet path, without a desktop picker.
     await send('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: true });
     await send('Page.navigate', { url: pathToFileURL(path.join(directory, 'index.html')).href + '?compact' });

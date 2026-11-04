@@ -1,0 +1,197 @@
+[
+  {
+    "event": "ready",
+    "at": 1793759504973
+  },
+  {
+    "event": "touch",
+    "at": 1793759517481,
+    "x": 541,
+    "y": 582
+  },
+  {
+    "event": "read",
+    "at": 1793759518750,
+    "t": "res",
+    "request": "phone-7",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793759518769,
+    "t": "res",
+    "request": "phone-10",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793759518770,
+    "t": "res",
+    "request": "phone-9",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793759518778,
+    "t": "res",
+    "request": "phone-8",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793759519419,
+    "t": "res",
+    "request": "phone-11",
+    "ok": true
+  },
+  {
+    "event": "touch",
+    "at": 1793759520259,
+    "x": 491,
+    "y": 2259
+  },
+  {
+    "event": "touch",
+    "at": 1793759521757,
+    "x": 981,
+    "y": 2259
+  },
+  {
+    "event": "write",
+    "at": 1793759522051,
+    "id": 0,
+    "t": "req",
+    "request": "phone-12",
+    "op": "sendRoomMessage"
+  },
+  {
+    "event": "read",
+    "at": 1793759522384,
+    "t": "res",
+    "request": "phone-12",
+    "ok": true
+  },
+  {
+    "event": "touch",
+    "at": 1793759526835,
+    "x": 491,
+    "y": 1439
+  },
+  {
+    "event": "connect",
+    "at": 1793759528251,
+    "id": 1,
+    "live": true
+  },
+  {
+    "event": "websocketClosed",
+    "at": 1793759528518
+  },
+  {
+    "event": "touch",
+    "at": 1793759528851,
+    "x": 981,
+    "y": 1439
+  },
+  {
+    "event": "websocketOpen",
+    "at": 1793759529732
+  },
+  {
+    "event": "write",
+    "at": 1793759529808,
+    "id": 1,
+    "t": "req",
+    "request": "phone-14",
+    "op": "sendRoomMessage"
+  },
+  {
+    "event": "read",
+    "at": 1793759530246,
+    "t": "res",
+    "request": "phone-13",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793759530270,
+    "t": "res",
+    "request": "phone-14",
+    "ok": true
+  },
+  {
+    "event": "touch",
+    "at": 1793759533937,
+    "x": 491,
+    "y": 1439
+  },
+  {
+    "event": "connect",
+    "at": 1793759535358,
+    "id": 2,
+    "live": true
+  },
+  {
+    "event": "websocketClosed",
+    "at": 1793759535608
+  },
+  {
+    "event": "touch",
+    "at": 1793759535958,
+    "x": 981,
+    "y": 1439
+  },
+  {
+    "event": "websocketOpen",
+    "at": 1793759536920
+  },
+  {
+    "event": "write",
+    "at": 1793759537004,
+    "id": 2,
+    "t": "req",
+    "request": "phone-16",
+    "op": "sendRoomMessage"
+  },
+  {
+    "event": "read",
+    "at": 1793759537718,
+    "t": "res",
+    "request": "phone-15",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793759537933,
+    "t": "res",
+    "request": "phone-16",
+    "ok": true
+  },
+  {
+    "event": "touch",
+    "at": 1793759541156,
+    "x": 491,
+    "y": 1439
+  },
+  {
+    "event": "touch",
+    "at": 1793759542516,
+    "x": 981,
+    "y": 2259
+  },
+  {
+    "event": "write",
+    "at": 1793759542730,
+    "id": 2,
+    "t": "req",
+    "request": "phone-17",
+    "op": "sendRoomMessage"
+  },
+  {
+    "event": "read",
+    "at": 1793759543062,
+    "t": "res",
+    "request": "phone-17",
+    "ok": true
+  }
+]

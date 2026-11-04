@@ -4,15 +4,18 @@ import { OWNED_MODEL_OWNER_END_SCHEMA } from './owned-model-parking.js';
 
 /** Independent rollout gate. Legacy rows and helpers retain their receipt adapter. */
 export { networkRouterEnabled as turnOwnershipEnabled } from './network-router-rollout.js';
-const ownedDatabaseOperations = new Set([
+const ownedTurnAdapters = new Set([
   'claimAgentCommand', 'acknowledgeAgentCommand', 'getAgentCommands',
   'postRoomMessage', 'postCornerMessage', 'postAgentTurnReceipt', 'markAgentTurnSilent',
   'postAgentActivity', 'postRoomEvent', 'postAgentDraft', 'postAgentThought', 'retractAgentLiveOutput',
   'postBackgroundToolCompletion', 'getRoomConversation', 'getRoomMessage', 'getRoomAuthority',
+  // Prompt preparation uses these existing command-authorized database adapters.
+  'getInstitutionalContext', 'getInstitutionalMemoryTurnStats', 'listRoomCorners',
 ]);
-/** External adapters opt in only after dispatch-time authority and durable
- * UNKNOWN are proven. This conservative list never changes legacy behavior. */
-export const ownedTurnOperationSupported = (name: string): boolean => ownedDatabaseOperations.has(name);
+/** Completed ownership adapters select their dedicated behavior. Every other
+ * operation retains its existing handler, permissions and provider leaf; lack
+ * of a new adapter is never a reason to refuse an otherwise allowed operation. */
+export const usesOwnedTurnAdapter = (name: string): boolean => ownedTurnAdapters.has(name);
 
 export const TURN_OWNERSHIP_SCHEMA = `
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS turn_owner_connection_id text;

@@ -8,13 +8,13 @@ const empty = Object.freeze({ state: 'ABSENT' as const, value: null, error: null
 const noop = () => {};
 const detached = () => noop;
 
-type DisplayResourceFamily = 'room-workflows' | 'owner-workbench' | 'owner-wallet' | 'agent-profile';
+type DisplayResourceFamily = 'room-workflows' | 'owner-workbench' | 'owner-wallet' | 'agent-profile' | 'workspace-roster';
 
 /** The existing navigation owner spends the route-bound opportunity. Effects
  * attach consumers only; no invalidation, elapsed time or response opens it. */
 export function useRoutedResource<F extends DisplayResourceFamily>(family: F, input: (RouterSnapshotInput & { family: F }) | undefined, focused: boolean,
   validate?:(value:unknown)=>boolean) {
-  if (!['room-workflows', 'owner-workbench', 'owner-wallet', 'agent-profile'].includes(family) || input && input.family !== family)
+  if (!['room-workflows', 'owner-workbench', 'owner-wallet', 'agent-profile','workspace-roster'].includes(family) || input && input.family !== family)
     throw new Error('Display resource must match its declared family');
   const mode = useRouterFamily(family), visible = useRef(focused); visible.current = focused;
   const key = input ? JSON.stringify(input) : '';

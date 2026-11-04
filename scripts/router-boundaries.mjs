@@ -102,6 +102,8 @@ const OWNER_CALLERS = {
   admitRouterPreparedMessage: ['buzz/command-message-gesture.ts'],
   admitRouterScheduledStop: ['buzz/router-scheduled-work.ts'],
   acquireRouterSavedContinuation: ['buzz/router-tray.ts'],
+  acquireRouterRosterQuery: ['buzz/use-routed-roster.ts'],
+  acquireRouterRoomRoster: ['buzz/use-room-roster.ts'],
   admitRouterTrayCommand: ['buzz/router-tray.ts'],
   admitRouterTrayPaint: ['buzz/router-tray.ts'],
   routerOwnerCapabilities: ['sync/transport/live-connection.ts'],
@@ -146,7 +148,9 @@ function inspectOwnerAccess(file, source, errors) {
 // Observing a hook cannot be used to re-export its command/paint authority.
 function inspectGestureWrappers(file,source,errors){
   const modules={
-    'buzz/router-resource': {'useRoutedResource': ['buzz/use-room-workflow-run.ts', 'buzz/workbench-surface.ts', 'buzz/wallet-surface.ts', 'app/(app)/beeline/members.tsx']},
+    'buzz/router-resource': {'useRoutedResource': ['buzz/use-room-workflow-run.ts', 'buzz/workbench-surface.ts', 'buzz/wallet-surface.ts', 'app/(app)/beeline/members.tsx', 'buzz/use-routed-roster.ts', 'buzz/use-room-roster.ts']},
+    'buzz/use-routed-roster':{'useRoutedRoster':['app/(app)/beeline/members.tsx']},
+    'buzz/use-room-roster':{'useRoomRoster':['app/(app)/beeline/chat/_chat-surface.tsx']},
     'buzz/router-tray':{'useRoutedTray':['app/(app)/beeline/tray.tsx'],
       'prepareTrayCommand':['app/(app)/beeline/tray.tsx'],'acknowledgeRoutedTrayPaint':['app/(app)/beeline/tray.tsx']},
     'buzz/router-scheduled-work':{'useRoutedScheduledWork':['buzz/scheduled-work.ts'],'prepareScheduledStop':['buzz/scheduled-work.ts']},

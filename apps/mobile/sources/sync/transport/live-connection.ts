@@ -30,6 +30,7 @@ import { setRequestDeadlineHandler } from './request-deadline';
 type PendingRequest = {
   frame: string;
   socket?: WebSocket;
+  awaitedSocket?: WebSocket;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
 };
@@ -112,10 +113,9 @@ export function useConnectionState(): ConnectionState {
   );
 }
 
-const BACKGROUND_CLOSE_DELAY_MS = 120_000;
-const HEALTH_CHALLENGE_DEADLINE_MS = 5_000;
 /** Message ids recently delivered by the socket, to judge a later push. */
 const HEARD_MESSAGE_LIMIT = 256;
+const HEALTH_CHALLENGE_DEADLINE_MS = 5_000;
 /** Parent-Room invalidations that name a corner change without its rows. */
 const CORNER_LIST_REASONS: ReadonlySet<string> = new Set(['corner-status', 'corner', 'resync']);
 /** The same window the server's own `liveDraftSnapshot` is gated on: past it a
@@ -184,8 +184,6 @@ export class LiveConnection {
   private readonly viewing = new Map<string, number>();
   private readonly heardMessages = new Set<string>();
   private readonly subscribeWaiters = new Set<() => void>();
-  private backgroundCloseTimer: ReturnType<typeof setTimeout> | undefined;
-  private backgroundSocketClosed = false;
   private readonly unsubscribeAppState: () => void;
   private readonly unsubscribeNetworkChange: () => void;
   private nextRegistrationId = 1;
@@ -201,7 +199,6 @@ export class LiveConnection {
       if (state === previousAppState) return;
       previousAppState = state;
       if (state === 'active') this.handleForeground();
-      else if (state === 'background') this.handleBackground();
     });
     this.unsubscribeAppState = () => appState.remove();
     this.unsubscribeIdentity = deps.subscribeIdentityChange(() => this.handleIdentityChanged());
@@ -289,20 +286,23 @@ export class LiveConnection {
         return Promise.reject(new PhoneSocketError('invalid_request', 'Phone request is too large', false));
     } catch (error) { return Promise.reject(error); }
     this.routeObservation.observe(op, args);
+    const generation = this.generation;
     return new Promise((resolve, reject) => {
       const finish = () => {
         clearTimeout(timer);
         options.signal?.removeEventListener('abort', abort);
         this.requests.delete(id);
       };
-      const request: PendingRequest = { frame,
+      const request: PendingRequest = { frame, awaitedSocket: this.socket,
         resolve: value => { finish(); resolve(value); },
         reject: error => { finish(); reject(error); },
       };
       const abort = () => request.reject(this.requestAbortError());
       const timer = setTimeout(() => {
         request.reject(new MonolithRequestTimeoutError());
-        if (request.socket === this.socket) this.reportRequestDeadlineMissed();
+        const awaited = request.socket ?? request.awaitedSocket;
+        if (generation === this.generation && awaited && awaited === this.socket)
+          this.reportRequestDeadlineMissed();
       }, options.timeoutMs ?? 20_000);
       this.requests.set(id, request);
       options.signal?.addEventListener('abort', abort, { once: true });
@@ -354,11 +354,13 @@ export class LiveConnection {
   private receiveRouterFrame(value: unknown, socket: WebSocket): boolean {
     if (!this.deps.router || !value || typeof value !== 'object') return false;
     const frame = value as Record<string, unknown>;
+    // Ordinary RPC replies race negotiation on capable servers. Only the
+    // ordered sync/subscription barrier can establish an old-server epoch.
     if (this.routerState === 'waiting' && (frame.type === 'router-capabilities' ||
-      frame.type === 'sync-ok' || frame.type === 'subscribed' || frame.t === 'res')) {
+      frame.type === 'sync-ok' || frame.type === 'subscribed')) {
       const families: RouterFamily[] = frame.type === 'router-capabilities' && frame.protocol === 1 && Array.isArray(frame.families)
-        ? ['room-list', 'needs-you-count', 'room-head','room-scheduled-work','workspace-roster','room-workflows','agent-profile','owner-workbench','owner-wallet'].filter(f => (frame.families as unknown[]).includes(f)&&
-          (f!=='room-scheduled-work'||frame.commandDedupV1===true&&frame.authorityFencesV1===true)) as RouterFamily[] : [];
+        ? ['room-list', 'needs-you-count','needs-you-tray','needs-you-saved-page', 'room-head','room-scheduled-work','workspace-roster','room-workflows','agent-profile','owner-workbench','owner-wallet'].filter(f => (frame.families as unknown[]).includes(f)&&
+          (!['room-scheduled-work','needs-you-tray','needs-you-saved-page'].includes(f)||frame.commandDedupV1===true&&frame.authorityFencesV1===true)) as RouterFamily[] : [];
       this.commandDedupV1 = frame.type === 'router-capabilities' && frame.protocol === 1 && frame.commandDedupV1 === true;
       this.routerState = 'initializing';
       // A negotiated executor belongs to this physical connection. Retained
@@ -402,8 +404,8 @@ export class LiveConnection {
     return true;
   }
 
-  private rejectRequests(reason: unknown = new PhoneSocketDisconnectedError()): void {
-    for (const request of this.requests.values()) request.reject(reason);
+  private rejectRequests(reason: unknown = new PhoneSocketDisconnectedError(), onlySent = false): void {
+    for (const request of this.requests.values()) if (!onlySent || request.socket) request.reject(reason);
   }
 
   /** Safe transport metadata for a recovery receipt; no URL or authorization. */
@@ -519,41 +521,41 @@ export class LiveConnection {
   }
 
   /**
-   * Replace the socket now. A backgrounded socket can look open while the
-   * server has long stopped delivering to it; the fresh socket's resubscribe
-   * frames are every surface's covering read. Also called when a read proves
-   * the current socket missed events.
+   * Replace a socket proven suspect by a missed request or live event. The
+   * replacement resubscribes every surface with its committed replay cursor.
    */
   reconnect(): void {
     this.reconnectNow();
   }
 
   /**
-   * Next socket for an explicit Retry, a foreground return, a network change,
-   * a push the socket has not delivered, or a request deadline. A handshake
-   * that is still opening yields to that event too. A failed attempt does not
-   * schedule another.
+   * Next socket after evidence of a failure or an explicit Retry. Foreground
+   * and connectivity notifications use this only when no socket remains.
+   * Authorization and handshake failures each have one immediate recovery
+   * while the app is active and still has work, with no retry timer.
    */
   reconnectNow(): void {
     this.recoverySpent = false;
     this.handshakeRecoveryUsed = false;
-    this.replaceSocket();
+    this.authorizationRecoveryUsed = false;
+    this.reconnectSocket();
   }
 
-  private replaceSocket(): void {
+  private reconnectSocket(): void {
     if (this.connectInFlight) {
       // Registration can return while the first connect promise is still
       // settling. Keep a foreground/read recovery request made in that gap.
       if (this.socket) {
         const generation = this.generation;
+        const socket = this.socket;
         void this.connectInFlight.then(() => {
-          if (generation === this.generation) this.replaceSocket();
+          if (generation === this.generation && this.socket === socket) this.reconnectSocket();
         });
       }
       return;
     }
     if (!this.socket) {
-      if (this.registrations.size) void this.ensureSocket();
+      if (this.hasDemand()) void this.ensureSocket();
       return;
     }
     const current = this.socket;
@@ -568,31 +570,27 @@ export class LiveConnection {
   reportRequestDeadlineMissed(): void {
     if (this.recoverySpent || !this.socket) return;
     this.recoverySpent = true;
-    this.replaceSocket();
+    this.roomCursors.clear();
+    this.reconnectSocket();
   }
 
   private handleForeground(): void {
-    this.backgroundSocketClosed = false;
-    if (this.backgroundCloseTimer) clearTimeout(this.backgroundCloseTimer);
-    this.backgroundCloseTimer = undefined;
     this.checkBoundaryHealth();
   }
 
-  /** An actual resume/path edge admits one application roundtrip, never a read.
-   * Concurrent edges join the pending challenge; only its failure spends the
-   * incident's one replacement. Existing servers already answer this frame. */
   private checkBoundaryHealth(): void {
-    if (this.healthChallenge) return;
+    if (!this.hasDemand() || this.healthChallenge) return;
     this.recoverySpent = false;
     const socket = this.socket;
-    if (!socket || !isSocketOpen(socket)) {
+    if (!socket) {
       this.reconnectNow();
       return;
     }
+    if (!isSocketOpen(socket)) return;
     const timer = setTimeout(() => {
       if (this.healthChallenge?.socket !== socket) return;
       this.clearHealthChallenge();
-      if (this.socket === socket) this.reportRequestDeadlineMissed();
+      if (this.socket === socket && this.hasDemand()) this.reportRequestDeadlineMissed();
     }, HEALTH_CHALLENGE_DEADLINE_MS);
     this.healthChallenge = { socket, timer };
     try { socket.send(JSON.stringify({ type: 'ping' })); }
@@ -605,18 +603,6 @@ export class LiveConnection {
   private clearHealthChallenge(): void {
     if (this.healthChallenge) clearTimeout(this.healthChallenge.timer);
     this.healthChallenge = undefined;
-  }
-
-  private handleBackground(): void {
-    if (this.backgroundCloseTimer) return;
-    this.backgroundSocketClosed = false;
-    this.backgroundCloseTimer = setTimeout(() => {
-      this.backgroundCloseTimer = undefined;
-      if (AppState.currentState === 'background') {
-        this.backgroundSocketClosed = true;
-        this.dropConnection();
-      }
-    }, BACKGROUND_CLOSE_DELAY_MS);
   }
 
   private handleNetworkChange(): void {
@@ -645,6 +631,8 @@ export class LiveConnection {
   private dropConnection(): void {
     this.clearHealthChallenge();
     this.resetRouterState();
+    this.authorizationRecoveryUsed = false;
+    this.handshakeRecoveryUsed = false;
     this.authorizationAttempt += 1;
     clearTimeout(this.authorizationDeadline);
     this.authorizationDeadline = undefined;
@@ -652,8 +640,6 @@ export class LiveConnection {
     setConnectionState('disconnected');
     this.generation += 1;
     this.connectInFlight = undefined;
-    if (this.backgroundCloseTimer) clearTimeout(this.backgroundCloseTimer);
-    this.backgroundCloseTimer = undefined;
     const current = this.socket;
     this.socket = undefined;
     this.socketReachedOpen = false;
@@ -692,7 +678,20 @@ export class LiveConnection {
 
   private authorizationDeadline?: ReturnType<typeof setTimeout>;
   private handshakeRecoveryUsed = false;
+  private authorizationRecoveryUsed = false;
   private authorizationAttempt = 0;
+
+  private hasDemand(): boolean {
+    return this.registrations.size > 0 || this.requests.size > 0;
+  }
+
+  private recoverAuthorizationFailure(): boolean {
+    if (this.authorizationRecoveryUsed || AppState.currentState !== 'active' || !this.hasDemand())
+      return false;
+    this.authorizationRecoveryUsed = true;
+    this.recoverOpenedSocket(false);
+    return true;
+  }
 
   private ensureSocket(): Promise<void> {
     if (this.socket) return Promise.resolve();
@@ -706,7 +705,7 @@ export class LiveConnection {
         if (attempt === this.authorizationAttempt) {
           this.authorizationAttempt += 1;
           setConnectionState('disconnected');
-          this.rejectRequests(new MonolithRequestTimeoutError());
+          if (!this.recoverAuthorizationFailure()) this.rejectRequests(new MonolithRequestTimeoutError());
         }
         resolve();
       }, 15_000);
@@ -722,10 +721,11 @@ export class LiveConnection {
   }
 
   /**
-   * Opens one socket. A handshake that never opens waits for foreground, a
-   * network change, a push, or an explicit Retry. A socket that had opened
+   * Opens one socket. An opening handshake has no transport cutoff; an
+   * existing request deadline can replace it. A socket that had opened
    * and then closes or errors starts one new attempt immediately, with no
-   * timer. That attempt does not start another if it never opens.
+   * timer. Authorization failure and a rejected token each get one bounded
+   * immediate retry; an unsuccessful replacement never starts a retry loop.
    */
   private async connect(attempt: number): Promise<void> {
     const generation = this.generation;
@@ -743,11 +743,14 @@ export class LiveConnection {
       const url = this.deps.liveUrl();
       const next = new WebSocket(url, [`bearer.${token}`]);
       this.socket = next;
+      for (const request of this.requests.values())
+        if (!request.socket && !request.awaitedSocket) request.awaitedSocket = next;
       this.socketReachedOpen = false;
       next.onopen = () => {
         if (this.socket !== next) return;
         this.socketReachedOpen = true;
         this.handshakeRecoveryUsed = false;
+        this.authorizationRecoveryUsed = false;
         setConnectionState('connected');
         this.socketEpoch += 1;
         if (this.deps.router) next.send(JSON.stringify({ type: 'router-negotiate', protocol: 1,
@@ -804,7 +807,7 @@ export class LiveConnection {
     } catch (reason) {
       if (generation !== this.generation || attempt !== this.authorizationAttempt) return;
       setConnectionState('disconnected');
-      this.rejectRequests(reason);
+      if (!this.recoverAuthorizationFailure()) this.rejectRequests(reason);
     }
   }
 
@@ -813,7 +816,7 @@ export class LiveConnection {
     // once after an unopened socket fails; persistent offline failures stop.
     if (!this.deps.invalidateAuthorization) return;
     this.deps.invalidateAuthorization(token);
-    if (this.handshakeRecoveryUsed) return;
+    if (this.handshakeRecoveryUsed || AppState.currentState !== 'active') return;
     this.handshakeRecoveryUsed = true;
     // Initial reads already failed on the rejected socket. Its first success
     // must cover roomless Workspace discovery too, just like a reconnect.
@@ -831,12 +834,13 @@ export class LiveConnection {
 
   /**
    * One replacement after a socket that had opened. Nothing is scheduled:
-   * a handshake that never opens, a background shutdown, or the last
-   * registration leaving does not start another.
+   * a handshake that never opens or the last holder leaving does not start
+   * another. Unsent requests also hold the connection until their own deadline.
    */
-  private recoverOpenedSocket(): void {
-    if (AppState.currentState !== 'active' || this.recoverySpent || this.registrations.size === 0) return;
-    this.recoverySpent = true;
+  private recoverOpenedSocket(consumeSocketRecovery = true): void {
+    if (AppState.currentState !== 'active' || (consumeSocketRecovery && this.recoverySpent) || !this.hasDemand()) return;
+    if (consumeSocketRecovery) this.recoverySpent = true;
+    const generation = this.generation;
     const flight = this.connectInFlight;
     // Register resolves before its socket attempt finishes. A close in that
     // gap must not reuse the attempt that just died.
@@ -845,7 +849,12 @@ export class LiveConnection {
       return;
     }
     void flight.finally(() => {
-      if (this.socket || this.connectInFlight || this.backgroundSocketClosed || this.registrations.size === 0)
+      if (
+        generation !== this.generation ||
+        this.socket ||
+        this.connectInFlight ||
+        !this.hasDemand()
+      )
         return;
       void this.ensureSocket();
     });
@@ -863,7 +872,9 @@ export class LiveConnection {
   private dropSocketState(): void {
     this.clearHealthChallenge();
     this.resetRouterState();
-    this.rejectRequests();
+    // Unsent calls have no ambiguous server result and keep their own deadline.
+    // Only a call dispatched on the dropped socket belongs to the outbox to retry.
+    this.rejectRequests(undefined, true);
     this.seenSubscribed.clear();
     this.pendingSubscribe.clear();
     noteCornerSocketDropped();

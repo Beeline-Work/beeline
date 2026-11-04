@@ -533,7 +533,11 @@ describe('feedback-triage workflow', () => {
       roomId: TRIAGE_CORNER,
       slug: 'feedback-triage-steps',
     });
-    expect(steps.markdown).toContain('## Morning-card follow-up (outside this workflow)');
+    expect(steps.markdown).toContain('## Fix-loop follow-up (outside this workflow)');
+    expect(steps.markdown).toContain('Ruby opens routine fix corners as an existing agent action without per-item');
+    expect(steps.markdown).toContain('A reviewer PASS on the exact head plus green checks lands them;');
+    expect(steps.markdown).toContain("the owner's hold remains a veto");
+    expect(steps.markdown).not.toContain("After the owner's yes on that card");
     const started = await startWorkflow(database, turn, {
       name: 'feedback-triage',
       roleBindings: { triager: TRIAGER },

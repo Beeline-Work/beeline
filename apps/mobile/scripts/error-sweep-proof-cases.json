@@ -272,7 +272,7 @@
     {
       "file": "app/(app)/beeline/members.tsx",
       "beforeLine": 1321,
-      "afterLine": 1321,
+      "afterLine": 1365,
       "id": "sweep-10",
       "label": "app/(app)/beeline/members.tsx:1321",
       "before": {
@@ -293,17 +293,17 @@
         "selectors": [
           {
             "tag": "SettingsRow",
-            "hash": "9b01c1b27069dbbc9f59c969e2c8b26d0b6f2c9c6753ec937c0fc51b952ad9a6",
+            "hash": "d8ade64736abf909533d64dfd7e547c4a31b8d0a489bdbbdd38350132f0235df",
             "occurrence": 0
           }
         ],
-        "sourceLine": 1321
+        "sourceLine": 1365
       }
     },
     {
       "file": "app/(app)/beeline/members.tsx",
       "beforeLine": 1402,
-      "afterLine": 1397,
+      "afterLine": 1441,
       "id": "sweep-11",
       "label": "app/(app)/beeline/members.tsx:1402",
       "before": {
@@ -321,11 +321,11 @@
         "selectors": [
           {
             "tag": "SettingsRow",
-            "hash": "54db118d67490b0b702cdccb817be7cbdd7ac390a9a014e5ecb062b64237cc58",
+            "hash": "ded7f0a4e719fc3a229b097ee094d167ff0e2582eae6cba61de80a9e53062946",
             "occurrence": 0
           }
         ],
-        "sourceLine": 1397
+        "sourceLine": 1441
       }
     },
     {

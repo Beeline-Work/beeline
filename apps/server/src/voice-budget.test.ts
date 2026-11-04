@@ -157,6 +157,8 @@ it('restores a persisted database into a new server store and fences the previou
 });
 
 it('owns no timer or database observation while audio is empty, then commits one actual batch', async () => {
+  // Keep native database/worker callbacks outside this fake-clock block.
+  // Async timer advancement yields to I/O and can count unrelated timers.
   vi.useFakeTimers();
   const initial={remainingMs:180_000,resetAt:START+86_400_000,timeZone:'UTC'};
   const record=vi.fn(async()=>initial);
@@ -165,15 +167,17 @@ it('owns no timer or database observation while audio is empty, then commits one
   const meter=new VoiceAudioMeter(store,'idle-call','owner','workspace',initial,()=>{},()=>{},()=>clock);
   try{
     expect(vi.getTimerCount()).toBe(0);
-    await vi.advanceTimersByTimeAsync(60_000);
+    vi.advanceTimersByTime(60_000);
     await meter.flush();expect(record).not.toHaveBeenCalled();expect(vi.getTimerCount()).toBe(0);
     clock+=100;expect(meter.audio(100)).toBe(100);
     expect(vi.getTimerCount()).toBe(1);
-    await vi.advanceTimersByTimeAsync(249);expect(record).not.toHaveBeenCalled();
-    await vi.advanceTimersByTimeAsync(1);
+    vi.advanceTimersByTime(249);expect(record).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(1);
     expect(record).toHaveBeenCalledOnce();expect(record.mock.calls[0]).toEqual(['idle-call','owner','workspace',[[START,START+100]]]);
+    // The deadline must start the write before flush joins its completion.
+    await meter.flush();
     expect(vi.getTimerCount()).toBe(0);
-    await vi.advanceTimersByTimeAsync(60_000);await meter.flush();expect(record).toHaveBeenCalledOnce();
+    vi.advanceTimersByTime(60_000);await meter.flush();expect(record).toHaveBeenCalledOnce();
   }finally{await meter.close();vi.useRealTimers();}
 });
 

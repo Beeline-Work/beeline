@@ -1,0 +1,18 @@
+{
+  "mobileSuites": 7,
+  "mobileTestsPassed": 157,
+  "vitestMaxWorkers": 2,
+  "storyRegressionsFailingOnOriginalV142": 5,
+  "checks": [
+    "root npm run typecheck",
+    "phone network channels: 74 sites / 74 entries",
+    "architecture: 20 rules",
+    "workflow paths: 106 references",
+    "git diff --check"
+  ],
+  "restoration": {
+    "native44": "Original v142 launch hash restored, original owner/mode600, normal qdiscs restored, Beeline Review foreground without recovery banner",
+    "native40": "Production v142 metadata verified, Beeline Review foreground without recovery banner; no faults or bundle changes",
+    "frida": "Task-started server stopped, port forward removed"
+  }
+}

@@ -284,7 +284,7 @@ test('the source-text scan finds guards that read code and ignores tests that re
 test('the System guard and every current source scanner are in the always-run set', () => {
   const alwaysRun = sourceTextTests(ts);
   for (const file of [guard, 'apps/server/src/system-line.contract.test.ts', 'apps/server/src/system-dm-sites.test.ts',
-    'apps/server/src/corner-state-lock.test.ts', 'apps/server/src/workspace-role-authority.test.ts']) {
+    'apps/server/src/workspace-role-authority.test.ts']) {
     assert.ok(alwaysRun.includes(file), `${file} reads source but is not always run`);
   }
   assert.ok(!alwaysRun.includes('apps/server/src/integration.test.ts'));

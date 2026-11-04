@@ -37,7 +37,7 @@ describe('Group A unclosed executable obligations', () => {
     expect(expected!.members.find(member => member.identity.pubkey === peer)!.role).toBe('spectator');
     expect(server.requests).toHaveLength(1);
     const rosterFacts = replacements(server.frames, position).filter(value => Array.isArray(value.members) && value.workspace?.id === workspace(8));
-    expect(rosterFacts, 'F03 committed membership must supply one exact authorized roster DTO').toEqual([expected]);
+    expect(rosterFacts, 'F03 committed membership must supply one exact authorized roster DTO').toEqual([{...expected,revision:(await fixture.a.query<{epoch:string}>(`SELECT epoch::text FROM router_authority WHERE scope=$1`,[`roster:${workspace(8)}`])).rows[0]!.epoch}]);
   });
 
   it('F04: one changed Room never rereads cells from an unaffected Room', async () => {

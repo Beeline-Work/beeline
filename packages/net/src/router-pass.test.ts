@@ -148,7 +148,7 @@ describe('local admission shadow core (P1)', () => {
 
   it('does not enable any production route or export an arbitrary executor', async () => {
     const api = await import('./index.js');
-    expect(Object.keys(api)).toEqual(['routes', 'validateWorkflowProjection']);
+    expect(Object.keys(api)).toEqual(['routes', 'validateWorkflowProjection', 'validateScheduledWorkProjection']);
     expect(api.validateWorkflowProjection({workflows:[]})).toBe(true);
     expect(api.validateWorkflowProjection({workflows:[{}]})).toBe(false);
     expect(Object.keys(routes).length).toBeGreaterThan(300);

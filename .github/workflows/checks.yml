@@ -406,7 +406,7 @@ jobs:
             echo "server=$SERVER_MODULE mobile=$MOBILE_MODULE"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Choose available CI slots and hosted overflow
+      - name: Choose CI pool by expected queue wait
         id: route
         env:
           GH_TOKEN: ${{ secrets.CI_RUNNER_INVENTORY_TOKEN || github.token }}

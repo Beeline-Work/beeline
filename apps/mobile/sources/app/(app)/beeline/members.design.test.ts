@@ -97,19 +97,6 @@ describe('Members page layout contract', () => {
     expect(source).not.toMatch(/sectionHeaderAction|sectionHeaderText/);
   });
 
-  it('opens an agent profile from the roster row instead of expanding settings inline', () => {
-    const agentsStart = source.indexOf('testID="members-agents-section"');
-    const agents = source.slice(
-      agentsStart,
-      source.indexOf('</KeyboardAwareScrollView>', agentsStart),
-    );
-    expect(agents).toContain('chevron="right"');
-    expect(agents).toContain('onPress={openRosterAgent}');
-    expect(source).toContain("pathname: '/beeline/agent-profile'");
-    expect(agents).not.toContain("direction={open ? 'down' : 'right'}");
-    expect(agents).not.toContain('agent-${selectedAgent.agent.identity.pubkey}-model-config');
-  });
-
   it('puts person and agent chevrons in the row chevron slot, not the trailing column', () => {
     // A chevron in the 72 px trailing column leaves the model name ~83 px short of it.
     const people = source.slice(

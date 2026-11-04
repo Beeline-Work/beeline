@@ -27,7 +27,13 @@ typecheck() {
   node --test scripts/eas-api-contract.test.mjs scripts/server-previous-sources.test.mjs
   node --test scripts/rollout-schema.test.mjs
   node scripts/rollout-schema.mjs --previous "$CI_BASE_SHA"
-  npm run typecheck
+  if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
+    npx turbo run typecheck --filter="...[$CI_BASE_SHA]"
+  else
+    npx turbo run typecheck
+  fi
+  npm run typecheck --prefix apps/mobile
+  npx tsc -p tsconfig.scripts.json
   # Check no workflow names a deleted test
   npm run lint:workflow-paths
   # Check CI routing, partitioning and build provenance

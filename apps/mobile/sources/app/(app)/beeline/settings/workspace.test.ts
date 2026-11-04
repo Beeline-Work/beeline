@@ -9,8 +9,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
 vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
 vi.mock('@/buzz/router-owner', () => ({
+  subscribeRouterOwner: () => () => {},
   routerFamilyMode: () => 'legacy',
   acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
     subscribe: () => () => {}, refreshVisibility: () => {} }),
@@ -48,7 +48,7 @@ const client = vi.hoisted(() => ({
 vi.mock('@beeline/buzz-client', () => ({
   RoomViewClient: class {
     workspace = roomViews.workspace;
-    chats = roomViews.chats;
+    chats = (_authority: unknown, workspaceId: string) => roomViews.chats(workspaceId);
     room = roomViews.room;
   },
   SurfaceRefreshScheduler: class<T> {
@@ -134,11 +134,11 @@ vi.mock('@/buzz/runtime-config', () => ({
 }));
 vi.mock('expo-clipboard', () => clipboard);
 vi.mock('@/modal', () => ({ Modal: modal }));
-vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation, readServerSurface: (_authority: unknown, ...args: unknown[]) => phoneOperation(...args) }));
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspace = roomViews.workspace;
-    chats = roomViews.chats;
+    chats = (_authority: unknown, workspaceId: string) => roomViews.chats(workspaceId);
     room = roomViews.room;
   },
 }));

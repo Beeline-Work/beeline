@@ -28,10 +28,10 @@ it.each(['obsidian', 'bone'])('Reproduction squire-spinner: card and Settings re
         root.unmount(); const settings=createRoot(document.getElementById('root')); globalThis.__route={params:{workspaceId:'ws',viewerId:'owner',connectorId:'trusty-squire',helperId:'machine'}};
         settings.render(<Connect />);
       },16000);
-      setTimeout(()=>{result.settingsError=document.querySelector('[data-testid="connect-error"]')?.textContent; result.text=document.getElementById('root').textContent;
-        document.getElementById('result').textContent=JSON.stringify(result);},33000);`);
+      setTimeout(()=>{result.settingsRetry=!!document.querySelector('[data-testid="connect-retry"]'); result.text=document.getElementById('root').textContent;
+        document.getElementById('result').textContent=JSON.stringify(result);},77000);`);
     const base = webProofShims(mobile);
-    const result = await runBrowserProof({ entry, mobile, width: 390, head: '<script>window.process={env:{NODE_ENV:"development"}};</script>', budgetMs: 35000,
+    const result = await runBrowserProof({ entry, mobile, width: 390, head: '<script>window.process={env:{NODE_ENV:"development"}};</script>', budgetMs: 79000,
       ...(process.env.SQUIRE_PROOF_OUT ? { screenshotPath: path.join(process.env.SQUIRE_PROOF_OUT, `squire-${theme}.png`) } : {}),
       shims: { ...base,
         'react-native-unistyles': base['react-native-unistyles'].replace('beelineThemes.obsidian', `beelineThemes.${theme}`),
@@ -57,9 +57,10 @@ it.each(['obsidian', 'bone'])('Reproduction squire-spinner: card and Settings re
     const output = JSON.parse(result.result);
     console.info('Reproduction squire-spinner:', output);
     expect(output.cardRoute).toBe('/beeline/settings/workbench/connect-signin');
-    expect(output.cardError).toContain('Couldn’t reach Beeline');
+    expect(output.cardError).toContain('Google sign-in didn’t load');
+    expect(output.cardError).toContain('browser didn’t answer within 15 seconds');
     expect(output.cardRetry).toBe(true);
-    expect(output.settingsError).toContain('Couldn’t reach Beeline');
-    expect(output.text).toContain('Couldn’t reach Beeline');
+    expect(output.settingsRetry).toBe(true);
+    expect(output.text).toContain('didn’t answer for 1 minute');
   } finally { await rm(directory, { recursive: true, force: true }); }
 }, 60000);

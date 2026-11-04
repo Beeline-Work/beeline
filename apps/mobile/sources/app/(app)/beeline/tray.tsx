@@ -37,7 +37,8 @@ import {
   loadTrayList,
   removeNeedsYou,
   subscribeTrayGap,
-  updateSavedList,
+  revealSavedItems,
+  hideSavedItems,
 } from '@/buzz/needs-you-store';
 import { compactRelativeTime } from '@/buzz/relative-time';
 import { CORNER_META_SIZE, CornerGlyph } from '@/components/buzz/CornerGlyph';
@@ -539,19 +540,14 @@ export default function TrayScreen() {
       }
       return;
     }
-    const edit = updateSavedList(clear.workspaceId,
-      (current) => current.filter((item) => !ids.has(item.messageId)));
+    const edit = hideSavedItems(clear.workspaceId, ids);
     try {
       await monolithPhoneOperation('clearMessageBookmarks', { workspaceId: clear.workspaceId });
       if (generation !== clientResetGeneration()) return;
       edit.settle();
-      updateSavedList(clear.workspaceId, () => [], null).settle();
     } catch (cause) {
       if (generation !== clientResetGeneration() || lostWorkspaceRef.current === clear.workspaceId) return;
       edit.cancel();
-      updateSavedList(clear.workspaceId, (current) =>
-        [...clear.items, ...current].sort((left, right) => right.bookmarkedAt - left.bookmarkedAt),
-      ).settle();
       setError(appErrorCopy(cause));
     }
   }, [legacy]);
@@ -653,8 +649,7 @@ export default function TrayScreen() {
       } catch (cause) { if (generation === clientResetGeneration()) setError(appErrorCopy(cause)); }
       return;
     }
-    const edit = updateSavedList(bookmark.workspaceId,
-      (current) => current.filter((item) => item.messageId !== bookmark.messageId));
+    const edit = hideSavedItems(bookmark.workspaceId, [bookmark.messageId]);
     setRemoved(bookmark);
     AccessibilityInfo.announceForAccessibility('Bookmark removed. Undo available.');
     try {
@@ -668,7 +663,6 @@ export default function TrayScreen() {
       if (generation !== clientResetGeneration()) return;
       edit.cancel();
       setRemoved(null);
-      updateSavedList(bookmark.workspaceId, (current) => [bookmark, ...current]).settle();
       setError(appErrorCopy(cause));
     }
   }, [legacy]);
@@ -687,7 +681,6 @@ export default function TrayScreen() {
       return;
     }
     setRemoved(null);
-    const edit = updateSavedList(bookmark.workspaceId, (current) => [bookmark, ...current]);
     AccessibilityInfo.announceForAccessibility('Bookmark restored');
     try {
       await monolithPhoneOperation('setMessageBookmark', {
@@ -695,12 +688,11 @@ export default function TrayScreen() {
         messageId: bookmark.messageId,
         bookmarked: true,
       });
-      edit.settle();
+      if (generation !== clientResetGeneration()) return;
+      revealSavedItems(bookmark.workspaceId, [bookmark.messageId]);
+      await loadSavedList(bookmark.workspaceId);
     } catch (cause) {
       if (generation !== clientResetGeneration()) return;
-      edit.cancel();
-      updateSavedList(bookmark.workspaceId,
-        (current) => current.filter((item) => item.messageId !== bookmark.messageId)).settle();
       setError(appErrorCopy(cause));
     }
   }, [removed, legacy]);

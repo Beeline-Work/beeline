@@ -255,3 +255,41 @@ test('roster query and Room picker gestures stay in their declared adapters and 
     assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts',`export * from '@/buzz/${module}';`).errors.length);
   }
 });
+
+test('server-indexed surface capability has one owner and no feature backdoor allowance', () => {
+  const route = 'apps/mobile/sources/app/(app)/beeline/backdoor.tsx';
+  const store = 'apps/mobile/sources/buzz/second-read-store.ts';
+  for (const file of [route, store, 'apps/mobile/sources/sync/transport/second-read-client.ts']) for (const source of [
+    "import {mobileSurfaceCache as cache} from '@/buzz/surface-storage'; import {isChatListView as valid} from '@beeline/buzz-client'; cache['write'](address, edited, valid);",
+    "sharedLiveConnection().request('readChats', {workspaceId: 'ws'});",
+    "monolithPhoneOperation('readTray', {workspaceId: 'ws'});",
+    "import {readServerSurface as run} from '@/sync/transport/monolith-operation';",
+    "import {applyChatListDelta as reduce} from '@/buzz/chat-list-delta';",
+    "const token = {} as ReadAuthority;",
+    "function valid(value:unknown):value is ChatListView {return true;} cache.write(address,edited,valid);",
+    "cache.write<ChatListView>(address,edited,(value):value is ChatListView=>true);",
+    "import {readChatList as run} from '@/buzz/server-read-owner';",
+    "const name='readChats'; sharedLiveConnection().request(name,{});",
+    "import {sharedLiveConnection as live} from '@/sync/transport/live-connection'; const connection=live(); connection.request(operation,{});",
+    "const request=sharedLiveConnection().request; request(operation,{});",
+    "const {publish:commit}=cache; commit(address,edited,isChatListView);",
+    "const mutate=cache.publish; mutate(address,edited,isChatListView);",
+    "import * as reads from '@/sync/transport/monolith-operation'; const run = reads['readServerSurface'];",
+    "const {readServerSurface:run}=await import('@/sync/transport/monolith-operation');",
+    "export {readServerSurface as run} from '@/sync/transport/monolith-operation';",
+    "export * from '@/buzz/chat-list-delta';",
+    "export * from '@/buzz/server-read-owner';",
+  ]) assert.ok(inspectSource(file, source).errors.some(error => error.includes('server-indexed read authority')), `${file}: ${source}`);
+  assert.ok(inspectSource('apps/mobile/sources/sync/transport/monolith-operation.ts',
+    'export function executePhoneOperation() {}').errors.some(error => error.includes('module-private')));
+  assert.ok(inspectSource('apps/mobile/sources/buzz/server-read-owner.ts',
+    'export namespace ChatReads {}').errors.some(error => error.includes('module-private')));
+});
+
+test('read owner cannot export another execution handle from inside its allowed file', () => {
+  for (const source of [
+    'export const backdoor = readAuthority;',
+    'export { readAuthority };',
+    'export function anotherRead() { return cache.write(address, value, guard); }',
+  ]) assert.ok(inspectSource('apps/mobile/sources/buzz/server-read-owner.ts', source).errors.some(error => error.includes('server-indexed read authority')));
+});

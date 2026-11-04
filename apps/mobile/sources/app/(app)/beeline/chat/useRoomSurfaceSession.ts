@@ -188,17 +188,7 @@ function messageTimeMs(message: RoomView['messages'][number]): number {
 }
 
 /** A read carries a message newer than anything the painted Room held. */
-function readFoundUnheardMessage(previous: RoomView | null, next: RoomView): boolean {
-  if (!previous) return false;
-  const known = new Set(previous.messages.map((message) => message.id));
-  const newest = previous.messages.reduce(
-    (latest, message) => Math.max(latest, messageTimeMs(message)),
-    0,
-  );
-  return next.messages.some(
-    (message) => !known.has(message.id) && messageTimeMs(message) > newest,
-  );
-}
+
 
 type RoomOutbox = ReturnType<typeof createRoomOutbox>;
 
@@ -663,8 +653,6 @@ export function useRoomSurfaceSession({
     };
     // Any frame on this watch since the last applied read. A read that finds a
     // newer message while the socket stayed silent proves the socket missed it.
-    let heardSinceRead = false;
-    let liveReadApplied = false;
     let refreshFailed = false;
     // Turn deltas heard while a Room read is in flight. Turn times are whole
     // seconds, so the read cannot tell a same-second retry from a stale turn;
@@ -916,7 +904,6 @@ export function useRoomSurfaceSession({
           if (routerHeadMode === 'router' && (!isFocusedRef.current || AppState.currentState !== 'active')) return;
           if (routerHeadMode === 'router' && 'monolithLive' in event &&
               !['presence', 'draft', 'thought', 'retract'].includes((event as MonolithSurfaceEvent).monolithLive.type)) return;
-          heardSinceRead = true;
           if ('monolithLive' in event) {
             const surfaceEvent = event as MonolithSurfaceEvent;
             const live = surfaceEvent.monolithLive;
@@ -1380,12 +1367,6 @@ export function useRoomSurfaceSession({
           apply: (view) => {
             if (cancelled) return;
             refreshFailed = false;
-            const missedLive =
-              liveReadApplied &&
-              !heardSinceRead &&
-              readFoundUnheardMessage(reconciledViewRef.current, view);
-            heardSinceRead = false;
-            liveReadApplied = true;
             roomReadStampRef.current = readStamp;
             const replayedMessages = messageDeltasDuringRead ?? [];
             messageDeltasDuringRead = undefined;
@@ -1422,7 +1403,6 @@ export function useRoomSurfaceSession({
                 });
               });
             }
-            if (missedLive) nextTransport.reconnectLive();
             if (!view.parent && !reopenedChat) {
               reopenedChat = true;
               // Only a Room the reader dismissed from the list needs reopening;

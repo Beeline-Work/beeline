@@ -154,6 +154,8 @@
       // stay in the static graph without executing a CI-specific environment.
       "expo": false,
       "entry": [
+        // tsc executes negative read-owner capability assertions in this entry.
+        "sources/buzz/read-authority.typecheck.ts",
         "index.ts",
         // WEB-OUTBOX-3446 invokes the exported-bundle startup proof by path.
         "scripts/outbox-startup-bundle-proof.mjs",

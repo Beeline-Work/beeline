@@ -7,7 +7,7 @@ export function legacyRouterProofShims(): Record<string, string> {
     export const acquireRouterLane = () => ({current:()=>empty,release:()=>{},subscribe:()=>()=>{},refreshVisibility:()=>{}});
     export const retryRouterLane = () => {};
     const forbidden = () => {throw new Error('Legacy fixture cannot mint router authority');};
-    export const acquireRouterRosterQuery=forbidden; export const acquireRouterRoomRoster=forbidden;
+    export const acquireRouterRosterQuery=forbidden; export const acquireRouterRoomRoster=forbidden; export const acquireRouterForwardList=forbidden;
     export const readRouterToolPage = forbidden; export const acquireRouterSavedContinuation = forbidden;
     export const admitRouterScheduledStop = forbidden; export const admitRouterTrayCommand = forbidden;
     export const admitRouterTrayPaint = forbidden;

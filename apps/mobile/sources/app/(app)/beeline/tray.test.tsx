@@ -35,6 +35,7 @@ vi.mock('@/buzz/command-owner', () => ({
   }),
 }));
 vi.mock('@/buzz/router-owner', () => ({
+  subscribeRouterOwner: () => () => {},
   routerFamilyMode: () => trayProtocol.mode,
   acquireRouterSavedContinuation: (...args: unknown[]) => {
     trayProtocol.continuation(...args);
@@ -183,7 +184,7 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   return { PixelLoader: (props: any) => ReactModule.createElement('PixelLoader', props) };
 });
 vi.mock('expo-haptics', () => ({ impactAsync: vi.fn(), ImpactFeedbackStyle: { Light: 'light' } }));
-vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation, readServerSurface: (_authority: unknown, ...args: unknown[]) => phoneOperation(...args) }));
 vi.mock('@/sync/transport/live-connection', () => ({
   sharedLiveConnection: () => ({
     register: async (_filters: unknown, listener: (event: unknown) => void) => {
@@ -231,7 +232,6 @@ import { ButtonRow } from '@/components/buzz/ButtonRow';
 import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
 import * as needFormatting from '@/buzz/needs-you';
 import {
-  applyNeedsYouLiveDelta,
   useNeedsYouCount,
   useTrayList,
   holdNeedsYou,
@@ -240,6 +240,9 @@ import {
 import { resetClientState } from '@/sync/client-reset';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
+function applyNeedsYouLiveDelta(delta: unknown) {
+  for (const listener of liveRegistrations) listener({ monolithLive: { ...(delta as object), type: 'needs-you-delta' } });
+}
 const person = {
   pubkey: 'person-1',
   kind: 'human' as const,
@@ -2210,6 +2213,7 @@ it.skipIf(!existsSync(CHROME)).each([false, true])(
         // Anchor the saved DTO before rendering, as the real server does. Sampling
         // it inside the read can make it newer than Tray's already sampled `now`.
         '@/sync/transport/monolith-operation': `const now = Math.floor(Date.now() / 1000);
+      export const readServerSurface = (_authority, ...args) => monolithPhoneOperation(...args);
       export const monolithPhoneOperation = async (name) => {
         if (${crossSecond}) Date.now = () => 1700000001000;
         return name === 'readTray' ? { needs: { items: [] }, saved: { bookmarks: [{
@@ -2242,6 +2246,8 @@ it.skipIf(!existsSync(CHROME)).each([false, true])(
  */
 function legacyTrayProofShims(): Record<string, string> {
   const owner = `const empty = Object.freeze({ state: 'ABSENT', value: null, cut: null, error: null });
+    export const subscribeRouterOwner = () => () => {};
+    export const acquireRouterForwardList = () => { throw new Error('Legacy proof has no router Forward gesture'); };
     export const routerFamilyMode = () => 'legacy';
     export const acquireRouterSavedContinuation = () => { throw new Error('Legacy cannot open router continuation'); };
     export const acquireRouterLane = () => ({ current: () => empty, release: () => {}, subscribe: () => () => {}, refreshVisibility: () => {} });
@@ -2271,6 +2277,7 @@ function clearProofShims(mobile: string) {
       export const useRouter = () => ({ back: () => undefined, push: () => undefined });`,
     '@/sync/transport/monolith-operation': `const now = Math.floor(Date.now() / 1000);
       const base = { workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'launch', roomKind: 'room', createdAt: now - 600, author: { name: 'Avery' } };
+      export const readServerSurface = (_authority, ...args) => monolithPhoneOperation(...args);
       export const monolithPhoneOperation = async (name) => name === 'readTray' ? { needs: { items: [
         { ...base, messageId: 'grant-1', text: 'BBC asks to run git push', approval: { kind: 'grant', actor: 'BBC', ask: 'asks to run', subject: 'git push', literal: true } },
         ...(!location.search.includes('approvalOnly=1') ? [{ ...base, messageId: 'ask-1', text: 'can you confirm the review note?', expiresAt: now + 80000 }] : []),
@@ -2302,7 +2309,8 @@ it.skipIf(!existsSync(CHROME))(
     export const useRouter = () => ({ back: () => undefined, push: value => { window.__opened = value; } });`;
     shims['@/sync/transport/monolith-operation'] = `const now = Math.floor(Date.now() / 1000);
     const base = { workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'launch', roomKind: 'room', createdAt: now - 600 };
-    export const monolithPhoneOperation = async name => name === 'readTray' ? { needs: { items: [
+    export const readServerSurface = (_authority, ...args) => monolithPhoneOperation(...args);
+      export const monolithPhoneOperation = async name => name === 'readTray' ? { needs: { items: [
       { ...base, messageId: 'merge-1', author: { name: 'System' }, text: 'Approve merge of PR #2412?' },
       { ...base, messageId: 'feedback-1', author: { name: 'Ruby' }, text: 'Turn Feedback Fixed notices on or off?' }
     ] }, saved: { bookmarks: [] } } : undefined;`;

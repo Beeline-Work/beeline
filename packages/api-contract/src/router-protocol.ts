@@ -7,8 +7,6 @@ import type {WalletView} from './wallet.js';
 /** Data protocol only. Local admission passes never enter these envelopes. */
 export const ROUTER_PROTOCOL = 1 as const;
 export const ROUTER_MAX_PART_BYTES = 64 * 1024;
-export const ROUTER_MAX_BATCH_BYTES = 1024 * 1024;
-export const ROUTER_MAX_PARTS = 16;
 export const ROUTER_FAMILIES = ['room-list', 'needs-you', 'needs-you-tray', 'needs-you-count', 'room-head','room-scheduled-work','needs-you-saved-page','workspace-roster','room-workflows','agent-profile','owner-workbench','owner-wallet'] as const;
 export type RouterFamily = typeof ROUTER_FAMILIES[number];
 export type RouterCut = { readonly stream: string; readonly epoch: string; readonly through: number; readonly protocol: 1 };

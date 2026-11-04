@@ -2202,6 +2202,35 @@ describe('phone committed-row live delivery', () => {
     expect(databaseQuery).toHaveBeenCalledOnce();
   });
 
+  it('a Room replay failure reloads only that Room and keeps other subscriptions and pong working', async () => {
+    const server = createBeelineServer({
+      database: { query: vi.fn(), transaction: vi.fn() },
+      auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+      phone: { canReadRooms: vi.fn(async (ids: string[]) => new Set(ids)), liveDraftSnapshot: vi.fn(async () => []) } as unknown as PhoneService,
+      daemon: {} as DaemonService, live: new LiveHub(), mediaMaximumBytes: 1,
+      replay: { subscribe: vi.fn(async (_stream: string, roomId: string) => {
+        if (roomId === 'failed') throw new Error('replay unavailable');
+        return { release: () => {}, start: () => {}, resumed: false, epoch: 'e', sequence: 0, replay: [] };
+      }) } as unknown as ServerOptions['replay'],
+    });
+    servers.push(server);
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = (server.address() as AddressInfo).port;
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
+    sockets.push(socket);
+    await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    const frames: Record<string, unknown>[] = [];
+    socket.on('message', raw => frames.push(JSON.parse(raw.toString())));
+    const subscribed = nextSocketMessage(socket, 'subscribed');
+    socket.send(JSON.stringify({ type: 'subscribe', roomIds: ['failed', 'healthy'] }));
+    await expect(subscribed).resolves.toMatchObject({ roomId: 'healthy' });
+    expect(frames.filter(frame => frame.type === 'reload')).toEqual([{ type: 'reload', roomId: 'failed' }]);
+    const pong = nextSocketMessage(socket, 'pong');
+    socket.send(JSON.stringify({ type: 'ping' }));
+    await expect(pong).resolves.toEqual({ type: 'pong' });
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+  });
+
   it('contains a failed paint-clock read and keeps serving HTTP', async () => {
     const query = vi.fn().mockRejectedValue(new Error('timeout exceeded when trying to connect'));
     const { live, roomId, socket, port } = await connect(
@@ -2222,9 +2251,10 @@ describe('phone committed-row live delivery', () => {
       trace: { id: 'failed-clock', databaseAt: 1, emittedAt: 2 },
     });
     await delivered;
-    const closed = new Promise<number>((resolve) => socket.once('close', resolve));
+    const failed = new Promise<Record<string, unknown>>(resolve => socket.once('message', raw => resolve(JSON.parse(raw.toString()))));
     socket.send(JSON.stringify({ type: 'trace-paint', id: 'failed-clock' }));
-    await expect(closed).resolves.toBe(1013);
+    await expect(failed).resolves.toMatchObject({ t: 'res', id: 'failed-clock', ok: false, error: { code: 'unavailable' } });
+    expect(socket.readyState).toBe(WebSocket.OPEN);
     expect(query).toHaveBeenCalledOnce();
     expect((await fetch(`http://127.0.0.1:${port}/healthz`)).status).toBe(200);
   });
@@ -2391,8 +2421,8 @@ describe('phone committed-row live delivery', () => {
 });
 
 describe('live reconnect admission', () => {
-  it('rejects an oversized subscribe frame before asking the database', async () => {
-    const canReadRooms = vi.fn();
+  it('accepts a large subscribe and keeps the phone open if its read fails', async () => {
+    const canReadRooms = vi.fn().mockRejectedValue(new Error('read unavailable'));
     const server = createBeelineServer({
       database: { query: vi.fn(), transaction: vi.fn() },
       auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
@@ -2410,12 +2440,18 @@ describe('live reconnect admission', () => {
         socket!.once('open', () => resolve());
         socket!.once('error', reject);
       });
-      const closed = new Promise<number>((resolve) => socket!.once('close', resolve));
+      const reloaded = new Promise<Record<string, unknown>>(resolve => socket!.once('message', raw => resolve(JSON.parse(raw.toString()))));
       socket.send(JSON.stringify({
         type: 'subscribe', roomIds: Array.from({ length: 33 }, (_, index) => `room-${index}`),
       }));
-      await expect(closed).resolves.toBe(1008);
-      expect(canReadRooms).not.toHaveBeenCalled();
+      await expect(reloaded).resolves.toMatchObject({ type: 'reload', roomId: 'room-0' });
+      expect(canReadRooms).toHaveBeenCalledOnce();
+      const pong = new Promise<Record<string, unknown>>(resolve => {
+        socket!.on('message', raw => { const value = JSON.parse(raw.toString()); if (value.type === 'pong') resolve(value); });
+      });
+      socket.send(JSON.stringify({ type: 'ping' }));
+      await expect(pong).resolves.toEqual({ type: 'pong' });
+      expect(socket.readyState).toBe(WebSocket.OPEN);
     } finally {
       socket?.terminate();
       await new Promise<void>((resolve) => server.close(() => resolve()));

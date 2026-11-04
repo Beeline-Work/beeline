@@ -241,8 +241,6 @@ export function routerLaneStorage(origin: string, principal: string) {
   };
   return {
     write: async (key: string, encoded: string): Promise<void> => transaction(() => {
-      const length = new TextEncoder().encode(encoded).length;
-      if (length > 1024 * 1024) throw new Error('Router consistency group exceeds storage budget.');
       const scopes = authorities(encoded); check(scopes);
       const target = groupKey(key); write(target, encoded);
       try { check(scopes); }

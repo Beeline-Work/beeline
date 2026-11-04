@@ -46,6 +46,18 @@ const edits=()=>[fact({kind:'scope-replace',family:'needs-you-count',scope:ws,va
   fact({kind:'saved-row-remove',scope:ws,bookmarkId:row(3).bookmarkId,messageId:row(3).value.messageId})];
 
 describe('Saved selected whole Needs/Tray/window group assembly',()=>{
+  it('a failed Tray re-read parks only that item and retains the healthy count',async()=>{
+    let failing=false;
+    const{lanes,reads}=await setup(async request=>{
+      if(failing&&request.family==='needs-you-tray')throw new Error('unavailable');
+      return snapshot(request);
+    });
+    failing=true;lanes.unavailable(`workspace:${ws}`,'needs-you-tray');await settle();
+    expect(lanes.peek(head)).toMatchObject({state:'PARKED',error:'This item could not be loaded; Retry.'});
+    expect(lanes.peek(count)).toMatchObject({state:'LIVE',value:{count:1},error:null});
+    expect(reads()).toBe(3);
+  });
+
   it('persists all retained members at one cut and publishes all values before any observer runs',async()=>{
     const{lanes,writes,reads}=await setup();lanes.demand(page,{},permit);await settle();
     const seen:number[][]=[];for(const request of[count,head,page])lanes.subscribe(request,()=>seen.push([count,head,page].map(key=>lanes.peek(key).cut?.through??-1)));
@@ -70,15 +82,17 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
     expect(reads()).toBe(3);
   });
 
-  it.each(['missing','query','oversize','row'] as const)('parks a malformed %s head interval atomically',async kind=>{
+  it.each(['missing','query','oversize','row'] as const)('re-reads a malformed %s head interval without painting its data',async kind=>{
     const{lanes,reads}=await setup();lanes.demand(page,{},permit);await settle();
     const saved=kind==='missing'?undefined:kind==='query'?{...window([row(1)]),windowId:`saved1:${'f'.repeat(64)}`}:
       kind==='oversize'?window(Array.from({length:31},(_,i)=>row(i+1))):window([row(1)]);
     const facts=[fact({kind:'scope-replace',family:'needs-you-saved-page',scope:ws,value:saved})];
     if(kind==='row')facts.push(fact({kind:'saved-row-replace',scope:ws,row:{...row(99),value:{...row(99).value,workspaceId:room}}}));
     await lanes.accept(batch(1,2,facts));
-    for(const request of[count,head,page])expect(lanes.peek(request)).toMatchObject({state:'PARKED',value:null});
-    expect(reads()).toBe(3);
+    for(const request of[count,head,page])expect(lanes.peek(request).value).toBeNull();
+    await settle();
+    for(const request of[count,head,page])expect(lanes.peek(request)).toMatchObject({state:'LIVE',value:value(request)});
+    expect(reads()).toBe(6);
   });
 
   it('replays complete intervals over an older opening page before it can paint and preserves the sealed cursor/hole',async()=>{
@@ -114,10 +128,10 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
     expect(current.before).toBe(old.before);expect(current.next).toBe(old.next);expect(current.windowId).toBe(old.windowId);expect(current.rows[0]!.order).toBe(old.rows[1]!.order);expect(reads()).toBe(3);
   });
 
-  it('parks a reply older than its independently known opening prefix with no automatic repair/read',async()=>{
+  it('parks only the page whose reply is older than its known opening prefix',async()=>{
     const{lanes,reads}=await setup(async request=>snapshot(request));await lanes.accept(batch(1,2));
-    lanes.demand(page,{},permit);await settle();expect([count,head,page].every(request=>lanes.peek(request).state==='PARKED')).toBe(true);
-    expect([count,head,page].every(request=>lanes.peek(request).value===null)).toBe(true);expect(reads()).toBe(3);
+    lanes.demand(page,{},permit);await settle();expect(lanes.peek(page)).toMatchObject({state:'PARKED',value:null});
+    expect(lanes.peek(count).state).toBe('LIVE');expect(lanes.peek(head).state).toBe('LIVE');expect(reads()).toBe(3);
   });
 
   it('requires classification, exact current certificate and committed clock without reviving older data',async()=>{
@@ -126,7 +140,7 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
       const facts=update.facts.map(entry=>entry.payload.kind!=='tray-classification'?entry:kind==='clock'?{...entry,payload:{...entry.payload,clockVersion:'wall-time'}}:
         kind==='scope'?{...entry,payload:{...entry.payload,scope:'wrong'}}:kind==='certificate'?{...entry,authority:{...authority,digest:'unrelated'}}:entry);
       await lanes.accept({...update,facts:kind==='missing'?facts.filter(entry=>entry.payload.kind!=='tray-classification'):facts});
-      expect(lanes.peek(head)).toMatchObject({state:'PARKED',value:null});expect(lanes.peek(count).value).toBeNull();expect(reads()).toBe(2);
+      await settle();expect(lanes.peek(head)).toMatchObject({state:'LIVE',value:headValue()});expect(lanes.peek(count).value).toEqual({count:1});expect(reads()).toBe(4);
     }
   });
 
@@ -135,7 +149,7 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
       const{lanes,reads}=await setup();lanes.demand(page,{},permit);await settle();
       const payload:LaneFact['payload']=kind==='metadata'?{kind:'saved-row-replace',scope:ws,row:{...row(2),order:'7,m-2'}}:
         {kind:'scope-replace',scope:ws,family:kind==='page'?'needs-you-saved-page':'needs-you-tray',value:kind==='page'?window([row(98)],cursor):{...headValue(),saved:window([row(98)])}};
-      await lanes.accept(batch(1,2,[fact(payload)]));expect(lanes.peek(head).value).toBeNull();expect(lanes.peek(page).value).toBeNull();expect(reads()).toBe(3);
+      await lanes.accept(batch(1,2,[fact(payload)]));await settle();expect(lanes.peek(head).value).toEqual(headValue());expect(lanes.peek(page).value).toEqual(value(page));expect(reads()).toBe(6);
     }
   });
 
@@ -152,12 +166,13 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
     expect(lanes.peek(page).value).toBeNull();expect(lanes.peek(head).value).toBeNull();expect(reads()).toBe(3);
   });
 
-  it('bounds source ingress during slow persistence and never keeps an unbounded serial promise/body chain',async()=>{
+  it('serializes all source ingress during slow persistence without parking a valid group',async()=>{
     const gate=deferred<void>(),entered=deferred<void>();let block=false;
     const{lanes,reads}=await setup(undefined,async()=>{if(block){entered.resolve();await gate.promise;}});block=true;
     const active=lanes.accept(batch(1,2,edits(),cv(1)));await entered.promise;
-    const future:Promise<void>[]=[];for(let n=2;n<21;n++)future.push(lanes.accept(batch(n,n+1)));
-    expect(lanes.peek(head)).toMatchObject({state:'PARKED',value:null});gate.resolve();await active;await Promise.all(future);expect(reads()).toBe(2);
+    const future:Promise<void>[]=[];for(let n=2;n<21;n++)future.push(lanes.accept(batch(n,n+1,[],cv(1))));
+    expect(lanes.peek(head).state).toBe('LIVE');gate.resolve();await active;await Promise.all(future);expect(reads()).toBe(2);
+    expect(lanes.peek(head)).toMatchObject({state:'LIVE',error:null});
   });
 
   it('an old generation storage completion cannot publish or park the fresh connection',async()=>{
@@ -190,15 +205,19 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
     expect(lanes.peek(head)).toMatchObject({state:'LIVE',cut:{through:2}});expect(lanes.peek(count).value).toEqual({count:0});expect(reads).toBe(3);
   });
 
-  it('a real Retry after a parked group retains its opening prefix until the new reply can replay',async()=>{
-    const response=deferred<LaneSnapshot>();let retrying=false;
-    const{lanes,reads}=await setup(async request=>retrying?response.promise:snapshot(request));
-    await lanes.accept({...batch(1,2),facts:[]});expect(lanes.peek(head).value).toBeNull();
-    retrying=true;lanes.retry(head,permit);await settle();
+  it('automatic data recovery holds an opening group until its reply can replay later updates',async()=>{
+    const response=deferred<void>();let recovering=false;
+    const{lanes,reads}=await setup(async request=>{
+      if(recovering){await response.promise;return snapshot(request,2,cv(1));}
+      return snapshot(request);
+    });
+    recovering=true;
+    await lanes.accept({...batch(1,2),facts:[]});await settle();
+    expect(lanes.peek(head).value).toBeNull();
     await lanes.accept(batch(2,3,edits(),cv(2)));
-    response.resolve(snapshot(head,2,cv(1)));await settle();
+    response.resolve();await settle();
     expect(lanes.peek(head)).toMatchObject({state:'LIVE',cut:{through:3},value:{needs:{items:[]}}});
-    expect(lanes.peek(count).value).toBeNull();expect(reads()).toBe(3);
+    expect(lanes.peek(count).value).toEqual({count:0});expect(reads()).toBe(4);
   });
 
   it('a Tray persistence failure hides that group and still commits the independent Room in the interval',async()=>{

@@ -1230,12 +1230,10 @@ export class PhoneService {
       const voiceRevision=hash(JSON.stringify({voices:metadata?.chosen_voices??{},soul:value.soul?.instructions??'',
         name:value.agent.identity.name,handle:value.agent.identity.handle,owner:value.access?.owner?.id,role:metadata?.role}));
       const result={...stable,configVersion:revision,canRemove,voiceRevision};
-      if(Buffer.byteLength(JSON.stringify(result))>32*1024)throw new RouterProjectionUnavailable('budget');
       return result;
     }
     if (input.family === 'room-workflows') {
       const value=await reader.listRoomWorkflowRuns(input.roomId, viewerId);
-      if(value.workflows.length>30||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
       return value;
     }
     if (input.family === 'workspace-roster') {
@@ -1244,8 +1242,6 @@ export class PhoneService {
       if(!revision)throw new RouterProjectionUnavailable('dependency');
       if(input.query&&input.query.revision!==revision)throw new RouterProjectionUnavailable('dependency');
       const value = await reader.readWorkspace(input.workspaceId, viewerId,input.query);
-      if (value && (value.members.length + value.agents.length > 100 ||
-          Buffer.byteLength(JSON.stringify(value)) > 64 * 1024)) throw new RouterProjectionUnavailable('budget');
       return value?{...value,revision}:null;
     }
     if (input.family === 'room-list') return reader.readChats(input.workspaceId, viewerId);
@@ -1298,7 +1294,6 @@ export class PhoneService {
         authority: routerAuthority(meta.scopes.map(scope => ({ authorityScope: scope.authorityScope, epoch: scope.epoch }))),
         atomicGroup: routerAtomicGroup(input, viewer),
       };
-      if (Buffer.byteLength(JSON.stringify(result)) > 64 * 1024) throw new RouterProjectionUnavailable('budget');
       return result;
     });
   }
@@ -1310,17 +1305,14 @@ export class PhoneService {
 
   async buildRouterNeedsHead(database:SqlDatabase,workspaceId:string,viewerId:string){
     const value=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,'committed');
-    if(value.items.length>30||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
     return value;
   }
 
   async buildRouterNeedsRooms(database:SqlDatabase,workspaceId:string,viewerId:string,rooms:readonly string[]){
-    if(rooms.length>128)throw new RouterProjectionUnavailable('budget');
     const order=await readNeedsYouOrder(database,workspaceId,viewerId);
     const {items}=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,'wall',rooms);
     const value={kind:'needs-you-rooms-replace' as const,scope:workspaceId,...order,
       rooms:rooms.map(roomId=>({roomId,items:items.filter(item=>item.roomId===roomId)}))};
-    if(items.length>30||order.order.length>500||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
     return value;
   }
 

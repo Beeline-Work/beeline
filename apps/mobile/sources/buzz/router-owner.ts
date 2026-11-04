@@ -145,10 +145,16 @@ const assembly = new RouterBatchAssembly(hash, batch => {
     }else void lanes?.accept({...batch,facts});
     return;
   }
-  if(!negotiation?.scheduledWorkCoverageV1||!scheduledAuthority){lanes?.hideFamily('room-scheduled-work','Unnegotiated coverage; Retry.');return;}
-  // One verified interval has one body in ReadLanes. Splitting its facts
-  // creates conflicting deliveries at the same cut, including when the
-  // Scheduled Work portion contains only its classification marker.
+  const scheduled=(fact:typeof facts[number])=>fact.atomicGroup.startsWith('room-scheduled-work:');
+  // Room facts never wait behind the Scheduled Work barrier. With no Scheduled
+  // Work facts there is nothing to hold; otherwise deliver the Room facts now
+  // and let Scheduled Work re-read, so one interval still has one body.
+  if(!facts.some(scheduled)){void lanes?.accept({...batch,facts});return;}
+  if(!negotiation?.scheduledWorkCoverageV1||!scheduledAuthority||facts.some(fact=>!scheduled(fact))){
+    lanes?.hideFamily('room-scheduled-work',negotiation?.scheduledWorkCoverageV1&&scheduledAuthority?'Projection unavailable; Retry.':'Unnegotiated coverage; Retry.');
+    void lanes?.accept({...batch,facts:facts.filter(fact=>!scheduled(fact))});
+    return;
+  }
   const deferred={...batch,facts};
   scheduledAuthority.defer(negotiation.generation,{id:hash(deferred),kind:'batch',barrier:marker.authorityBarrier,
     bytes:utf8ToBytes(JSON.stringify(deferred)).length,apply:()=>{void lanes?.accept(deferred);},

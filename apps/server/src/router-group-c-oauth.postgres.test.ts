@@ -32,7 +32,7 @@ describe.skipIf(!url)('Group C P7/P12 real PostgreSQL OAuth HTTP handoff', () =>
       if (sql.startsWith('SELECT code,error FROM rooms_mcp_handoffs')) { reads++; inspection.resolve(); }
       return result;
     } };
-    const oauth = new RoomsMcpOAuth(observed, 'http://synthetic.invalid', {} as TokenAuth, () => true);
+    const oauth = new RoomsMcpOAuth(observed, 'http://synthetic.invalid', {} as TokenAuth, undefined, () => true);
     const server = createServer((request, response) => {
       void oauth.handle(request, response, new URL(request.url!, 'http://synthetic.invalid')).catch(() => response.destroy());
     });

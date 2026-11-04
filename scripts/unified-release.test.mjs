@@ -2257,7 +2257,8 @@ test('native/helper completion cannot hold the live checkpoint or steal the prod
   for (const name of ['server', 'mobile_ota', 'website']) assert.equal(workflow.jobs[name].needs, 'initialize');
   assert.ok(workflow.jobs.helper.needs.includes('delivery_result'));
   assert.ok(workflow.jobs.mobile_native_android.needs.includes('delivery_result'));
-  assert.equal(workflow.jobs.website.steps.find(step => step.uses === './.github/actions/pages-leg').if, undefined);
+  // Pages keeps one deployment per commit: when the helper ships, its deploy carries the website.
+  assert.equal(workflow.jobs.website.steps.find(step => step.uses === './.github/actions/pages-leg').if, "needs.initialize.outputs.run_helper != 'true'");
   assert.equal(workflow.jobs.website.concurrency.group, workflow.jobs.helper.concurrency.group);
   for (const name of ['server', 'website']) {
     assert.equal(workflow.jobs[name].outputs.completed_at, '${{ steps.complete.outputs.completed_at }}');

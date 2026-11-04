@@ -9,7 +9,8 @@ const asyncStorage = vi.hoisted(() => ({
 }));
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: asyncStorage }));
 const viewer = vi.hoisted(() => ({ publicKey: 'viewer' }));
-vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: async () => ({ publicKey: viewer.publicKey }) }));
+vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: vi.fn(async () => ({ publicKey: viewer.publicKey })) }));
+import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 
 import { saveActiveCommunityId } from './community-storage';
 import { useActiveCommunityId } from './use-active-community';
@@ -43,4 +44,22 @@ it('follows the new viewer after an identity change', async () => {
   expect(seen.at(-1)).toBe('workspace-other');
   await act(async () => saveActiveCommunityId('other', 'workspace-next'));
   expect(seen.at(-1)).toBe('workspace-next');
+});
+
+it('Retry replaces a stuck initial identity read and ignores its late completion', async () => {
+  viewer.publicKey = 'retry-viewer';
+  asyncStorage.getItem.mockResolvedValue('retry-workspace');
+  let resolve!: (identity: Awaited<ReturnType<typeof loadBuzzIdentity>>) => void;
+  vi.mocked(loadBuzzIdentity).mockImplementationOnce(() => new Promise(r => { resolve = r; }));
+  const seen: Array<string | null | undefined> = [];
+  function Reader({ retry }: { retry: number }) {
+    const id = useActiveCommunityId(retry); seen.push(id); return <span>{id ?? ''}</span>;
+  }
+  let view: any;
+  await act(async () => { view = create(<Reader retry={0} />); mounted.push(view); });
+  expect(seen.at(-1)).toBeUndefined();
+  await act(async () => view.update(<Reader retry={1} />));
+  expect(seen.at(-1)).toBe('retry-workspace');
+  await act(async () => resolve({ publicKey: 'stale-viewer', secretKey: new Uint8Array() }));
+  expect(seen.at(-1)).toBe('retry-workspace');
 });

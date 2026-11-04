@@ -315,7 +315,7 @@ describe('MemberPickerSheet', () => {
       act(() => row.props.onPress());
       return props.onCopyPairCommand.mock.calls.at(-1)![0];
     };
-    const connector = 'Join my Beeline workspace using the MCP connector https://server.usebeeline.app/mcp';
+    const connector = 'Join my Beeline Room: join.usebeeline.app';
 
     // The shown line only gains invisible break hints; Copy copies the plain line.
     expect(line()).toBe(connector.replace(/\//g, '/\u2060'));
@@ -326,7 +326,7 @@ describe('MemberPickerSheet', () => {
     expect(copy()).toBe(`${connector}\n\nClient ID: 6Zxge0aVJeCxF8Jvshy-oYTjYPJmrFHdTnwVfvkaF0o`);
     for (const id of ['claude', 'codex', 'gemini', 'opencode', 'pi', 'hermes', 'zcode']) {
       tap(id);
-      expect(copy()).toBe('Join my Beeline Room: usebeeline.app/room');
+      expect(copy()).toBe('Join my Beeline Room: join.usebeeline.app');
     }
     tap('grok');
     expect(copy()).toBe(connector);

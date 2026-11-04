@@ -16,7 +16,7 @@ describe('actual committed MCP OAuth held completion',()=>{
     const observed:SqlDatabase={transaction:work=>db.transaction(work),query:(sql,values)=>{
       if(sql.startsWith('SELECT code,error FROM rooms_mcp_handoffs'))reads.push(sql);return db.query(sql,values);
     }};
-    const oauth=new RoomsMcpOAuth(observed,'http://synthetic.invalid',{} as TokenAuth,()=>ready);
+    const oauth=new RoomsMcpOAuth(observed,'http://synthetic.invalid',{} as TokenAuth,undefined,()=>ready);
     server=createServer((request,response)=>{void oauth.handle(request,response,new URL(request.url!,'http://synthetic.invalid')).catch(()=>{response.destroy();});});
     await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));origin=`http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   },60000);

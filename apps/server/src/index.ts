@@ -409,7 +409,7 @@ async function main() {
   const server = createBeelineServer({
     operationOutcomes,
     replay: new DurableLiveReplay(database, live),
-    roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth, () => liveListener.projectionHealth().connected), phone, live, daemon, objectService, undefined, () => liveListener.projectionHealth().connected),
+    roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth, undefined, () => liveListener.projectionHealth().connected), phone, live, daemon, objectService, undefined, () => liveListener.projectionHealth().connected),
     sentryWakeAgentId,
     database,
     sentryTelegram: sentryTelegramFromEnv(),

@@ -5,7 +5,7 @@
     {
       "file": "app/(app)/beeline/channels.tsx",
       "beforeLine": 852,
-      "afterLine": 853,
+      "afterLine": 887,
       "id": "sweep-01",
       "label": "app/(app)/beeline/channels.tsx:852",
       "before": {
@@ -25,11 +25,11 @@
         "selectors": [
           {
             "tag": "IndexRow",
-            "hash": "060d6945e99f50f3486ed5d4889df9a0199eada3a70b997a593b7528e2b05cfa",
+            "hash": "d835f91b15bed9a97870f80af78c56d8c55cf5badb371eba55deaa2ed83ec6c3",
             "occurrence": 0
           }
         ],
-        "sourceLine": 853
+        "sourceLine": 887
       }
     },
     {

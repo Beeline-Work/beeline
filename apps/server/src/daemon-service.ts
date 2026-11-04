@@ -21,6 +21,7 @@ import { consumeStarterVideoPost, restoreStarterVideoPost, postStarterVideoPrevi
 import type { StarterOnboardingService } from './starter-onboarding-run.js';
 import { checkinOutputAllowed } from './next-day-checkin.js';
 import { recordStartupWakeOutcome } from './startup-wake-backoff.js';
+import { isSilentRetry, stopSilentWakes } from './silent-wake-limit.js';
 import { visibleMessageSql } from './read-cursor.js';
 import { readUsageRefreshOutcome, sanitizeTurnReplay } from '@beeline/api-contract/daemon';
 import { observeOnboardingMessage } from './signin-funnel.js';
@@ -1838,7 +1839,7 @@ export class DaemonService {
           // Older helpers may detach the terminal MCP call before its result
           // arrives. Its result cannot add work to a turn already ended silently.
           // Preserve every other background job and every later generation.
-          if (/^(?:mcp__beeline[-_]agent__)?no_reply_needed$/.test(completion.title) &&
+          if (/^(?:(?:mcp__)?beeline[-_]agent__)?no_reply_needed$/.test(completion.title) &&
               (await db.query(`SELECT 1 FROM agent_turns
                 WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4
                   AND completion_kind='no-reply'`,
@@ -5216,7 +5217,17 @@ export class DaemonService {
       }
       await this.persistTurnTrace(database, input, agentId);
       if (!input.heartbeat) await recordStartupWakeOutcome(database, input, agentId);
-      if (input.status === 'failed') {
+      let silentWakeStopped = false;
+      if (['complete','failed'].includes(input.status) && !input.heartbeat) {
+        const command = (await database.query<CommandRow>(`SELECT * FROM agent_commands
+          WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND generation_id=$4`,
+        [input.roomId,agentId,input.requestId,input.generationId ?? null])).rows[0];
+        if (command && isSilentRetry(command.reason, command.private_payload))
+          silentWakeStopped = await stopSilentWakes(database,input.roomId,agentId,command.root_source_message_id);
+        if (silentWakeStopped) await database.query(`UPDATE agent_commands SET state='complete',completed_at=now()
+          WHERE id=$1 AND state='claimed' AND generation_id=$2`, [command!.id,input.generationId]);
+      }
+      if (input.status === 'failed' && !silentWakeStopped) {
         silence = await this.inscribeTurnFailure(
           database,
           input.roomId,
@@ -7786,7 +7797,7 @@ export class DaemonService {
     if (['grok', 'xai', 'x ai', 'grok bot', 'muse', 'meta muse', 'meta ai',
       'chatgpt', 'openai chatgpt', 'claude', 'cursor', 'mcp', 'beeline connector'].includes(assistant))
       return { status: 'ready', app: 'Beeline Rooms',
-        next: 'In your AI assistant, add a custom connector with URL https://server.usebeeline.app/mcp, sign in with your Beeline account, tap Allow, then add the new member to a Room via its Members sheet > +. If the assistant has no custom-connector option yet, it cannot connect yet; the Muse directory listing is still pending.' };
+        next: 'In your AI assistant, add a custom connector with URL https://join.usebeeline.app, sign in with your Beeline account, tap Allow, then add the new member to a Room via its Members sheet > +. If the assistant has no custom-connector option yet, it cannot connect yet; the Muse directory listing is still pending.' };
     // Remove an entry when its provider approves Beeline sign-in.
     const pendingProviderApproval = new Set(['tiktok']);
     if (pendingProviderApproval.has(appIdentity(service)?.key ?? assistant))
@@ -9239,7 +9250,12 @@ export class DaemonService {
            RETURNING url,name,mime_type,size,created_at,id
          )
          INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,request_id,legacy_event,attachments,reply_to_message_id,root_message_id)
-         SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3),
+         SELECT COALESCE((SELECT prior.id FROM messages prior
+           WHERE prior.id=$10 AND prior.room_id=$2 AND prior.author_id=$3
+             AND prior.text=$4 AND prior.reply_to_message_id=$8),
+           CASE WHEN $10::text IS NOT NULL AND NOT EXISTS(SELECT 1 FROM messages WHERE id=$10)
+             THEN $10 ELSE $1 END),
+           room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3),
            CASE WHEN room.id=$5::uuid THEN $6 ELSE NULL END,
            jsonb_build_object('turnGenerationId',$7::text),
            COALESCE((SELECT jsonb_agg(jsonb_build_object('url',url,'name',name,'mimeType',mime_type,'size',size)
@@ -9247,7 +9263,11 @@ export class DaemonService {
          FROM rooms room WHERE room.id=$2 AND room.archived_at IS NULL
          ON CONFLICT(id) DO UPDATE SET id=messages.id
          RETURNING id,created_at`,
-        [key ? mentionReplyId(key) : id(), input.cornerId, agentId, text, input.roomId, input.requestId, input.generationId, input.replyTo ?? null, root],
+        // Explicit posts may answer the same mention with different text. A
+        // retry of that text keeps its id, while a new post gets its own row.
+        // Keep the first post on the shared mention id so an automatic final
+        // reply or a retry in another turn cannot deliver the answer again.
+        [key ? mentionReplyId(`${key}:${text}`) : id(), input.cornerId, agentId, text, input.roomId, input.requestId, input.generationId, input.replyTo ?? null, root, key ? mentionReplyId(key) : null],
       )
     ).rows[0];
     if (!saved) throw new CommandRefusalError('post refused: address is archived', 409);

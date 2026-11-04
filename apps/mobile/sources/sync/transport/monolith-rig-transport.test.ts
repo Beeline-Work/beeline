@@ -8,6 +8,7 @@ const controls = vi.hoisted(() => ({
   request: vi.fn(),
   activation: vi.fn(),
   authorization: vi.fn(),
+  invalidateAuthorization: vi.fn(),
   identityListeners: new Set<() => void>(),
 }));
 const mmkv = vi.hoisted(() => ({ stores: new Map<string, Map<string, string>>() }));
@@ -34,6 +35,7 @@ vi.mock('@/auth/monolith-session', () => ({
   monolithSession: {
     fetch: controls.fetch,
     authorization: controls.authorization,
+    invalidateAuthorization: controls.invalidateAuthorization,
     subscribeIdentityChange: (listener: () => void) => {
       controls.identityListeners.add(listener);
       return () => controls.identityListeners.delete(listener);
@@ -130,6 +132,7 @@ describe('monolith Room send path', () => {
       return new Response(JSON.stringify({ messageId: input.messageId }), { status: 200 });
     });
     controls.authorization.mockReset();
+    controls.invalidateAuthorization.mockReset();
     controls.authorization.mockResolvedValue('phone-session');
     controls.identityListeners.clear();
   });
@@ -298,8 +301,18 @@ describe('monolith Room send path', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets).toHaveLength(2);
     sockets[1]!.onclose?.();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(controls.invalidateAuthorization).toHaveBeenCalledExactlyOnceWith('phone-session');
+    // The opened socket's loss already spent this incident's replacement.
+    // Rejecting its handshake invalidates stale access without another attempt.
+    expect(sockets).toHaveLength(2);
+    const authorizationCalls = controls.authorization.mock.calls.length;
     await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets).toHaveLength(2);
+    expect(controls.authorization).toHaveBeenCalledTimes(authorizationCalls);
+    sharedLiveConnection().reconnectNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(3);
 
     stop();
   });

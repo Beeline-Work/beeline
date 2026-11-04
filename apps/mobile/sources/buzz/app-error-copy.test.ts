@@ -31,3 +31,7 @@ it('uses the screen fallback for runtime and RTC diagnostics', () => {
   for (const message of ['profile read failed', 'TLS roots missing', 'WebRTC failed before connecting', "Cannot read properties of undefined (reading name)"])
     expect(appErrorCopy(new Error(message), 'Conversation mode could not start')).toBe('Conversation mode could not start');
 });
+
+it('shows connection recovery after a live socket closes before its read answers', () => {
+  expect(appErrorCopy(new Error('The connection closed before the server answered. The result is unknown.'))).toBe(connectionErrorTitle);
+});

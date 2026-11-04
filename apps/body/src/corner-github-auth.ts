@@ -371,10 +371,11 @@ function isPushCommand(args) {
 }
 /** The feature branch's remote-tracking ref must exist after a launcher push. */
 async function publishTrackingRef(value) {
+  // Follow-up commands must use the push's -C/--git-dir/--work-tree context.
   const refspec = '+refs/heads/' + config.featureBranch + ':refs/remotes/origin/' + config.featureBranch;
-  const fetched = await runCommand(config.gitCommand, ['fetch', '--no-tags', 'origin', refspec], value, true).catch(() => ({ status: 1 }));
+  const fetched = await runCommand(config.gitCommand, gitContext.concat(['fetch', '--no-tags', 'origin', refspec]), value, true).catch(() => ({ status: 1 }));
   if (fetched.status !== 0)
-    await runCommand(config.gitCommand, ['update-ref', 'refs/remotes/origin/' + config.featureBranch, 'HEAD'], value, true).catch(() => undefined);
+    await runCommand(config.gitCommand, gitContext.concat(['update-ref', 'refs/remotes/origin/' + config.featureBranch, 'HEAD']), value, true).catch(() => undefined);
 }
 function flagValue(args, names) {
   for (let index = 0; index < args.length; index += 1) {

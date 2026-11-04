@@ -14,6 +14,7 @@ import { CommandScopedDatabase } from './command-scoped-database.js';
 import type { TrayDecisionOperation } from './tray-decision-command.js';
 import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
 import type { RouterSnapshotInput, RouterValues, RouterFamily,RouterSnapshot,RouterAuthorityCertificate } from '@beeline/api-contract/router-protocol';
+import { createWorkspace } from './workspace-creation.js';
 import { withdrawMergeApprovalsBy } from './corner-merge-approval.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerLifecycleSql } from './corner-github-cache.js';
@@ -23,7 +24,7 @@ import { cornerKindSql, cornerCommissionerSql } from './corner-opening.js';
 import { prepareMentionReplyInput, isMentionReplyInput } from './owed-mentions.js';
 import { cornerOwnerSql } from './corner-worker.js';
 import { PHONE_ROUTE_OPERATION_NAMES } from '@beeline/api-contract/phone';
-import { seedWelcomeVideoWorkflow, WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
+import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { postStarterGame } from './starter-onboarding.js';
 import { mcpClientName } from './rooms-mcp-logos.js';
 import { setMcpMemberWebhook, McpToolError } from './rooms-mcp-members.js';
@@ -203,13 +204,12 @@ import { cornerOwedLookupSql } from './corner-owed.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
 import { revokeDaemonCredentials } from './daemon-credential-lifetime.js';
-import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
+import { firstAccessibleRoomId } from './first-room.js';
 import type { FreeAgentService } from './free-agents.js';
 import {
   ensureInvitedWorkspaceMembership,
   restorePairedWorkspaceMembership,
   writeIdentityRoomsEventSubscriptions,
-  createWorkspaceOwnerMembership,
   removeWorkspaceMemberships,
   joinRoomCreator,
   unsubscribeRoomReviewer,
@@ -6551,40 +6551,8 @@ export class PhoneService {
    * that returns the same Room.
    */
   private async createWorkspace(input: Input<'createWorkspace'>, viewerId: string) {
-    if (input.timeZone !== undefined) {
-      if (typeof input.timeZone !== 'string' || input.timeZone.length > 100) throw new Error('Invalid time zone');
-      try { new Intl.DateTimeFormat('en', { timeZone: input.timeZone }); } catch { throw new Error('Invalid time zone'); }
-    }
-    const id = input.workspaceId ?? randomUUID();
-    const roomId = await this.database.transaction(async (db) => {
-      const inserted = await db.query(
-        `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT DO NOTHING`,
-        [id, input.name],
-      );
-      if (!inserted.rowCount) {
-        const owned = await db.query(
-          `SELECT 1 FROM workspaces w JOIN memberships m ON m.workspace_id=w.id AND m.room_id IS NULL
-           WHERE w.id=$1 AND m.identity_id=$2 AND m.role='owner' AND m.removed_at IS NULL`,
-          [id, viewerId],
-        );
-        if (!owned.rowCount) throw new Error('workspaceId is invalid');
-      } else {
-        await createWorkspaceOwnerMembership(db, [id, viewerId]);
-      }
-      const generalId = await ensureFirstRoom(db, id, viewerId);
-      await seedWelcomeVideoWorkflow(db, id, generalId);
-      // Only a newly created Workspace gets a free starter agent, in the same
-      // transaction as its #general, so the creator lands next to it.
-      if (inserted.rowCount && this.freeAgents)
-        await this.freeAgents.createInWorkspace(db, {
-          workspaceId: id,
-          creatorId: viewerId,
-          roomId: generalId,
-          team: true,
-          timeZone: input.timeZone,
-        });
-      return generalId;
-    });
+    const { id, roomId } = await this.database.transaction(db =>
+      createWorkspace(db, input, viewerId, this.freeAgents));
     void this.starterOnboarding?.prepare(roomId).catch(error => console.error('[onboarding] prepare failed', error));
     return { id, roomId };
   }

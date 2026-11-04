@@ -106,7 +106,7 @@ test('excluding the fingerprint regression from the mobile suite always has isol
   assert.ok(mobile.needs.includes('prepare-workspace'));
   assert.equal(mobile.steps[0].uses, 'actions/checkout@v4');
   assert.match(JSON.stringify(mobile.steps), /timeout 20m bash scripts\/ci-workspace-tasks.sh mobile-suite/);
-  assert.ok(isolated['runs-on'].includes('beeline-ci'));
+  assert.match(isolated['runs-on'], /needs.changes.outputs.runner_native/);
   assert.equal(isolated['timeout-minutes'], 20);
   assert.match(JSON.stringify(isolated.steps), /timeout 15m bash scripts\/ci-workspace-tasks.sh native-fingerprint/);
   assert.equal(mobile['timeout-minutes'], 25);
@@ -161,13 +161,25 @@ test('privileged setup and isolated PostgreSQL stay hosted', () => {
 });
 
 test('only credential-free PR Linux jobs use the bounded CI-only pool', () => {
-  for (const name of squireJobs) {
+  assert.equal(jobs.changes['runs-on'], 'ubuntu-latest', 'routing must never wait on squire');
+  assert.equal(jobs.changes.permissions.actions, 'read');
+  const routingStep = jobs.changes.steps.find(step => step.id === 'route');
+  assert.equal(routingStep.run, 'node scripts/ci-runner-routing.mjs');
+  assert.equal(routingStep.env.GH_TOKEN, '${{ secrets.CI_RUNNER_INVENTORY_TOKEN || github.token }}');
+  for (const name of [...squireJobs.filter(name => name !== 'changes'), 'main-coverage-map']) {
     const routing = jobs[name]['runs-on'];
-    const standalone = ['dead-code', 'native-fingerprint', 'mobile-export-reachability'].includes(name);
-    if (!standalone) assert.match(routing, /github.event_name == 'pull_request'/, name);
-    const labels = standalone ? routing : JSON.parse(routing.match(/fromJSON\('([^']+)'\)/)[1]);
-    assert.deepEqual(labels, ['self-hosted', 'Linux', 'X64', 'beeline-ci', `beeline-ci-${controlJobs.includes(name) ? 'control' : workspaceJobs.includes(name) ? 'workspace' : 'heavy'}`], name);
-    if (!standalone) assert.match(routing, /\|\| 'ubuntu-latest'/, name);
+    if (name === 'server-suite-shard') {
+      assert.match(routing, /matrix.target/);
+      assert.match(jobs[name].strategy.matrix.include, /needs.changes.outputs.serverMatrix/);
+      assert.match(jobs[name].services.postgres.image, /matrix.hosted/);
+      continue;
+    }
+    const output = routing.match(/needs.changes.outputs.(runner_\w+)/)?.[1];
+    assert.ok(output, `${name} must consume an explicit placement`);
+    assert.ok(jobs.changes.outputs[output], `${name} has no routing output`);
+    assert.match(routing, /ubuntu-latest/, `${name} must have a safe fallback`);
+    const needs = Array.isArray(jobs[name].needs) ? jobs[name].needs : [jobs[name].needs];
+    assert.ok(needs.includes('changes'), name);
   }
   const tasks = readFileSync(new URL('./ci-workspace-tasks.sh', import.meta.url), 'utf8');
   const runner = readFileSync(new URL('./run-workspace-tests.mjs', import.meta.url), 'utf8');
@@ -270,7 +282,7 @@ test('every main merge runs full checks and publishes one coverage map without c
   assert.equal(workflow.concurrency['cancel-in-progress'], "${{ github.event_name == 'pull_request' }}");
   const main = jobs['main-coverage-map'];
   assert.equal(main.if, "github.event_name == 'push'");
-  assert.deepEqual(main['runs-on'], ['self-hosted', 'Linux', 'X64', 'beeline-ci', 'beeline-ci-control']);
+  assert.match(main['runs-on'], /needs.changes.outputs.runner_coverage/);
   assert.ok(main.needs.includes('server-suite-shard'));
   assert.ok(main.needs.includes('production-corpus-replay'));
   assert.match(JSON.stringify(main.steps), /test-selection.mjs check-map/);

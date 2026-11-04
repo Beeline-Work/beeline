@@ -1,0 +1,55 @@
+[
+  {
+    "server": "beeline-public",
+    "tool": "list_rooms",
+    "arguments": {},
+    "status": "completed",
+    "error": null,
+    "result": {
+      "rooms": [
+        {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "name": "join-proof",
+          "workspace_id": "11111111-1111-4111-8111-111111111111"
+        }
+      ],
+      "you": {
+        "id": "7855667bba2b4ffb378d9614e9ea863dfbf4b2200a5018ee6c12f637ef5fda4a",
+        "name": "Codex",
+        "handle": "codex"
+      },
+      "owner": {
+        "name": "Local Join Reviewer",
+        "handle": "join-reviewer"
+      }
+    }
+  },
+  {
+    "server": "beeline-public",
+    "tool": "read_messages",
+    "arguments": {
+      "room": "22222222-2222-4222-8222-222222222222"
+    },
+    "status": "completed",
+    "error": null,
+    "result": {
+      "read": true,
+      "messageCount": 2
+    }
+  },
+  {
+    "server": "beeline-public",
+    "tool": "send_message",
+    "arguments": {
+      "room": "22222222-2222-4222-8222-222222222222",
+      "text": "CODEX-SHORT-PROOF: read and posted through the short join URL."
+    },
+    "status": "completed",
+    "error": null,
+    "result": {
+      "messageId": "5557c0ca098bba0687604da93b7d8e790205b29653aa514845934074138ed294",
+      "woken": [],
+      "notWoken": []
+    }
+  }
+]

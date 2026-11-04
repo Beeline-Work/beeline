@@ -1,5 +1,5 @@
 import type { SavedRowPayload, TrayGroupPayload, NeedsYouRoomsPayload,RouterFamily,RouterSnapshotInput } from '@beeline/api-contract/router-protocol';
-import { trayFamily } from './tray-group.js';
+import { trayFamily, trayCertificate, trayClock } from './tray-group.js';
 import { ProjectionGroups, type GroupCell, type GroupProposal } from './projection-groups.js';
 import { jsonBytes as bytes } from './staging-bounds.js';
 import { LaneStaging, sameStream } from './lane-staging.js';
@@ -286,6 +286,25 @@ export class ReadLanes {
         }
       }
       if(session!==this.session||generation!==this.generation)return;
+      // An authority advance discards private Tray values, retaining only a
+      // content-free baseline. A committed current classification cannot fold
+      // partial Needs/Saved facts over that missing value. Reuse the surviving
+      // visible owners to obtain fresh, server-authorized group snapshots.
+      // A bare control, denial or unavailable group never admits this recovery.
+      const recovering=new Set<string>();
+      for(const entry of this.entries.values()){
+        const baseline=entry.baseline;
+        if(!this.joint(entry)||entry.snapshot||!baseline||entry.flight||!liveOwner(entry)||
+          baseline.cut.stream!==batch.to.stream||this.authorized(baseline.authority)||recovering.has(baseline.atomicGroup))continue;
+        const facts=batch.facts.filter(fact=>fact.atomicGroup===baseline.atomicGroup);
+        const markers=facts.filter(fact=>fact.payload.kind==='tray-classification');
+        const marker=markers[0];
+        if(markers.length!==1||marker?.payload.kind!=='tray-classification'||marker.payload.scope!==entry.request.workspaceId||
+          marker.payload.version!==1||!trayClock(marker.payload.clockVersion)||!trayCertificate(marker.authority,this.identity.principal,entry.request.workspaceId!,authority=>this.authorized(authority))||
+          facts.some(fact=>fact.payload.kind==='group-unavailable'||fact.payload.kind==='authority'&&!fact.payload.allowed||
+            fact.payload.kind==='authority-fence'&&fact.payload.mode==='deny'))continue;
+        recovering.add(baseline.atomicGroup);this.repair(entry,UNAVAILABLE);
+      }
       for(const future of this.groups.ready())void this.queueBatch(future,true);
   }
 

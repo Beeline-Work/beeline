@@ -1,3 +1,5 @@
+import { validateTrayProjection } from '../../../packages/net/src/private/owner-inputs.js';
+import { postRoomChoice, answerRoomChoice } from './room-choice.js';
 import {RouterBuildCoordinator} from './router-build-coordinator.js';
 import {TrayClockAvailability} from './tray-clock-availability.js';
 import {BACKGROUND_OWNERSHIP_SCHEMA,BackgroundOwnership} from './background-ownership.js';
@@ -231,6 +233,56 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
       expect(new Set(facts.map(fact=>fact.authority.digest)).size).toBe(1);
       expect(build.mock.calls.map(call=>call[1].family)).toEqual(['needs-you-count']);
       expect(facts.some(fact=>fact.payload.kind==='scope-replace'&&fact.payload.family!=='needs-you-count')).toBe(false);
+    }finally{protocol.close();}
+  });
+  it.each([false,true])('reauthorizes populated Tray after an addressed choice, including Saved revocation (%s)',async revokeSaved=>{
+    const savedRoom='33333333-3333-4333-8333-333333333333',agent='d'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Helper','helper')`,[agent]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,VIEWER]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')`,[WORKSPACE,ROOM,agent]);
+    await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Saved Room')`,[savedRoom,WORKSPACE,VIEWER]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WORKSPACE,savedRoom,VIEWER]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('retained-save',$1,$2,'Saved private source')`,[savedRoom,OTHER]);
+    await database.query(`INSERT INTO message_bookmarks(identity_id,workspace_id,room_id,message_id,source_room_name,source_room_kind,message_created_at)
+      VALUES($1,$2,$3,'retained-save','Saved Room','room',now())`,[VIEWER,WORKSPACE,savedRoom]);
+    const choice=await database.transaction(tx=>postRoomChoice(tx,{roomId:ROOM,agentId:agent,mode:'question',prompt:'@reader choose?',
+      options:[{label:'One',consequence:'Use one'},{label:'Two',consequence:'Use two'}],ttlSeconds:300}));
+    await readyClock();
+    const phone=new PhoneService(database,'https://example.test'),live=clockLive;
+    const families=['needs-you-tray','needs-you-count','needs-you-saved-page'] as const;
+    const request={family:'needs-you-tray' as const,workspaceId:WORKSPACE};
+    const lanes=new ReadLanes({origin:'https://example.test',principal:VIEWER,sessionEpoch:1},(args,value)=>validateTrayProjection(value,args.workspaceId!));
+    const reads=vi.fn(async(args:any)=>phone.readRouterSnapshot(args,VIEWER,{trayClock:true}));
+    lanes.connected(1,families,reads);
+    let opened!:()=>void;const opening=new Promise<void>(done=>{opened=done;});
+    lanes.subscribe(request,()=>{if(lanes.peek(request).state==='LIVE')opened();});
+    lanes.demand(request,{}, {isCurrent:()=>true});await opening;
+    expect(lanes.peek(request).value).toMatchObject({needs:{items:[{approval:{actions:expect.arrayContaining([expect.objectContaining({choiceId:choice.choiceId,optionId:'A'})])}}]},saved:{rows:[{value:{messageId:'retained-save',available:true}}]}});
+    const frames:any[]=[],accepted:Promise<void>[]=[];
+    const assembly=new RouterBatchAssembly(facts=>createHash('sha256').update(JSON.stringify(facts)).digest('hex'),
+      batch=>{accepted.push(lanes.accept(batch));},()=>{throw new Error('Invalid wire batch');});
+    let committed!:()=>void;const commit=new Promise<void>(done=>{committed=done;});
+    const protocol=routerSocketProtocol(database,VIEWER,raw=>{
+      const frame=JSON.parse(raw);frames.push(frame);
+      if(frame.kind==='push-part'||frame.kind==='push-commit')assembly.accept(frame);
+      if(frame.kind==='push-commit')committed();
+    },{families,listenerReady:()=>true,trayClockAvailability:clockAvailability},{live,phone,rooms:()=>[]});
+    try{
+      await protocol.handle({type:'router-negotiate',protocol:1,families});
+      await database.transaction(async tx=>{
+        await answerRoomChoice(tx,{choiceId:choice.choiceId,optionId:'A',viewerId:VIEWER},{wake:false});
+        if(revokeSaved)await tx.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,[savedRoom,VIEWER]);
+      });
+      live.journalChanged([`workspace:${WORKSPACE}`]);await commit;await Promise.all(accepted);
+      for(let i=0;i<20;i++){await database.query('SELECT 1');await new Promise<void>(done=>setImmediate(done));}
+      expect(frames.some(frame=>frame.kind==='router-unavailable')).toBe(false);
+      expect(lanes.peek(request)).toMatchObject({state:'LIVE',value:{needs:{items:[]}}});
+      expect(reads).toHaveBeenCalledTimes(2);
+      const serialized=JSON.stringify(lanes.peek(request).value);
+      if(revokeSaved)expect(serialized).not.toContain('Saved private source');
+      else expect(lanes.peek(request).value).toMatchObject({saved:{rows:[{value:{messageId:'retained-save',available:true,text:'Saved private source'}}]}});
+      expect((await database.query(`SELECT count(*)::int n FROM message_bookmarks WHERE message_id='retained-save'`)).rows[0]!.n).toBe(1);
     }finally{protocol.close();}
   });
   it.each([false,true])('shares a new Saved head and isolates head budget failure (%s)',async budgetFailure=>{

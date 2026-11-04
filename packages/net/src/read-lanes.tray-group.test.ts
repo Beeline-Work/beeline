@@ -166,6 +166,56 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
     expect(lanes.peek(page).value).toBeNull();expect(lanes.peek(head).value).toBeNull();expect(reads()).toBe(3);
   });
 
+  it('recovers visible Tray members only after committed reauthorization and keeps private data hidden until the reply',async()=>{
+    const response=deferred<void>();let recovering=false;
+    const currentAuthority={digest:'renewed-certificate',scopes:[{authorityScope:reader,epoch:'1'},{authorityScope:visibility,epoch:'2'}]};
+    const{lanes,reads}=await setup(async request=>{
+      if(!recovering)return snapshot(request);
+      await response.promise;
+      return {...snapshot(request,2,cv(1),request.family==='needs-you-count'?{count:0}:request.family==='needs-you-tray'
+        ?{needs:{items:[]},saved:window([row(1,'Reauthorized source')])}:window([row(2)],cursor)),authority:currentAuthority};
+    });
+    lanes.demand(page,{},permit);await settle();recovering=true;
+    await lanes.advance(visibility,'2');await settle();
+    expect(reads()).toBe(3);for(const request of[count,head,page])expect(lanes.peek(request).value).toBeNull();
+    const update=batch(1,2,[fact({kind:'tray-needs-replace',scope:ws,value:{items:[]}})],cv(1));
+    const renewed={...update,facts:update.facts.map(fact=>({...fact,authority:currentAuthority}))};
+    await lanes.accept(renewed);await settle();expect(reads()).toBe(6);
+    await lanes.accept(renewed);await lanes.advance(visibility,'2');await settle();expect(reads()).toBe(6);
+    for(const request of[count,head,page])expect(lanes.peek(request).value).toBeNull();
+    response.resolve();await settle();
+    expect(lanes.peek(head)).toMatchObject({state:'LIVE',value:{needs:{items:[]},saved:{rows:[{value:{text:'Reauthorized source'}}]}}});
+    expect(lanes.peek(page)).toMatchObject({state:'LIVE',value:{rows:[{value:{messageId:'m-2'}}]}});
+    // A subsequent denial hides the newly authorized data and cannot recover
+    // from the previous classification.
+    await lanes.revoke(visibility,'2');await lanes.accept(renewed);await settle();
+    for(const request of[count,head,page])expect(lanes.peek(request).value).toBeNull();expect(reads()).toBe(6);
+  });
+
+  it.each(['stale','revoked'] as const)('rejects a %s reply during Tray reauthorization',async reason=>{
+    const response=deferred<void>();let recovering=false;
+    const currentAuthority={digest:'renewed-certificate',scopes:[{authorityScope:reader,epoch:'1'},{authorityScope:visibility,epoch:'2'}]};
+    const{lanes,reads}=await setup(async request=>{
+      if(!recovering)return snapshot(request);
+      await response.promise;return {...snapshot(request,2),authority:reason==='stale'?authority:currentAuthority};
+    });
+    recovering=true;await lanes.advance(visibility,'2');
+    const update=batch(1,2);await lanes.accept({...update,facts:update.facts.map(fact=>({...fact,authority:currentAuthority}))});await settle();
+    expect(reads()).toBe(4);
+    if(reason==='revoked')await lanes.revoke(visibility,'2');
+    response.resolve();await settle();
+    expect(lanes.peek(head).value).toBeNull();expect(lanes.peek(count).value).toBeNull();expect(reads()).toBe(4);
+  });
+
+  it.each(['unavailable','inactive','stale'] as const)('does not recover a %s Tray classification after an authority floor',async reason=>{
+    const{lanes,reads}=await setup();await lanes.advance(visibility,'2');
+    if(reason==='inactive')lanes.disconnected();
+    const next={digest:'renewed-certificate',scopes:[{authorityScope:reader,epoch:'1'},{authorityScope:visibility,epoch:'2'}]};
+    const update=batch(1,2,reason==='unavailable'?[fact({kind:'group-unavailable',scope:ws,reason:'dependency'})]:[]);
+    await lanes.accept({...update,facts:update.facts.map(fact=>({...fact,authority:reason==='stale'?authority:next}))});await settle();
+    expect(reads()).toBe(2);expect(lanes.peek(head).value).toBeNull();
+  });
+
   it('serializes all source ingress during slow persistence without parking a valid group',async()=>{
     const gate=deferred<void>(),entered=deferred<void>();let block=false;
     const{lanes,reads}=await setup(undefined,async()=>{if(block){entered.resolve();await gate.promise;}});block=true;

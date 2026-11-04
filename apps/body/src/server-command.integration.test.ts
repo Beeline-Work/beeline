@@ -1,3 +1,4 @@
+import { runClaimedFixtureTurn } from './command-fixture.test-support.js';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -102,6 +103,7 @@ describe.each([
         return result;
       });
       const api = {
+        runWithTurnOwnership: runClaimedFixtureTurn,
         execute,
         connection: () => ({ baseUrl: 'http://test', daemonToken: 'token', agentId }),
         liveSubscribe: (_roomId: string, _cursor: unknown, _items: unknown,

@@ -1,3 +1,4 @@
+import { runClaimedFixtureTurn } from './command-fixture.test-support.js';
 /**
  * The corner-open settle scenarios, driven through the real server.
  *
@@ -152,6 +153,7 @@ async function runScenario(options: {
   } as BodyConfig;
   let pushCommands: ((commands: readonly AgentCommand[]) => void) | undefined;
   const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
     execute: (name: string, input: never) => daemon.execute(name as never, input, AGENT),
     connection: () => ({ baseUrl: 'http://test', daemonToken: 'token', agentId: AGENT }),
     liveSubscribe: (_roomId: string, _cursor: unknown, _items: unknown,

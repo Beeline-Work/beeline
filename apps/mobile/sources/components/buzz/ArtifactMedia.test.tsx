@@ -222,7 +222,7 @@ describe('the raster artifact view', () => {
     expect(mocks.artifactImageSource).toHaveBeenCalledTimes(2);
   });
 
-  it('a visible old-server source recovers once after explicit legacy negotiation without a metadata read or remount', async () => {
+  it('an unsupported metadata connection stays failed without a fallback read or remount', async () => {
     resetClientState();
     mocks.artifactImageSource.mockImplementation(async () => {
       await mediaMetadataFor('https://synthetic.test', 'reader', '11111111-1111-4111-8111-111111111111');
@@ -233,10 +233,10 @@ describe('the raster artifact view', () => {
     const executeMetadata = vi.fn(async () => { throw new Error('Legacy must not send metadata JSON.'); });
     const receipt = { origin: 'https://synthetic.test', principal: 'reader', generation: 1, mediaMetadataV1: false, executeMetadata };
     act(() => { installMediaCacheConnection(receipt); }); await flush();
-    expect(hostNode(renderer, 'artifact-image').props.source.uri).toBe('blob:legacy-recovered');
-    expect(mocks.artifactImageSource).toHaveBeenCalledTimes(2); expect(executeMetadata).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByProps({ testID: 'artifact-image-failed' }).length).toBeGreaterThan(0);
+    expect(mocks.artifactImageSource).toHaveBeenCalledTimes(1); expect(executeMetadata).not.toHaveBeenCalled();
     act(() => { installMediaCacheConnection(receipt); }); await flush();
-    expect(mocks.artifactImageSource).toHaveBeenCalledTimes(2);
+    expect(mocks.artifactImageSource).toHaveBeenCalledTimes(1);
   });
 
   it('releases a source that lands after the view is already gone', async () => {

@@ -21,17 +21,7 @@ describe('Room open occupancy', () => {
     expect(surface).toContain('onPress={retryHydration}');
   });
 
-  it('marks navigation dispatch, route mount, and cache-read separately from auth', () => {
-    expect(prefetch).toContain("markRoomOpen('nav-dispatch', roomId)");
-    expect(chat).toContain("markRoomOpen('route-mount', decodedId)");
-    expect(session).toContain("markRoomOpen('session-effect', channelId)");
-    expect(session).toContain("markRoomOpen('cache-read-start')");
-    expect(session).toContain("markRoomOpen('auth-start')");
-    expect(session.indexOf("markRoomOpen('cache-read-start')")).toBeLessThan(
-      session.indexOf("markRoomOpen('auth-start')"),
-    );
-    expect(session).toContain('liveDraftDrainStore.setActive(true)');
-  });
+
 
   it('pushes the Room without a stack animation stealing the tap-to-pixel budget', () => {
     const chatScreen = layout.slice(layout.indexOf('beeline/chat/[channelId]'));

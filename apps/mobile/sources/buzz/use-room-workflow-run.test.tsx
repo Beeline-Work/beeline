@@ -1,6 +1,9 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { liveRoomRuns, pickRoomWorkflowRun } from './use-room-workflow-run';
 import type { WorkflowRunSummaryView } from '@beeline/api-contract/phone';
+
+vi.mock('./use-surface-focus', () => ({ useSurfaceFocus: () => true }));
+vi.mock('./router-resource', () => ({ useRoutedResource: vi.fn() }));
 
 it('CWM1: the latest handoff stays primary, including a live state named stuck', () => {
   const run = (fields: Partial<WorkflowRunSummaryView>): WorkflowRunSummaryView => ({

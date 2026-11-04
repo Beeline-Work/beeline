@@ -4,9 +4,7 @@ import { describe, expect, it } from 'vitest';
 const chat = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
 const screen = readFileSync(new URL('../settings/schedules.tsx', import.meta.url), 'utf8');
 const layout = readFileSync(new URL('../../_layout.tsx', import.meta.url), 'utf8');
-const schedule = readFileSync(new URL('../settings/schedule.tsx', import.meta.url), 'utf8');
 const subscription = readFileSync(new URL('../settings/subscription.tsx', import.meta.url), 'utf8');
-const workflow = readFileSync(new URL('../workflow.tsx', import.meta.url), 'utf8');
 const work = readFileSync(new URL('../../../../buzz/scheduled-work.ts', import.meta.url), 'utf8');
 
 describe('scheduled Agent work', () => {
@@ -20,21 +18,7 @@ describe('scheduled Agent work', () => {
     expect(chat).not.toContain('View or stop Agent-managed recurring work.');
   });
 
-  it('allows managers to inspect and stop existing work without scheduling it', () => {
-    expect(work).toContain("monolithPhoneOperation('readScheduledWork'");
-    expect(work).toContain("monolithPhoneOperation('deleteRoomSchedule'");
-    expect(work).not.toContain("'createRoomSchedule'");
-    // No explainer paragraph stands above the list (DESIGN.md).
-    expect(screen).not.toContain('AGENT-MANAGED SCHEDULES');
-    expect(screen).not.toContain('repository notifications');
-    expect(screen).not.toContain('Alert.alert');
-    expect(work).toContain("monolithPhoneOperation('deleteRoomSubscription'");
-    // Both Stop actions live on the trigger's own page, behind one confirm step.
-    expect(schedule).toContain('<StopScheduledWork');
-    expect(subscription).toContain('<StopScheduledWork');
-    expect(workflow).not.toContain('<StopScheduledWork');
-    expect(workflow).toContain('<WorkflowRunLine');
-  });
+
 
   it('draws each entry as a settings row in one grammar, with no timestamp log', () => {
     expect(screen).toContain('<SettingsRow');

@@ -1,3 +1,4 @@
+import { ConnectionPresence } from '../../server/src/connection-presence.js';
 import { cornerOwnerSql } from '../../server/src/corner-worker.js';
 import { cornerRunStateSql } from '../../server/src/corner-run.js';
 import { createHash } from 'node:crypto';
@@ -147,6 +148,7 @@ class PgliteListenClient extends EventEmitter implements LivePgClient {
 let database: PgliteDatabase;
 let objectStorage: MemoryObjectStorage;
 let origin: string;
+let connectionPresence: ConnectionPresence;
 let server: ReturnType<typeof createBeelineServer>;
 const serverSockets = new Set<Socket>();
 let accessToken: string;
@@ -233,7 +235,8 @@ beforeEach(async () => {
     token: 'test-room-token',
     expiresAt: Date.now() + 60_000,
   }));
-  server = createBeelineServer({ database, auth, phone, daemon, live, objectService });
+  connectionPresence = new ConnectionPresence(database, live);
+  server = createBeelineServer({ database, auth, phone, daemon, live, connectionPresence, objectService });
   server.on('connection', (socket) => {
     serverSockets.add(socket);
     socket.on('close', () => serverSockets.delete(socket));
@@ -327,6 +330,7 @@ afterEach(async () => {
     for (const socket of serverSockets) socket.destroy();
     await closed;
   }
+  await connectionPresence?.stop();
   if (objectStorage) await objectStorage.close();
   if (database) await database.close();
 }, HOOK_TIMEOUT_MS);

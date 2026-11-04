@@ -696,22 +696,29 @@ describe('one update drain for every hosted agent', () => {
         res.end(JSON.stringify({ commandProtocol: 1,
           commands: [...queued.values()].filter((row) => row.roomId === input.roomId) }));
         return;
-      } else if (req.url?.endsWith('/claimAgentCommand')) {
-        claims.set(input.commandId, Date.now());
-        claimed.set(input.commandId, queued.get(input.commandId)!);
-        claimGenerations.push(input.generationId);
-        queued.delete(input.commandId);
-      } else if (req.url?.endsWith('/postAgentTurnReceipt') && input.reasonKind === 'update-interrupted') {
-        interruptions.push({ requestId: input.requestId, generationId: input.generationId });
-        const command = claimed.get(input.requestId)!;
-        queued.set(command.id, command);
       } else if (req.url?.endsWith('/postRoomMessage')) replies.push(input.text);
       res.end(JSON.stringify({ id: 'ok' }));
     });
     const sockets = new WebSocketServer({ server });
     sockets.on('connection', (socket) => socket.on('message', (data) => {
       const frame = JSON.parse(data.toString());
-      if (frame.type === 'register') socket.send(JSON.stringify({ type: 'registered', agentId }));
+      if (frame.type === 'register') socket.send(JSON.stringify({ type: 'registered', agentId,
+        capabilities: {turnOwnershipV1: true, turnConnectionId: 'drain-fixture', turnConnectionEpoch: 1} }));
+      if (frame.type === 'turn-operation') {
+        const input = frame.input;
+        if (frame.operation === 'claimAgentCommand') {
+          claims.set(input.commandId, Date.now());
+          claimed.set(input.commandId, queued.get(input.commandId)!);
+          claimGenerations.push(input.generationId);
+          queued.delete(input.commandId);
+        } else if (frame.operation === 'postAgentTurnReceipt' && input.reasonKind === 'update-interrupted') {
+          interruptions.push({requestId: input.requestId, generationId: input.generationId});
+          const command = claimed.get(input.requestId)!;
+          queued.set(command.id, command);
+        }
+        socket.send(JSON.stringify({type: 'turn-result', agentId, requestId: frame.requestId,
+          result: {id: input.commandId ?? input.requestId, createdAt: 1}}));
+      }
       if (frame.type === 'subscribe') {
         socket.send(JSON.stringify({ type: 'subscribed', roomId: frame.roomId, agentId,
           capabilities: { pushIntake: true, connectionPresence: true } }));
@@ -743,6 +750,8 @@ describe('one update drain for every hosted agent', () => {
       const runtime = await readRuntimeRecord(configPath);
       runtime.transport = { kind: 'monolith', baseUrl: origin, daemonToken: 'isolated-test-token' };
       const api = new DaemonApiClient(origin, 'isolated-test-token', agentId);
+      api.channel.start();
+      await vi.waitFor(() => expect(api.turnOwnershipScope()).toBeDefined());
       await reportInterruptedTurns(dirname(configPath), api, agentId);
       core = new ThinDaemonCore(runtime, configPath, { workspaceRoot: root } as never, { daemonApi: api });
       const lifecycle = new AgentLifecycle({ controller: new AbortController() });

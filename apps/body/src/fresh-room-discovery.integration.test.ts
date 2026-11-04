@@ -1,3 +1,4 @@
+import { ConnectionPresence } from '../../server/src/connection-presence.js';
 import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -240,6 +241,7 @@ async function resetDatabase(database: PgliteDatabase): Promise<void> {
 describe('fresh Room discovery through the live membership wake', () => {
   let database: PgliteDatabase;
   let origin: string;
+  let connectionPresence: ConnectionPresence;
   let server: ReturnType<typeof createBeelineServer>;
   let accessToken: string;
   let core: ThinDaemonCore;
@@ -290,7 +292,8 @@ describe('fresh Room discovery through the live membership wake', () => {
       if (roomId === deniedRoomId) throw new Error('GitHub repository installation not found');
       return { token: 'test-room-token', expiresAt: Date.now() + 60_000 };
     });
-    server = createBeelineServer({ database, auth, phone, daemon, live });
+    connectionPresence = new ConnectionPresence(database, live);
+    server = createBeelineServer({ database, auth, phone, daemon, live, connectionPresence });
     listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database), 50);
     void listener.run();
     await new Promise<void>((resolve2) => server.listen(0, '127.0.0.1', resolve2));
@@ -383,6 +386,7 @@ describe('fresh Room discovery through the live membership wake', () => {
     await listener?.stop();
     await new Promise((r) => setTimeout(r, 150));
     if (server) await new Promise<void>((resolve2) => server.close(() => resolve2()));
+    await connectionPresence?.stop();
   }, 90_000);
 
   // database is the one shared, already-migrated instance created during
@@ -599,10 +603,12 @@ describe('fresh Room discovery through the live membership wake', () => {
         expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
         const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
         expect(opening?.state).toBe('complete');
-        // The echo harness posts conversation but never reports this order.
-        // The order stays open; the server sends no failure for the quiet turn.
-        const reports = await database.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId]);
-        expect(reports.rowCount).toBe(0);
+        // The completed opening has no failure report. Connection ownership
+        // may independently enqueue the commander's idle-corner notice.
+        const reports = await database.query(`SELECT private_payload FROM agent_commands
+          WHERE reason='report' AND private_payload->>'fromRoomId'=$1
+            AND private_payload->>'idleSince' IS NULL`, [cornerId]);
+        expect(reports.rows).toEqual([]);
       },
       { timeout: 30_000, interval: 500 },
     );
@@ -648,10 +654,12 @@ describe('fresh Room discovery through the live membership wake', () => {
         expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
         const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
         expect(opening?.state).toBe('complete');
-        // The echo harness posts conversation but never reports this order.
-        // The order stays open; the server sends no failure for the quiet turn.
-        const reports = await database.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId]);
-        expect(reports.rowCount).toBe(0);
+        // The completed opening has no failure report. Connection ownership
+        // may independently enqueue the commander's idle-corner notice.
+        const reports = await database.query(`SELECT private_payload FROM agent_commands
+          WHERE reason='report' AND private_payload->>'fromRoomId'=$1
+            AND private_payload->>'idleSince' IS NULL`, [cornerId]);
+        expect(reports.rows).toEqual([]);
       },
       { timeout: 30_000, interval: 500 },
     );
@@ -727,10 +735,12 @@ describe('fresh Room discovery through the live membership wake', () => {
         expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
         const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
         expect(opening?.state).toBe('complete');
-        // The echo harness posts conversation but never reports this order.
-        // The order stays open; the server sends no failure for the quiet turn.
-        const reports = await database.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId]);
-        expect(reports.rowCount).toBe(0);
+        // The completed opening has no failure report. Connection ownership
+        // may independently enqueue the commander's idle-corner notice.
+        const reports = await database.query(`SELECT private_payload FROM agent_commands
+          WHERE reason='report' AND private_payload->>'fromRoomId'=$1
+            AND private_payload->>'idleSince' IS NULL`, [cornerId]);
+        expect(reports.rows).toEqual([]);
       },
       { timeout: 30_000, interval: 500 },
     );

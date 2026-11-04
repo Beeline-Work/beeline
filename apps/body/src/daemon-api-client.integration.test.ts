@@ -73,7 +73,7 @@ describe('daemon API client against the local monolith', () => {
   let releaseNotify: ReleaseNotifier;
 
   const prepareTurn = async (client: DaemonApiClient, requestId: string) => {
-    await database.transaction(async (tx) => {
+    const command = await database.transaction(async (tx) => {
       await tx.query(
         `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'Transport fixture','activity') ON CONFLICT DO NOTHING`,
         [requestId, ROOM, HUMAN],
@@ -84,8 +84,11 @@ describe('daemon API client against the local monolith', () => {
         sourceMessageId: requestId,
         reason: 'fixture',
       });
-      await claimAgentCommand(tx, ROOM, AGENT, c!.id, 'generation-1');
+      return c!;
     });
+    client.liveSubscribe(ROOM);
+    await vi.waitFor(() => expect(client.turnOwnershipScope()).toBeDefined());
+    await client.execute('claimAgentCommand', {roomId: ROOM, commandId: command.id, generationId: 'generation-1'});
   };
 
   it.each(['createRoomSchedule', 'updateRoomSchedule'])(

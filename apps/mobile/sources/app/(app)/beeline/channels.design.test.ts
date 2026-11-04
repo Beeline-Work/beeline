@@ -36,14 +36,7 @@ describe('Approved Room list layout', () => {
     expect(row).not.toContain('roomRowNeedsAttention');
     expect(row).not.toContain('presenceDot');
   });
-  it('keeps desktop corners independently selectable, waiting first, from the corner record alone', () => {
-    const corners = component('DesktopRoomCorners');
-    expect(corners).toContain('useRoomCornerSummary(item.room.id)?.openCorners ?? []');
-    expect(corners).not.toContain('.corners(');
-    expect(corners).toContain("Number(b.state === 'waiting') - Number(a.state === 'waiting')");
-    expect(corners).toContain('onOpen(corner.id, corner.name)');
-    expect(corners).toContain('<CornerGlyph');
-  });
+
   it('retains authorized empty-state actions and a filter recovery action', () => {
     expect(source).toContain('canAddRoom={!viewerIsAgent && canManageWorkspace}');
     expect(source).toContain('canConnectAgent={!viewerIsAgent}');

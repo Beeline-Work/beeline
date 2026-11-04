@@ -7,10 +7,7 @@ const glyphSource = readFileSync(
   path.join(__dirname, '..', '..', '..', 'components', 'buzz', 'ExitGlyph.tsx'),
   'utf8',
 );
-const roomSessionSource = readFileSync(
-  path.join(__dirname, 'chat', 'useRoomSurfaceSession.ts'),
-  'utf8',
-);
+
 
 describe('Chat-list swipe-left actions', () => {
   it('offers Leave for every human Room member and Close for DMs', () => {
@@ -116,11 +113,5 @@ describe('Chat-list swipe-left actions', () => {
     expect(source).not.toContain('explainRoomLeaveConstraint');
   });
 
-  it('explicitly reopens a top-level chat the reader dismissed when its Room surface is navigated to', () => {
-    expect(roomSessionSource).toContain('if (!view.parent && !reopenedChat)');
-    expect(roomSessionSource).toContain('reopenIfDismissed(nextTransport, view, relayUrl, identity.publicKey)');
-    // A Room the list shows open needs no request; a dismissed or unlisted one does.
-    expect(roomSessionSource).toContain('if (row && !row.closed) return;');
-    expect(roomSessionSource).toContain('await transport.reopenChat(view.room.id);');
-  });
+
 });

@@ -1,3 +1,4 @@
+import { runClaimedFixtureTurn } from './command-fixture.test-support.js';
 /**
  * The institutional-context prefetch fix (#1904), proven against the real
  * server: `DaemonService.execute()` in process, a real Pglite database, and
@@ -124,7 +125,7 @@ async function seedProfileFact(
 }
 
 function localApi(agentId: string): DaemonApiClient {
-  return { execute: (name: string, input: never) => daemon.execute(name as never, input, agentId) } as unknown as DaemonApiClient;
+  return { runWithTurnOwnership: runClaimedFixtureTurn, execute: (name: string, input: never) => daemon.execute(name as never, input, agentId) } as unknown as DaemonApiClient;
 }
 
 /** The turn-trace JSONL line for one completed attempt in this room/corner. */
@@ -209,6 +210,7 @@ describe('institutional context prefetch, proven against the real server', () =>
 
     let pushCommands: ((commands: readonly AgentCommand[]) => void) | undefined;
     const api = {
+      runWithTurnOwnership: runClaimedFixtureTurn,
       execute: (name: string, input: never) => daemon.execute(name as never, input, AGENT),
       connection: () => ({ baseUrl: 'http://test', daemonToken: 'token', agentId: AGENT }),
       liveSubscribe: (
@@ -327,6 +329,7 @@ describe('institutional context prefetch, proven against the real server', () =>
     } as BodyConfig;
     let roomPushCommands: ((commands: readonly AgentCommand[]) => void) | undefined;
     const roomApi = {
+      runWithTurnOwnership: runClaimedFixtureTurn,
       execute: (name: string, input: never) => daemon.execute(name as never, input, AGENT),
       connection: () => ({ baseUrl: 'http://test', daemonToken: 'token', agentId: AGENT }),
       liveSubscribe: (
@@ -415,6 +418,7 @@ describe('institutional context prefetch, proven against the real server', () =>
     } as BodyConfig;
     let cornerPushCommands: ((commands: readonly AgentCommand[]) => void) | undefined;
     const cornerApi = {
+      runWithTurnOwnership: runClaimedFixtureTurn,
       execute: (name: string, input: never) => daemon.execute(name as never, input, AGENT),
       connection: () => ({ baseUrl: 'http://test', daemonToken: 'token', agentId: AGENT }),
       liveSubscribe: (
@@ -539,6 +543,7 @@ describe('institutional context prefetch, proven against the real server', () =>
     } as BodyConfig;
     let pushCommands: ((commands: readonly AgentCommand[]) => void) | undefined;
     const api = {
+      runWithTurnOwnership: runClaimedFixtureTurn,
       execute: (name: string, input: never) => daemon.execute(name as never, input, AGENT),
       connection: () => ({ baseUrl: 'http://test', daemonToken: 'token', agentId: AGENT }),
       liveSubscribe: (

@@ -13,6 +13,13 @@ describe('server-authored Needs-you Room replacements',()=>{
     expect(result).toEqual({count:2,items:[item('new'),base.items[1]]});
     expect(result.items[1]).toBe(base.items[1]);expect(base.items[0]!.messageId).toBe('old');
   });
+  it('accepts all server-authored replacement rows beyond former display limits',()=>{
+    const rows=Array.from({length:501},(_,n)=>item(`q${n}`,`room${n}`));
+    rows[0]!.text='x'.repeat(128*1024);
+    const complete={...payload,rooms:rows.map(row=>({roomId:row.roomId,items:[row]})),order:rows.map(row=>row.messageId),count:rows.length};
+    expect(validateNeedsRoomsPayload(complete)).toBe(true);
+    expect(foldNeedsYouRooms({items:[]},complete).items).toEqual(rows);
+  });
   it('removes a Room using a complete empty replacement without inventing a cell or sorting',()=>{
     expect(foldNeedsYouRooms(base,{...payload,rooms:[{roomId:changed,items:[]}],order:['untouched'],count:1}))
       .toEqual({count:1,items:[base.items[1]]});
@@ -24,8 +31,7 @@ describe('server-authored Needs-you Room replacements',()=>{
     {...payload,count:3}, {...payload,order:['new','new']},
     {...payload,rooms:[{roomId:changed,items:[{...item('new'),workspaceId:'foreign'}]}]},
     {...payload,rooms:[{roomId:changed,items:[item('new',other)]}]},
-    {...payload,rooms:[{roomId:changed,items:Array.from({length:31},(_,n)=>item(String(n)))}]},
-  ])('rejects malformed, foreign or over-budget data',value=>{expect(validateNeedsRoomsPayload(value)).toBe(false);});
+  ])('rejects malformed or foreign data',value=>{expect(validateNeedsRoomsPayload(value)).toBe(false);});
   it('installs the count and changed cells at one group cut without another snapshot',async()=>{
     const needs={family:'needs-you' as const,workspaceId:workspace},badge={family:'needs-you-count' as const,workspaceId:workspace};
     const scopes=[{authorityScope:`reader:reader:workspace:${workspace}`,epoch:'1'},{authorityScope:`reader:reader:workspace:${workspace}:visibility`,epoch:'1'}];

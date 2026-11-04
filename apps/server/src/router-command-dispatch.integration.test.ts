@@ -43,6 +43,22 @@ describe('P7 dispatcher durable command adapter', () => {
     expect(publish).not.toHaveBeenCalled();expect(legacy).not.toHaveBeenCalled();
     expect((await db.query('SELECT status FROM room_choices WHERE id=$1',[choice.choiceId])).rows).toEqual([{status:'skipped'}]);
   });
+  it('answers a Tray choice through the durable front door and replays without another effect',async()=>{
+    const agent='d'.repeat(64);
+    await db.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')",[agent]);
+    await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)',[agent,VIEWER]);
+    await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')",[WORKSPACE,ROOM,agent]);
+    const choice=await db.transaction(tx=>postRoomChoice(tx,{roomId:ROOM,agentId:agent,mode:'question',prompt:'Synthetic?',
+      options:[{label:'One',consequence:'Use one'},{label:'Two',consequence:'Use two'}],ttlSeconds:300}));
+    const first=server(),second=server(),legacy=vi.fn(async()=>{throw new Error('Legacy bypass');});
+    const input={choiceId:choice.choiceId,optionId:'B'},identity={v:1 as const,id:'tray-dispatch-answer'};
+    const receipt=await first.dispatch('answerChoice',input,VIEWER,undefined,legacy,undefined,identity);
+    expect(receipt).toMatchObject({state:'committed',operation:'answerChoice',result:null});
+    const publish=vi.spyOn(second.live,'publish');
+    expect(await second.dispatch('answerChoice',input,VIEWER,undefined,legacy,undefined,identity)).toEqual(receipt);
+    expect(publish).not.toHaveBeenCalled();expect(legacy).not.toHaveBeenCalled();
+    expect((await db.query('SELECT choice.status,vote.option_id FROM room_choices choice JOIN room_choice_votes vote ON vote.choice_id=choice.id WHERE choice.id=$1',[choice.choiceId])).rows).toEqual([{status:'answered',option_id:'B'}]);
+  });
   it('retry on a second dispatcher preserves a toggled reaction and does not announce twice', async () => {
     const first = server(), second = server();
     const publish = vi.spyOn(second.live, 'publish');

@@ -158,6 +158,19 @@ describe('durable DB-only Tray decision adapter', () => {
     expect((await db.query('SELECT status FROM room_choices WHERE id=$1', [expired.choiceId])).rows).toEqual([{ status: 'open' }]);
   });
 
+  it('answers an ordinary choice once and preserves authority and option validation', async () => {
+    const choice = await db.transaction(tx => postRoomChoice(tx, { roomId: ROOM, agentId: AGENT, mode: 'question', prompt: 'Synthetic?',
+      options: [{ label: 'One', consequence: 'Use one' }, { label: 'Two', consequence: 'Use two' }], ttlSeconds: 300 }));
+    await expect(dispatch('answerChoice', { choiceId: choice.choiceId, optionId: 'missing' }, 'invalid-option')).rejects.toThrow();
+    const input = { choiceId: choice.choiceId, optionId: 'B' };
+    const receipt = await dispatch('answerChoice', input, 'answer');
+    expect(receipt).toEqual({ v: 1, operation: 'answerChoice', commandId: 'answer', state: 'committed', result: null });
+    expect(await dispatch('answerChoice', input, 'answer')).toEqual(receipt);
+    expect((await db.query('SELECT choice.status,vote.option_id FROM room_choices choice JOIN room_choice_votes vote ON vote.choice_id=choice.id WHERE choice.id=$1', [choice.choiceId])).rows).toEqual([{ status: 'answered', option_id: 'B' }]);
+    expect((await db.query("SELECT count(*)::int count FROM messages WHERE card_type='choice-answered'")).rows[0]?.count).toBe(1);
+    await expect(dispatch('answerChoice', { ...input, optionId: 'A' }, 'answer')).rejects.toBeInstanceOf(CommandDigestConflict);
+  });
+
   it('takes a real workflow gate default once without advancing the run again on receipt replay', async () => {
     const contract = describedWorkflow({ version: 1, name: 'tray-gate', description: 'A synthetic human decision',
       roles: ['approver'], start: 'decision', deadlineSeconds: 7200, handoffs: {
@@ -182,8 +195,26 @@ describe('durable DB-only Tray decision adapter', () => {
       .toEqual([{ outcome: 'stop', contents: { decision: 'stop', defaultedBy: A } }]);
   });
 
-  it('keeps legacy result/receipt behavior and refuses answerChoice or malformed selected inputs', async () => {
-    expect(isTrayDecisionCommand('answerChoice')).toBe(false);
+  it('preserves workflow gate answers and their note through the durable adapter', async () => {
+    const contract = describedWorkflow({ version: 1, name: 'tray-answer-gate', description: 'A synthetic human decision',
+      roles: ['approver'], start: 'decision', deadlineSeconds: 7200, handoffs: {
+        decision: { kind: 'gate', role: 'approver', requires: ['decision'], on: { approve: 'done', stop: 'failed' }, timeoutSeconds: 600, default: 'stop' },
+        done: { kind: 'terminal', status: 'done' }, failed: { kind: 'terminal', status: 'failed' },
+      } });
+    await saveWorkflow(db, { room_id: ROOM, agent_id: AGENT } as CommandRow, { contract });
+    const { runId } = await startWorkflow(db, { room_id: ROOM, agent_id: A } as CommandRow,
+      { name: 'tray-answer-gate', roleBindings: { approver: AGENT } });
+    const choice = (await db.query<{ id: string; options: { label: string; optionId: string }[] }>(`SELECT choice.id,choice.options FROM room_choices choice JOIN messages message ON message.id=choice.message_id
+      WHERE message.card->>'runId'=$1 AND choice.status='open'`, [runId])).rows[0]!;
+    const input = { choiceId: choice.id, optionId: choice.options.find(option => option.label === 'approve')!.optionId, note: 'Proceed with this plan' };
+    const receipt = await dispatch('answerChoice', input, 'gate-answer');
+    expect(await dispatch('answerChoice', input, 'gate-answer')).toEqual(receipt);
+    expect(await getWorkflowRun(db, ROOM, runId)).toMatchObject({ state: 'done', attempt: 1 });
+    expect((await db.query('SELECT note FROM room_choice_votes WHERE choice_id=$1', [choice.id])).rows).toEqual([{ note: input.note }]);
+  });
+
+  it('keeps legacy result/receipt behavior and refuses malformed selected inputs', async () => {
+    expect(isTrayDecisionCommand('answerChoice')).toBe(true);
     expect(isTrayDecisionCommand('skipChoice')).toBe(true);
     await grant();
     const getter = vi.fn(() => GRANT);
@@ -192,8 +223,7 @@ describe('durable DB-only Tray decision adapter', () => {
     await expect(dispatch('decideAgentGrant', input, 'getter')).rejects.toBeInstanceOf(InvalidCommandArguments);
     expect(getter).not.toHaveBeenCalled();
     await expect(dispatch('decideAgentGrant', { grantId: GRANT, decision: 'deny', metadata: 'extra' }, 'extra')).rejects.toBeInstanceOf(InvalidCommandArguments);
-    await expect(dispatchTrayDecisionCommand(new RouterCommandLedger(db), phone, live, 'answerChoice' as TrayDecisionOperation,
-      { choiceId: GRANT, optionId: 'B' }, A, { v: 1, id: 'provider' })).rejects.toMatchObject({ status: 400 });
+    await expect(dispatch('answerChoice', { choiceId: GRANT, optionId: 'B', extra: true }, 'extra-choice')).rejects.toBeInstanceOf(InvalidCommandArguments);
     const result = await phone.execute('decideAgentGrant', { grantId: GRANT, decision: 'deny' }, A);
     expect(result).toEqual({ grantId: GRANT, status: 'denied', roomId: ROOM });
     expect((await db.query('SELECT * FROM router_commands')).rows).toEqual([]);

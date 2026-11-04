@@ -61,6 +61,13 @@ describe('complete Tray ownership',()=>{
     const paint={route:'phone.markNeedsYouSeen',input:{workspaceId:'workspace-a',messageIds:['q']}} as const;
     expect(()=>owner.tap('PaintTray' as never,paint as never,()=>undefined)).toThrow('wrong action');
   });
+  it('accepts complete canonical sections beyond former display row and byte caps',()=>{
+    const items=Array.from({length:31},(_,n)=>({messageId:`q${n}`,roomId:'room',workspaceId:'workspace-a',
+      roomName:'Room',roomKind:'room',text:n===0?'x'.repeat(128*1024):'Question',createdAt:1}));
+    const saved={windowId:`saved1:${'a'.repeat(64)}`,rows:[]};
+    expect(validateTrayProjection({needs:{items},saved},'workspace-a')).toBe(true);
+    expect(validateTrayProjection({needs:{items:[...items,{...items[0],createdAt:'invalid'}]},saved},'workspace-a')).toBe(false);
+  });
   it('requires both validated sections; legacy partial/error envelopes cannot become canonical data',()=>{
     expect(validateTrayProjection({needs:{items:[]},saved:{windowId:`saved1:${'a'.repeat(64)}`,rows:[]}},'workspace-a')).toBe(true);
     for(const value of [{},{needs:{items:[]},saved:{windowId:`saved1:${'a'.repeat(64)}`,rows:[]},undeclared:true},{needs:{items:[]}},{saved:{bookmarks:[]}},

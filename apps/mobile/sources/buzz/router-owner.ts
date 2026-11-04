@@ -621,6 +621,12 @@ export function admitRouterTrayCommand(workspaceId:string,command:TrayCommand):A
       const request={route:'phone.decideWritePermission' as const,input:command.input};
       return owner.tap('EditTray',request,pass=>owner.spend(request,pass));
     }
+    case 'answerChoice':{
+      if(!value.needs.items.some(item=>item.workspaceId===workspaceId&&item.approval?.actions?.some(action=>
+        action.kind==='choice'&&exactTrayInput(command.input,{choiceId:action.choiceId,optionId:action.optionId}))))throw new Error('Tray decision is unavailable.');
+      const request={route:'phone.answerChoice' as const,input:command.input};
+      return owner.tap('EditTray',request,pass=>owner.spend(request,pass));
+    }
     case 'skipChoice':{
       if(!value.needs.items.some(item=>item.workspaceId===workspaceId&&item.approval?.actions?.some(action=>
         action.kind==='skip-choice'&&exactTrayInput(command.input,{choiceId:action.choiceId}))))throw new Error('Tray decision is unavailable.');

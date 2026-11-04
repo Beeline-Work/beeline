@@ -21,6 +21,15 @@ describe('P7 durable private command owner', () => {
     expect(record).toMatchObject({ ...PARTITION, state: 'prepared', sent: false, id: 'a'.repeat(64) });
     expect(save).toHaveBeenCalledTimes(1);
   });
+  it('persists and delivers a Tray choice answer with its immutable identity',async()=>{
+    const {intents}=owner();
+    const input={choiceId:'11111111-1111-4111-8111-111111111111',optionId:'B'};
+    const record=await intents.prepare({wire:{operation:'answerChoice',input:canonical(input)},isCurrent:()=>true});
+    const send=vi.fn(async()=>receipt(record));
+    await intents.dispatch(record,{kind:'initial',generation:1,commandDedupV1:true},send);
+    expect(send).toHaveBeenCalledWith('answerChoice',input,{v:1,id:record.id});
+    expect(intents.view()[0]).toMatchObject({state:'committed',sent:true});
+  });
   it('never sends before the atomic storage promise succeeds', async () => {
     let release!: () => void;
     const blocked = new Promise<void>(resolve => { release = resolve; });

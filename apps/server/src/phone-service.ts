@@ -1161,6 +1161,7 @@ export class PhoneService {
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(operation)) throw new Error(REVIEW_IDENTITY_MESSAGE);
     if (operation === 'decideAgentGrant') await this.decideAgentGrant(input as Input<'decideAgentGrant'>, viewerId, defer);
     else if (operation === 'decideWritePermission') await this.execute(operation, input as Input<'decideWritePermission'>, viewerId);
+    else if (operation === 'answerChoice') await this.execute(operation, input as Input<'answerChoice'>, viewerId);
     else if (operation === 'skipChoice') await this.execute(operation, input as Input<'skipChoice'>, viewerId);
     else throw new Error('Unsupported Tray decision command');
   }

@@ -59,6 +59,21 @@ Tray Needs-you CLEAR/UNDO uses the separately identified **commit+rAF proxy**, n
 
 `native-gestures.json` and screenshots retain actual signed-in Android checks: below-threshold cancellation, a scrolling interruption (150 px vertical movement), left reply, right corner prompt/cancel, and long press. Both cancelled cases and the committed reply returned with zero horizontal displacement. No message was sent or corner created. The temporary bookmark was restored to its original unsaved state. No iOS or physical-device timing claim is made.
 
+## Native acceptance revalidation
+
+The selected live-evidence finding is resolved in [native-revalidation.json](native-revalidation.json), with one result per scenario. Scenarios 1/2 reuse the earlier native A/B explicitly accepted by Firstmate; scenarios 3–6 were driven on owned emulator **5634** using candidate `4e4fd5edc2885aecadc7df03d54b43dee1b00e8e`, including the unused swipe-option removal. These are device checks, not mocked recognizers.
+
+- **PASS 1 — Restart, then tap a previously opened Room:** accepted earlier cold p95 **413.065 ms**, down from 916.270 ms; not remeasured in this phase.
+- **PASS 2 — Cached reopen with refresh:** accepted earlier warm p95 **331.384 ms**, down from 415.801 ms; not remeasured in this phase.
+- **PASS 3 — Scoped cache removal:** the proof Room existed before removal; hot lookup, synchronous restoration and durable read all returned empty afterward. The ordinary opening read then delivered thirty rows. Removed data did not paint before that response.
+- **PASS 4 — No tap-prefetch:** a fresh-process deep link completed its own read and displayed native rows. A second check removed the proof Room cache, then navigated without running prefetch: the session reported a cache miss, completed its own read before the first nonempty transcript commit, and displayed native rows without deadlock.
+- **PASS 5 — Cancelled gestures:** short swipe and scrolling interruption both returned to **0 px** horizontal displacement without a reply action; the interruption scrolled the selected row **150 px** vertically.
+- **PASS 6 — Committed gestures:** reply showed its composer banner and returned to **0 px** after cancellation; corner swipe showed its prompt, cancelled without creating a corner and returned to rest; long press showed message actions, then dismissed. No message was sent.
+
+[Raw device records](native-revalidation-records.json.gz) retain the cache-removal, direct-open and gesture logs; the JSON links nine new native screenshots and records both bundle hashes. SDKs were compiled sequentially with `tsc --noCheck` for this runtime proof; exports used the production origin, runtime override 40 and two workers. Temporary build-only hooks removed only the assigned Room's scoped DTO and bypassed prefetch for the uncached direct-navigation check. They added no permanent control or network site. One export attempt ended with SIGTERM without a build diagnostic; its focused retry succeeded. All temporary source hooks were restored, added device assets removed, and the original production v142 launch asset restored with its SHA256 verified. Auth storage and server data were untouched; no OTA was published.
+
+These behavioral cache-miss checks do **not** measure first-ever uncached tap-to-paint latency. That total remains unmeasured; the exploratory ~377 ms response wait is not a total. **Room-list-return p95 250.815 ms remains OPEN in the PR body.** The Tray experiment stays excluded.
+
 ## Recompute and reproduce
 
 Recompute all navigation tables without a device, credentials, or network:

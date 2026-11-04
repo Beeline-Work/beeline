@@ -165,8 +165,13 @@ describe('uninstalled precise Saved source and sealed-row projection',()=>{
     const pieces=Array.from({length:3},(_,batch)=>({sourceTable:'tray-saved-source',trayReaderId:a,trayWorkspaceId:w1,
       table:'messages',operation:'UPDATE',classification:'complete',targets:Array.from({length:100},(_,n)=>({
         bookmarkId:`00000000-0000-4000-8000-${String(batch*100+n).padStart(12,'0')}`,messageId:`m-${batch*100+n}`}))}));
-    expect(routerSourcePlan(pieces,a,w1).savedTargets).toHaveLength(300);
-    expect(routerSourcePlan(pieces,a,w1).savedUnavailable).toBeUndefined();
+    // Combining complete captures retains every target while conflicting
+    // bookmark identities still invalidate source evidence.
+    const combined=routerSourcePlan(pieces,a,w1);
+    expect(combined.savedUnavailable).toBeUndefined();
+    expect(combined.savedTargets).toEqual(pieces.flatMap(piece=>piece.targets));
+    const conflict={...pieces[0]!,targets:[{...pieces[0]!.targets[0]!,messageId:'conflicting-message'}]};
+    expect(routerSourcePlan([...pieces,conflict],a,w1)).toMatchObject({savedTargets:[],savedUnavailable:'dependency'});
   });
 
   it('keeps source evidence transactional and strictly parses only bounded exact targets',async()=>{

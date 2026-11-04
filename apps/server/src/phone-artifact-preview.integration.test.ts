@@ -9,7 +9,7 @@ import { PhoneService } from './phone-service.js';
 import { readMediaMetadata } from './phone-media.js';
 import { createBeelineServer } from './server.js';
 import { MemoryObjectStorage, migratedDatabase } from './test-support.js';
-import { phoneArtifactHost } from './test-fixtures/phone-artifact-host.js';
+import { phoneArtifactHost } from './test-fixtures/test-support-phone-artifact-host.js';
 
 const VIEWER = 'a'.repeat(64), AGENT = 'b'.repeat(64);
 const WS = '11111111-1111-4111-8111-111111111111', ROOM = '22222222-2222-4222-8222-222222222222';

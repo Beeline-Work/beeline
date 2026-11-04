@@ -25,7 +25,7 @@ type Negotiation = { generation: number; families: readonly LaneFamily[];
   execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> };
 type Slot = { request: LaneRequest; consumers: Map<() => void, () => boolean>; listeners: Set<() => void>;
   validate?:(value:unknown)=>boolean;
-  generation?: number; expectedWorkspace?: string; token?: object; release?: () => void; stop?: () => void };
+  generation?: number; forwardGeneration?: number; expectedWorkspace?: string; token?: object; release?: () => void; stop?: () => void };
 const navigation = new NavigationOwner();
 const listeners = new Set<() => void>();
 const slots = new Set<Slot>();
@@ -146,7 +146,7 @@ function eligible(slot: Slot): boolean {
   if(slot.request.family==='workspace-roster')return focused.screen==='AppShell'||focused.screen==='AgentProfile'||focused.screen==='Room';
   if(slot.request.family==='agent-profile')return focused.screen==='AgentProfile'&&focused.agentId===slot.request.agentId;
   if (slot.request.family === 'room-head') return focused.screen === 'Room' && focused.roomId === slot.request.roomId;
-  if (slot.request.family === 'room-list') return focused.screen === 'AppShell' || listPanelVisible;
+  if (slot.request.family === 'room-list') return focused.screen === 'AppShell' || listPanelVisible || focused.screen === 'Room' && slot.forwardGeneration === focused.generation;
   return slot.request.family === 'needs-you-count';
 }
 function release(slot: Slot): void {
@@ -161,7 +161,7 @@ function focus(slot: Slot): void {
   if (!admission || !lanes || !residency || !eligible(slot) || !lanes.supports(slot.request.family)) {
     release(slot); return;
   }
-  if(slot.request.family==='needs-you-saved-page'||slot.request.family==='workspace-roster'&&(slot.request.query||residency.screen==='Room'))return; // only its actual continuation gesture or connection recovery admits demand
+  if(slot.request.family==='needs-you-saved-page'||slot.request.family==='room-list'&&residency.screen==='Room'&&!listPanelVisible||slot.request.family==='workspace-roster'&&(slot.request.query||residency.screen==='Room'))return; // only its actual continuation gesture or connection recovery admits demand
   if (slot.generation === residency.generation) {
     if (!slot.release && slot.token) {
       const permit = admission.resumeObservation(slotNames.get(slot)!, residency.generation);
@@ -288,7 +288,7 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
     const recovery = permits.get(lanes.key(slot.request));
     if (!recovery) continue;
     const residency = navigation.current()!;
-    if(slot.request.family==='needs-you-saved-page'||slot.request.family==='workspace-roster'&&residency.screen==='Room'){ /* already gesture-admitted; connection pass owns recovery */ }
+    if(slot.request.family==='needs-you-saved-page'||['workspace-roster','room-list'].includes(slot.request.family)&&residency.screen==='Room'){ /* already gesture-admitted; connection pass owns recovery */ }
     else if (slot.generation === residency.generation && slot.token) admission.resumeObservation(slotNames.get(slot)!, residency.generation);
     else {
       const request = { route: 'phone.readRouterSnapshot' as const, input: slot.request };
@@ -460,7 +460,7 @@ export function acquireRouterLane(request: LaneRequest, visible: () => boolean, 
     // observer, so StrictMode setup/cleanup cannot mint or cancel a focus pass.
     release: () => {
       held.consumers.delete(listener);held.listeners.delete(listener);
-      if(held.request.family==='workspace-roster'&&!held.consumers.size&&navigation.current()?.screen==='Room')release(held);
+      if(['workspace-roster','room-list'].includes(held.request.family)&&!held.consumers.size&&navigation.current()?.screen==='Room')release(held);
       if((held.request.family==='needs-you-saved-page'||held.request.family==='workspace-roster'&&held.request.query)&&!held.consumers.size){release(held);slots.delete(held);slotsByKey.delete(key);}
     },
   };
@@ -487,6 +487,29 @@ export function acquireRouterSavedContinuation(workspaceId:string,before:string,
       slot.stop=lanes!.subscribe(request,()=>{for(const notify of slot.listeners)notify();});
     });
     return handle;
+  }catch(error){handle.release();throw error;}
+}
+
+/** The actual Forward picker gesture uses the same read lanes. An absent
+ * sidebar never authorizes a direct readChats request from the transcript. */
+export function acquireRouterForwardList(workspaceId:string,visible:()=>boolean,listener:()=>void){
+  const focused=navigation.current(),owner=admission;
+  if(!owner||!lanes||!focused||focused.screen!=='Room'||!focused.roomId||routerFamilyMode('room-list')!=='router')
+    throw new Error('Forward picker is unavailable.');
+  const room=[...slots].find(slot=>slot.request.family==='room-head'&&slot.request.roomId===focused.roomId&&
+    slot.generation===focused.generation&&slot.release);
+  const value=room?lanes.peek(room.request).value as RouterValues['room-head']|null:null;
+  if(!value||value.room.workspaceId!==workspaceId)throw new Error('Forward Workspace is not held.');
+  const request={family:'room-list' as const,workspaceId};
+  const handle=acquireRouterLane(request,visible,listener),slot=slotsByKey.get(slotKey(request))!;
+  slot.forwardGeneration=focused.generation;
+  if(slot.release&&slot.generation===focused.generation)return handle;
+  try{
+    owner.openForwardList(focused.generation,focused.roomId,workspaceId,pass=>{
+      const read={route:'phone.readRouterSnapshot' as const,input:request},permit=owner.spend(read,pass);
+      slot.generation=focused.generation;slot.token=pass;slot.release=lanes!.demand(request,pass,permit);
+      slot.stop=lanes!.subscribe(request,()=>{for(const notify of slot.listeners)notify();});
+    });return handle;
   }catch(error){handle.release();throw error;}
 }
 

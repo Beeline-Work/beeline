@@ -68,7 +68,7 @@ function deferred<T = void>() { let resolve!: (value: T) => void; const promise 
 // machine, PostgreSQL snapshot and final enqueue fence are real. The native
 // NetInfo source is synthetic; installed OS/SDK captures remain separate.
 describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
-  it('F10/F18: healthy callbacks read zero; one half-open replacement recovers each demanded key once and flapping cannot refill it', async () => {
+  it('F10/F18: native death reopens and re-reads demanded keys; failed handshakes park without polling', async () => {
     resetSharedLiveConnection(); app.currentState = 'active'; app.listeners.clear(); netInfo.configure.mockClear();
     const healthyPong = deferred();
     class ClientSocket extends WebSocket {
@@ -81,7 +81,7 @@ describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
     const schema = `group_c_socket_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: url, max: 1 });
     await admin.query(`CREATE SCHEMA ${schema}`);
     const db = new PostgresDatabase('', 2, { pool: new Pool({ connectionString: url, options: `-c search_path=${schema},public`, max: 2 }) });
-    let queries = 0, sockets = 0, pings = 0, pong = true, refuse = false;
+    let queries = 0, sockets = 0, attempts = 0, pings = 0, pong = true, refuse = false;
     const wrap = (database: SqlDatabase): SqlDatabase => ({
       transaction: work => database.transaction(tx => work(wrap(tx))),
       query: async (sql, args) => { queries++; return database.query(sql, args); },
@@ -95,10 +95,15 @@ describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
     const network = () => { path++; sample(); };
     let challenged = deferred(), negotiated = deferred(), installed = deferred(), rejected = deferred();
     lanes.subscribe(input, () => { if (lanes.peek(input).state === 'LIVE') installed.resolve(); });
-    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0 }); await once(wss, 'listening');
+    const wss = new WebSocketServer({ host: '127.0.0.1', port: 0, verifyClient: (_info, finish) => {
+      attempts++;
+      // Refuse the upgrade itself. Closing after an accepted upgrade is a
+      // native death of an opened socket and correctly admits a reconnect.
+      if (refuse) { finish(false, 401); rejected.resolve(); }
+      else finish(true);
+    } }); await once(wss, 'listening');
     wss.on('connection', socket => {
       sockets++;
-      if (refuse) { socket.close(); rejected.resolve(); return; }
       const protocol = routerSocketProtocol(observed, viewer, raw => socket.send(raw),
         { families: ['room-head'], listenerReady: () => true, roomHeadContinuityV1: true }, { live, phone, rooms: () => [] });
       protocols.push(protocol); let serial = Promise.resolve();
@@ -135,6 +140,7 @@ describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
       };
       app.origin = `http://127.0.0.1:${(wss.address() as AddressInfo).port}`;
       vi.spyOn(monolithSession, 'authorization').mockResolvedValue('synthetic-credential');
+      const invalidateAuthorization = vi.spyOn(monolithSession, 'invalidateAuthorization');
       app.negotiated = async next => { lanes.connected(next.generation, next.families, next.execute, { roomHeadContinuityV1: true }); negotiated.resolve(); };
       app.disconnected = () => lanes.disconnected();
       connection = sharedLiveConnection();
@@ -172,16 +178,32 @@ describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
       expect(reads.filter(read => read.roomId === room)).toHaveLength(2);
       expect(reads.filter(read => read.roomId === hidden)).toHaveLength(1);
       expect(lanes.peek(input).cut).toEqual(cut);
+      // A real native close after that recovery must create a fresh socket,
+      // re-read the still-demanded Room once, and leave the released Room alone.
+      pong = true; negotiated = deferred(); installed = deferred();
       const latest = [...wss.clients].at(-1)!; latest.terminate();
-      await vi.waitFor(() => expect(lanes.peek(input).state).toBe('PARKED'));
+      await negotiated.promise; await installed.promise;
+      expect({ sockets, attempts, ready: connection.commandState().ready }).toEqual({ sockets: 3, attempts: 3, ready: true });
+      expect(lanes.peek(input).state).toBe('LIVE');
+      expect(lanes.peek(input).cut).toEqual(cut);
+      expect(reads.filter(read => read.roomId === room)).toHaveLength(3);
+      expect(reads.filter(read => read.roomId === hidden)).toHaveLength(1);
+      // Its next native close also gets one attempt, but an upgrade which
+      // never opens cannot refill recovery or leave a silently LIVE lane.
+      refuse = true; [...wss.clients].at(-1)!.terminate(); await rejected.promise;
+      await vi.waitFor(() => expect(invalidateAuthorization).toHaveBeenCalledTimes(1));
+      expect(lanes.peek(input).state).toBe('PARKED');
+      expect(connection.commandState().ready).toBe(false);
       const count = queries;
       await vi.advanceTimersByTimeAsync(86_400_000);
-      expect({ queries, sockets }).toEqual({ queries: count, sockets: 2 });
-      // A distinct path edge admits one attempt. Refusal and elapsed time do
-      // not manufacture a fourth attempt or a fresh snapshot generation.
-      refuse = true; network(); await rejected.promise;
+      expect({ queries, sockets, attempts }).toEqual({ queries: count, sockets: 3, attempts: 4 });
+      // A distinct path edge admits one bounded handshake recovery. Neither
+      // refusal nor elapsed time manufactures another attempt or snapshot.
+      network();
+      await vi.waitFor(() => expect(invalidateAuthorization).toHaveBeenCalledTimes(3));
       await vi.advanceTimersByTimeAsync(86_400_000);
-      expect(sockets).toBe(3); expect(reads).toHaveLength(3); expect(errors).toEqual([]);
+      expect({ queries, sockets, attempts }).toEqual({ queries: count, sockets: 3, attempts: 6 });
+      expect(reads).toHaveLength(4); expect(errors).toEqual([]);
     } finally {
       resetSharedLiveConnection(); connection?.dispose(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();
       for (const protocol of protocols) protocol.close(); for (const socket of wss.clients) socket.terminate();

@@ -55,8 +55,8 @@ export const SidebarNavigator = React.memo(() => {
   );
   // Web follows the live window: only `isTablet` (width ≥ 768) opens the
   // two-pane frame. `desktopPlatform` is true for every browser, so OR-ing it
-  // here painted the desktop shell at phone width. Native Tauri still keeps
-  // the frame at every width through `inDesktopShell`.
+  // here painted the desktop shell at phone width. Native Tauri follows the
+  // same width class so its compact Room deck has the whole window.
   const isDesktopLayout = usesPersistentDesktopFrame(inDesktopShell, isTablet);
   // Choosing, creating or joining a Workspace is a focused setup step, like
   // onboarding: no Room sidebar (a person there may have no Workspace yet).

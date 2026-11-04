@@ -3,20 +3,33 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RoomView, RoomViewMessage } from '@beeline/buzz-client';
-import { offscreenMessageFits, projectSidebarPreview } from '../../../../../../../packages/api-contract/src/sidebar-preview';
+import {
+  offscreenMessageFits,
+  projectSidebarPreview,
+} from '../../../../../../../packages/api-contract/src/sidebar-preview';
 
 // The real SurfaceRefreshScheduler drives the reads here; only the network
 // edges are faked. The socket subscribes and then stalls until the explicit frame test.
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+vi.mock('@/buzz/router-family', () => ({
+  useRouterFamily: () => 'legacy',
+  holdRouterConnection: () => () => {},
+}));
+vi.mock('@/buzz/router-chat-list', () => ({
+  acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy(),
+}));
 vi.mock('@/buzz/router-owner', () => ({
   routerFamilyMode: () => 'legacy',
-  acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
-    subscribe: () => () => {}, refreshVisibility: () => {} }),
+  acquireRouterLane: () => ({
+    current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
+    release: () => {},
+    subscribe: () => () => {},
+    refreshVisibility: () => {},
+  }),
   routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: () => {}, routerOwnerListPanel: () => {},
+  retryRouterLane: () => {},
+  routerOwnerListPanel: () => {},
 }));
 
 const controls = vi.hoisted(() => ({
@@ -101,7 +114,9 @@ vi.mock('@/sync/transport', () => ({
       };
     }
     async publishPreparedMessage() {}
-    liveDiagnostics() { return { state: 1, connecting: false }; }
+    liveDiagnostics() {
+      return { state: 1, connecting: false };
+    }
     reconnectLive() {
       controls.reconnects += 1;
     }
@@ -128,7 +143,10 @@ vi.mock('@/sync/transport/room-view-client', async () => {
   };
 });
 
-import type { RoomSurfaceSessionBindings, UseRoomSurfaceSessionResult } from './useRoomSurfaceSession';
+import type {
+  RoomSurfaceSessionBindings,
+  UseRoomSurfaceSessionResult,
+} from './useRoomSurfaceSession';
 import { useRoomSurfaceSession } from './useRoomSurfaceSession';
 
 function roomView(messages: RoomViewMessage[]): RoomView {
@@ -143,7 +161,14 @@ function roomView(messages: RoomViewMessage[]): RoomView {
     },
     messages,
     members: [],
-    latestAgentTurns: [{ agentPubkey: 'bbc', requestId: 'turn-a', status: controls.working ? 'working' : 'complete', createdAt: 1 }],
+    latestAgentTurns: [
+      {
+        agentPubkey: 'bbc',
+        requestId: 'turn-a',
+        status: controls.working ? 'working' : 'complete',
+        createdAt: 1,
+      },
+    ],
     viewer: {
       identity: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
       role: 'owner',
@@ -183,9 +208,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  controls.serverMessages = [
-    message('m-2042', 1_791_246_920, 'Yes. I left the timers here…'),
-  ];
+  controls.serverMessages = [message('m-2042', 1_791_246_920, 'Yes. I left the timers here…')];
   controls.roomReads = 0;
   controls.appState = 'active';
   controls.reconnects = 0;
@@ -215,20 +238,26 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       });
       await advance(100);
       expect(latest!.roomSurface!.latestAgentTurns![0]!.status).toBe('working');
-      controls.serverMessages.push(message('hidden-reply', 1_791_247_547, 'A long reply. '.repeat(200)));
+      controls.serverMessages.push(
+        message('hidden-reply', 1_791_247_547, 'A long reply. '.repeat(200)),
+      );
       controls.working = false;
       controls.failures = failures;
       await advance(30_000);
       expect(controls.roomReads).toBe(1);
       expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('m-2042');
-      await act(async () => controls.emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } }));
+      await act(async () =>
+        controls.emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } }),
+      );
       await advance(1_100);
       if (failures > 0) {
         expect(controls.roomReads).toBe(2);
         expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('m-2042');
         await advance(60_000);
         expect(controls.roomReads).toBe(2);
-        await act(async () => controls.emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } }));
+        await act(async () =>
+          controls.emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } }),
+        );
         await advance(0);
       }
       expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('hidden-reply');
@@ -243,14 +272,24 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
   it('never polls a working Room, including after live frames', async () => {
     controls.working = true;
     let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(Harness, { capture: () => {} })); });
+    await act(async () => {
+      renderer = create(React.createElement(Harness, { capture: () => {} }));
+    });
     await advance(100);
     const opening = controls.roomReads;
     await advance(120_000);
     expect(controls.roomReads).toBe(opening);
-    await act(async () => controls.emit({ monolithLive: {
-      type: 'presence', roomId: 'experiments', agentId: 'bbc', status: 'online', observedAt: 1,
-    } }));
+    await act(async () =>
+      controls.emit({
+        monolithLive: {
+          type: 'presence',
+          roomId: 'experiments',
+          agentId: 'bbc',
+          status: 'online',
+          observedAt: 1,
+        },
+      }),
+    );
     await advance(60_000);
     expect(controls.roomReads).toBe(opening);
     controls.appState = 'background';
@@ -264,28 +303,40 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     let latest: UseRoomSurfaceSessionResult | undefined;
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(React.createElement(Harness, { capture: (result) => { latest = result; } }));
+      renderer = create(
+        React.createElement(Harness, {
+          capture: (result) => {
+            latest = result;
+          },
+        }),
+      );
     });
     await advance(60_000);
     expect(controls.roomReads).toBe(1);
     expect(latest!.hydrationFailed).toBe(true);
     expect(latest!.roomSurface).toBeNull();
     controls.failures = 0;
-    await act(async () => controls.emit({
-      monolithLive: { type: 'subscribed', roomId: 'experiments', resumed: false },
-    }));
+    await act(async () =>
+      controls.emit({
+        monolithLive: { type: 'subscribed', roomId: 'experiments', resumed: false },
+      }),
+    );
     await advance(0);
     expect(controls.roomReads).toBe(2);
     expect(latest!.roomSurface?.messages.at(-1)?.id).toBe('m-2042');
     expect(latest!.hydrationFailed).toBe(false);
-    console.log('R1 stand-in: failed open left Retry; reconnect subscribe painted the Room and cleared it');
+    console.log(
+      'R1 stand-in: failed open left Retry; reconnect subscribe painted the Room and cleared it',
+    );
     await act(async () => renderer.unmount());
   });
 
   it('does not retry a failed refresh on a timer, and reads once on foreground', async () => {
     controls.failures = 100;
     let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(Harness, { capture: () => {} })); });
+    await act(async () => {
+      renderer = create(React.createElement(Harness, { capture: () => {} }));
+    });
     await advance(60_000);
     expect(controls.roomReads).toBe(1);
     controls.failures = 0;
@@ -313,7 +364,11 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     // BBC posts to the Room. The phone's socket never delivers a frame for it.
     controls.serverMessages = [
       ...controls.serverMessages,
-      message('adf6a0c9', 1_791_247_547, 'All five operational timers are now in Equities Operations'),
+      message(
+        'adf6a0c9',
+        1_791_247_547,
+        'All five operational timers are now in Equities Operations',
+      ),
     ];
 
     // The reader keeps the Room open for ten minutes: nothing is read on a timer.
@@ -326,9 +381,9 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       ...controls.serverMessages,
       message('5e7d', 1_791_248_000, 'Thanks — looks good'),
     ];
-    await act(async () => latest!.applyRoomMessageResult(
-      message('5e7d', 1_791_248_000, 'Thanks — looks good'),
-    ));
+    await act(async () =>
+      latest!.applyRoomMessageResult(message('5e7d', 1_791_248_000, 'Thanks — looks good')),
+    );
     await advance(5_000);
 
     const newest = latest?.roomSurface?.messages.map((item) => item.id).slice(-2);
@@ -344,7 +399,13 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       let latest: UseRoomSurfaceSessionResult | undefined;
       let renderer!: ReactTestRenderer;
       await act(async () => {
-        renderer = create(React.createElement(Harness, { capture: (result) => { latest = result; } }));
+        renderer = create(
+          React.createElement(Harness, {
+            capture: (result) => {
+              latest = result;
+            },
+          }),
+        );
       });
       await advance(100);
       expect(controls.roomReads).toBe(1);
@@ -361,8 +422,16 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       await act(async () => {
         if (delivery !== 'invalidation') controls.emit({ monolithLive: preview });
         if (delivery !== 'preview') {
-          controls.emit({ monolithLive: { type: 'invalidate', roomId: 'experiments', reason: 'postgres:agent_turns' } });
-          controls.emit({ monolithLive: { type: 'invalidate', roomId: 'experiments', reason: 'phone-write' } });
+          controls.emit({
+            monolithLive: {
+              type: 'invalidate',
+              roomId: 'experiments',
+              reason: 'postgres:agent_turns',
+            },
+          });
+          controls.emit({
+            monolithLive: { type: 'invalidate', roomId: 'experiments', reason: 'phone-write' },
+          });
         }
       });
       await advance(180_000);
@@ -374,7 +443,10 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       });
       await advance(0);
       expect(controls.roomReads).toBe(2);
-      expect(latest!.roomSurface!.messages.at(-1)).toMatchObject({ id: reply.id, text: reply.text });
+      expect(latest!.roomSurface!.messages.at(-1)).toMatchObject({
+        id: reply.id,
+        text: reply.text,
+      });
       expect(controls.reconnects).toBe(0);
       await act(async () => {
         for (const listener of controls.appStateListeners) listener('active');
@@ -389,7 +461,13 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     let latest: UseRoomSurfaceSessionResult | undefined;
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(React.createElement(Harness, { capture: (result) => { latest = result; } }));
+      renderer = create(
+        React.createElement(Harness, {
+          capture: (result) => {
+            latest = result;
+          },
+        }),
+      );
     });
     await advance(100);
     controls.appState = 'background';
@@ -397,7 +475,9 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     controls.serverMessages.push(reply);
     await act(async () => {
       for (const listener of controls.appStateListeners) listener('background');
-      controls.emit({ monolithLive: { type: 'message-delta', roomId: 'experiments', message: reply } });
+      controls.emit({
+        monolithLive: { type: 'message-delta', roomId: 'experiments', message: reply },
+      });
     });
     await advance(180_000);
     controls.appState = 'active';

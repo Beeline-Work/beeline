@@ -7,14 +7,24 @@ import type { ChatListItem, ChatListView } from '@beeline/buzz-client';
 
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+vi.mock('@/buzz/router-family', () => ({
+  useRouterFamily: () => 'legacy',
+  holdRouterConnection: () => () => {},
+}));
+vi.mock('@/buzz/router-chat-list', () => ({
+  acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy(),
+}));
 vi.mock('@/buzz/router-owner', () => ({
   routerFamilyMode: () => 'legacy',
-  acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
-    subscribe: () => () => {}, refreshVisibility: () => {} }),
+  acquireRouterLane: () => ({
+    current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
+    release: () => {},
+    subscribe: () => () => {},
+    refreshVisibility: () => {},
+  }),
   routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: () => {}, routerOwnerListPanel: () => {},
+  retryRouterLane: () => {},
+  routerOwnerListPanel: () => {},
 }));
 
 const disk = vi.hoisted(() => ({
@@ -24,10 +34,16 @@ const disk = vi.hoisted(() => ({
   writes: [] as unknown[],
 }));
 const server = vi.hoisted(() => ({
-  chats: (async () => { throw new Error('no read served'); }) as () => Promise<unknown>,
+  chats: (async () => {
+    throw new Error('no read served');
+  }) as () => Promise<unknown>,
 }));
 const live = vi.hoisted(() => ({
-  registrations: [] as Array<{ filters: unknown; listener: (event: unknown) => void; closed: boolean }>,
+  registrations: [] as Array<{
+    filters: unknown;
+    listener: (event: unknown) => void;
+    closed: boolean;
+  }>,
   connected: new Set<() => void>(),
   reconnects: 0,
   viewing: new Set<string>(),
@@ -35,8 +51,12 @@ const live = vi.hoisted(() => ({
 
 vi.mock('react-native', () => ({ AppState: { currentState: 'active' } }));
 vi.mock('./surface-storage', () => ({
-  surfaceAddress: (_relay: string, _viewer: string, endpoint: string, params?: { workspaceId?: string }) =>
-    `${endpoint}:${params?.workspaceId ?? ''}`,
+  surfaceAddress: (
+    _relay: string,
+    _viewer: string,
+    endpoint: string,
+    params?: { workspaceId?: string },
+  ) => `${endpoint}:${params?.workspaceId ?? ''}`,
   mobileSurfaceCache: {
     peek: (key: string) => disk.hot.get(key) ?? null,
     read: async (key: string) => {
@@ -74,7 +94,11 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: async () => ({ publicKey: 'viewer' }),
 }));
 vi.mock('@/sync/transport/room-view-client', () => ({
-  RoomViewClient: class { chats() { return server.chats(); } },
+  RoomViewClient: class {
+    chats() {
+      return server.chats();
+    }
+  },
 }));
 vi.mock('@/modal', async () => ({ Modal: (await import('@/modal/ModalManager')).Modal }));
 // The real ModalProvider and confirm dialog render; only the native Hull
@@ -116,7 +140,12 @@ import { ModalProvider } from '@/modal/ModalProvider';
 import type { RepoCandidate } from './room-repo-picker';
 import { resetClientState } from '@/sync/client-reset';
 import { useRoomRepoReplacementGuard } from './room-repo-replacement';
-import { acquireChatList, liveChatList, resetChatListStoresForTest, useChatList } from './chat-list-store';
+import {
+  acquireChatList,
+  liveChatList,
+  resetChatListStoresForTest,
+  useChatList,
+} from './chat-list-store';
 import {
   acceptCornerStatusFrame,
   getRoomCornerSummary,
@@ -184,16 +213,34 @@ afterEach(() => {
 
 describe('app-level Room list store', () => {
   it.each([1, 5])('keeps %i complete offscreen arrivals ready in the Room cache', async (count) => {
-    const sidebar = join(vi.fn(async () => listOf([row('room-a', 10)])), visible);
+    const sidebar = join(
+      vi.fn(async () => listOf([row('room-a', 10)])),
+      visible,
+    );
     await vi.advanceTimersByTimeAsync(10);
     const roomKey = '/room/room-a:';
-    disk.hot.set(roomKey, { room: { id: 'room-a' }, messages: [], members: [],
-      latestAgentTurns: [], pendingAgentCommands: [], watchFilters: [] });
+    disk.hot.set(roomKey, {
+      room: { id: 'room-a' },
+      messages: [],
+      members: [],
+      latestAgentTurns: [],
+      pendingAgentCommands: [],
+      watchFilters: [],
+    });
     for (let index = 0; index < count; index++) {
-      emit({ monolithLive: { type: 'message-delta', roomId: 'room-a', message: {
-        id: `new-${index}`, text: `complete arrival ${index}`, createdAt: 20 + index,
-        author: agent, presentation: 'message',
-      } } });
+      emit({
+        monolithLive: {
+          type: 'message-delta',
+          roomId: 'room-a',
+          message: {
+            id: `new-${index}`,
+            text: `complete arrival ${index}`,
+            createdAt: 20 + index,
+            author: agent,
+            presentation: 'message',
+          },
+        },
+      });
     }
     expect((disk.hot.get(roomKey) as { messages: unknown[] }).messages).toHaveLength(count);
     sidebar.release();
@@ -206,12 +253,26 @@ describe('app-level Room list store', () => {
     const roomKey = '/room/room-a:';
     const completeRoom = { room: { id: 'room-a' }, messages: [{ id: 'old', text: 'complete' }] };
     disk.hot.set(roomKey, completeRoom);
-    emit({ monolithLive: { type: 'sidebar-preview', roomId: 'room-a', preview: {
-      id: 'new', text: 'short preview', createdAt: 20, author: agent, presentation: 'message',
-      mentionsViewer: true,
-    } } });
+    emit({
+      monolithLive: {
+        type: 'sidebar-preview',
+        roomId: 'room-a',
+        preview: {
+          id: 'new',
+          text: 'short preview',
+          createdAt: 20,
+          author: agent,
+          presentation: 'message',
+          mentionsViewer: true,
+        },
+      },
+    });
     await vi.advanceTimersByTimeAsync(1100);
-    expect(sidebar.current()?.chats[0]?.latestMessage).toMatchObject({ id: 'new', text: 'short preview', mentionsViewer: true });
+    expect(sidebar.current()?.chats[0]?.latestMessage).toMatchObject({
+      id: 'new',
+      text: 'short preview',
+      mentionsViewer: true,
+    });
     expect(disk.hot.has(roomKey)).toBe(false);
     expect(chats).toHaveBeenCalledTimes(1);
     sidebar.release();
@@ -223,19 +284,39 @@ describe('app-level Room list store', () => {
     const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     for (const status of ['online', 'offline', 'online']) {
-      emit({ monolithLive: { type: 'presence', roomId: 'room-a', agentId: 'agent', status, observedAt: 42 } });
+      emit({
+        monolithLive: {
+          type: 'presence',
+          roomId: 'room-a',
+          agentId: 'agent',
+          status,
+          observedAt: 42,
+        },
+      });
       await vi.advanceTimersByTimeAsync(2_000);
     }
     expect(chats).toHaveBeenCalledTimes(1);
     expect(handle.current()?.chats[0]?.unread).toBe(true);
 
     server = listOf([row('room-a', 10, { unread: false })]);
-    emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'postgres:room_read_marks', readerId: 'viewer' } });
+    emit({
+      monolithLive: {
+        type: 'invalidate',
+        roomId: 'room-a',
+        reason: 'postgres:room_read_marks',
+        readerId: 'viewer',
+      },
+    });
     await vi.advanceTimersByTimeAsync(2_000);
     expect(chats).toHaveBeenCalledTimes(2);
     expect(handle.current()?.chats[0]?.unread).toBe(false);
 
-    for (const reason of ['postgres:rooms', 'postgres:memberships', 'corner-text', 'legacy-unknown']) {
+    for (const reason of [
+      'postgres:rooms',
+      'postgres:memberships',
+      'corner-text',
+      'legacy-unknown',
+    ]) {
       emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason } });
       await vi.advanceTimersByTimeAsync(2_000);
     }
@@ -268,7 +349,11 @@ describe('app-level Room list store', () => {
         type: 'message-delta',
         roomId: 'room-b',
         message: {
-          id: 'm-new', text: 'fresh', createdAt: 20, author: agent, presentation: 'message',
+          id: 'm-new',
+          text: 'fresh',
+          createdAt: 20,
+          author: agent,
+          presentation: 'message',
         },
       },
     });
@@ -279,8 +364,12 @@ describe('app-level Room list store', () => {
 
     emit({
       monolithLive: {
-        type: 'corner-status', roomId: 'room-a', cornerCount: 1, waitingCornerCount: 0,
-        openCorners: [], agentState: 'working',
+        type: 'corner-status',
+        roomId: 'room-a',
+        cornerCount: 1,
+        waitingCornerCount: 0,
+        openCorners: [],
+        agentState: 'working',
       },
     });
     const roomA = roomScreen.current()?.chats.find((item) => item.room.id === 'room-a');
@@ -298,7 +387,8 @@ describe('app-level Room list store', () => {
   });
 
   it('Reproduction R1: a failed opening read runs again when the socket subscribes', async () => {
-    const chats = vi.fn()
+    const chats = vi
+      .fn()
       .mockRejectedValueOnce(new Error('offline'))
       .mockResolvedValue(listOf([row('room-a', 10)]));
     const handle = join(chats, visible);
@@ -387,7 +477,13 @@ describe('app-level Room list store', () => {
       monolithLive: {
         type: 'message-delta',
         roomId: 'room-a',
-        message: { id: 'm-late', text: 'late', createdAt: 40, author: agent, presentation: 'message' },
+        message: {
+          id: 'm-late',
+          text: 'late',
+          createdAt: 40,
+          author: agent,
+          presentation: 'message',
+        },
       },
     });
     await vi.advanceTimersByTimeAsync(1_100);
@@ -396,7 +492,13 @@ describe('app-level Room list store', () => {
 
     // The next open paints the delta from disk before its covering read lands.
     let answer!: (value: ChatListView) => void;
-    const second = join(() => new Promise((resolve) => { answer = resolve; }), visible);
+    const second = join(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+      visible,
+    );
     await vi.advanceTimersByTimeAsync(0);
     expect(second.current()?.chats[0]?.latestMessage?.text).toBe('late');
     answer(listOf([row('room-a', 10)]));
@@ -422,45 +524,66 @@ describe('app-level Room list store', () => {
     handle.release();
   });
 
-  it.each([false, true])('preserves a newer background invalidation across an older list read: %s', async (laterInvalidation) => {
-    const oldView = listOf([row('room-a', 10)]);
-    const newView = listOf([row('room-a', 20, {
-      latestMessage: { id: 'new', text: 'new reply', createdAt: 20, author: agent },
-    })]);
-    const chats = vi.fn(async () => oldView);
-    const handle = join(chats, { visible: () => AppState.currentState === 'active' });
-    try {
-      await vi.advanceTimersByTimeAsync(10);
-      let resolveRead!: (value: ChatListView) => void;
-      chats.mockImplementationOnce(() => new Promise<ChatListView>((resolve) => { resolveRead = resolve; }));
-      handle.force();
-      await vi.advanceTimersByTimeAsync(10);
-      expect(chats).toHaveBeenCalledTimes(2);
-      AppState.currentState = 'background';
-      chats.mockResolvedValue(newView);
-      if (laterInvalidation) emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'phone-write' } });
-      resolveRead(oldView);
-      await vi.advanceTimersByTimeAsync(180_000);
-      expect(chats).toHaveBeenCalledTimes(2);
-      expect(handle.current()?.chats[0]?.latestMessage?.text).toBe('hello');
-      AppState.currentState = 'active';
-      handle.catchUp();
-      await vi.advanceTimersByTimeAsync(10);
-      const expectedReads = laterInvalidation ? 3 : 2;
-      expect(chats).toHaveBeenCalledTimes(expectedReads);
-      expect(handle.current()?.chats[0]?.latestMessage?.text).toBe(laterInvalidation ? 'new reply' : 'hello');
-      handle.catchUp();
-      await vi.advanceTimersByTimeAsync(180_000);
-      expect(chats).toHaveBeenCalledTimes(expectedReads);
-      expect(live.reconnects).toBe(0);
-    } finally { handle.release(); }
-  });
+  it.each([false, true])(
+    'preserves a newer background invalidation across an older list read: %s',
+    async (laterInvalidation) => {
+      const oldView = listOf([row('room-a', 10)]);
+      const newView = listOf([
+        row('room-a', 20, {
+          latestMessage: { id: 'new', text: 'new reply', createdAt: 20, author: agent },
+        }),
+      ]);
+      const chats = vi.fn(async () => oldView);
+      const handle = join(chats, { visible: () => AppState.currentState === 'active' });
+      try {
+        await vi.advanceTimersByTimeAsync(10);
+        let resolveRead!: (value: ChatListView) => void;
+        chats.mockImplementationOnce(
+          () =>
+            new Promise<ChatListView>((resolve) => {
+              resolveRead = resolve;
+            }),
+        );
+        handle.force();
+        await vi.advanceTimersByTimeAsync(10);
+        expect(chats).toHaveBeenCalledTimes(2);
+        AppState.currentState = 'background';
+        chats.mockResolvedValue(newView);
+        if (laterInvalidation)
+          emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'phone-write' } });
+        resolveRead(oldView);
+        await vi.advanceTimersByTimeAsync(180_000);
+        expect(chats).toHaveBeenCalledTimes(2);
+        expect(handle.current()?.chats[0]?.latestMessage?.text).toBe('hello');
+        AppState.currentState = 'active';
+        handle.catchUp();
+        await vi.advanceTimersByTimeAsync(10);
+        const expectedReads = laterInvalidation ? 3 : 2;
+        expect(chats).toHaveBeenCalledTimes(expectedReads);
+        expect(handle.current()?.chats[0]?.latestMessage?.text).toBe(
+          laterInvalidation ? 'new reply' : 'hello',
+        );
+        handle.catchUp();
+        await vi.advanceTimersByTimeAsync(180_000);
+        expect(chats).toHaveBeenCalledTimes(expectedReads);
+        expect(live.reconnects).toBe(0);
+      } finally {
+        handle.release();
+      }
+    },
+  );
 
   it('never offers a stored copy as the live list a dismissed Room is checked against', async () => {
     // Disk still shows the Room open; the reader dismissed it since.
     disk.rows.set('/workspace/:id/chats:workspace', listOf([row('room-a', 10)]));
     let answer!: (value: ChatListView) => void;
-    const handle = join(() => new Promise((resolve) => { answer = resolve; }), visible);
+    const handle = join(
+      () =>
+        new Promise((resolve) => {
+          answer = resolve;
+        }),
+      visible,
+    );
     await vi.advanceTimersByTimeAsync(0);
     expect(handle.current()?.chats[0]?.closed).toBeUndefined();
     expect(liveChatList(key)).toBeNull();
@@ -505,13 +628,16 @@ describe('app-level Room list store', () => {
 function agentMessage(roomId: string, id: string, createdAt: number) {
   return {
     monolithLive: {
-      type: 'message-delta', roomId,
+      type: 'message-delta',
+      roomId,
       message: { id, text: id, createdAt, author: agent, presentation: 'message' },
     },
   };
 }
 
-const readMark = (roomId: string) => ({ monolithLive: { type: 'invalidate', roomId, reason: 'read-mark' } });
+const readMark = (roomId: string) => ({
+  monolithLive: { type: 'invalidate', roomId, reason: 'read-mark' },
+});
 
 describe('unread follows the server read cursor in every arrival order', () => {
   it('delta then read mark: lights once, then the read clears it', async () => {
@@ -525,8 +651,16 @@ describe('unread follows the server read cursor in every arrival order', () => {
     emit(agentMessage('room-a', 'm2', 20));
     expect(handle.current()?.chats[0]?.unread).toBe(true);
     // Another device reads m2.
-    server = listOf([row('room-a', 20, { latestMessage: {
-      id: 'm2', text: 'm2', createdAt: 20, author: agent } })]);
+    server = listOf([
+      row('room-a', 20, {
+        latestMessage: {
+          id: 'm2',
+          text: 'm2',
+          createdAt: 20,
+          author: agent,
+        },
+      }),
+    ]);
     emit(readMark('room-a'));
     await vi.advanceTimersByTimeAsync(2_000);
     expect(handle.current()?.chats[0]?.unread).toBe(false);
@@ -540,8 +674,16 @@ describe('unread follows the server read cursor in every arrival order', () => {
     const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     // The read already shows m2, read on another device.
-    server = listOf([row('room-a', 20, { latestMessage: {
-      id: 'm2', text: 'm2', createdAt: 20, author: agent } })]);
+    server = listOf([
+      row('room-a', 20, {
+        latestMessage: {
+          id: 'm2',
+          text: 'm2',
+          createdAt: 20,
+          author: agent,
+        },
+      }),
+    ]);
     emit(readMark('room-a'));
     await vi.advanceTimersByTimeAsync(2_000);
     const seen: Array<boolean | undefined> = [];
@@ -554,24 +696,52 @@ describe('unread follows the server read cursor in every arrival order', () => {
 
   it('delta during a read in flight: the read that covers it decides', async () => {
     const answers: Array<(value: ChatListView) => void> = [];
-    const chats = vi.fn(() => new Promise<ChatListView>((resolve) => { answers.push(resolve); }));
+    const chats = vi.fn(
+      () =>
+        new Promise<ChatListView>((resolve) => {
+          answers.push(resolve);
+        }),
+    );
     const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(0);
     // The opening read is in flight when m2 lands and another device reads it.
     emit(agentMessage('room-a', 'm2', 20));
     emit(readMark('room-a'));
-    answers[0]!(listOf([row('room-a', 20, { latestMessage: {
-      id: 'm2', text: 'm2', createdAt: 20, author: agent } })]));
+    answers[0]!(
+      listOf([
+        row('room-a', 20, {
+          latestMessage: {
+            id: 'm2',
+            text: 'm2',
+            createdAt: 20,
+            author: agent,
+          },
+        }),
+      ]),
+    );
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(handle.current()?.chats[0]).toMatchObject({ unread: false, latestMessage: { id: 'm2' } });
+    expect(handle.current()?.chats[0]).toMatchObject({
+      unread: false,
+      latestMessage: { id: 'm2' },
+    });
 
     // A read that predates the delta keeps it lit until a read covers it.
     emit(readMark('room-a'));
     await vi.advanceTimersByTimeAsync(0);
     const pending = answers.length - 1;
     emit(agentMessage('room-a', 'm3', 30));
-    answers[pending]!(listOf([row('room-a', 20, { latestMessage: {
-      id: 'm2', text: 'm2', createdAt: 20, author: agent } })]));
+    answers[pending]!(
+      listOf([
+        row('room-a', 20, {
+          latestMessage: {
+            id: 'm2',
+            text: 'm2',
+            createdAt: 20,
+            author: agent,
+          },
+        }),
+      ]),
+    );
     await vi.advanceTimersByTimeAsync(10);
     expect(handle.current()?.chats[0]).toMatchObject({ unread: true, latestMessage: { id: 'm3' } });
     handle.release();
@@ -583,8 +753,9 @@ describe('unread follows the server read cursor in every arrival order', () => {
     await vi.advanceTimersByTimeAsync(10);
     live.viewing.add('room-b');
     const seen: Array<boolean | undefined> = [];
-    handle.subscribe(() => seen.push(
-      handle.current()!.chats.find((item) => item.room.id === 'room-b')!.unread));
+    handle.subscribe(() =>
+      seen.push(handle.current()!.chats.find((item) => item.room.id === 'room-b')!.unread),
+    );
     emit(agentMessage('room-b', 'm-open', 20));
     emit(readMark('room-b'));
     await vi.advanceTimersByTimeAsync(2_000);
@@ -610,20 +781,29 @@ describe('a read that cannot say unread', () => {
     handle.force();
     await vi.advanceTimersByTimeAsync(10);
     expect(chats).toHaveBeenCalledTimes(2);
-    expect(handle.current()?.chats[0]).toMatchObject({ unread: true, latestMessage: { createdAt: 12 } });
+    expect(handle.current()?.chats[0]).toMatchObject({
+      unread: true,
+      latestMessage: { createdAt: 12 },
+    });
     expect((disk.rows.get(address) as ChatListView).chats[0]?.unread).toBe(true);
     handle.release();
   });
 
   it('hands corner facts to the corner store and keeps them only on the saved copy', async () => {
-    const corners = [{ id: 'corner-a', name: 'fix', state: 'working' as const, mine: true as const }];
-    const chats = vi.fn(async () => listOf([row('room-a', 10, { cornerCount: 1, openCorners: corners })]));
+    const corners = [
+      { id: 'corner-a', name: 'fix', state: 'working' as const, mine: true as const },
+    ];
+    const chats = vi.fn(async () =>
+      listOf([row('room-a', 10, { cornerCount: 1, openCorners: corners })]),
+    );
     const handle = join(chats, visible);
     await vi.advanceTimersByTimeAsync(10);
     expect(handle.current()?.chats[0]).not.toHaveProperty('openCorners');
     expect(getRoomCornerSummary('room-a')).toEqual({ cornerCount: 1, openCorners: corners });
-    expect((disk.rows.get(address) as ChatListView).chats[0])
-      .toMatchObject({ cornerCount: 1, openCorners: corners });
+    expect((disk.rows.get(address) as ChatListView).chats[0]).toMatchObject({
+      cornerCount: 1,
+      openCorners: corners,
+    });
     handle.release();
 
     // A cold start paints the saved summary before its read lands.
@@ -638,7 +818,8 @@ describe('a read that cannot say unread', () => {
 
   it('keeps a Room unknown across a second incomplete read, in memory and on disk', async () => {
     const incomplete = (latestAt: number): ChatListView => ({
-      ...listOf([row('room-a', latestAt)]), unavailable: ['unread'],
+      ...listOf([row('room-a', latestAt)]),
+      unavailable: ['unread'],
     });
     const reads = [incomplete(10), incomplete(12)];
     const chats = vi.fn(async () => reads.shift()!);
@@ -664,22 +845,49 @@ describe('the Room screen reads the live list', () => {
     function Transcript() {
       renders += 1;
       const list = useChatList(key, { transcriptRoomId: 'room-a' });
-      return React.createElement('Text', null, list?.chats.find(item => item.room.id === 'room-b')?.room.name);
+      return React.createElement(
+        'Text',
+        null,
+        list?.chats.find((item) => item.room.id === 'room-b')?.room.name,
+      );
     }
     let tree!: ReturnType<typeof create>;
-    await act(async () => { tree = create(React.createElement(Transcript)); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    await act(async () => {
+      tree = create(React.createElement(Transcript));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
     expect(liveChatList(key)?.chats).toHaveLength(2);
     renders = 0;
     for (let index = 0; index < 25; index += 1) {
-      await act(async () => emit({ monolithLive: { type: 'message-delta', roomId: 'room-b',
-        message: { id: `message-${index}`, text: 'Unrelated message', createdAt: 20 + index,
-          author: agent, reactions: [], presentation: 'message' } } }));
+      await act(async () =>
+        emit({
+          monolithLive: {
+            type: 'message-delta',
+            roomId: 'room-b',
+            message: {
+              id: `message-${index}`,
+              text: 'Unrelated message',
+              createdAt: 20 + index,
+              author: agent,
+              reactions: [],
+              presentation: 'message',
+            },
+          },
+        }),
+      );
     }
     expect(renders).toBe(0);
-    expect(liveChatList(key)?.chats.find(item => item.room.id === 'room-b')?.latestMessage?.id).toBe('message-24');
+    expect(
+      liveChatList(key)?.chats.find((item) => item.room.id === 'room-b')?.latestMessage?.id,
+    ).toBe('message-24');
     await act(async () => {
-      server.chats = async () => listOf([row('room-a', 10), { ...row('room-b', 45), room: { ...row('room-b', 45).room, name: 'Renamed Room' } }]);
+      server.chats = async () =>
+        listOf([
+          row('room-a', 10),
+          { ...row('room-b', 45), room: { ...row('room-b', 45).room, name: 'Renamed Room' } },
+        ]);
       const handle = acquireChatList(key, { visible: () => true });
       handle.force();
       await vi.advanceTimersByTimeAsync(10);
@@ -691,29 +899,57 @@ describe('the Room screen reads the live list', () => {
 
   it('keeps transcript DM presence, Room names and live calls current', async () => {
     (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-    let view = listOf([row('room-a', 10, { directMessage: { peer: agent,
-      presence: { status: 'offline', observedAt: 1 } } })]);
+    let view = listOf([
+      row('room-a', 10, {
+        directMessage: { peer: agent, presence: { status: 'offline', observedAt: 1 } },
+      }),
+    ]);
     server.chats = async () => view;
     function Header() {
       const current = useChatList(key, { transcriptRoomId: 'room-a' })?.chats[0];
-      return React.createElement('Text', null, [current?.room.name,
-        current?.directMessage?.presence?.status, current?.agentState ?? 'idle',
-        current?.voiceCall?.id ?? 'none'].join(':'));
+      return React.createElement(
+        'Text',
+        null,
+        [
+          current?.room.name,
+          current?.directMessage?.presence?.status,
+          current?.agentState ?? 'idle',
+          current?.voiceCall?.id ?? 'none',
+        ].join(':'),
+      );
     }
     let tree!: ReturnType<typeof create>;
-    await act(async () => { tree = create(React.createElement(Header)); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+    await act(async () => {
+      tree = create(React.createElement(Header));
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
     expect(tree.root.findByType('Text').props.children).toBe('room-a:offline:idle:none');
     const handle = acquireChatList(key, { visible: () => true });
-    view = listOf([row('room-a', 11, { room: { ...view.chats[0]!.room, name: 'Renamed' },
-      directMessage: { peer: agent, presence: { status: 'online', observedAt: 2 } },
-      agentState: 'working', voiceCall: { id: 'call-1', roomId: 'room-a', startedAt: 2, participants: [agent] } })]);
-    await act(async () => { handle.force(); await vi.advanceTimersByTimeAsync(10); });
+    view = listOf([
+      row('room-a', 11, {
+        room: { ...view.chats[0]!.room, name: 'Renamed' },
+        directMessage: { peer: agent, presence: { status: 'online', observedAt: 2 } },
+        agentState: 'working',
+        voiceCall: { id: 'call-1', roomId: 'room-a', startedAt: 2, participants: [agent] },
+      }),
+    ]);
+    await act(async () => {
+      handle.force();
+      await vi.advanceTimersByTimeAsync(10);
+    });
     expect(tree.root.findByType('Text').props.children).toBe('Renamed:online:working:call-1');
     view = listOf([{ ...view.chats[0]!, voiceCall: undefined }]);
-    await act(async () => { handle.force(); await vi.advanceTimersByTimeAsync(10); });
+    await act(async () => {
+      handle.force();
+      await vi.advanceTimersByTimeAsync(10);
+    });
     expect(tree.root.findByType('Text').props.children).toBe('Renamed:online:working:none');
-    await act(async () => { tree.unmount(); handle.release(); });
+    await act(async () => {
+      tree.unmount();
+      handle.release();
+    });
   });
 
   it('warns on a repository change after a corner opens live, and Cancel blocks the write', async () => {
@@ -723,11 +959,18 @@ describe('the Room screen reads the live list', () => {
     const repository: RoomRepository = {
       channelId: 'room-a',
       communityId: 'workspace',
-      binding: { key: 'repo-key', name: 'acme/app', remote: 'https://github.com/acme/app', localOnly: false },
+      binding: {
+        key: 'repo-key',
+        name: 'acme/app',
+        remote: 'https://github.com/acme/app',
+        localOnly: false,
+      },
       source: 'config',
     };
     const candidate: RepoCandidate = {
-      key: 'next-key', name: 'acme/next', remote: 'https://github.com/acme/next',
+      key: 'next-key',
+      name: 'acme/next',
+      remote: 'https://github.com/acme/next',
     };
     // The repository write the Room screen hands the guard (transport.roomRepositorySet).
     const roomRepositorySet = vi.fn(async (_candidate: RepoCandidate) => undefined);
@@ -741,7 +984,10 @@ describe('the Room screen reads the live list', () => {
       }).selectCandidate;
       return null;
     }
-    let renderer!: { unmount(): void; root: { findAllByType(type: unknown): Array<{ props: any }> } };
+    let renderer!: {
+      unmount(): void;
+      root: { findAllByType(type: unknown): Array<{ props: any }> };
+    };
     await act(async () => {
       renderer = create(React.createElement(ModalProvider, null, React.createElement(RoomScreen)));
     });
@@ -758,8 +1004,12 @@ describe('the Room screen reads the live list', () => {
     await act(async () => {
       emit({
         monolithLive: {
-          type: 'corner-status', roomId: 'room-a', cornerCount: 2, waitingCornerCount: 0,
-          openCorners: [], agentState: 'working',
+          type: 'corner-status',
+          roomId: 'room-a',
+          cornerCount: 2,
+          waitingCornerCount: 0,
+          openCorners: [],
+          agentState: 'working',
         },
       });
     });
@@ -795,8 +1045,13 @@ it('Send: pushed read and command state update other devices without follow-up r
   const chats = vi.fn(async () => listOf([row('room-a', 10, { unread: true })]));
   const handle = join(chats, () => true);
   await vi.advanceTimersByTimeAsync(10);
-  emit({ monolithLive: { type: 'read-state', roomId: 'room-a',
-    readCursor: { messageId: 'sent', firstUnreadMessageId: null, unreadCount: 0 } } });
+  emit({
+    monolithLive: {
+      type: 'read-state',
+      roomId: 'room-a',
+      readCursor: { messageId: 'sent', firstUnreadMessageId: null, unreadCount: 0 },
+    },
+  });
   emit({ monolithLive: { type: 'room-commands', roomId: 'room-a', commands: [] } });
   await vi.advanceTimersByTimeAsync(2_000);
   expect(chats).toHaveBeenCalledTimes(1);

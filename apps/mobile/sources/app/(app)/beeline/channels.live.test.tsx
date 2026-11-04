@@ -1,22 +1,43 @@
-vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
-vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
+vi.mock('@expo/vector-icons', async () => {
+  const R = await import('react');
+  return { Ionicons: (props: any) => R.createElement('Ionicons', props) };
+});
+vi.mock('react-native-keyboard-controller', async () => {
+  const R = await import('react');
+  return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) };
+});
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { RoomViewHttpError, type ChatListItem, type ChatListView, type WorkspaceListView } from '@beeline/buzz-client';
+import {
+  RoomViewHttpError,
+  type ChatListItem,
+  type ChatListView,
+  type WorkspaceListView,
+} from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => deck.routerMode, holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+vi.mock('@/buzz/router-family', () => ({
+  useRouterFamily: () => deck.routerMode,
+  holdRouterConnection: () => () => {},
+}));
+vi.mock('@/buzz/router-chat-list', () => ({
+  acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy(),
+}));
 vi.mock('@/buzz/router-owner', () => ({
   routerFamilyMode: () => 'legacy',
-  acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
-    subscribe: () => () => {}, refreshVisibility: () => {} }),
+  acquireRouterLane: () => ({
+    current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
+    release: () => {},
+    subscribe: () => () => {},
+    refreshVisibility: () => {},
+  }),
   routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: () => {}, routerOwnerListPanel: () => {},
+  retryRouterLane: () => {},
+  routerOwnerListPanel: () => {},
 }));
 
 const deck = vi.hoisted(() => ({
@@ -64,7 +85,18 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
+  return {
+    StyleSheet: {
+      flatten: (style: any): any =>
+        Array.isArray(style)
+          ? Object.assign(
+              {},
+              ...style.map((part: any) =>
+                Array.isArray(part) ? Object.assign({}, ...part) : part,
+              ),
+            )
+          : style,
+    },
     AppState: {
       addEventListener: (_type: string, listener: (state: string) => void) => {
         deck.appStateListeners.push(listener);
@@ -140,7 +172,8 @@ vi.mock('expo-haptics', () => ({
 }));
 vi.mock('expo-router', () => ({
   router: { push: vi.fn(), replace: vi.fn() },
-  useLocalSearchParams: () => deck.selectedWorkspace ? { communityId: deck.selectedWorkspace } : {},
+  useLocalSearchParams: () =>
+    deck.selectedWorkspace ? { communityId: deck.selectedWorkspace } : {},
 }));
 vi.mock('react-native-gesture-handler', () => hostModule('Swipeable'));
 vi.mock('react-native-safe-area-context', () => ({
@@ -157,7 +190,10 @@ vi.mock('@react-navigation/native', () => ({
       };
       const cleanup = effect();
       const previousBlur = deck.blur;
-      deck.blur = () => { previousBlur?.(); cleanup?.(); };
+      deck.blur = () => {
+        previousBlur?.();
+        cleanup?.();
+      };
       return () => {
         deck.focusEffects.delete(effect);
         cleanup?.();
@@ -186,14 +222,23 @@ vi.mock('@/buzz/surface-storage', () => {
     for (const listener of hotSurfaces.listeners.get(address) ?? []) listener();
   };
   const cache = {
-    peek: vi.fn((address: string) => deck.withholdWorkspaceSnapshot && address.includes('/workspaces') ? null : hotSurfaces.values.get(address) ?? null),
+    peek: vi.fn((address: string) =>
+      deck.withholdWorkspaceSnapshot && address.includes('/workspaces')
+        ? null
+        : (hotSurfaces.values.get(address) ?? null),
+    ),
     read: vi.fn(async () => null),
     write: vi.fn(async (address: string, value: unknown, _guard: unknown) => {
       cache.publish(address, value);
     }),
     persist: vi.fn(async () => undefined),
-    remove: vi.fn(async (address: string) => { hotSurfaces.values.delete(address); notify(address); }),
-    clear: vi.fn(() => { hotSurfaces.values.clear(); }),
+    remove: vi.fn(async (address: string) => {
+      hotSurfaces.values.delete(address);
+      notify(address);
+    }),
+    clear: vi.fn(() => {
+      hotSurfaces.values.clear();
+    }),
     publish: vi.fn((address: string, value: unknown) => {
       hotSurfaces.values.set(address, value);
       notify(address);
@@ -203,7 +248,9 @@ vi.mock('@/buzz/surface-storage', () => {
       const listeners = hotSurfaces.listeners.get(address) ?? new Set<() => void>();
       listeners.add(listener);
       hotSurfaces.listeners.set(address, listeners);
-      return () => { listeners.delete(listener); };
+      return () => {
+        listeners.delete(listener);
+      };
     }),
     fetch: vi.fn(async (address: string, guard: unknown, request: () => Promise<unknown>) => {
       const value = await request();
@@ -211,8 +258,12 @@ vi.mock('@/buzz/surface-storage', () => {
       return value;
     }),
   };
-  return { mobileSurfaceCache: cache, surfaceAddress: vi.fn((relay, viewer, endpoint, params) =>
-    JSON.stringify([relay, viewer, endpoint, params])) };
+  return {
+    mobileSurfaceCache: cache,
+    surfaceAddress: vi.fn((relay, viewer, endpoint, params) =>
+      JSON.stringify([relay, viewer, endpoint, params]),
+    ),
+  };
 });
 vi.mock('@/buzz/room-open-prefetch', () => ({ dispatchRoomOpenTap: vi.fn() }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
@@ -244,7 +295,9 @@ vi.mock('@/sync/transport', () => ({
 // The app-level Room list store watches through the shared live connection.
 vi.mock('@/sync/transport/live-connection', () => ({
   useConnectionState: () => deck.connectionState,
-  reconnectNow: () => { deck.reconnects += 1; },
+  reconnectNow: () => {
+    deck.reconnects += 1;
+  },
   sharedLiveConnection: () => ({
     connectionStatus: () => deck.connectionState,
     subscribeConnectionStatus: () => () => undefined,
@@ -267,13 +320,22 @@ vi.mock('@/sync/transport/live-connection', () => ({
   }),
 }));
 vi.mock('@/sync/transport/room-view-client', async () => ({
-  isRoomViewTimeoutError: (await vi.importActual<typeof import('@/sync/transport/room-view-client')>('@/sync/transport/room-view-client')).isRoomViewTimeoutError,
+  isRoomViewTimeoutError: (
+    await vi.importActual<typeof import('@/sync/transport/room-view-client')>(
+      '@/sync/transport/room-view-client',
+    )
+  ).isRoomViewTimeoutError,
   RoomViewClient: class {
     async workspaces(): Promise<WorkspaceListView> {
       deck.workspaceReads += 1;
       if (deck.useRealWorkspaceRead) {
-        const { RoomViewClient } = await vi.importActual<typeof import('@/sync/transport/room-view-client')>('@/sync/transport/room-view-client');
-        return new RoomViewClient({ baseUrl: 'https://relay.test', identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) } }).workspaces();
+        const { RoomViewClient } = await vi.importActual<
+          typeof import('@/sync/transport/room-view-client')
+        >('@/sync/transport/room-view-client');
+        return new RoomViewClient({
+          baseUrl: 'https://relay.test',
+          identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) },
+        }).workspaces();
       }
       const failure = deck.workspaceFailures.shift();
       if (failure) throw failure;
@@ -433,13 +495,17 @@ afterEach(() => {
 });
 
 describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
-  beforeEach(() => { hotSurfaces.values.clear(); });
+  beforeEach(() => {
+    hotSurfaces.values.clear();
+  });
   it('opens workspace creation after a transient initial workspace timeout without showing an error', async () => {
     deck.selectedWorkspace = null;
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
     deck.workspaceFailures = [new RoomViewHttpError(0, 'timeout')];
     let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await act(async () => {
+      renderer = create(React.createElement(BuzzChannels));
+    });
     await quiet();
     expect(router.replace).toHaveBeenCalledWith('/beeline/community');
     expect(deck.workspaceReads).toBe(2);
@@ -448,19 +514,24 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
   });
 
   it('demonstrates the landing through the real guarded workspace socket reader', async () => {
-    const { monolithSession, MonolithRequestTimeoutError } = await import('@/auth/monolith-session');
+    const { monolithSession, MonolithRequestTimeoutError } =
+      await import('@/auth/monolith-session');
     const http = vi.spyOn(monolithSession, 'fetch');
     const request = deck.socketRequest
       .mockRejectedValueOnce(new MonolithRequestTimeoutError())
       .mockResolvedValueOnce({
-        workspaces: [], viewer: { pubkey: 'a'.repeat(64), name: 'New user', kind: 'human' },
-        watchFilters: [], truncated: false,
+        workspaces: [],
+        viewer: { pubkey: 'a'.repeat(64), name: 'New user', kind: 'human' },
+        watchFilters: [],
+        truncated: false,
       });
     deck.selectedWorkspace = null;
     deck.useRealWorkspaceRead = true;
     let renderer!: ReactTestRenderer;
     try {
-      await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+      await act(async () => {
+        renderer = create(React.createElement(BuzzChannels));
+      });
       await quiet();
       expect(request).toHaveBeenCalledTimes(2);
       expect(request.mock.calls.every(([operation]) => operation === 'readWorkspaces')).toBe(true);
@@ -480,12 +551,24 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     vi.mocked(loadBuzzIdentity).mockImplementationOnce(() => new Promise(() => {}));
     let renderer!: ReactTestRenderer;
     try {
-      await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
-      await act(async () => { await vi.advanceTimersByTimeAsync(35_000); });
-      expect(renderer.root.findAllByProps({ testID: 'room-deck-unavailable' }).length).toBeGreaterThan(0);
-      expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(0);
-      await act(async () => renderer.root.findByProps({ testID: 'room-deck-reconnect' }).props.onPress());
-      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      await act(async () => {
+        renderer = create(React.createElement(BuzzChannels));
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(35_000);
+      });
+      expect(
+        renderer.root.findAllByProps({ testID: 'room-deck-unavailable' }).length,
+      ).toBeGreaterThan(0);
+      expect(
+        renderer.root.findAllByProps({ testID: 'connection-status-disconnected' }),
+      ).toHaveLength(0);
+      await act(async () =>
+        renderer.root.findByProps({ testID: 'room-deck-reconnect' }).props.onPress(),
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(10);
+      });
       expect(deck.workspaceReads).toBeGreaterThan(0);
     } finally {
       if (renderer) await act(async () => renderer.unmount());
@@ -497,21 +580,34 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     deck.connectionState = 'disconnected';
     deck.selectedWorkspace = null;
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
-    deck.workspaceFailures = [new RoomViewHttpError(0, 'timeout'), new RoomViewHttpError(0, 'timeout')];
+    deck.workspaceFailures = [
+      new RoomViewHttpError(0, 'timeout'),
+      new RoomViewHttpError(0, 'timeout'),
+    ];
     let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await act(async () => {
+      renderer = create(React.createElement(BuzzChannels));
+    });
     await quiet();
     expect(deck.workspaceReads).toBe(2);
     expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
     expect(renderer.root.findAllByProps({ action: 'Retry' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'room-deck-unavailable' }).length).toBeGreaterThan(0);
-    expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(0);
+    expect(
+      renderer.root.findAllByProps({ testID: 'room-deck-unavailable' }).length,
+    ).toBeGreaterThan(0);
+    expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(
+      0,
+    );
     const copy = renderer.root.findAllByType('Text').map((node: any) => node.props.children);
     expect(copy).toContain('Beeline couldn’t connect');
-    expect(copy).toContain('Your Rooms can’t load right now. There are no saved messages on this device yet.');
+    expect(copy).toContain(
+      'Your Rooms can’t load right now. There are no saved messages on this device yet.',
+    );
     const reconnect = renderer.root.findByProps({ testID: 'room-deck-reconnect' });
     expect(reconnect.props.variant).toBe('secondary');
-    await act(async () => { reconnect.props.onPress(); });
+    await act(async () => {
+      reconnect.props.onPress();
+    });
     await quiet();
     expect(deck.reconnects).toBe(1);
     expect(deck.workspaceReads).toBe(3);
@@ -524,15 +620,21 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     deck.connectionState = 'connected';
     deck.workspaceFailures = [new RoomViewHttpError(503, 'unavailable')];
     let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await act(async () => {
+      renderer = create(React.createElement(BuzzChannels));
+    });
     await quiet();
     expect(renderer.root.findAllByType('Text').length).toBeGreaterThan(0);
     const retry = renderer.root.findByProps({ testID: 'room-deck-reconnect' });
-    await act(async () => { retry.props.onPress(); });
+    await act(async () => {
+      retry.props.onPress();
+    });
     await quiet();
     expect(deck.workspaceReads).toBe(2);
     expect(deck.reconnects).toBe(1);
-    expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(
+      0,
+    );
     await act(async () => renderer.unmount());
   });
 
@@ -540,7 +642,9 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     deck.selectedWorkspace = null;
     deck.workspaceFailures = [new RoomViewHttpError(403, 'forbidden')];
     let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await act(async () => {
+      renderer = create(React.createElement(BuzzChannels));
+    });
     await quiet();
     expect(deck.workspaceReads).toBe(1);
     expect(renderer.root.findAllByProps({ action: 'Retry' }).length).toBeGreaterThan(0);
@@ -558,13 +662,21 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
       entry.filters.some((filter: any) => filter.kinds?.includes(9000)),
     );
     expect(workspaceWatch).toBeTruthy();
-    await act(async () => workspaceWatch!.emit({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:workspaces' } }));
+    await act(async () =>
+      workspaceWatch!.emit({
+        monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:workspaces' },
+      }),
+    );
     await quiet();
     expect(deck.workspaceReads).toBe(reads + 1);
     expect(paintedRows(renderer)[0]!.latestMessage?.text).toBe('earlier');
     expect(renderer.root.findAllByProps({ testID: 'room-deck-unavailable' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' }).length).toBeGreaterThan(0);
-    expect(renderer.root.findAllByProps({ testID: 'connection-status-reconnect' }).length).toBeGreaterThan(0);
+    expect(
+      renderer.root.findAllByProps({ testID: 'connection-status-disconnected' }).length,
+    ).toBeGreaterThan(0);
+    expect(
+      renderer.root.findAllByProps({ testID: 'connection-status-reconnect' }).length,
+    ).toBeGreaterThan(0);
     await act(async () => renderer.unmount());
   });
 });
@@ -572,11 +684,18 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
 describe('Deleted workspace removal', () => {
   it('removes a cached deleted workspace on the first read after an offline session', async () => {
     vi.mocked(mobileSurfaceCache.read)
-      .mockResolvedValueOnce({ workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }], viewer, truncated: false, watchFilters: [] } as never)
+      .mockResolvedValueOnce({
+        workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }],
+        viewer,
+        truncated: false,
+        watchFilters: [],
+      } as never)
       .mockResolvedValueOnce(chatList({ id: 'cached', text: 'old room', createdAt: 1 }) as never);
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
     let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await act(async () => {
+      renderer = create(React.createElement(BuzzChannels));
+    });
     await quiet();
     expect(router.replace).toHaveBeenCalledWith('/beeline/community');
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', null);
@@ -588,12 +707,24 @@ describe('Deleted workspace removal', () => {
   it('does not repaint deleted rooms when an older chats read finishes late', async () => {
     const renderer = await mountDeck();
     let finish!: (value: ChatListView) => void;
-    deck.chatsResponse = new Promise<ChatListView>((resolve) => { finish = resolve; });
-    act(() => roomWatch().emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'resync' } }));
+    deck.chatsResponse = new Promise<ChatListView>((resolve) => {
+      finish = resolve;
+    });
+    act(() =>
+      roomWatch().emit({
+        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'resync' },
+      }),
+    );
     await quiet();
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
-    const workspaceWatch = deck.subscriptions.find((entry) => !entry.filters.some((filter) => filter['#h']?.length));
-    act(() => workspaceWatch!.emit({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } }));
+    const workspaceWatch = deck.subscriptions.find(
+      (entry) => !entry.filters.some((filter) => filter['#h']?.length),
+    );
+    act(() =>
+      workspaceWatch!.emit({
+        monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' },
+      }),
+    );
     await quiet();
     await act(async () => finish(chatList({ id: 'late', text: 'deleted data', createdAt: 1 })));
     expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
@@ -603,15 +734,34 @@ describe('Deleted workspace removal', () => {
 
   it('drops a deleted workspace tile and opens the remaining workspace', async () => {
     const renderer = await mountDeck();
-    deck.workspacesResponse = { workspaces: [{ id: 'remaining', name: 'Remaining', role: 'member', updatedAt: 1 }],
-      viewer, truncated: false, watchFilters: [] };
-    const workspaceWatch = deck.subscriptions.find((entry) => !entry.filters.some((filter) => filter['#h']?.length));
-    act(() => workspaceWatch!.emit({ monolithLive: {
-      type: 'invalidate', roomId: '', reason: 'postgres:memberships',
-    } }));
+    deck.workspacesResponse = {
+      workspaces: [{ id: 'remaining', name: 'Remaining', role: 'member', updatedAt: 1 }],
+      viewer,
+      truncated: false,
+      watchFilters: [],
+    };
+    const workspaceWatch = deck.subscriptions.find(
+      (entry) => !entry.filters.some((filter) => filter['#h']?.length),
+    );
+    act(() =>
+      workspaceWatch!.emit({
+        monolithLive: {
+          type: 'invalidate',
+          roomId: '',
+          reason: 'postgres:memberships',
+        },
+      }),
+    );
     await quiet();
-    expect(mobileSurfaceCache.write).toHaveBeenCalledWith(expect.anything(), deck.workspacesResponse, expect.any(Function));
-    expect(vi.mocked(router.replace)).toHaveBeenCalledWith({ pathname: '/beeline/channels', params: { communityId: 'remaining' } });
+    expect(mobileSurfaceCache.write).toHaveBeenCalledWith(
+      expect.anything(),
+      deck.workspacesResponse,
+      expect.any(Function),
+    );
+    expect(vi.mocked(router.replace)).toHaveBeenCalledWith({
+      pathname: '/beeline/channels',
+      params: { communityId: 'remaining' },
+    });
     expect(vi.mocked(saveActiveCommunityId)).toHaveBeenCalledWith('viewer', 'remaining');
     expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
     await act(async () => renderer.unmount());
@@ -620,13 +770,25 @@ describe('Deleted workspace removal', () => {
   it('clears the last workspace rooms and persisted selection after live deletion', async () => {
     const renderer = await mountDeck();
     expect(paintedRows(renderer)).toHaveLength(1);
-    deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [],
-      deletedNotices: [{ workspaceId: 'workspace', workspaceName: 'Work' }] };
-    const workspaceWatch = deck.subscriptions.find((entry) =>
-      !entry.filters.some((filter) => filter['#h']?.length));
-    act(() => workspaceWatch!.emit({ monolithLive: {
-      type: 'invalidate', roomId: '', reason: 'postgres:memberships',
-    } }));
+    deck.workspacesResponse = {
+      workspaces: [],
+      viewer,
+      truncated: false,
+      watchFilters: [],
+      deletedNotices: [{ workspaceId: 'workspace', workspaceName: 'Work' }],
+    };
+    const workspaceWatch = deck.subscriptions.find(
+      (entry) => !entry.filters.some((filter) => filter['#h']?.length),
+    );
+    act(() =>
+      workspaceWatch!.emit({
+        monolithLive: {
+          type: 'invalidate',
+          roomId: '',
+          reason: 'postgres:memberships',
+        },
+      }),
+    );
     await quiet();
     expect(vi.mocked(router.replace)).toHaveBeenCalledWith('/beeline/community');
     expect(vi.mocked(saveActiveCommunityId)).toHaveBeenCalledWith('viewer', null);
@@ -643,7 +805,8 @@ it('hides the retained private deck when negotiated family capability becomes pe
   await act(async () => renderer.update(React.createElement(BuzzChannels)));
   deck.routerMode = 'pending';
   await act(async () => renderer.update(React.createElement(BuzzChannels)));
-  const rows = renderer.root.findAll((node: any) => node.type === 'SectionList' && node.props.testID === 'room-list')
+  const rows = renderer.root
+    .findAll((node: any) => node.type === 'SectionList' && node.props.testID === 'room-list')
     .flatMap((node: any) => node.props.sections.flatMap((section: any) => section.data));
   expect(rows).toEqual([]);
   await act(async () => renderer.unmount());
@@ -897,9 +1060,18 @@ describe('Room deck live path', () => {
     const renderer = await mountDeck();
     const item = paintedRows(renderer)[0]!;
     // The row and its dropdown read the Room's corners from the corner store.
-    applyChatListCorners([{ room: item.room, cornerCount: 1, openCorners: [
-      { id: 'corner-1', name: 'fix', state: 'working' as const, mine: true as const },
-    ] }], -1);
+    applyChatListCorners(
+      [
+        {
+          room: item.room,
+          cornerCount: 1,
+          openCorners: [
+            { id: 'corner-1', name: 'fix', state: 'working' as const, mine: true as const },
+          ],
+        },
+      ],
+      -1,
+    );
     const renderRow = () => {
       const list = renderer.root.find((node: any) => node.type === 'SectionList');
       return create(list.props.renderItem({ item, index: 0, section: { data: [item] } }));
@@ -1027,15 +1199,22 @@ describe('Room deck live path', () => {
     const tray = renderer.root.findByType('TrayGlyph' as any);
     const { beelineThemes } = await import('@/buzz/groknight');
     expect(members.props.icon.props.color).toBe(tray.props.color);
-    expect(Object.values(beelineThemes).map((hull) => hull.ledgerQuiet)).toContain(tray.props.color);
+    expect(Object.values(beelineThemes).map((hull) => hull.ledgerQuiet)).toContain(
+      tray.props.color,
+    );
     act(() => renderer.unmount());
   });
 
   it('heads Rooms and Direct messages without a row count', async () => {
     const renderer = await mountDeck();
     const list = renderer.root.find((node: any) => node.type === 'SectionList');
-    for (const [kind, title] of [['rooms', 'Rooms'], ['messages', 'Direct messages']]) {
-      const header = list.props.renderSectionHeader({ section: { kind, title, data: [{}, {}, {}] } });
+    for (const [kind, title] of [
+      ['rooms', 'Rooms'],
+      ['messages', 'Direct messages'],
+    ]) {
+      const header = list.props.renderSectionHeader({
+        section: { kind, title, data: [{}, {}, {}] },
+      });
       expect(header.props.title).toBe(title);
       expect(header.props.count).toBeUndefined();
     }
@@ -1131,8 +1310,10 @@ describe('Room deck live path', () => {
     ]);
     const renderer = await mountDeck();
     expect(paintedRows(renderer)[0]).toMatchObject({ unread: true });
-    expect(getRoomCornerSummary('room-a')).toEqual({ cornerCount: 2,
-      openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }] });
+    expect(getRoomCornerSummary('room-a')).toEqual({
+      cornerCount: 2,
+      openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }],
+    });
 
     deck.chatsResponse = listOf([room('room-a', 10)], { unavailable: ['unread', 'corners'] });
     await act(async () =>
@@ -1144,8 +1325,10 @@ describe('Room deck live path', () => {
 
     expect(paintedRows(renderer)[0]).toMatchObject({ unread: true });
     // The corner store keeps the last known summary; a read without it says nothing.
-    expect(getRoomCornerSummary('room-a')).toEqual({ cornerCount: 2,
-      openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }] });
+    expect(getRoomCornerSummary('room-a')).toEqual({
+      cornerCount: 2,
+      openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }],
+    });
     await act(async () => renderer.unmount());
   });
 
@@ -1190,10 +1373,14 @@ describe('Room deck live path', () => {
     // Reproduction 4.3: a stored list whose Rooms all resume never read again.
     vi.mocked(mobileSurfaceCache.read)
       .mockResolvedValueOnce(null)
-      .mockImplementationOnce(async (address) => mobileSurfaceCache.publish(
-        address, chatList({ id: 'cached', text: 'stale', createdAt: 1 }),
-        (_value): _value is ChatListView => true,
-      ) as never);
+      .mockImplementationOnce(
+        async (address) =>
+          mobileSurfaceCache.publish(
+            address,
+            chatList({ id: 'cached', text: 'stale', createdAt: 1 }),
+            (_value): _value is ChatListView => true,
+          ) as never,
+      );
     deck.chatsResponse = chatList({ id: 'm9', text: 'current', createdAt: 50 });
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -1294,16 +1481,18 @@ describe('Room deck live path', () => {
     );
     await quiet();
 
-    expect(
-      paintedRows(renderer).find((row) => row.room.id === 'room-a')!.latestMessage?.text,
-    ).toBe('sent while we were deaf');
+    expect(paintedRows(renderer).find((row) => row.room.id === 'room-a')!.latestMessage?.text).toBe(
+      'sent while we were deaf',
+    );
     expect(deck.reconnects).toBe(1);
     await act(async () => renderer.unmount());
   });
 });
 
 vi.mock('@/components/buzz/WorkspaceActionsMenu', () => hostModule('WorkspaceActionsMenu'));
-vi.mock('@/components/buzz/RoomListToolbar', () => hostModule('RoomListToolbar', 'RoomListTrayAction'));
+vi.mock('@/components/buzz/RoomListToolbar', () =>
+  hostModule('RoomListToolbar', 'RoomListTrayAction'),
+);
 vi.mock('@react-native-async-storage/async-storage', () => ({
   default: {
     getItem: async (key: string) =>
@@ -1323,11 +1512,15 @@ it('R-GITHUB-LANDING: a confirmed nonempty response cannot redirect through a la
     const renderer = await mountDeck();
     expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
     expect(deck.chatsReads).toBeGreaterThan(0);
-    console.log('R-GITHUB-LANDING cold empty-cache navigation trace:', JSON.stringify(vi.mocked(router.replace).mock.calls));
+    console.log(
+      'R-GITHUB-LANDING cold empty-cache navigation trace:',
+      JSON.stringify(vi.mocked(router.replace).mock.calls),
+    );
     await act(async () => renderer.unmount());
-  } finally { deck.withholdWorkspaceSnapshot = false; }
+  } finally {
+    deck.withholdWorkspaceSnapshot = false;
+  }
 });
-
 
 describe('Retained socket deck activation', () => {
   beforeEach(() => {
@@ -1337,12 +1530,16 @@ describe('Retained socket deck activation', () => {
   afterEach(() => vi.useRealTimers());
 
   async function advance(ms = 100) {
-    await act(async () => { await vi.advanceTimersByTimeAsync(ms); });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ms);
+    });
   }
 
   async function openDeck() {
     let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+    await act(async () => {
+      renderer = create(React.createElement(BuzzChannels));
+    });
     await advance();
     expect(deck.workspaceReads).toBe(1);
     expect(deck.chatsReads).toBe(1);
@@ -1360,16 +1557,26 @@ describe('Retained socket deck activation', () => {
     await activate('background');
     deck.workspacesResponse = {
       workspaces: [{ id: 'workspace', name: 'Renamed Workspace', role: 'member', updatedAt: 2 }],
-      viewer, truncated: false, watchFilters: [],
+      viewer,
+      truncated: false,
+      watchFilters: [],
     };
     deck.chatsResponse = chatList({ id: 'm2', text: 'background reply', createdAt: 20 });
-    const workspaceWatch = deck.subscriptions.find((entry) => entry.filters.some((filter) => !filter['#h']));
+    const workspaceWatch = deck.subscriptions.find((entry) =>
+      entry.filters.some((filter) => !filter['#h']),
+    );
     expect(workspaceWatch).toBeDefined();
     await act(async () => {
-      workspaceWatch!.emit({ monolithLive: {
-        type: 'workspace-changed', roomId: '', workspace: { id: 'workspace', name: 'Renamed Workspace' },
-      } });
-      roomWatch().emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'phone-write' } });
+      workspaceWatch!.emit({
+        monolithLive: {
+          type: 'workspace-changed',
+          roomId: '',
+          workspace: { id: 'workspace', name: 'Renamed Workspace' },
+        },
+      });
+      roomWatch().emit({
+        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'phone-write' },
+      });
     });
     await advance(180_000);
     expect(deck.workspaceReads).toBe(1);
@@ -1386,54 +1593,86 @@ describe('Retained socket deck activation', () => {
       expect(deck.workspaceReads).toBe(2);
       expect(deck.chatsReads).toBe(2);
       expect(paintedRows(renderer)[0]!.latestMessage!.text).toBe('background reply');
-      expect(renderer.root.findByType('BuzzCommunityShell').props.communities[0].name).toBe('Renamed Workspace');
+      expect(renderer.root.findByType('BuzzCommunityShell').props.communities[0].name).toBe(
+        'Renamed Workspace',
+      );
       await activate('active');
       await advance(180_000);
       expect(deck.workspaceReads).toBe(2);
       expect(deck.chatsReads).toBe(2);
       expect(deck.reconnects).toBe(0);
-    } finally { await act(async () => renderer.unmount()); }
+    } finally {
+      await act(async () => renderer.unmount());
+    }
   });
 
-  it.each([false, true])('preserves a newer Workspace invalidation across an older read: %s', async (laterInvalidation) => {
-    const renderer = await openDeck();
-    try {
-      const oldView: WorkspaceListView = {
-        workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }],
-        viewer, truncated: false, watchFilters: [],
-      };
-      let resolveRead!: (value: WorkspaceListView) => void;
-      deck.workspacesResponse = new Promise<WorkspaceListView>((resolve) => { resolveRead = resolve; });
-      const watch = deck.subscriptions.find((entry) => entry.filters.some((filter) => !filter['#h']))!;
-      await act(async () => watch.emit({ monolithLive: {
-        type: 'workspace-changed', roomId: '', workspace: { id: 'workspace', name: 'Work' },
-      } }));
-      await advance(600);
-      expect(deck.workspaceReads).toBe(2);
-      await activate('background');
-      deck.workspacesResponse = {
-        ...oldView, workspaces: [{ ...oldView.workspaces[0]!, name: 'Renamed Workspace', updatedAt: 2 }],
-      };
-      if (laterInvalidation) await act(async () => watch.emit({ monolithLive: {
-        type: 'workspace-changed', roomId: '', workspace: { id: 'workspace', name: 'Renamed Workspace' },
-      } }));
-      await act(async () => resolveRead(oldView));
-      await advance(180_000);
-      expect(deck.workspaceReads).toBe(2);
-      expect(renderer.root.findByType('BuzzCommunityShell').props.communities[0].name).toBe('Work');
-      await activate('active');
-      await advance();
-      const expectedReads = laterInvalidation ? 3 : 2;
-      expect(deck.workspaceReads).toBe(expectedReads);
-      expect(renderer.root.findByType('BuzzCommunityShell').props.communities[0].name)
-        .toBe(laterInvalidation ? 'Renamed Workspace' : 'Work');
-      await activate('active');
-      await advance(180_000);
-      expect(deck.workspaceReads).toBe(expectedReads);
-      expect(deck.chatsReads).toBe(1);
-      expect(deck.reconnects).toBe(0);
-    } finally { await act(async () => renderer.unmount()); }
-  });
+  it.each([false, true])(
+    'preserves a newer Workspace invalidation across an older read: %s',
+    async (laterInvalidation) => {
+      const renderer = await openDeck();
+      try {
+        const oldView: WorkspaceListView = {
+          workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }],
+          viewer,
+          truncated: false,
+          watchFilters: [],
+        };
+        let resolveRead!: (value: WorkspaceListView) => void;
+        deck.workspacesResponse = new Promise<WorkspaceListView>((resolve) => {
+          resolveRead = resolve;
+        });
+        const watch = deck.subscriptions.find((entry) =>
+          entry.filters.some((filter) => !filter['#h']),
+        )!;
+        await act(async () =>
+          watch.emit({
+            monolithLive: {
+              type: 'workspace-changed',
+              roomId: '',
+              workspace: { id: 'workspace', name: 'Work' },
+            },
+          }),
+        );
+        await advance(600);
+        expect(deck.workspaceReads).toBe(2);
+        await activate('background');
+        deck.workspacesResponse = {
+          ...oldView,
+          workspaces: [{ ...oldView.workspaces[0]!, name: 'Renamed Workspace', updatedAt: 2 }],
+        };
+        if (laterInvalidation)
+          await act(async () =>
+            watch.emit({
+              monolithLive: {
+                type: 'workspace-changed',
+                roomId: '',
+                workspace: { id: 'workspace', name: 'Renamed Workspace' },
+              },
+            }),
+          );
+        await act(async () => resolveRead(oldView));
+        await advance(180_000);
+        expect(deck.workspaceReads).toBe(2);
+        expect(renderer.root.findByType('BuzzCommunityShell').props.communities[0].name).toBe(
+          'Work',
+        );
+        await activate('active');
+        await advance();
+        const expectedReads = laterInvalidation ? 3 : 2;
+        expect(deck.workspaceReads).toBe(expectedReads);
+        expect(renderer.root.findByType('BuzzCommunityShell').props.communities[0].name).toBe(
+          laterInvalidation ? 'Renamed Workspace' : 'Work',
+        );
+        await activate('active');
+        await advance(180_000);
+        expect(deck.workspaceReads).toBe(expectedReads);
+        expect(deck.chatsReads).toBe(1);
+        expect(deck.reconnects).toBe(0);
+      } finally {
+        await act(async () => renderer.unmount());
+      }
+    },
+  );
 
   it('does not read on activation when no incomplete delivery was missed', async () => {
     const renderer = await openDeck();
@@ -1445,7 +1684,9 @@ describe('Retained socket deck activation', () => {
       expect(deck.workspaceReads).toBe(1);
       expect(deck.chatsReads).toBe(1);
       expect(deck.reconnects).toBe(0);
-    } finally { await act(async () => renderer.unmount()); }
+    } finally {
+      await act(async () => renderer.unmount());
+    }
   });
 
   it('defers catch-up while the deck is covered by a Room', async () => {
@@ -1457,12 +1698,16 @@ describe('Retained socket deck activation', () => {
       await advance();
       expect(deck.workspaceReads).toBe(1);
       expect(deck.chatsReads).toBe(1);
-      await act(async () => { deck.blur = (deck.focusEffect?.() as (() => void) | undefined) ?? null; });
+      await act(async () => {
+        deck.blur = (deck.focusEffect?.() as (() => void) | undefined) ?? null;
+      });
       await advance();
       expect(deck.workspaceReads).toBe(2);
       expect(deck.chatsReads).toBe(2);
       expect(deck.reconnects).toBe(0);
-    } finally { await act(async () => renderer.unmount()); }
+    } finally {
+      await act(async () => renderer.unmount());
+    }
   });
 
   it('does not catch up an old identity after a client reset', async () => {
@@ -1475,6 +1720,8 @@ describe('Retained socket deck activation', () => {
       expect(deck.workspaceReads).toBe(1);
       expect(deck.chatsReads).toBe(1);
       expect(deck.reconnects).toBe(0);
-    } finally { await act(async () => renderer.unmount()); }
+    } finally {
+      await act(async () => renderer.unmount());
+    }
   });
 });

@@ -1,0 +1,70 @@
+{
+  "runs": [
+    {
+      "kind": "old",
+      "label": "SA",
+      "n": 6,
+      "bundleSha256": "aec6b15f3976c3d416342f736a568fa5e88f1871e02c38116354d5609b8dcc3f",
+      "at": 1793775811.6770442,
+      "hostLoad": "13.99 14.70 17.33 3/6528 1569608"
+    },
+    {
+      "kind": "new",
+      "label": "TA",
+      "n": 6,
+      "bundleSha256": "e3657b2917c33e2183354f6c743e18fe5becba55a018eeaf15aad30171c9e70c",
+      "at": 1793775833.37226,
+      "hostLoad": "12.18 14.26 17.13 8/6522 1578381"
+    },
+    {
+      "kind": "old",
+      "label": "SB",
+      "n": 6,
+      "bundleSha256": "aec6b15f3976c3d416342f736a568fa5e88f1871e02c38116354d5609b8dcc3f",
+      "at": 1793775854.6766798,
+      "hostLoad": "10.20 13.68 16.87 4/6534 1587036"
+    },
+    {
+      "kind": "new",
+      "label": "TB",
+      "n": 6,
+      "bundleSha256": "e3657b2917c33e2183354f6c743e18fe5becba55a018eeaf15aad30171c9e70c",
+      "at": 1793775877.2163835,
+      "hostLoad": "10.93 13.56 16.75 2/6520 1595932"
+    },
+    {
+      "kind": "old",
+      "label": "SC",
+      "n": 6,
+      "bundleSha256": "aec6b15f3976c3d416342f736a568fa5e88f1871e02c38116354d5609b8dcc3f",
+      "at": 1793775898.5840225,
+      "hostLoad": "9.05 12.96 16.48 2/6503 1601604"
+    },
+    {
+      "kind": "new",
+      "label": "TC",
+      "n": 6,
+      "bundleSha256": "e3657b2917c33e2183354f6c743e18fe5becba55a018eeaf15aad30171c9e70c",
+      "at": 1793775920.2128036,
+      "hostLoad": "6.92 12.15 16.12 12/6557 1610461"
+    },
+    {
+      "kind": "old",
+      "label": "SD",
+      "n": 6,
+      "bundleSha256": "aec6b15f3976c3d416342f736a568fa5e88f1871e02c38116354d5609b8dcc3f",
+      "at": 1793775941.7702444,
+      "hostLoad": "6.58 11.74 15.90 3/6664 1621823"
+    },
+    {
+      "kind": "new",
+      "label": "TD",
+      "n": 6,
+      "bundleSha256": "e3657b2917c33e2183354f6c743e18fe5becba55a018eeaf15aad30171c9e70c",
+      "at": 1793775962.9696903,
+      "hostLoad": "7.03 11.52 15.74 4/6670 1628449"
+    }
+  ],
+  "definition": "Current pipeline head3a77888f6b99465e9156efc237cfab7d5a5167e4 versus pre-preview rebased baseline283dd1cfd91e2a74b7f46f909e2684c77cfa649f, same-session alternating local Hermes fixtures on unchanged native44 and production142, same private proof Room. Critical app modules verified by source-map content; isolated Metro caches. Old local bundle includes initial sender-fade fix; new paints an independently subscribed newest-slot child with unchanged FlatList data and first-frame anchor suppression. Fixed composer/send coordinates from screenshots; full draft OCR and enabled gold arrow required before each tap. Empty draft required before typing next message. No UI dumps. Monotonic uptime bracket supplements wall-clock date.",
+  "originalRestored": true
+}

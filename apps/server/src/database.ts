@@ -99,7 +99,7 @@ import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { cornerWaitingFunctionSql } from './corner-waiting-report.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
-import { logLockHolders, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
+import { alreadySatisfied, logLockHolders, triggerAlreadyCurrent, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 import { QueryProfiler } from './query-profile.js';
 import { DatabaseBackgroundWork } from './database-background-work.js';
@@ -3218,8 +3218,13 @@ export async function migrate(
     });
   const ddlScript = async (name: string, sql: string) => {
     const statements = splitMigrationStatements(sql);
-    for (const [index, statement] of statements.entries())
+    for (let index = 0; index < statements.length; index++) {
+      const statement = statements[index]!;
+      if (await alreadySatisfied(database, statement)) continue;
+      const next = statements[index + 1];
+      if (next && await triggerAlreadyCurrent(database, statement, next)) { index++; continue; }
       await ddl(`${name} ${index + 1}/${statements.length}`, statement);
+    }
   };
   await ddlScript('server schema', SCHEMA);
   await ddlScript('Rooms MCP OAuth', ROOMS_MCP_SCHEMA);

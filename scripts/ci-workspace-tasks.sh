@@ -24,6 +24,7 @@ typecheck() {
   # G1: candidate invariants govern CI; changes are reviewed weekly after merging.
   node scripts/check-architecture.mjs --root . --base "$ARCHITECTURE_BASE"
   # The root command also generates mobile routes and typechecks mobile.
+  node --test scripts/eas-api-contract.test.mjs scripts/server-previous-sources.test.mjs
   node --test scripts/rollout-schema.test.mjs
   node scripts/rollout-schema.mjs --previous "$CI_BASE_SHA"
   npm run typecheck

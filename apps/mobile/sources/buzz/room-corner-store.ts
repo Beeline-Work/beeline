@@ -446,7 +446,11 @@ export function subscribeRoomCornerSummaries(listener: () => void): () => void {
 
 /** Select a Room's corner summary; re-renders when it changes. */
 export function useRoomCornerSummary(roomId: string): RoomCornerSummary | undefined {
-  return useRoomCornerRecord(roomId)?.summary;
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeRoomCorners(roomId, listener),
+    [roomId],
+  );
+  return useSyncExternalStore(subscribe, () => getRoomCornerSummary(roomId));
 }
 
 /** Every held Room's summary by Room id; a new map whenever one changes. */

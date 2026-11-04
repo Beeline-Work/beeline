@@ -1,0 +1,8 @@
+{
+  "roomId": "ba6e778a-69ff-4ea2-8b8d-68f94039add3",
+  "workspaceId": "bee11e00-0000-4000-8000-000000000105",
+  "exactExpectedCandidateTextsSeenInBoundedCanonicalRead": 20,
+  "visibleSamples": 21,
+  "status": "incomplete verification",
+  "limit": "readRoom plus one earlier history page found20 exact expected strings; complete21-message delivery was not established; cause not determined; visibility samples remain optimistic paint measurements"
+}

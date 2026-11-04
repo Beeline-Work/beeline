@@ -296,7 +296,7 @@ Primitives live in `components/buzz/MonoHull.tsx` with `motionTokens`: reveal 17
 - **Live breathes, never travels.** `HullLivePulse` (one opacity breath) is the only motion "live" may have. It is mounted only where something is genuinely live, so mount it conditionally, never `active={false}`. No sweeping bands, progress bars, or marching dashes for turns, corners or checks.
 - At most two of `PixelLoader` run on screen at once.
 - **The self-painting glyph** is the one drawn loop: `BootPaint` paints once on splash; `SurfaceGlyphLoader` (page and Room load gates) and `BeelineMarkSpinner` (thinking line) draw the Beeline mark, unwind, and rest empty. Reduced motion shows the static mark.
-- **Exceptions:** the provisional settle cross-fade (220 ms); a closed poll's still brass wash (magnitude, not progress).
+- **Exceptions:** the sender's own message appears without an entrance fade, including its optimistic-to-signed replacement; the provisional settle cross-fade (220 ms); a closed poll's still brass wash (magnitude, not progress).
 
 ### Agent and human profiles
 Profiles reuse Settings typography, spacing and `SettingsRow`. Bylines open profiles; mentions and Message open DMs. Phone pushes a page; desktop opens an adjacent pane. Human profiles show identity, Workspace role (with explicit Edit/Save/Cancel when authorized) and the read-only grant ledger. Agent profiles show the mark or generated portrait, model, effort, owner, expandable soul and merged work. See [agent profiles](docs/agent-profiles.md).

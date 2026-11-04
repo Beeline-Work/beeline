@@ -1,0 +1,46 @@
+{
+  "testedHead": "3a77888f6b99465e9156efc237cfab7d5a5167e4",
+  "baselineHead": "283dd1cfd91e2a74b7f46f909e2684c77cfa649f",
+  "nativeRuntime": 44,
+  "nativeVersionCode": 144,
+  "productionSource": "98c2a49a4f3df909e8fd3fc32ae39129f6f8367b",
+  "functionalPassed": true,
+  "enqueueRecoveryPassed": true,
+  "canonicalExactlyOnce": 48,
+  "paired": {
+    "old": {
+      "n": 24,
+      "p50Ms": 136.594899,
+      "p95Ms": 202.782926,
+      "maxMs": 432.882926,
+      "afterCommandP50Ms": 117.422899,
+      "afterCommandP95Ms": 182.782926,
+      "under150Ms": 16
+    },
+    "new": {
+      "n": 24,
+      "p50Ms": 84.258884,
+      "p95Ms": 127.080884,
+      "maxMs": 140.340879,
+      "afterCommandP50Ms": 63.582879,
+      "afterCommandP95Ms": 97.080884,
+      "under150Ms": 24
+    }
+  },
+  "coldRoomPreviousN25": {
+    "p50Ms": 1323,
+    "p95Ms": 2251,
+    "budgetMs": 450,
+    "passes": false
+  },
+  "sendBudgetMs": 150,
+  "sendBudgetPasses": true,
+  "productionExactHandlerSpan": "unavailable; no post-deployment claim",
+  "notes": [
+    "Original production v142 bytes and complete launch manifest/asset hash metadata restored.",
+    "Same-session alternating four blocks of six sends per arm, readiness verified in screenshots, no UI dumps.",
+    "Nearest-rank percentiles, all samples retained; command-before elapsed-clock timing is a conservative upper bound.",
+    "Fault hooks affect only one controlled durable save and one unrelated event transport in a separate diagnostic bundle; no fault instrumentation in pure latency bundle.",
+    "No published OTA, APK replacement, server deployment, additional phone connection, or polling."
+  ]
+}

@@ -1,0 +1,10 @@
+{
+  "name": "native-working-a2",
+  "kind": "working",
+  "selfOnly": true,
+  "done": true,
+  "details": {
+    "turn": "proof-A2",
+    "nativeComponentHost": true
+  }
+}

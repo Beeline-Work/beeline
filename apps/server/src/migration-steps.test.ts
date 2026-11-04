@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { backfillAgentHandles, migrate, migrateData, MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
-import { lockedTables, logLockHolders, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
+import { alreadySatisfied, lockedTables, logLockHolders, normalizeTriggerDefinition, runMigrationStep, satisfiedCheck, splitMigrationStatements, triggerAlreadyCurrent, triggerPair } from './migration-steps.js';
 
 const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
 if (postgresUrl && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgresUrl).hostname))
@@ -227,5 +227,55 @@ describe('lock holder diagnostic', () => {
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
     }
+  });
+});
+
+describe('already-satisfied idempotent DDL', () => {
+  it('reads back only plain IF NOT EXISTS creates', () => {
+    expect(satisfiedCheck('ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;'))
+      .toEqual({ relation: 'identities', columns: ['hidden_from_roster'] });
+    expect(satisfiedCheck(`-- note\nALTER TABLE t ADD COLUMN IF NOT EXISTS a text DEFAULT 'x,y', ADD COLUMN IF NOT EXISTS b numeric(10,2)`))
+      .toEqual({ relation: 't', columns: ['a', 'b'] });
+    expect(satisfiedCheck('CREATE TABLE IF NOT EXISTS rooms (id uuid PRIMARY KEY)')).toEqual({ relation: 'rooms', columns: [] });
+    expect(satisfiedCheck('CREATE UNIQUE INDEX IF NOT EXISTS rooms_slug ON rooms(slug)')).toEqual({ relation: 'rooms_slug', columns: [] });
+    expect(satisfiedCheck('CREATE INDEX CONCURRENTLY IF NOT EXISTS rooms_slug ON rooms(slug)')).toBeNull();
+    expect(satisfiedCheck('ALTER TABLE t ADD COLUMN IF NOT EXISTS a text, DROP COLUMN b')).toBeNull();
+    expect(satisfiedCheck('ALTER TABLE t ADD COLUMN a text')).toBeNull();
+    expect(satisfiedCheck('ALTER TABLE t ALTER COLUMN a SET NOT NULL')).toBeNull();
+    expect(satisfiedCheck('UPDATE t SET a = 1')).toBeNull();
+  });
+
+  it('skips only when every named object exists, without touching the table', async () => {
+    const query = vi.fn(async (_sql: string, values?: unknown[]) => ({
+      rows: [{ relation: true, columns: (values?.[1] as string[]).filter(c => c !== 'missing').length }],
+    }));
+    await expect(alreadySatisfied({ query }, 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a text')).resolves.toBe(true);
+    await expect(alreadySatisfied({ query }, 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a text, ADD COLUMN IF NOT EXISTS missing text')).resolves.toBe(false);
+    await expect(alreadySatisfied({ query }, 'ALTER TABLE t DROP COLUMN IF EXISTS a')).resolves.toBe(false);
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(String(query.mock.calls[0]![0])).not.toMatch(/\bLOCK\b|\bALTER\b/i);
+  });
+});
+
+describe('already-current trigger pairs', () => {
+  const drop = 'DROP TRIGGER IF EXISTS next_day_first_message ON messages;';
+  const create = 'CREATE TRIGGER next_day_first_message AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION note_checkin_first_message();';
+  const installed = 'CREATE TRIGGER next_day_first_message AFTER INSERT ON public.messages FOR EACH ROW EXECUTE FUNCTION note_checkin_first_message()';
+
+  it('pairs only a drop and create of the same trigger on the same table', () => {
+    expect(triggerPair(drop, create)).toEqual(['next_day_first_message', 'messages']);
+    expect(triggerPair(drop, create.replace('ON messages', 'ON rooms'))).toBeNull();
+    expect(triggerPair(drop, 'CREATE TRIGGER other AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION f()')).toBeNull();
+    expect(triggerPair('DROP TRIGGER next_day_first_message ON messages', create)).toBeNull();
+    expect(normalizeTriggerDefinition(installed)).toBe(normalizeTriggerDefinition(create));
+  });
+
+  it('skips only when the installed definition is identical', async () => {
+    const query = vi.fn(async () => ({ rows: [{ definition: installed }] }));
+    await expect(triggerAlreadyCurrent({ query }, drop, create)).resolves.toBe(true);
+    await expect(triggerAlreadyCurrent({ query }, drop, create.replace('AFTER INSERT', 'AFTER INSERT OR UPDATE'))).resolves.toBe(false);
+    const absent = vi.fn(async () => ({ rows: [] }));
+    await expect(triggerAlreadyCurrent({ query: absent }, drop, create)).resolves.toBe(false);
+    await expect(triggerAlreadyCurrent({ query }, 'UPDATE t SET a=1', create)).resolves.toBe(false);
   });
 });

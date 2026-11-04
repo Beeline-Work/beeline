@@ -586,7 +586,8 @@ async function render(): Promise<ReactTestRenderer> {
 
 async function press(renderer: ReactTestRenderer, testID: string): Promise<void> {
   await act(async () => {
-    await renderer.root.findByProps({ testID }).props.onPress();
+    const row = renderer.root.findByProps({ testID });
+    await row.props.onPress(row.props.pubkey);
   });
 }
 

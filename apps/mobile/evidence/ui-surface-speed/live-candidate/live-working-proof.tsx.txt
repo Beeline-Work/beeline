@@ -1,0 +1,18 @@
+// Temporary native host for the actual working-line component.
+import React from 'react';
+import { View,Text } from 'react-native';
+import { useUnistyles } from 'react-native-unistyles';
+import { TurnProgressLine } from '@/components/buzz/TurnProgressLine';
+import { useWorkingProof,setWorkingProof } from '@/ui-working-proof-state';
+import { useSurfaceBody } from '@/ui-surface-profiler';
+export default function NativeWorkingProof(){
+ const {theme}=useUnistyles(),state=useWorkingProof();
+ const [tick,setTick]=React.useState(0),[start]=React.useState(()=>Math.floor(Date.now()/1000));
+ React.useEffect(()=>{const id=setInterval(()=>setTick(t=>t+1),50);return()=>clearInterval(id);},[]);
+ useSurfaceBody('NativeWorkingProof',{turn:state.turn,tick});
+ return <View style={{flex:1,backgroundColor:theme.buzz.bgBase,justifyContent:'center'}}>
+  <Text testID="proof-current-turn" style={{color:theme.buzz.textPrimary}}>{state.turn}</Text>
+  <TurnProgressLine label="Thinking" startedAt={start} stopping={state.stopped} testID="proof-working-line"
+   onStop={()=>{console.warn('[UI_STOP_TARGET] '+JSON.stringify({turn:state.turn,tick,t:performance.now()}));setWorkingProof({...state,stopped:true});}}/>
+ </View>;
+}

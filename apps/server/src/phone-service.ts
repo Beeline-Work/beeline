@@ -4331,6 +4331,8 @@ export class PhoneService {
     sourceClient?: { id: string; name: string },
     /** Sign-in family of this device session. Absent when the caller is not one. */
     familyId?: string,
+    /** Transport receipts may precede tracked observation; direct callers retain full completion. */
+    deferPostCommitObservation = false,
   ): Promise<Output<Name>> {
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(name))
       throw new Error(REVIEW_IDENTITY_MESSAGE);
@@ -4405,14 +4407,14 @@ export class PhoneService {
       case 'sendRoomMessage': {
         const sent = await this.sendMessage(input as Input<'sendRoomMessage'>, viewerId, sourceClient, familyId);
         this.beginAgentSignIn(input as Input<'sendRoomMessage'>, sent.messageId);
-        await observeOnboardingMessage(this.database, (input as Input<'sendRoomMessage'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
+        await this.observeSentMessage((input as Input<'sendRoomMessage'>).roomId, viewerId, deferPostCommitObservation);
         return sent as Output<Name>;
       }
       case 'sendRoomReply': {
         await prepareMentionReplyInput(this.database, viewerId, input as Input<'sendRoomReply'>);
         const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId, sourceClient, familyId);
         this.beginAgentSignIn(input as Input<'sendRoomReply'>, sent.messageId);
-        await observeOnboardingMessage(this.database, (input as Input<'sendRoomReply'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
+        await this.observeSentMessage((input as Input<'sendRoomReply'>).roomId, viewerId, deferPostCommitObservation);
         return sent as Output<Name>;
       }
       case 'reactToMessage':
@@ -5230,6 +5232,21 @@ export class PhoneService {
     };
   }
 
+  /** Only transport receipts defer observation; service completion still includes its milestones. */
+  private async observeSentMessage(roomId: string, viewerId: string, defer: boolean): Promise<void> {
+    const work = () =>
+      observeOnboardingMessage(this.database, roomId, viewerId).catch((error) =>
+        console.error('[onboarding]', error),
+      );
+    const backgroundWork = CornerAccessDatabase.physical(this.database).backgroundWork;
+    if (defer && backgroundWork)
+      backgroundWork.run(async () => {
+        // Queue the response before analytics competes for a database connection.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await work();
+      });
+    else await work();
+  }
   private async sendMessage(
     input: Input<'sendRoomMessage'>,
     author: string,

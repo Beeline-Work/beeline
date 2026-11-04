@@ -10,7 +10,7 @@ import { Image, Platform, Pressable, Text, View } from 'react-native';
 export { GitHubEventCard, DaemonFactCard } from '@/components/buzz/LifecycleCard';
 import { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
 export { NotificationLifecycleCard };
-import ReanimatedSwipeable, { type SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
+import TranscriptSwipeable, { type TranscriptSwipeableMethods as SwipeableMethods } from '@/components/buzz/TranscriptSwipeable';
 import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
 import { ButtonRowFrame } from '@/components/buzz/ButtonRow';
 import { DesktopWorkspacePortal } from '@/components/buzz/DesktopWorkspacePortal';
@@ -855,7 +855,7 @@ function SwipeToReply({
   const hideSwipe = useCallback(() => setSwipeShown(false), []);
   useEffect(() => setSwipeShown(false), [messageId]);
   const commitSwipe = (direction: 'left' | 'right') => {
-    // ReanimatedSwipeable reports the movement direction. Its UI-thread spring
+    // TranscriptSwipeable reports the movement direction. Its UI-thread spring
     // can return immediately without the legacy native-driver close timers.
     swipeableRef.current?.close();
     // Install the quote before a composer update can recycle this row.
@@ -1011,12 +1011,14 @@ function SwipeToReply({
       style={[styles.cornerSwipeAction, !swipeShown && styles.swipeActionAtRest, poseStyle]}
       testID={`corner-swipe-action-${messageId}`}
     >
-      <CornerGlyph color={styles.cornerSwipeGlyph.color} size={20} />
-      <Text style={styles.replySwipeLabel}>{CORNER_LABEL.toUpperCase()}</Text>
+      {swipeShown ? <>
+        <CornerGlyph color={styles.cornerSwipeGlyph.color} size={20} />
+        <Text style={styles.replySwipeLabel}>{CORNER_LABEL.toUpperCase()}</Text>
+      </> : null}
     </View>
   );
   const swipeRow = () => (
-    <ReanimatedSwipeable
+    <TranscriptSwipeable
       ref={swipeableRef}
       // Swipeable's container clips (`overflow: 'hidden'`) at the row's content
       // edge, where the byline tile sits — and a live agent's gold ring paints
@@ -1032,9 +1034,6 @@ function SwipeToReply({
       onSwipeableWillOpen={commitSwipe}
       onSwipeableClose={hideSwipe}
       onSwipeableOpenStartDrag={showSwipe}
-      onSwipeableCloseStartDrag={showSwipe}
-      overshootLeft={false}
-      overshootRight={false}
       renderLeftActions={onSwipeCorner ? () => cornerAction() : undefined}
       renderRightActions={onReply ? () => (
         <View
@@ -1042,15 +1041,17 @@ function SwipeToReply({
           style={styles.replySwipeAction}
           testID={`reply-swipe-action-${messageId}`}
         >
-          <Text style={styles.replySwipeGlyph}>↩</Text>
-          <Text style={styles.replySwipeLabel}>REPLY</Text>
+          {swipeShown ? <>
+            <Text style={styles.replySwipeGlyph}>↩</Text>
+            <Text style={styles.replySwipeLabel}>REPLY</Text>
+          </> : null}
         </View>
       ) : undefined}
       enabled={Boolean(onReply || onSwipeCorner)}
       testID={`swipe-reply-${messageId}`}
     >
       {message}
-    </ReanimatedSwipeable>
+    </TranscriptSwipeable>
   );
   return swipeRow();
 }
@@ -1570,8 +1571,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     replyReference
   );
 
+  // A local send is tap feedback; never hide it behind the arrival fade.
   const content = (
-    <NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>
+    <NewMessageMaterialize enabled={Boolean(message.isNew) && !message.isUser} messageId={message.id}>
       <View>
         {isSelfSteer ? (
           <LedgerSteer

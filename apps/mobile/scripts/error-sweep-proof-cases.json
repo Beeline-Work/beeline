@@ -64,7 +64,7 @@
     {
       "file": "app/(app)/beeline/channels.tsx",
       "beforeLine": 960,
-      "afterLine": 954,
+      "afterLine": 1107,
       "id": "sweep-03",
       "label": "app/(app)/beeline/channels.tsx:960",
       "before": {
@@ -82,11 +82,11 @@
         "selectors": [
           {
             "tag": "View",
-            "hash": "9ce4379fe0c19cd9a1691b70ba9d61e1a4875d188613584fc90c2806d3cbb5d7",
+            "hash": "f65dd7a771eae2f8dacdcf15da5e55e77c43f382c372f6fc295932c746230ac2",
             "occurrence": 0
           }
         ],
-        "sourceLine": 972
+        "sourceLine": 1107
       }
     },
     {

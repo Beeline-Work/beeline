@@ -1,0 +1,78 @@
+{
+  "baselineSource": "98c2a49a4f3df909e8fd3fc32ae39129f6f8367b",
+  "currentMainSourceProved": "483ea07d07d2c747b026f3c9e7c4b95cd85a5d94",
+  "nativeRuntime": "40",
+  "nativeVersionCode": 27,
+  "nativeVersionName": "0.2.22",
+  "nativeApkSha256": "00eb69f56cce366a72e6b2631a473626e60050a69f12e7e2f5e2f35f927644be",
+  "emulator": "emulator-5628",
+  "bundles": {
+    "before-final": {
+      "sha256": "eb696f8dac6134e78cfcc77f165f7da9d34fc3b436474762639527a96895d460",
+      "sourceMapModules": 3757,
+      "installedUpdate": {
+        "updateId": "b1e0d8fe-aabc-4f31-9e51-730d715dbdb9",
+        "runtime": "40",
+        "bundleSha256": "eb696f8dac6134e78cfcc77f165f7da9d34fc3b436474762639527a96895d460",
+        "installerCheckoutHead": "483ea07d07d2c747b026f3c9e7c4b95cd85a5d94"
+      }
+    },
+    "after-final": {
+      "sha256": "0af48f3b5c1e743fe52ac3fb84936e6bfef8c4c4595367f265f8db5a2fbe8379",
+      "sourceMapModules": 3757,
+      "installedUpdate": {
+        "updateId": "7b53292d-070b-4200-b4b6-bd6c05a8f25b",
+        "runtime": "40",
+        "bundleSha256": "0af48f3b5c1e743fe52ac3fb84936e6bfef8c4c4595367f265f8db5a2fbe8379",
+        "installerCheckoutHead": "483ea07d07d2c747b026f3c9e7c4b95cd85a5d94"
+      }
+    },
+    "after-members-final": {
+      "sha256": "a9e84fc7af9df9e3d952ced4032bb4fb489663e9d8719d3f51dfaa44ec48041e",
+      "sourceMapModules": 3757,
+      "installedUpdate": {
+        "updateId": "187ba8b0-277e-43e9-9a5d-813c5678741a",
+        "runtime": "40",
+        "bundleSha256": "a9e84fc7af9df9e3d952ced4032bb4fb489663e9d8719d3f51dfaa44ec48041e",
+        "installerCheckoutHead": "483ea07d07d2c747b026f3c9e7c4b95cd85a5d94"
+      }
+    },
+    "clock-before": {
+      "sha256": "7a6b8b4f4eed68fd216e0ea5f61d387ddf91a47a82957fa87fad0b394085a96d",
+      "sourceMapModules": 1255,
+      "installedUpdate": {
+        "updateId": "1fbeed20-6a7f-48b8-96c5-680dce307a43",
+        "runtime": "40",
+        "bundleSha256": "7a6b8b4f4eed68fd216e0ea5f61d387ddf91a47a82957fa87fad0b394085a96d",
+        "installerCheckoutHead": "483ea07d07d2c747b026f3c9e7c4b95cd85a5d94"
+      }
+    },
+    "clock-after": {
+      "sha256": "e1b672bfc4d294d1d5f287e5d4caf6dbf5f67089962969311cab089d8ccb83b4",
+      "sourceMapModules": 1255,
+      "installedUpdate": {
+        "updateId": "fa3b6c55-193f-47c7-96c4-2bac1c9f6eb5",
+        "runtime": "40",
+        "bundleSha256": "e1b672bfc4d294d1d5f287e5d4caf6dbf5f67089962969311cab089d8ccb83b4",
+        "installerCheckoutHead": "483ea07d07d2c747b026f3c9e7c4b95cd85a5d94"
+      }
+    },
+    "main-fresh": {
+      "sha256": "b2166c761f1ad10397f198395a9f711a795bbde19f566b9a9195273547bda4b3",
+      "sourceMapModules": 3777,
+      "installedUpdate": {
+        "updateId": "b18f44f8-1d99-4727-a60d-8b639ee067f4",
+        "runtime": "40",
+        "bundleSha256": "b2166c761f1ad10397f198395a9f711a795bbde19f566b9a9195273547bda4b3",
+        "installerCheckoutHead": "483ea07d07d2c747b026f3c9e7c4b95cd85a5d94"
+      }
+    }
+  },
+  "installerCheckoutHeadMeaning": "Checkout used by the installer, not the bundled source revision. baselineSource plus scoped rendering overlays identify the profiling arms.",
+  "scopedWorkingSourcesSha256": {
+    "apps/mobile/sources/components/buzz/ConversationRow.tsx": "565c595b98dacfd44dbdd697fbb9454f8a3422fc19929c9eea9c290cbc84d911",
+    "apps/mobile/sources/components/buzz/MemberRosterRow.tsx": "893f63033ea1c24a5a8df8ea5391efe594be8ca61d59c83bb151695c2511ee6a",
+    "apps/mobile/sources/components/buzz/NeedsYouCell.tsx": "ce80a99e5d74cf066a385f46a27b9a9d08b74eed3fbbf1e7576b02439437f6d6",
+    "apps/mobile/sources/components/buzz/TurnProgressLine.tsx": "f73ffad93d36ce7cba7e52bd69769e4c04ad93c3df175c14f8fe8d69a255c4e0"
+  }
+}

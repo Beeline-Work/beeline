@@ -156,6 +156,67 @@ describe('local read lanes (P2)', () => {
     expect(reads).toBe(1);
   });
 
+  it.each([false, true])('replays unchanged opening intervals on an unscoped Room (message before snapshot=%s)', async beforeSnapshot => {
+    const room = { family: 'room-head', roomId: 'room-a' } as const;
+    let resolve!: (value: LaneSnapshot) => void, reads = 0;
+    const lanes = new ReadLanes(identity, () => true);
+    const initial = { ...snapshot(51), atomicGroup: 'room-head:room-a:ada', value: { messages: [] } };
+    lanes.connected(1, ['room-head'], () => { reads++; return new Promise(done => { resolve = done; }); });
+    lanes.demand(room, {}, permit); await drain();
+    await lanes.accept({ from: snapshot(51).cut, to: snapshot(52).cut, facts: [] });
+    const value = { messages: [{ id: 'prepared-event', text: 'router90-send-repro' }] };
+    const replacement: LaneBatch = { from: snapshot(52).cut, to: snapshot(54).cut, facts: [{
+      atomicGroup: initial.atomicGroup, authority, payload: { kind: 'scope-replace', family: 'room-head', scope: 'room-a', value },
+    }] };
+    if (beforeSnapshot) await lanes.accept(replacement);
+    expect(lanes.peek(room)).toMatchObject({ state: 'OPENING', value: null });
+    resolve(initial); await drain();
+    if (!beforeSnapshot) await lanes.accept(replacement);
+    await drain();
+    expect(lanes.peek(room)).toMatchObject({ state: 'LIVE', value, cut: { stream: 'workspace:w', through: 54 } });
+    expect(reads).toBe(1);
+  });
+
+  it('classifies opening intervals only against the returned Room Workspace', async () => {
+    const room = { family: 'room-head', roomId: 'room-a' } as const;
+    let resolve!: (value: LaneSnapshot) => void;
+    const lanes = new ReadLanes(identity, () => true);
+    const initial = { ...snapshot(51), atomicGroup: 'room-head:room-a:ada', value: { messages: [] } };
+    lanes.connected(1, ['room-head'], () => new Promise(done => { resolve = done; }));
+    lanes.demand(room, {}, permit); await drain();
+    const other = (through: number) => ({ ...snapshot(through).cut, stream: 'workspace:other' });
+    await lanes.accept({ from: other(51), to: other(52), facts: [] });
+    await lanes.accept({ from: other(52), to: other(54), facts: [{
+      atomicGroup: initial.atomicGroup, authority, payload: { kind: 'scope-replace', family: 'room-head', scope: 'room-a', value: { messages: ['wrong Workspace'] } },
+    }] });
+    resolve(initial); await drain();
+    expect(lanes.peek(room)).toMatchObject({ state: 'LIVE', value: initial.value, cut: { stream: 'workspace:w', through: 51 } });
+    const value = { messages: ['correct Workspace'] };
+    await lanes.accept({ from: snapshot(52).cut, to: snapshot(54).cut, facts: [{
+      atomicGroup: initial.atomicGroup, authority, payload: { kind: 'scope-replace', family: 'room-head', scope: 'room-a', value },
+    }] });
+    expect(lanes.peek(room).value).toEqual(initial.value);
+    await lanes.accept({ from: snapshot(51).cut, to: snapshot(52).cut, facts: [] }); await drain();
+    expect(lanes.peek(room)).toMatchObject({ state: 'LIVE', value, cut: { stream: 'workspace:w', through: 54 } });
+  });
+
+  it.each(['count', 'bytes'])('bounds unchanged Room opening intervals by original logical %s', async bound => {
+    const room = { family: 'room-head', roomId: 'room-a' } as const;
+    let resolve!: (value: LaneSnapshot) => void;
+    const lanes = new ReadLanes(identity, () => true);
+    lanes.connected(1, ['room-head'], () => new Promise(done => { resolve = done; }));
+    lanes.demand(room, {}, permit); await drain();
+    for (let index = 0; index < (bound === 'count' ? 18 : 3); index++) {
+      await lanes.accept({ from: snapshot(51 + index).cut, to: snapshot(52 + index).cut,
+        facts: bound === 'count' ? [] : [{ atomicGroup: 'room-head:other:ada', authority,
+          payload: { kind: 'scope-replace', family: 'room-head', scope: 'other', value: { padding: 'x'.repeat(150 * 1024) } } }],
+      });
+    }
+    expect(lanes.peek(room)).toMatchObject({ state: 'PARKED', value: null, error: 'Projection queue overflow; Retry.' });
+    resolve({ ...snapshot(51), atomicGroup: 'room-head:room-a:ada', value: { messages: [] } }); await drain();
+    expect(lanes.peek(room)).toMatchObject({ state: 'PARKED', value: null });
+  });
+
   it('does not bridge a missing Room interval with unrelated progress', async () => {
     const room = { family: 'room-head', roomId: 'room-a', workspaceId: 'w' } as const;
     const lanes = new ReadLanes(identity, () => true);

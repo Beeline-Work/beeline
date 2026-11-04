@@ -1,3 +1,4 @@
+import { migrateMembershipSubscriptions } from './agent-subscriptions.js';
 import { STARTER_BANTER_TYPING_MS, StarterOnboardingService } from './starter-onboarding-run.js';
 import { starterHello, consumeStarterVideoPost, postStarterVideoPreview } from './starter-onboarding.js';
 import { postRoomChoice } from './room-choice.js';
@@ -1229,7 +1230,7 @@ describe('free starter agents', () => {
     const agent = await freeAgentOf(id);
     expect(
       (
-        await db.query(`SELECT event_subscriptions FROM memberships WHERE identity_id=$1 AND room_id=$2`, [
+        await db.query(`SELECT event_subscriptions FROM room_access WHERE identity_id=$1 AND room_id=$2`, [
           agent.agent_id,
           roomId,
         ])
@@ -1248,18 +1249,26 @@ describe('free starter agents', () => {
     await phone.execute('addWorkspaceMember', { workspaceId: id, memberId: FRIEND, role: 'member' }, OWNER);
     expect(await wakes()).toEqual(['@friend joined · invited by @lunchboxfortwo']);
 
-    // The person leaves #general: the next sweep queues one wake on the leave line.
+    // Leave producers use the same event dispatch as joins, before any sweep.
     await phone.execute('leaveRoom', { roomId }, FRIEND);
-    expect(await freeAgents.sweep()).toBeGreaterThanOrEqual(1);
     expect((await wakes()).at(-1)).toBe('@friend left');
+    await freeAgents.sweep();
     // Each leave is one wake, never repeated.
     await freeAgents.sweep();
     expect(await wakes()).toHaveLength(2);
     // A removal by an admin is a leave too.
     await phone.execute('addRoomMember', { roomId, memberIds: [FRIEND] }, OWNER);
     await phone.execute('removeRoomMember', { roomId, memberId: FRIEND }, OWNER);
-    await freeAgents.sweep();
     expect((await wakes()).at(-1)).toBe('@lunchboxfortwo removed @friend');
+    await freeAgents.sweep();
+    expect(await wakes()).toHaveLength(4);
+    // A recent unkinded fact from the preceding image retains its owed wake at upgrade.
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,system_event)
+      VALUES('legacy-leave',$1,$2,'Legacy leave','system','member-left',$3::jsonb,'{"verb":"left"}')`,[roomId,FRIEND,JSON.stringify({identityId:FRIEND})]);
+    await migrateMembershipSubscriptions(db);
+    await migrateMembershipSubscriptions(db);
+    expect((await wakes()).at(-1)).toBe('Legacy leave');
+    expect(await wakes()).toHaveLength(5);
   });
 
   it('carries the owner\'s exact join greeting and the exit note in the free agent\'s instructions', async () => {

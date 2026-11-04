@@ -1,5 +1,7 @@
+import { ExpectedRefusalError } from './command-refusal.js';
+import { subscribeConfiguredReviewers } from './agent-subscriptions.js';
 import { cornerLifecycleSql } from './corner-github-cache.js';
-import { subscribeConfiguredReviewers } from './membership-join.js';
+
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
 import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, registerOwnedEffectFence } from './turn-ownership.js';
@@ -631,23 +633,28 @@ export async function supersededReview(db: SqlDatabase, command: CommandRow): Pr
       JSON.stringify(command.review_context.pullRequest)])).rowCount);
 }
 
-/** An explicit connected-app call starts claimed, without queueing a second wake.
- * Its clamped depth and root provenance match the connected-app call contract. */
+/** Explicit app calls need a command before claiming, without notifying a helper.
+ * Mint that row and acquire its working turn through the claim owner in one transaction;
+ * the clamped depth and historical requester provenance remain the app-call contract. */
 export async function createClaimedMcpAgentCommand(db: SqlDatabase, input: {
   roomId: string; agentId: string; generationId: string;
   parent?: Pick<CommandRow, 'root_command_id' | 'root_source_message_id' | 'agent_depth'>;
   requesterMessageId?: string;
 }): Promise<string> {
-  const id = randomBytes(32).toString('hex');
-  const chain = input.parent;
-  await db.query(
-    `INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,
-       root_source_message_id,agent_depth,state,generation_id,lease_expires_at,claimed_at)
-     VALUES($1,$2,$3,NULL,$1,'input','mcp_call',$4,$5,$6,'claimed',$7,now()+interval '90 seconds',now())`,
-    [id, input.roomId, input.agentId, chain?.root_command_id ?? id,
-      chain?.root_source_message_id ?? input.requesterMessageId ?? id,
-      chain ? Math.min(chain.agent_depth + 1, COMMAND_MAX_DEPTH) : 0, input.generationId]);
-  return id;
+  return db.transaction(async db => {
+    const id = randomBytes(32).toString('hex');
+    const chain = input.parent;
+    await lockAgentCommandQueue(db, input.roomId, input.agentId);
+    await db.query(
+      `INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,
+         root_source_message_id,agent_depth,state,generation_id,lease_expires_at,claimed_at)
+       VALUES($1,$2,$3,NULL,$1,'input','mcp_call',$4,$5,$6,'claimed',$7,now()+interval '90 seconds',now())`,
+      [id, input.roomId, input.agentId, chain?.root_command_id ?? id,
+        chain?.root_source_message_id ?? input.requesterMessageId ?? id,
+        chain ? Math.min(chain.agent_depth + 1, COMMAND_MAX_DEPTH) : 0, input.generationId]);
+    await claimAgentCommand(db, input.roomId, input.agentId, id, input.generationId);
+    return id;
+  });
 }
 
 export async function createAgentCommand(
@@ -1505,6 +1512,7 @@ export async function claimAgentCommand(
   commandId: string,
   generation: string,
   owner?: HelperTurnOwnershipSource,
+  recoverCapacityCompletion = false,
 ): Promise<CommandRow> {
   if (!generation || generation.length > 200) throw new Error('command generation is required');
   if (owner) {
@@ -1538,7 +1546,10 @@ export async function claimAgentCommand(
              SELECT agent_commands.* FROM agent_commands CROSS JOIN claim_fence
              WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND wake_after IS NULL AND
                beeline_command_claim_open(id) AND
-               (state='pending' OR (state='claimed' AND ${commandOwnerExpiredSql(undefined)}) OR (state='claimed' AND generation_id=$4))
+               (state='pending' OR (state='claimed' AND ${commandOwnerExpiredSql(undefined)}) OR (state='claimed' AND generation_id=$4)
+                 OR ($8::boolean AND state='complete' AND generation_id=$4 AND EXISTS (
+                   SELECT 1 FROM messages diagnostic WHERE diagnostic.id=agent_commands.result_message_id
+                     AND diagnostic.text='Selected model is at capacity. Please try a different model.')))
                AND (generation_id IS DISTINCT FROM $4 OR
                  (turn_owner_connection_id IS NOT DISTINCT FROM $6::text AND turn_owner_epoch IS NOT DISTINCT FROM $7::bigint))
                AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=agent_commands.id)
@@ -1609,6 +1620,8 @@ export async function claimAgentCommand(
            ), claimed AS (
              UPDATE agent_commands command SET state='claimed',generation_id=$4,
                lease_expires_at=CASE WHEN $6::text IS NULL THEN now()+interval '90 seconds' END,claimed_at=now(),
+               completed_at=CASE WHEN $8::boolean THEN NULL ELSE command.completed_at END,
+               result_message_id=CASE WHEN $8::boolean THEN NULL ELSE command.result_message_id END,
                turn_owner_connection_id=$6::text,turn_owner_epoch=$7::bigint,
                recovery_context=COALESCE((SELECT context.recovery_context FROM return_context context WHERE context.id=command.id),command.recovery_context),
                coalesced_context=COALESCE((SELECT context FROM human_context),command.coalesced_context),
@@ -1647,7 +1660,7 @@ export async function claimAgentCommand(
            UNION ALL
            SELECT digest_refresh.*,false turn_claimed,true needs_digest_refresh FROM digest_refresh
            ) SELECT claim_result.*,wake_drop_log.drops FROM wake_drop_log LEFT JOIN claim_result ON true`,
-        [commandId, roomId, agentId, generation, digestRefreshed, owner?.connectionId ?? null, owner?.epoch ?? null],
+        [commandId, roomId, agentId, generation, digestRefreshed, owner?.connectionId ?? null, owner?.epoch ?? null, recoverCapacityCompletion],
       )
     ).rows[0];
     if (!row?.id) {
@@ -1666,6 +1679,91 @@ export async function claimAgentCommand(
     return row;
   }
   throw new Error('command claim conflict');
+}
+
+/** Connected-app ingress selects an order; claimAgentCommand alone decides eligibility.
+ * Explicit calls reuse a live MCP generation across tools until report, never a helper owner. */
+export async function claimMcpOrder(db: SqlDatabase, agentId: string, target: string,
+  generation: string, commandId?: string): Promise<CommandRow | undefined> {
+  const waiting = (await db.query<CommandRow>(
+    `SELECT command.* FROM agent_commands command
+     JOIN rooms room ON room.id=command.room_id AND room.archived_at IS NULL
+     JOIN room_access member ON member.room_id=room.id AND member.identity_id=$1 AND member.removed_at IS NULL
+     WHERE command.agent_id=$1 AND command.action IN ('input','resume')
+       AND command.private_payload->>'kind'='order'
+       AND ($3::text IS NULL OR (command.id=$3 AND command.room_id=$2))
+       AND (command.state='pending' OR (command.state='claimed' AND
+         (${commandOwnerExpiredSql('command')} OR ($3::text IS NOT NULL AND command.generation_id LIKE 'mcp:%'))))
+     ORDER BY (command.room_id=$2) DESC,command.created_at,command.id`,
+    [agentId, target, commandId ?? null])).rows;
+  if (!commandId && !waiting.some(row => row.room_id === target) && waiting.length > 1)
+    throw new ExpectedRefusalError(`ambiguous report; pass commandId from the order: ${waiting.map(row => `${row.id} at ${row.room_id}`).join(', ')}`);
+  const selected = waiting[0];
+  if (!selected) return undefined;
+  // Stop and claims take this same queue lock before inspecting or writing ownership.
+  await lockAgentCommandQueue(db, selected.room_id, agentId);
+  const current = (await db.query<CommandRow & { live: boolean }>(`SELECT *,lease_expires_at>now() live FROM agent_commands WHERE id=$1 FOR UPDATE`, [selected.id])).rows[0];
+  const reuse = commandId && current?.state === 'claimed' && current.generation_id?.startsWith('mcp:')
+    && current.live;
+  return claimAgentCommand(db, selected.room_id, agentId, selected.id, reuse ? current.generation_id! : generation);
+}
+
+/** Progress only renews the recorded legacy/MCP lease; it cannot acquire ownership. */
+export async function renewAgentCommandLease(db: SqlDatabase, command: CommandRow): Promise<void> {
+  await db.query(`UPDATE agent_commands SET lease_expires_at=now()+interval '90 seconds'
+    WHERE id=$1 AND state='claimed' AND generation_id=$2 AND turn_owner_connection_id IS NULL`,
+    [command.id, command.generation_id]);
+}
+
+/** The normal terminal receipt settles its command through this generation fence. */
+export async function settleAgentCommand(db: SqlDatabase, command: CommandRow,
+  state: 'complete' | 'cancelled', settleWorkingTurn = false): Promise<void> {
+  const settled = await db.query(`UPDATE agent_commands SET state=$2,completed_at=now()
+    WHERE id=$1 AND state<>'cancelled' AND generation_id IS NOT DISTINCT FROM $3 RETURNING id`,
+    [command.id, state, command.generation_id]);
+  // Receipts own their rich turn update; an explicit inbox dismissal must also
+  // end an expired working turn, without overwriting cancellation or a successor.
+  if (settleWorkingTurn && settled.rowCount) await db.query(`UPDATE agent_turns SET status=$4,created_at=now()
+    WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'
+      AND generation_id IS NOT DISTINCT FROM $5`,
+    [command.room_id,command.agent_id,command.turn_request_id,state,command.generation_id]);
+}
+
+/** Inbox dismissal does not start a turn: queued non-orders may be handled
+ * directly, while orders still require a report and live owners retain their work. */
+export async function dismissAgentCommandWakes(db: SqlDatabase, roomId: string, agentId: string,
+  commandId?: string): Promise<number> {
+  return db.transaction(async db => {
+    await lockAgentCommandQueue(db, roomId, agentId);
+    const waiting = (await db.query<CommandRow>(`SELECT command.* FROM agent_commands command
+      JOIN rooms room ON room.id=command.room_id AND room.archived_at IS NULL
+      JOIN room_access member ON member.room_id=room.id AND member.identity_id=command.agent_id AND member.removed_at IS NULL
+      WHERE command.room_id=$1 AND command.agent_id=$2 AND command.action IN ('input','resume') AND command.reason<>'mcp_call'
+        AND ($3::text IS NULL OR command.id=$3)
+        AND ($3::text IS NOT NULL OR COALESCE(command.private_payload->>'kind','')<>'order')
+        AND (command.state='pending' OR (command.state='claimed' AND ${commandOwnerExpiredSql('command')}))
+      ORDER BY command.created_at,command.id FOR UPDATE OF command`, [roomId,agentId,commandId ?? null])).rows;
+    if (waiting.some(command => command.private_payload?.kind === 'order'))
+      throw new ExpectedRefusalError('that wake is an order; answer it with report');
+    for (const command of waiting) await settleAgentCommand(db, command, 'complete', true);
+    return waiting.length;
+  });
+}
+
+/** A refused report leaves its order owed, without reviving a Stop or cancelled turn. */
+export async function releaseUnreportedMcpOrder(db: SqlDatabase, commandId: string, generation: string): Promise<void> {
+  const command = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`, [commandId])).rows[0];
+  if (!command) return;
+  await lockAgentCommandQueue(db, command.room_id, command.agent_id);
+  await db.query(`WITH released AS (
+    UPDATE agent_commands command SET state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL
+    WHERE id=$1 AND state='claimed' AND generation_id=$2
+      AND NOT EXISTS (SELECT 1 FROM agent_turns turn WHERE turn.room_id=command.room_id
+        AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id AND turn.status='cancelled')
+    RETURNING room_id,agent_id,turn_request_id
+  ) UPDATE agent_turns turn SET status='complete',created_at=now() FROM released
+    WHERE turn.room_id=released.room_id AND turn.agent_id=released.agent_id
+      AND turn.request_id=released.turn_request_id AND turn.status='working' AND turn.generation_id=$2`, [commandId, generation]);
 }
 
 export async function authorizeCommandOutput(

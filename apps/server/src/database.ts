@@ -54,7 +54,7 @@ import { FREE_AGENTS_SCHEMA, FREE_AGENT_CONNECT_GUIDE } from './free-agents.js';
 import { backfillComputerObservations } from './system-line.js';
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { SUBSCRIPTION_WEBHOOKS_SCHEMA } from './subscription-webhooks.js';
-import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
+import { AGENT_SUBSCRIPTIONS_SCHEMA, migrateMembershipSubscriptions } from './agent-subscriptions.js';
 import { PROVIDER_WEBHOOKS_SCHEMA } from './provider-webhooks.js';
 import { SENTRY_WAKE_SCHEMA } from './sentry-wake.js';
 import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
@@ -3677,6 +3677,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('corner follows backfill', () =>
     workflowBackfillOnce(database, 'corner-follows-v1', backfillCornerFollows));
   await dataStep('corner person state migration', () => migrateCornerPersonState(database));
+  await dataStep('single subscription store', () => migrateMembershipSubscriptions(database));
   await dataStep('remove corner memberships', () => removeCornerMemberships(database));
   await dataStep('rooms MCP preregistered clients', () => seedPreregisteredMcpClients(database));
   const mcpMembers = await dataStep('rooms MCP members', () => backfillMcpMembers(database));

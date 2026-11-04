@@ -1,3 +1,4 @@
+import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { closeFreeAgentTurn } from './free-agent-turn-close.js';
@@ -9,12 +10,7 @@ import type { FreeAgentMachines } from './fly-machines.js';
 import { FlyApiError } from './fly-machines.js';
 import type { LiveHub } from './live.js';
 import { DEFAULT_FREE_AGENT_LIMITS, freeAgentDailyTokenCapFromEnv, freeAgentFirstDayTokenCapFromEnv, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
-import {
-  createInvitedWorkspaceMembership,
-  writeActiveRoomEventSubscriptions,
-  writeActiveRoomMembersEventSubscriptions,
-  joinRooms,
-} from './membership-join.js';
+import { createInvitedWorkspaceMembership, joinRooms } from './membership-join.js';
 import { captureServerError } from './sentry.js';
 import { ensureSystemIdentity, systemLine } from './system-line.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
@@ -367,7 +363,7 @@ export async function createFreeAgentInWorkspace(
     workspaceJoined: true,
   });
   // Subscribed after its own arrival, so only later joins and leaves wake it.
-  if (!input.team) await writeActiveRoomEventSubscriptions(database, [agent.publicKey, input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
+  if (!input.team) await setRoomEventSubscriptions(database, input.roomId, agent.publicKey, FREE_AGENT_EVENT_SUBSCRIPTIONS);
   // Reachable from the first moment: a mention before the Machine has booted
   // is a wake to deliver, not an offline agent.
   await database.query(
@@ -440,44 +436,7 @@ export async function addFreeAgentToWorkspace(
   return agentId;
 }
 
-/**
- * A member leaving or being removed from a Room already writes its System
- * line; a free agent subscribed to `left` there gets one wake on that line.
- * The leader runs this on every committed message, so the note follows the
- * leave within moments. Returns how many wakes it queued.
- */
-async function wakeFreeAgentsForLeaves(database: SqlDatabase): Promise<number> {
-  const leaves = await database.query<{ message_id: string; room_id: string; agent_id: string }>(
-    `SELECT line.id message_id,subscriber.room_id,subscriber.identity_id agent_id
-     FROM room_access subscriber
-     JOIN free_agents f ON f.agent_id=subscriber.identity_id AND f.state<>'failed' AND f.removed_at IS NULL
-     CROSS JOIN LATERAL (
-       SELECT m.id,m.card FROM messages m
-       WHERE m.room_id=subscriber.room_id
-         -- The messages_room_cursor_idx expression (MESSAGE_CURSOR_MS_SQL), so the read stays indexed.
-         AND floor(extract(epoch FROM (m.created_at AT TIME ZONE 'UTC'))*1000)::bigint
-           >= floor(extract(epoch FROM now()-interval '10 minutes')*1000)::bigint
-         AND m.card_type IN ('member-left','member-removed')
-     ) line
-     WHERE subscriber.room_id IS NOT NULL AND subscriber.removed_at IS NULL
-       AND subscriber.event_subscriptions @> '["left"]'::jsonb
-       AND line.card->>'identityId' IS DISTINCT FROM subscriber.identity_id
-       AND NOT EXISTS (SELECT 1 FROM agent_commands command
-         WHERE command.agent_id=subscriber.identity_id AND command.source_message_id=line.id)
-     LIMIT 50`,
-  );
-  let queued = 0;
-  for (const leave of leaves.rows) {
-    const command = await createAgentCommand(database, {
-      roomId: leave.room_id,
-      agentId: leave.agent_id,
-      sourceMessageId: leave.message_id,
-      reason: 'subscribed_event',
-    });
-    if (command) queued++;
-  }
-  return queued;
-}
+
 
 export async function recordFreeAgentEvent(
   database: Pick<SqlDatabase, 'query'>,
@@ -625,7 +584,7 @@ export class FreeAgentService {
       ...this.config, model: this.config.lunaModel ?? 'openai/gpt-6-luna',
     }, { ...input, name: 'Luna', silent: true, team: true });
     if (!beebee || !luna) throw new Error('starter team provisioning failed');
-    await writeActiveRoomMembersEventSubscriptions(database, [[beebee, luna], input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)]);
+    for (const agent of [beebee, luna]) await setRoomEventSubscriptions(database, input.roomId, agent, FREE_AGENT_EVENT_SUBSCRIPTIONS);
     await createStarterOnboardingRun(database, { roomId: input.roomId, userId: input.creatorId, beebeeId: beebee, lunaId: luna, timeZone: input.timeZone });
     return beebee;
   }
@@ -985,7 +944,6 @@ export class FreeAgentService {
         this.log(`remove ${row.agent_id.slice(0, 12)}: ${String(error)}`),
       );
     }
-    acted += await wakeFreeAgentsForLeaves(this.database);
     const provision = await this.database.query<{ agent_id: string }>(
       `SELECT agent_id FROM free_agents
        WHERE removed_at IS NULL AND fly_machine_id IS NULL AND state='provisioning' AND provision_attempts<5

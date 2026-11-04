@@ -81,8 +81,7 @@ function validValue(request: LaneRequest, value: unknown): boolean {
   if (request.family === 'room-head') return readRoomView(value) !== null;
   if (!value || typeof value !== 'object') return false;
   const count = (value as { count?: unknown }).count;
-  return request.family === 'needs-you-count' && Number.isSafeInteger(count) && Number(count) >= 0 &&
-    utf8ToBytes(JSON.stringify(value)).length <= 1024;
+  return request.family === 'needs-you-count' && Number.isSafeInteger(count) && Number(count) >= 0;
 }
 function validCertificate(snapshot: LaneSnapshot): boolean {
   const scopes = snapshot.authority.scopes;
@@ -341,7 +340,7 @@ function fact(value: unknown): boolean {
   if (typeof payload.scope !== 'string' || payload.scope.length > 256) return false;
   if(payload.kind==='tray-classification')return payload.version===1&&typeof payload.clockVersion==='string'&&
     /^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion)&&Object.keys(payload).length===4;
-  if(payload.kind==='tray-needs-replace')return record(payload.value)&&Array.isArray(payload.value.items)&&payload.value.items.length<=30;
+  if(payload.kind==='tray-needs-replace')return record(payload.value)&&Array.isArray(payload.value.items);
   if(payload.kind==='saved-row-replace')return record(payload.row);
   if(payload.kind==='saved-row-remove')return typeof payload.bookmarkId==='string'&&typeof payload.messageId==='string';
   if (payload.kind === 'group-unavailable') return payload.reason === 'authority' || payload.reason === 'dependency';
@@ -381,8 +380,7 @@ export function routerOwnerReceive(value: unknown): void {
           `scheduled-work-manager:${principal}:workspace:${value.scope}`,`scheduled-work-member:${principal}:room:${value.scope}`,
           `scheduled-work-room:${value.scope}`,...(value.scope===principal?[`scheduled-work-principal:${principal}`]:[]) ].includes(domain)&&!profileDomain&&!ownerDomain&&!rosterDomain ||
         (value.mode !== undefined && value.mode !== 'deny' && value.mode !== 'advance') ||
-        !certificate(value.authority) || !validCertificate({ authority: value.authority } as LaneSnapshot) ||
-        utf8ToBytes(JSON.stringify(value)).length > 4096) { failAuthority(); return; }
+        !certificate(value.authority) || !validCertificate({ authority: value.authority } as LaneSnapshot)) { failAuthority(); return; }
     const epoch = (value.authority as LaneSnapshot['authority']).scopes.find(scope => scope.authorityScope === domain)?.epoch;
     if (!epoch) { failAuthority(); return; }
     // A content-free current-authority fence carries no data coverage/cursor.

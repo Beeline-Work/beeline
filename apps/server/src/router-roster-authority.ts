@@ -14,7 +14,7 @@ export function subscribeRosterAuthority(database:SqlDatabase,live:LiveHub,viewe
     try{
       await ready;
       while(dirty.size&&!closed){
-        const scopes=[...dirty];dirty.clear();if(scopes.length>128)throw new RouterProjectionUnavailable('budget');
+        const scopes=[...dirty];dirty.clear();
         await database.transaction(async db=>{
           await db.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
           await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);

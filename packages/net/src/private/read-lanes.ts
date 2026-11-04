@@ -1,7 +1,7 @@
 import type { SavedRowPayload, TrayGroupPayload, NeedsYouRoomsPayload,RouterFamily,RouterSnapshotInput } from '@beeline/api-contract/router-protocol';
 import { trayFamily } from './tray-group.js';
 import { ProjectionGroups, type GroupCell, type GroupProposal } from './projection-groups.js';
-import { jsonBytes as bytes, stagingWithinBudget } from './staging-bounds.js';
+import { jsonBytes as bytes } from './staging-bounds.js';
 import { LaneStaging, sameStream } from './lane-staging.js';
 /** Local state only. No transport, clock, scheduler, native module or server inventory. */
 export type LaneFamily=RouterFamily;
@@ -201,11 +201,6 @@ export class ReadLanes {
     if(duplicate){
       if(JSON.stringify(duplicate.batch)!==JSON.stringify(batch)){this.interrupted.add(stream);this.parkStream(stream,'Conflicting projection; Retry.');}
       return duplicate.promise;
-    }
-    if(!stagingWithinBudget([...held.filter(item=>item.batch.to.stream===stream).map(item=>item.batch),batch],bytes)){
-      this.interrupted.add(stream);this.parkStream(stream,'Projection queue overflow; Retry.');
-      this.arrivals=this.arrivals.filter(item=>{if(item.batch.to.stream!==stream)return true;item.done();return false;});
-      return Promise.resolve();
     }
     let done!:()=>void;const promise=new Promise<void>(resolve=>{done=resolve;});
     this.arrivals.push({batch,session:this.session,generation:this.generation,replay,done,promise});this.drainArrivals();return promise;
@@ -471,7 +466,6 @@ export class ReadLanes {
     }
     const encoded=JSON.stringify({schema:1,identity:this.identity,group:id,
       entries:whole.map(({cell,snapshot})=>({key:cell.key,request:cell.request,snapshot}))});
-    if(new TextEncoder().encode(encoded).length>1024*1024)throw new Error('Projection consistency group exceeds storage budget.');
     for(const{cell}of items)cell.committing++;
     try{await this.storage?.write(this.groupStorageKey(id),encoded);}
     finally{for(const{cell}of items)cell.committing--;}

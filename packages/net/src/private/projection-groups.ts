@@ -1,6 +1,6 @@
 import type { LaneAuthority, LaneBatch, LaneCut, LaneRequest, LaneSnapshot, LaneView } from './read-lanes.js';
 import { LaneStaging, intervalId, sameStream, type IntervalStage } from './lane-staging.js';
-import { jsonBytes, stagingWithinBudget, remember } from './staging-bounds.js';
+import { jsonBytes, remember } from './staging-bounds.js';
 import { checkTraySnapshot, equal, exactCut, foldTray, trayCertificate, trayClock, trayFamily } from './tray-group.js';
 import { foldNeedsYouRooms } from './needs-you-rooms.js';
 
@@ -81,7 +81,7 @@ export class ProjectionGroups<T extends GroupCell>{
     }
     cell.incoming=JSON.parse(JSON.stringify(response)) as LaneSnapshot;
     if(!state)return this.proposal(response.atomicGroup,response.cut.stream,[{cell,snapshot:cell.incoming}]);
-    this.bound(state);return this.prepare(state);
+    return this.prepare(state);
   }
   stage(batch:LaneBatch,replay:boolean,generation:number,scheduled:boolean,current:()=>boolean):{proposals:GroupProposal<T>[];unavailable:string[]}{
     const proposals:GroupProposal<T>[]=[],unavailable:string[]=[],items:CellSnapshot<T>[]=[];
@@ -172,11 +172,11 @@ export class ProjectionGroups<T extends GroupCell>{
     return[...ready.values()];
   }
   salvage(cell:T,id:string):LaneBatch[]|undefined{
-    const safe:LaneBatch[]=[];let bytes=0;
+    const safe:LaneBatch[]=[];
     for(const{batch}of cell.queued.values()){
       const facts=batch.facts.filter(fact=>fact.atomicGroup===id);
       if(!facts.length||facts.some(fact=>fact.payload.kind===REPLACE&&!this.authorized(fact.authority)))continue;
-      const kept={...batch,facts};bytes+=jsonBytes(kept);if(safe.length>=16||bytes>256*1024)return;
+      const kept={...batch,facts};
       safe.push(kept);
     }
     return safe;
@@ -207,7 +207,7 @@ export class ProjectionGroups<T extends GroupCell>{
       fact.payload.scope!==state.workspace)throw new Error('Invalid Tray group authority');
     if(typeof batch.contentDigest!=='string'||!/^[a-f0-9]{64}$/.test(batch.contentDigest))throw new Error('Unverified Tray interval');
     const prior=state.history.get(intervalId(batch));if(prior&&prior!==batch.contentDigest)throw new Error('Conflicting Tray interval');
-    state.intervals.add(batch,facts);this.bound(state);
+    state.intervals.add(batch,facts);
   }
   private prepare(state:Group):GroupProposal<T>|undefined{
     const cells=this.members(state),held=cells.filter(cell=>cell.snapshot).map(cell=>({cell,snapshot:cell.snapshot!})),
@@ -245,10 +245,6 @@ export class ProjectionGroups<T extends GroupCell>{
       const previous=members;members=foldTray(members,next.batch,version,state.workspace,this.valid);
       changed ||=members.some((member,index)=>!equal(member.snapshot.value,previous[index]!.snapshot.value));cut=next.batch.to;version=members[0]!.snapshot.clockVersion!;
     }
-  }
-  private bound(state:Group):void{
-    const values=[...[...state.intervals.values()].map(value=>value.bytes),...this.members(state).flatMap(cell=>cell.incoming?[jsonBytes(cell.incoming)]:[])];
-    if(!stagingWithinBudget(values,value=>value))throw new Error('Tray group staging overflow');
   }
   private trim(state:Group):void{
     const openings=this.members(state).flatMap(cell=>cell.opening?[cell.opening]:[]);if(openings.includes(true))return;

@@ -79,14 +79,16 @@ test('inventory pagination includes later free slots and rejects invalid reposit
 });
 
 
-test('older preparing workflows reserve future capacity before dependent jobs exist', async () => {
+test('older preparing workflows cannot reserve idle capacity before requesting Squire jobs', async () => {
   const reservations = await loadPressure({ repository: 'Beeline-Work/beeline', runId: 3, request: async path => {
     if (path.includes('/workflows/')) return { total_count: 2, workflow_runs: [{ id: 2, status: 'queued' }, { id: 3, status: 'in_progress' }] };
     return { total_count: 1, jobs: [{ name: 'Detect changes', status: 'in_progress' }] };
   } });
-  assert.deepEqual(reservations, { heavy: 8, control: 1, workspace: 1 });
+  assert.deepEqual(reservations, { heavy: 0, control: 0, workspace: 0 });
   const plan = routeRunners({ runners: pool(), flags, reservations });
-  assert.ok(plan.placements.every(p => p.target[0] === 'ubuntu-latest'));
+  assert.equal(plan.serverMatrix.filter(row => !row.hosted).length, 6);
+  assert.ok(plan.targets.typecheck.includes('beeline-ci-heavy'));
+  assert.ok(plan.targets.mobile.includes('beeline-ci-workspace'));
 });
 
 test('queued role requests count even when API timestamps imply they already started', async () => {
@@ -103,4 +105,40 @@ test('queued role requests count even when API timestamps imply they already sta
 test('stale active-run inventory refuses to place new work on uncertain squire capacity', async () => {
   await assert.rejects(loadPressure({ repository: 'Beeline-Work/beeline', runId: 3,
     request: async () => ({ total_count: 0, workflow_runs: [] }) }), /not current/);
+});
+
+
+test('older hosted runs and empty job graphs cannot hold Squire capacity', async () => {
+  for (const jobs of [[], [
+    { name: 'Detect changes', status: 'in_progress', labels: ['ubuntu-latest'] },
+    { name: 'TYPECHECK', status: 'queued', labels: ['ubuntu-latest'] },
+  ]]) {
+    const reservations = await loadPressure({ repository: 'Beeline-Work/beeline', runId: 3, request: async path => {
+      if (path.includes('/workflows/')) return { total_count: 2, workflow_runs: [{ id: 2, status: 'in_progress' }, { id: 3, status: 'queued' }] };
+      return { total_count: jobs.length, jobs };
+    } });
+    assert.deepEqual(reservations, { heavy: 0, control: 0, workspace: 0 });
+    assert.equal(routeRunners({ runners: pool(), flags, reservations }).serverMatrix.filter(row => !row.hosted).length, 6);
+  }
+});
+
+test('only actual unassigned queued Squire jobs consume observed capacity', async () => {
+  const reservations = await loadPressure({ repository: 'Beeline-Work/beeline', runId: 3, request: async path => {
+    if (path.includes('/workflows/')) return { total_count: 3, workflow_runs: [{ id: 2, status: 'in_progress' }, { id: 3, status: 'queued' }, { id: 4, status: 'queued' }] };
+    assert.ok(path.includes('/runs/2/'), 'current and newer runs cannot reserve slots');
+    const jobs = [
+      { name: 'SERVER SUITE SHARD 1/8', status: 'queued', labels: ['beeline-ci-heavy'], runner_id: 0 },
+      { name: 'TYPECHECK', status: 'queued', labels: ['ubuntu-latest'] },
+      { name: 'SHARED PACKAGE TESTS', status: 'in_progress', labels: ['beeline-ci-heavy'], runner_name: 'beeline-ci-squire-03' },
+      { name: 'DEAD CODE', status: 'completed', labels: ['beeline-ci-heavy'] },
+      { name: 'NATIVE FINGERPRINT', status: 'queued', labels: ['beeline-ci-heavy'], runner_id: 123 },
+      { name: 'Prepare workspace caches', status: 'queued', labels: ['beeline-ci-control'] },
+    ];
+    return { total_count: jobs.length, jobs };
+  } });
+  assert.deepEqual(reservations, { heavy: 1, control: 1, workspace: 0 });
+  const plan = routeRunners({ runners: pool(), flags, reservations });
+  assert.deepEqual(plan.reserved, reservations);
+  assert.equal(plan.serverMatrix.filter(row => !row.hosted).length, 5);
+  assert.deepEqual(plan.targets.prepare, ['ubuntu-latest']);
 });

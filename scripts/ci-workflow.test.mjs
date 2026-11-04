@@ -107,9 +107,9 @@ test('excluding the fingerprint regression from the mobile suite always has isol
   assert.equal(mobile.steps[0].uses, 'actions/checkout@v4');
   assert.match(JSON.stringify(mobile.steps), /timeout 20m bash scripts\/ci-workspace-tasks.sh mobile-suite/);
   assert.match(isolated['runs-on'], /needs.changes.outputs.runner_native/);
-  assert.equal(isolated['timeout-minutes'], 11);
+  assert.equal(isolated['timeout-minutes'], 20);
   assert.match(JSON.stringify(isolated.steps), /timeout 15m bash scripts\/ci-workspace-tasks.sh native-fingerprint/);
-  assert.equal(mobile['timeout-minutes'], 22);
+  assert.equal(mobile['timeout-minutes'], 25);
   assert.ok(tasks.includes(`npx vitest run ${file} --maxWorkers=1 --minWorkers=1`));
   assert.ok(isolated.needs.includes('prepare-workspace'));
   assert.equal(isolated.steps[0].uses, 'actions/checkout@v4');

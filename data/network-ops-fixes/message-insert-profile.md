@@ -27,6 +27,6 @@ The final activation run completed with less backend CPU than the repeated main 
 
 ## Reproduction and validation
 
-`node --import tsx scripts/prove-message-insert-cost.mjs LABEL SOURCE_WORKTREE` accepts only an exact source worktree root and a loopback `BEELINE_PUSH_TEST_POSTGRES_URL`. Use a clean disposable database for each source, `NODE_OPTIONS=--max-old-space-size=4096`, and a label starting with `main` to select rollback mode. It records the source head/dirty state, trigger definitions, EXPLAIN plan, function timings and Linux backend CPU in `.beeline-proof/seed-LABEL-50000.json`. It drops only its own generated schema and fails on SQL timeout.
+The local one-off profiler recorded the source head/dirty state, trigger definitions, EXPLAIN plan, function timings and Linux backend CPU in `.beeline-proof/seed-LABEL-50000.json`. It used exact source roots, isolated loopback databases and a 4096 MB heap cap, and dropped only its generated schema. The profiler is omitted from the shipped tree; measured outcomes remain in this report and the PR description.
 
 Required executable proof remains `apps/server/src/push-outbox.test.ts` (`R-PUSH-SCAN-LOCK`), with its original 120-second deadline, 50,000 historical rows, 300 deliveries, 20 exclusive-lock acquisitions and plan assertions. Existing corner-owed and commander-wake behavior tests verify that relevant reports still become answered. Final results are recorded in [activation CI fixes](activation-ci-fixes.md).

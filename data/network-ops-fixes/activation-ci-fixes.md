@@ -27,4 +27,9 @@ Passed locally with a 4096 MB heap and at most two Vitest workers, one suite at 
 - Full PostgreSQL `R-PUSH-SCAN-LOCK`: pass in 112.304 seconds with the unchanged 120-second deadline; 300 deliveries, 20 locks, maximum lock handoff 18 ms, all query-plan assertions intact. Corner-owed: all 20 cases pass after the scope precheck; all 28 commander-wake cases pass.
 - Full root typecheck passes (workspaces, mobile and scripts). Phone scanner: 72/72; router inventory: 158; architecture: 20 rules, unchanged budgets.
 
-Final corpus replay is pending at this checkpoint; CI must also confirm the pushed head, including macOS. Local logs are under `.beeline-proof/activation-*.log` and contain synthetic fixture data. No additional audit finding is declared closed by this activation follow-up.
+On CI head `491ddfb32`, macOS helper acceptance, typecheck, shared packages, Body, claim latency and corpus replay pass. The local cold corpus seed completed, with two cases passing and one history-search sample at 276.3 ms against its unchanged 250 ms budget; CI corpus replay passed. A follow-up local profiling run was stopped when instruction 068 narrowed the next step; no history-query or readiness-index change was made.
+
+Two new CI failures were handled under instruction 068:
+
+- DEAD CODE reported three one-off proof scripts. All three were removed from the PR, with evidence retained in the reports and PR body. The original baseline now passes with five existing findings and zero introduced findings; it was not rewritten.
+- SERVER SUITE SHARD 6 passed all 643 tests but reported an unhandled Node 22.23.4 bundled-Undici `onParserTimeout` error while `daemon-storage-lifecycle.test.ts` was the last file. Exactly one local router-on run of that file passed (one test, 5.301 seconds), with no unhandled error on Node 24.16. Per instruction, no speculative runtime/test change or further chase was made. The next CI head must confirm it. Local logs are under `.beeline-proof/activation-*.log` and contain synthetic fixture data. No additional audit finding is declared closed by this activation follow-up.

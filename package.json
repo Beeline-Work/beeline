@@ -160,10 +160,7 @@
     "prove:fixed-context": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node --import tsx scripts/prove-fixed-context-replay.mjs",
     "prove:native-shell-claude": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node scripts/prove-native-shell-cap.mjs",
     "prove:native-shell-codex": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node scripts/prove-codex-shell-cap.mjs",
-    "prove:native-shell-cursor": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node scripts/prove-cursor-shell-cap.mjs",
-    "inventory:owned-turn-adapters": "node --import tsx scripts/inventory-owned-turn-adapters.mjs",
-    "prove:message-insert-cost": "node --import tsx scripts/prove-message-insert-cost.mjs",
-    "prove:room-list-release-compat": "node --import tsx scripts/prove-room-list-release-compat.mjs"
+    "prove:native-shell-cursor": "npx turbo run build --filter=@beeline/body... --concurrency=2 && node scripts/prove-cursor-shell-cap.mjs"
   },
   "devDependencies": {
     "@colbymchenry/codegraph": "^1.6.0",

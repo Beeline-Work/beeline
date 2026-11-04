@@ -10,13 +10,9 @@ The supplied `current-main-load-failure.md`, `current-session.log` and `launch-d
 
 ## Executable local matrix
 
-Run from the repository root with installed dependencies and both historical commits available:
+This matrix was executed by a local historical-source harness. The one-off harness is omitted from the shipped tree; the results and scope are retained here and in the PR description.
 
-```sh
-NODE_OPTIONS=--max-old-space-size=4096 node --import tsx scripts/prove-room-list-release-compat.mjs
-```
-
-The script archives exact historical source, starts each actual server handler on loopback with its database migration, and runs each actual mobile shared connection, production router bridge/owner, `RoomViewClient`, `ChatListStore`, SurfaceRegistry and surface-storage implementation. It asserts all **12 synthetic Room IDs**, and asserts the candidate/candidate case uses `readRouterSnapshot` in router mode. It saves frame traces and source provenance in the printed `.beeline-proof/room-list-release-*/matrix.json`; any failed combination exits nonzero. No production identity or Workspace is used. Client sockets must use that fixture's loopback origin; HTTP requests fail.
+The harness archived exact historical source, started each actual server handler on loopback with its database migration, and ran each actual mobile shared connection, production router bridge/owner, `RoomViewClient`, `ChatListStore`, SurfaceRegistry and surface-storage implementation. It asserted all **12 synthetic Room IDs**, and asserted the candidate/candidate case uses `readRouterSnapshot` in router mode. It saved frame traces and source provenance in `.beeline-proof/room-list-release-*/matrix.json`; any failed combination exited nonzero. No production identity or Workspace is used. Client sockets must use that fixture's loopback origin; HTTP requests fail.
 
 | Client source | v142 server | Pinned main server | Activation candidate server |
 | --- | --- | --- | --- |

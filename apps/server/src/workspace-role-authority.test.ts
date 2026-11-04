@@ -230,16 +230,15 @@ describe('permissions: agent owner, Workspace admin, or anyone in the Room', () 
       }
   });
 
-  it('anyone in the Room may start or cancel a workflow run; only Workspace admins manage schedules', async () => {
+  it('anyone in the Room may read Scheduled Work or start a workflow run; management keeps Workspace authority', async () => {
     for (const person of PEOPLE)
       for (const [, roomId] of placesFor(person)) {
         expect(await humanRoomMember(database, roomId, person)).toBe(true);
         expect(await humanRoomAdmin(database, roomId, person)).toBe(person === WS_OWNER || person === WS_ADMIN);
       }
-    expect(await errorOf(phone.execute('readScheduledWork', { roomId: ROOM }, ROOM_ADMIN))).toBe(
-      WORKSPACE_ADMIN_AUTHORITY_MESSAGE,
-    );
-    expect(await errorOf(phone.execute('readScheduledWork', { roomId: ROOM }, WS_ADMIN))).toBeUndefined();
+    for (const person of PEOPLE)
+      for (const roomId of [ROOM, dms.get(person)!])
+        expect(await errorOf(phone.execute('readScheduledWork', { roomId }, person))).toBeUndefined();
     // A plain member passes the start gate; this one fails later only because
     // no such workflow is saved.
     expect(

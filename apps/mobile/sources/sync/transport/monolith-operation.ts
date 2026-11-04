@@ -1,3 +1,4 @@
+import type { ReadAuthority, OwnedSurfaceRead } from '@/buzz/read-authority';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { MONOLITH_REQUEST_TIMEOUT_MS, MonolithRequestTimeoutError } from '@/auth/monolith-session';
@@ -101,7 +102,7 @@ export function phoneOperationFailureReason(error: unknown): string {
   return appErrorCopy(error);
 }
 
-export async function monolithPhoneOperation<Name extends keyof PhoneOperationMap>(
+async function executePhoneOperation<Name extends keyof PhoneOperationMap>(
   name: Name,
   input: PhoneOperationMap[Name]['input'],
   options?: { timeoutMs?: number },
@@ -128,4 +129,16 @@ export async function monolithPhoneOperation<Name extends keyof PhoneOperationMa
       throw new MonolithPhoneOperationError(name, error.status, error.message);
     throw error;
   }
+}
+
+export function monolithPhoneOperation<Name extends Exclude<keyof PhoneOperationMap, OwnedSurfaceRead>>(
+  name: Name, input: PhoneOperationMap[Name]['input'], options?: { timeoutMs?: number },
+): Promise<PhoneOperationMap[Name]['output']> {
+  return executePhoneOperation(name, input, options);
+}
+/** Old-wire serialization retains its deadline; only the read owner holds admission. */
+export function readServerSurface<Name extends OwnedSurfaceRead>(
+  _authority: ReadAuthority, name: Name, input: PhoneOperationMap[Name]['input'],
+): Promise<PhoneOperationMap[Name]['output']> {
+  return executePhoneOperation(name, input);
 }

@@ -24,10 +24,8 @@ vi.mock('@/buzz/router-family', () => ({
   useRouterFamily: () => deck.routerMode,
   holdRouterConnection: () => () => {},
 }));
-vi.mock('@/buzz/router-chat-list', () => ({
-  acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy(),
-}));
 vi.mock('@/buzz/router-owner', () => ({
+  subscribeRouterOwner: () => () => {},
   routerFamilyMode: () => 'legacy',
   acquireRouterLane: () => ({
     current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
@@ -273,7 +271,7 @@ vi.mock('@/buzz/surface-storage', () => {
 });
 vi.mock('@/buzz/room-open-prefetch', () => ({ dispatchRoomOpenTap: vi.fn() }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
-vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn() }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn(), readServerSurface: vi.fn() }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     async ensureClient() {
@@ -353,7 +351,7 @@ vi.mock('@/sync/transport/room-view-client', async () => ({
         watchFilters: [],
       };
     }
-    async chats(workspaceId: string): Promise<ChatListView> {
+    async chats(_authority: unknown, workspaceId: string): Promise<ChatListView> {
       deck.chatsWorkspaces.push(workspaceId);
       deck.chatsReads += 1;
       return deck.chatsResponse as ChatListView;
@@ -1500,10 +1498,11 @@ describe('Room deck live path', () => {
   it.each([
     ['a message the socket never announced', 30],
     ['an unannounced message that landed in the same second', 10],
-  ])('reconnects the socket when a read finds %s', async (_case, createdAt) => {
+  ])('paints %s from a covering read without replacing the healthy socket', async (_case, createdAt) => {
     deck.chatsResponse = listOf([room('room-a', 10), room('room-b', 10)]);
     const renderer = await mountDeck();
     expect(deck.reconnects).toBe(0);
+    const readsAtRest = deck.chatsReads;
 
     // room-a gets a message the socket never mentions; a change it does
     // announce in room-b is what reads the list next.
@@ -1523,7 +1522,8 @@ describe('Room deck live path', () => {
     expect(paintedRows(renderer).find((row) => row.room.id === 'room-a')!.latestMessage?.text).toBe(
       'sent while we were deaf',
     );
-    expect(deck.reconnects).toBe(1);
+    expect(deck.reconnects).toBe(0);
+    expect(deck.chatsReads).toBe(readsAtRest + 1);
     await act(async () => renderer.unmount());
   });
 });

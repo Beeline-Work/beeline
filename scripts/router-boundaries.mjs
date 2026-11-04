@@ -104,6 +104,7 @@ const OWNER_CALLERS = {
   acquireRouterSavedContinuation: ['buzz/router-tray.ts'],
   acquireRouterRosterQuery: ['buzz/use-routed-roster.ts'],
   acquireRouterRoomRoster: ['buzz/use-room-roster.ts'],
+  acquireRouterForwardList: ['buzz/server-read-owner.ts'],
   admitRouterTrayCommand: ['buzz/router-tray.ts'],
   admitRouterTrayPaint: ['buzz/router-tray.ts'],
   routerOwnerCapabilities: ['sync/transport/live-connection.ts'],
@@ -111,7 +112,7 @@ const OWNER_CALLERS = {
   routerOwnerDisconnected: ['sync/transport/live-connection.ts'],
   routerOwnerReceive: ['sync/transport/live-connection.ts'],
   retryRouterLane: ['buzz/router-resource.ts', 'buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/channels.tsx', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts'],
-  acquireRouterLane: ['buzz/router-resource.ts', 'buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts', 'buzz/router-chat-list.ts', 'buzz/needs-you-store.ts'],
+  acquireRouterLane: ['buzz/router-resource.ts', 'buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts', 'buzz/server-read-owner.ts'],
 };
 const OWNER_READS = new Set(['routerFamilyMode', 'routerLaneSnapshot', 'subscribeRouterOwner']);
 function inspectOwnerAccess(file, source, errors) {
@@ -151,6 +152,7 @@ function inspectGestureWrappers(file,source,errors){
     'buzz/router-resource': {'useRoutedResource': ['buzz/use-room-workflow-run.ts', 'buzz/workbench-surface.ts', 'buzz/wallet-surface.ts', 'app/(app)/beeline/members.tsx', 'buzz/use-routed-roster.ts', 'buzz/use-room-roster.ts']},
     'buzz/use-routed-roster':{'useRoutedRoster':['app/(app)/beeline/members.tsx']},
     'buzz/use-room-roster':{'useRoomRoster':['app/(app)/beeline/chat/_chat-surface.tsx']},
+    'buzz/chat-list-store':{'readChatList':['app/(app)/beeline/chat/_chat-surface.tsx'], 'useChatList': ['app/(app)/beeline/chat/_chat-surface.tsx']},
     'buzz/router-tray':{'useRoutedTray':['app/(app)/beeline/tray.tsx'],
       'prepareTrayCommand':['app/(app)/beeline/tray.tsx'],'acknowledgeRoutedTrayPaint':['app/(app)/beeline/tray.tsx']},
     'buzz/router-scheduled-work':{'useRoutedScheduledWork':['buzz/scheduled-work.ts'],'prepareScheduledStop':['buzz/scheduled-work.ts']},
@@ -170,7 +172,7 @@ function inspectGestureWrappers(file,source,errors){
         if(ts.isExportDeclaration(node)||node.importClause?.name||!names||!ts.isNamedImports(names))deny();
         else for(const item of names.elements)if(!item.isTypeOnly){
           const allowed=modules[module][(item.propertyName??item.name).text];
-          if(!allowed?.some(caller=>MOBILE+caller===file))deny();
+          if(!allowed?.some(caller=>MOBILE+caller===file)&&!(module==='buzz/chat-list-store'&&!['readChatList'].includes((item.propertyName??item.name).text)))deny();
         }
       }
     }
@@ -212,6 +214,103 @@ function inspectConnectionOwners(file, source, errors) {
   visit(source);
 }
 
+// Read authority is a capability, not a filename/name budget. No feature may
+// mint it, forward a raw reader, or persist the selected surfaces independently.
+export function inspectSurfaceReadAuthority(file, text) {
+  if (!file.startsWith(MOBILE) || !/\.[cm]?[jt]sx?$/.test(file)) return [];
+  const owner = MOBILE + 'buzz/server-read-owner.ts';
+  const transport = MOBILE + 'sync/transport/';
+  const adapters = new Set([transport + 'monolith-operation.ts', transport + 'room-view-client.ts']);
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const errors = [];
+  const reads = new Set(['readChats', 'countNeedsYou', 'readNeedsYou', 'readTray', 'listMessageBookmarks']);
+  const deny = reason => errors.push(`${file}: server-indexed read authority ${reason}`);
+  const resolve = value => value?.startsWith('.') ? path.posix.normalize(path.posix.join(path.posix.dirname(file), value)) : value?.replace(/^@\//, MOBILE);
+  const guards = new Set(['isChatListView', 'needsList', 'savedList']);
+  const restricted = new Set(['readServerSurface', 'applyChatListDelta', 'chatListDeltaNeedsRead', 'keepUnavailableChatFacts', 'withoutCornerFacts', 'withCornerFacts']);
+  const memberName = node => ts.isPropertyAccessExpression(node) ? node.name.text :
+    ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) ? node.argumentExpression.text : undefined;
+  const writerAliases = new Set();
+  const readNames = new Set();
+  const connectionFactories = new Set(['sharedLiveConnection']);
+  const connections = new Set();
+  const socket = node => ts.isIdentifier(node) && connections.has(node.text) ||
+    ts.isCallExpression(node) && ts.isIdentifier(node.expression) && connectionFactories.has(node.expression.text);
+
+  const publicReads = new Set(['ChatListKey', 'ChatListConsumer', 'ChatListHandle', 'acquireChatList',
+    'liveChatList', 'chatListSnapshot', 'refreshChatList', 'resetChatListStoresForTest', 'readChatList',
+    'loadNeedsYouList', 'loadSavedList', 'loadTrayList', 'seedNeedsYouList', 'forgetTray',
+    'removeNeedsYou', 'holdNeedsYou', 'subscribeTrayGap', 'useTrayList', 'useNeedsYouCount',
+    'acknowledgePaintedNeedsYou', 'hideSavedItems', 'revealSavedItems']);
+  function visit(node) {
+    if ((ts.isFunctionDeclaration(node) || ts.isVariableDeclaration(node)) && node.name &&
+        /(?:ChatListView|NeedsYouListResult|MessageBookmarkListResult)/.test((node.type ?? node.initializer?.type)?.getText(source) ?? ''))
+      guards.add(node.name.getText(source));
+    if (file === owner && node.parent === source) {
+      if (ts.isExportDeclaration(node) || ts.isExportAssignment(node)) deny('implementation cannot be forwarded');
+      if (node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword)) {
+        const names = ts.isVariableStatement(node) ? node.declarationList.declarations.map(item => item.name.getText(source)) : [node.name?.text];
+        if (names.some(name => !publicReads.has(name))) deny('implementation must remain module-private');
+      }
+    }
+    if (ts.isImportDeclaration(node) && ts.isStringLiteralLike(node.moduleSpecifier)) {
+      for (const element of node.importClause?.namedBindings?.elements ?? []) {
+        if (guards.has((element.propertyName ?? element.name).text)) guards.add(element.name.text);
+        if ((element.propertyName ?? element.name).text === 'sharedLiveConnection') connectionFactories.add(element.name.text);
+        if ((element.propertyName ?? element.name).text === 'readChatList' && /server-read-owner$/.test(resolve(node.moduleSpecifier.text) ?? '') && file !== MOBILE + 'buzz/chat-list-store.ts') deny('Forward gesture belongs to its declared transcript boundary');
+        if (['readServerSurface', 'applyChatListDelta', 'chatListDeltaNeedsRead', 'keepUnavailableChatFacts', 'withoutCornerFacts', 'withCornerFacts'].includes((element.propertyName ?? element.name).text) && file !== owner) deny('dispatch belongs to its owner');
+      }
+    }
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier) &&
+        /(?:read-authority|server-read-owner)$/.test(resolve(node.moduleSpecifier.text) ?? '') &&
+        ![MOBILE + 'buzz/needs-you-store.ts', MOBILE + 'buzz/chat-list-store.ts'].includes(file) && !node.isTypeOnly)
+      deny('cannot be forwarded');
+    const member = memberName(node);
+    if (file !== owner && (restricted.has(member) || ts.isBindingElement(node) && restricted.has((node.propertyName ?? node.name).getText(source))))
+      deny('capability cannot be extracted outside its owner');
+    if (ts.isExportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier) &&
+        /(?:monolith-operation|chat-list-delta)$/.test(resolve(node.moduleSpecifier.text) ?? '') && !node.isTypeOnly &&
+        (!node.exportClause || !ts.isNamedExports(node.exportClause) || node.exportClause.elements.some(element => restricted.has((element.propertyName ?? element.name).text))))
+      deny('wire/reducer capability cannot be forwarded');
+    if (ts.isVariableDeclaration(node) && node.initializer) {
+      if (ts.isIdentifier(node.name) && socket(node.initializer)) connections.add(node.name.text);
+      if (ts.isIdentifier(node.name) && (ts.isStringLiteralLike(node.initializer) && reads.has(node.initializer.text) || ts.isIdentifier(node.initializer) && readNames.has(node.initializer.text))) readNames.add(node.name.text);
+
+      if (ts.isIdentifier(node.name) && ['write','publish','persist'].includes(memberName(node.initializer))) writerAliases.add(node.name.text);
+      if (ts.isObjectBindingPattern(node.name)) for (const element of node.name.elements)
+        if (['write','publish','persist'].includes((element.propertyName ?? element.name).getText(source))) writerAliases.add(element.name.getText(source));
+    }
+    if (file !== owner && (ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) && /\bReadAuthority\b/.test(node.type.getText(source)))
+      deny('cannot be minted outside its owner');
+    if (!adapters.has(file) && memberName(node) === 'request' && socket(node.expression)) {
+      const call = node.parent;
+      if (!ts.isCallExpression(call) || call.expression !== node ||
+          !call.arguments[0] || !ts.isStringLiteralLike(call.arguments[0]) || reads.has(call.arguments[0].text))
+        deny('generic socket read dispatch belongs to its owner');
+    }
+    if (file !== owner && ts.isCallExpression(node)) {
+      const expression = node.expression;
+      const member = ts.isPropertyAccessExpression(expression) ? expression.name.text :
+        ts.isElementAccessExpression(expression) && ts.isStringLiteralLike(expression.argumentExpression) ? expression.argumentExpression.text : undefined;
+      if (member === 'chats' && file !== transport + 'room-view-client.ts') deny('Room-list dispatch belongs to its owner');
+      if (!adapters.has(file) && node.arguments.some(arg => ts.isStringLiteralLike(arg) && reads.has(arg.text) || ts.isIdentifier(arg) && readNames.has(arg.text)))
+        deny('raw surface dispatch belongs to its owner');
+      if ((['write','publish','persist'].includes(member) || ts.isIdentifier(expression) && writerAliases.has(expression.text)) &&
+          (node.arguments.some(arg => ts.isIdentifier(arg) && guards.has(arg.text)) || /(?:ChatListView|NeedsYouListResult|MessageBookmarkListResult)|\/(?:needs-you|bookmarks|workspace\/:id\/chats)/.test(node.getText(source))))
+        deny('committed surface writes belong to its owner');
+    }
+    // A capability-requiring adapter cannot become a generic exported executor.
+    if (file === transport + 'monolith-operation.ts' && ts.isFunctionDeclaration(node) &&
+        node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword) &&
+        node.name?.text === 'executePhoneOperation') deny('raw executor must remain module-private');
+    if (file === owner && ts.isModuleDeclaration(node) && node.modifiers?.some(modifier => modifier.kind === ts.SyntaxKind.ExportKeyword))
+      deny('implementation state must remain module-private');
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  return errors;
+}
+
 export function inspectSource(file, text) {
   const errors = [];
   const inCore = file.startsWith('packages/net/src/');
@@ -234,6 +333,7 @@ export function inspectSource(file, text) {
       ts.forEachChild(node, commandAccess);
     }
     commandAccess(source);
+    errors.push(...inspectSurfaceReadAuthority(file, text));
     inspectOwnerAccess(file, source, errors);
     inspectGestureWrappers(file, source, errors);
     inspectConnectionOwners(file, source, errors);

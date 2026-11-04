@@ -51,7 +51,8 @@ describe.skipIf(!existsSync(CHROME))('onboarding account settings', () => {
         export const setBuzzPushEnabled=async()=>({registered:false,phase:'network-failed',retryable:true});`;
       shims['@/sync/transport/monolith-operation'] = `window.__providers=[{provider:'google',login:'qa@example.test',reconnect:false}];
         const profile=()=>({personId:'a'.repeat(64),name:'Google Person',handle:'googleperson',face:'fox',pushLevel:'attention',providers:window.__providers});
-        export const monolithPhoneOperation=async name=>{
+        export const readServerSurface=(_authority,...args)=>monolithPhoneOperation(...args);
+      export const monolithPhoneOperation=async name=>{
           if(name==='readIdentitySettings')return {identity:profile(),workspaces:{workspaces:[],viewer:{pubkey:'a'.repeat(64),kind:'human',name:'Google Person'}}};
           if(name==='getManagedIdentity')return profile();
           if(name==='beginGitHubInstallation'){window.__began=(window.__began??0)+1;return {url:'https://github.com/apps/beeline/installations/new?state=fixture'};}

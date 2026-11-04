@@ -3,6 +3,7 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { RoomView, RoomViewMessage } from '@beeline/buzz-client';
+import { offscreenMessageFits, projectSidebarPreview } from '../../../../../../../packages/api-contract/src/sidebar-preview';
 
 // The real SurfaceRefreshScheduler drives the reads here; only the network
 // edges are faked. The socket subscribes and then stalls until the explicit frame test.
@@ -334,6 +335,78 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     console.log(`[R1] room reads=${controls.roomReads} newest painted=${newest}`);
     expect(newest).toEqual(['m-2042', '5e7d']);
     expect(controls.roomReads).toBe(openingReads);
+    expect(controls.reconnects).toBe(0);
+    await act(async () => renderer.unmount());
+  });
+
+  for (const delivery of ['preview', 'invalidation', 'both'] as const) {
+    it(`reconciles background ${delivery} once on activation without replacing the socket`, async () => {
+      let latest: UseRoomSurfaceSessionResult | undefined;
+      let renderer!: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(React.createElement(Harness, { capture: (result) => { latest = result; } }));
+      });
+      await advance(100);
+      expect(controls.roomReads).toBe(1);
+      controls.appState = 'background';
+      await act(async () => {
+        for (const listener of controls.appStateListeners) listener('background');
+      });
+      const reply = message('background-reply', 1_791_247_547, 'Ruby replies. '.repeat(300));
+      controls.serverMessages.push(reply);
+      const delta = { type: 'message-delta' as const, roomId: 'experiments', message: reply };
+      expect(offscreenMessageFits(delta)).toBe(false);
+      const preview = projectSidebarPreview(delta, 'viewer');
+      expect(preview.preview.text.length).toBeLessThan(reply.text.length);
+      await act(async () => {
+        if (delivery !== 'invalidation') controls.emit({ monolithLive: preview });
+        if (delivery !== 'preview') {
+          controls.emit({ monolithLive: { type: 'invalidate', roomId: 'experiments', reason: 'postgres:agent_turns' } });
+          controls.emit({ monolithLive: { type: 'invalidate', roomId: 'experiments', reason: 'phone-write' } });
+        }
+      });
+      await advance(180_000);
+      expect(controls.roomReads).toBe(1);
+      expect(latest!.roomSurface!.messages.map((row) => row.id)).not.toContain(reply.id);
+      controls.appState = 'active';
+      await act(async () => {
+        for (const listener of controls.appStateListeners) listener('active');
+      });
+      await advance(0);
+      expect(controls.roomReads).toBe(2);
+      expect(latest!.roomSurface!.messages.at(-1)).toMatchObject({ id: reply.id, text: reply.text });
+      expect(controls.reconnects).toBe(0);
+      await act(async () => {
+        for (const listener of controls.appStateListeners) listener('active');
+      });
+      await advance(180_000);
+      expect(controls.roomReads).toBe(2);
+      await act(async () => renderer.unmount());
+    });
+  }
+
+  it('retains complete background deltas without a covering read on activation', async () => {
+    let latest: UseRoomSurfaceSessionResult | undefined;
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(Harness, { capture: (result) => { latest = result; } }));
+    });
+    await advance(100);
+    controls.appState = 'background';
+    const reply = message('complete-background-reply', 1_791_247_547, 'Short reply');
+    controls.serverMessages.push(reply);
+    await act(async () => {
+      for (const listener of controls.appStateListeners) listener('background');
+      controls.emit({ monolithLive: { type: 'message-delta', roomId: 'experiments', message: reply } });
+    });
+    await advance(180_000);
+    controls.appState = 'active';
+    await act(async () => {
+      for (const listener of controls.appStateListeners) listener('active');
+    });
+    await advance(1_000);
+    expect(latest!.roomSurface!.messages.at(-1)).toMatchObject({ id: reply.id, text: reply.text });
+    expect(controls.roomReads).toBe(1);
     expect(controls.reconnects).toBe(0);
     await act(async () => renderer.unmount());
   });

@@ -166,3 +166,37 @@ The focused mobile validation command, from `apps/mobile`, is:
   'sources/app/(app)/beeline/chat/useRoomSurfaceSession.silent-socket.test.ts' \
   --maxWorkers=2
 ```
+
+## Pipeline review fix: retained Room catch-up
+
+The native captures above predate the R1 pipeline review fix. Their background
+socket was aborted by Android; they do not prove delivery of a large reply
+while a healthy socket survives backgrounding.
+
+The pipeline fix retains incomplete deliveries at `useRoomSurfaceSession`,
+where background invalidations previously discarded their read request and
+sidebar previews supplied no full transcript row. Activation consumes this
+pending work through one existing Room read, without replacing a healthy
+socket, polling, changing the keyed outbox, or adding a network channel.
+
+Behavioral regression cases use the real refresh scheduler and server sidebar
+projection with mocked network edges. A reply over 2 KiB becomes a bounded
+preview while backgrounded. Preview-only, invalidation-only, and combined
+cases assert no background reads over three minutes, exactly one covering
+read on activation exposing the complete reply, no reconnect, and no further
+read on a repeated activation or idle wait. These are deterministic pipeline
+checks, not additional native captures or latency measurements. Complete
+background deltas also have coverage confirming no covering read is needed.
+
+Focused review verification, from `apps/mobile`:
+
+```sh
+./node_modules/.bin/vitest run \
+  'sources/app/(app)/beeline/chat/useRoomSurfaceSession.silent-socket.test.ts' \
+  'sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts' \
+  --maxWorkers=2
+```
+
+Review verification result: **80 tests passed across both focused files**
+(11 real-scheduler cases and 69 Room-session cases), with `--maxWorkers=2`.
+No native capture was repeated for this pipeline fix.

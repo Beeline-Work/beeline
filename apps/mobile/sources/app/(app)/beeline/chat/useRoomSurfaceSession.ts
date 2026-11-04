@@ -649,10 +649,14 @@ export function useRoomSurfaceSession({
     let stopRouterLane: (() => void) | undefined;
     let unsubscribe: (() => void) | undefined;
     let scheduler: SurfaceRefreshScheduler<RoomView> | undefined;
-    // A backgrounded app reads nothing: returning to the foreground replaces
-    // the socket, and that resubscribe's `subscribed` frame is the covering read.
-    const visibleScheduler = () =>
-      !isFocusedRef.current || AppState.currentState === 'background' || AppState.currentState === 'inactive' ? undefined : scheduler;
+    let incompleteDelivery = false;
+    const visibleScheduler = () => {
+      if (!isFocusedRef.current || AppState.currentState === 'background' || AppState.currentState === 'inactive') {
+        incompleteDelivery = true;
+        return undefined;
+      }
+      return scheduler;
+    };
     // Any frame on this watch since the last applied read. A read that finds a
     // newer message while the socket stayed silent proves the socket missed it.
     let heardSinceRead = false;
@@ -861,7 +865,13 @@ export function useRoomSurfaceSession({
     // Enter the storage queue before the app suspends; background writes flush it.
     const cacheAppStateSubscription = AppState.addEventListener('change', (state) => {
       if (state === 'background' || state === 'inactive') flushCacheWrite();
-      else if (state === 'active' && refreshFailed && routerHeadMode === 'legacy') visibleScheduler()?.force();
+      else if (state === 'active' && routerHeadMode === 'legacy' && (refreshFailed || incompleteDelivery)) {
+        const visible = visibleScheduler();
+        if (visible) {
+          incompleteDelivery = false;
+          visible.force();
+        }
+      }
     });
     scheduleCacheWriteRef.current = scheduleCacheWrite;
 
@@ -918,9 +928,6 @@ export function useRoomSurfaceSession({
               // A push-prefetched read can predate this lane, in which case
               // one follow-up read covers that gap.
               if (handshakeSeen) {
-                // A failed read waits for this frame. Foreground and network
-                // recovery replace the socket, which subscribes again. A
-                // resumed lane that already painted replays its own gap.
                 if (refreshFailed || !hasPainted || !live.resumed) visibleScheduler()?.force();
                 return;
               }
@@ -930,6 +937,10 @@ export function useRoomSurfaceSession({
                 markRoomOpen('covering-read');
                 visibleScheduler()?.followUp();
               }
+              return;
+            }
+            if (live.type === 'sidebar-preview') {
+              if (live.roomId === channelId) visibleScheduler()?.signal();
               return;
             }
             if (live.type === 'read-state' || live.type === 'room-commands') {
@@ -1329,6 +1340,7 @@ export function useRoomSurfaceSession({
         const openReadBeforeWatch = Boolean(notificationResponseId || openingPrefetch);
         scheduler = new SurfaceRefreshScheduler({
           fetch: async () => {
+            incompleteDelivery = false;
             const traces = pendingReadTraces;
             pendingReadTraces = [];
             logLiveTrace('room-read-start', traces);

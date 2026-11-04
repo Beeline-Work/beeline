@@ -225,9 +225,10 @@ export async function recordSigninFunnelEvent(
       `UPDATE signin_funnel_installs SET account_hash=$2 WHERE install_id=$1`, [event.installId, funnelAccountHash(identityId)],
     );
     await tx.query(
-      `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,error_code,source,screen,last_seen_at,occurred_at,onboarding_option,duration_ms,artifact_id)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $3='welcome_shown' THEN $14::timestamptz ELSE now() END,$12,$13,$15::uuid) ON CONFLICT(install_id,attempt_id,event,provider,screen)
+      `INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,provider,outcome,error_code,source,screen,last_seen_at,occurred_at,onboarding_option,duration_ms,artifact_id,auth_session)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,CASE WHEN $3='welcome_shown' THEN $14::timestamptz ELSE now() END,$12,$13,$15::uuid,$16::jsonb) ON CONFLICT(install_id,attempt_id,event,provider,screen)
       DO UPDATE SET outcome=EXCLUDED.outcome,error_code=EXCLUDED.error_code,source=EXCLUDED.source,
+        auth_session=COALESCE(EXCLUDED.auth_session,signin_funnel_events.auth_session),
         last_seen_at=GREATEST(signin_funnel_events.last_seen_at,EXCLUDED.last_seen_at),
         visits=signin_funnel_events.visits+CASE WHEN EXCLUDED.event='screen_shown' THEN 1 ELSE 0 END
       WHERE (EXCLUDED.source='server' AND signin_funnel_events.source='client') OR EXCLUDED.event='screen_shown'`,
@@ -248,6 +249,7 @@ export async function recordSigninFunnelEvent(
         event.durationMs ?? null,
         event.timestamp,
         event.artifactId ?? null,
+        event.authSession ? JSON.stringify(event.authSession) : null,
       ],
     );
     if (event.event === 'signed_in' && identityId && !internal) {

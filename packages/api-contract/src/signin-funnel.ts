@@ -90,6 +90,12 @@ export const FUNNEL_ERRORS = [
   'exchange_failed',
   'unknown',
 ] as const;
+export interface AuthSessionDiagnostics {
+  resultType?: string;
+  errorDomain?: string;
+  errorCode?: string;
+  updateId: string;
+}
 export interface SigninFunnelEvent {
   event: (typeof FUNNEL_EVENTS)[number];
   installId: string;
@@ -100,6 +106,7 @@ export interface SigninFunnelEvent {
   provider?: 'github' | 'google';
   outcome?: 'success' | 'cancelled' | 'error';
   errorCode?: (typeof FUNNEL_ERRORS)[number];
+  authSession?: AuthSessionDiagnostics;
   screen?: FunnelScreen;
   option?: 'A' | 'B' | 'C' | 'D';
   durationMs?: number;
@@ -122,6 +129,7 @@ const KEYS = [
   'option',
   'durationMs',
   'artifactId',
+  'authSession',
 ];
 export function parseSigninFunnelEvent(value: unknown, now = Date.now()): SigninFunnelEvent | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -143,6 +151,15 @@ export function parseSigninFunnelEvent(value: unknown, now = Date.now()): Signin
     Math.abs(now - Date.parse(v.timestamp)) > 86_400_000
   )
     return null;
+  if (v.authSession !== undefined) {
+    if (v.event !== 'callback_result' || !v.authSession || typeof v.authSession !== 'object' || Array.isArray(v.authSession)) return null;
+    const diagnostic = v.authSession as Record<string, unknown>;
+    if (Object.keys(diagnostic).some(key => !['resultType', 'errorDomain', 'errorCode', 'updateId'].includes(key))) return null;
+    if (typeof diagnostic.updateId !== 'string' || !(diagnostic.updateId === 'embedded' || diagnostic.updateId === 'unavailable' || FUNNEL_UUID.test(diagnostic.updateId))) return null;
+    for (const key of ['resultType', 'errorDomain', 'errorCode']) {
+      if (diagnostic[key] !== undefined && (typeof diagnostic[key] !== 'string' || !/^[A-Za-z0-9_.-]{1,100}$/.test(diagnostic[key] as string))) return null;
+    }
+  }
   const providerStep = ['provider_tapped', 'callback_result', 'signed_in'].includes(
     v.event as string,
   );

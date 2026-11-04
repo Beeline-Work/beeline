@@ -27,3 +27,18 @@ describe('Google browser close outcomes', () => {
     expect(funnel.callback).not.toHaveBeenCalled();
   });
 });
+
+it.each([
+  { type: 'cancel', errorDomain: 'com.apple.AuthenticationServices.WebAuthenticationSession', errorCode: '1' },
+  { type: 'cancel', errorDomain: 'com.apple.AuthenticationServices.WebAuthenticationSession', errorCode: '2' },
+  { type: 'cancel', errorDomain: 'com.apple.AuthenticationServices.WebAuthenticationSession', errorCode: '3' },
+  { type: 'dismiss' },
+])('retains raw native result identifiers through recovery: %j', async (result) => {
+  const { resetAuthSessionDiagnostics, authSessionDiagnostics } = await import('./auth-session-diagnostics');
+  resetAuthSessionDiagnostics();
+  vi.mocked(WebBrowser.openAuthSessionAsync).mockResolvedValue(result as never);
+  await openAccountAuthSession('https://server.example/auth/github/start', 'beeline://beeline/github-callback', {});
+  expect(authSessionDiagnostics('embedded', { code: 'browser_canceled' })).toEqual({
+    resultType: result.type, errorDomain: result.errorDomain, errorCode: result.errorCode ?? 'browser_canceled', updateId: 'embedded',
+  });
+});

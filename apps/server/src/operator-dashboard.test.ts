@@ -305,6 +305,11 @@ describe('private operator dashboard', () => {
     expect(rows).toHaveLength(1);
     expect(JSON.stringify(rows)).not.toContain('private@example.com');
     expect(JSON.stringify(rows)).not.toContain('funnel-proof');
+    const authSession = { resultType: 'cancel', errorDomain: 'com.apple.AuthenticationServices.WebAuthenticationSession', errorCode: '3', updateId: '11111111-1111-4111-8111-111111111111' };
+    expect((await send({ ...input, event: 'callback_result', provider: 'github', outcome: 'cancelled', authSession })).status).toBe(204);
+    const diagnosticRows = await db.query<{ auth_session: unknown }>(`SELECT auth_session FROM signin_funnel_events WHERE event='callback_result'`);
+    expect(diagnosticRows.rows[0]?.auth_session).toEqual(authSession);
+    expect((await send({ ...input, event: 'callback_result', provider: 'github', outcome: 'cancelled', authSession: { ...authSession, errorDomain: 'https://private.example/callback' } })).status).toBe(400);
     // Invalid input also spends the per-IP budget, before body parsing or storage.
     for(let i=0;i<128;i++)expect((await send({},'rate-proof')).status).toBe(400);
     expect((await send({},'rate-proof')).status).toBe(429);

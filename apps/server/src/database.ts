@@ -2448,6 +2448,7 @@ CREATE INDEX IF NOT EXISTS signin_funnel_installs_account ON signin_funnel_insta
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS onboarding_option text CHECK(onboarding_option IN ('A','B','C','D'));
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS duration_ms bigint;
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS artifact_id uuid;
+ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS auth_session jsonb;
 CREATE INDEX IF NOT EXISTS signin_funnel_events_date ON signin_funnel_events(occurred_at);
 ALTER TABLE signin_funnel_events ADD COLUMN IF NOT EXISTS screen text NOT NULL DEFAULT '';
 -- Device time of the latest visit for a screen_shown row; NULL otherwise.

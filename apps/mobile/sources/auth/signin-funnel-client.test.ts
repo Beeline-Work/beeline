@@ -236,3 +236,14 @@ it('stamps screen changes with strictly increasing device times, even within one
   expect(times).toHaveLength(3);
   expect(times[0]! < times[1]! && times[1]! < times[2]!).toBe(true);
 });
+
+it('keeps native cancellation and OTA diagnostics in the validated callback event', async () => {
+  const { client, send } = setup();
+  await client.begin('github');
+  const authSession = { resultType: 'cancel', errorDomain: 'com.apple.AuthenticationServices.WebAuthenticationSession', errorCode: '2', updateId: '11111111-1111-4111-8111-111111111111' };
+  await client.callback('cancelled', undefined, authSession);
+  const event = send.mock.calls.at(-1)![0];
+  expect(event.authSession).toEqual(authSession);
+  expect(parseSigninFunnelEvent(event)?.authSession).toEqual(authSession);
+  expect(parseSigninFunnelEvent({ ...event, authSession: { ...authSession, errorCode: 'https://private-callback' } })).toBeNull();
+});

@@ -1,3 +1,4 @@
+import { observeAuthSessionResult } from './auth-session-diagnostics';
 import { beginFunnelAttempt, funnelCallback } from './signin-funnel';
 import * as Linking from 'expo-linking';
 import * as WebBrowser from 'expo-web-browser';
@@ -34,9 +35,10 @@ export async function openAccountAuthSession(
   try {
     if (!isDesktopShell()) {
       const result=await WebBrowser.openAuthSessionAsync(url.toString(), redirectUri, options);
+      observeAuthSessionResult(result);
       if(google && result.type==='success') {
         const error=new URL(result.url).searchParams.get('error');
-        void funnelCallback(error ? 'error' : 'success',error ? 'provider_error' : undefined);
+        void funnelCallback(error ? 'error' : 'success',error ? 'provider_error' : undefined, error ? { code: 'provider_denial' } : undefined);
       }
       // The sign-in flow checks server completion before recording a close outcome.
       return result;
@@ -44,7 +46,7 @@ export async function openAccountAuthSession(
     const { openUrl } = await import('@tauri-apps/plugin-opener');
     await openUrl(url.toString());
     return { type: 'opened' };
-  }catch(error){if(google)void funnelCallback('error','unknown');throw error;}
+  }catch(error){if(google)void funnelCallback('error','unknown', error);throw error;}
 }
 
 export function subscribeToAuthUrls(

@@ -1,5 +1,7 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants from 'expo-constants';
+import * as Updates from 'expo-updates';
+import { authSessionDiagnostics, resetAuthSessionDiagnostics } from './auth-session-diagnostics';
 import { randomUUID } from 'expo-crypto';
 import { Platform } from 'react-native';
 import type { FunnelScreen, SigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
@@ -77,6 +79,7 @@ export async function funnelScreenShown(screen: FunnelScreen) {
   });
 }
 export async function beginFunnelAttempt(provider: 'github' | 'google') {
+  resetAuthSessionDiagnostics();
   return (await getClient())?.begin(provider);
 }
 export async function pendingFunnelAttempt() {
@@ -85,8 +88,10 @@ export async function pendingFunnelAttempt() {
 export async function funnelCallback(
   outcome: 'success' | 'cancelled' | 'error',
   errorCode?: SigninFunnelEvent['errorCode'],
+  error?: unknown,
 ) {
-  await (await getClient())?.callback(outcome, errorCode);
+  const diagnostics = authSessionDiagnostics(Updates.updateId ?? (Updates.isEmbeddedLaunch ? 'embedded' : 'unavailable'), error);
+  await (await getClient())?.callback(outcome, errorCode, diagnostics);
 }
 export async function funnelSignedIn(authorization: string) {
   await (await getClient())?.signedIn(authorization);

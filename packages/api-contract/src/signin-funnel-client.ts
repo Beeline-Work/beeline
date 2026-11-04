@@ -109,6 +109,7 @@ export function createSigninFunnelClient(input: {
     outcome?: SigninFunnelEvent['outcome'],
     errorCode?: SigninFunnelEvent['errorCode'],
     authorization?: string,
+    authSession?: SigninFunnelEvent['authSession'],
   ) => {
     if (suppressed || input.environment !== 'production') return undefined;
     const pending = await readPending();
@@ -135,6 +136,7 @@ export function createSigninFunnelClient(input: {
         ...(actualProvider && ['provider_tapped', 'callback_result', 'signed_in'].includes(event)
           ? { provider: actualProvider }
           : {}),
+        ...(authSession ? { authSession } : {}),
         ...(outcome ? { outcome } : {}),
         ...(errorCode ? { errorCode } : {}),
         timestamp: new Date(now()).toISOString(),
@@ -172,8 +174,8 @@ export function createSigninFunnelClient(input: {
           timestamp: new Date(now()).toISOString(),
         };
       }),
-    callback: (outcome: SigninFunnelEvent['outcome'], errorCode?: SigninFunnelEvent['errorCode']) =>
-      serial(() => step('callback_result', undefined, outcome, errorCode)),
+    callback: (outcome: SigninFunnelEvent['outcome'], errorCode?: SigninFunnelEvent['errorCode'], authSession?: SigninFunnelEvent['authSession']) =>
+      serial(() => step('callback_result', undefined, outcome, errorCode, undefined, authSession)),
     signedIn: (authorization: string) =>
       serial(() => step('signed_in', undefined, undefined, undefined, authorization)),
     /**

@@ -421,7 +421,7 @@ export default function BuzzOnboarding() {
     } catch (error) {
       if (attempt.signal.aborted) return;
       const cancelled = error instanceof OidcBindError && ['browser_canceled', 'oidc_denied'].includes(error.code);
-      void funnelCallback(cancelled ? 'cancelled' : 'error', cancelled ? undefined : 'unknown');
+      void funnelCallback(cancelled ? 'cancelled' : 'error', cancelled ? undefined : 'unknown', error);
       const next = noticeForAuthError(
         error instanceof OidcBindError
           ? error
@@ -482,7 +482,7 @@ export default function BuzzOnboarding() {
     } catch (error) {
       if (attempt.signal.aborted) return;
       const cancelled=error instanceof OidcBindError && ['browser_canceled','github_denied','oidc_denied'].includes(error.code);
-      void funnelCallback(cancelled?'cancelled':'error',cancelled?undefined:error instanceof OidcBindError && error.code==='offline'?'offline':'unknown');
+      void funnelCallback(cancelled?'cancelled':'error',cancelled?undefined:error instanceof OidcBindError && error.code==='offline'?'offline':'unknown', error);
       // Leaving the GitHub page is not a failure: free the buttons without a notice.
       if (isGitHubSignInLeft(error)) {
         setStatus('idle');

@@ -532,3 +532,12 @@ it('uses first welcome per person, exclusive period end, mature denominators and
   expect(retained.paths.task[2]?.count).toBe(6);
 
 });
+
+it('stores native cancellation diagnostics even when a server outcome supersedes the client', async () => {
+  const event = make({ event: 'callback_result', provider: 'github', outcome: 'cancelled',
+    authSession: { resultType: 'cancel', errorDomain: 'com.apple.AuthenticationServices.WebAuthenticationSession', errorCode: '2', updateId: 'embedded' } });
+  await recordSigninFunnelEvent(db, event, 'client');
+  await recordSigninFunnelEvent(db, { ...event, outcome: 'success', authSession: undefined }, 'server');
+  const stored = await db.query<{ auth_session: unknown }>('SELECT auth_session FROM signin_funnel_events WHERE attempt_id=$1', [event.attemptId]);
+  expect(stored.rows[0]?.auth_session).toEqual(event.authSession);
+});

@@ -4,7 +4,6 @@ import type { CellSnapshot, GroupCell } from './projection-groups.js';
 import { replaceSavedWindowRows, validateSavedWindow } from './saved-windows.js';
 import { sameStream } from './lane-staging.js';
 export const equal=(a:unknown,b:unknown):boolean=>JSON.stringify(a)===JSON.stringify(b);
-export const trayClock=(value:unknown)=>typeof value==='string'?value.match(/^tray-clock-v1:([a-f0-9]{32}):(0|[1-9][0-9]{0,19})$/):null;
 export const exactCut=(a:LaneCut,b:LaneCut):boolean=>sameStream(a,b)&&a.through===b.through;
 export const trayFamily=(family:string):boolean=>['needs-you','needs-you-count','needs-you-tray','needs-you-saved-page'].includes(family);
 export function trayCertificate(authority:LaneAuthority,reader:string,workspace:string,authorized:(value:LaneAuthority)=>boolean):boolean{
@@ -15,7 +14,7 @@ export function trayCertificate(authority:LaneAuthority,reader:string,workspace:
 export function checkTraySnapshot(cell:GroupCell,snapshot:LaneSnapshot,reader:string,workspace:string,
   valid:(request:LaneRequest,value:unknown)=>boolean,authorized:(value:LaneAuthority)=>boolean):void{
   if(snapshot.atomicGroup!==`needs-you:${workspace}:${reader}`||snapshot.cut.stream!==`workspace:${workspace}`||
-    !trayClock(snapshot.clockVersion)||!trayCertificate(snapshot.authority,reader,workspace,authorized)||!valid(cell.request,snapshot.value))
+    !trayCertificate(snapshot.authority,reader,workspace,authorized)||!valid(cell.request,snapshot.value))
     throw new Error('Invalid Tray baseline');
   if(cell.request.family==='needs-you-saved-page'&&(!validateSavedWindow(snapshot.value,workspace)||snapshot.value.before!==cell.request.before))
     throw new Error('Saved window query changed');
@@ -23,13 +22,10 @@ export function checkTraySnapshot(cell:GroupCell,snapshot:LaneSnapshot,reader:st
 }
 /** Closed Tray value algebra only. All lifecycle, receipts, interval retention
  * and commit proposals are owned by ProjectionGroups for both cohorts. */
-export function foldTray<T extends GroupCell>(members:readonly CellSnapshot<T>[],batch:LaneBatch,priorClock:string,workspace:string,
+export function foldTray<T extends GroupCell>(members:readonly CellSnapshot<T>[],batch:LaneBatch,workspace:string,
   valid:(request:LaneRequest,value:unknown)=>boolean):CellSnapshot<T>[]{
     const marker=batch.facts.find(fact=>fact.payload.kind==='tray-classification')!;
     if(marker.payload.kind!=='tray-classification')throw new Error('Missing Tray classification');
-    const clockVersion=marker.payload.clockVersion;
-    const nextClock=trayClock(clockVersion),previous=trayClock(priorClock);
-    if(!nextClock||!previous||nextClock[1]!==previous[1]||BigInt(nextClock[2]!)<BigInt(previous[2]!))throw new Error('Unknown Tray clock');
     const rows=batch.facts.flatMap(fact=>fact.payload.kind==='saved-row-replace'||fact.payload.kind==='saved-row-remove'?[fact.payload as SavedRowPayload]:[]);
     const heads=batch.facts.filter(fact=>fact.payload.kind==='scope-replace'&&fact.payload.family==='needs-you-saved-page');
     if(heads.length>1)throw new Error('Conflicting Saved head');
@@ -69,6 +65,6 @@ export function foldTray<T extends GroupCell>(members:readonly CellSnapshot<T>[]
         value=JSON.parse(JSON.stringify(replacement)) as unknown;
       }else if(member.cell.request.family==='needs-you'&&needs.length)throw new Error('Missing complete Needs head');
       if(!valid(member.cell.request,value))throw new Error('Invalid Tray group value');
-      return{...member,snapshot:{...member.snapshot,value,cut:{...batch.to},clockVersion}};
+      return{...member,snapshot:{...member.snapshot,value,cut:{...batch.to}}};
     });
   }

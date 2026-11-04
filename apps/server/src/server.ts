@@ -957,6 +957,10 @@ export function createBeelineServer(options: ServerOptions): Server {
           return;
         }
         if (event.reason === 'postgres:needs_you_marks' && event.sourceRoomId) {
+          if (routerProtocol.supports('needs-you-count')) sendLive(JSON.stringify({
+            kind:'router-unavailable',stream:'control:tray-clock',
+            families:['needs-you','needs-you-tray','needs-you-count','needs-you-saved-page'],reason:'dependency',
+          }));
           sendNeedsYouDelta(event, event.sourceRoomId);
           return;
         }

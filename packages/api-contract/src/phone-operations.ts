@@ -572,8 +572,10 @@ export type ReportMessageIssueInput = RoomInput & {
 /** `duplicate` is true when this message was already reported. */
 export type ReportMessageIssueResult = { readonly itemId: string; readonly duplicate: boolean };
 export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[]; readonly next?: string };
-export type NeedsYouListResult = { readonly items: readonly NeedsYouItemView[] };
-export type NeedsYouCountResult = { readonly count: number };
+export type NeedsYouListResult = {
+  readonly nextExpiry?: number; readonly items: readonly NeedsYouItemView[] };
+export type NeedsYouCountResult = {
+  readonly nextExpiry?: number; readonly count: number };
 export type ClearNeedsYouInput = WorkspaceInput & { readonly messageId: string; readonly dismissReminder?: boolean };
 /**
  * Stop one turn in progress.

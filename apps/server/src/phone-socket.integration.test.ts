@@ -220,6 +220,19 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
       expect(snapshot.ok).toBe(selected);
       if (selected) {
         expect(snapshot).toMatchObject({ result: { value: { count: 0 } } });
+        const expiryRefresh=new Promise<Record<string,unknown>>(resolve=>{
+          const receive=(raw:WebSocket.RawData)=>{
+            const frame=JSON.parse(String(raw));
+            if(frame.kind!=='router-unavailable'||frame.stream!=='control:tray-clock')return;
+            modern.off('message',receive);resolve(frame);
+          };
+          modern.on('message',receive);
+        });
+        live.publish({type:'invalidate',roomId:'',reason:'postgres:needs_you_marks',
+          readerId:VIEWER,sourceRoomId:ROOM});
+        expect(await expiryRefresh).toMatchObject({kind:'router-unavailable',
+          families:['needs-you','needs-you-tray','needs-you-count','needs-you-saved-page']});
+
         expect(
           await request(legacy, 'sendRoomMessage', {
             roomId: ROOM,

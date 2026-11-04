@@ -54,14 +54,14 @@ describe('pure count-only Needs-you projection at one database cut',()=>{
     await db.query(`INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at) VALUES($1,'choice',$2,now())`,[VIEWER,WORKSPACE]);
     await differential(1);await db.query(`UPDATE agent_grants SET status='denied' WHERE id=$1`,[GRANT]);await differential(0);
   });
-  it('matches first-seen expiry, lookback expiry, and expiring Squire approvals without starting clocks',async()=>{
+  it('keeps old unseen asks while applying first-seen and Squire expiry',async()=>{
     await message('current','@reader please review');await message('seen-expired','@reader please review');await message('old','@reader please review');
     await db.query(`UPDATE messages SET created_at=now()-interval '8 days' WHERE id='old'`);
     await db.query(`INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,first_seen_at) VALUES($1,'seen-expired',$2,now()-interval '25 hours')`,[VIEWER,WORKSPACE]);
     await card('squire','squire-approval',{title:'Approval',action:'reveal a key',approvalId:'approval',sourceRoomId:CHILD,expiresAt:Date.now()+600000});
-    await differential(2);
+    await differential(3);
     expect((await db.query(`SELECT 1 FROM needs_you_marks WHERE message_id='current'`)).rowCount).toBe(0);
-    await db.query(`UPDATE messages SET card=jsonb_set(card,'{expiresAt}',to_jsonb(1::bigint)) WHERE id='squire'`);await differential(1);
+    await db.query(`UPDATE messages SET card=jsonb_set(card,'{expiresAt}',to_jsonb(1::bigint)) WHERE id='squire'`);await differential(2);
   });
   it('follows inherited Room membership and rejects removed Workspace authority even with stale Room rows',async()=>{
     await message('ask','@reader please review',CHILD);await differential(1);
@@ -78,7 +78,7 @@ describe('pure count-only Needs-you projection at one database cut',()=>{
         for(const row of result.rows)columns.push(Object.keys(row).sort());return result;}};
       const phone=new PhoneService(db,'https://example.test');
       expect(await phone.buildRouterValue(proxy,{family:'needs-you-count',workspaceId:WORKSPACE},VIEWER)).toEqual({count:1});expect(rows).toBe(1);
-      expect(columns).toEqual([['authorized','count','questions']]);
+      expect(columns).toEqual([['authorized','count','next_expiry']]);
     });
     expect((await db.query(`SELECT 1 FROM needs_you_marks`)).rowCount).toBe(0);
   });
@@ -89,20 +89,20 @@ describe('pure count-only Needs-you projection at one database cut',()=>{
     ])await message(id!,text!);
     await differential(2);
   });
-  it('accepts the complete500-question bound and refuses501 instead of claiming the legacy capped count',async()=>{
+  it('returns every eligible ask and an accurate badge above 500 questions',async()=>{
     await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
       SELECT 'ask-'||n,$1,$2,'@reader please review',now()-interval '1 hour' FROM generate_series(1,500)n`,[ROOM,PEER]);
     await differential(500);await message('overflow','@reader please review');
-    await expect(countNeedsYouProjection(db,WORKSPACE,VIEWER)).rejects.toMatchObject({reason:'budget'});
-    await expect(readNeedsYouCountSnapshot(db,WORKSPACE,VIEWER)).rejects.toMatchObject({reason:'budget'});
-    expect(await countNeedsYouItems(db,WORKSPACE,VIEWER)).toBe(500);
+    await differential(501);
+    expect((await readNeedsYouCountSnapshot(db,WORKSPACE,VIEWER)).value.count).toBe(501);
+    expect(await countNeedsYouItems(db,WORKSPACE,VIEWER)).toEqual({count:501});
   });
-  it('applies eligibility before the cap so expired asks and near misses cannot manufacture overflow',async()=>{
+  it('counts old unseen asks while excluding near misses',async()=>{
     await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
       SELECT 'near-'||n,$1,$2,'@reader I approved it',now() FROM generate_series(1,501)n`,[ROOM,PEER]);
     await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
       SELECT 'old-'||n,$1,$2,'@reader please review',now()-interval '8 days' FROM generate_series(1,501)n`,[ROOM,PEER]);
-    await message('real','@reader please review');await differential(1);
+    await message('real','@reader please review');await differential(502);
   });
   it('builds a complete badge snapshot in one SELECT with the same-cut authority and count',async()=>{
     await message('single-statement','@reader please review');

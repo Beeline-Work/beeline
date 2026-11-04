@@ -176,7 +176,7 @@ import {
 } from './message-mentions.js';
 import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { clearNeedsYouQuestions, countNeedsYouItems, countNeedsYouProjection, readNeedsYouCountSnapshot, readNeedsYouOrder, needsYouItems, markNeedsYouSeen } from './needs-you.js';
+import { clearNeedsYouQuestions, countNeedsYouItems, readNeedsYouCountSnapshot, readNeedsYouOrder, needsYouItems, markNeedsYouSeen } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyAgentConfigRoom,
@@ -1179,20 +1179,20 @@ export class PhoneService {
     if(trigger&&this.composio)await this.composio.deleteWebhookTrigger(trigger);
   }
 
-  readRouterSnapshot(input: RouterSnapshotInput, viewerId: string,options?:{readonly trayClock?:true}) {
+  readRouterSnapshot(input: RouterSnapshotInput, viewerId: string) {
     if(ownerFamily(input.family))return this.database.transaction(async db=>{
       await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
       return buildOwnerSnapshot(db,this,input,viewerId);
     });
     if(input.family==='room-head')return this.readRoomRouterSnapshot({...input,family:'room-head'},viewerId);
-    if (input.family === 'needs-you-count') return readNeedsYouCountSnapshot(this.database,input.workspaceId,viewerId,options?.trayClock?'committed':'wall');
-    return buildRouterSnapshot(this.database, input, viewerId, (db, args, viewer) => this.buildRouterValue(db, args, viewer,options),options);
+    if (input.family === 'needs-you-count') return readNeedsYouCountSnapshot(this.database,input.workspaceId,viewerId);
+    return buildRouterSnapshot(this.database, input, viewerId, (db, args, viewer) => this.buildRouterValue(db, args, viewer));
   }
 
   /** Pure router builders bind both core and enrichment to the caller's
    * repeatable-read handle. No providers, live cache, onboarding or seen marks. */
   async buildRouterValue(database: SqlDatabase, input: RouterSnapshotInput,
-    viewerId: string,options?:{readonly trayClock?:true}): Promise<RouterValues[RouterFamily] | null> {
+    viewerId: string): Promise<RouterValues[RouterFamily] | null> {
     const reader = new PhoneService(database, this.publicOrigin);
     reader.pureProjection = true;
     if(input.family==='owner-workbench')return projectWorkbenchDisplay(await reader.readWorkbench({workspaceId:''},viewerId),viewerId);
@@ -1233,14 +1233,14 @@ export class PhoneService {
       return reader.readRoom(input.roomId,viewerId);
     }
     if(input.family==='room-scheduled-work')return buildRoomSchedulesProjection(reader.database,input.roomId,viewerId,this.publicOrigin);
-    if(input.family==='needs-you-tray')return buildTrayProjection(reader.database,input.workspaceId,viewerId,row=>identity(row,reader.publicOrigin),options?.trayClock?'committed':'wall');
+    if(input.family==='needs-you-tray')return buildTrayProjection(reader.database,input.workspaceId,viewerId,row=>identity(row,reader.publicOrigin));
     if(input.family==='needs-you-saved-page')return readTraySavedWindow(reader.database,input,viewerId,row=>identity(row,reader.publicOrigin));
-    if(input.family==='needs-you-count')return {count:await countNeedsYouProjection(reader.database,input.workspaceId,viewerId,options?.trayClock?'committed':'wall')};
+    if(input.family==='needs-you-count')return countNeedsYouItems(reader.database,input.workspaceId,viewerId);
     if(input.family!=='needs-you')throw new Error('Unsupported router projection family');
     await reader.requireWorkspaceMember(input.workspaceId, viewerId);
-    const { items } = await needsYouItems(reader.database, input.workspaceId, viewerId,
-      (row) => identity(row, reader.publicOrigin), false,options?.trayClock?'committed':'wall');
-    return { count: items.length, items };
+    const needs = await needsYouItems(reader.database, input.workspaceId, viewerId,
+      (row) => identity(row, reader.publicOrigin), false);
+    return { count: needs.items.length, ...needs };
   }
 
   /** Room data, certificate, canonical head and enrichment are one SELECT
@@ -1286,13 +1286,13 @@ export class PhoneService {
   }
 
   async buildRouterNeedsHead(database:SqlDatabase,workspaceId:string,viewerId:string){
-    const value=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,'committed');
+    const value=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false);
     return value;
   }
 
   async buildRouterNeedsRooms(database:SqlDatabase,workspaceId:string,viewerId:string,rooms:readonly string[]){
     const order=await readNeedsYouOrder(database,workspaceId,viewerId);
-    const {items}=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,'wall',rooms);
+    const {items}=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,rooms);
     const value={kind:'needs-you-rooms-replace' as const,scope:workspaceId,...order,
       rooms:rooms.map(roomId=>({roomId,items:items.filter(item=>item.roomId===roomId)}))};
     return value;
@@ -1663,12 +1663,12 @@ export class PhoneService {
        WHERE room.id=$1`, [roomId, viewerId],
     )).rows[0];
     if (!scope) return null;
-    const order=await readNeedsYouOrder(database,scope.workspace_id,viewerId,'wall',false);
+    const order=await readNeedsYouOrder(database,scope.workspace_id,viewerId);
     // This snapshot proves there are no cells to project. Legacy replay still
     // sends the empty delta, without repeating the expensive cell query.
     if(order.count===0)return {workspaceId:scope.workspace_id,count:0,items:[]};
     const { items } = await needsYouItems(database, scope.workspace_id, viewerId,
-      (row) => identity(row, this.publicOrigin), false,'wall',[roomId]);
+      (row) => identity(row, this.publicOrigin), false,[roomId]);
     const selected=new Map(items.map(item=>[item.messageId,item]));
     return { workspaceId: scope.workspace_id, count: order.count,
       items: order.order.flatMap(id=>selected.has(id)?[selected.get(id)!]:[]) };
@@ -5668,14 +5668,13 @@ export class PhoneService {
     input: Input<'readNeedsYou'>,
     viewerId: string,
   ): Promise<Output<'readNeedsYou'>> {
-    const { items } = await needsYouItems(
+    return needsYouItems(
       this.database,
       input.workspaceId,
       viewerId,
       (row) => identity(row, this.publicOrigin),
       input.markSeen !== false,
     );
-    return { items };
   }
 
   private async readTray(input: Input<'readTray'>, viewerId: string): Promise<Output<'readTray'>> {
@@ -5697,7 +5696,7 @@ export class PhoneService {
     input: Input<'countNeedsYou'>,
     viewerId: string,
   ): Promise<Output<'countNeedsYou'>> {
-    return { count: await countNeedsYouItems(this.database, input.workspaceId, viewerId) };
+    return countNeedsYouItems(this.database, input.workspaceId, viewerId);
   }
 
   /** A tap or a dismissal: the cell is handled, on every device. */

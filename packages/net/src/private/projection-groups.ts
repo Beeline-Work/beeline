@@ -1,7 +1,7 @@
 import type { LaneAuthority, LaneBatch, LaneCut, LaneRequest, LaneSnapshot, LaneView } from './read-lanes.js';
 import { LaneStaging, intervalId, sameStream, type IntervalStage } from './lane-staging.js';
 import { jsonBytes, remember } from './staging-bounds.js';
-import { checkTraySnapshot, equal, exactCut, foldTray, trayCertificate, trayClock, trayFamily } from './tray-group.js';
+import { checkTraySnapshot, equal, exactCut, foldTray, trayCertificate, trayFamily } from './tray-group.js';
 import { foldNeedsYouRooms } from './needs-you-rooms.js';
 
 export type GroupCell={key:string;request:LaneRequest;expectedWorkspace?:string;view:LaneView;
@@ -11,9 +11,9 @@ export type GroupCell={key:string;request:LaneRequest;expectedWorkspace?:string;
   opening?:LaneCut|true;incoming?:LaneSnapshot};
 export type CellSnapshot<T extends GroupCell>=Readonly<{cell:T;snapshot:LaneSnapshot}>;
 type Group={id:string;workspace:string;intervals:IntervalStage;history:Map<string,string>;
-  progress?:LaneCut;clockVersion?:string;failed:boolean};
+  progress?:LaneCut;failed:boolean};
 export type GroupProposal<T extends GroupCell>=Readonly<{id:string;group?:Group;items:readonly CellSnapshot<T>[];
-  whole:readonly CellSnapshot<T>[];versions:readonly number[];cut?:LaneCut;clockVersion?:string}>;
+  whole:readonly CellSnapshot<T>[];versions:readonly number[];cut?:LaneCut}>;
 const REPLACE='scope-replace',UNAVAILABLE='Projection unavailable; Retry.';
 const room=(request:LaneRequest)=>request.family==='room-head'||request.family==='room-scheduled-work'||request.family==='room-workflows';
 const scope=(request:LaneRequest,reader:string)=>request.agentId??(room(request)?request.roomId!:request.workspaceId??reader);
@@ -188,19 +188,19 @@ export class ProjectionGroups<T extends GroupCell>{
     for(const{cell,snapshot}of proposal.items){
       cell.snapshot=snapshot;cell.baseline=undefined;cell.classified=undefined;cell.covered=true;cell.incoming=undefined;cell.opening=undefined;
     }
-    if(proposal.group&&proposal.cut){proposal.group.progress={...proposal.cut};proposal.group.clockVersion=proposal.clockVersion;this.trim(proposal.group);}
+    if(proposal.group&&proposal.cut){proposal.group.progress={...proposal.cut};this.trim(proposal.group);}
     return true;
   }
-  private proposal(id:string,stream:string,items:readonly CellSnapshot<T>[],group?:Group,cut?:LaneCut,clockVersion?:string):GroupProposal<T>{
+  private proposal(id:string,stream:string,items:readonly CellSnapshot<T>[],group?:Group,cut?:LaneCut):GroupProposal<T>{
     const retained=new Map([...this.cells.values()].filter(cell=>cell.snapshot?.atomicGroup===id&&cell.snapshot.cut.stream===stream)
       .map(cell=>[cell.key,{cell,snapshot:cell.snapshot!}]));
     for(const item of items)retained.set(item.cell.key,item);
-    const whole=[...retained.values()];return{id,group,items,whole,versions:whole.map(item=>item.cell.revision),cut,clockVersion};
+    const whole=[...retained.values()];return{id,group,items,whole,versions:whole.map(item=>item.cell.revision),cut};
   }
   private stageTray(state:Group,batch:LaneBatch):void{
     const facts=batch.facts.filter(fact=>fact.atomicGroup===state.id),markers=facts.filter(fact=>fact.payload.kind==='tray-classification'),marker=markers[0];
     if(markers.length!==1||marker?.payload.kind!=='tray-classification'||marker.payload.scope!==state.workspace||marker.payload.version!==1||
-      !trayClock(marker.payload.clockVersion)||!trayCertificate(marker.authority,this.reader,state.workspace,this.authorized))throw new Error('Invalid Tray classification');
+      !trayCertificate(marker.authority,this.reader,state.workspace,this.authorized))throw new Error('Invalid Tray classification');
     if(!sameStream(batch.from,batch.to)||!Number.isSafeInteger(batch.from.through)||!Number.isSafeInteger(batch.to.through)||batch.from.protocol!==1||
       !batch.from.epoch||batch.from.epoch.length>128||batch.from.through<0||batch.to.through<batch.from.through||state.progress&&!sameStream(state.progress,batch.to))throw new Error('Tray stream changed');
     for(const fact of facts)if(!trayCertificate(fact.authority,this.reader,state.workspace,this.authorized)||fact.authority.digest!==marker.authority.digest||
@@ -214,15 +214,15 @@ export class ProjectionGroups<T extends GroupCell>{
       pending=cells.filter(cell=>cell.incoming).map(cell=>({cell,snapshot:cell.incoming!}));
     const first=held[0]??pending[0];if(!first||state.failed)return;
     for(const item of held){checkTraySnapshot(item.cell,item.snapshot,this.reader,state.workspace,this.valid,this.authorized);
-      if(!exactCut(item.snapshot.cut,first.snapshot.cut)||item.snapshot.clockVersion!==first.snapshot.clockVersion||
+      if(!exactCut(item.snapshot.cut,first.snapshot.cut)||
         item.snapshot.authority.digest!==first.snapshot.authority.digest)throw new Error('Mixed Tray group baseline');}
-    let{members,cut,version,changed}=this.replay(state,held.length?held:[first],state.progress??first.snapshot.cut,state.clockVersion??first.snapshot.clockVersion!);
+    let{members,cut,changed}=this.replay(state,held.length?held:[first],state.progress??first.snapshot.cut);
     changed ||=held.length===0;
     const merged=new Map(members.map(member=>[member.cell.key,member]));
     for(const incoming of pending){
       if(!sameStream(incoming.snapshot.cut,cut))throw new Error('Tray snapshot epoch changed');if(incoming.snapshot.cut.through>cut.through)continue;
-      const replay=this.replay(state,[incoming],incoming.snapshot.cut,incoming.snapshot.clockVersion!,cut.through);
-      if(replay.cut.through!==cut.through)continue;if(replay.version!==version)throw new Error('Tray snapshot clock changed');
+      const replay=this.replay(state,[incoming],incoming.snapshot.cut,cut.through);
+      if(replay.cut.through!==cut.through)continue;
       const item=replay.members[0]!,prior=merged.get(item.cell.key);
       if(prior&&exactCut(incoming.snapshot.cut,prior.snapshot.cut)){
         const before=item.cell.request.family==='needs-you-tray'?(prior.snapshot.value as {needs:unknown}).needs:prior.snapshot.value,
@@ -232,18 +232,18 @@ export class ProjectionGroups<T extends GroupCell>{
       // An unchanged covering reply still completes this lane's pending open.
       if(!prior||!equal(prior.snapshot,item.snapshot)||incoming.cell.view.state==='OPENING')changed=true;merged.set(item.cell.key,item);
     }
-    if(!changed){state.progress={...cut};state.clockVersion=version;for(const cell of cells)if(cell.snapshot)cell.classified=cut;this.trim(state);return;}
-    const current=[...merged.values()].map(item=>({...item,snapshot:{...item.snapshot,cut:{...cut},clockVersion:version}}));
-    return this.proposal(state.id,`workspace:${state.workspace}`,current,state,cut,version);
+    if(!changed){state.progress={...cut};for(const cell of cells)if(cell.snapshot)cell.classified=cut;this.trim(state);return;}
+    const current=[...merged.values()].map(item=>({...item,snapshot:{...item.snapshot,cut:{...cut}}}));
+    return this.proposal(state.id,`workspace:${state.workspace}`,current,state,cut);
   }
-  private replay(state:Group,members:CellSnapshot<T>[],cut:LaneCut,version:string,ceiling=Infinity):
-    {members:CellSnapshot<T>[];cut:LaneCut;version:string;changed:boolean}{
+  private replay(state:Group,members:CellSnapshot<T>[],cut:LaneCut,ceiling=Infinity):
+    {members:CellSnapshot<T>[];cut:LaneCut;changed:boolean}{
     let changed=false;
     while(true){
       const next=[...state.intervals.values()].find(({batch})=>sameStream(batch.from,cut)&&batch.from.through<=cut.through&&batch.to.through>cut.through&&batch.to.through<=ceiling);
-      if(!next)return{members,cut,version,changed};
-      const previous=members;members=foldTray(members,next.batch,version,state.workspace,this.valid);
-      changed ||=members.some((member,index)=>!equal(member.snapshot.value,previous[index]!.snapshot.value));cut=next.batch.to;version=members[0]!.snapshot.clockVersion!;
+      if(!next)return{members,cut,changed};
+      const previous=members;members=foldTray(members,next.batch,state.workspace,this.valid);
+      changed ||=members.some((member,index)=>!equal(member.snapshot.value,previous[index]!.snapshot.value));cut=next.batch.to;
     }
   }
   private trim(state:Group):void{

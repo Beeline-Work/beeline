@@ -38,6 +38,27 @@ describe('pure complete Tray projection',()=>{
     expect((await db.query('SELECT * FROM needs_you_marks')).rows).toEqual([]);
     expect((await db.query(`SELECT id,epoch,sequence::text FROM live_streams ORDER BY id`)).rows).toEqual(before);
   });
+  it('expires seen questions and approvals from stored timestamps without a source write',async()=>{
+    const expiresAt=Date.now()+1000;
+    await db.query(`INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,first_seen_at)
+      VALUES($1,'ask',$2,to_timestamp($3/1000.0)-interval '24 hours')`,[viewer,workspace,expiresAt]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+      VALUES('expiring-approval',$1,$2,'Approve','card','squire-approval',$3::jsonb)`,[room,author,JSON.stringify({
+        title:'Review release',action:'approve release',approvalId:'expiry-proof',sourceRoomId:room,expiresAt,
+      })]);
+    const phone=new PhoneService(db,'https://example.test');
+    const input={family:'needs-you-count',workspaceId:workspace} as const;
+    const initial=await phone.readRouterSnapshot(input,viewer);
+    expect(initial.value).toMatchObject({count:2,nextExpiry:expiresAt});
+    expect((await build()).needs.items).toHaveLength(2);
+    await new Promise(resolve=>setTimeout(resolve,Math.max(0,expiresAt-Date.now()+30)));
+    const expired=await phone.readRouterSnapshot(input,viewer);
+    expect(expired.value).toEqual({count:0});
+    expect(expired.cut).toEqual(initial.cut);
+    const tray=await build();
+    expect(tray.needs.items).toEqual([]);
+    expect(tray.saved.rows.map(row=>row.value.messageId)).toEqual(['ask']);
+  });
   it('routes the complete projection in the count atomic group and scopes saved sources to their reader',async()=>{
     const input={family:'needs-you-tray',workspaceId:workspace} as const;
     const value=await db.transaction(tx=>new PhoneService(tx,'https://example.test').buildRouterValue(tx,input,viewer));
@@ -62,9 +83,9 @@ describe('pure complete Tray projection',()=>{
     const next=await readTraySavedWindow(db,{workspaceId:workspace,before:value.saved!.next},viewer,toIdentity);
     expect(next.rows).toHaveLength(1);expect(new Set([...value.saved!.rows,...next.rows].map(row=>row.value.messageId)).size).toBe(31);
   });
-  it('parks on the legacy question cap instead of certifying truncated cells',async()=>{
+  it('returns a complete Tray above the former 500-question cap',async()=>{
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) SELECT 'overflow-'||n,$1,$2,'@ada please review?' FROM generate_series(1,500)n`,[room,author]);
-    await expect(build()).rejects.toMatchObject({reason:'budget'});
+    expect((await build()).needs.items).toHaveLength(501);
     expect((await db.query('SELECT * FROM needs_you_marks')).rows).toEqual([]);
   });
   it('keeps only the unavailable saved reference after Room authority is revoked',async()=>{

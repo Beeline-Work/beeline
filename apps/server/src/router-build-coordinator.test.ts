@@ -4,7 +4,7 @@ import type {RouterSnapshotInput} from '@beeline/api-contract/router-protocol';
 import type {QueryResult,SqlDatabase} from './database.js';
 import {readRouterBuildTicket,RouterBuildCoordinator,type RouterBuilderBasis} from './router-build-coordinator.js';
 import type {RouterValueBuilder} from './router-projections.js';
-const input={family:'needs-you-count' as const,workspaceId:'11111111-1111-4111-8111-111111111111'};
+const input={family:'room-list' as const,workspaceId:'11111111-1111-4111-8111-111111111111'};
 const basis:RouterBuilderBasis={schema:1,databaseScope:'primary-fixture',version:'phone-dto-v1',publicOrigin:'https://example.test',clockVersion:'committed-clock-1'};
 class ReadSnapshot implements SqlDatabase{
   constructor(readonly through=1,readonly authorityEpoch='1',readonly epoch='stream-1',readonly isolation='repeatable read'){}
@@ -26,6 +26,15 @@ const ticket=(db:SqlDatabase=new ReadSnapshot(),request:RouterSnapshotInput=inpu
 function deferred<T>(){let resolve!:(value:T)=>void;const promise=new Promise<T>(done=>{resolve=done;});return {promise,resolve};}
 
 describe('shared DB-derived canonical projection builds',()=>{
+  it('re-reads timestamp-dependent Needs-you even when no source write advances its cut',async()=>{
+    const coordinator=new RouterBuildCoordinator();let count=1;
+    const request={family:'needs-you-count' as const,workspaceId:input.workspaceId};
+    const first=await coordinator.build(await ticket(new ReadSnapshot(),request),async()=>({count}));
+    count=0;
+    const second=await coordinator.build(await ticket(new ReadSnapshot(),request),async()=>({count}));
+    expect(first.value).toEqual({count:1});expect(second.value).toEqual({count:0});
+    expect(first.cut).toEqual(second.cut);
+  });
   it('keeps distinct ordinary Saved cursors in the cache key while sharing equal windows',async()=>{
     const coordinator=new RouterBuildCoordinator(),seen:Array<string|undefined>=[];
     const build:RouterValueBuilder=async(_db,args)=>{

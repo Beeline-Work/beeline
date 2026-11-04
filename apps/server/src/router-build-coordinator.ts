@@ -1,21 +1,18 @@
 import type {RouterAuthorityCertificate,RouterCut,RouterSnapshot,RouterSnapshotInput} from '@beeline/api-contract/router-protocol';
 import type {SqlDatabase} from './database.js';
 import {readRouterAuthority,readRouterCut,resolveRouterInput,routerAtomicGroup,RouterProjectionUnavailable,type RouterValueBuilder} from './router-projections.js';
-import {readTrayClockBasis} from './tray-clock-basis.js';
 
-/** Immutable server configuration and committed clock-source version. A raw
- * Date.now()/transaction timestamp is not a declared durable clock basis. */
+/** Immutable configuration for projections determined by stored fields. */
 export type RouterBuilderBasis=Readonly<{schema:1;databaseScope:string;version:string;publicOrigin:string;clockVersion:string}>;
 const TICKET=Symbol('router-build-ticket');
 export type RouterBuildTicket=Readonly<{[TICKET]:true;input:RouterSnapshotInput;reader:string;
-  cut:RouterCut;authority:RouterAuthorityCertificate;basis:RouterBuilderBasis;trayClockVersion?:string}>;
+  cut:RouterCut;authority:RouterAuthorityCertificate;basis:RouterBuilderBasis}>;
 const transactions=new WeakMap<RouterBuildTicket,SqlDatabase>();
 
 /** This read-only transaction stays alive until build(ticket, ...) resolves.
  * The coordinator invokes the builder with this exact handle, never a newer
  * connection and never a cache result relabeled at a later cut. */
-export async function readRouterBuildTicket(db:SqlDatabase,input:RouterSnapshotInput,reader:string,basis:RouterBuilderBasis,
-  options?:{readonly trayClock?:true}):Promise<RouterBuildTicket>{
+export async function readRouterBuildTicket(db:SqlDatabase,input:RouterSnapshotInput,reader:string,basis:RouterBuilderBasis):Promise<RouterBuildTicket>{
   if(!reader||reader.length>128||basis.schema!==1||!basis.databaseScope||basis.databaseScope.length>128||!basis.version||basis.version.length>128||
     !basis.publicOrigin||basis.publicOrigin.length>2048||!basis.clockVersion||basis.clockVersion.length>256)
     throw new RouterProjectionUnavailable('dependency');
@@ -23,14 +20,11 @@ export async function readRouterBuildTicket(db:SqlDatabase,input:RouterSnapshotI
     current_setting('transaction_read_only') read_only`)).rows[0];
   if(settings?.isolation!=='repeatable read'||settings.read_only!=='on')throw new RouterProjectionUnavailable('dependency');
   const resolved=await resolveRouterInput(db,input);
-  const clock=options?.trayClock?await readTrayClockBasis(db,resolved.workspaceId):undefined;
-  if(options?.trayClock&&(!input.family.startsWith('needs-you')||!clock?.ready))throw new RouterProjectionUnavailable('dependency');
   const authority=await readRouterAuthority(db,resolved,reader),cut=await readRouterCut(db,resolved.workspaceId);
   const ticket:RouterBuildTicket=Object.freeze({[TICKET]:true as const,
     input:Object.freeze({...resolved}) as RouterSnapshotInput,reader,
     authority:Object.freeze({digest:authority.digest,scopes:Object.freeze(authority.scopes.map(scope=>Object.freeze({...scope})))}),
-    cut:Object.freeze({...cut}),basis:Object.freeze({...basis,...(clock?{clockVersion:clock.clockVersion}:{})}),
-    ...(clock?{trayClockVersion:clock.clockVersion}:{})});
+    cut:Object.freeze({...cut}),basis:Object.freeze({...basis})});
   transactions.set(ticket,db);return ticket;
 }
 
@@ -55,10 +49,15 @@ export class RouterBuildCoordinator{
 
   async build(ticket:RouterBuildTicket,builder:RouterValueBuilder):Promise<RouterSnapshot>{
     const db=transactions.get(ticket);if(!db)throw new RouterProjectionUnavailable('dependency');
+    if(ticket.input.family.startsWith('needs-you')&&ticket.input.family!=='needs-you-saved-page'){
+      const value=await builder(db,ticket.input,ticket.reader);
+      if(value===null)throw new RouterProjectionUnavailable('authority');
+      return {kind:'snapshot',family:ticket.input.family,scope:ticket.input.workspaceId,value,
+        cut:ticket.cut,authority:ticket.authority,atomicGroup:routerAtomicGroup(ticket.input,ticket.reader)} as RouterSnapshot;
+    }
     const key=JSON.stringify([ticket.reader,ticket.input.family,ticket.input.workspaceId,ticket.input.agentId??ticket.input.roomId??'',
       'query'in ticket.input?ticket.input.query??null:null,
       ticket.input.family==='needs-you-saved-page'?ticket.input.before??null:null,
-      ticket.trayClockVersion??null,
       ticket.cut.stream,ticket.cut.epoch,ticket.cut.through,ticket.cut.protocol,ticket.authority.digest,
       ticket.authority.scopes.map(scope=>[scope.authorityScope,scope.epoch]),
       ticket.basis.schema,ticket.basis.databaseScope,ticket.basis.version,ticket.basis.publicOrigin,ticket.basis.clockVersion]);
@@ -76,8 +75,7 @@ export class RouterBuildCoordinator{
         const value=await builder(db,ticket.input,ticket.reader);
         if(value===null)throw new RouterProjectionUnavailable('authority');
         const snapshot={kind:'snapshot' as const,family:ticket.input.family,scope:ticket.input.agentId??ticket.input.roomId??ticket.input.workspaceId,
-          value,cut:ticket.cut,authority:ticket.authority,atomicGroup:routerAtomicGroup(ticket.input,ticket.reader),
-          ...(ticket.trayClockVersion?{clockVersion:ticket.trayClockVersion}:{})};
+          value,cut:ticket.cut,authority:ticket.authority,atomicGroup:routerAtomicGroup(ticket.input,ticket.reader)};
         const encoded=JSON.stringify(snapshot),bytes=Buffer.byteLength(encoded)+Buffer.byteLength(key);
         if(generation===this.generation&&this.flights.get(key)?.cacheable)this.remember(key,{encoded,bytes,authority:ticket.authority});
         return encoded;

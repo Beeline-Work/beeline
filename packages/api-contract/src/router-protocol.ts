@@ -35,7 +35,7 @@ export type SavedRowPayload = {
   readonly kind:'saved-row-remove';readonly scope:string;readonly bookmarkId:string;readonly messageId:string;
 };
 export type TrayGroupPayload={
-  readonly kind:'tray-classification';readonly scope:string;readonly version:1;readonly clockVersion:string;
+  readonly kind:'tray-classification';readonly scope:string;readonly version:1;readonly clockVersion?:string;
 }|{
   readonly kind:'tray-needs-replace';readonly scope:string;readonly value:NeedsYouListResult;
 };

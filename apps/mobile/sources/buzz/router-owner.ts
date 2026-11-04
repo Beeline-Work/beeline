@@ -338,8 +338,7 @@ function fact(value: unknown): boolean {
   const payload = value.payload;
   if(payload.kind==='needs-you-rooms-replace')return validateNeedsRoomsPayload(payload);
   if (typeof payload.scope !== 'string' || payload.scope.length > 256) return false;
-  if(payload.kind==='tray-classification')return payload.version===1&&typeof payload.clockVersion==='string'&&
-    /^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion)&&Object.keys(payload).length===4;
+  if(payload.kind==='tray-classification')return payload.version===1&&Object.keys(payload).every(key=>['kind','scope','version','clockVersion'].includes(key));
   if(payload.kind==='tray-needs-replace')return record(payload.value)&&Array.isArray(payload.value.items);
   if(payload.kind==='saved-row-replace')return record(payload.row);
   if(payload.kind==='saved-row-remove')return typeof payload.bookmarkId==='string'&&typeof payload.messageId==='string';
@@ -396,7 +395,7 @@ export function routerOwnerReceive(value: unknown): void {
   }
   if(value.kind==='router-unavailable'&&value.stream===ROUTER_TRAY_CLOCK_STREAM){
     // A shared control loss re-reads only held Tray state on this socket.
-    lanes?.refresh(request => request.family.startsWith('needs-you'));
+    lanes?.refresh(request => request.family.startsWith('needs-you'),true);
     return;
   }
   if (value.kind === 'router-unavailable' && value.stream === `authority:${principal}`) {

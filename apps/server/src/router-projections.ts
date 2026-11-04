@@ -8,7 +8,6 @@ import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import {scheduledWorkAuthority,scheduledWorkAuthorities,scheduledRoomDomain} from './scheduled-work-authority.js';
-import {readTrayClockBasis} from './tray-clock-basis.js';
 import {profileDomain} from './router-profile-source.js';
 
 export class RouterProjectionUnavailable extends Error {
@@ -100,18 +99,15 @@ export async function readRouterStreamCut(db:SqlDatabase,stream:string):Promise<
 
 /** All DTO queries, authority and head share this transaction handle. */
 export async function buildRouterSnapshot(database: SqlDatabase, input: RouterSnapshotInput, viewer: string,
-  build: RouterValueBuilder,options?:{readonly trayClock?:true}): Promise<RouterSnapshot> {
+  build: RouterValueBuilder): Promise<RouterSnapshot> {
   return database.transaction(async db => {
     await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
     const resolved = await resolveRouterInput(db,input);
-    const clock=options?.trayClock?await readTrayClockBasis(db,resolved.workspaceId):undefined;
-    if(options?.trayClock&&(!input.family.startsWith('needs-you')||!clock?.ready))throw new RouterProjectionUnavailable('dependency');
     const authority = await readRouterAuthority(db, resolved, viewer);
     const value = await build(db, input, viewer);
     if (value === null) throw new RouterProjectionUnavailable('authority');
     const snapshot = { kind: 'snapshot' as const, family: input.family, scope: input.agentId??input.roomId ?? input.workspaceId,
-      value, cut: await readRouterCut(db, resolved.workspaceId), atomicGroup: routerAtomicGroup(input, viewer), authority,
-      ...(clock?{clockVersion:clock.clockVersion}:{}) } as RouterSnapshot;
+      value, cut: await readRouterCut(db, resolved.workspaceId), atomicGroup: routerAtomicGroup(input, viewer), authority } as RouterSnapshot;
     return snapshot;
   });
 }
@@ -119,19 +115,12 @@ export async function buildRouterSnapshot(database: SqlDatabase, input: RouterSn
 /** Separate current snapshot and shared lock through the synchronous send.
  * An async enqueue callback is deliberately rejected by the type contract. */
 export async function fenceRouterEnqueue(database: SqlDatabase, input: RouterSnapshotInput, viewer: string,
-  expected: RouterAuthorityCertificate, enqueue: () => undefined, expectedClockVersion?: string): Promise<void> {
+  expected: RouterAuthorityCertificate, enqueue: () => undefined): Promise<void> {
   await database.transaction(async db => {
     await db.query('SET TRANSACTION ISOLATION LEVEL READ COMMITTED');
     await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
     if ((await readRouterAuthority(db, input, viewer)).digest !== expected.digest)
       throw new RouterProjectionUnavailable('authority');
-    if (expectedClockVersion !== undefined) {
-      if (!input.family.startsWith('needs-you') || !input.workspaceId)
-        throw new RouterProjectionUnavailable('dependency');
-      const clock = await readTrayClockBasis(db, input.workspaceId);
-      if (!clock?.ready || clock.clockVersion !== expectedClockVersion)
-        throw new RouterProjectionUnavailable('dependency');
-    }
     enqueue();
   });
 }
@@ -261,7 +250,7 @@ function validProjectedMember(fact:RouterFact,input:ResolvedRouterSnapshotInput,
     payload.rooms.every(room=>ROOM_SCOPE.test(room.roomId)&&room.items.every(item=>item.workspaceId===workspace&&item.roomId===room.roomId));
   if(payload.kind==='tray-classification'||payload.kind==='tray-needs-replace'){
     if(input.roomId||payload.scope!==workspace||fact.atomicGroup!==`needs-you:${workspace}:${viewer}`)return false;
-    return payload.kind==='tray-classification'?payload.version===1&&/^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion):true;
+    return payload.kind==='tray-classification'?payload.version===1:true;
   }
   if(payload.kind==='saved-row-replace'||payload.kind==='saved-row-remove'){
     if(input.roomId||payload.scope!==workspace||fact.atomicGroup!==`needs-you:${workspace}:${viewer}`)return false;
@@ -394,27 +383,6 @@ export async function fenceRouterBatchInTransaction(db:SqlDatabase,workspace:str
           input.agentId&&target.authorityScope===profileDomain(workspace,input.agentId)?input.agentId:workspace;
         safe.push({atomicGroup:group,authority:current,payload:{kind:'authority-fence',scope:logical,authorityScope:target.authorityScope,mode:'advance'}});
       }
-    }
-    // This is the final asynchronous read before synchronous enqueue. Cached
-    // classification cannot survive an overdue deadline or owner/readiness loss.
-    const trayGroups = new Set(safe.filter(fact => ['tray-classification', 'tray-needs-replace',
-      'saved-row-replace', 'saved-row-remove'].includes(fact.payload.kind)).map(fact => fact.atomicGroup));
-    if (trayGroups.size) {
-      const clock = await readTrayClockBasis(db, workspace);
-      const invalid = new Set([...trayGroups].filter(group => {
-        const markers = safe.filter(fact => fact.atomicGroup === group && fact.payload.kind === 'tray-classification');
-        return !clock?.ready || markers.length !== 1 || markers[0]!.payload.kind !== 'tray-classification'
-          || markers[0]!.payload.clockVersion !== clock.clockVersion;
-      }));
-      const emitted = new Set<string>();
-      enqueue(safe.flatMap(fact => {
-        if (!invalid.has(fact.atomicGroup)) return [fact];
-        if (emitted.has(fact.atomicGroup)) return [];
-        emitted.add(fact.atomicGroup);
-        return [{atomicGroup: fact.atomicGroup, authority: fact.authority,
-          payload: {kind: 'group-unavailable' as const, scope: workspace, reason: 'dependency' as const}}];
-      }));
-      return;
     }
     enqueue(safe);
 }

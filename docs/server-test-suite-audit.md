@@ -66,7 +66,6 @@ This inventory covers every current `apps/server/src/**/*.test.ts` file after th
 | `institutional-history.test.ts` | authorized institutional history search | retained |
 | `institutional-memory-corner-requester.integration.test.ts` | save_memory requester authority on corner wakes | retained |
 | `institutional-memory-embeddings.test.ts` | OpenRouter embedding request/response, backfill, retries, and failure handling | retained |
-| `institutional-memory-evaluation.test.ts` | institutional memory shadow evaluation | retained |
 | `institutional-memory-lifecycle.test.ts` | agent memory tools at the server boundary; memory expiry by kind and by real use; Reproduction R1: no hidden memory review | retained |
 | `institutional-memory-search-recall.test.ts` | search_memory recall (institutional memory); search_memory hybrid vector recall (no shared words) | consolidated assertions; retained coverage |
 | `institutional-memory-shadow.test.ts` | institutional memory shadow capture, serving, and turn authority | retained |

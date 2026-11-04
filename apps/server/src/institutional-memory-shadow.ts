@@ -94,60 +94,6 @@ function assertNoProhibitedSecret(
   }
 }
 
-function bodyWords(body: string): Set<string> {
-  return institutionalMemoryRequestWords(body);
-}
-
-/**
- * The same fact saved twice in different words is how memory bloats. A new
- * item that shares a keyword and most of its words with an active item under
- * another key must replace that item instead; the error names it so the
- * agent can update it instead.
- */
-async function refuseNearDuplicate(
-  db: SqlDatabase,
-  workspaceId: string,
-  proposal: InstitutionalMemoryProposal,
-  replacedId?: string,
-): Promise<void> {
-  const others = (
-    await db.query<{
-      id: string;
-      canonical_key: string;
-      version: number;
-      body: string;
-      keywords: string[];
-    }>(
-      `SELECT id,canonical_key,version,body,keywords FROM institutional_memory_items
-       WHERE workspace_id=$1 AND kind=$2 AND subject_identity_id IS NOT DISTINCT FROM $3
-         AND audience_kind=$4 AND state='active' AND deleted_at IS NULL
-         AND canonical_key<>$5 AND keywords && $6::text[]
-         AND id IS DISTINCT FROM $7::uuid
-       ORDER BY updated_at DESC LIMIT 200`,
-      [
-        workspaceId,
-        proposal.memoryKind,
-        proposal.subjectIdentityId ?? null,
-        proposal.audience,
-        proposal.canonicalKey,
-        [...proposal.keywords],
-        replacedId ?? null,
-      ],
-    )
-  ).rows;
-  const words = bodyWords(proposal.body);
-  for (const other of others) {
-    const otherWords = bodyWords(other.body);
-    const shared = [...words].filter((word) => otherWords.has(word)).length;
-    const union = new Set([...words, ...otherWords]).size;
-    if (union && shared / union >= 0.6) {
-      throw new Error(
-        `institutional memory repeats item ${other.id} (key ${other.canonical_key}, version ${other.version}); skip this save if it says the same, or update_memory item ${other.id} at version ${other.version}`,
-      );
-    }
-  }
-}
-
 type ContextItemRow = {
   id: string;
   kind: InstitutionalMemoryItem['kind'];
@@ -782,7 +728,6 @@ export async function saveInstitutionalMemory(
   const saved = await database.transaction(async (db) => {
     const authority = await memoryWriteAuthority(db, command, input);
     const proposal = memoryProposal(command, authority, input);
-    await refuseNearDuplicate(db, authority.workspaceId, proposal);
     await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
       [
         'institutional-memory-item',
@@ -849,7 +794,6 @@ export async function updateInstitutionalMemory(
       sourceMessageIds: input.sourceMessageIds,
       confidence: target.confidence,
     });
-    await refuseNearDuplicate(db, authority.workspaceId, proposal, target.id);
     await db.query(
       `UPDATE institutional_memory_items
        SET state='stale',body='',deleted_at=now(),updated_at=now() WHERE id=$1`,

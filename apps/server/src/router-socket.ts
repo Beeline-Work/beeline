@@ -1,6 +1,3 @@
-import type {TrayClockAvailability} from './tray-clock-availability.js';
-import {ROUTER_TRAY_CLOCK_STREAM} from '@beeline/api-contract/router-protocol';
-import {readTrayClockBasis} from './tray-clock-basis.js';
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import { helperUsageEnabled, subscribeAgentUsageCells, fenceAgentUsageCellEnqueue } from './helper-usage.js';
 import type { MediaMetadata } from '@beeline/api-contract/media-metadata';
@@ -33,7 +30,6 @@ export interface RouterProjectionPolicy {
   readonly families: readonly RouterFamily[];
   readonly listenerReady: () => boolean;
   /** Installed shared control consumer, not a separate rollout switch. */
-  readonly trayClockAvailability?:TrayClockAvailability;
   readonly commandDedupV1?: boolean;
   readonly roomHeadContinuityV1?:boolean;
   /** Closed compact classification needs its independent complete control
@@ -73,20 +69,9 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
       scheduledCoverage=undefined;
       const currentGeneration=++generation;refreshAudience=undefined;subscribedWorkspaces=new Set();
       negotiated = sources && policy?.listenerReady() ? ROUTER_FAMILIES.filter(f => requested.includes(f) && policy.families.includes(f)&&
-        (f!=='room-scheduled-work'||message.authorityFencesV1===true&&policy.commandDedupV1===true)&&
-        (!['needs-you-tray','needs-you-saved-page'].includes(f)||policy.trayClockAvailability!==undefined)) : [];
+        (f!=='room-scheduled-work'||message.authorityFencesV1===true&&policy.commandDedupV1===true)) : [];
       let releaseReady!: () => void;
       const ready = new Promise<void>(resolve => { releaseReady = resolve; });
-      let protocolReady=false,trayLossPending=false;
-      const flushTrayLoss=()=>{
-        if(!protocolReady||!trayLossPending||stopped||generation!==currentGeneration)return;
-        trayLossPending=false;
-        send(JSON.stringify({kind:'router-unavailable',stream:ROUTER_TRAY_CLOCK_STREAM,
-          families:negotiated.filter(family=>family.startsWith('needs-you')),reason:'dependency'}));
-      };
-      if(sources&&negotiated.includes('needs-you-saved-page'))releases.push(sources.live.subscribeTrayClockUnavailable(()=>{
-        trayLossPending=true;flushTrayLoss();
-      }));
       let authorityFencesV1=message.authorityFencesV1===true&&Boolean(sources)&&policy?.listenerReady()===true
         && (negotiated.length>0||sources?.mediaMetadataV1===true);
       usageCellV1 = message.protocol === 1 && message.usageCellV1 === true && helperUsageEnabled() && !!sources && policy?.listenerReady() === true;
@@ -193,12 +178,10 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
             const scopedNeedsEnabled=message.needsYouRoomsV1===true&&policy?.needsYouRoomsV1===true&&!jointTray&&
               negotiated.includes('needs-you')&&plan.families.has('needs-you')&&!plan.allRooms&&plan.rooms.size>0;
             let scopedNeeds:Awaited<ReturnType<PhoneService['buildRouterNeedsRooms']>>|undefined;
-            const clock=jointTray&&policy?.trayClockAvailability?.ready()?await readTrayClockBasis(db,workspace):undefined;
             if(jointTray){
               const input={family:'needs-you-tray',workspaceId:workspace} as const;
-              const authority=await readRouterCertificate(db,input,viewer),atomicGroup=routerAtomicGroup(input,viewer);
-              if(clock?.ready)facts.push({atomicGroup,authority,payload:{kind:'tray-classification',scope:workspace,version:1,clockVersion:clock.clockVersion}});
-              else facts.push({atomicGroup,authority,payload:{kind:'group-unavailable',scope:workspace,reason:'dependency'}});
+              facts.push({atomicGroup:routerAtomicGroup(input,viewer),authority:await readRouterCertificate(db,input,viewer),
+                payload:{kind:'tray-classification',scope:workspace,version:1}});
             }
             const roomAudience=negotiated.some(family=>family==='room-head'||family==='room-workflows')?await readRouterRoomAudience(db,workspace,viewer,plan):[];
             const scheduledAudience=negotiated.includes('room-scheduled-work')?await scheduledWorkAudience(db,workspace,viewer,plan,!!coverageOwner):[];
@@ -225,20 +208,19 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
                 }
                 continue;
               }
-              if(jointTray&&!clock?.ready&&family.startsWith('needs-you'))continue;
               if(family==='needs-you-saved-page'){
                 const input={family,workspaceId:workspace} as const,atomicGroup=routerAtomicGroup(input,viewer);
                 try{
                   if(plan.savedTargets.length&&!plan.savedUnavailable){
                     facts.push(...await sources.phone.buildRouterSavedFacts(db,workspace,viewer,plan.savedTargets));
                     if(plan.savedHeadChanged){
-                      const shared=policy?.sharedBuilds,options={trayClock:true as const};
-                      const ticket=shared?await readRouterBuildTicket(db,input,viewer,shared.basis,options):undefined;
+                      const shared=policy?.sharedBuilds;
+                      const ticket=shared?await readRouterBuildTicket(db,input,viewer,shared.basis):undefined;
                       if(ticket&&(ticket.cut.stream!==to.stream||ticket.cut.epoch!==to.epoch||ticket.cut.through!==to.through))
                         throw new RouterProjectionUnavailable('dependency');
                       const value=ticket&&shared
-                        ?(await shared.coordinator.build(ticket,(tx,args,reader)=>sources.phone.buildRouterValue(tx,args,reader,options))).value
-                        :await sources.phone.buildRouterValue(db,input,viewer,options);
+                        ?(await shared.coordinator.build(ticket,(tx,args,reader)=>sources.phone.buildRouterValue(tx,args,reader))).value
+                        :await sources.phone.buildRouterValue(db,input,viewer);
                       if(!value)throw new RouterProjectionUnavailable('authority');
                       facts.push({atomicGroup,authority:ticket?.authority??await readRouterAuthority(db,input,viewer),
                         payload:{kind:'scope-replace',family,scope:workspace,value}} as RouterFact);
@@ -294,11 +276,10 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
                   facts.push({atomicGroup:routerAtomicGroup(input,viewer),authority:room.authority,
                     payload:{kind:'authority',...room.denied,allowed:false}});continue;
                 }
-                const options=jointTray&&family.startsWith('needs-you')?{trayClock:true as const}:undefined;
                 let authority,ticket:RouterBuildTicket|undefined;
                 try {
                   if(changed&&policy?.sharedBuilds&&!(jointTray&&family==='needs-you-tray')){
-                    ticket=await readRouterBuildTicket(db,input,viewer,policy.sharedBuilds.basis,options);
+                    ticket=await readRouterBuildTicket(db,input,viewer,policy.sharedBuilds.basis);
                     if(ticket.cut.stream!==to.stream||ticket.cut.epoch!==to.epoch||ticket.cut.through!==to.through)
                       throw new RouterProjectionUnavailable('dependency');
                     authority=ticket.authority;
@@ -330,8 +311,8 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
                   facts.push({atomicGroup:routerAtomicGroup(input,viewer),authority,payload:{kind:'scope-replace',family,scope:workspace,value:{count:scopedNeeds.count}}});continue;
                 }
                 const value = ticket&&policy?.sharedBuilds
-                  ?(await policy.sharedBuilds.coordinator.build(ticket,(tx,args,reader)=>sources.phone.buildRouterValue(tx,args,reader,options))).value
-                  :await sources.phone.buildRouterValue(db,input,viewer,options);
+                  ?(await policy.sharedBuilds.coordinator.build(ticket,(tx,args,reader)=>sources.phone.buildRouterValue(tx,args,reader))).value
+                  :await sources.phone.buildRouterValue(db,input,viewer);
                 if (!value) throw new RouterProjectionUnavailable('authority');
                 facts.push({atomicGroup:routerAtomicGroup(input,viewer),authority,
                   payload:{kind:'scope-replace',family,scope,value}} as RouterFact);
@@ -392,7 +373,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
         ...(message.roomHeadContinuityV1===true&&policy?.roomHeadContinuityV1===true&&authorityFencesV1&&negotiated.includes('room-head')?{roomHeadContinuityV1:true}:{}),
         ...(usageCellV1 ? {usageCellV1:true} : {}), commandDedupV1: policy?.commandDedupV1 === true,mediaMetadataV1:sources?.mediaMetadataV1===true&&authorityFencesV1,authorityFencesV1 };
       send(JSON.stringify({ type: 'router-capabilities', ...capabilities }));
-      protocolReady=true;releaseReady();flushTrayLoss();
+      releaseReady();
       return true;
     },
     requireUsage(): void {
@@ -400,8 +381,6 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
     },
     requireSnapshot(args: Record<string, unknown>): void {
       if(args.family==='workspace-roster')readRosterQuery(args.query);
-      if(negotiated.includes('needs-you-saved-page')&&typeof args.family==='string'&&args.family.startsWith('needs-you')&&
-        policy?.trayClockAvailability?.ready()!==true)throw new PhoneOperationError(503,{error:'router_projection_unavailable'});
       if (!policy?.listenerReady() || !negotiated.includes(args.family as RouterFamily))
         throw new PhoneOperationError(409, { error: 'router_family_unavailable' });
     },
@@ -431,12 +410,11 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
         try{await scheduledWorkAudience(database,resolved.workspaceId,viewer,routerSourcePlan([],viewer));}
         catch(error){if(error instanceof RouterProjectionUnavailable)throw new PhoneOperationError(503,{error:'router_projection_unavailable'});throw error;}
       }
-      const options=negotiated.includes('needs-you-saved-page')&&input.family.startsWith('needs-you')?{trayClock:true as const}:undefined;
       const shared=policy?.sharedBuilds;
-      const result=!shared?await sources.phone.readRouterSnapshot(scopedInput,viewer,options):await database.transaction(async tx=>{
+      const result=!shared?await sources.phone.readRouterSnapshot(scopedInput,viewer):await database.transaction(async tx=>{
         await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-        const ticket=await readRouterBuildTicket(tx,scopedInput,viewer,shared.basis,options);
-        return shared.coordinator.build(ticket,(db,args,reader)=>sources.phone.buildRouterValue(db,args,reader,options));
+        const ticket=await readRouterBuildTicket(tx,scopedInput,viewer,shared.basis);
+        return shared.coordinator.build(ticket,(db,args,reader)=>sources.phone.buildRouterValue(db,args,reader));
       });
       if(input.family==='room-scheduled-work'){
         if(requestGeneration!==generation||coverageOwner!==scheduledCoverage||coverageOwner&&requestSegment!==coverageOwner.segment)throw new PhoneOperationError(503,{error:'router_projection_unavailable'});
@@ -470,7 +448,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
         try{await scheduledCoverage.fenceSnapshot(args as RouterSnapshotInput,snapshot,pending.segment,safe=>enqueue(safe));}
         finally{scheduledReplies.delete(snapshot);}return;
       }
-      await fenceRouterEnqueue(database, args as RouterSnapshotInput, viewer, snapshot.authority, enqueue, 'clockVersion' in snapshot ? snapshot.clockVersion : undefined);
+      await fenceRouterEnqueue(database, args as RouterSnapshotInput, viewer, snapshot.authority, enqueue);
     },
   };
 }

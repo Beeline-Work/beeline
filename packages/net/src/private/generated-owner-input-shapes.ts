@@ -81,7 +81,7 @@ export const ownerInputShapes: readonly WireShape[] = expandWireShapes([
   [12,{"roomId":1,"subscriptionId":1}],
   [12,{"needs":-79,"saved":-121,"needsError":-18,"savedError":-18}],
   [8,[11,79]],
-  [12,{"items":80}],
+  [12,{"nextExpiry":-34,"items":80}],
   [10,81],
   [12,{"messageId":1,"workspaceId":1,"roomId":1,"roomName":1,"roomKind":82,"parentRoomName":-18,"text":1,"createdAt":34,"expiresAt":-34,"author":-87,"approval":-90}],
   [8,[83,84,85]],

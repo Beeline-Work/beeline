@@ -407,14 +407,11 @@ async function main() {
   const operationOutcomes = new OperationOutcomes();
   const sentryWakeAgentId = sentryWakeAgentFromEnv();
   const router = createNetworkRouterRuntime({
-    database, jobsDatabase, live, instanceId: connectionPresence.instanceId, publicOrigin,
+    database, live, instanceId: connectionPresence.instanceId, publicOrigin,
     listenerReady: () => liveListener.projectionHealth().connected,
-    wake: () => { work.wake('router-tray', 'committed-tray-source'); leader.wake(); },
-    retireOwner: connection => leader.parkOwner(connection),
   });
   liveListener.setServerLeaseEvidence((instance, renewedAt, removed) => {
     connectionPresence.observeServerLease(instance, renewedAt, removed);
-    router?.work.observeServerLease(instance, renewedAt, removed);
   });
   const server = createBeelineServer({
     ...(router ? { routerProjections: router.policy, mediaMetadataV1: router.mediaMetadataV1 } : {}),
@@ -515,7 +512,7 @@ async function main() {
     const due = await backgroundJobs.run('connector-offer-expiry', () => connectorOfferExpiry.runOnce());
     if (due.ok) return due.value;
   });
-  if (!router) work.addDeadline('choices', async () => {
+  work.addDeadline('choices', async () => {
     const due = await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
     if (due.ok) return due.value;
   });
@@ -553,8 +550,7 @@ async function main() {
   registerBackgroundDeadlineFamilies(work,repairDeadlineFamilies(jobsDatabase,{
     live,phone,mediaExpiry,institutionalMemory,institutionalAnchors,voice,voiceDeadlines,
   }),(name,run)=>backgroundJobs.run(name,run),jobsDatabase);
-  if (router) work.addDeadline('router-tray', () => router.work.run());
-  const leader = new BackgroundLeader(jobsDatabase, (newLeader, signal) => work.run(newLeader, signal), router?.work.leadership);
+  const leader = new BackgroundLeader(jobsDatabase, (newLeader, signal) => work.run(newLeader, signal));
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
   const stopBackgroundSources=subscribeBackgroundFamilies(jobsDatabase,live,backgroundSourceFamilies(),name=>wakeWork(name,'committed-family-source'));
   const wakeSystemDms=()=>wakeWork('operator-system-dms','committed-system-dm');
@@ -612,10 +608,6 @@ async function main() {
     await connectionPresence.renewLease();
     await connectionPresence.start();
   }, port, host);
-  // The existing aggregate lease also covers the background owner when no
-  // phone/helper socket is attached. This adds no separate renewal loop.
-  const releaseRouterLease = router ? connectionPresence.holdServerConnection() : undefined;
-  await router?.start();
   void leader.run();
   const stopOperationOutcomes = startOperationOutcomeFlush(jobsDatabase, operationOutcomes, backgroundJobs, wake => jobsDatabase.onRecovery(wake));
   const stopComputerExpiry = startComputerExpirySweep(database, live);
@@ -631,7 +623,6 @@ async function main() {
     stopScheduleRecovery();stopScheduleResync();stopScheduleWake();
     await leader.stop();
     await router?.close();
-    releaseRouterLease?.();
     stopBackgroundSources();
     stopVoiceDeadlines();
     // The provider flight intentionally does not block unrelated leader jobs.

@@ -1,4 +1,3 @@
-import {readTrayClockCause,readTrayClockBasisCause} from './tray-clock-protocol.js';
 import type { RouterFamily } from '@beeline/api-contract/router-protocol';
 import { readTrayMutableCause } from './tray-mutable-source.js';
 import { readTraySavedWindowCause } from './tray-saved-window.js';
@@ -36,8 +35,6 @@ const dependencies: Readonly<Record<string, readonly RouterFamily[]>> = {
   chat_dismissals: ['room-list'],
   // These tables do not enter any of the first four DTOs.
   agent_schedules: [], agent_subscriptions: [],
-  'tray-clock':['needs-you','needs-you-tray','needs-you-count'],
-  'tray-clock-basis':[], 'tray-clock-readiness':[],
   'tray-projection':['needs-you','needs-you-tray','needs-you-count'],
   'scheduled-work-projection':['room-scheduled-work'],
   'tray-saved-window':['needs-you-saved-page'],
@@ -77,19 +74,6 @@ export function routerSourcePlan(causes: readonly Record<string,unknown>[], view
     }
     if(table==='memberships'&&cause.identityId===viewer||table==='rooms'||table==='workspaces'||table==='corner_facts'||table==='corner_github_cache'){
       allProfiles=true;families.add('agent-profile');
-    }
-    if(table==='tray-clock-basis'||table==='tray-clock-readiness'){
-      const source=readTrayClockBasisCause(cause);
-      if(!source||!workspaceId||source.trayWorkspaceId!==workspaceId)throw new RouterProjectionUnavailable('dependency');
-      // The committed basis is read once by the joint group producer. A basis
-      // transition alone carries no changed cells and never queries a page.
-      continue;
-    }
-    if(table==='tray-clock'){
-      const source=readTrayClockCause(cause);
-      if(!source||!workspaceId||source.trayWorkspaceId!==workspaceId)throw new RouterProjectionUnavailable('dependency');
-      if(source.trayReaderId===viewer)for(const family of dependencies[table]!)families.add(family);
-      continue;
     }
     if(table==='tray-saved-window'){
       const source=readTraySavedWindowCause(cause);

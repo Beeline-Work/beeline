@@ -18,9 +18,8 @@ describe('universal production router admission', () => {
     const query = vi.fn(async () => { throw new Error('Composition must not access data'); });
     const database = { query, transaction: vi.fn() } as unknown as SqlDatabase;
     let ready = false;
-    const router = createNetworkRouterRuntime({ database, jobsDatabase: database, live: new LiveHub(),
-      instanceId: 'activation-test', publicOrigin: 'https://synthetic.invalid', listenerReady: () => ready,
-      wake: vi.fn(), retireOwner: vi.fn() });
+    const router = createNetworkRouterRuntime({ database, live: new LiveHub(),
+      instanceId: 'activation-test', publicOrigin: 'https://synthetic.invalid', listenerReady: () => ready });
     if (enabled) {
       expect(router?.policy.families).toEqual(ROUTER_FAMILIES);
       expect(router?.policy).toMatchObject({ needsYouRoomsV1: true, commandDedupV1: true,

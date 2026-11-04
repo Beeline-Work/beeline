@@ -141,7 +141,6 @@ export default function TrayScreen() {
   const [pending, setPending] = useState<readonly PendingClear[]>([]);
   const pendingRef = useRef<readonly PendingClear[]>([]);
   const [workspaceName, setWorkspaceName] = useState<string | null>(first(params.workspaceName) || null);
-  const [inspectError, setInspectError] = useState<string | null>(null);
   const [now] = useState(() => Date.now());
   const focused = useRef(false);
   const paintContext = useRef({ workspaceId, ready: false });
@@ -244,10 +243,6 @@ export default function TrayScreen() {
     };
   }, [desktop, workspaceId, params.workspaceName]);
 
-  useEffect(() => {
-    setInspectError(desktop && selected ? 'Could not open this corner.' : null);
-  }, [desktop, selected]);
-
   const open = useCallback(
     (target: Target, via: 'bookmark' | 'needs-you') => {
       const responseId = `${via}:${target.messageId}`;
@@ -274,10 +269,9 @@ export default function TrayScreen() {
     (item: NeedsYouItemView) => {
       // Opening an approval does not dismiss or decide it.
       if (!item.approval) void clear(item);
-      if (desktop) setSelected(item);
-      else open(item, 'needs-you');
+      open(item, 'needs-you');
     },
-    [clear, desktop, open],
+    [clear, open],
   );
 
   const decideNeed = useCallback(async (item: NeedsYouItemView, action: NeedsYouActionView) => {
@@ -457,8 +451,8 @@ export default function TrayScreen() {
         accessibilityRole={bookmark.available || desktop ? 'button' : undefined}
         accessibilityState={desktop ? { selected: selected?.messageId === bookmark.messageId } : undefined}
         // A desktop pane explains an unavailable source; a phone has nowhere to go.
-        onPress={desktop ? () => setSelected(bookmark)
-          : bookmark.available ? () => open(bookmark, 'bookmark') : undefined}
+        onPress={bookmark.available ? () => open(bookmark, 'bookmark')
+          : desktop ? () => setSelected(bookmark) : undefined}
         style={({ pressed }) => [
           styles.row,
           desktop && selected?.messageId === bookmark.messageId && styles.rowSelected,
@@ -628,15 +622,6 @@ export default function TrayScreen() {
               variant="quiet"
               appearance={{ control: styles.remove, label: styles.removeText }}
             />
-          </View>
-        ) : selected && inspectError ? (
-          <View style={styles.emptyBlock}>
-            <Text style={styles.emptyTitle}>Could not open this corner</Text>
-            <Text style={styles.empty}>{inspectError}</Text>
-          </View>
-        ) : selected ? (
-          <View style={styles.loadingBlock} testID="tray-corner-loader">
-            <SurfaceGlyphLoader />
           </View>
         ) : null}
       </View>

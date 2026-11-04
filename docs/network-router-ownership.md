@@ -29,3 +29,9 @@ Helper source epochs, current connection ownership, turn bindings and dispatch-t
 ## Room projection scope
 
 The canonical `room-head` projection contains the newest 30 messages (`ROOM_VIEW_MESSAGE_LIMIT`). History windows continue to use the existing explicit history operations. Mutation responses update loaded message records. The existing negotiated router suppresses legacy durable message deltas; it does not currently deliver another reader's edits to historical rows outside that head. Removing the fallback preserves that existing router behavior. `useRoomSurfaceSession.test.ts` covers canonical head updates, local history mutation results, unread boundaries, Room reopening, presence and draft settlement.
+
+## Cleanup regression evidence
+
+The native comparison used the same release shell and cloned local databases on emulator-5628. Main retained `router90-send-repro`; the cleanup acknowledged and committed the send but returned to an empty transcript even though the canonical Room-head push contained the message. The canonical owner must classify contiguous Workspace intervals that leave a covered Room head unchanged, including the interval from reopening a chat, so the next message replacement can reach the Room consumer. `useRoomSurfaceSession.test.ts` exercises the real canonical owner, multipart push delivery, session rendering and outbox reconciliation across that boundary; `read-lanes.test.ts` also checks that a genuinely missing interval stays unbridged.
+
+No latency A/B was captured. The local main baseline failed Room-list readiness because the 200-Room fixture exceeded the existing 64 KiB phone snapshot bound, and the later baseline setup also failed. There are no p50/p95 results, and the initial native send smoke failed as described above. Automated regression validation does not substitute for the driver's final native rerun.

@@ -30,6 +30,7 @@ export class MobileCommandOwner {
   private readonly restored = new Set<string>();
   private readonly listeners = new Set<(record: CommandIntent) => void>();
   private readonly storageKey: string;
+  private readonly preparedLocks = new Map<string, { ready: Promise<boolean>; release(): void }>();
   constructor(readonly origin: string, readonly principal: string, private readonly socket: CommandSocketBridge) {
     this.origin = new URL(origin).origin;
     const partition = { origin: this.origin, principal };
@@ -45,12 +46,18 @@ export class MobileCommandOwner {
       // Each tab changes only its own records. Preserve other tabs' intents
       // and terminal outcomes while replacing the shared snapshot atomically.
       const changes = records.filter(record => observed.get(intentKey(record)) !== JSON.stringify(record));
-      await navigator.locks.request(namespace + key, { mode: 'exclusive' }, () => {
+      const claimed: string[] = [];
+      try { await navigator.locks.request(namespace + key, { mode: 'exclusive' }, async () => {
         if (this.suspended) throw new Error('Command owner suspended');
         const shared: CommandIntent[] = JSON.parse(web.storage!.getItem(namespace + key) ?? '[]');
         const merged = new Map(shared.map(record => [intentKey(record), record]));
         for (const record of changes) {
           const prior = merged.get(intentKey(record));
+          if (!prior && record.state === 'prepared') {
+            if (!await this.holdPrepared(record.id)) throw new Error('Command gesture is active in another tab');
+            claimed.push(record.id);
+            if (this.suspended) throw new Error('Command owner suspended');
+          }
           if (prior && (prior.bytes !== record.bytes || prior.digest !== record.digest))
             throw new Error('Command storage identity changed');
           if (record.state === 'sending' && prior && terminal(prior))
@@ -67,15 +74,38 @@ export class MobileCommandOwner {
         for (const record of completed.slice(0, Math.max(0, completed.length - 100))) merged.delete(intentKey(record));
         web.storage!.setItem(namespace + key, JSON.stringify([...merged.values()]));
       });
+      } catch (error) {
+        for (const id of claimed) this.releasePrepared(id);
+        throw error;
+      }
       observed = new Map(records.map(record => [intentKey(record), JSON.stringify(record)]));
     } }, async value => bytesToHex(sha256(utf8ToBytes(value))), randomId, Date.now);
     this.intents.setPartition(partition);
     if (saved) {
       this.intents.restore(initial);
-      // Another browser tab can still own an unsent Undo window. Adopt its
-      // sent intents, but leave that gesture's prepared command with its owner.
-      for (const record of this.intents.view()) if (!web || record.sent) this.restored.add(record.id);
+      for (const record of this.intents.view()) this.restored.add(record.id);
     }
+  }
+  private holdPrepared(id: string): Promise<boolean> {
+    if (!web) return Promise.resolve(true);
+    const held = this.preparedLocks.get(id);
+    if (held) return held.ready;
+    let release!: () => void;
+    const lifetime = new Promise<void>(resolve => { release = resolve; });
+    let acquired!: (value: boolean) => void;
+    const ready = new Promise<boolean>(resolve => { acquired = resolve; });
+    this.preparedLocks.set(id, { ready, release });
+    void navigator.locks.request(namespace + this.storageKey + ':' + id,
+      { mode: 'exclusive', ifAvailable: true }, async lock => {
+        if (!lock || this.suspended) { this.releasePrepared(id); acquired(false); return; }
+        acquired(true);
+        await lifetime;
+      }).catch(() => { this.releasePrepared(id); acquired(false); });
+    return ready;
+  }
+  private releasePrepared(id: string): void {
+    this.preparedLocks.get(id)?.release();
+    this.preparedLocks.delete(id);
   }
   canPrepare(): boolean {
     const state = this.socket.commandState();
@@ -83,7 +113,10 @@ export class MobileCommandOwner {
   }
   prepare(admitted: AdmittedCommand): Promise<CommandIntent> { this.adopt(); return this.intents.prepare(admitted); }
   find(id: string): CommandIntent | undefined { return this.intents.view().find(record => record.id === id); }
-  suspend(): void { this.suspended = true; this.intents.setPartition(undefined); }
+  suspend(): void {
+    this.suspended = true; this.intents.setPartition(undefined);
+    for (const id of this.preparedLocks.keys()) this.releasePrepared(id);
+  }
   subscribe(listener: (record: CommandIntent) => void): () => void { this.listeners.add(listener); return () => { this.listeners.delete(listener); }; }
   private notify(record: CommandIntent): void { for (const listener of this.listeners) listener(record); }
   private adopt(): void {
@@ -98,10 +131,13 @@ export class MobileCommandOwner {
     if (record.state === 'committed') return { messageId: record.id };
     const connection = this.socket.commandState();
     if (!connection.ready || !connection.commandDedupV1) throw new CommandAwaitingConfirmation();
+    if (record.state === 'prepared' && !await this.holdPrepared(id)) throw new CommandAwaitingConfirmation();
     const kind = record.state === 'prepared' ? 'initial' : cause === 'reconnect' ? 'reconnect' : 'retry';
-    const next = await this.intents.dispatch(record, { kind, generation: connection.generation,
+    let next: CommandIntent;
+    try { next = await this.intents.dispatch(record, { kind, generation: connection.generation,
       commandDedupV1: connection.commandDedupV1, ...(kind === 'retry' ? { actionId: randomId() } : {}) } as Parameters<CommandIntents['dispatch']>[1],
       (operation, args, command) => this.socket.requestCommand(operation, args, command));
+    } finally { this.releasePrepared(id); }
     this.notify(next);
     if (next.state !== 'committed') throw new CommandAwaitingConfirmation();
     return { messageId: next.id };
@@ -119,7 +155,10 @@ export class MobileCommandOwner {
   async cancel(id: string): Promise<void> {
     this.adopt();
     const record = this.find(id);
-    if (record) this.notify(await this.intents.cancel(record));
+    if (record) {
+      this.notify(await this.intents.cancel(record));
+      this.releasePrepared(id);
+    }
   }
   async committedMessage(id: string): Promise<void> {
     const record = this.find(id);

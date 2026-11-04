@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { ChatListView, NostrEvent, RoomView } from '@beeline/buzz-client';
 import { SurfaceResponseCache, visibleLiveOverlays } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
-import { mobileSurfaceCache } from '@/buzz/surface-storage';
+import { mobileSurfaceCache, createRoomOutbox } from '@/buzz/surface-storage';
 import { loadBuzzIdentity, loadBuzzViewerPubkey } from '@/auth/buzz-identity-storage';
 
 import { resetClientState } from '@/sync/client-reset';
@@ -29,9 +29,12 @@ type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 vi.mock('@/sync/transport/live-connection', () => ({ reconnectNow: () => { controls.explicitReconnects += 1; } }));
 vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => controls.routerMode, holdRouterConnection: () => () => {} }));
 vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
-vi.mock('@/buzz/router-owner', () => ({
+vi.mock('@/buzz/router-owner', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/buzz/router-owner')>();
+  return { ...actual,
   routerFamilyMode: () => controls.routerMode,
-  acquireRouterLane: (_input: unknown, _visible: unknown, changed: () => void) => {
+  acquireRouterLane: (_input: Parameters<typeof actual.acquireRouterLane>[0], _visible: () => boolean, changed: () => void) => {
+    if (controls.realRouter) return actual.acquireRouterLane(_input, _visible, changed);
     const lane = {
       fetch: async () => { controls.roomReads++; return controls.roomResponse!; },
       apply: (view: RoomView) => { controls.routerValue = view; changed(); },
@@ -46,10 +49,11 @@ vi.mock('@/buzz/router-owner', () => ({
   },
   routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
   retryRouterLane: () => { controls.retryCalls++; }, routerOwnerListPanel: () => {},
-}));
+}; });
 
 const controls = vi.hoisted(() => ({
   focused: true,
+  realRouter: false,
   routerMode: 'router' as 'pending' | 'router',
   routerValue: null as RoomView | null,
   routerError: null as string | null,
@@ -197,6 +201,10 @@ vi.mock('@/buzz/community-storage', () => ({
 }));
 
 vi.mock('@/buzz/surface-storage', () => ({
+  routerAuthorityStorageReady: () => true,
+  routerCommandStorageReady: () => true,
+  routerLaneStorage: () => ({ write: async () => {}, fence: async () => {}, floor: async () => {},
+    remove: async () => {}, subscribeFences: () => () => {}, subscribeFloors: () => () => {} }),
   mobileSurfaceCache: {
     peek: vi.fn((path: string) => path.startsWith('/room/') ? controls.initialView : null),
     read: vi.fn(async () => controls.initialView),
@@ -409,6 +417,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
+  controls.realRouter = false;
   resetClientState();
   controls.routerMode = 'router';
   controls.routerValue = null; controls.routerError = null;
@@ -1547,5 +1556,59 @@ describe('canonical Room updates', () => {
     expect(current().roomSurface?.room.id).toBe(roomId);
     expect(current().hydrationFailed).toBe(false);
     expect(controls.roomReads).toBe(0);
+  });
+});
+
+
+describe('Room session with the real canonical owner', () => {
+  it('keeps a sent row after unrelated stream progress and its canonical push', async () => {
+    const { routerOwnerNavigation, routerOwnerNegotiated, routerOwnerReceive } = await import('@/buzz/router-owner');
+    const { sha256 } = await import('@noble/hashes/sha2.js');
+    const { bytesToHex, utf8ToBytes } = await import('@noble/hashes/utils.js');
+    const hash = (value: unknown) => bytesToHex(sha256(utf8ToBytes(JSON.stringify(value))));
+    controls.realRouter = true;
+    const roomId = '11111111-1111-4111-8111-111111111111';
+    const workspaceId = '22222222-2222-4222-8222-222222222222';
+    const initial = { ...roomView(roomId), room: { ...roomView(roomId).room, workspaceId }, repositoryResolution: 'none' as const };
+    const scopes = [{ authorityScope: `reader:viewer:workspace:${workspaceId}`, epoch: '1' },
+      { authorityScope: `room:${roomId}`, epoch: '1' }];
+    const authority = { scopes, digest: hash(scopes) };
+    const cut = (through: number) => ({ stream: `workspace:${workspaceId}`, epoch: 'stream', through, protocol: 1 as const });
+    const atomicGroup = `room-head:${roomId}:viewer`;
+    const execute = vi.fn(async () => ({ kind: 'snapshot' as const, family: 'room-head' as const, scope: roomId,
+      value: initial, authority, atomicGroup, cut: cut(51) }));
+    routerOwnerNavigation({ routes: [{ key: 'room', name: 'beeline/chat/[channelId]', params: { channelId: roomId, communityId: workspaceId } }] });
+    await routerOwnerNegotiated({ generation: 1, families: ['room-head'], authorityFencesV1: true,
+      roomHeadContinuityV1: true, execute });
+    let current!: UseRoomSurfaceSessionResult;
+    let tree!: ReactTestRenderer;
+    await act(async () => { tree = create(React.createElement(Harness, { channelId: roomId,
+      capture: value => { current = value; } })); });
+    await flushEffects();
+    expect(current.roomSurface?.messages).toEqual([]);
+    const push = async (from: number, to: number, facts: unknown[]) => {
+      const frame = { batchId: `batch-${to}`, from: cut(from), to: cut(to), partCount: 1, contentDigest: hash(facts) };
+      await act(async () => {
+        routerOwnerReceive({ ...frame, kind: 'push-part', partIndex: 0, facts });
+        routerOwnerReceive({ ...frame, kind: 'push-commit' });
+        for (let i = 0; i < 100; i++) await Promise.resolve();
+      });
+    };
+    await push(51, 52, []);
+    const message = { id: '8d041263f5fc6a3e6c94fd8383a3aa62c710af505797a3b6494cf81fcaff2523',
+      text: 'router90-send-repro', createdAt: 1793783245, author: initial.viewer.identity, presentation: 'message' as const };
+    await act(async () => current.applyRoomMessageResult(message));
+    expect(current.roomSurface?.messages.map(row => row.id)).toEqual([message.id]);
+    const committed = { ...initial, messages: [message], viewer: { ...initial.viewer,
+      readCursor: { messageId: message.id, firstUnreadMessageId: null, unreadCount: 0 } } };
+    await push(52, 54, [{ atomicGroup, authority, payload: { kind: 'scope-replace', family: 'room-head', scope: roomId, value: committed } }]);
+    expect(current.roomSurface).toEqual(committed);
+    expect(tree.root.findAllByType('message-row').map((node: any) => node.props.children)).toEqual([message.text]);
+    const outbox = vi.mocked(createRoomOutbox).mock.results.at(-1)!.value;
+    expect(outbox.reconcile).toHaveBeenLastCalledWith(new Set([message.id]));
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(controls.transportCount).toBe(1);
+    expect(controls.explicitReconnects).toBe(0);
+    expect(mobileSurfaceCache.read).not.toHaveBeenCalled();
   });
 });

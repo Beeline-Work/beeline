@@ -1,21 +1,20 @@
 # Accepted audit decisions
 
 This batch implements the captain's accepted recommendations. The code batch
-https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1's four
-schedule stops remain stored and independently verified. B1 has now deleted all
-**63,964 approved ledger rows**, preserved all 228 skill versions via SET NULL,
-and updated **2,875 note cards**. The resumed run stopped on one cleanup-blocked
-client waiting **263.979 ms**, above the revised 250 ms limit. No retry followed.
-Current read-back and remaining work are in `b1-resume-lock-stop.json`; the ready
-08:00Z restore point remains `b1-low-traffic-restore-point.json`. B8 drops remain
-staged and unapplied.
+https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1 is
+complete. B1 has deleted all **63,964 approved ledger rows**, preserved all 228
+skill versions via SET NULL, and updated **4,951 note cards**. B1 is now **paused
+by firstmate for the production release retry**. The cleanup backend has exited,
+holds zero locks, and blocks zero clients. **187,138 cards and 147 fields** remain.
+No further production access will occur until firstmate resumes the task. See
+`b1-release-pause.json`; B8 remains staged and unapplied.
 
 | Decision | Implementation |
 | --- | --- |
 | G1 | `scripts/check-architecture.mjs` reports relaxations for weekly review; candidate rules still must pass. `scripts/ci-workspace-tasks.sh` runs the candidate guard. |
 | G2 | System catalog shape and source-use guards remain; phrase changes are reviewed weekly without a wording hash approval gate. |
 | G3 | The old System fingerprint lock was already removed. The wording-hash approval gate and corner declaration lock are retired; the catalog guard and exhaustive corner reference replace them. |
-| B1 | `scripts/audit-decisions-cleanup.mjs` defaults to `BEGIN READ ONLY`, counts exact D1 classes, and rolls back. `--apply` changes the skill-version job FK to `ON DELETE SET NULL` before deleting jobs, and checks that every skill version survived. Never called by deployment. All 63,964 approved ledger rows deleted and SET NULL preserved all versions; 2,875 cards updated before the revised 250 ms stop threshold tripped. Remaining cards/values await direction. |
+| B1 | `scripts/audit-decisions-cleanup.mjs` defaults to `BEGIN READ ONLY`, counts exact D1 classes, and rolls back. `--apply` changes the skill-version job FK to `ON DELETE SET NULL` before deleting jobs, and checks that every skill version survived. Never called by deployment. All 63,964 approved ledger rows deleted and SET NULL preserved all versions; 4,951 cards updated across the resumed passes. The release pause leaves 187,138 cards and 147 fields; firstmate owns resume authority. |
 | B2 | Maintenance keeps the latest 200 tool/output activity rows per archived corner, matching `ROOM_VIEW_TOOL_ROW_LIMIT`; leaves open corners, prose and durable facts alone. Scans at most 20 archived corners and deletes at most 1,000 rows per pass; an ephemeral cursor rotates completed slices. |
 | B3 | Check-start and individual check-pass notes stop. Whole-head green, failure, conflict and merge notes remain; note IDs retain their dedupe formulas. |
 | B4 | Expired claims become terminal `uncertain` after a crashed send, or `failed` for exhausted retries. Active outbox windows survive. Uncertain rows retain an hour before deletion. Expired join devices and notifications are swept in bounded batches after the existing one-hour delivery window. |
@@ -303,3 +302,35 @@ Independent READ ONLY read-back verifies:
 `b1-resume-before.json` records the resumed dry run. `b1-resume-lock-stop.json`
 records per-table changes, maxima and independent read-back. Further production
 changes await firstmate's direction under the threshold stop rule.
+
+## B1 release pause after quarter-size pass (inboxes 014–015)
+
+Inbox 014 authorized six-row batches (25/4 rounded down), 200 ms pauses, and a
+three-row fallback if needed. Local PGlite tests cover both sizes, autonomous
+commits, unrelated-card retention, and no rewriting of completed FK/ledger work.
+The six-row pass updated **2,076 cards**, then received monitor-initiated SQL
+cancellation. It recorded no client blocked by cleanup; its maximum global
+observed wait was 31.423 ms. The old zero-wait check for the cleanup's own lock
+wait was still present in that run. The operator now applies the explicit
+250 ms/three-client rule while its own waits remain bounded by lock_timeout=2s,
+but that correction has not been run in production.
+
+Before the three-row fallback began, inbox 015 ordered B1 paused to keep the
+messages table clear for the release migration retry. No fallback began. The
+completed READ ONLY read-back at 08:43:04Z shows backend 886699 absent, zero locks
+held and zero clients blocked by it. That readback connection then closed normally.
+No new production call was made after the pause instruction.
+
+Current cumulative state:
+
+- 63,964 ledger rows deleted; every approved ledger predicate is zero.
+- 4,951 cards updated (2,875 + 2,076); 187,138 matching cards remain.
+- 147 other field updates remain untouched.
+- 228 skill versions preserved; 18 source-job links detached.
+- Original telemetry cohorts 55,908 / 11,700 unchanged; live totals 56,144 / 11,709.
+- Maximum observed cleanup-attributed wait across runs remains 263.979 ms.
+- B8 untouched; ready restore point remains audit-b1-20261104080017-pre-cleanup.
+
+`b1-quarter-before.json` records the six-row dry run. `b1-release-pause.json`
+records the pass receipt, current counts, release proof and explicit pause.
+Further work requires firstmate's resume instruction.

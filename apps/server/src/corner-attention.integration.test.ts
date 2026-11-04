@@ -1327,3 +1327,22 @@ it('IDLE-DERIVED: CI completing during the post-turn grace keeps the remaining g
   expect(new Date(pending[0]!.wake_after).getTime()).toBeGreaterThan(Date.now()+20_000);
   expect(new Date(pending[0]!.wake_after).getTime()).toBeLessThanOrEqual(Date.now()+30_000);
 });
+
+it('IDLE-SCOPE: another corner’s answered report never changes this corner’s idle episode', async () => {
+  const other = '44444444-4444-4444-8444-444444444444';
+  const idleSince = async () => (await db.query<{ idle_since: string }>(cornerIdleSql('$1'), [C])).rows[0]!.idle_since;
+  const before = await idleSince();
+  await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by)
+    VALUES($1,$2,$3,'Unrelated corner',$4)`, [other, WS, ROOM, COMMANDER]);
+  await insertCornerFacts(db, { cornerId: other, ownerAgentId: WORKER, workerAgentId: WORKER });
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,card,created_at)
+    VALUES($1,$2,$3,'blocked: Choose a scope.',
+      jsonb_build_object('sourceRoomId',$4::text,'reportToId',$5::text,'waitingAnswered',true),now()-interval '2 minutes')`,
+    ['e'.repeat(64), ROOM, WORKER, other, COMMANDER]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+    VALUES($1,$2,$3,'Proceed with that scope.',now()-interval '1 minute')`, ['f'.repeat(64), ROOM, COMMANDER]);
+  expect(await idleSince()).toBe(before);
+  await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [other]);
+  expect((await db.query(cornerIdleSql('$1'), [other])).rows).toEqual([]);
+  expect(await idleSince()).toBe(before);
+});

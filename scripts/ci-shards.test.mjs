@@ -153,6 +153,56 @@ test('server test setup lets IPC run between microtask-only tests even with fake
   }
 });
 
+test('server fake clocks preserve native I/O cleanup and later event-loop yields', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ci-native-clock-'));
+  try {
+    symlinkSync(new URL('../node_modules', import.meta.url), join(directory, 'node_modules'), 'dir');
+    writeFileSync(join(directory, 'package.json'), '{"type":"module"}');
+    const serverConfig = new URL('../apps/server/vitest.config.ts', import.meta.url).pathname;
+    writeFileSync(join(directory, 'vitest.config.js'), `
+      import server from ${JSON.stringify(serverConfig)};
+      export default { test: { fakeTimers: server.test.fakeTimers, testTimeout: server.test.testTimeout } };
+    `);
+    writeFileSync(join(directory, 'native.test.js'), `
+      import { setTimeout as realTimeout, clearTimeout as realClearTimeout,
+        setImmediate as realImmediate } from 'node:timers';
+      import { expect, it, vi } from 'vitest';
+
+      it('can clean up work queued by an already-armed native callback', async () => {
+        let pending;
+        // A network connection timeout may already be armed when a test starts
+        // mocking its clock. Its callback uses the current global scheduler;
+        // its later socket-error cleanup uses the restored global canceller.
+        const ready = new Promise(resolve => realTimeout(() => {
+          pending = setImmediate(() => {});
+          resolve();
+        }, 0));
+        vi.useFakeTimers();
+        try { await ready; }
+        finally { vi.useRealTimers(); }
+        clearImmediate(pending);
+
+        const completed = [];
+        for (let turn = 0; turn < 4; turn++) {
+          completed.push(await new Promise(resolve => realTimeout(() => {
+            const deadline = realTimeout(() => resolve(false), 5_000);
+            realImmediate(() => { realClearTimeout(deadline); resolve(true); });
+          }, 0)));
+        }
+        expect(completed).toEqual([true, true, true, true]);
+      });
+    `);
+    const result = spawnSync(process.execPath, [new URL('../node_modules/vitest/vitest.mjs', import.meta.url).pathname,
+      'run', '--root', directory, '--config', join(directory, 'vitest.config.js'),
+      '--maxWorkers=1', '--minWorkers=1'], {
+      encoding: 'utf8', timeout: 30_000,
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
 test('a PR selection runs each selected file once and skips unselected integration batches', () => {
   const path = join(mkdtempSync(join(tmpdir(), 'server-selection-')), 'selection.json');
   const wanted = ['apps/server/src/agent-access.test.ts', 'apps/server/src/phone-service.read-room-latency.test.ts',

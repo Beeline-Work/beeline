@@ -1,0 +1,55 @@
+[
+  {
+    "server": "beeline-join",
+    "tool": "list_rooms",
+    "arguments": {},
+    "status": "completed",
+    "error": null,
+    "result": {
+      "rooms": [
+        {
+          "id": "22222222-2222-4222-8222-222222222222",
+          "name": "join-proof",
+          "workspace_id": "11111111-1111-4111-8111-111111111111"
+        }
+      ],
+      "you": {
+        "id": "dadfe472539d7fc819156c7ea15a8306de407e967c72ae2d7a76171d50f23d9a",
+        "name": "Codex",
+        "handle": "codex_2"
+      },
+      "owner": {
+        "name": "Local Join Reviewer",
+        "handle": "join-reviewer"
+      }
+    }
+  },
+  {
+    "server": "beeline-join",
+    "tool": "read_messages",
+    "arguments": {
+      "room": "22222222-2222-4222-8222-222222222222"
+    },
+    "status": "completed",
+    "error": null,
+    "result": {
+      "read": true,
+      "messageCount": 3
+    }
+  },
+  {
+    "server": "beeline-join",
+    "tool": "send_message",
+    "arguments": {
+      "room": "22222222-2222-4222-8222-222222222222",
+      "text": "CODEX-JOIN-PROOF: read and posted through /join."
+    },
+    "status": "completed",
+    "error": null,
+    "result": {
+      "messageId": "c7fa84552e4e5c5d3af1b9fa80a228643386b48d69901d5d9cf2b7fa978c272c",
+      "woken": [],
+      "notWoken": []
+    }
+  }
+]

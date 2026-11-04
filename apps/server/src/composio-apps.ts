@@ -156,6 +156,13 @@ const YOUTUBE_UPLOAD_TOOL = 'YOUTUBE_MULTIPART_UPLOAD_VIDEO';
 const YOUTUBE_ANALYTICS_REPORTS = 'https://youtubeanalytics.googleapis.com/v2/reports';
 const REPORT_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
+const githubRestReadTool = {
+  slug: 'BEELINE_GITHUB_REST_READ', name: 'GitHub repository REST read',
+  description: 'Read repository data through the connected GitHub account, including contents and pull requests.',
+  inputParameters: { type: 'object', additionalProperties: false, required: ['path'],
+    properties: { path: { type: 'string', description: 'Repository API path, including query parameters.' } } },
+};
+
 const youtubeAnalyticsTool = {
   slug: YOUTUBE_ANALYTICS_TOOL,
   name: 'YouTube Analytics report',
@@ -646,7 +653,8 @@ export class ComposioApps {
       description: typeof row.description === 'string' ? row.description : '',
       inputParameters: stripSecrets(row.input_parameters ?? {}),
     }));
-    const catalog = toolkit === 'youtube' ? [youtubeAnalyticsTool, ...tools] : tools;
+    const catalog = toolkit === 'youtube' ? [youtubeAnalyticsTool, ...tools]
+      : toolkit === 'github' ? [...tools, githubRestReadTool] : tools;
     if (query?.trim()) {
       const search = query.trim().toLowerCase();
       const exact = catalog.filter(tool => tool.slug.toLowerCase() === search || tool.name.toLowerCase() === search);
@@ -730,6 +738,26 @@ export class ComposioApps {
       throw new CommandRefusalError('Room files are unavailable for app tools', 400);
     if (!(await this.account(input.accountId, input.userId, input.toolkit)))
       throw new CommandRefusalError('App connection is unavailable', 409);
+    if (input.tool === githubRestReadTool.slug && input.toolkit === 'github') {
+      const path = input.arguments.path;
+      const url = typeof path === 'string' ? new URL(path, 'https://api.github.com') : undefined;
+      if (!url || !path || typeof path !== 'string' || !path.startsWith('/repos/') ||
+        url.origin !== 'https://api.github.com' || !/^\/repos\/[^/]+\/[^/]+(?:\/|$)/.test(url.pathname) ||
+        url.hash || Object.keys(input.arguments).some(key => key !== 'path'))
+        throw new CommandRefusalError('GitHub read requires a repository API path', 400);
+      if (files.size) throw new CommandRefusalError('GitHub reads do not take files', 400);
+      const result = await this.request('/tools/execute/proxy', 'POST', {
+        connected_account_id: input.accountId, endpoint: url.origin + url.pathname, method: 'GET',
+        parameters: [...url.searchParams].map(([name, value]) => ({ name, value, type: 'query' })),
+      }, 'v3.1');
+      if (!Number.isInteger(result.status) || Number(result.status) < 100 || Number(result.status) > 599)
+        throw new Error('GitHub returned an invalid response status');
+      const headers = object(result.headers);
+      return stripSecrets({ status: result.status,
+        headers: { 'content-type': 'application/json',
+          ...(typeof headers.link === 'string' ? { link: headers.link } : {}) },
+        body: JSON.stringify(stripSecrets(result.data)) });
+    }
     if (input.tool === YOUTUBE_ANALYTICS_TOOL && input.toolkit === 'youtube') {
       if (files.size) throw new CommandRefusalError('A Room file was passed for a parameter that does not take a file', 400);
       return this.youtubeAnalyticsReport(input.accountId, input.arguments);

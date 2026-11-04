@@ -640,6 +640,8 @@ export function planOutputs(state, previous) {
     `has_previous=${Boolean(previous)}`,
     `previous_version=${previous?.version ?? ''}`,
     `previous_sha=${previous?.sourceSha ?? ''}`,
+    `previous_server_image_ref=${previous?.components?.server?.imageRef ?? ''}`,
+    `rollback_server_image_ref=${previous?.components?.server?.previousImageRef ?? ''}`,
     `ota_memory=${encodeReleaseOutput(otaMemory(previous))}`,
     `previous_record=${previous ? encodeReleaseOutput(compactState(previous)) : ''}`,
     `no_op=${state.state === 'delivered'}`,

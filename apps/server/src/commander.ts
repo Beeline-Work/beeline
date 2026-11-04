@@ -671,6 +671,20 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
     recipient = source?.author_id;
     returnRoom = source?.room_id;
   }
+  // A standing corner's report can outlive its commander's incoming command.
+  // The retained root message is still that command's recorded human order;
+  // do not infer a recipient from the delegate who authored the report wake.
+  if ((!recipient || !returnRoom) && command?.private_payload?.kind === 'report') {
+    const source = (await db.query<{ author_id: string; room_id: string }>(
+      `SELECT source.author_id,source.room_id FROM messages source
+       JOIN identities author ON author.id=source.author_id AND author.kind='human'
+       JOIN rooms source_room ON source_room.id=source.room_id
+       JOIN rooms execution ON execution.id=$2 AND execution.workspace_id=source_room.workspace_id
+       WHERE source.id=$1 AND source.presentation='message' AND source.system_event IS NULL
+         AND source.deleted_at IS NULL`, [command.root_source_message_id, roomId])).rows[0];
+    recipient = source?.author_id;
+    returnRoom = source?.room_id;
+  }
   if (!recipient || !returnRoom) {
     const corner = (
       await db.query<{ created_by: string; return_room: string; parent_command: string | null }>(

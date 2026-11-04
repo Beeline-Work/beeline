@@ -91,6 +91,11 @@ describe('Room guidance', () => {
       expect(memory, tool).toContain(tool);
     }
     expect(memory).toContain('No background reviewer exists');
+    expect(memory).toContain('When a human corrects your claim, save the corrected fact with remember(kind:fact, action:save) in that same turn.');
+    expect(memory).toContain('Private harness notes do not count; other agents read only Beeline memory.');
+    const lookup = memory.split('\n').find((line) => line.startsWith('- **Look up.**'));
+    expect(lookup).toContain('Before you say "can\'t", "impossible" or "not saved"');
+    expect(lookup).toContain('search(scope:memory, query)');
     // The workspace-core lookup lives in the turn prompt, which knows the
     // Workspace's own procedure list; a static skill cannot, so this section
     // must not name read(facet:procedure) at all.

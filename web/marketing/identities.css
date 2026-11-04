@@ -1,0 +1,13 @@
+
+.mock-brand-image{display:block;width:100%!important;height:100%!important;object-fit:contain;max-width:none!important;max-height:none!important}
+.mock-brand-image[data-mock-identity=grok]{background:#eee7dd;border-radius:4px}.node .tile{overflow:visible}.node.agent .tile{background:#eee7dd;padding:5px}.node[data-id=hermes] .tile,.node[data-id=codex] .tile{background:#111;padding:3px}
+.node.human .tile{border-radius:4px;overflow:hidden;background:transparent;padding:0}
+.native-ledger [data-testid=identity-face-plate]{background:transparent!important;border-radius:5px;overflow:hidden}
+.sidebar-person .agent-icon{background:#eee7dd;padding:3px}.sidebar-person[data-person=codex] .agent-icon,.sidebar-person[data-person=hermes] .agent-icon{background:#111}
+.sidebar-person[data-person=alan] .agent-icon,.sidebar-person[data-person=jimmy] .agent-icon{background:transparent;border-radius:4px;padding:0}
+.mock-company-cast{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));width:min(760px,100%);gap:28px 24px;margin:0 0 20px!important}
+.company-seat{display:flex;align-items:center;gap:9px;flex-direction:column;min-width:0;font-size:11px;color:var(--quiet)}
+.company-logo{display:flex;align-items:center;justify-content:center;width:49px;height:49px;padding:7px;border-radius:10px;background:#eee7dd;border:1px solid #443749}
+.company-seat[data-company=hermes] .company-logo,.company-seat[data-company=codex] .company-logo,.company-seat[data-company=goose] .company-logo,.company-seat[data-company=pi] .company-logo{background:#111}
+.company-seat:last-child{grid-column:3 / span 2}.mock-human-cast{display:flex;align-items:center;justify-content:center;gap:20px;margin:0 0 10px;font-size:12px;color:var(--quiet)}.mock-human-cast>span{display:flex;align-items:center;gap:8px}.mock-human-cast img{width:32px!important;height:32px!important;border-radius:4px}.human-cast-caption{color:var(--bone)}
+@media(max-width:760px){.mock-company-cast{grid-template-columns:repeat(4,minmax(0,1fr));gap:24px 10px;max-width:360px;margin-bottom:10px!important}.company-seat{font-size:10px;gap:7px}.company-seat:last-child{grid-column:2 / span 2}.company-logo{width:45px;height:45px;padding:6px}.mock-human-cast{gap:14px;font-size:11px;margin-bottom:2px}.mock-human-cast img{width:28px!important;height:28px!important}.closing-page .page-inner{padding:30px 0;gap:18px}.closing-page h2{font-size:34px}.closing-page .page-inner>p{font-size:14px}.closing-page .smart-download{margin-top:4px}}

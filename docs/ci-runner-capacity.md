@@ -19,13 +19,35 @@ MemoryHigh 48 GiB / MemoryMax 60 GiB; per-service maxima are not additive
 capacity. Ordinary listeners have MemoryHigh 6 GiB, the workspace listener
 10 GiB. Verify both service and parent limits before activation.
 
-| Checks work | Pull requests | Merge groups / manual dispatch |
+Detect changes starts on `ubuntu-latest` and snapshots runner availability
+before preparing any workspace. It uses `CI_RUNNER_INVENTORY_TOKEN` for the
+repository-scoped Administration-read inventory API and the workflow token's
+Actions-read access for older queued jobs. API failure, stale/truncated data or
+a missing inventory credential selects hosted execution. The routing request
+has a fifteen-second overall deadline and never becomes a new gate.
+
+The planner allocates each observed idle role slot once, subtracts older queued
+role requests and reserves capacity for older workflows still preparing their
+job graphs. This avoids placing a second PR behind already promised work.
+Preparation may use an idle control listener; verdicts stay hosted. The plan
+and reasons are printed in the first job's log and summary.
+
+| Checks work | PR and main placement | Merge groups / manual dispatch |
 | --- | --- | --- |
-| Eight server shards, shared tests, TYPECHECK | `beeline-ci, beeline-ci-heavy` (02–09) | `ubuntu-latest` |
-| Dead-code, fingerprint and export | `beeline-ci, beeline-ci-heavy` (02–09) | Same bounded heavy pool |
-| Mobile suite execution | `beeline-ci, beeline-ci-workspace` (10) | `ubuntu-latest` |
-| Detection, preparation, selection, required verdicts, README, app associations | `beeline-ci, beeline-ci-control` (01) | `ubuntu-latest` |
-| Privileged Body setup, PostgreSQL timing, Docker build/lint, corpus replay | `ubuntu-latest` | `ubuntu-latest` |
+| Eight server shards, shared tests, TYPECHECK, dead-code, fingerprint, export | Available `beeline-ci-heavy` slots, then `ubuntu-latest` | `ubuntu-latest` |
+| Mobile suite | Available `beeline-ci-workspace` slot, then `ubuntu-latest` | `ubuntu-latest` |
+| Preparation | Available `beeline-ci-control` slot, then `ubuntu-latest` | `ubuntu-latest` |
+| Detection, selection, verdicts, README, app associations | `ubuntu-latest` | `ubuntu-latest` |
+| Body, PostgreSQL timing, Docker build/lint, corpus replay | Existing `ubuntu-latest` routes | Existing routes |
+
+Hosted server shards start an isolated pgvector/PostgreSQL service and verify
+its readiness. The configured PGlite suites and all existing PostgreSQL gates
+keep their original backends and assertions. Hosted setup uses the existing
+lockfile-keyed Actions dependency caches and exact-head compiled provenance;
+missing caches recover locally, without a squire filesystem dependency.
+Standard hosted Ubuntu runners are
+[free for this public repository](https://docs.github.com/en/actions/reference/runners/github-hosted-runners).
+No production/release listener, service budget or paid runner is added.
 
 Each server shard runs its balanced file assignment and one of the existing
 eight integration batches. Held voice playback and durable socket replay run

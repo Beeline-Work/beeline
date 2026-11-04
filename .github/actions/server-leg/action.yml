@@ -18,6 +18,14 @@ inputs:
     required: true
   release_version:
     required: true
+  previous_server_image_ref:
+    required: false
+    default: ''
+    description: The newest published server image, which may differ from an unpublished serving attempt
+  rollback_server_image_ref:
+    required: false
+    default: ''
+    description: The older rollback image still named by the published release
 
 outputs:
   image_ref:
@@ -83,6 +91,38 @@ runs:
       env:
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}
+
+    - name: Guard schema overlap with the serving and rollback images
+      if: steps.fleet.outputs.shipped != 'true' || hashFiles('apps/server/contracts/*.sql') != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        node - "$RUNNER_TEMP/server-release/machines-before.json" "${{ steps.fleet.outputs.image_ref }}" > "$RUNNER_TEMP/server-release/previous-refs" <<'NODE'
+        const machines = require(process.argv[2]);
+        const tag = image => String(image ?? '').replace(/@sha256:[a-f0-9]+$/, '');
+        const previous = machines.map(machine => {
+          const image = tag(machine.config?.image ?? machine.imageRef);
+          return image === tag(process.argv[3]) ? machine.config?.metadata?.beeline_replaced_image : image;
+        });
+        previous.push(...[process.env.PUBLISHED_SERVER_IMAGE, process.env.ROLLBACK_SERVER_IMAGE].filter(Boolean));
+        for (const image of new Set(previous)) {
+          const sha = image?.match(/-([a-f0-9]{12,40})(?:@sha256:[a-f0-9]+)?$/)?.[1];
+          if (!sha) throw new Error('Cannot identify the previous server source; refusing schema changes');
+          console.log(sha);
+        }
+        NODE
+        git fetch --unshallow origin || git fetch origin main
+        while IFS= read -r previous; do
+          node scripts/rollout-schema.mjs --previous "$previous"
+          node --input-type=module - "$previous" "$RUNNER_TEMP/server-release/trees-$previous.json" <<'NODE'
+        import { writeFileSync } from 'node:fs';
+        import { sourceTrees } from './scripts/rollout-schema.mjs';
+        writeFileSync(process.argv[3], JSON.stringify(sourceTrees(process.argv[2])));
+        NODE
+        done < "$RUNNER_TEMP/server-release/previous-refs"
+      env:
+        PUBLISHED_SERVER_IMAGE: ${{ inputs.previous_server_image_ref }}
+        ROLLBACK_SERVER_IMAGE: ${{ inputs.rollback_server_image_ref }}
 
     - name: Run schema migrations and backfills once before Machine updates
       id: migrate
@@ -333,3 +373,21 @@ runs:
       env:
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}
+
+    - name: Run column contracts only after old Machines drain
+      if: steps.fleet.outputs.shipped != 'true' || hashFiles('apps/server/contracts/*.sql') != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        image_ref="${{ steps.fleet.outputs.image_ref }}"
+        docker image inspect "$image_ref" >/dev/null 2>&1 || docker pull "$image_ref"
+        flyctl machine list --app beeline-server --json > "$RUNNER_TEMP/server-release/machines-drained.json"
+        while IFS= read -r previous; do
+          docker run --rm --env MIGRATION_DATABASE_URL \
+            -v "$PWD/scripts:/app/scripts:ro" \
+            -v "$PWD/apps/server/contracts:/app/apps/server/contracts:ro" \
+            -v "$RUNNER_TEMP/server-release:/proof:ro" \
+            --entrypoint node "$image_ref" scripts/run-contract-migrations.mjs \
+            --machines /proof/machines-drained.json \
+            --image "$image_ref" --trees "/proof/trees-$previous.json"
+        done < "$RUNNER_TEMP/server-release/previous-refs"

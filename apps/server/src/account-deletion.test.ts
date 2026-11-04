@@ -447,7 +447,7 @@ describe('deleteAccount', () => {
       'computer_sessions.agent_id', 'connector_offers.accepted_by',
       'corner_apps.author_agent_id', 'corner_app_bindings.bound_by',
       'corner_app_installations.installed_by', 'corner_app_installations.developer_agent_id',
-      'corner_brief_revisions.author_id', 'corner_facts.reviewer_agent_id',
+      'corner_brief_revisions.author_id', 'corner_facts.owner_agent_id', 'corner_facts.reviewer_agent_id',
       'corner_merge_approvals.approved_by',
       'corner_merge_holds.actor_id', 'corner_merge_holds.released_by',
       'corner_merge_holds.set_by_agent_id',
@@ -519,6 +519,7 @@ describe('deleteAccount', () => {
   });
 
   it('keeps shared corner records under the tombstone and releases holds on the corners it archives', async () => {
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [CORNER, AGENT]);
     await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [ROOM, AGENT]);
     await database.query(`UPDATE messages SET deleted_by=$1 WHERE id='m3'`, [OWNER]);
     await database.query(
@@ -534,6 +535,7 @@ describe('deleteAccount', () => {
     await phone.execute('deleteAccount', {}, OWNER);
 
     await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`, [[OWNER, AGENT]], 0);
+    await expectRowCount(`SELECT 1 FROM corner_facts WHERE corner_id=$1 AND owner_agent_id=$2`, [CORNER, DELETED_ACCOUNT_IDENTITY_ID], 1);
     await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND reviewer_agent_id IS NULL`, [ROOM], 1);
     await expectRowCount(`SELECT 1 FROM messages WHERE id='m3' AND deleted_by=$1`, [DELETED_ACCOUNT_IDENTITY_ID], 1);
     await expectRowCount(

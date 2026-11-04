@@ -14,10 +14,9 @@ import zcodeLogo from '@/assets/images/agent-logos/zcode.png';
 import { Button } from './Button';
 import { InlineRow } from './IndexRow';
 
-const CONNECTOR_LINE = 'Join my Beeline workspace using the MCP connector https://server.usebeeline.app/mcp';
+const JOIN_LINE = 'Join my Beeline Room: join.usebeeline.app';
 /** Meta Muse's preregistered client in apps/server/src/rooms-mcp-preregistered.ts. */
 const MUSE_CLIENT_ID = '6Zxge0aVJeCxF8Jvshy-oYTjYPJmrFHdTnwVfvkaF0o';
-const ROOM_LINE = 'Join my Beeline Room: usebeeline.app/room';
 
 type ExistingAgent = {
   id: string;
@@ -30,21 +29,21 @@ type ExistingAgent = {
 };
 
 export const EXISTING_AGENTS: readonly ExistingAgent[] = [
-  { id: 'grok', name: 'Grok Bot', logo: grokLogo, line: CONNECTOR_LINE },
+  { id: 'grok', name: 'Grok Bot', logo: grokLogo, line: JOIN_LINE },
   {
     id: 'muse',
     name: 'Muse',
     logo: museLogo,
     outlined: true,
-    line: `${CONNECTOR_LINE}\n\nClient ID: ${MUSE_CLIENT_ID}`,
+    line: `${JOIN_LINE}\n\nClient ID: ${MUSE_CLIENT_ID}`,
   },
-  { id: 'claude', name: 'Claude', logo: claudeLogo, line: ROOM_LINE },
-  { id: 'codex', name: 'Codex', logo: codexLogo, line: ROOM_LINE },
-  { id: 'gemini', name: 'Gemini', logo: geminiLogo, line: ROOM_LINE },
-  { id: 'opencode', name: 'OpenCode', logo: opencodeLogo, line: ROOM_LINE },
-  { id: 'pi', name: 'Pi', logo: piLogo, line: ROOM_LINE },
-  { id: 'hermes', name: 'Hermes', logo: hermesLogo, line: ROOM_LINE },
-  { id: 'zcode', name: 'ZCode', logo: zcodeLogo, line: ROOM_LINE },
+  { id: 'claude', name: 'Claude', logo: claudeLogo, line: JOIN_LINE },
+  { id: 'codex', name: 'Codex', logo: codexLogo, line: JOIN_LINE },
+  { id: 'gemini', name: 'Gemini', logo: geminiLogo, line: JOIN_LINE },
+  { id: 'opencode', name: 'OpenCode', logo: opencodeLogo, line: JOIN_LINE },
+  { id: 'pi', name: 'Pi', logo: piLogo, line: JOIN_LINE },
+  { id: 'hermes', name: 'Hermes', logo: hermesLogo, line: JOIN_LINE },
+  { id: 'zcode', name: 'ZCode', logo: zcodeLogo, line: JOIN_LINE },
 ];
 
 /**

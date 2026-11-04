@@ -2086,11 +2086,15 @@ test('R-DESKTOP-EVIDENCE: notification diagnostics are optional while desktop bu
 
 test('public JSON release outputs survive punctuation masking across plan, OTA and bookkeeping', () => {
   const previous = deliveredPrevious();
+  previous.components.server.imageRef = `registry.fly.io/beeline-server:0.0.8-${OLD_SHA.slice(0,12)}`;
+  previous.components.server.previousImageRef = `registry.fly.io/beeline-server:0.0.7-${'a'.repeat(12)}`;
   const state = initializeRelease({ version: 'v0.0.9', sourceSha: NEW_SHA, previous });
   const outputs = Object.fromEntries(planOutputs(state, previous).trim().split('\n').map((line) => {
     const i = line.indexOf('='); return [line.slice(0, i), line.slice(i + 1)];
   }));
   assert.equal(outputs.release_state, undefined);
+  assert.equal(outputs.previous_server_image_ref, previous.components.server.imageRef);
+  assert.equal(outputs.rollback_server_image_ref, previous.components.server.previousImageRef);
   for (const key of ['previous_record', 'ota_memory']) {
     assert.doesNotMatch(outputs[key], /[{}\[\]]/);
     assert.equal(typeof decodeReleaseOutput(outputs[key]), 'object');
@@ -2257,7 +2261,8 @@ test('native/helper completion cannot hold the live checkpoint or steal the prod
   for (const name of ['server', 'mobile_ota', 'website']) assert.equal(workflow.jobs[name].needs, 'initialize');
   assert.ok(workflow.jobs.helper.needs.includes('delivery_result'));
   assert.ok(workflow.jobs.mobile_native_android.needs.includes('delivery_result'));
-  assert.equal(workflow.jobs.website.steps.find(step => step.uses === './.github/actions/pages-leg').if, undefined);
+  // Pages keeps one deployment per commit: when the helper ships, its deploy carries the website.
+  assert.equal(workflow.jobs.website.steps.find(step => step.uses === './.github/actions/pages-leg').if, "needs.initialize.outputs.run_helper != 'true'");
   assert.equal(workflow.jobs.website.concurrency.group, workflow.jobs.helper.concurrency.group);
   for (const name of ['server', 'website']) {
     assert.equal(workflow.jobs[name].outputs.completed_at, '${{ steps.complete.outputs.completed_at }}');

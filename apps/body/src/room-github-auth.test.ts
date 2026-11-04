@@ -42,7 +42,8 @@ async function fixture(personal: boolean, transport = 'squire-api', outcome = 'e
       calls.push({ name, arguments: input });
       reply.end(JSON.stringify(name === 'listAppTools' ? { tools: outcome === 'missing' ? [] : [
         { slug: 'GITHUB_CREATE_AN_ISSUE_COMMENT' }, { slug: 'GITHUB_GET_AN_ISSUE' },
-      ] } : { status: outcome === 'write_denied' ? (input.tool === 'GITHUB_CREATE_AN_ISSUE_COMMENT' ? 'needs_permission' : 'executed') : outcome, data: { id: 42, html_url: input.tool === 'GITHUB_GET_AN_ISSUE' ? 'https://github.com/owner/widgets/issues/1' : 'https://github.com/owner/widgets/issues/1#issuecomment-42' } }));
+        { slug: 'BEELINE_GITHUB_REST_READ' },
+      ] } : { status: outcome === 'write_denied' ? (input.tool === 'GITHUB_CREATE_AN_ISSUE_COMMENT' ? 'needs_permission' : 'executed') : outcome, data: input.tool === 'BEELINE_GITHUB_REST_READ' ? { status: 200, headers: { 'content-type': 'application/json' }, body: JSON.stringify([{ name: 'personal-github-proxy-502.json' }]) } : { id: 42, html_url: input.tool === 'GITHUB_GET_AN_ISSUE' ? 'https://github.com/owner/widgets/issues/1' : 'https://github.com/owner/widgets/issues/1#issuecomment-42' } }));
       return;
     }
     expect(request.headers.authorization).toBe('Bearer relay-fixture');
@@ -217,3 +218,16 @@ for (const transport of ['composio', 'registry-mcp']) {
     expect(f.calls.some(call => ['executeAppTool', 'tools/call'].includes(call.name))).toBe(false);
   });
 }
+
+it('Reproduction gh-personal-502: reads repository contents through managed personal GitHub', async () => {
+  const f = await fixture(true, 'composio');
+  const ghBinary = (await exec('which', ['gh'], { env: { PATH: '/usr/bin:/bin' } })).stdout.trim();
+  const path = await installRoomGitHubLauncher({ ...f, ghBinary, inheritedPath: '/usr/bin:/bin' });
+  const result = await exec('gh', ['api', 'repos/Beeline-Work/beeline-insights/contents/problems?ref=f47c43d'], {
+    cwd: f.root, env: { ...process.env, PATH: path, GH_TOKEN: 'app-fixture', GH_HOST: 'github.com', GH_DEBUG: '' },
+  });
+  expect(JSON.parse(result.stdout)).toEqual([{ name: 'personal-github-proxy-502.json' }]);
+  expect(f.calls.find(call => call.name === 'executeAppTool')?.arguments).toMatchObject({
+    tool: 'BEELINE_GITHUB_REST_READ', arguments: { path: '/repos/Beeline-Work/beeline-insights/contents/problems?ref=f47c43d' },
+  });
+});

@@ -9,7 +9,7 @@ import { isDraftFrame } from '@/sync/transport/live-frames';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
-import { applyChatListDelta, chatListDeltaNeedsRead, chatWatchFiltersKey, keepUnavailableChatFacts, roomsMissedByLive, withCornerFacts, withoutCornerFacts } from './chat-list-delta';
+import { applyChatListDelta, chatListDeltaNeedsRead, chatWatchFiltersKey, keepUnavailableChatFacts, withCornerFacts, withoutCornerFacts } from './chat-list-delta';
 import { applyChatListCorners, cornerStoreClock, getRoomCornerSummary } from './room-corner-store';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 import { cacheRoomMessageDelta } from './cache-room-message-delta';
@@ -52,7 +52,6 @@ class ChatListStore {
   private watchGeneration = 0;
   private watched = new Set<string>();
   private covered = new Set<string>();
-  private readonly heard = new Set<string>();
   private reading = false;
   private readStamp = 0;
   private deltasDuringRead: Parameters<typeof applyChatListDelta>[1][] = [];
@@ -93,15 +92,12 @@ class ChatListStore {
         const held = this.current();
         const value = this.deltasDuringRead.reduce((view, delta) => applyChatListDelta(view, delta, deltaContext),
           withoutCornerFacts(keepUnavailableChatFacts(held, read)));
-        const missedLive = this.confirmedRead && held !== null && roomsMissedByLive(held, read, this.heard);
         this.openingReadFailed = false;
         this.confirmedRead = true;
-        if (!this.missed) this.heard.clear();
         this.covered = new Set(this.watched);
         mobileSurfaceCache.publish(this.address, value, isChatListView, this.readStamp);
         void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);
         for (const consumer of this.consumers) consumer.onRead?.();
-        if (missedLive) sharedLiveConnection().reconnect();
         if (chatWatchFiltersKey(value.watchFilters) !== this.watchKey) void this.watch(value.watchFilters);
       },
       onError: (reason) => {
@@ -184,7 +180,6 @@ class ChatListStore {
   private onFrame(event: SurfaceEvent): void {
     if (this.closed) return;
     const live = 'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
-    if (live && 'roomId' in live) this.heard.add(live.roomId);
     if (live?.type === 'room-commands') return;
     if (live?.type === 'sidebar-preview') {
       // A projection cannot establish a complete transcript, including edits

@@ -364,13 +364,8 @@ export class MonolithRigTransport {
     return sharedLiveConnection().register(filters, listener);
   }
 
-  /** A read proved the live socket missed events: replace it. */
   liveDiagnostics(): { state: number | null; connecting: boolean } {
     return sharedLiveConnection().diagnostics();
-  }
-
-  reconnectLive(): void {
-    sharedLiveConnection().reconnect();
   }
 
   /** Fires on the live socket's first connect and every reconnect. */

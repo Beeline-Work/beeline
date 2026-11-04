@@ -229,7 +229,8 @@ export class ProjectionGroups<T extends GroupCell>{
           after=item.cell.request.family==='needs-you-tray'?(incoming.snapshot.value as {needs:unknown}).needs:incoming.snapshot.value;
         if(item.cell.request.family!=='needs-you-saved-page'&&!equal(before,after))throw new Error('Conflicting Tray snapshot');
       }
-      if(!prior||!equal(prior.snapshot,item.snapshot))changed=true;merged.set(item.cell.key,item);
+      // An unchanged covering reply still completes this lane's pending open.
+      if(!prior||!equal(prior.snapshot,item.snapshot)||incoming.cell.view.state==='OPENING')changed=true;merged.set(item.cell.key,item);
     }
     if(!changed){state.progress={...cut};state.clockVersion=version;for(const cell of cells)if(cell.snapshot)cell.classified=cut;this.trim(state);return;}
     const current=[...merged.values()].map(item=>({...item,snapshot:{...item.snapshot,cut:{...cut},clockVersion:version}}));

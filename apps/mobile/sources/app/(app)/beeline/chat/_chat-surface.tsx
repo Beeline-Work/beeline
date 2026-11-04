@@ -173,7 +173,7 @@ import {
 } from '@/buzz/desktop-workbench-state';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
 import { RoomSendList, RoomSendPreview } from '@/buzz/room-send-list';
-import { useChatList } from '@/buzz/chat-list-store';
+import { useChatList, readChatList } from '@/buzz/chat-list-store';
 import { useRoomRepoReplacementGuard } from '@/buzz/room-repo-replacement';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
 import {
@@ -3886,7 +3886,7 @@ export function BuzzChatSurface({
         // The live Room list is current; only a list not yet loaded reads one.
         const held = workspaceChatListRef.current;
         const [chats, workspace] = await Promise.all([
-          held ? held.chats : roomClient.chats(activeCommunityId).then((list) => list.chats),
+          held ? held.chats : chatListKey ? readChatList(chatListKey).then(list => list.chats) : Promise.reject(new Error('Room list unavailable.')),
           roomClient.workspace(activeCommunityId),
         ]);
         setForwardRooms(forwardTargets(chats, workspace, decodedId));
@@ -3895,7 +3895,7 @@ export function BuzzChatSurface({
         setForwardRooms([]);
       }
     },
-    [activeCommunityId, decodedId, roomClient],
+    [activeCommunityId, decodedId, roomClient, chatListKey],
   );
 
   const forwardToRoom = useCallback(

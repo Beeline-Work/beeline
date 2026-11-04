@@ -1,3 +1,5 @@
+import type { OwnedSurfaceRead } from '@/buzz/read-authority';
+import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import { preparedMessageOperation } from '@/buzz/prepared-message-operation';
 import { getRandomBytes } from 'expo-crypto';
 import type { NostrEvent } from '@beeline/nostr';
@@ -272,12 +274,12 @@ export class MonolithRigTransport {
   }
 
   async operation(
-    name: string,
+    name: Exclude<keyof PhoneOperationMap, OwnedSurfaceRead>,
     input: unknown,
     options?: { timeoutMs?: number },
   ): Promise<unknown> {
     return monolithPhoneOperation(
-      name as keyof import('@beeline/api-contract/phone').PhoneOperationMap,
+      name,
       input as never,
       options,
     );

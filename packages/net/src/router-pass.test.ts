@@ -126,6 +126,25 @@ describe('local admission shadow core (P1)', () => {
     expect(() => owner.focusOwner('bad', 2, 'AppShell', [head])).toThrow('wrong screen family');
   });
 
+  it('admits the Forward list only under the active Room gesture and fences its completion on blur', () => {
+    const owner = new AdmissionOwner(identity);
+    const head = { route: 'phone.readRouterSnapshot', input: { family: 'room-head', roomId: 'room-a' } } as const;
+    const list = { route: 'phone.readRouterSnapshot', input: { family: 'room-list', workspaceId: 'workspace-a' } } as const;
+    expect(() => owner.openForwardList(1, 'room-a', 'workspace-a', () => {})).toThrow('inactive');
+    owner.focusOwner('room', 1, 'Room', [head]);
+    let pass!: Pass<'phone.readRouterSnapshot'>;
+    const permit = owner.openForwardList(1, 'room-a', 'workspace-a', granted => {
+      pass = granted;
+      expect(() => owner.spend(head, granted)).toThrow('wrong route or key');
+      return owner.spend(list, granted);
+    });
+    expect(permit.wire.operation).toBe('readRouterSnapshot');
+    expect(permit.isCurrent()).toBe(true);
+    expect(() => owner.spend(list, pass)).toThrow('inactive pass');
+    owner.releaseOwner('room');
+    expect(permit.isCurrent()).toBe(false);
+  });
+
   it('resumes observation without reviving a revoked pass; explicit Retry consumes a new synchronous pass', async () => {
     const owner = new AdmissionOwner(identity);
     const badge = { route: 'phone.readRouterSnapshot', input: { family: 'needs-you-count', workspaceId: 'workspace-a' } } as const;

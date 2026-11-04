@@ -100,6 +100,8 @@ upper bounds, not isolated regressions or server/network attribution.
 - 7 browser-navigation tests passed, including the actual web-Modal Escape
   regression, which fails on the original hook.
 - Root typecheck passed again after integrating main.
+- `npm run dead-code` passed: 5 existing findings, 0 introduced. The browser
+  proof is registered as an esbuild entry; the baseline is unchanged.
 - The final official AppImage build passed, then the native reproductions passed
   in both themes and in compact/wide layouts.
 - No new outstanding layout/control breakage was found beyond the two repaired.

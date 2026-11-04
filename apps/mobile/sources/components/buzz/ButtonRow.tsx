@@ -1,7 +1,12 @@
 import React from 'react';
-import { View, type StyleProp, type ViewStyle } from 'react-native';
+import { View, type StyleProp, type ViewStyle, type ViewProps } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Button, type ButtonProps } from './Button';
+/** Shared layout frame for existing icon and emoji action targets. */
+export function ButtonRowFrame(props: ViewProps & { ref?: React.Ref<View> }) {
+  return <View {...props} />;
+}
+
 export type ButtonRowAction = Pick<
   ButtonProps,
   | 'label'

@@ -5673,6 +5673,7 @@ export function BuzzChatSurface({
         firstBylineOfDay,
         untaggedHint,
         deliveryFailed = false,
+        desktopLayout: rowDesktopLayout = false,
         sendState,
         speakerWorking: rowSpeakerWorking = false,
         cornerProposalAnswer,
@@ -6022,7 +6023,7 @@ export function BuzzChatSurface({
           // The byline shows the agent's model from its profile; an agent
           // with no profile model keeps the plain `AGENT` word.
           agentModel={modelForRow}
-          desktopLayout={isDesktop}
+          desktopLayout={rowDesktopLayout}
           announcementFeed={isReadOnlyDirectMessage}
           {...(knownAgent ? { agent: knownAgent } : {})}
           participantsHydrated={rowHydrated}
@@ -6142,6 +6143,7 @@ export function BuzzChatSurface({
   // hint, byline opener, working speaker, or this row's roster paint changes
   // only that row's props.
   const presentationForMessage = useCallback((item: ChatDisplayMessage): RoomMessagePresentation => ({
+    desktopLayout: isDesktop,
     firstBylineOfDay: bylineOpeners.has(item.id),
     untaggedHint: hintMessageIds.has(item.id),
     deliveryFailed: failedOutboxIds.has(item.id),
@@ -6208,6 +6210,7 @@ export function BuzzChatSurface({
     isArchived,
     isDirectMessage,
     desktopExperience,
+    isDesktop,
     isCorner,
     isReadOnlyDirectMessage,
   ]);

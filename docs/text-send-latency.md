@@ -6,6 +6,11 @@ Room-wide projections or network work. Cold Room opening still misses the
 450 ms budget. The server improvement is measured in an isolated scenario;
 it has not been deployed to production.
 
+Firstmate approved this measured improvement under delegated overnight decision
+authority despite the unmet 150 ms send p95 and 450 ms cold-load budgets.
+Remaining send p95 work continues in follow-up; the all-surfaces worker owns
+cold Room opening. This change does not claim to meet the latency invariant.
+
 ## Native comparison
 
 All writes used the Play-review identity in **Beeline Review**, never the
@@ -17,6 +22,8 @@ The final comparison alternates old/new local Hermes bundles in the same
 session against production142, six sends per block, four blocks per arm.
 The old local bundle already includes the sender-fade fix; the new one adds
 the independently subscribed first row. Neither bundle was published as OTA.
+These are historical pre-rebase local-bundle measurements, not measurements of
+the rebased source.
 
 | Measurement | Samples | p50 | p95 | Budget |
 | --- | ---: | ---: | ---: | --- |

@@ -155,19 +155,19 @@ describe('Reproduction R3: a send addressed to an agent shows the thinking indic
     expect(ack.current()).toBeNull();
   });
 
-  it('keeps the indicator for an offline send until its own bound clears it', async () => {
+  it('keeps the indicator when enqueue succeeds but the offline outbox has no server ack', async () => {
     const ack = ackRecorder();
-    const { sendOutbox, context } = sendContext({ setPendingAck: ack.setPendingAck });
+    const { enqueue, event, sendOutbox, context, draft } = sendContext({ setPendingAck: ack.setPendingAck });
+    enqueue.mockImplementation(() => {
+      expect(ack.current()).toEqual({ sentAt: expect.any(Number), requestId: event.id });
+    });
     // Offline: the outbox keeps the message and resolves without a write.
     sendOutbox.mockResolvedValue(undefined);
     expect(await runInNewContext(executable, context)()).toBe(true);
+    expect(enqueue).toHaveBeenCalledWith(event, expect.objectContaining({ text: '@ruby Open a corner for issue 4' }));
+    expect(sendOutbox).toHaveBeenCalledWith(event.id);
+    expect(draft.value).toBe('');
     expect(ack.current()).toEqual({ sentAt: expect.any(Number), requestId: 'signed-message' });
-    // The existing COMPOSER_ACK_BOUND_MS deadline timer is what clears it.
-    expect(source).toContain('const deadline = pendingAck.sentAt + COMPOSER_ACK_BOUND_MS;');
     expect(context.Modal.alert).not.toHaveBeenCalled();
-  });
-
-  it('never clears the indicator just because the message entered the outbox', () => {
-    expect(source).not.toContain('The durable outbox now owns the Sending line');
   });
 });

@@ -44,7 +44,8 @@ Targeted proofs cover the real DB-only readers, pure read-only capture,
 source/provenance/expiry refusal, actual machine registration/codecs/enqueue,
 HTTP refusal, actual monolith getters and zero-fetch selected Body transport.
 The opt-in PostgreSQL proof checks a repeatable-read cut across a concurrent
-writer and final authority locking behind a committed revoke. Released-helper
-and native cohort evidence, source dependency closure under every real writer,
-and equal-workload statement/WAL/CPU budgets remain rollout gates. These tests
-do not establish provider exactly-once execution or zero total transport cost.
+writer and final authority locking behind a committed revoke. These tests do
+not establish released-helper/native behavior, source dependency closure under
+every real writer, equal-workload statement/WAL/CPU budgets, provider exactly-once
+execution or zero total transport cost. Router composition and cleanup evidence
+are documented in [router ownership](network-router-ownership.md).

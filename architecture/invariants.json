@@ -2257,7 +2257,8 @@
           "duration_ms": "existing before the registry; weekly audit reviews",
           "artifact_id": "existing before the registry; weekly audit reviews",
           "last_seen_at": "existing before the registry; weekly audit reviews",
-          "visits": "existing before the registry; weekly audit reviews"
+          "visits": "existing before the registry; weekly audit reviews",
+          "auth_session": "Preserves native auth-session cancellation diagnostics and OTA provenance unavailable from server requests."
         }
       },
       "signin_funnel_installs": {
@@ -3155,6 +3156,12 @@
         "workspace": "Existing source-capture JSON alias retains the changed Workspace identifier for committed scheduling causes.",
         "room": "Existing source-capture JSON alias retains the changed Room identifier for committed scheduling causes.",
         "roomId": "Existing scheduled-row source JSON alias preserves the Room scope across old/new capture."
+      },
+      "auth_session": {
+        "resultType": "Native auth-session result distinguishes cancellation from dismissal.",
+        "errorDomain": "Native error domain identifies the auth-session failure source.",
+        "errorCode": "Native error code preserves cancellation evidence.",
+        "updateId": "OTA update identity links the attempt to the running client code."
       }
     }
   }

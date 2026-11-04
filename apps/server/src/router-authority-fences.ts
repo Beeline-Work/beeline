@@ -1,4 +1,4 @@
-import { ROUTER_MAX_AUTHORITY_FENCE_BYTES, type RouterAuthorityFence } from '@beeline/api-contract/router-protocol';
+import type { RouterAuthorityFence } from '@beeline/api-contract/router-protocol';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { authorizedMediaMetadata } from './phone-media.js';
@@ -56,7 +56,6 @@ export async function currentAuthorityFence(db:SqlDatabase,viewer:string,scope:s
   if(!row)throw new RouterProjectionUnavailable('authority');
   const frame:RouterAuthorityFence={kind:'authority-fence',scope,authorityScope:domain,mode,
     authority:routerAuthority([{authorityScope:domain,epoch:row.epoch}])};
-  if(Buffer.byteLength(JSON.stringify(frame))>ROUTER_MAX_AUTHORITY_FENCE_BYTES)throw new RouterProjectionUnavailable('budget');
   return frame;
 }
 

@@ -1,6 +1,6 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {
-  ROUTER_MAX_AUTHORITY_FENCE_BYTES,ROUTER_MAX_PART_BYTES,ROUTER_MAX_PARTS,
+  ROUTER_MAX_PART_BYTES,
   type RouterAuthorityFence,type RouterFact,type RouterSnapshot,type RouterSnapshotInput,
   type RouterUnavailable,type ScheduledWorkAuthorityFrame,type ScheduledWorkAuthorityPosition,
 } from '@beeline/api-contract/router-protocol';
@@ -15,7 +15,7 @@ type Fence=RouterAuthorityFence&{readonly mode:'deny'|'advance'};
 type Head={epoch:string;sequence:string};
 type State='opening'|'live'|'lost'|'closed';
 
-/** Content-free controls obey the same physical/logical stage/commit bounds as
+/** Content-free controls share complete multipart delivery with
  * data batches. The commit/digest covers every fence, including empty intervals. */
 export function encodeScheduledWorkAuthority(from:ScheduledWorkAuthorityPosition,to:ScheduledWorkAuthorityPosition,
   fences:readonly Fence[]):ScheduledWorkAuthorityFrame[]{
@@ -27,14 +27,12 @@ export function encodeScheduledWorkAuthority(from:ScheduledWorkAuthorityPosition
       !f.scope||f.scope.length>256||f.authorityScope.length>256||f.authority.scopes.length!==1||
       f.authority.scopes[0]!.authorityScope!==f.authorityScope||!/^\d{1,30}$/.test(f.authority.scopes[0]!.epoch)||
       createHash('sha256').update(JSON.stringify(f.authority.scopes)).digest('hex')!==f.authority.digest))throw new RouterProjectionUnavailable('authority');
-  if(fences.some(f=>Buffer.byteLength(JSON.stringify(f))>ROUTER_MAX_AUTHORITY_FENCE_BYTES))throw new RouterProjectionUnavailable('budget');
   const batchId=randomUUID(),contentDigest=createHash('sha256').update(JSON.stringify(fences)).digest('hex');
   const parts:Fence[][]=[[]];
   const size=(part:readonly Fence[])=>Buffer.byteLength(JSON.stringify({kind:'scheduled-work-authority-part',batchId,from,to,
-    partIndex:ROUTER_MAX_PARTS-1,partCount:ROUTER_MAX_PARTS,contentDigest,fences:part}));
+    partIndex:fences.length,partCount:fences.length,contentDigest,fences:part}));
   for(const fence of fences){
-    if(size([fence])>ROUTER_MAX_PART_BYTES)throw new RouterProjectionUnavailable('budget');
-    if(size([...parts.at(-1)!,fence])>ROUTER_MAX_PART_BYTES)parts.push([]);
+    if(parts.at(-1)!.length&&size([...parts.at(-1)!,fence])>ROUTER_MAX_PART_BYTES)parts.push([]);
     parts.at(-1)!.push(fence);
   }
   const frames:ScheduledWorkAuthorityFrame[]=parts.map((part,index)=>({kind:'scheduled-work-authority-part',batchId,from,to,
@@ -52,7 +50,7 @@ export class ScheduledWorkAuthorityDelivery{
   private position:ScheduledWorkAuthorityPosition|undefined;
   private initial:ScheduledWorkAuthorityPosition|undefined;
   private serial:Promise<void>=Promise.resolve();
-  private dirty=false;private pumping=false;private recovering=false;private revision=0;private queued=0;
+  private dirty=false;private pumping=false;private recovering=false;private revision=0;
   private readonly releases:Array<()=>void>=[];
   private constructor(private readonly database:SqlDatabase,live:LiveHub,private readonly viewer:string,
     private readonly enqueue:(frame:RouterAuthorityFence|ScheduledWorkAuthorityFrame)=>undefined,
@@ -93,13 +91,10 @@ export class ScheduledWorkAuthorityDelivery{
   }
   private queue(work:()=>Promise<void>):Promise<void>{
     if(this.state==='closed')return Promise.reject(new RouterProjectionUnavailable('listener'));
-    if(this.queued>=256){this.lose('budget');return Promise.reject(new RouterProjectionUnavailable('budget'));}
-    this.queued++;
     const next=this.serial.then(work);
     // A stale datum/snapshot is a group refusal, not evidence that the control
     // source was lost. Only the control phase below can retire this actor.
     this.serial=next.catch(()=>{});
-    void next.finally(()=>{this.queued--;}).catch(()=>{});
     return next;
   }
   private pump():void{

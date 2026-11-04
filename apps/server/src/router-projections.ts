@@ -1,4 +1,4 @@
-import { ROUTER_PROTOCOL, ROUTER_MAX_PART_BYTES as PART_BYTES, ROUTER_MAX_PARTS as MAX_PARTS } from '@beeline/api-contract/router-protocol';
+import { ROUTER_PROTOCOL, ROUTER_MAX_PART_BYTES as PART_BYTES } from '@beeline/api-contract/router-protocol';
 import { createHash, randomUUID } from 'node:crypto';
 import type {
   RouterAuthorityCertificate, RouterCut, RouterFact, RouterBatchRecord, RouterFamily, RouterPushFrame,
@@ -148,9 +148,9 @@ export function encodeRouterBatch(from: RouterCut, to: RouterCut, facts: readonl
   const batchId = randomUUID();
   const contentDigest = createHash('sha256').update(JSON.stringify(facts)).digest('hex');
   const parts: RouterBatchRecord[][] = [[]];
-  // Reserve the actual envelope overhead, including the maximum part count.
+  // Packet size is a transfer target; an indivisible fact is always delivered.
   const bytes = (part: RouterBatchRecord[]) => Buffer.byteLength(JSON.stringify({kind:'push-part',batchId,from,to,
-    partIndex:MAX_PARTS-1,partCount:MAX_PARTS,contentDigest,facts:part}));
+    partIndex:facts.length,partCount:facts.length,contentDigest,facts:part}));
   for (const fact of facts) {
     if (parts.at(-1)!.length && bytes([...parts.at(-1)!, fact]) > PART_BYTES) parts.push([]);
     parts.at(-1)!.push(fact);

@@ -1,5 +1,5 @@
 import type { LaneBatch, LaneCut, LaneFact, LaneClassification } from './read-lanes.js';
-import { jsonBytes as bytes, remember, stagingWithinBudget } from './staging-bounds.js';
+import { jsonBytes as bytes, remember } from './staging-bounds.js';
 export type RouterPart = Readonly<{ kind: 'push-part'; batchId: string; from: LaneCut; to: LaneCut;
   partIndex: number; partCount: number; contentDigest: string; facts: readonly (LaneFact | LaneClassification)[] }>;
 export type RouterCommit = Readonly<{ kind: 'push-commit'; batchId: string; from: LaneCut; to: LaneCut;
@@ -21,13 +21,12 @@ export function multipartRecords<T,P extends Position>(batch:MultipartBatch<T,P>
  * verify digests and own publication/authority ordering. Keeping asynchronous
  * authority proofs out of this map preserves synchronous data assembly. */
 export class Multipart<T,P extends Position,E extends object={}> extends Map<string,MultipartBatch<T,P,E>>{
-  constructor(private readonly ordered=false){super();}
+  constructor(_ordered=false){super();}
   accept(frame:MultipartHeader<P>,part?:Readonly<{index:number;values:readonly T[]}>):MultipartBatch<T,P,E>|'protocol'|'continuity'|'digest'|'budget'{
     if(!Number.isInteger(frame.partCount)||frame.partCount<1||part&&
       (!Number.isInteger(part.index)||part.index<0||part.index>=frame.partCount))return'protocol';
     const signature=multipartIdentity(frame);let batch=this.get(frame.batchId);
     if(!batch){
-      if(this.size>=17)return'budget';
       const header={batchId:frame.batchId,from:frame.from,to:frame.to,partCount:frame.partCount,contentDigest:frame.contentDigest};
       batch={frame:JSON.parse(JSON.stringify(header)) as MultipartHeader<P>,signature,parts:new Map(),bytes:0,commit:false} as MultipartBatch<T,P,E>;
       this.set(frame.batchId,batch);
@@ -41,11 +40,11 @@ export class Multipart<T,P extends Position,E extends object={}> extends Map<str
         batch.parts.set(part.index,JSON.parse(JSON.stringify(part.values)) as T[]);batch.bytes+=bytes(part.values);
       }
     }
-    return stagingWithinBudget(this.values(),value=>value.bytes,this.ordered?value=>value.frame.from.through:undefined)?batch:'budget';
+    return batch;
   }
 }
 
-/** Bounded staging. Neither a part nor a commit alone can advance a cut.
+/** Complete staging. Neither a part nor a commit alone can advance a cut.
  * Digest is injected by the trusted platform adapter; this module imports no SDK.
  */
 export class RouterBatchAssembly {

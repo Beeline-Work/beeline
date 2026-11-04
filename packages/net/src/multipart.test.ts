@@ -7,7 +7,7 @@ const header=(id:string,from=0)=>({batchId:id,from:cut(from),to:cut(from+1),part
 const fact=(text:string):LaneFact=>({atomicGroup:'room:a',authority:{digest:'certificate',scopes:[{authorityScope:'room:a',epoch:'1'}]},
   payload:{kind:'scope-replace',family:'room-head',scope:'a',value:{text}}});
 
-describe('shared bounded physical multipart ownership',()=>{
+describe('shared physical multipart ownership',()=>{
   it('owns retained data parts and cut references until commit without allowing caller mutation',()=>{
     const outputs:LaneBatch[]=[],faults:string[]=[];
     const records=[fact('original')],part:RouterPart={kind:'push-part',...header('data'),partIndex:0,facts:records};
@@ -32,7 +32,7 @@ describe('shared bounded physical multipart ownership',()=>{
     batches.accept(common);expect(multipartRecords(first)).toBeUndefined();
     batches.accept(common,{index:0,values:['first']});expect(multipartRecords(first)).toEqual(['first','second']);
   });
-  it('preserves arrival-primary data limits and earliest-position authority limits',()=>{
+  it('retains complete data and authority parts regardless of byte count',()=>{
     const data=new Multipart<string,LaneCut>(),authority=new Multipart<string,LaneCut>(true);
     const later=header('later',10),earlier={...header('earlier'),partCount:5};
     for(const stage of[data,authority])expect(typeof stage.accept(later,{index:0,values:['small']})).not.toBe('string');
@@ -41,7 +41,7 @@ describe('shared bounded physical multipart ownership',()=>{
       expect(typeof data.accept(earlier,{index,values})).not.toBe('string');
       expect(typeof authority.accept(earlier,{index,values})).not.toBe('string');
     }
-    expect(data.accept(earlier,{index:4,values})).toBe('budget');
+    expect(typeof data.accept(earlier,{index:4,values})).not.toBe('string');
     expect(typeof authority.accept(earlier,{index:4,values})).not.toBe('string');
   });
   it('uses semantic position identity and rejects invalid indices/counts before retaining them',()=>{

@@ -1,5 +1,5 @@
 import type { RouterAuthorityFence, ScheduledWorkAuthorityFrame, ScheduledWorkAuthorityPosition } from '@beeline/api-contract/router-protocol';
-import { jsonBytes as bytes, remember, stagingWithinBudget } from './staging-bounds.js';
+import { jsonBytes as bytes, remember } from './staging-bounds.js';
 import { Multipart, multipartIdentity, multipartRecords, positionKey, type MultipartBatch } from './batch-assembly.js';
 
 export type ScheduledAuthorityFence = RouterAuthorityFence & { readonly mode: 'deny' | 'advance' };
@@ -121,9 +121,7 @@ export class ScheduledWorkAuthority {
     }
     const value = Object.freeze({ ...deferred, barrier: positionCopy(deferred.barrier) });
     state.deferred.set(key, { value, signature: identity });
-    if (!stagingWithinBudget(state.deferred.values(), item => item.value.bytes, item => item.value.barrier.through)) {
-      this.fail(state, 'budget'); return;
-    }
+
     if (!state.pumping) this.release(state);
   }
 
@@ -160,7 +158,7 @@ export class ScheduledWorkAuthority {
         !this.domain(scope.authorityScope) || domains.has(scope.authorityScope) || !epoch(scope.epoch)) return false;
       domains.add(scope.authorityScope);
     }
-    return domains.has(target) && bytes(value) <= 4096;
+    return domains.has(target);
   }
   private validFrame(value: unknown): value is Part | Commit {
     if (!record(value) || ![PART_KIND, COMMIT_KIND].includes(String(value.kind)) ||
@@ -200,9 +198,8 @@ export class ScheduledWorkAuthority {
         }
         if(batch.verified)continue;
         const fences=multipartRecords(batch);if(!fences)continue;
-        const domains = new Set<string>(), targets = new Map<string, string>();
+        const targets = new Map<string, string>();
         for(const fence of fences){
-          for(const scope of fence.authority.scopes)domains.add(scope.authorityScope);
           const encoded=JSON.stringify(fence),prior=targets.get(fence.authorityScope);
           if(prior&&prior!==encoded){this.fail(state,'protocol');return;}
           targets.set(fence.authorityScope,encoded);

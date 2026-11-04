@@ -208,31 +208,6 @@ export function chatListDeltaNeedsRead(view: ChatListView, delta: ChatListDelta)
 }
 
 /**
- * Whether a read shows a newer latest message than the deck held although
- * the socket delivered nothing for them since the previous read: proof the
- * socket missed those events.
- */
-export function roomsMissedByLive(
-  held: ChatListView,
-  read: ChatListView,
-  heardRoomIds: ReadonlySet<string>,
-): boolean {
-  const heldById = new Map(held.chats.map((item) => [item.room.id, item]));
-  return read.chats.some((item) => {
-    const before = heldById.get(item.room.id);
-    const latest = item.latestMessage;
-    if (!before || !latest || heardRoomIds.has(item.room.id)) return false;
-    const previous = before.latestMessage;
-    // Times are whole seconds, so a different message in the same second is also new.
-    const newer =
-      !previous ||
-      latest.createdAt > previous.createdAt ||
-      (latest.createdAt === previous.createdAt && latest.id !== previous.id);
-    return newer;
-  });
-}
-
-/**
  * A read whose unread lookup timed out on the server says nothing about it.
  * Carry each row's last known value instead of painting every dot away until
  * the next read. A row whose unread is unknown and has no last known value

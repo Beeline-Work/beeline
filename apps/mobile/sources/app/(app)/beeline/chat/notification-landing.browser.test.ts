@@ -215,6 +215,8 @@ function shims(mobile: string): Record<string, string> {
     const cached = new URLSearchParams(location.search).get('cache')
       ? (deep ? { ...saved, messages: deepSeries.slice(41) } : saved)
       : null;
+    export const restoreStoredSurface = (address, guard) =>
+      address.endpoint === '/room/${ROOM}' && guard(cached) ? cached : null;
     export const mobileSurfaceCache = {
       read: async (address) => (address.endpoint === '/room/${ROOM}' ? cached : null),
       peek: () => null, subscribe: () => () => undefined, fetch: async () => null,

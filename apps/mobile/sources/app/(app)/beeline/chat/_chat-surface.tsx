@@ -6525,6 +6525,11 @@ export function BuzzChatSurface({
                   testID="chat-messages"
                   ref={flatListRef}
                   inverted={transcriptMessages.length > 0}
+                  initialNumToRender={PHONE_FIRST_RENDER_ROWS}
+                  // Keep history outside the viewport from monopolizing the
+                  // JS thread while the newly opened Room accepts a gesture.
+                  maxToRenderPerBatch={4}
+                  windowSize={5}
                   data={transcriptMessages}
                   keyExtractor={(item: ChatDisplayMessage) => phoneRowKey(item.id)}
                   CellRendererComponent={PhoneTranscriptCell}

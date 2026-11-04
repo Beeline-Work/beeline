@@ -358,6 +358,7 @@
       "rowContent"
     ],
     "components/buzz/TranscriptReference.tsx": ["TranscriptReference", "contents"],
+    "components/buzz/TranscriptSwipeable.tsx": ["TranscriptSwipeable", "default"],
     "components/buzz/TranscriptScrubber.tsx": ["TranscriptScrubber"],
     "components/buzz/TrayGlyph.tsx": ["TrayGlyph", "glyph"],
     "components/buzz/TurnProgressLine.tsx": ["TurnBandSlot", "TurnProgressLine", "TurnProgressLineBody", "TurnSettledLine"],

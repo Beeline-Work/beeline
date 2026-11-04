@@ -7,6 +7,7 @@ const fixture = vi.hoisted(() => ({
   monolithUrl: 'https://server.test',
   reads: [] as string[],
   cached: null as RoomView | null,
+  stored: null as RoomView | null,
   response: null as Promise<RoomView> | null,
 }));
 vi.mock('@/buzz/router-owner', () => ({ routerFamilyMode: () => fixture.mode }));
@@ -15,6 +16,7 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
   peekBuzzViewerContext: () => fixture.viewer ? { relayUrl: fixture.monolithUrl, viewerPubkey: fixture.viewer } : null,
 }));
 vi.mock('@/buzz/surface-storage', () => ({
+  restoreStoredSurface: (address: { endpoint: string }) => address.endpoint.startsWith('/room/') ? (fixture.cached ??= fixture.stored) : null,
   mobileSurfaceCache: {
     read: async (address: { endpoint: string }) => address.endpoint.startsWith('/room/') ? fixture.cached : null,
     peek: (address: { endpoint: string }) => address.endpoint.startsWith('/room/') ? fixture.cached : null,
@@ -46,6 +48,7 @@ beforeEach(() => {
   fixture.monolithUrl = 'https://server.test';
   fixture.reads = [];
   fixture.cached = null;
+  fixture.stored = null;
   fixture.response = null;
 });
 
@@ -94,6 +97,20 @@ describe('push Room prefetch', () => {
 });
 
 describe('received versus missing pushed rows', () => {
+  it('restores the complete stored Room synchronously on the tap before its first render', async () => {
+    const stored = { room: { id: 'room-a' }, members: [], messages: Array.from({ length: 30 }, (_, i) => ({ id: `message-${i}` })) } as unknown as RoomView;
+    fixture.stored = stored;
+    prefetchPushRoom('stored', 'room-a', 'message-29');
+    // No microtask or network response is required for navigation to see it.
+    expect(fixture.cached).toBe(stored);
+    expect(fixture.cached?.messages).toHaveLength(30);
+    expect(fixture.reads).toEqual([]);
+    const pending = takePrefetchedPushRoom('stored', 'room-a');
+    finishRoomDraw('message-29', 'room-a');
+    observeVisibleRoomRows('room-a', ['message-29']);
+    await pending;
+    expect(fixture.reads).toEqual(['room-a']);
+  });
   it('starts no network read while a received target waits to paint', async () => {
     fixture.cached = { room: { id: 'room-a' }, members: [], messages: [{ id: 'target' }] } as unknown as RoomView;
     prefetchPushRoom('received', 'room-a', 'target');

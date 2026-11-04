@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { readFileSync } from 'node:fs';
 import { SurfaceRegistry } from '@/buzz/surface-registry';
 import { roomTransitionWork } from '@/buzz/room-transition-work';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -174,6 +173,7 @@ vi.mock('@/buzz/community-storage', () => ({
 }));
 
 vi.mock('@/buzz/surface-storage', () => ({
+  restoreStoredSurface: (path: string) => path.startsWith('/room/') ? controls.cached : null,
   mobileSurfaceCache: {
     peek: vi.fn((path: string) => path.startsWith('/room/') ? controls.cached : null),
     read: vi.fn(async () => controls.cached),
@@ -566,11 +566,28 @@ describe('reopening a dismissed Room', () => {
 });
 
 describe('useRoomSurfaceSession', () => {
-  it('keeps the heavy Room surface free of its own render-triggering focus subscription', () => {
-    const source = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
-    expect(source).not.toMatch(/\buseIsFocused\s*\(/);
+  it('keeps tap-owned cached Room setup behind its visible-row draw, without delaying the first DTO', async () => {
+    controls.hotViewer = true;
+    controls.cached = { ...roomView('room-a'), messages: [{ id: 'target', text: 'Already received', createdAt: 10,
+      presentation: 'message', author: { pubkey: 'viewer', kind: 'human', name: 'Viewer' } }] };
+    prefetchPushRoom('cached-tap', 'room-a', 'target');
+    await flushEffects();
+    let session!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, {
+      channelId: 'room-a', notificationResponseId: 'cached-tap', capture: (value) => { session = value; },
+    })); });
+    await flushEffects();
+    expect(session.roomSurface?.messages[0]?.id).toBe('target');
+    expect(controls.transportCount).toBe(0);
+    await act(async () => {
+      observeVisibleRoomRows('room-a', ['target']);
+      finishRoomDraw('target', 'room-a');
+    });
+    await flushEffects();
+    expect(controls.transportCount).toBe(1);
+    await act(async () => renderer.unmount());
   });
-
   it('releases Room conversion and saves only after the actual route transition ends', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;

@@ -895,8 +895,8 @@ export function serveMachineSocket(
         agentId,
         {
           send: (event) => send({ ...event, agentId }),
-          pause: () => { pausedAgents.add(agentId); client.pause(); },
-          resume: () => { pausedAgents.delete(agentId); if (!pausedAgents.size) client.resume(); },
+          pause: () => { pausedAgents.add(session.connectionId); client.pause(); },
+          resume: () => { pausedAgents.delete(session.connectionId); if (!pausedAgents.size) client.resume(); },
           isOpen: (): boolean => isOpen() && sessions.get(agentId) === session,
           drop: (code, reason) => {
             if (sessions.get(agentId) !== session) return;

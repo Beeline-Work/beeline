@@ -2,27 +2,14 @@ import { markRoomOpen } from '@/buzz/room-open-trace';
 import { AppState } from 'react-native';
 import { useEffect, useRef, useState } from 'react';
 import equal from 'fast-deep-equal';
-import {
-  SurfaceRefreshScheduler,
-  isChatListView,
-  type ChatListView,
-  type SurfaceCacheAddress,
-} from '@beeline/buzz-client';
+import { SurfaceRefreshScheduler, isChatListView, type ChatListView, type SurfaceCacheAddress } from '@beeline/buzz-client';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { subscribeClientReset } from '@/sync/client-reset';
 import { isDraftFrame } from '@/sync/transport/live-frames';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
-import {
-  applyChatListDelta,
-  chatListDeltaNeedsRead,
-  chatWatchFiltersKey,
-  keepUnavailableChatFacts,
-  roomsMissedByLive,
-  withCornerFacts,
-  withoutCornerFacts,
-} from './chat-list-delta';
+import { applyChatListDelta, chatListDeltaNeedsRead, chatWatchFiltersKey, keepUnavailableChatFacts, roomsMissedByLive, withCornerFacts, withoutCornerFacts } from './chat-list-delta';
 import { applyChatListCorners, cornerStoreClock, getRoomCornerSummary } from './room-corner-store';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 import { cacheRoomMessageDelta } from './cache-room-message-delta';
@@ -31,16 +18,8 @@ import { useRouterFamily } from './router-family';
 import { acquireRoutedChatList } from './router-chat-list';
 import { routerFamilyMode, routerLaneSnapshot } from './router-owner';
 
-export type ChatListKey = {
-  readonly relayUrl: string;
-  readonly viewerPubkey: string;
-  readonly workspaceId: string;
-};
-export type ChatListConsumer = {
-  readonly visible: () => boolean;
-  readonly onRead?: () => void;
-  readonly onError?: (reason: unknown) => void;
-};
+export type ChatListKey = { readonly relayUrl: string; readonly viewerPubkey: string; readonly workspaceId: string };
+export type ChatListConsumer = { readonly visible: () => boolean; readonly onRead?: () => void; readonly onError?: (reason: unknown) => void };
 export interface ChatListHandle {
   current(): ChatListView | null;
   confirmed(): boolean;
@@ -52,16 +31,10 @@ export interface ChatListHandle {
 }
 
 type Filters = ChatListView['watchFilters'];
-type SurfaceEvent = Parameters<
-  Parameters<ReturnType<typeof sharedLiveConnection>['register']>[1]
->[0];
+type SurfaceEvent = Parameters<Parameters<ReturnType<typeof sharedLiveConnection>['register']>[1]>[0];
 const stores = new Map<string, ChatListStore>();
-const idOf = (key: ChatListKey) =>
-  JSON.stringify([key.relayUrl, key.viewerPubkey, key.workspaceId]);
-const addressOf = (key: ChatListKey): SurfaceCacheAddress =>
-  surfaceAddress(key.relayUrl, key.viewerPubkey, '/workspace/:id/chats', {
-    workspaceId: key.workspaceId,
-  });
+const idOf = (key: ChatListKey) => JSON.stringify([key.relayUrl, key.viewerPubkey, key.workspaceId]);
+const addressOf = (key: ChatListKey): SurfaceCacheAddress => surfaceAddress(key.relayUrl, key.viewerPubkey, '/workspace/:id/chats', { workspaceId: key.workspaceId });
 const roomIds = (filters: Filters) => new Set(filters.flatMap((filter) => filter['#h'] ?? []));
 const deltaContext = {
   viewing: (id: string) => sharedLiveConnection().isViewing(id),
@@ -91,10 +64,7 @@ class ChatListStore {
   private durableTimer?: ReturnType<typeof setTimeout>;
   private stopConnected?: () => void;
 
-  constructor(
-    readonly key: ChatListKey,
-    private readonly onClosed: () => void,
-  ) {
+  constructor(readonly key: ChatListKey, private readonly onClosed: () => void) {
     this.address = addressOf(key);
     this.restore(this.current());
     this.scheduler = new SurfaceRefreshScheduler({
@@ -108,9 +78,7 @@ class ChatListStore {
           const identity = await loadBuzzIdentity();
           if (!identity || identity.publicKey !== key.viewerPubkey)
             throw new Error('The signed-in identity changed before the Room list was read.');
-          const read = await new RoomViewClient({ baseUrl: key.relayUrl, identity }).chats(
-            key.workspaceId,
-          );
+          const read = await new RoomViewClient({ baseUrl: key.relayUrl, identity }).chats(key.workspaceId);
           if (!read.unavailable?.includes('corners')) applyChatListCorners(read.chats, cornerClock);
           return read;
         } catch (error) {
@@ -123,12 +91,9 @@ class ChatListStore {
       apply: (read) => {
         if (this.closed) return;
         const held = this.current();
-        const value = this.deltasDuringRead.reduce(
-          (view, delta) => applyChatListDelta(view, delta, deltaContext),
-          withoutCornerFacts(keepUnavailableChatFacts(held, read)),
-        );
-        const missedLive =
-          this.confirmedRead && held !== null && roomsMissedByLive(held, read, this.heard);
+        const value = this.deltasDuringRead.reduce((view, delta) => applyChatListDelta(view, delta, deltaContext),
+          withoutCornerFacts(keepUnavailableChatFacts(held, read)));
+        const missedLive = this.confirmedRead && held !== null && roomsMissedByLive(held, read, this.heard);
         this.openingReadFailed = false;
         this.confirmedRead = true;
         if (!this.missed) this.heard.clear();
@@ -137,8 +102,7 @@ class ChatListStore {
         void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);
         for (const consumer of this.consumers) consumer.onRead?.();
         if (missedLive) sharedLiveConnection().reconnect();
-        if (chatWatchFiltersKey(value.watchFilters) !== this.watchKey)
-          void this.watch(value.watchFilters);
+        if (chatWatchFiltersKey(value.watchFilters) !== this.watchKey) void this.watch(value.watchFilters);
       },
       onError: (reason) => {
         if (!this.closed) for (const consumer of this.consumers) consumer.onError?.(reason);
@@ -154,12 +118,8 @@ class ChatListStore {
   current(): ChatListView | null {
     return this.closed ? null : mobileSurfaceCache.peek(this.address, isChatListView);
   }
-  confirmed(): boolean {
-    return this.confirmedRead;
-  }
-  attach(consumer: ChatListConsumer): void {
-    this.consumers.add(consumer);
-  }
+  confirmed(): boolean { return this.confirmedRead; }
+  attach(consumer: ChatListConsumer): void { this.consumers.add(consumer); }
   detach(consumer: ChatListConsumer): void {
     this.consumers.delete(consumer);
     if (!this.consumers.size) this.close();
@@ -167,26 +127,16 @@ class ChatListStore {
   subscribe(listener: () => void): () => void {
     const stop = mobileSurfaceCache.subscribe(this.address, listener);
     this.subscriptions.add(stop);
-    return () => {
-      stop();
-      this.subscriptions.delete(stop);
-    };
+    return () => { stop(); this.subscriptions.delete(stop); };
   }
-  force(): void {
-    this.missed = false;
-    this.scheduler.force();
-  }
-  catchUp(): void {
-    if (this.missed) this.force();
-  }
+  force(): void { this.missed = false; this.scheduler.force(); }
+  catchUp(): void { if (this.missed) this.force(); }
   async remove(): Promise<void> {
     const removal = mobileSurfaceCache.remove(this.address);
     this.close(false);
     await removal;
   }
-  reset(): void {
-    this.close(false);
-  }
+  reset(): void { this.close(false); }
 
   private saved(value: ChatListView): ChatListView {
     return withCornerFacts(value, (roomId) => {
@@ -208,10 +158,7 @@ class ChatListStore {
     }, 1_000);
   }
   private requestRead(): void {
-    if (
-      AppState.currentState !== 'background' &&
-      [...this.consumers].some((consumer) => consumer.visible())
-    )
+    if (AppState.currentState !== 'background' && [...this.consumers].some((consumer) => consumer.visible()))
       this.scheduler.signal();
     else this.missed = true;
   }
@@ -227,18 +174,10 @@ class ChatListStore {
     const generation = ++this.watchGeneration;
     this.watchKey = chatWatchFiltersKey(filters);
     const previous = this.stopWatch;
-    if (!filters.length) {
-      previous?.();
-      this.stopWatch = undefined;
-      this.watched.clear();
-      return;
-    }
+    if (!filters.length) { previous?.(); this.stopWatch = undefined; this.watched.clear(); return; }
     const stop = await sharedLiveConnection().register(filters, (event) => this.onFrame(event));
     previous?.();
-    if (this.closed || generation !== this.watchGeneration) {
-      stop();
-      return;
-    }
+    if (this.closed || generation !== this.watchGeneration) { stop(); return; }
     this.stopWatch = stop;
     this.watched = roomIds(filters);
   }
@@ -250,73 +189,37 @@ class ChatListStore {
     if (live?.type === 'sidebar-preview') {
       // A projection cannot establish a complete transcript, including edits
       // and deletions whose missing body is not detectable from the newest id.
-      const address = surfaceAddress(
-        this.key.relayUrl,
-        this.key.viewerPubkey,
-        `/room/${live.roomId}`,
-      );
+      const address = surfaceAddress(this.key.relayUrl, this.key.viewerPubkey, `/room/${live.roomId}`);
       void mobileSurfaceCache.remove(address).catch(() => undefined);
     }
     if (live?.type === 'message-delta') {
       markRoomOpen('list-message-delta', live.message.id);
-      const address = surfaceAddress(
-        this.key.relayUrl,
-        this.key.viewerPubkey,
-        `/room/${live.roomId}`,
-      );
+      const address = surfaceAddress(this.key.relayUrl, this.key.viewerPubkey, `/room/${live.roomId}`);
       cacheRoomMessageDelta(mobileSurfaceCache, address, live);
     }
-    if (
-      live?.type === 'read-state' ||
-      live?.type === 'sidebar-preview' ||
-      live?.type === 'message-delta' ||
-      live?.type === 'turn-delta' ||
-      live?.type === 'corner-status'
-    ) {
+    if (live?.type === 'read-state' || live?.type === 'sidebar-preview' || live?.type === 'message-delta' || live?.type === 'turn-delta' || live?.type === 'corner-status') {
       if (this.reading) this.deltasDuringRead.push(live);
       const held = this.current();
-      if (!held) {
-        this.requestRead();
-        return;
-      }
+      if (!held) { this.requestRead(); return; }
       const needsRead = chatListDeltaNeedsRead(held, live);
       const next = applyChatListDelta(held, live, deltaContext);
-      if (next !== held) {
-        mobileSurfaceCache.publish(this.address, next, isChatListView);
-        this.persistSoon();
-      }
+      if (next !== held) { mobileSurfaceCache.publish(this.address, next, isChatListView); this.persistSoon(); }
       if (needsRead) this.requestRead();
       return;
     }
-    if (
-      live?.type === 'presence' ||
-      isDraftFrame(event) ||
-      (live?.type === 'invalidate' && live.deliveryId)
-    )
-      return;
+    if (live?.type === 'presence' || isDraftFrame(event) || (live?.type === 'invalidate' && live.deliveryId)) return;
     // The opening subscribe arrives before that read finishes. Ignore it.
     // After the read fails, the next subscribe is the reconnect: read again
     // so Retry is not the only way off the error screen.
     if (live?.type === 'subscribed' && !this.confirmedRead && !this.openingReadFailed) return;
     if (live?.type === 'subscribed' && !this.confirmedRead && this.reading) return;
-    if (
-      live?.type === 'subscribed' &&
-      this.confirmedRead &&
-      live.resumed &&
-      this.covered.has(live.roomId)
-    )
-      return;
+    if (live?.type === 'subscribed' && this.confirmedRead && live.resumed && this.covered.has(live.roomId)) return;
     this.requestRead();
   }
   private close(persist = true): void {
     if (this.closed) return;
-    if (this.durableTimer) {
-      clearTimeout(this.durableTimer);
-      this.durableTimer = undefined;
-      const value = this.current();
-      if (persist && value)
-        void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);
-    }
+    if (this.durableTimer) { clearTimeout(this.durableTimer); this.durableTimer = undefined;
+      const value = this.current(); if (persist && value) void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView); }
     this.closed = true;
     this.scheduler.dispose();
     this.stopConnected?.();
@@ -340,9 +243,7 @@ export function acquireChatList(key: ChatListKey, consumer: ChatListConsumer): C
     const id = idOf(key);
     let store = stores.get(id);
     if (!store) {
-      const created = new ChatListStore(key, () => {
-        if (stores.get(id) === created) stores.delete(id);
-      });
+      const created = new ChatListStore(key, () => { if (stores.get(id) === created) stores.delete(id); });
       store = created;
       stores.set(id, store);
     }
@@ -351,21 +252,10 @@ export function acquireChatList(key: ChatListKey, consumer: ChatListConsumer): C
     held.attach(member);
     let released = false;
     return {
-      current: () => held.current(),
-      confirmed: () => held.confirmed(),
-      subscribe: (listener) => held.subscribe(listener),
-      force: () => held.force(),
-      catchUp: () => held.catchUp(),
-      release: () => {
-        if (!released) {
-          released = true;
-          held.detach(member);
-        }
-      },
-      remove: () => {
-        released = true;
-        return held.remove();
-      },
+      current: () => held.current(), confirmed: () => held.confirmed(),
+      subscribe: (listener) => held.subscribe(listener), force: () => held.force(), catchUp: () => held.catchUp(),
+      release: () => { if (!released) { released = true; held.detach(member); } },
+      remove: () => { released = true; return held.remove(); },
     };
   });
 }
@@ -384,47 +274,25 @@ export function chatListSnapshot(key: ChatListKey): ChatListView | null {
   if (routerFamilyMode('room-list') !== 'legacy') return liveChatList(key);
   return mobileSurfaceCache.peek(addressOf(key), isChatListView);
 }
-export function refreshChatList(key: ChatListKey): void {
-  stores.get(idOf(key))?.force();
-}
+export function refreshChatList(key: ChatListKey): void { stores.get(idOf(key))?.force(); }
 /** Transcript headers, mentions and forwarding do not display deck previews. */
-function sameTranscriptContext(
-  before: ChatListView | null,
-  after: ChatListView | null,
-  roomId: string,
-): boolean {
+function sameTranscriptContext(before: ChatListView | null, after: ChatListView | null, roomId: string): boolean {
   if (before === after) return true;
-  if (
-    !before ||
-    !after ||
-    before.chats.length !== after.chats.length ||
-    !equal(before.workspace, after.workspace) ||
-    !equal(before.viewer, after.viewer)
-  )
-    return false;
+  if (!before || !after || before.chats.length !== after.chats.length ||
+      !equal(before.workspace, after.workspace) || !equal(before.viewer, after.viewer)) return false;
   const byId = new Map(after.chats.map((item) => [item.room.id, item]));
   return before.chats.every((item) => {
     const next = byId.get(item.room.id);
-    return (
-      next !== undefined &&
-      equal(item.room, next.room) &&
-      item.repositoryName === next.repositoryName &&
-      equal(item.directMessage, next.directMessage) &&
+    return next !== undefined && equal(item.room, next.room) &&
+      item.repositoryName === next.repositoryName && equal(item.directMessage, next.directMessage) &&
       (item.room.id !== roomId ||
-        (item.agentState === next.agentState && equal(item.voiceCall, next.voiceCall)))
-    );
+        (item.agentState === next.agentState && equal(item.voiceCall, next.voiceCall)));
   });
 }
 
-export type UseChatListOptions = {
-  readonly visible?: () => boolean;
-  readonly onError?: (reason: unknown) => void;
-  readonly transcriptRoomId?: string;
-};
-export function useChatList(
-  key: ChatListKey | null,
-  options: UseChatListOptions = {},
-): ChatListView | null {
+export type UseChatListOptions = { readonly visible?: () => boolean; readonly onError?: (reason: unknown) => void;
+  readonly transcriptRoomId?: string };
+export function useChatList(key: ChatListKey | null, options: UseChatListOptions = {}): ChatListView | null {
   const mode = useRouterFamily('room-list');
   const [value, setValue] = useState<ChatListView | null>(null);
   const painted = useRef<ChatListView | null>(null);
@@ -432,11 +300,7 @@ export function useChatList(
   optionsRef.current = options;
   const id = key ? idOf(key) : null;
   useEffect(() => {
-    if (!key) {
-      painted.current = null;
-      setValue(null);
-      return;
-    }
+    if (!key) { painted.current = null; setValue(null); return; }
     const handle = acquireChatList(key, {
       visible: () => optionsRef.current.visible?.() ?? true,
       onError: (reason) => optionsRef.current.onError?.(reason),
@@ -451,16 +315,13 @@ export function useChatList(
     paint();
     const stop = handle.subscribe(paint);
     handle.catchUp();
-    return () => {
-      stop();
-      handle.release();
-    };
+    return () => { stop(); handle.release(); };
   }, [id]);
   // A retained sidebar cannot expose its prior private projection while a
   // replacement connection has not negotiated and reauthorized its family.
   if (mode === 'pending') return null;
   if (mode === 'router') return key ? liveChatList(key) : null;
   // Other local interactions still read the newest canonical ordering and DTO.
-  return options.transcriptRoomId && key ? (liveChatList(key) ?? value) : value;
+  return options.transcriptRoomId && key ? liveChatList(key) ?? value : value;
 }
 export const resetChatListStoresForTest = resetStores;

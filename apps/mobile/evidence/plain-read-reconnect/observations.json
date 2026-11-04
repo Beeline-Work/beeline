@@ -1,0 +1,115 @@
+{
+  "nativeRuntime": 40,
+  "androidApi": 35,
+  "device": "task-owned x86_64 Android emulator",
+  "originalNativeApkSha256": "00eb69f56cce366a72e6b2631a473626e60050a69f12e7e2f5e2f35f927644be",
+  "candidateApkSha256": "ff9bba1b67175297c37be78f588ec46e62c0ead7b56e4e9888e104083bfc975f",
+  "candidateHbcSha256": "57a07e694a867203b4f9618645fcd1d64d78218675feb7be4203e79f1e066f36",
+  "candidateJsSha256": "59705c824237905824bd6958b45c31135a043aa5e771e9d5c7536c774190462f",
+  "accepted-home": {
+    "elapsed": 13.610664129257202,
+    "time": 1793834657.174068,
+    "server": {
+      "fail": false,
+      "reads": 24
+    }
+  },
+  "accepted-airplane-on": {
+    "elapsed": 6.43923020362854,
+    "sharedError": true,
+    "server": {
+      "fail": false,
+      "reads": 24
+    }
+  },
+  "accepted-radio": {
+    "recovered": true,
+    "retryControl": "Retry",
+    "time": 1793834676.1474938,
+    "server": {
+      "fail": false,
+      "reads": 25
+    }
+  },
+  "accepted-switches": {
+    "before": {
+      "fail": false,
+      "reads": 25
+    },
+    "after": {
+      "fail": false,
+      "reads": 35
+    },
+    "events": [
+      {
+        "target": "proof",
+        "time": 1793834676.7518556
+      },
+      {
+        "target": "busy-proof",
+        "time": 1793834678.2657175
+      },
+      {
+        "target": "proof",
+        "time": 1793834679.78573
+      },
+      {
+        "target": "busy-proof",
+        "time": 1793834681.3173888
+      },
+      {
+        "target": "proof",
+        "time": 1793834682.8348112
+      },
+      {
+        "target": "busy-proof",
+        "time": 1793834684.3545794
+      },
+      {
+        "target": "proof",
+        "time": 1793834685.8613074
+      },
+      {
+        "target": "busy-proof",
+        "time": 1793834687.3801262
+      },
+      {
+        "target": "proof",
+        "time": 1793834688.8990753
+      },
+      {
+        "target": "busy-proof",
+        "time": 1793834690.417401
+      }
+    ]
+  },
+  "accepted-idle-start": {
+    "time": 1793834696.2891562,
+    "server": {
+      "fail": false,
+      "reads": 35
+    },
+    "hbcSha256": "57a07e694a867203b4f9618645fcd1d64d78218675feb7be4203e79f1e066f36"
+  },
+  "serverFault": {
+    "before": {
+      "fail": true,
+      "reads": 18
+    },
+    "after": {
+      "fail": true,
+      "reads": 21
+    },
+    "errorRow": "Couldn\u2019t reach Beeline / Check your connection and try again. / Retry"
+  },
+  "accepted-idle-end": {
+    "time": 1793835185.2006779,
+    "elapsedSeconds": 488.88745379447937,
+    "server": {
+      "fail": false,
+      "reads": 35
+    },
+    "historyAndSentProbeVisible": true,
+    "sharedErrorVisible": false
+  }
+}

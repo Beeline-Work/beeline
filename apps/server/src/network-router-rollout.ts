@@ -1,3 +1,5 @@
+// Retained for helper command/effect rollout and the separate MCP member stream.
+// Phone reads do not consult this flag or negotiate read capabilities.
 import { serverSetting } from './server-configuration.js';
 /** Router admission is on for every deployment by default. The explicit zero
  * remains available for rollback; protocol support and current authority are

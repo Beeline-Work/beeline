@@ -302,7 +302,7 @@ test('every main merge runs full checks and publishes one coverage map without c
 });
 
 test('the network admission CI command runs without duplicate package-script worker flags', () => {
-  const step = jobs['shared-package-tests'].steps.find(step => step.name === 'Prove local network admission');
+  const step = jobs['shared-package-tests'].steps.find(step => step.name === 'Prove network codecs and command ownership');
   const result = spawnSync('bash', ['-c', step.run], {
     cwd: new URL(`../${step['working-directory'] ?? ''}/`, import.meta.url),
     env: { ...process.env, ...step.env, CI_TEST_WORKERS: '1' }, encoding: 'utf8',

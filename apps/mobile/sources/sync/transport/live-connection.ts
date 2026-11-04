@@ -77,7 +77,7 @@ const roomIdsFromFilters = (filters: SurfaceFilters) =>
       ])
       .filter(Boolean),
   );
-const isOpen = (socket: WebSocket | undefined): socket is WebSocket => socket?.readyState === 1;
+const isOpen = (socket: WebSocket | undefined): socket is WebSocket & { readyState: 1 } => socket?.readyState === 1;
 
 /** The only phone socket. Screens call request; push listeners call their same read. */
 export class LiveConnection {
@@ -375,6 +375,7 @@ export class LiveConnection {
     for (const listener of this.disconnected) listener();
   }
   reconnectNow(): void {
+    if (this.socket && this.socket.readyState > 1) this.dropConnection();
     if (!this.socket) void this.ensureSocket().catch(() => undefined);
   }
   reportRequestDeadlineMissed(): void {
@@ -383,7 +384,10 @@ export class LiveConnection {
   private checkHealth(): void {
     if (AppState.currentState !== 'active' || this.pongDeadline) return;
     if (!this.socket) return;
-    if (!isOpen(this.socket)) return;
+    if (!isOpen(this.socket)) {
+      if (this.socket.readyState > 1) this.socketFailed(this.socket);
+      return;
+    }
     const socket = this.socket;
     this.pongDeadline = setTimeout(() => this.socketFailed(socket), 5_000);
     try {

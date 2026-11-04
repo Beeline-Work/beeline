@@ -135,6 +135,7 @@ it('preserves command identity across a lost receipt and explicit retry on anoth
     origin = origins[1]!; dropReceipt = true;
     const parked = capabilities(connection, state => state.ready && state.generation > initialGeneration);
     await expect(connection.requestCommand('reactToMessage', args, command)).rejects.toMatchObject({ name: 'PhoneSocketDisconnectedError' });
+    connection.reconnectNow();
     await parked;
     expect(dropped).toBe(1); expect(sockets).toHaveLength(2);
     // Closing a command never replays it. Retry resends the original identity.

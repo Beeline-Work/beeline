@@ -159,6 +159,16 @@ describe('the one phone socket',()=>{
     await vi.advanceTimersByTimeAsync(90_000);expect(socket.sent).not.toContain('{"type":"ping"}');appState('active');
     expect(socket.sent).toContain('{"type":"ping"}');expect(listener).toHaveBeenCalledWith({monolithLive:{type:'invalidate',roomId:'a',reason:'reconnect'}});
   });
+  it('Retry revives a socket already closed before its native close callback arrives',async()=>{
+    const {connection}=setup();await connection.register([],()=>{});const first=await open();
+    first.readyState=3;connection.reconnectNow();const second=await open();
+    expect(second).not.toBe(first);expect(connection.commandState().ready).toBe(true);
+  });
+  it('the heartbeat detects native closure even if its callback was lost',async()=>{
+    const {connection}=setup();const listener=vi.fn();await connection.register([{'#h':['a']}],listener);
+    const socket=await open();socket.readyState=3;await vi.advanceTimersByTimeAsync(30_000);
+    expect(listener).toHaveBeenCalledWith({monolithLive:{type:'invalidate',roomId:'a',reason:'reconnect'}});
+  });
   it('forwards a native push into the same read without another connection',async()=>{
     const {connection}=setup();const listener=vi.fn();await connection.register([{'#h':['a']}],listener);await open();connection.notePushedMessage('a');
     expect(listener).toHaveBeenCalledWith({monolithLive:{type:'invalidate',roomId:'a',reason:'resync'}});expect(Socket.instances).toHaveLength(1);

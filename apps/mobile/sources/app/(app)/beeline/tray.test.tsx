@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 import * as React from 'react';
+import { AccessibilityInfo } from 'react-native';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -371,6 +372,7 @@ beforeEach(() => {
   trayProtocol.prepare.mockReset().mockResolvedValue({ id: 'prepared-tray' });
   trayProtocol.deliver.mockReset().mockResolvedValue(undefined);
   trayProtocol.cancel.mockReset().mockResolvedValue(undefined);
+  vi.mocked(AccessibilityInfo.announceForAccessibility).mockClear();
   trayProtocol.retry.mockReset();
   liveRegistrations.clear();
   resetClientState();
@@ -502,14 +504,63 @@ describe('negotiated Tray consumer', () => {
     expect(trayProtocol.prepare).toHaveBeenCalledTimes(1);
     expect(trayProtocol.deliver).not.toHaveBeenCalled();
     expect(tree.root.findByProps({ testID: 'needs-you-ask-1' })).toBeDefined();
-    await act(async () =>
-      tree.root
+    let finishCancellation!: () => void;
+    trayProtocol.cancel.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finishCancellation = resolve;
+        }),
+    );
+    let undo!: Promise<void>;
+    await act(async () => {
+      undo = tree.root
         .findByProps({ testID: 'tray-clear-undo' })
         .findByProps({ accessibilityRole: 'button' })
-        .props.onPress(),
-    );
+        .props.onPress();
+    });
+    expect(tree.root.findByProps({ testID: 'tray-clear-undo' })).toBeDefined();
+    expect(AccessibilityInfo.announceForAccessibility).not.toHaveBeenCalledWith('Restored');
+    await act(async () => {
+      finishCancellation();
+      await undo;
+    });
+    expect(tree.root.findAllByProps({ testID: 'tray-clear-undo' })).toHaveLength(0);
+    expect(AccessibilityInfo.announceForAccessibility).toHaveBeenCalledWith('Restored');
     expect(trayProtocol.cancel).toHaveBeenCalledWith('prepared-tray');
     expect(trayProtocol.deliver).not.toHaveBeenCalled();
+    expect(phoneOperation).not.toHaveBeenCalled();
+  });
+
+  it('retains a pending clear and shows the refusal when another tab has dispatched it', async () => {
+    trayProtocol.value = { needs: { items: [need()] }, saved: { windowId: 'window', rows: [] } };
+    const tree = await renderTray();
+    await act(async () => {
+      tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress();
+    });
+    let rejectCancellation!: (cause: Error) => void;
+    trayProtocol.cancel.mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectCancellation = reject;
+        }),
+    );
+    let undo!: Promise<void>;
+    await act(async () => {
+      undo = tree.root
+        .findByProps({ testID: 'tray-clear-undo' })
+        .findByProps({ accessibilityRole: 'button' })
+        .props.onPress();
+    });
+    expect(tree.root.findByProps({ testID: 'tray-clear-undo' })).toBeDefined();
+    expect(AccessibilityInfo.announceForAccessibility).not.toHaveBeenCalledWith('Restored');
+    await act(async () => {
+      rejectCancellation(new Error('Command already admitted to transport'));
+      await undo;
+    });
+    expect(trayProtocol.cancel).toHaveBeenCalledWith('prepared-tray');
+    expect(tree.root.findByProps({ testID: 'tray-clear-undo' })).toBeDefined();
+    expect(textOf(tree)).toContain('Command already admitted to transport');
+    expect(AccessibilityInfo.announceForAccessibility).not.toHaveBeenCalledWith('Restored');
     expect(phoneOperation).not.toHaveBeenCalled();
   });
 

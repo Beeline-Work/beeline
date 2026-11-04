@@ -70,10 +70,10 @@ export async function readArtifactObject(attachment: AttachmentReference,
   if (reset !== clientResetGeneration() || localEpoch !== epoch || options.signal?.aborted) throw new Error('The file is no longer visible.');
   const raster = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'].includes(attachment.mimeType);
   const source = options.thumbnail ? metadata.thumbnail : options.preview && metadata.size > 16 * 1024
-    ? raster ? metadata.thumbnail : undefined : metadata;
+    ? raster ? metadata.thumbnail ?? metadata : undefined : metadata;
   if (options.thumbnail && !source) throw new ArtifactPreviewUnavailable();
   if (options.preview && !source) throw new ArtifactPreviewUnavailable();
-  if (options.preview && source && source.size > 16 * 1024)
+  if (options.preview && !raster && source && source.size > 16 * 1024)
     throw new ArtifactPreviewUnavailable();
   if (!source) throw new ArtifactPreviewUnavailable();
   const id = source.objectId;
@@ -93,10 +93,10 @@ export async function readArtifactObject(attachment: AttachmentReference,
     new URL(getBuzzRuntimeConfig().monolithUrl).origin === origin && mediaCertificateCurrent(metadata);
   await adoptFences();
   const bytes = await cache.get(address, async signal => {
-    const bytes = await read(id, signal, options.preview ? 16 * 1024 : 25 * 1024 * 1024);
+    const bytes = await read(id, signal, options.preview && !raster ? 16 * 1024 : 25 * 1024 * 1024);
     return bytes;
   }, { signal: options.signal, restoreAuthorized: true, reuseAuthorized: true, isCurrent: current,
-    maxBytes: options.preview ? 16 * 1024 : 25 * 1024 * 1024 });
+    maxBytes: options.preview && !raster ? 16 * 1024 : 25 * 1024 * 1024 });
   if (!current() || options.signal?.aborted) throw new Error('The file is no longer visible.');
   return { bytes, key, address, mimeType, isCurrent: current };
 }

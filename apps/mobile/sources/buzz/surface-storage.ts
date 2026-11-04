@@ -56,13 +56,6 @@ function storedValue(encoded: string | null): unknown {
   }
 }
 
-/** MMKV already provides the response synchronously. Restore it on the tap
- * stack so the first Room render has its complete validated DTO. */
-export function restoreStoredSurface<T>(address: SurfaceCacheAddress, guard: (value: unknown) => value is T): T | null {
-  return mobileSurfaceCache.restoreStored(address, guard,
-    (key) => storedValue(responses.getString(storageKey(key)) ?? null));
-}
-
 // Another tab's write or removal of one response reaches this tab's copy of
 // that response only. Clearing the whole storage drops every hot copy, so
 // this tab neither shows nor writes back what the other tab removed.

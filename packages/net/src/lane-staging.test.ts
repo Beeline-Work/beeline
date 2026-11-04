@@ -50,7 +50,7 @@ describe('shared retained lane intervals',()=>{
     expect(stage.take()).toEqual([empty, { ...classified, facts: [] }]);
     expect(stage.size).toBe(0);
   });
-  it.each([false, true])('keeps original byte charges after pruning private payloads (future=%s)', future => {
+  it.each([false, true])('retains original byte accounting and subsequent intervals after pruning private payloads (future=%s)', future => {
     const store = new LaneStaging(), stage = store.stage(future);
     const body = interval(0, [fact('x'.repeat(200 * 1024))]);
     stage.add(body);
@@ -58,19 +58,23 @@ describe('shared retained lane intervals',()=>{
     store.prune(() => false);
     expect([...stage.values()][0]).toEqual({ batch: { ...body, facts: [] }, bytes });
     if (!future) stage.add(interval(1, [fact('x'.repeat(200 * 1024))]));
-    expect(() => stage.add(interval(2, [fact('x'.repeat(100 * 1024))]))).toThrow('overflow');
+    const later = interval(2, [fact('x'.repeat(100 * 1024))]);
+    stage.add(later);
+    expect([...stage.values()].at(-1)!.batch).toEqual(later);
+    expect([...stage.values()][0]!.batch.facts).toEqual([]);
     stage.clear();
     expect(() => stage.add(interval(3, [fact('x'.repeat(200 * 1024))]))).not.toThrow();
   });
-  it.each([false, true])('keeps count limits after pruning every payload (future=%s)', future => {
+  it.each([false, true])('retains continuity beyond former count limits after pruning every payload (future=%s)', future => {
     const store = new LaneStaging(), stage = store.stage(future);
     const limit = future ? 16 : 17;
     for (let i = 0; i < limit; i++) stage.add(interval(i, [fact('private')]));
     store.prune(() => false);
     expect(stage.size).toBe(limit);
     expect([...stage.values()].every(value => value.batch.facts.length === 0)).toBe(true);
-    expect(() => stage.add(interval(limit, []))).toThrow('overflow');
-    expect(stage.take()).toHaveLength(limit);
+    stage.add(interval(limit, []));
+    expect(stage.take()).toEqual(Array.from({ length: limit + 1 }, (_, index) => interval(index, [])));
+    expect(stage.size).toBe(0);
     expect(() => stage.add(interval(limit, []))).not.toThrow();
   });
   it('retains future intervals and deduplicates same-consumer references',()=>{

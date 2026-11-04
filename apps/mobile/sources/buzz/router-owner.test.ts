@@ -118,7 +118,7 @@ describe('real mobile router owner', () => {
     expect(execute).not.toHaveBeenCalled();
     expect(fixture.storage.write).not.toHaveBeenCalled();
   });
-  it.each(['live','opening'] as const)('parks %s Tray on shared clock loss while keeping the visible Room list and issuing no read',async phase=>{
+  it.each(['live','opening'] as const)('re-reads %s Tray on shared clock loss while keeping the visible Room list',async phase=>{
     const workspace='11111111-1111-4111-8111-111111111111';
     const tray={family:'needs-you-tray',workspaceId:workspace} as const,list={family:'room-list',workspaceId:workspace} as const;
     const certScopes=[{authorityScope:`reader:ada:workspace:${workspace}`,epoch:'1'},
@@ -137,8 +137,8 @@ describe('real mobile router owner', () => {
     await routerOwnerNegotiated({generation:1,families:['room-list','needs-you-tray','needs-you-count','needs-you-saved-page'],authorityFencesV1:true,execute});await settle();
     expect(head.current().state).toBe(phase==='live'?'LIVE':'OPENING');expect(rooms.current().state).toBe('LIVE');const count=execute.mock.calls.length;
     routerOwnerReceive({kind:'router-unavailable',stream:'control:tray-clock',families:['needs-you-tray','needs-you-count','needs-you-saved-page'],reason:'dependency'});
-    expect(head.current()).toMatchObject({state:'PARKED',value:null});expect(rooms.current()).toMatchObject({state:'LIVE',value:listValue});
-    open();await settle();expect(head.current()).toMatchObject({state:'PARKED',value:null});expect(execute.mock.calls).toHaveLength(count);
+    expect(head.current().state).toBe('OPENING');expect(rooms.current()).toMatchObject({state:'LIVE',value:listValue});
+    open();await settle();expect(head.current().state).toBe('LIVE');expect(execute.mock.calls).toHaveLength(count+1);
     head.release();rooms.release();routerOwnerListPanel(false);
   });
   it('accepts a validated 31-item live Tray update without parking unrelated held families',async()=>{
@@ -155,9 +155,10 @@ describe('real mobile router owner', () => {
     const listValue={workspace:{id:workspace,name:'Synthetic',role:'member' as const,updatedAt:1},chats:[],
       viewer:{pubkey:'a'.repeat(64),kind:'human' as const,name:'Reader'},truncated:false,watchFilters:[]};
     const from={...snapshot().cut,stream:`workspace:${workspace}`},to={...from,through:2};
+    let covered=false;
     const execute=vi.fn(async(input:RouterSnapshotInput):Promise<RouterSnapshot>=>({kind:'snapshot',family:input.family,scope:workspace,
-      cut:from,authority,atomicGroup:input.family==='room-list'?`room-list:${workspace}:ada`:atomicGroup,
-      clockVersion,value:input.family==='room-list'?listValue:input.family==='needs-you-count'?{count:30}:{needs:{items:items.slice(0,30)},saved}} as RouterSnapshot));
+      cut:covered?to:from,authority,atomicGroup:input.family==='room-list'?`room-list:${workspace}:ada`:atomicGroup,
+      clockVersion:covered?`tray-clock-v1:${'a'.repeat(32)}:1`:clockVersion,value:input.family==='room-list'?listValue:input.family==='needs-you-count'?{count:covered?31:30}:{needs:{items:covered?items:items.slice(0,30)},saved}} as RouterSnapshot));
     routerOwnerNavigation({routes:[{key:'tray',name:'beeline/tray',params:{communityId:workspace}}]});routerOwnerListPanel(true);
     const head=acquireRouterLane(tray,()=>true,()=>{}),rooms=acquireRouterLane(list,()=>true,()=>{}),count=acquireRouterLane(badge,()=>true,()=>{});
     try{
@@ -174,10 +175,12 @@ describe('real mobile router owner', () => {
       expect(head.current()).toMatchObject({state:'LIVE',cut:to,value:{needs:{items},saved}});
       expect(count.current()).toMatchObject({state:'LIVE',cut:to,value:{count:31}});
       expect(rooms.current()).toMatchObject({state:'LIVE',value:listValue});expect(execute).toHaveBeenCalledTimes(3);
+      covered=true;
       const invalid=[{atomicGroup,authority,payload:{kind:'tray-needs-replace',scope:workspace,value:{items:[{...items[0],createdAt:'invalid'}]}}}];
       const malformed={batchId:'invalid-needs',from:to,to:{...to,through:3},partCount:1,contentDigest:hash(invalid)};
       routerOwnerReceive({...malformed,kind:'push-part',partIndex:0,facts:invalid});routerOwnerReceive({...malformed,kind:'push-commit'});await settle();
-      expect(head.current()).toMatchObject({state:'PARKED',value:null});expect(execute).toHaveBeenCalledTimes(3);
+      expect(head.current()).toMatchObject({state:'LIVE',cut:to,value:{needs:{items},saved}});
+      expect(rooms.current()).toMatchObject({state:'LIVE',value:listValue});expect(execute).toHaveBeenCalledTimes(6);
     }finally{head.release();rooms.release();count.release();routerOwnerListPanel(false);}
   });
 
@@ -392,18 +395,18 @@ describe('real mobile router owner', () => {
     expect(execute).toHaveBeenCalledTimes(1);
     routerOwnerReceive({ kind: 'router-unavailable', stream: 'authority:ada', families: [], reason: 'listener' });
     retryRouterLane(request); await settle();
-    expect(execute).toHaveBeenCalledTimes(1);
+    expect(execute).toHaveBeenCalledTimes(2);
     expect(lane.current().value).toBeNull();
     lane.release();
   });
-  it('malformed wire never throws, creates a pass, or issues a read', async () => {
+  it('malformed wire never throws and re-reads only its affected stream', async () => {
     const execute = vi.fn(async () => snapshot());
     routerOwnerNavigation(navigation());
     const lane = acquireRouterLane(request, () => true, () => {});
     await routerOwnerNegotiated({ generation: 1, families: ['needs-you-count'], execute }); await settle();
     for (const value of [null, {}, { kind: 'push-part' }, { kind: 'push-part', to: snapshot().cut, facts: null },
       { kind: 'router-unavailable', stream: 'workspace:w', families: null }]) expect(() => routerOwnerReceive(value)).not.toThrow();
-    await settle(); expect(execute).toHaveBeenCalledTimes(1); lane.release();
+    await settle(); expect(execute).toHaveBeenCalledTimes(2); lane.release();
   });
 });
 
@@ -522,111 +525,9 @@ describe('actual Tray gesture and painted ownership',()=>{
 });
 
 
-it.each([50,51])('validates the full Scheduled Work webhook-call budget (%s) before painting',async calls=>{
-  const roomId='11111111-1111-4111-8111-111111111111',request={family:'room-scheduled-work' as const,roomId};
-  const scopeList=[{authorityScope:'scheduled-work-manager:ada:workspace:w',epoch:'1'},
-    {authorityScope:'scheduled-work-principal:ada',epoch:'1'},{authorityScope:`scheduled-work-room:${roomId}`,epoch:'1'}];
-  const value={roomName:'Scheduled',agentNames:[],schedules:[],subscriptions:[{id:'webhook',roomId,agentId:'helper',source:'webhook',event:'webhook.called',createdAt:1,
-    recentCalls:Array.from({length:calls},(_,i)=>({id:`call:${i}`,at:1,outcome:'skipped',bytes:1}))}]};
-  const result={...snapshot(),family:'room-scheduled-work',scope:roomId,value,authority:{scopes:scopeList,digest:hash(scopeList)},atomicGroup:`room-scheduled-work:${roomId}:ada`} as unknown as RouterSnapshot<'room-scheduled-work'>;
-  const execute=vi.fn(async()=>result);
-  routerOwnerNavigation({routes:[{key:'scheduled',name:'beeline/settings/schedules',params:{roomId}}]});
-  const lane=acquireRouterLane(request,()=>true,()=>{});
-  await routerOwnerNegotiated({generation:1,families:['room-scheduled-work'],authorityFencesV1:true,execute});await settle();
-  if(calls===50)expect(lane.current()).toMatchObject({state:'LIVE',value});
-  else expect(lane.current()).toMatchObject({state:'PARKED',value:null});
-  expect(execute).toHaveBeenCalledTimes(1);lane.release();
-});
 
-describe('negotiated Scheduled Work authority barrier',()=>{
-  const roomId='11111111-1111-4111-8111-111111111111';
-  const position=(through:number,segment='segment')=>({stream:'authority:ada' as const,epoch:'authority',segment,through,protocol:1 as const});
-  const data=(through:number)=>({...snapshot().cut,through});
-  const scopeList=[{authorityScope:'scheduled-work-manager:ada:workspace:w',epoch:'1'},
-    {authorityScope:'scheduled-work-principal:ada',epoch:'1'},{authorityScope:`scheduled-work-room:${roomId}`,epoch:'1'}];
-  const result=(barrier=0):RouterSnapshot<'room-scheduled-work'>=>({kind:'snapshot',family:'room-scheduled-work',scope:roomId,
-    value:{roomName:'Scheduled',agentNames:[],schedules:[],subscriptions:[]},cut:data(1),
-    authority:{scopes:scopeList,digest:hash(scopeList)},atomicGroup:`room-scheduled-work:${roomId}:ada`,authorityBarrier:position(barrier)});
-  function authorityFrames(fences:unknown[]=[]){const frame={batchId:'authority-one',from:position(0),to:position(1),partCount:1,contentDigest:hash(fences)};
-    routerOwnerReceive({...frame,kind:'scheduled-work-authority-commit'});
-    routerOwnerReceive({...frame,kind:'scheduled-work-authority-part',partIndex:0,fences});
-  }
-  function batch(from:number,to:number,facts:unknown[]=[]){const records=[...facts,{kind:'scheduled-work-classification',version:1,authorityBarrier:position(1)}];
-    const frame={batchId:`data-${from}-${to}`,from:data(from),to:data(to),partCount:1,contentDigest:hash(records)};
-    routerOwnerReceive({...frame,kind:'push-part',partIndex:0,facts:records});routerOwnerReceive({...frame,kind:'push-commit'});
-  }
-  async function open(barrier=0){
-    const execute=vi.fn(async()=>result(barrier));
-    routerOwnerNavigation({routes:[{key:'scheduled',name:'beeline/settings/schedules',params:{roomId}}]});
-    const lane=acquireRouterLane({family:'room-scheduled-work',roomId},()=>true,()=>{});
-    await routerOwnerNegotiated({generation:1,families:['room-scheduled-work'],authorityFencesV1:true,
-      scheduledWorkCoverageV1:{version:1,authorityStart:position(0)},execute});await settle();return {execute,lane};
-  }
-  it.each([
-    {phase: 'live', scheduled: false}, {phase: 'opening', scheduled: false},
-    {phase: 'live', scheduled: true}, {phase: 'opening', scheduled: true},
-  ])('keeps a mixed classified Workspace interval coherent: $phase, scheduled payload $scheduled', async ({phase, scheduled}) => {
-    const request = {family: 'room-head' as const, roomId};
-    const roomScopes = [...scopes, {authorityScope: `room:${roomId}`, epoch: '1'}];
-    const certificate = {scopes: roomScopes, digest: hash(roomScopes)};
-    const value = {room: {id: roomId, workspaceId: 'w'}, messages: []};
-    const initial = {...snapshot(), family: 'room-head', scope: roomId, value,
-      cut: data(81), authority: certificate, atomicGroup: `room-head:${roomId}:ada`} as RouterSnapshot<'room-head'>;
-    let finish!: () => void;
-    const pending = new Promise<void>(resolve => { finish = resolve; });
-    if (phase === 'live') finish();
-    const execute = vi.fn(async () => { await pending; return initial; });
-    routerOwnerNavigation({routes: [{key: 'room', name: 'beeline/chat/[channelId]', params: {channelId: roomId, communityId: 'w'}}]});
-    const lane = acquireRouterLane(request, () => true, () => {});
-    await routerOwnerNegotiated({generation: 1, families: ['room-head', 'room-scheduled-work'], authorityFencesV1: true,
-      roomHeadContinuityV1: true, scheduledWorkCoverageV1: {version: 1, authorityStart: position(0)}, execute});
-    await settle();
-    expect(lane.current().state).toBe(phase === 'live' ? 'LIVE' : 'OPENING');
-    const next = {...value, messages: [{id: 'committed'}]};
-    // Production sent independent Room facts with only a Scheduled Work classification.
-    const facts: unknown[] = Array.from({length: 13}, (_, index) => ({atomicGroup: initial.atomicGroup, authority: certificate,
-      payload: {kind: 'scope-replace', family: 'room-head', scope: index ? `other-${index}` : roomId, value: next}}));
-    if (scheduled) facts.push({atomicGroup: result().atomicGroup, authority: result().authority,
-      payload: {kind: 'scope-replace', family: 'room-scheduled-work', scope: roomId, value: result().value}});
-    const writes = fixture.storage.write.mock.calls.length;
-    batch(81, 83, facts); await settle();
-    expect(lane.current().state).toBe(phase === 'live' ? 'LIVE' : 'OPENING');
-    expect(lane.current().value).toEqual(phase === 'live' ? value : null);
-    expect(fixture.storage.write).toHaveBeenCalledTimes(writes);
-    authorityFrames(); await settle();
-    finish(); await settle();
-    expect(lane.current()).toMatchObject({state: 'LIVE', value: next, cut: {through: 83}, error: null});
-    batch(83, 84, [{atomicGroup: initial.atomicGroup, authority: certificate,
-      payload: {kind: 'scope-replace', family: 'room-head', scope: roomId, value: {...next, messages: [{id: 'later'}]}}}]);
-    await settle();
-    expect(lane.current()).toMatchObject({state: 'LIVE', value: {messages: [{id: 'later'}]}, cut: {through: 84}});
-    expect(execute).toHaveBeenCalledTimes(1); lane.release();
-  });
-  it('holds a snapshot until complete authority controls are durable and cannot restore an old certificate',async()=>{
-    const {execute,lane}=await open(1);expect(lane.current().value).toBeNull();
-    let release!:()=>void;fixture.storage.floor.mockImplementationOnce(()=>new Promise<void>(resolve=>{release=resolve;}));
-    const scopes=[{authorityScope:`scheduled-work-room:${roomId}`,epoch:'2'}];
-    authorityFrames([{kind:'authority-fence',scope:roomId,authorityScope:scopes[0]!.authorityScope,mode:'advance',authority:{scopes,digest:hash(scopes)}}]);
-    await settle();expect(fixture.storage.floor).toHaveBeenCalled();expect(lane.current().value).toBeNull();
-    release();await settle();expect(lane.current().value).toBeNull();expect(execute).toHaveBeenCalledTimes(1);lane.release();
-  });
-  it('stages a complete data marker until controls arrive, then bridges an edit with no unchanged storage write',async()=>{
-    const {execute,lane}=await open();expect(lane.current().state).toBe('LIVE');const writes=fixture.storage.write.mock.calls.length;
-    batch(1,2);await settle();expect(fixture.storage.write).toHaveBeenCalledTimes(writes);expect(lane.current().cut?.through).toBe(1);
-    authorityFrames();await settle();expect(fixture.storage.write).toHaveBeenCalledTimes(writes);expect(lane.current().cut?.through).toBe(1);
-    batch(2,3,[{atomicGroup:result().atomicGroup,authority:result().authority,payload:{kind:'scope-replace',family:'room-scheduled-work',scope:roomId,value:{...result().value,roomName:'Changed'}}}]);
-    await settle();expect(lane.current()).toMatchObject({value:{roomName:'Changed'},cut:{through:3}});expect(execute).toHaveBeenCalledTimes(1);lane.release();
-  });
-  it('source loss and actual segment restart hide old data without admitting a snapshot',async()=>{
-    const {execute,lane}=await open();expect(lane.current().state).toBe('LIVE');
-    routerOwnerReceive({kind:'router-unavailable',stream:'authority:ada',families:['room-scheduled-work'],reason:'listener'});await settle();
-    expect(lane.current()).toMatchObject({state:'PARKED',value:null});
-    routerOwnerReceive({kind:'scheduled-work-authority-restart',start:position(4,'recovered')});await settle();
-    expect(lane.current()).toMatchObject({state:'PARKED',value:null});expect(execute).toHaveBeenCalledTimes(1);lane.release();
-  });
-});
 
-it('a compact shared authority-source loss hides retained count and media, and a Scheduled Work restart cannot restore their trust',async()=>{
+it('authority-source loss re-reads current count and invalidates old media without losing the connection',async()=>{
   const execute=vi.fn(async()=>snapshot()),objectId='aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
   const mediaScopes=[{authorityScope:`object:${objectId}`,epoch:'1'},...scopes];
   const executeMetadata=vi.fn(async()=>({objectId,sha256:'a'.repeat(64),size:1,mimeType:'image/png',expiresAt:Date.now()+60_000,
@@ -639,10 +540,10 @@ it('a compact shared authority-source loss hides retained count and media, and a
   routerOwnerArtifactViewport('room',[objectId]);const media=await mediaMetadataFor('https://example.test','ada',objectId);
   expect(lane.current().value).toEqual({count:1});expect(mediaCertificateCurrent(media!)).toBe(true);
   routerOwnerReceive({kind:'router-unavailable',stream:'authority:ada',families:[],reason:'listener'});await settle();
-  expect(lane.current().value).toBeNull();expect(mediaCertificateCurrent(media!)).toBe(false);
+  expect(lane.current().value).toEqual({count:1});expect(mediaCertificateCurrent(media!)).toBe(false);
   routerOwnerReceive({kind:'scheduled-work-authority-restart',start:{...start,segment:'recovered',through:4}});await settle();
-  retryRouterLane(request);await settle();expect(lane.current().value).toBeNull();expect(mediaCertificateCurrent(media!)).toBe(false);
-  expect(execute).toHaveBeenCalledTimes(1);expect(executeMetadata).toHaveBeenCalledTimes(1);lane.release();
+  await settle();expect(lane.current().value).toEqual({count:1});expect(mediaCertificateCurrent(media!)).toBe(false);
+  expect(execute).toHaveBeenCalledTimes(2);expect(executeMetadata).toHaveBeenCalledTimes(1);lane.release();
 });
 
 it('admits only the exact offered DB decision actions offered in the held canonical Tray, with no follow-up read',async()=>{

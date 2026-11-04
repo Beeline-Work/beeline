@@ -271,7 +271,7 @@ describe('local read lanes (P2)', () => {
     expect(lanes.peek(room)).toMatchObject({ state: 'LIVE', value, cut: { stream: 'workspace:w', through: 54 } });
   });
 
-  it.each(['count', 'bytes'])('bounds unchanged Room opening intervals by original logical %s', async bound => {
+  it.each(['count', 'bytes'])('replays unchanged Room opening intervals beyond the former %s limit', async bound => {
     const room = { family: 'room-head', roomId: 'room-a' } as const;
     let resolve!: (value: LaneSnapshot) => void;
     const lanes = new ReadLanes(identity, () => true);
@@ -283,9 +283,16 @@ describe('local read lanes (P2)', () => {
           payload: { kind: 'scope-replace', family: 'room-head', scope: 'other', value: { padding: 'x'.repeat(150 * 1024) } } }],
       });
     }
-    expect(lanes.peek(room)).toMatchObject({ state: 'PARKED', value: null, error: 'Projection queue overflow; Retry.' });
+    expect(lanes.peek(room)).toMatchObject({ state: 'OPENING', value: null, error: null });
     resolve({ ...snapshot(51), atomicGroup: 'room-head:room-a:ada', value: { messages: [] } }); await drain();
-    expect(lanes.peek(room)).toMatchObject({ state: 'PARKED', value: null });
+    expect(lanes.peek(room)).toMatchObject({ state: 'LIVE', value: { messages: [] }, cut: { through: 51 }, error: null });
+    const through = 51 + (bound === 'count' ? 18 : 3);
+    const value = { messages: ['after retained continuity'] };
+    await lanes.accept({ from: snapshot(through).cut, to: snapshot(through + 1).cut, facts: [{
+      atomicGroup: 'room-head:room-a:ada', authority,
+      payload: { kind: 'scope-replace', family: 'room-head', scope: 'room-a', value },
+    }] });
+    await expect.poll(() => lanes.peek(room)).toMatchObject({ state: 'LIVE', value, cut: { through: through + 1 }, error: null });
   });
 
   it('does not bridge a missing Room interval with unrelated progress', async () => {

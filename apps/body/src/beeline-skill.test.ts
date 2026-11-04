@@ -124,6 +124,8 @@ describe('Room guidance', () => {
     expect(markdown).toContain('wake(action:create, trigger:lifecycle, address) on that corner address');
     expect(markdown).toContain('no_reply_needed ends the turn');
     expect(markdown).toContain('no reminder loops');
+    expect(markdown).toContain("If a background job's process id is missing after a wake, check the job's output before restarting.");
+    expect(markdown).toContain('If its output is still updating, the job is alive; do not restart it.');
   });
 
   it('lets a direct message drive member Rooms through the command grammar', () => {

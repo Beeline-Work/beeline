@@ -91,9 +91,7 @@ import {
   type GitHubInstallationAccess,
   type MessageReactionEmoji,
   type ChatListItem,
-  type SurfaceCacheAddress,
   AGENT_PRESENCE_STALE_MS,
-  isWorkspaceView,
 } from '@beeline/buzz-client';
 import {
   cornerDisplayName,
@@ -174,7 +172,6 @@ import {
   type DesktopWorkPanePrimary,
 } from '@/buzz/desktop-workbench-state';
 import { useRoomSendFrame } from '@/buzz/room-send-frame';
-import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { useChatList } from '@/buzz/chat-list-store';
 import { useRoomRepoReplacementGuard } from '@/buzz/room-repo-replacement';
 import { liveDraftMessages, projectActiveTurnStream } from '@/buzz/live-turn-stream';
@@ -190,7 +187,6 @@ import {
   replaceActiveMention,
   resolveComposerMentions,
   selectedMentionAgentPubkey,
-  shouldReadWorkspaceRoster,
   SYSTEM_MENTION_HANDLE,
   SYSTEM_MENTION_PUBKEY,
 } from '@/buzz/room-participants';
@@ -351,7 +347,7 @@ import {
   phoneOperationFailureReason,
 } from '@/sync/transport/monolith-operation';
 import { isWorkspaceManagerRole } from '@/buzz/workspace-role';
-import { useWorkspaceRecords, workspaceRecordScope, workspaceRows } from '@/buzz/workspace-records';
+import {useRoomRoster} from '@/buzz/use-room-roster';
 import { promptAndReportMessageIssue, reportIssueToastCopy } from '@/buzz/report-message-issue';
 import { useCopiedToast } from '@/components/buzz/CopiedToast';
 import {
@@ -1015,28 +1011,6 @@ export function BuzzChatSurface({
   // the daemon recorded on its create event, and the bounded window of Room
   // conversation that preceded it. Corner-only; a Room never reads it.
   const [addingMembers, setAddingMembers] = useState(false);
-  /** The shared `/workspace/:id` entry behind bylines and member and mention pickers. */
-  const [workspaceRosterEntry, setWorkspaceRoster] = useState<WorkspaceView | null>(null);
-  const [workspaceRosterAddress, setWorkspaceRosterAddress] = useState<SurfaceCacheAddress | null>(null);
-  // The entry's rows select the shared Workspace records, which every
-  // roster write reaches; the entry supplies only the ids and header.
-  const workspaceRosterScope = workspaceRosterAddress
-    ? workspaceRecordScope(workspaceRosterAddress.relayOrigin, workspaceRosterAddress.viewerPubkey,
-      String(workspaceRosterAddress.params?.workspaceId))
-    : null;
-  const workspaceRosterRecords = useWorkspaceRecords(workspaceRosterScope);
-  const workspaceRoster = useMemo<WorkspaceView | null>(() => workspaceRosterEntry && workspaceRosterScope
-    ? {
-        ...workspaceRosterEntry,
-        members: workspaceRows(workspaceRosterScope,
-          workspaceRosterEntry.members.map((member) => member.identity.pubkey)),
-        agents: workspaceRows(workspaceRosterScope,
-          workspaceRosterEntry.agents.map((agent) => agent.identity.pubkey)),
-      }
-    : workspaceRosterEntry,
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- the records version re-selects the rows
-  [workspaceRosterEntry, workspaceRosterScope, workspaceRosterRecords]);
-  const workspaceRosterScopeRef = useRef<string | null>(null);
   // The repo this Room owns, or `null` for a chat-only Room. Corners never
   // read this — a corner has no room-repository binding of its own; the
   // daemon resolves its working repo from its parent Room instead.
@@ -1199,6 +1173,8 @@ export function BuzzChatSurface({
   }, [firstUnreadMessageId, isCorner]);
   const resolvedChannelName = roomSurface?.room.name ?? routeChannelTitle ?? null;
   const activeCommunityId = roomSurface?.room.workspaceId ?? routeCommunityId ?? null;
+  const readPickerRoster=useCallback((workspaceId:string)=>roomClient!.workspace(workspaceId),[roomClient]);
+  const {value:workspaceRoster,open:openWorkspaceRoster}=useRoomRoster(activeCommunityId,userPubkey,participantPickerVisible||rosterVisible,roomClient?readPickerRoster:undefined,setMembershipError);
   const usageProfileFocused = useSurfaceFocus();
   const committedUsageProfileId = desktopExperience && profileKind === 'agent' && activeCommunityId ? profileAgentId : null;
   useEffect(() => {
@@ -1971,56 +1947,6 @@ export function BuzzChatSurface({
   // every byline at once. A closed picker observes the canonical held answer;
   // only opening the roster sheet or member picker reads its missing/fresh
   // candidates. Room entry alone never reads data for a future picker.
-  useEffect(() => {
-    workspaceRosterScopeRef.current = null;
-    setWorkspaceRoster(null);
-    setWorkspaceRosterAddress(null);
-    if (!activeCommunityId || !userPubkey) return;
-    let cancelled = false;
-    let stop: (() => void) | undefined;
-    void (async () => {
-      const address = surfaceAddress(await getEffectiveRelayUrl(), userPubkey, '/workspace/:id', {
-        workspaceId: activeCommunityId,
-      });
-      if (cancelled) return;
-      const paint = () => {
-        if (!cancelled) setWorkspaceRoster(mobileSurfaceCache.peek(address, isWorkspaceView));
-      };
-      stop = mobileSurfaceCache.subscribe(address, paint);
-      await mobileSurfaceCache.read(address, isWorkspaceView);
-      paint();
-      if (!cancelled) setWorkspaceRosterAddress(address);
-    })().catch(() => undefined);
-    return () => {
-      cancelled = true;
-      stop?.();
-    };
-  }, [activeCommunityId, userPubkey]);
-  useEffect(() => {
-    const rosterSurfaceVisible = participantPickerVisible || rosterVisible;
-    if (!roomClient || !activeCommunityId || !workspaceRosterAddress) return;
-    if (
-      !shouldReadWorkspaceRoster({
-        activeWorkspaceId: activeCommunityId,
-        cachedWorkspaceId: workspaceRosterScopeRef.current,
-        rosterSurfaceVisible,
-      })
-    )
-      return;
-    let cancelled = false;
-    mobileSurfaceCache
-      .fetch(workspaceRosterAddress, isWorkspaceView, () => roomClient.workspace(activeCommunityId))
-      .then(() => {
-        if (!cancelled) workspaceRosterScopeRef.current = activeCommunityId;
-      })
-      .catch((err) => {
-        if (!cancelled && rosterSurfaceVisible)
-          setMembershipError(appErrorCopy(err, `Could not read the Workspace roster.`));
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [activeCommunityId, participantPickerVisible, roomClient, rosterVisible, workspaceRosterAddress]);
   const participantPickerCandidates = useMemo<MemberPickerCandidate[] | null>(() => {
     if (!workspaceRoster) return null;
     return [...workspaceRoster.members, ...workspaceRoster.agents]
@@ -2591,7 +2517,7 @@ export function BuzzChatSurface({
         else if (prompt.action.kind === 'add-room-agent') {
           setMembershipError(null);
           setParticipantPickerKind('agent');
-          setParticipantPickerVisible(true);
+          openWorkspaceRoster();setParticipantPickerVisible(true);
         } else if (prompt.action.kind === 'connect-agent') void connectAgent();
         else
           router.push({
@@ -2603,7 +2529,7 @@ export function BuzzChatSurface({
           } as never);
       },
     }));
-  }, [activeCommunityId, connectAgent, fillComposer, starterPromptDefs]);
+  }, [activeCommunityId, connectAgent, fillComposer, starterPromptDefs,openWorkspaceRoster]);
   // The transcript is the composer's "outside": a tap on it puts the keyboard
   // away, the same as a drag (keyboardDismissMode on the list below). Kept
   // dependency-free so it never re-creates renderItem — see the memo note on
@@ -5584,17 +5510,18 @@ export function BuzzChatSurface({
           }
           setMembershipError(null);
           setParticipantPickerKind('agent');
-          setParticipantPickerVisible(true);
+          openWorkspaceRoster();setParticipantPickerVisible(true);
           return;
         case 'invite':
           if (!canManageWorkspace) return;
           setMembershipError(null);
           setParticipantPickerKind('person');
-          setParticipantPickerVisible(true);
+          openWorkspaceRoster();setParticipantPickerVisible(true);
       }
     },
     [
       clearSlashComposer,
+      openWorkspaceRoster,
       activeCommunityId,
       canManageWorkspace,
       decodedId,
@@ -7295,7 +7222,7 @@ export function BuzzChatSurface({
           // opens lists both kinds and carries its own invite-a-person and
           // connect-an-agent rows.
           setParticipantPickerKind(null);
-          setParticipantPickerVisible(true);
+          openWorkspaceRoster();setParticipantPickerVisible(true);
         }}
         onClose={closeRoster}
         onRemove={handleRemoveRoomMember}
@@ -7393,7 +7320,7 @@ export function BuzzChatSurface({
               }
               onPress={() => {
                 setRoomActionsVisible(false);
-                setRosterVisible(true);
+                openWorkspaceRoster();setRosterVisible(true);
               }}
               testID="room-participant-roster-trigger"
             />

@@ -53,11 +53,11 @@ describe('uninstalled mutable Tray source',()=>{
     expect(changed.every(cause=>cause.trayWorkspaceId===w1&&readTrayMutableCause(cause))).toBe(true);
     expect((await read()).value.needs.items).toHaveLength(0);expect((await read(b)).value.needs.items).toHaveLength(1);
     await expect(fenceRouterEnqueue(db,input(),a,before.authority,()=>undefined)).rejects.toThrow('authority');
-    // The shared agent also has a profile in Workspace two. Its ownership fact
-    // must advance that family, without adding a Tray cause there.
+    // The shared agent also has a profile and public roster row in Workspace
+    // two. Ownership must advance both families, without adding a Tray cause.
     expect((await db.query(`SELECT event->>'sourceTable' family FROM live_journal
       WHERE stream_id=$1 AND sequence>$2 ORDER BY sequence`,[`workspace:${w2}`,untouched[0]!.sequence])).rows)
-      .toEqual([{family:'profile-projection'}]);
+      .toEqual([{family:'profile-projection'},{family:'roster-projection'}]);
   });
 
   it('uses the referencing grant Workspace for app ownership and retains cascade tombstones',async()=>{

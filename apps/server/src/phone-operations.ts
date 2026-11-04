@@ -1,4 +1,5 @@
 import { readRoomTools } from './room-tool-projection.js';
+import {readRosterQuery} from './router-roster-query.js';
 import { dispatchTrayDecisionCommand, isTrayDecisionCommand } from './tray-decision-command.js';
 import { helperUsageEnabled, readAgentUsageCell } from './helper-usage.js';
 import { readMediaMetadata } from './phone-media.js';
@@ -109,6 +110,8 @@ export function createPhoneOperationDispatcher(
         if (roomScoped !== Boolean(roomId)) refuse(400,'invalid_router_scope');
         if(family==='agent-profile')return phone.readRouterSnapshot({family,workspaceId:uuid(input,'workspaceId'),agentId:required(input,'agentId')},viewerId);
         if(family==='owner-workbench'||family==='owner-wallet')return phone.readRouterSnapshot({family},viewerId);
+        if(family==='workspace-roster')return phone.readRouterSnapshot({family,workspaceId:uuid(input,'workspaceId'),
+          ...(input.query===undefined?{}:{query:readRosterQuery(input.query)})},viewerId);
         return phone.readRouterSnapshot(roomScoped
           ? {family,roomId:roomId!,...(input.workspaceId ? {workspaceId:uuid(input,'workspaceId')} : {})}
           : {family,workspaceId:uuid(input,'workspaceId')},viewerId);

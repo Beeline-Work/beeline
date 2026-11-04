@@ -17,7 +17,7 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
 }));
 vi.mock('./surface-storage', () => ({ routerLaneStorage: () => fixture.storage, routerAuthorityStorageReady: () => fixture.authorityReady,routerCommandStorageReady:()=>fixture.commandsReady }));
 import { resetClientState } from '@/sync/client-reset';
-import { acquireRouterLane, acquireRouterSavedContinuation, routerOwnerNegotiated, routerOwnerNavigation, routerOwnerDisconnected,
+import { acquireRouterLane, acquireRouterSavedContinuation, acquireRouterRosterQuery, acquireRouterRoomRoster, routerOwnerNegotiated, routerOwnerNavigation, routerOwnerDisconnected,
   readRouterToolPage, admitRouterTrayCommand, admitRouterTrayPaint, routerOwnerListPanel, routerOwnerCapabilities, routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport, routerOwnerUsageProfile } from './router-owner';
 const request = { family: 'needs-you-count' as const, workspaceId: 'w' };
 const hash = (value: unknown) => bytesToHex(sha256(utf8ToBytes(JSON.stringify(value))));
@@ -31,6 +31,54 @@ const settle = async () => { for (let i = 0; i < 35; i++) await Promise.resolve(
 beforeEach(() => { fixture.authorityReady = true;fixture.commandsReady=true; fixture.state = 'active'; resetClientState(); vi.clearAllMocks(); });
 
 describe('real mobile router owner', () => {
+  it('F03 roster query observers cannot admit reads; Submit binds a held revision and source controls retire it without reading',async()=>{
+    const ws='11111111-1111-4111-8111-111111111111',head={family:'workspace-roster' as const,workspaceId:ws};
+    const input={...head,query:{revision:'1',q:'Reader'}};
+    const person={pubkey:'a'.repeat(64),kind:'human' as const,name:'Reader'};
+    const value={revision:'1',workspace:{id:ws,name:'Roster',visibility:'invite-only' as const,role:'owner' as const,updatedAt:1,createdAt:1},
+      members:[{identity:person,role:'owner' as const}],agents:[],viewer:{identity:person,role:'owner' as const,permissions:{send:true,manage:true}},
+      watchFilters:[],peopleTotal:1,agentTotal:0,membersTruncated:false,agentsTruncated:false};
+    const certScopes=[{authorityScope:`reader:ada:workspace:${ws}`,epoch:'1'},{authorityScope:`roster:${ws}`,epoch:'1'}];
+    const execute=vi.fn(async(request:RouterSnapshotInput):Promise<RouterSnapshot>=>({...snapshot(),family:'workspace-roster',scope:ws,
+      value,atomicGroup:`workspace-roster:${ws}:ada${'query'in request?':query:sealed':''}`,
+      authority:{scopes:certScopes,digest:hash(certScopes)},cut:{...snapshot().cut,stream:`workspace:${ws}`}}));
+    routerOwnerNavigation({routes:[{key:'members',name:'beeline/members',params:{communityId:ws}}]});
+    const root=acquireRouterLane(head,()=>true,()=>{});
+    await routerOwnerNegotiated({generation:1,families:['workspace-roster'],authorityFencesV1:true,execute});await settle();
+    const observer=acquireRouterLane(input,()=>true,()=>{});await settle();expect(execute).toHaveBeenCalledTimes(1);
+    expect(()=>acquireRouterRosterQuery({...input,query:{revision:'2',q:'forged'}},()=>true,()=>{})).toThrow('no longer held');
+    const page=acquireRouterRosterQuery(input,()=>true,()=>{});await settle();expect(execute).toHaveBeenCalledTimes(2);
+    expect(page.current()).toMatchObject({state:'LIVE',value});
+    const nextScopes=[{authorityScope:`roster:${ws}`,epoch:'2'}];
+    routerOwnerReceive({kind:'authority-fence',scope:ws,authorityScope:`roster:${ws}`,mode:'advance',authority:{scopes:nextScopes,digest:hash(nextScopes)}});
+    await settle();expect(page.current()).toMatchObject({state:'PARKED',value:null});expect(execute).toHaveBeenCalledTimes(2);
+    page.release();observer.release();root.release();
+  });
+
+  it('F25 a Room roster opens only on its picker gesture, rejects another Workspace and closed pickers stay absent from recovery',async()=>{
+    const ws='11111111-1111-4111-8111-111111111111',id='22222222-2222-4222-8222-222222222222';
+    const person={pubkey:'a'.repeat(64),kind:'human' as const,name:'Reader'};
+    const roster={revision:'1',workspace:{id:ws,name:'Roster',visibility:'invite-only',role:'owner',updatedAt:1,createdAt:1},
+      members:[{identity:person,role:'owner'}],agents:[],viewer:{identity:person,role:'owner',permissions:{send:true,manage:true}},
+      watchFilters:[],membersTruncated:false,agentsTruncated:false};
+    const execute=vi.fn(async(input:RouterSnapshotInput):Promise<RouterSnapshot>=>{
+      const room=input.family==='room-head',certScopes=[{authorityScope:`reader:ada:workspace:${ws}`,epoch:'1'},
+        {authorityScope:room?`room:${id}`:`roster:${ws}`,epoch:'1'}];
+      return {...snapshot(),family:input.family,scope:room?id:ws,value:room?{room:{id,workspaceId:ws},messages:[]}:roster,
+        cut:{...snapshot().cut,stream:`workspace:${ws}`},atomicGroup:room?`room-head:${id}:ada`:`workspace-roster:${ws}:ada`,
+        authority:{scopes:certScopes,digest:hash(certScopes)}} as RouterSnapshot;
+    });
+    routerOwnerNavigation({routes:[{key:'room',name:'beeline/chat/[channelId]',params:{channelId:id,communityId:ws}}]});
+    const room=acquireRouterLane({family:'room-head',roomId:id,workspaceId:ws},()=>true,()=>{});
+    await routerOwnerNegotiated({generation:1,families:['room-head','workspace-roster'],authorityFencesV1:true,execute});await settle();
+    expect(execute.mock.calls.map(([input])=>input.family)).toEqual(['room-head']);
+    expect(()=>acquireRouterRoomRoster('33333333-3333-4333-8333-333333333333',()=>true,()=>{})).toThrow('not held');
+    const picker=acquireRouterRoomRoster(ws,()=>true,()=>{});await settle();
+    expect(picker.current().state).toBe('LIVE');expect(execute).toHaveBeenCalledTimes(2);picker.release();
+    await routerOwnerNegotiated({generation:2,families:['room-head','workspace-roster'],authorityFencesV1:true,execute});await settle();
+    expect(execute.mock.calls.map(([input])=>input.family)).toEqual(['room-head','workspace-roster','room-head']);room.release();
+  });
+
   it('refuses an additive family until its local assembly is implemented without minting a read',async()=>{
     const execute=vi.fn(async()=>snapshot());
     expect(routerOwnerCapabilities().families).not.toContain('needs-you-saved-page');

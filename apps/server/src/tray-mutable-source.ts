@@ -35,8 +35,8 @@ const grantDecider = grantDecidedBySql('grant_row', 'surface.reader_id')
   .replaceAll('grant_agent.owner_id=', 'COALESCE(override_agent_owner,grant_agent.owner_id)=')
   .replaceAll('app.owner_identity_id=', 'COALESCE(override_app_owner,app.owner_identity_id)=');
 
-/** Uninstalled schema. Root installs it only alongside the closed source-plan
- * adapter. Time passage/deadline scheduling and activation are separate gates.
+/** Release-installed schema alongside the closed source-plan adapter.
+ * Time passage/deadline scheduling and activation are separate gates.
  * BEFORE capture keeps OLD audiences alive across FK cascades. Its journal and
  * epoch writes roll back with the source. No provider/network work runs here.
  */

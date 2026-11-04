@@ -27,8 +27,8 @@ const member=`EXISTS(SELECT 1 FROM rooms surface
 const workspaceMember=`EXISTS(SELECT 1 FROM memberships workspace_member WHERE workspace_member.workspace_id=bookmark.workspace_id
  AND workspace_member.room_id IS NULL AND workspace_member.identity_id=bookmark.identity_id AND workspace_member.removed_at IS NULL)`;
 
-/** Uninstalled exact content/access dependencies for sealed Saved rows. Install
- * only together with immutable bookmark metadata + closed source-plan adapter.
+/** Release-installed exact content/access dependencies for sealed Saved rows,
+ * after immutable bookmark metadata and the closed source-plan adapter.
  * No page/held-key inventory, top-N query, provider, deadline or authority epoch
  * write occurs here. Reader targets derive solely from actual private bookmarks.
  * Room archive/identity hidden/usage/member role are not read by Saved's current

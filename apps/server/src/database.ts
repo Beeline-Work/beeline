@@ -2,6 +2,11 @@ import { BACKGROUND_OWNERSHIP_SCHEMA } from './background-ownership.js';
 import { TRAY_CLOCK_SOURCE_SCHEMA } from './tray-clock-source.js';
 import { TRAY_CLOCK_OWNER_SCHEMA } from './tray-clock-owner.js';
 import { TRAY_CLOCK_WORK_SCHEMA } from './tray-clock-work.js';
+import { TRAY_SAVED_WINDOW_SCHEMA } from './tray-saved-window.js';
+import { TRAY_SAVED_SOURCE_SCHEMA } from './tray-saved-source.js';
+import { TRAY_MUTABLE_SOURCE_SCHEMA } from './tray-mutable-source.js';
+import { OWNED_MODEL_CREDENTIAL_SCHEMA } from './owned-model-credential.js';
+import { OWNED_MODEL_ATTEMPT_SCHEMA } from './owned-model-attempt.js';
 import { DISPLAY_DEADLINE_SOURCE_SCHEMA } from './deadline-expiry-source.js';
 import { SENTRY_WAKE_SOURCE_SCHEMA } from './sentry-wake-source.js';
 import { CONNECTOR_OFFER_EXPIRY_SCHEMA } from './connector-offer-expiry.js';
@@ -3254,6 +3259,8 @@ export async function migrate(
   await ddlScript('router command identity', ROUTER_COMMAND_SCHEMA);
   await ddlScript('startup wake backoff', STARTUP_WAKE_BACKOFF_SCHEMA);
   await ddlScript('free agents schema', FREE_AGENTS_SCHEMA);
+  await ddlScript('owned model credentials', OWNED_MODEL_CREDENTIAL_SCHEMA);
+  await ddlScript('owned model attempts', OWNED_MODEL_ATTEMPT_SCHEMA);
   await ddlScript('starter onboarding schema', STARTER_ONBOARDING_SCHEMA);
   await runMigrationStep('checkin human history index', () => createIndexConcurrently(
     database, 'messages_checkin_author_history',
@@ -3578,6 +3585,11 @@ export async function migrate(
   await ddlScript('router profile sources', ROUTER_PROFILE_SCHEMA);
   await ddlScript('router owner sources', ROUTER_OWNER_SCHEMA);
   await ddlScript('router roster source',ROUTER_ROSTER_SCHEMA);
+  // Saved source capture reads the incarnation metadata; all Tray capture
+  // depends on the durable journal and router authority installed above.
+  await ddlScript('Tray saved window', TRAY_SAVED_WINDOW_SCHEMA);
+  await ddlScript('Tray saved sources', TRAY_SAVED_SOURCE_SCHEMA);
+  await ddlScript('Tray mutable sources', TRAY_MUTABLE_SOURCE_SCHEMA);
   await ddlScript('scheduled work authority', SCHEDULED_WORK_AUTHORITY_SCHEMA);
   await ddlScript('scheduled work sources', ROOM_SCHEDULES_CAPTURE_SCHEMA);
   await ddlScript('server lease deadlines', SERVER_LEASE_DEADLINE_SCHEMA);

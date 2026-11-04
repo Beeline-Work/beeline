@@ -52,6 +52,8 @@ vi.mock('@/buzz/router-owner', async (importOriginal) => {
 }; });
 
 const controls = vi.hoisted(() => ({
+  routeChannelId: '11111111-1111-4111-8111-111111111111',
+  scopeProbe: null as null | ((session: any, overlay: any, history: any) => void),
   focused: true,
   realRouter: false,
   routerMode: 'router' as 'pending' | 'router',
@@ -151,7 +153,7 @@ vi.mock('react-native-reanimated', () => ({
 
 vi.mock('expo-router', () => ({
   router: { replace: vi.fn() },
-  useLocalSearchParams: () => ({ channelId: '11111111-1111-4111-8111-111111111111' }),
+  useLocalSearchParams: () => ({ channelId: controls.routeChannelId }),
 }));
 const navigation = {
   isFocused: () => controls.focused,
@@ -177,12 +179,48 @@ vi.mock('@react-navigation/native', () => ({
   ),
 }));
 vi.mock('@/components/buzz/RoomOpenTraceOverlay', () => ({ RoomOpenTraceOverlay: () => null }));
-vi.mock('./_chat-surface', () => ({
-  BuzzChatSurface: () => {
-    controls.surfaceRenders++;
-    return React.createElement('room-root');
-  },
-}));
+vi.mock('./_chat-surface', async () => {
+  const { useRoomSendFrame } = await import('@/buzz/room-send-frame');
+  const { useRoomMessageStore } = await import('@/buzz/room-message-store');
+  function ScopeProbe({ session, bindingsRef }: any) {
+    const overlay = useRoomSendFrame([], new Set());
+    const history = useRoomMessageStore({
+      roomId: controls.routeChannelId,
+      tailMessages: session.roomSurface?.messages,
+      roomClient: session.roomClient,
+      enabled: true,
+      initialVisibleCount: 30,
+    });
+    bindingsRef.current = {
+      resetTranscript: () => {
+        overlay.clear();
+        history.reset();
+      },
+      restoreOutboxMessages: overlay.append,
+      dismissOptimisticMessage: overlay.remove,
+      observeRoomSurface: () => {},
+    };
+    controls.scopeProbe?.(session, overlay, history);
+    const rows = [
+      ...(session.roomSurface?.messages ?? []),
+      ...history.rows,
+      ...overlay.frame.optimistic,
+    ];
+    return React.createElement(
+      'room-root',
+      null,
+      ...rows.map((row, index) => React.createElement('probe-row', { key: index }, row.text)),
+    );
+  }
+  return {
+    BuzzChatSurface: (props: any) => {
+      controls.surfaceRenders++;
+      return controls.scopeProbe
+        ? React.createElement(ScopeProbe, props)
+        : React.createElement('room-root');
+    },
+  };
+});
 
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: vi.fn(
@@ -417,6 +455,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
+  controls.routeChannelId = '11111111-1111-4111-8111-111111111111';
+  controls.scopeProbe = null;
   controls.realRouter = false;
   resetClientState();
   controls.routerMode = 'router';
@@ -1631,4 +1671,56 @@ describe('Room session with the real canonical owner', () => {
     expect(controls.explicitReconnects).toBe(0);
     expect(mobileSurfaceCache.read).not.toHaveBeenCalled();
   });
+});
+
+it('isolates transcript windows, outbox and late send completion when a route changes Room', async () => {
+  let current!: {
+    session: UseRoomSurfaceSessionResult;
+    overlay: ReturnType<typeof import('@/buzz/room-send-frame').useRoomSendFrame>;
+    history: ReturnType<typeof useRoomMessageStore>;
+  };
+  controls.scopeProbe = (session, overlay, history) => {
+    current = { session, overlay, history };
+  };
+  let renderer!: ReactTestRenderer;
+  await act(async () => {
+    renderer = create(React.createElement(BuzzChat));
+  });
+  await flushEffects();
+  const source = current;
+  const view = roomView('11111111-1111-4111-8111-111111111111');
+  const row = {
+    id: 'source-message',
+    text: 'source only',
+    createdAt: 1,
+    author: view.viewer.identity,
+    presentation: 'message',
+  } as RoomViewMessage;
+  await act(async () => controls.lanes[0]!.apply({ ...view, messages: [row] }));
+  await act(async () =>
+    current.overlay.append([{ id: 'pending', text: 'pending source' } as ChatDisplayMessage]),
+  );
+  const visible = () =>
+    renderer.root.findAllByType('probe-row').map((node: any) => node.props.children);
+  expect(visible()).toEqual(['source only', 'pending source']);
+  const sourceOutbox = current.session.outbox.current();
+  controls.routeChannelId = '22222222-2222-4222-8222-222222222222';
+  controls.initialView = null;
+  // The destination lane has no answer yet; do not replay the source fixture.
+  controls.routerValue = null;
+  await act(async () => renderer.update(React.createElement(BuzzChat)));
+  // Even before the destination responds, it must not draw the source tail.
+  expect(visible()).toEqual([]);
+  await flushEffects();
+  await act(async () => controls.lanes.at(-1)!.apply(roomView('22222222-2222-4222-8222-222222222222')));
+  expect(visible()).toEqual([]);
+  expect(current.session.outbox.current()).not.toBe(sourceOutbox);
+  await act(async () => {
+    source.overlay.append([{ id: 'late-preview', text: 'late source' } as ChatDisplayMessage]);
+    source.session.applyRoomMessageResult({ ...row, id: 'late-ack', text: 'late acknowledgement' });
+  });
+  expect(visible()).toEqual([]);
+  expect(current.session.roomSurface?.room.id).toBe('22222222-2222-4222-8222-222222222222');
+  expect(current.session.roomSurface?.messages).toEqual([]);
+  await act(async () => renderer.unmount());
 });

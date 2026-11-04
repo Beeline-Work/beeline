@@ -32,6 +32,7 @@ import { FREE_AGENT_APP_CONNECT_GUIDE, FREE_AGENT_REPOSITORY_GUIDE, FREE_AGENT_T
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { agentUsage, notifyUsageRefreshResult, postedRefreshOutcome, saveAgentUsage } from './agent-usage.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
+import { queueDatabaseWork } from './database-work-queue.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeAgentAsk } from './tray-approval-ask.js';
@@ -661,11 +662,11 @@ export class DaemonService {
         [scopedRoom, authenticatedAgentId, candidate.requestId, candidate.generationId],
       )).rowCount
     ) {
-      const output = await this.postRoomMessage(
+      const output = await queueDatabaseWork(this.database, `turn:${scopedRoom}:${authenticatedAgentId}`, () => this.postRoomMessage(
         input as Input<'postRoomMessage'>,
         authenticatedAgentId,
         true,
-      );
+      ));
       if (isCorner)
         await this.reconcileZeroCheckWorkerCompletion(scopedRoom!, authenticatedAgentId);
       return output as Output<Name>;
@@ -697,7 +698,7 @@ export class DaemonService {
             : undefined;
       const committedTasks: Parameters<AfterCommit>[0][] = [];
       let appToolExecution: DaemonService['deferredAppTool'];
-      const output = await this.database.transaction(async (db) => {
+      const output = await queueDatabaseWork(this.database, `turn:${scopedRoom}:${authenticatedAgentId}`, () => this.database.transaction(async (db) => {
         // Failed receipts may reassign the reviewer. Take the lifecycle lock
         // before the silence lock and turn writes, matching lifecycle dispatch.
         if (name === 'createCorner' || name === 'reviseCornerBrief' ||
@@ -1016,7 +1017,7 @@ export class DaemonService {
           }
         }
         return result;
-      });
+      }));
       committed = true;
       for (const task of committedTasks) {
         try {
@@ -1242,13 +1243,13 @@ export class DaemonService {
           input as Input<'assignWorkflowRole'>,
         )) as Output<Name>;
       case 'getAgentCommands':
-        return (await readAgentCommands(
+        return (await queueDatabaseWork(this.database, `turn:${scopedRoom}:${authenticatedAgentId}`, () => readAgentCommands(
           this.database,
           scopedRoom!,
           authenticatedAgentId,
-        )) as Output<Name>;
+        ))) as Output<Name>;
       case 'claimAgentCommand': {
-        const claimed = await this.database.transaction(async (db) => {
+        const claimed = await queueDatabaseWork(this.database, `turn:${scopedRoom}:${authenticatedAgentId}`, () => this.database.transaction(async (db) => {
           const row = await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
             String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '')
             .catch((error: unknown) => {
@@ -1264,7 +1265,7 @@ export class DaemonService {
             ? (await readAgentCommands(db, scopedRoom!, authenticatedAgentId, [row.id])).commands[0]?.source
             : undefined;
           return { row, activity, source };
-        });
+        }));
         if (claimed instanceof StaleWakeClaimRefused) {
           claimed.log();
           throw claimed;

@@ -107,6 +107,8 @@ jobs:
       has_previous: ${{ steps.plan.outputs.has_previous }}
       previous_version: ${{ steps.plan.outputs.previous_version }}
       previous_sha: ${{ steps.plan.outputs.previous_sha }}
+      previous_server_image_ref: ${{ steps.plan.outputs.previous_server_image_ref }}
+      rollback_server_image_ref: ${{ steps.plan.outputs.rollback_server_image_ref }}
       ota_memory: ${{ steps.plan.outputs.ota_memory }}
       previous_record: ${{ steps.plan.outputs.previous_record }}
       no_op: ${{ steps.plan.outputs.no_op }}
@@ -323,6 +325,8 @@ jobs:
         with:
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
+          previous_server_image_ref: ${{ needs.initialize.outputs.previous_server_image_ref }}
+          rollback_server_image_ref: ${{ needs.initialize.outputs.rollback_server_image_ref }}
 
       - name: Record live server completion after both Machines passed
         id: complete

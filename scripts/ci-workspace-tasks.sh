@@ -35,6 +35,8 @@ typecheck() {
     node "$runner/check-architecture.mjs" --root .
   fi
   # The root command also generates mobile routes and typechecks mobile.
+  node --test scripts/rollout-schema.test.mjs
+  node scripts/rollout-schema.mjs --previous "$CI_BASE_SHA"
   npm run typecheck
   # Check no workflow names a deleted test
   npm run lint:workflow-paths

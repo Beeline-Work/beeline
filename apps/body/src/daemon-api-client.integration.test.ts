@@ -844,6 +844,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   });
 
   it('refreshes authenticated evidence across a socket drop and resumes through push without polling', async () => {
+    const initialClaim = vi.spyOn(connectionPresence, 'claimConnection');
     const exchange = await auth.createDaemonExchange(AGENT);
     const exchanged = await fetch(`${origin}/v1/auth/daemon/exchange`, {
       method: 'POST',
@@ -907,6 +908,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         targetAgentId: AGENT,
       });
     };
+    let finishClaim!: () => void;
+    const reclaimed = new Promise<void>(resolve => { finishClaim = resolve; });
+    let releaseFinished = false, claimFinished = false;
+    let restoreConnections = () => { initialClaim.mockRestore(); };
     try {
       await vi.waitFor(async () => {
         expect(connected).toBe(true);
@@ -914,21 +919,53 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       });
       await attempt();
       await vi.waitFor(() => expect(answered).toBe(1), { timeout: 5_000 });
+      await vi.waitFor(() => expect(initialClaim).toHaveBeenCalledOnce());
+      await initialClaim.mock.results[0]!.value;
+      initialClaim.mockRestore();
+      await connectionPresence.evidence(ROOM, AGENT);
       const before = (
         await database.query<{ updated_at: Date }>(
           `SELECT updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
           [AGENT],
         )
       ).rows;
+      const previousConnection = (await database.query<{ connection_id: string; epoch: string }>(
+        `SELECT connection_id,epoch FROM agent_connections WHERE agent_id=$1`, [AGENT],
+      )).rows[0]!;
+      const claimConnection = connectionPresence.claimConnection.bind(connectionPresence);
+      const releaseConnection = connectionPresence.releaseConnection.bind(connectionPresence);
+      const claims = vi.spyOn(connectionPresence, 'claimConnection').mockImplementation(async (...args) => {
+        const epoch = await claimConnection(...args);
+        claimFinished = true;
+        finishClaim();
+        return epoch;
+      });
+      const releases = vi.spyOn(connectionPresence, 'releaseConnection').mockImplementation(async (...args) => {
+        if (args[1] === previousConnection.connection_id) await reclaimed;
+        await releaseConnection(...args);
+        if (args[1] === previousConnection.connection_id) releaseFinished = true;
+      });
+      restoreConnections = () => { claims.mockRestore(); releases.mockRestore(); };
       const published: string[] = [];
       const stopWatching = live.subscribe(ROOM, (event) => {
         if (event.type === 'presence' && event.agentId === AGENT) published.push(event.status);
       });
       sockets[0]!.close();
       await vi.waitFor(() => expect(connectionStates).toContain(false));
-      // Reconnect restores online presence. A transient offline event appears
-      // only if the old socket's close is processed before the reconnect claims it.
+      await vi.waitFor(() => {
+        expect(releaseFinished).toBe(true);
+        expect(claimFinished).toBe(true);
+      }, { timeout: 5_000 });
+      // Force the CI race: the replacement claims before the old release.
+      // That stale release must be fenced, with no false offline broadcast.
+      expect(published).not.toContain('offline');
       await vi.waitFor(() => expect(published.at(-1)).toBe('online'), { timeout: 5_000 });
+      const currentConnection = (await database.query<{ connection_id: string; epoch: string; released_at: Date | null }>(
+        `SELECT connection_id,epoch,released_at FROM agent_connections WHERE agent_id=$1`, [AGENT],
+      )).rows[0]!;
+      expect(currentConnection.connection_id).not.toBe(previousConnection.connection_id);
+      expect(Number(currentConnection.epoch)).toBeGreaterThan(Number(previousConnection.epoch));
+      expect(currentConnection.released_at).toBeNull();
       stopWatching();
       await vi.waitFor(
         () => {
@@ -952,6 +989,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       expect(after[0]!.updated_at.getTime()).toBeGreaterThan(before[0]!.updated_at.getTime());
       expect(operations.mock.calls.filter(([name]) => name === 'getRoomInbox')).toHaveLength(1);
     } finally {
+      finishClaim();
+      restoreConnections();
       disconnect();
       await replies;
     }
@@ -1052,7 +1091,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     try {
       await vi.waitFor(() => expect(connected).toBe(true));
       await ask('@bee before the outage');
-      await vi.waitFor(() => expect(answered).toBe(1));
+      await vi.waitFor(() => expect(answered).toBe(1), { timeout: 5_000 });
 
       down = true;
       for (const [socket, entry] of relayed) {

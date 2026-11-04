@@ -1941,6 +1941,10 @@ CREATE TABLE IF NOT EXISTS corner_facts (
 );
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS locked boolean NOT NULL DEFAULT false;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS reviewer_agent_id text REFERENCES identities(id);
+-- Reproduction rollout-0707: the preceding serving/rollback image reads this
+-- field in corner lists, command delivery and webhook dispatch. Repair the
+-- premature drop as well as preserving existing installations.
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES identities(id);
 CREATE INDEX IF NOT EXISTS corner_facts_reviewer_agent_idx ON corner_facts(reviewer_agent_id);
 -- Smallest corner state (owner order 2026-11-02; [drops data], each item
 -- approved by the owner). Derived storage and its retired tables are dropped
@@ -1963,7 +1967,7 @@ ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_kind_check;
 ALTER TABLE corner_facts DROP CONSTRAINT IF EXISTS corner_facts_lane_check;
 ALTER TABLE corner_facts
   DROP COLUMN IF EXISTS plan, DROP COLUMN IF EXISTS review_handback_head, DROP COLUMN IF EXISTS review_handback_count,
-  DROP COLUMN IF EXISTS command_check_state, DROP COLUMN IF EXISTS worker_agent_id, DROP COLUMN IF EXISTS owner_agent_id,
+  DROP COLUMN IF EXISTS command_check_state, DROP COLUMN IF EXISTS worker_agent_id,
   DROP COLUMN IF EXISTS merge_attempt_head, DROP COLUMN IF EXISTS workflow_state, DROP COLUMN IF EXISTS workflow_outcome,
   DROP COLUMN IF EXISTS feature_branch, DROP COLUMN IF EXISTS close_requested, DROP COLUMN IF EXISTS kind,
   DROP COLUMN IF EXISTS commissioned_by, DROP COLUMN IF EXISTS opened_from_corner_id, DROP COLUMN IF EXISTS request_id,

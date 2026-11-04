@@ -39,6 +39,9 @@
         "scripts/marketing/build.mjs",
         // TYPECHECK runs the base commit's copy of the architecture guard by path.
         "scripts/check-architecture.mjs",
+        // Rollout replay and the post-drain release action invoke these CLIs by path.
+        "scripts/prove-rollout-overlap.mjs",
+        "scripts/run-contract-migrations.mjs",
         // The CI baseline runbook invokes this read-only GitHub measurement CLI by path.
         "scripts/ci-baseline.mjs",
         // Play upload and commit shell scripts invoke the CD listing lock by path.

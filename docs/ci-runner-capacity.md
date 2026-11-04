@@ -26,9 +26,12 @@ Actions-read access for older queued jobs. API failure, stale/truncated data or
 a missing inventory credential selects hosted execution. The routing request
 has a fifteen-second overall deadline and never becomes a new gate.
 
-The planner allocates each observed idle role slot once, subtracts older queued
-role requests and reserves capacity for older workflows still preparing their
-job graphs. This avoids placing a second PR behind already promised work.
+The planner allocates each observed idle role slot once and subtracts only
+actual unassigned queued jobs requesting a `beeline-ci` role in older runs.
+Preparing workflows and hosted jobs reserve nothing: their future job graphs
+are not claims on idle Squire capacity. This keeps the eight-heavy-slot per-run
+allowance available while avoiding already queued Squire work. The runner
+inventory excludes busy listeners; overflow uses hosted Ubuntu immediately.
 Preparation may use an idle control listener; verdicts stay hosted. The plan
 and reasons are printed in the first job's log and summary.
 

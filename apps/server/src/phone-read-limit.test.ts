@@ -7,7 +7,7 @@ import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { MessageSearchTooBroadError, PhoneService } from './phone-service.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
-import { IdentityRateLimit, phoneReadLimits } from './phone-read-limit.js';
+import { IdentityRateLimit } from './phone-read-limit.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
 import { createBeelineServer } from './server.js';
@@ -87,14 +87,7 @@ describe('identity rate limit', () => {
     expect(limit.admit(BOB)).toBe(true);
   });
 
-  it('lets one person search 60 times a minute', () => {
-    let now = 0;
-    const { search } = phoneReadLimits({ search: { now: () => now, log: () => undefined } });
-    for (let request = 0; request < 60; request += 1) expect(search.admit(ALICE)).toBe(true);
-    expect(search.admit(ALICE)).toBe(false);
-    now += 60_000;
-    expect(search.admit(ALICE)).toBe(true);
-  });
+
 });
 
 describe('history outline cache', () => {
@@ -191,11 +184,7 @@ describe('phone history and outline reads', () => {
       daemon: {} as DaemonService,
       live,
       mediaMaximumBytes: 1,
-      phoneReadLimits: phoneReadLimits({
-        history: { maxRequestsPerWindow: 3, now: () => now, log },
-        outline: { maxRequestsPerWindow: 3, now: () => now, log },
-        search: { maxRequestsPerWindow: 3, now: () => now, log },
-      }),
+
     });
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -208,34 +197,15 @@ describe('phone history and outline reads', () => {
     vi.restoreAllMocks();
   });
 
-  it('answers 429 to one identity over the history limit while another keeps paging', async () => {
-    for (let request = 0; request < 3; request += 1)
+  it('ordinary history and outline reads have no admission budget', async () => {
+    for (let request = 0; request < 6; request++) {
       expect((await get(`/v1/phone/rooms/${ROOM}/history`)).status).toBe(200);
-    const limited = await get(`/v1/phone/rooms/${ROOM}/history`);
-    expect(limited.status).toBe(429);
-    expect(await limited.json()).toEqual({ error: 'too_many_requests' });
-    expect(log.mock.calls).toEqual([['[phone-history] rate-limited', `identity=${ALICE}`]]);
-
-    const other = await get(`/v1/phone/rooms/${ROOM}/history`, BOB);
-    expect(other.status).toBe(200);
-    expect(((await other.json()) as { messages: unknown[] }).messages).toHaveLength(2);
-    // The outline keeps its own budget.
-    expect((await outline()).status).toBe(200);
-
-    now += 60_000;
-    expect((await get(`/v1/phone/rooms/${ROOM}/history`)).status).toBe(200);
+      expect((await outline()).status).toBe(200);
+    }
+    expect(log).not.toHaveBeenCalled();
   });
 
-  it('answers 429 over the outline limit for that identity only', async () => {
-    for (let request = 0; request < 3; request += 1) expect((await outline()).status).toBe(200);
-    const limited = await outline();
-    expect(limited.status).toBe(429);
-    expect(limited.body).toEqual({ error: 'too_many_requests' });
-    expect(log.mock.calls).toEqual([['[phone-outline] rate-limited', `identity=${ALICE}`]]);
-    expect((await outline(BOB)).status).toBe(200);
-  });
-
-  it('answers the message search, refuses a bad query or cursor, and limits each identity', async () => {
+  it('answers the message search, refuses a bad query or cursor, with current membership', async () => {
     const found = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=gradle`);
     expect(found.status).toBe(200);
     expect(
@@ -249,10 +219,8 @@ describe('phone history and outline reads', () => {
     const cursor = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=gradle&before=nope`);
     expect(cursor.status).toBe(400);
     expect(await cursor.json()).toEqual({ error: 'invalid_cursor' });
-    const limited = await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=gradle`);
-    expect(limited.status).toBe(429);
-    expect(await limited.json()).toEqual({ error: 'too_many_requests' });
-    expect(log.mock.calls).toEqual([['[phone-search] rate-limited', `identity=${ALICE}`]]);
+    expect((await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=gradle`)).status).toBe(200);
+    expect(log).not.toHaveBeenCalled();
     expect(
       (await get(`/v1/phone/workspaces/${WORKSPACE}/search?q=${'x'.repeat(201)}`, BOB)).status,
     ).toBe(400);

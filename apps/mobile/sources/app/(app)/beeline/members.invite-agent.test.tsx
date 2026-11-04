@@ -1,4 +1,4 @@
-vi.mock('@/buzz/router-resource',()=>({useRoutedResource:()=>({mode:'legacy',value:null,error:null,loading:false,retry:()=>{}})}));
+
 vi.mock('@/utils/responsive', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/responsive')>()), useIsDesktop: () => false }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));

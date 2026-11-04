@@ -1,6 +1,6 @@
 // This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+
+
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('react-native', () => ({ AppState: {} }));

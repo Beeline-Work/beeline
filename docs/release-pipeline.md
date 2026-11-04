@@ -230,9 +230,8 @@ the owner-scoped `MIGRATION_DATABASE_URL`, before either Fly Machine is changed.
 The production-database guard runs in that same image first. Migration secrets
 are passed by environment name, never as image build arguments or command-line
 values. No host dependency install or duplicate TypeScript build is needed.
-The migration writes the base `beeline_schema_state` and additive
-`beeline_router_schema_state` only after both the server and auth schemas and all
-backfills finish. Current boot uses `DATABASE_URL` only to read those markers and exits with an explicit release-migration error when the schema
+The migration writes `beeline_schema_state` only after both the server and auth schemas and all
+backfills finish. Current boot uses `DATABASE_URL` only to read that marker and exits with an explicit release-migration error when the schema
 is absent or stale. A Machine restart therefore cannot rerun or queue a
 migration behind live traffic. Each release-owned SQL step runs once. Lock
 timeout/deadlock returns the original failure with bounded lock diagnostics;

@@ -1,4 +1,3 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
 // @ts-expect-error Executable production JSX inventory.
 import { failureProofModule } from '../../scripts/error-surface-audit.mjs';
 // @ts-expect-error Executable source-bound sweep proof builder.
@@ -15,7 +14,7 @@ it('reproduces R1 and demonstrates the failed row with a single retry per row or
   mkdirSync(output,{recursive:true});
   const fonts = ['SpaceGrotesk-Regular','SpaceGrotesk-Medium','SpaceGrotesk-SemiBold'].map(font => `@font-face{font-family:'${font}';src:url(data:font/ttf;base64,${readFileSync(path.join(mobile,'sources/assets/fonts',font+'.ttf')).toString('base64')})}`).join('');
   for (const theme of ['obsidian','bone']) for (const width of [780,1440]) {
-    const shims={...webProofShims(mobile), ...legacyRouterProofShims()};
+    const shims={...webProofShims(mobile)};
     shims['react-native-unistyles']=shims['react-native-unistyles']!.replace('beelineThemes.obsidian',`beelineThemes.${theme}`);
     shims['error-proof-changed-sweep']='export default [];';
     shims['error-proof-production-rows']=failureProofModule(path.join(mobile,'sources'));
@@ -43,7 +42,7 @@ it('screenshots every changed inventory row before and after in both themes and 
   const module = changedSweepProofModule(mobile);
   const captured: string[] = [];
   for (const theme of ['obsidian','bone']) for (const width of [828,1440]) {
-    const shims = {...webProofShims(mobile), ...legacyRouterProofShims()};
+    const shims = {...webProofShims(mobile)};
     shims['react-native-unistyles'] = `import { ${theme}Theme } from '${path.join(mobile,'sources/theme')}';\n` + shims['react-native-unistyles']!.replace(/const theme = \{ buzz: beelineThemes\.obsidian \};/, `const theme = ${theme}Theme;`);
     shims['error-proof-production-rows'] = 'export default [];';
     shims['error-proof-inventory'] = 'export default [];';
@@ -73,7 +72,7 @@ it('R2: replaces the Workflow settings placeholder with the approved failed row 
   const fonts = ['SpaceGrotesk-Regular','SpaceGrotesk-Medium','SpaceGrotesk-SemiBold'].map(font => `@font-face{font-family:'${font}';src:url(data:font/ttf;base64,${readFileSync(path.join(mobile,'sources/assets/fonts',font+'.ttf')).toString('base64')})}`).join('');
   const module = changedSweepProofModule(mobile);
   for (const theme of ['obsidian','bone']) for (const width of [828,1440]) {
-    const shims = {...webProofShims(mobile), ...legacyRouterProofShims()};
+    const shims = {...webProofShims(mobile)};
     shims['react-native-unistyles'] = `import { ${theme}Theme } from '${path.join(mobile,'sources/theme')}';\n` + shims['react-native-unistyles']!.replace(/const theme = \{ buzz: beelineThemes\.obsidian \};/, `const theme = ${theme}Theme;`);
     shims['error-proof-production-rows'] = 'export default [];';
     shims['error-proof-inventory'] = 'export default [];';

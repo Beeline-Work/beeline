@@ -102,3 +102,6 @@ export function activateCommandOwner(origin: string, principal: string, socket: 
 }
 export function activeCommandOwner(): MobileCommandOwner | undefined { return active; }
 export function suspendCommandOwner(): void { active?.suspend(); active = undefined; }
+
+export { canonical } from '@beeline/net/owner';
+export type { CommandIntent } from '@beeline/net/owner';

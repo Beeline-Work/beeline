@@ -1,4 +1,4 @@
-vi.mock('@/buzz/router-owner', () => ({ routerOwnerCapabilities: async () => ({ families: [], authorityFencesV1: false }), routerOwnerNegotiated: async () => {}, routerOwnerDisconnected: () => {}, routerOwnerReceive: () => {} }));
+
 import { type RoomViewMessage } from '@beeline/buzz-client';
 import { verifyEvent, type NostrEvent } from '@beeline/nostr';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -186,7 +186,6 @@ describe('monolith Room send path', () => {
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]!.onopen?.();
     expect(sockets[0]!.sent.map(value => JSON.parse(value))).toEqual([
-      { type: 'router-negotiate', protocol: 1, families: [], authorityFencesV1: false, usageCellV1: true },
       { type: 'subscribe', sidebarPreviews: true, roomStateProjections: true, roomIds: [ROOM] },
     ]);
     sockets[0]!.onmessage?.({
@@ -373,7 +372,6 @@ describe('monolith Room send path', () => {
     expect(received).toHaveLength(1);
     expect(received[0]!.acknowledgePaint).toEqual(expect.any(Function));
     expect(sockets[0]!.sent.map(value => JSON.parse(value))).toEqual([
-      { type: 'router-negotiate', protocol: 1, families: [], authorityFencesV1: false, usageCellV1: true },
       { type: 'subscribe', sidebarPreviews: true, roomStateProjections: true, roomIds: [ROOM] },
     ]);
     received[0]!.acknowledgePaint?.();

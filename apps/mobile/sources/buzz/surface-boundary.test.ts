@@ -39,7 +39,7 @@ describe('server-indexed mobile data boundary', () => {
     );
   });
 
-  it('confines current routes, stores and transport adapters to the one read owner', () => {
+  it('keeps server-authored list cache writes in their existing owner', () => {
     const files = productionFiles(resolve(REPO, 'apps/mobile/sources'));
     expect(files.some(file => file.includes('/app/(app)/beeline/'))).toBe(true);
     const failures = files.flatMap(file => inspectSurfaceReadAuthority(file.slice(REPO.length + 1), readFileSync(file, 'utf8')));
@@ -48,10 +48,6 @@ describe('server-indexed mobile data boundary', () => {
 
   it.each([
     "import {mobileSurfaceCache as cache} from '@/buzz/surface-storage'; import {isChatListView as guard} from '@beeline/buzz-client'; cache['publish'](address, changed, guard);",
-    "sharedLiveConnection().request('readTray', {workspaceId:'ws'});",
-    "client.chats(authority, 'ws');",
-    "import {readServerSurface as backdoor} from '@/sync/transport/monolith-operation';",
-    "const token = {} as ReadAuthority;",
     "export * from '@/buzz/server-read-owner';",
   ])('rejects a planted backdoor: %s', source => {
     expect(inspectSurfaceReadAuthority('apps/mobile/sources/app/(app)/beeline/backdoor.ts', source).length).toBeGreaterThan(0);

@@ -184,8 +184,15 @@ export class SurfaceRefreshScheduler<T> {
         }
       }
     } catch (error) {
-      if (!this.disposed && generation === this.generation && raced === this.raced)
+      if (!this.disposed && generation === this.generation) {
+        // The transport has exhausted its read attempts. Reconnect frames
+        // received during that read must not start another attempt loop.
+        this.dirty = false;
+        this.immediatePending = false;
+        this.firstDirtyAt = undefined;
+        this.expectations = [];
         this.options.onError?.(error);
+      }
     } finally {
       this.inFlight = false;
       if (this.dirty) {

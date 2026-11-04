@@ -10,25 +10,8 @@ import {
 
 // The real SurfaceRefreshScheduler drives the reads here; only the network
 // edges are faked. The socket subscribes and then stalls until the explicit frame test.
-// These fixtures exercise the negotiated legacy compatibility path. The actual
-// router owner/negotiation path has independent integration coverage.
-vi.mock('@/buzz/router-family', () => ({
-  useRouterFamily: () => 'legacy',
-  holdRouterConnection: () => () => {},
-}));
-vi.mock('@/buzz/router-owner', () => ({
-  subscribeRouterOwner: () => () => {},
-  routerFamilyMode: () => 'legacy',
-  acquireRouterLane: () => ({
-    current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-    release: () => {},
-    subscribe: () => () => {},
-    refreshVisibility: () => {},
-  }),
-  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: () => {},
-  routerOwnerListPanel: () => {},
-}));
+
+
 
 const controls = vi.hoisted(() => ({
   serverMessages: [] as RoomViewMessage[],
@@ -37,6 +20,7 @@ const controls = vi.hoisted(() => ({
   reconnects: 0,
   working: false,
   failures: 0,
+  reconnectDuringFailure: false,
   appStateListeners: [] as Array<(state: string) => void>,
   emit: (_event: unknown) => {},
 }));
@@ -132,7 +116,14 @@ vi.mock('@/sync/transport/room-view-client', async () => {
     RoomViewClient: class {
       async room(): Promise<RoomView> {
         controls.roomReads += 1;
-        if (controls.failures-- > 0) throw new Error('temporary network failure');
+        if (controls.failures-- > 0) {
+          if (controls.reconnectDuringFailure) {
+            for (let n = 0; n < 2; n++) controls.emit({
+              monolithLive: { type: 'subscribed', roomId: 'experiments', resumed: false },
+            });
+          }
+          throw new Error('temporary network failure');
+        }
         return roomView([...controls.serverMessages]);
       }
       async markRead() {}
@@ -257,6 +248,9 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
           controls.emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } }),
         );
         await advance(0);
+        expect(controls.roomReads).toBe(2);
+        await act(async () => latest!.retryHydration());
+        await advance(100);
       }
       expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('hidden-reply');
       expect(latest!.roomSurface!.latestAgentTurns![0]!.status).toBe('complete');
@@ -296,7 +290,33 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('Reproduction R1: a failed opening read clears Retry when the socket subscribes again', async () => {
+  it('settles on Retry when read recovery also resubscribes the Room', async () => {
+    controls.failures = 100;
+    controls.reconnectDuringFailure = true;
+    let latest: UseRoomSurfaceSessionResult | undefined;
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => {
+        renderer = create(React.createElement(Harness, { capture: result => { latest = result; } }));
+      });
+      await advance(60_000);
+      expect(controls.roomReads).toBe(1);
+      expect(latest!.hydrationFailed).toBe(true);
+      expect(latest!.hydrationError).toBe('Couldn’t reach Beeline');
+      await advance(60_000);
+      expect(controls.roomReads).toBe(1);
+      controls.failures = 0;
+      await act(async () => latest!.retryHydration());
+      await advance(100);
+      expect(latest!.roomSurface?.messages.at(-1)?.id).toBe('m-2042');
+      expect(latest!.hydrationFailed).toBe(false);
+    } finally {
+      controls.reconnectDuringFailure = false;
+      await act(async () => renderer.unmount());
+    }
+  });
+
+  it('keeps a failed opening on Retry when the socket subscribes again', async () => {
     controls.failures = 100;
     let latest: UseRoomSurfaceSessionResult | undefined;
     let renderer!: ReactTestRenderer;
@@ -320,11 +340,15 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       }),
     );
     await advance(0);
+    expect(controls.roomReads).toBe(1);
+    expect(latest!.hydrationFailed).toBe(true);
+    await act(async () => latest!.retryHydration());
+    await advance(100);
     expect(controls.roomReads).toBe(2);
     expect(latest!.roomSurface?.messages.at(-1)?.id).toBe('m-2042');
     expect(latest!.hydrationFailed).toBe(false);
     console.log(
-      'R1 stand-in: failed open left Retry; reconnect subscribe painted the Room and cleared it',
+      'R1: failed open waits on Retry; Retry paints the Room and clears it',
     );
     await act(async () => renderer.unmount());
   });

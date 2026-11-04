@@ -1,4 +1,3 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,7 +8,7 @@ const NEXT_RUN = Date.parse('2026-10-23T13:00:00Z') / 1000;
 function shims(mobile: string): Record<string, string> {
   const contract = readFileSync(path.join(mobile, '../../docs/workflows/feedback-triage.json'), 'utf8');
   return {
-    ...webProofShims(mobile), ...legacyRouterProofShims(),
+    ...webProofShims(mobile),
     'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';
       const theme = { buzz: new URLSearchParams(location.search).get('theme') === 'light'
         ? beelineThemes.bone : beelineThemes.obsidian };

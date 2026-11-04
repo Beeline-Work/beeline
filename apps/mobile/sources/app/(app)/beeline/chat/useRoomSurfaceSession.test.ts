@@ -20,30 +20,11 @@ vi.mock('@/sync/transport/live-connection', () => ({
     controls.explicitReconnects += 1;
   },
 }));
-vi.mock('@/buzz/router-family', () => ({
-  useRouterFamily: () => controls.routerMode,
-  holdRouterConnection: () => () => {},
-}));
+
 vi.mock('@/buzz/router-chat-list', () => ({
   acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy(),
 }));
-vi.mock('@/buzz/router-owner', () => ({
-  routerFamilyMode: () => 'legacy',
-  acquireRouterLane: () => ({
-    current: () => ({
-      state: controls.routerValue ? 'LIVE' : 'ABSENT',
-      value: controls.routerValue,
-      cut: null,
-      error: null,
-    }),
-    release: () => {},
-    subscribe: () => () => {},
-    refreshVisibility: () => {},
-  }),
-  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: () => {},
-  routerOwnerListPanel: () => {},
-}));
+
 
 const controls = vi.hoisted(() => ({
   routeChannelId: 'room-a',
@@ -579,59 +560,6 @@ beforeEach(() => {
   controls.outboxFail.mockClear();
   controls.outboxGet.mockClear();
   vi.clearAllMocks();
-});
-
-it('uses the existing pending Room Retry for one transport attempt without manufacturing a read or focus', async () => {
-  controls.routerMode = 'pending';
-  let current!: UseRoomSurfaceSessionResult;
-  let renderer!: ReactTestRenderer;
-  await act(async () => {
-    renderer = create(
-      React.createElement(Harness, {
-        channelId: 'room-a',
-        capture: (value: UseRoomSurfaceSessionResult) => {
-          current = value;
-        },
-      }),
-    );
-  });
-  await act(async () => current.retryHydration());
-  expect(controls.explicitReconnects).toBe(1);
-  expect(controls.roomReads).toBe(0);
-  expect(controls.schedulers).toHaveLength(0);
-  await act(async () => renderer.unmount());
-});
-
-it('hides retained negotiated Room data synchronously when connection capability returns to pending', async () => {
-  const roomId = '11111111-1111-4111-8111-111111111111';
-  controls.routerMode = 'router';
-  controls.routerValue = roomView(roomId);
-  let current!: UseRoomSurfaceSessionResult;
-  const paints: Array<RoomView | null> = [];
-  let renderer: ReactTestRenderer | undefined;
-  const props = {
-    channelId: roomId,
-    capture: (value: UseRoomSurfaceSessionResult) => {
-      current = value;
-      paints.push(value.roomSurface);
-    },
-  };
-  try {
-    await act(async () => {
-      renderer = create(React.createElement(Harness, props));
-    });
-    await flushEffects();
-    expect(current.roomSurface?.room.id).toBe(roomId);
-    paints.length = 0;
-    controls.routerMode = 'pending';
-    await act(async () => renderer!.update(React.createElement(Harness, props)));
-    expect(paints.length).toBeGreaterThan(0);
-    expect(paints.every((value) => value === null)).toBe(true);
-    expect(current.liveOverlays).toEqual([]);
-    expect(current.heartbeatPresences).toEqual({});
-  } finally {
-    if (renderer) await act(async () => renderer!.unmount());
-  }
 });
 
 describe('reopening a dismissed Room', () => {
@@ -2884,7 +2812,7 @@ describe('useRoomSurfaceSession', () => {
     expect(current.roomSurface).toBeNull();
     expect(current.hydrationFailed).toBe(true);
     expect(current.hydrationError).toBe(
-      'The server did not respond. Check your connection and retry.',
+      'Couldn’t reach Beeline',
     );
 
     // RETRY re-runs the read; a responding server paints the Room normally.
@@ -2901,7 +2829,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('keeps a cached page free of offline notices on network failure but still shows terminal errors', async () => {
+  it('keeps the cached page with the shared Retry error and clears private data on access loss', async () => {
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
@@ -2917,13 +2845,13 @@ describe('useRoomSurfaceSession', () => {
 
     await act(async () => controls.schedulers[0]!.error(new TypeError('Network request failed')));
     expect(current.roomSurface?.room.id).toBe('room-a');
-    expect(current.hydrationFailed).toBe(false);
-    expect(current.hydrationError).toBeNull();
+    expect(current.hydrationFailed).toBe(true);
+    expect(current.hydrationError).toBe('Couldn’t reach Beeline');
 
     await act(async () => controls.schedulers[0]!.error(new RoomViewHttpError(403, 'forbidden')));
     expect(current.roomSurface).toBeNull();
     expect(current.hydrationFailed).toBe(true);
-    expect(current.hydrationError).toContain('Could not load this conversation');
+    expect(current.hydrationError).toBe('Couldn’t reach Beeline');
     await act(async () => renderer.unmount());
   });
 });

@@ -2,7 +2,6 @@ import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
-import { legacyRouterProofShims } from '../test-fixtures/router-proof';
 
 it('CR1: failed workflow fetch leaves a clean objective and recovers on an event', async () => {
   const mobile = process.cwd();
@@ -41,10 +40,10 @@ it('CR1: failed workflow fetch leaves a clean objective and recovers on an event
       }, 1600);`);
     for (const theme of ['obsidian', 'bone']) {
       for (const width of [390, 1180]) {
-        const shims = { ...webProofShims(mobile), ...legacyRouterProofShims() };
+        const shims = { ...webProofShims(mobile) };
         shims['react-native-unistyles'] = shims['react-native-unistyles']!.replace('beelineThemes.obsidian', `beelineThemes.${theme}`);
         const options = { entry, mobile, width, head, budgetMs: 1900,
-          
+
           shims: { ...shims,
             'expo-router': `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]);`,
             '@/sync/transport/live-connection': 'export const sharedLiveConnection = () => ({ register: async (_, listener) => { window.listener = listener; return () => {}; } });',

@@ -370,8 +370,8 @@ describe('server readiness', () => {
     });
   });
 
-  it.each(['readAgentUsageCell', 'readRouterSnapshot', 'readMediaMetadata', 'readMediaLink', 'readMediaPlayback'])(
-    'keeps negotiated %s on the sole phone socket', async operation => {
+  it.each(['readRoomTools', 'readMediaMetadata', 'readMediaLink', 'readMediaPlayback'])(
+    'keeps %s on the sole phone socket', async operation => {
       const query = vi.fn(), transaction = vi.fn(), execute = vi.fn();
       const response = await get(`/v1/phone/operations/${operation}`, { query, transaction }, {
         auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
@@ -379,7 +379,7 @@ describe('server readiness', () => {
       }, { method: 'POST', headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
         body: JSON.stringify({ objectId: '11111111-1111-4111-8111-111111111111' }) });
       expect(response.status).toBe(409);
-      expect(await response.json()).toEqual({ error: 'router_socket_required' });
+      expect(await response.json()).toEqual({ error: 'phone_socket_required' });
       expect(execute).not.toHaveBeenCalled(); expect(query).not.toHaveBeenCalled(); expect(transaction).not.toHaveBeenCalled();
     });
 

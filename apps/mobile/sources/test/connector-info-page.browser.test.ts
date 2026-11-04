@@ -1,4 +1,3 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
 import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -59,7 +58,7 @@ describe('connected app with no frontend in the mobile web renderer', () => {
         height: 844,
         budgetMs: 8000,
         shims: {
-          ...webProofShims(mobile), ...legacyRouterProofShims(),
+          ...webProofShims(mobile),
           '@expo/vector-icons': 'export const Ionicons = () => null;',
           'expo-web-browser': 'export const openAuthSessionAsync = async () => ({ type: "cancel" }); export const openBrowserAsync = async url => { globalThis.__browser.push(url); };',
           'expo-router': `import { useEffect } from 'react';

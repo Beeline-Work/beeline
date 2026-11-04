@@ -528,13 +528,13 @@ jobs:
           node --test --test-concurrency=1 scripts/external-request-deadlines.test.mjs
           npm test -w @beeline/auth -- --run src/external-fetch.test.ts --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
           npm test --prefix apps/mobile -- --run sources/sync/transport/monolith-operation.test.ts sources/components/buzz/CornerActionsSheet.test.tsx 'sources/app/(app)/beeline/human-profile.waiting.test.tsx' --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
-      - name: Prove local network admission
+      - name: Prove network codecs and command ownership
         working-directory: packages/net
         env:
           NODE_OPTIONS: --max-old-space-size=4096
         run: |
           node ../../scripts/generate-network-codecs.mjs --check
-          for suite in src/*.test.ts src/private/*.test.ts; do
+          for suite in src/*.test.ts; do
             npx vitest run "$suite" --maxWorkers="$CI_TEST_WORKERS" --minWorkers=1
           done
           cd ../..
@@ -885,7 +885,6 @@ jobs:
           NODE_OPTIONS: --max-old-space-size=4096
           BEELINE_COMMAND_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
         run: |
-          npm test -w @beeline/server -- src/network-router-runtime.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/database-one-attempt.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/mcp-webhook-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/agent-schedule-deadline.postgres.test.ts --maxWorkers=2 --minWorkers=1
@@ -898,16 +897,11 @@ jobs:
           npm test -w @beeline/server -- src/router-group-c-oauth.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/router-group-c-replay.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/room-router-read.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          node --import tsx scripts/prove-router-group-c-room-payload.mjs
-          BEELINE_GROUP_C_COST_PROOF=1 node --import tsx scripts/prove-router-group-c-room-payload.mjs
-          (cd apps/mobile && npx vitest run sources/buzz/router-group-c-media.postgres.test.ts --maxWorkers=2 --minWorkers=1)
           (cd apps/mobile && npx vitest run sources/sync/transport/router-group-c-connection.postgres.test.ts --maxWorkers=2 --minWorkers=1)
           npm test -w @beeline/server -- src/router-command.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/router-projections.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/durable-live.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/rooms-mcp-stream.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/phone-media.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/router-authority-fences.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/helper-overlay.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/turn-ownership-socket.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/rooms-mcp-stream.test.ts --maxWorkers=2 --minWorkers=1
@@ -915,7 +909,6 @@ jobs:
           npm test -w @beeline/server -- src/choice-expiry.test.ts --maxWorkers=2 --minWorkers=1
           BEELINE_VOICE_TEST_POSTGRES_URL="$BEELINE_COMMAND_TEST_POSTGRES_URL" npm test -w @beeline/server -- src/voice-budget.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/helper-usage.postgres.test.ts --maxWorkers=2 --minWorkers=1
-          npm test -w @beeline/server -- src/router-build-coordinator.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/helper-activation.postgres.test.ts --maxWorkers=2 --minWorkers=1
           npm test -w @beeline/server -- src/operator-system-dm-source.postgres.test.ts --maxWorkers=2 --minWorkers=1
       # This file subtracts the measured synthetic 206 ms timer wait before

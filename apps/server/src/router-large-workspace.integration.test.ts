@@ -1,59 +1,99 @@
-import { beforeAll, afterAll, afterEach, expect, it } from 'vitest';
-import { phoneRouterHost } from './test-fixtures/test-support-phone-router-host.js';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import type { Server } from 'node:http';
+import WebSocket from 'ws';
+import { beforeAll, afterAll, afterEach, expect, it, vi } from 'vitest';
+import type { TokenAuth } from './auth.js';
+import type { DaemonService } from './daemon-service.js';
+import { phoneReadHost } from './test-fixtures/test-support-phone-read-host.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
-import { routerSocketProtocol } from './router-socket.js';
+import { createBeelineServer } from './server.js';
 import { migratedDatabase, type PgliteDatabase } from './test-support.js';
 
 const VIEWER = 'a'.repeat(64);
 const WS = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
 let db: PgliteDatabase;
-let host: Awaited<ReturnType<typeof phoneRouterHost>>;
-beforeAll(async () => { host = await phoneRouterHost(VIEWER); });
+let server: Server | undefined;
+let connection: any;
+let host: Awaited<ReturnType<typeof phoneReadHost>>;
+const sockets: WebSocket[] = [];
+beforeAll(async () => { host = await phoneReadHost(); });
 afterAll(async () => { await host?.close(); });
-afterEach(async () => { await db?.close(); });
+afterEach(async () => {
+  connection?.dispose(); connection = undefined;
+  for (const socket of sockets.splice(0)) socket.terminate();
+  if (server) await new Promise<void>(resolve => server!.close(() => resolve()));
+  server = undefined;
+  await db?.close();
+  vi.restoreAllMocks(); vi.unstubAllGlobals();
+});
 
-it('keeps a loaded Room list live when a Workspace with 1,900 mostly archived Rooms changes', async () => {
+async function setup() {
   db = await migratedDatabase();
-  await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Synthetic reader')`, [VIEWER]);
-  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Synthetic scale proof')`, [WS]);
-  await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Experiments')`, [ROOM, WS, VIEWER]);
+  await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Proof reader')`, [VIEWER]);
+  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Proof Workspace')`, [WS]);
+  await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'proof')`, [ROOM, WS, VIEWER]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'owner'),($1,$2,$3,'owner')`, [WS, ROOM, VIEWER]);
-  await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,archived_at)
-    SELECT ('33333333-3333-4333-8333-'||lpad(n::text,12,'0'))::uuid,$1,$2,$3,'Archived corner '||n,now()
-    FROM generate_series(1,1899) n`, [WS, ROOM, VIEWER]);
-  const live = new LiveHub(), phone = new PhoneService(db, 'https://synthetic.test');
-  const frames: Record<string, any>[] = [];
-  let delivered!: () => void;
-  const delivery = new Promise<void>(resolve => { delivered = resolve; });
-  const protocol = routerSocketProtocol(db, VIEWER, raw => {
-    const frame = JSON.parse(raw); frames.push(frame);
-    if (frame.kind) host.phone.routerOwnerReceive(frame);
-    if (frame.kind === 'push-commit' || frame.kind === 'router-unavailable') delivered();
-  }, { families: ['room-list', 'room-head'], listenerReady: () => true, roomHeadContinuityV1: true },
-  { live, phone, rooms: () => [] });
-  try {
-    await protocol.handle({ type: 'router-negotiate', protocol: 1, families: ['room-list', 'room-head'], authorityFencesV1: true, roomHeadContinuityV1: true });
-    const request = { family: 'room-list', workspaceId: WS } as const;
-    host.phone.routerOwnerNavigation({ routes: [{ key: 'channels', name: 'beeline/channels', params: { communityId: WS } }] });
-    let changed!: () => void;
-    const initial = new Promise<void>(resolve => { changed = resolve; });
-    const lane = host.phone.acquireRouterLane(request, () => true, () => { if (lane.current().state === 'LIVE') changed(); });
-    await host.phone.routerOwnerNegotiated({ generation: 1, families: ['room-list', 'room-head'], authorityFencesV1: true,
-      execute: async (input: any) => { const value = await protocol.snapshot(input); await protocol.fenceReply('readRouterSnapshot', input, value, () => undefined); return value; } });
-    await initial;
-    expect(lane.current().state).toBe('LIVE');
-    const snapshot = await protocol.snapshot(request);
-    expect(snapshot.value).toMatchObject({ chats: [{ room: { id: ROOM } }] });
-    await protocol.fenceReply('readRouterSnapshot', { family: 'room-list', workspaceId: WS }, snapshot, () => undefined);
-    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('scale-update',$1,$2,'A live update')`, [ROOM, VIEWER]);
-    live.journalChanged([`workspace:${WS}`]);
-    await delivery;
-    expect(frames.filter(frame => frame.kind === 'router-unavailable')).toEqual([]);
-    expect(frames.some(frame => frame.kind === 'push-commit')).toBe(true);
-    await new Promise(resolve => setImmediate(resolve));
-    expect(lane.current()).toMatchObject({ state: 'LIVE', error: null });
-    lane.release();
-  } finally { host.phone.routerOwnerDisconnected(); protocol.close(); }
+  const live = new LiveHub(), phone = new PhoneService(db, 'https://synthetic.test', undefined, undefined, live);
+  server = createBeelineServer({ database: db, phone, live,
+    auth: { authenticatePhone: async () => VIEWER } as unknown as TokenAuth,
+    daemon: {} as DaemonService, mediaMaximumBytes: 1 });
+  server.listen(0, '127.0.0.1'); await once(server, 'listening');
+  const port = (server.address() as AddressInfo).port;
+  class NativeSocket extends WebSocket {
+    constructor(url: string, protocols: string[]) { super(url, protocols); sockets.push(this); }
+  }
+  vi.stubGlobal('WebSocket', NativeSocket);
+  connection = new host.phone.LiveConnection({
+    authorization: async () => 'proof-viewer'.repeat(8),
+    liveUrl: () => `ws://127.0.0.1:${port}/v1/phone/live`,
+    subscribeIdentityChange: () => () => {},
+  });
+  return { phone, live };
+}
+
+it('plain reads load the list and a busy Room with 1,900 active Rooms', async () => {
+  const { phone } = await setup();
+  await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name)
+    SELECT ('33333333-3333-4333-8333-'||lpad(n::text,12,'0'))::uuid,$1,$2,'Proof Room '||n
+    FROM generate_series(1,1899) n`, [WS, VIEWER]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    SELECT $1,id,$2,'member' FROM rooms WHERE workspace_id=$1 AND id<>$3`, [WS, VIEWER, ROOM]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text)
+    SELECT md5('busy-'||n)||md5('proof-'||n),$1,$2,repeat('Busy Room history ',200) FROM generate_series(1,100) n`, [ROOM, VIEWER]);
+  const chats = vi.spyOn(phone, 'readChats'), room = vi.spyOn(phone, 'readRoom');
+  const [list, view] = await Promise.all([
+    connection.request('readChats', { workspaceId: WS }, { afterRoomDraw: false }),
+    connection.request('readRoom', { roomId: ROOM }),
+  ]);
+  expect(list.chats).toHaveLength(200);
+  expect(list.truncated).toBe(true);
+  expect(list.chats).toContainEqual(expect.objectContaining({ room: expect.objectContaining({ id: ROOM }) }));
+  expect(view).toMatchObject({ room: { id: ROOM } }); expect(view.messages.length).toBeGreaterThan(0);
+  expect(chats).toHaveBeenCalledTimes(1); expect(room).toHaveBeenCalledTimes(1);
+  expect(sockets).toHaveLength(1);
+}, 60_000);
+
+it('a socket killed mid-read reconnects and reads the Room again', async () => {
+  const { phone } = await setup();
+  const original = phone.readRoom.bind(phone);
+  const read = vi.spyOn(phone, 'readRoom').mockImplementationOnce(async () => {
+    sockets[0]!.terminate();
+    return original(ROOM, VIEWER);
+  });
+  const value = await connection.request('readRoom', { roomId: ROOM });
+  expect(value).toMatchObject({ room: { id: ROOM }, messages: [] });
+  expect(read).toHaveBeenCalledTimes(2); expect(sockets).toHaveLength(2);
+});
+
+it('three server errors settle the read; a later Retry reads successfully', async () => {
+  const { phone } = await setup();
+  const read = vi.spyOn(phone, 'readRoom').mockRejectedValue(new Error('Synthetic unavailable read'));
+  await expect(connection.request('readRoom', { roomId: ROOM })).rejects.toThrow('Synthetic unavailable read');
+  expect(read).toHaveBeenCalledTimes(3); expect(sockets).toHaveLength(3);
+  read.mockRestore();
+  await expect(connection.request('readRoom', { roomId: ROOM })).resolves.toMatchObject({ room: { id: ROOM } });
+  expect(sockets).toHaveLength(3);
 });

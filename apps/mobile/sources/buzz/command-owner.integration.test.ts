@@ -17,9 +17,9 @@ vi.mock('react-native', () => ({ AppState: { currentState: 'active', addEventLis
 vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: async () => ({ publicKey: 'c'.repeat(64) }), getEffectiveRelayUrl: async () => 'https://command.test' }));
 vi.mock('./surface-storage', () => ({routerAuthorityStorageReady:()=>true,routerCommandStorageReady:()=>true,
   routerLaneStorage: () => ({ write: async () => {}, fence: async () => {},floor:async()=>{}, remove: async () => {}, subscribeFences: () => () => {},subscribeFloors:()=>()=>{} }) }));
-import { activateCommandOwner, suspendCommandOwner } from './command-owner';
+import { activateCommandOwner, suspendCommandOwner, canonical } from './command-owner';
 import { prepareRouterMessageGesture } from './command-message-gesture';
-import { routerOwnerNavigation, routerOwnerNegotiated,admitRouterScheduledStop } from './router-owner';
+
 import { resetClientState } from '@/sync/client-reset';
 import { MessageOutbox } from './message-outbox';
 const ORIGIN = 'https://command.test', PRINCIPAL = 'c'.repeat(64);
@@ -27,46 +27,36 @@ const ROOM = '22222222-2222-4222-8222-222222222222';
 const input = { roomId: ROOM, principal: PRINCIPAL, text: 'A prepared command', attachments: [], mentions: [] };
 const bridge = (requestCommand: ReturnType<typeof vi.fn>) => ({ commandState: () => ({ ready: fixture.ready, commandDedupV1: fixture.capable, generation: fixture.generation }), requestCommand });
 const committed = (_operation: string, _args: unknown, command: { id: string }): RouterCommandReceipt => ({ v: 1, operation: _operation, commandId: command.id, state: 'committed' });
-async function focus() {
-  routerOwnerNavigation({ routes: [{ key: 'room', name: 'beeline/chat/[channelId]', params: { channelId: ROOM } }] });
-  await routerOwnerNegotiated({ generation: fixture.generation, families: [], execute: async () => { throw new Error('no read expected'); } });
-}
 beforeEach(async () => {
   suspendCommandOwner(); resetClientState(); fixture.disk.clear(); fixture.random = 1; fixture.write = undefined;
   fixture.ready = true; fixture.capable = true; fixture.generation += 1;
-  await focus();
 });
 describe('actual mobile prepared-command owner and existing outbox', () => {
-  async function scheduleFocus(){
-    routerOwnerNavigation({routes:[{key:'scheduled',name:'beeline/settings/schedule',params:{roomId:ROOM}}]});
-    await routerOwnerNegotiated({generation:++fixture.generation,families:['room-scheduled-work'],authorityFencesV1:true,
-      execute:async()=>{throw new Error('A stop must never read a display');}});
-  }
   it('durable Scheduled Work stop reserves in the gesture, persists before dispatch and survives blur without a display read',async()=>{
-    await scheduleFocus();const trace:string[]=[];
+    const trace:string[]=[];
     const send=vi.fn(async(...args:Parameters<typeof committed>)=>{trace.push('network');return committed(...args);});
     const owner=activateCommandOwner(ORIGIN,PRINCIPAL,bridge(send));fixture.write=()=>trace.push('persisted');
     const schedule='33333333-3333-4333-8333-333333333333';
-    const pending=owner.prepare(admitRouterScheduledStop('deleteRoomSchedule',ROOM,schedule));
-    routerOwnerNavigation({routes:[{key:'elsewhere',name:'beeline/channels'}]});trace.push('gesture-returned');
+    const pending=owner.prepare(scheduledStop('deleteRoomSchedule',ROOM,schedule));
+
     const record=await pending;await owner.deliver(record.id);
     expect(trace.indexOf('persisted')).toBeLessThan(trace.indexOf('network'));
     expect(send).toHaveBeenCalledWith('deleteRoomSchedule',{roomId:ROOM,scheduleId:schedule},{v:1,id:record.id},undefined);
     expect(owner.find(record.id)?.state).toBe('committed');
   });
   it('a lost subscription-stop receipt resumes the exact durable identity once on a real negotiated generation',async()=>{
-    await scheduleFocus();let effects=0;
+    let effects=0;
     const send=vi.fn(async(...args:Parameters<typeof committed>)=>{if(++effects===1)throw new Error('committed result dropped');return committed(...args);});
     const owner=activateCommandOwner(ORIGIN,PRINCIPAL,bridge(send));
-    const record=await owner.prepare(admitRouterScheduledStop('deleteRoomSubscription',ROOM,'legacy:'+ROOM+':helper:joined'));
+    const record=await owner.prepare(scheduledStop('deleteRoomSubscription',ROOM,'legacy:'+ROOM+':helper:joined'));
     await expect(owner.deliver(record.id)).rejects.toThrow('dropped');expect(owner.find(record.id)?.state).toBe('unknown');
     fixture.generation++;await owner.negotiated();await owner.negotiated();
     expect(send).toHaveBeenCalledTimes(2);expect(send.mock.calls[0]![2]).toEqual(send.mock.calls[1]![2]);expect(owner.find(record.id)?.state).toBe('committed');
   });
   it('a stop admitted before connection loss remains prepared and sends once at the next actual connection',async()=>{
-    await scheduleFocus();const send=vi.fn(async(...args:Parameters<typeof committed>)=>committed(...args));
+    const send=vi.fn(async(...args:Parameters<typeof committed>)=>committed(...args));
     const owner=activateCommandOwner(ORIGIN,PRINCIPAL,bridge(send));
-    const record=await owner.prepare(admitRouterScheduledStop('deleteRoomSchedule',ROOM,'33333333-3333-4333-8333-333333333333'));
+    const record=await owner.prepare(scheduledStop('deleteRoomSchedule',ROOM,'33333333-3333-4333-8333-333333333333'));
     fixture.ready=false;await expect(owner.deliver(record.id)).rejects.toThrow();expect(owner.find(record.id)?.state).toBe('prepared');expect(send).not.toHaveBeenCalled();
     fixture.ready=true;fixture.generation++;await owner.negotiated();await owner.negotiated();expect(send).toHaveBeenCalledTimes(1);
   });
@@ -77,7 +67,7 @@ describe('actual mobile prepared-command owner and existing outbox', () => {
     const gesture = prepareRouterMessageGesture(input)!;
     // Blur immediately after the synchronous handler prefix; admitted immutable
     // persistence survives while a delayed admission would now be refused.
-    routerOwnerNavigation({ routes: [{ key: 'elsewhere', name: 'beeline/channels' }] });
+
     trace.push('gesture-returned');
     expect(send).not.toHaveBeenCalled();
     const record = await gesture.persisted;
@@ -160,3 +150,8 @@ describe('actual mobile prepared-command owner and existing outbox', () => {
     expect(handler.indexOf('await routerPrepared.persisted')).toBeLessThan(handler.indexOf('await activeOutbox.enqueue('));
   });
 });
+
+function scheduledStop(operation:string,roomId:string,id:string) {
+  const input=operation==='deleteRoomSchedule'?{roomId,scheduleId:id}:{roomId,subscriptionId:id};
+  return {wire:{operation,input:canonical(input)},isCurrent:()=>true};
+}

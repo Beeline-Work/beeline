@@ -1,4 +1,4 @@
-vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: () => {} }));
+
 // This fixture owns approval colors/actions, not authenticated image bytes.
 // RoomMessageVariants also exports image rows; keep that unrelated renderer
 // outside the theme proof's native credential boundary.

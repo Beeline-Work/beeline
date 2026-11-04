@@ -1,4 +1,3 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
 import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, it } from 'vitest';
@@ -7,7 +6,7 @@ import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 for (const width of [390, 1280]) for (const theme of ['bone', 'obsidian'])
   it.skipIf(!existsSync(CHROME))(`transcript dividers: ${width} ${theme}`, async () => {
     const mobile = process.cwd();
-    const shims = { ...webProofShims(mobile), ...legacyRouterProofShims() };
+    const shims = { ...webProofShims(mobile) };
     shims['react-native-reanimated'] += '\nexport const FadeOut = FadeInDown; export const interpolateColor = (_, __, colors) => colors[1];';
     shims['react-native-unistyles'] = shims['react-native-unistyles'].replace('beelineThemes.obsidian', `beelineThemes.${theme}`);
     shims['./ToolOutputSheet'] = 'export const ToolOutputSheet = () => null;';

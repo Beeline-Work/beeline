@@ -1,4 +1,3 @@
-import type { ReadAuthority } from '@/buzz/read-authority';
 import { describe, expect, it, vi } from 'vitest';
 import {
   RoomViewClient,
@@ -193,7 +192,7 @@ describe('monolith client paint projection microbench (not RN page-load)', () =>
     };
 
     const paintDeckThroughClient = async () => {
-      const fetched = await client.chats({} as ReadAuthority, WORKSPACE);
+      const fetched = await client.chats(WORKSPACE);
       const hydrated = hydrateFromCache(fetched);
       let painted = 0;
       await new Promise<void>((resolve, reject) => {

@@ -4,7 +4,7 @@ import { act, create } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 const read = vi.hoisted(() => vi.fn(async () => ({ workflows: [] })));
 // This suite exercises the explicitly negotiated legacy-server cohort.
-vi.mock('./router-resource', () => ({ useRoutedResource: () => ({ mode: 'legacy', value: null }) }));
+
 vi.mock('expo-router', () => ({ useFocusEffect: (effect: () => (() => void)) => { wire.focus = effect; React.useEffect(() => { const blur = effect(); wire.blur = blur; return blur; }, [effect]); } }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: read }));
 const wire = vi.hoisted(() => ({ listener: undefined as any, foreground: undefined as any, focus: undefined as any, blur: undefined as any, fail: false }));

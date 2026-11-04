@@ -1,5 +1,5 @@
 vi.mock('@/buzz/use-surface-focus',()=>({useSurfaceFocus:()=>true}));
-vi.mock('@/buzz/router-resource',()=>({useRoutedResource:()=>({mode:'legacy',value:null,error:null,loading:false,retry:()=>{}})}));
+
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -165,8 +165,7 @@ it('Reproduction NET-WASTE-1: mounted Settings releases Workbench on blur and re
   await act(async () => renderer.unmount());
 });
 
-it('negotiated canonical usage cells do not refresh Workbench, wallet, history or connection detail', async () => {
-  const { installUsageCellConnection, suspendUsageCellConnection } = await import('./agent-usage-cell');
+it('uses ordinary live resource changes to refresh open owner surfaces', async () => {
   function Screen() {
     useSharedWorkbench({ workspaceId: 'ws-spin', viewerId: 'owner' });
     useSharedWallet('ws'); useSharedWalletHistory('ws');
@@ -175,17 +174,10 @@ it('negotiated canonical usage cells do not refresh Workbench, wallet, history o
   }
   let renderer!: ReactTestRenderer;
   await act(async () => { renderer = create(<Screen />); });
-  try {
-    const before = Object.fromEntries(Object.entries(state.reads).map(([name, read]) => [name, read.mock.calls.length]));
-    installUsageCellConnection({ generation: 1, usageCellV1: true, origin: 'https://relay.test', principal: 'owner',
-      executeRead: async () => { throw new Error('No active profile'); } });
-    await act(async () => {
-      for (const listener of state.live) listener({ monolithLive: { type: 'resource-change', resource: 'agent', resourceId: 'agent-a', usageOnly: true } });
-    });
-    for (const [name, read] of Object.entries(state.reads)) expect(read.mock.calls.length).toBe(before[name]);
-    await act(async () => {
-      for (const listener of state.live) listener({ monolithLive: { type: 'resource-change', resource: 'agent', resourceId: 'agent-a' } });
-    });
-    for (const [name, read] of Object.entries(state.reads)) expect(read.mock.calls.length).toBe(before[name]! + 1);
-  } finally { suspendUsageCellConnection(); await act(async () => renderer.unmount()); }
+  const before = Object.fromEntries(Object.entries(state.reads).map(([name, read]) => [name, read.mock.calls.length]));
+  await act(async () => {
+    for (const listener of state.live) listener({ monolithLive: { type: 'resource-change', resource: 'agent', resourceId: 'agent-a', usageOnly: true } });
+  });
+  for (const [name, read] of Object.entries(state.reads)) expect(read.mock.calls.length).toBe(before[name]! + 1);
+  await act(async () => renderer.unmount());
 });

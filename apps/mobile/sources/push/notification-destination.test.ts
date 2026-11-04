@@ -1,7 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({ workspace: 'workspace-a', mode: 'legacy' as 'legacy' | 'router' | 'pending', save: vi.fn(), room: vi.fn() }));
-vi.mock('@/buzz/router-owner', () => ({ routerFamilyMode: () => state.mode }));
+
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: async () => ({ publicKey: 'viewer' }),
   getEffectiveRelayUrl: async () => 'https://relay.test',
@@ -31,14 +31,4 @@ it('persists a different pushed Workspace while preserving the exact destination
   expect(await resolveBuzzNotificationDestination(target)).toEqual(target);
   expect(state.save).toHaveBeenCalledWith('viewer', 'workspace-a');
   expect(state.room).not.toHaveBeenCalled();
-});
-
-
-it('leaves a negotiated or pending corner target to one destination-focus snapshot', async () => {
-  const corner = { ...target, channelId: 'corner-a', cornerId: 'corner-a' };
-  for (const mode of ['router', 'pending'] as const) {
-    state.mode = mode;
-    expect(await resolveBuzzNotificationDestination(corner)).toEqual(corner);
-    expect(state.room).not.toHaveBeenCalled();
-  }
 });

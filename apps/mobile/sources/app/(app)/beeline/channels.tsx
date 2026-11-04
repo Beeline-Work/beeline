@@ -14,8 +14,7 @@ import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsE
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
-import { useRouterFamily } from '@/buzz/router-family';
-import { retryRouterLane, routerFamilyMode } from '@/buzz/router-owner';
+
 import { acquireChatList, type ChatListHandle } from '@/buzz/chat-list-store';
 import { saveActiveCommunityId, saveLastViewedChannel } from '@/buzz/community-storage';
 import { cornerHref, navigateToRoom } from '@/buzz/corner-navigation';
@@ -42,7 +41,7 @@ import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { inviteOnlyForRepository, type RepoCandidate } from '@/buzz/room-repo-picker';
 import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
-import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
+import { ROOM_LABEL } from '@/buzz/vocabulary';
 import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
@@ -51,7 +50,7 @@ import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { Button } from '@/components/buzz/Button';
 import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
-import { RoomDeckUnavailableView } from '@/components/buzz/RoomDeckUnavailableView';
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { reconnectNow } from '@/sync/transport/live-connection';
 import { clientResetGeneration } from '@/sync/client-reset';
 import { InlineRow } from '@/components/buzz/IndexRow';
@@ -198,9 +197,9 @@ export default function BuzzChannels() {
   const workspaceList = useSurfaceSnapshot(workspaceListAddress, isWorkspaceListView);
   // Only a live read (never a cached one) may say "you have no Workspace".
   const [confirmedWorkspaceCount, setConfirmedWorkspaceCount] = useState<number | null>(null);
-  const chatListMode = useRouterFamily('room-list');
+
   const [chatListState, setChatList] = useState<ChatListView | null>(null);
-  const chatList = chatListMode === 'pending' ? null : chatListState;
+  const chatList = (chatListState);
   useLatencyRouteFrame('/beeline/channels', chatList !== null, true);
   // A covering list read seeds the Needs-you rows behind the badge;
   // ordinary changes carry typed row deltas on the live socket.
@@ -348,9 +347,7 @@ export default function BuzzChannels() {
 
   const refreshNow = useCallback(() => {
     workspaceScheduler.current?.force();
-    if (activeCommunityId && routerFamilyMode('room-list') === 'router')
-      retryRouterLane({ family: 'room-list', workspaceId: activeCommunityId });
-    else chatStore.current?.force();
+    chatStore.current?.force();
   }, [activeCommunityId]);
 
   const refreshMissed = useCallback(() => {
@@ -467,8 +464,6 @@ export default function BuzzChannels() {
       if (cancelled) return;
       const selectedId = deckWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
       let selectedWorkspaceRemoved = false;
-      let workspaceReadConfirmed = false;
-      let startupTimeoutRetried = false;
 
       workspaceRefresh = new SurfaceRefreshScheduler({
         fetch: () => {
@@ -480,7 +475,6 @@ export default function BuzzChannels() {
         apply: (value) => {
           // Null: an eviction overtook the read; there is nothing to paint.
           if (!value) return;
-          workspaceReadConfirmed = true;
           setConfirmedWorkspaceCount(value.workspaces.length);
           if (value.deletedNotices?.length) {
             setDeletedWorkspaceNotice('This workspace was deleted by its owner');
@@ -506,15 +500,6 @@ export default function BuzzChannels() {
           }
         },
         onError: (reason) => {
-          // A cold post-auth read can time out on the connection used during
-          // the browser handoff. The transport moves off that connection;
-          // give this initial discovery one bounded recovery read before
-          // asking the person to retry. Never retry refusals or later reads.
-          if (!workspaceReadConfirmed && !startupTimeoutRetried && isRoomViewTimeoutError(reason)) {
-            startupTimeoutRetried = true;
-            workspaceRefresh?.force();
-            return;
-          }
           setError(appErrorCopy(reason));
         },
       });
@@ -564,8 +549,7 @@ export default function BuzzChannels() {
         // Live list reconciliation must yield to a Room or push navigation.
         // Its committed transcript rows are already in the scoped cache.
         unsubscribeChats = chats.subscribe(() => {
-          if (routerFamilyMode('room-list') === 'router') paint();
-          else startTransition(paint);
+          startTransition(paint);
         });
       }
       const relay = await relayPromise;
@@ -955,29 +939,10 @@ export default function BuzzChannels() {
   );
 
   if (landing.kind === 'error') {
-    if (error === connectionErrorTitle) {
-      return (
-        <RoomDeckUnavailableView
-          style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
-          onReconnect={() => {
-            reconnectNow();
-            setError(null);
-            setRetryGeneration((value) => value + 1);
-          }}
-        />
-      );
-    }
     return (
-      <View style={[styles.center, { paddingTop: insets.top }]}>
-        <IndexRow
-          title={error!}
-          description={connectionErrorDescription}
-          action="Retry"
-          onPress={() => {
-            setError(null);
-            setRetryGeneration((value) => value + 1);
-          }}
-        />
+      <View style={[styles.center, { paddingTop: insets.top }]} testID="room-deck-unavailable">
+        <ErrorBanner title={connectionErrorTitle} description={connectionErrorDescription} testID="room-deck-error"
+          onRetry={() => { reconnectNow(); setError(null); setRetryGeneration(value => value + 1); }} />
       </View>
     );
   }

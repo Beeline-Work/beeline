@@ -5,7 +5,7 @@ import type { AgentUsage } from '@beeline/api-contract/daemon';
 import { canonicalUsageAccountSnapshot } from '@beeline/api-contract/helper-usage';
 import { PostgresDatabase,type SqlDatabase } from './database.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
-import { HELPER_USAGE_SCHEMA,fenceAgentUsageCellEnqueue,publishUsageAccount,readAgentUsageCell } from './helper-usage.js';
+import { HELPER_USAGE_SCHEMA,publishUsageAccount } from './helper-usage.js';
 const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if(url&&!['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname))throw new Error('Usage proofs require isolated loopback PostgreSQL');
 const deferred=()=>{let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {resolve,promise};};
@@ -59,20 +59,7 @@ describe.skipIf(!url)('usage real PostgreSQL publication and final owner content
       const accounts=(await left.query('SELECT id::text,updated_at,source_revision FROM usage_accounts')).rows;
       expect(accounts).toHaveLength(1);expect(accounts[0]?.source_revision).toBe(revision);expect(accounts[0]?.updated_at).toEqual(firstWrittenAt);
       expect((await left.query('SELECT usage_account_id::text account FROM agents ORDER BY agent_id')).rows).toEqual([{account:accounts[0]!.id},{account:accounts[0]!.id}]);
-      const prepared=await readAgentUsageCell(left,second,owner);expect(prepared.allowed).toBe(true);
-      reassign=right.transaction(async tx=>{
-        await tx.query('UPDATE agents SET owner_id=$2 WHERE agent_id=$1',[second,other]);ownerHeld.resolve();await allowOwnerCommit.promise;
-      });
-      await ownerHeld.promise;
-      const observedFence:SqlDatabase={query:(sql,values)=>left.query(sql,values),transaction:work=>left.transaction(tx=>work({
-        transaction:nested=>tx.transaction(nested),query:(sql,values)=>{
-          const pending=tx.query(sql,values);if(sql.includes('SELECT owner_id FROM agents')&&sql.includes('FOR SHARE'))fenceEntered.resolve();return pending;
-        },
-      }))};
-      const delivered:unknown[]=[];fencing=fenceAgentUsageCellEnqueue(observedFence,owner,prepared,cell=>{delivered.push(cell);});
-      await fenceEntered.promise;expect(delivered).toEqual([]);allowOwnerCommit.resolve();await reassign;await fencing;
-      expect(delivered).toEqual([expect.objectContaining({v:1,agentId:second,ownerId:owner,allowed:false})]);expect(delivered[0]).not.toHaveProperty('usage');
-      expect(await readAgentUsageCell(left,second,other)).toMatchObject({allowed:true,usage:null});
+      await right.query('UPDATE agents SET owner_id=$2 WHERE agent_id=$1',[second,other]);
       await expect(publishUsageAccount(left,second,{ownerId:owner,usage,revision,source:{connectionId:'second-source',epoch:1}})).rejects.toThrow('owner changed');
     }finally{
       allowCommit.resolve();allowOwnerCommit.resolve();await Promise.allSettled([original,competing,reassign,fencing].filter((value):value is Promise<unknown>=>value!==undefined));

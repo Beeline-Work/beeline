@@ -2,7 +2,6 @@ import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
-import { legacyRouterProofShims } from '../test-fixtures/router-proof';
 
 it('Reproduction C1: a plain corner has no workflow glyph or link; a saved workflow still opens its run', async () => {
   const mobile = process.cwd();
@@ -33,7 +32,7 @@ it('Reproduction C1: a plain corner has no workflow glyph or link; a saved workf
       }, 1500);`);
     for (const width of [390, 1180]) {
       for (const theme of ['obsidian', 'bone']) {
-        const shims = { ...webProofShims(mobile), ...legacyRouterProofShims() };
+        const shims = { ...webProofShims(mobile) };
         shims['react-native-unistyles'] = shims['react-native-unistyles']!.replace('beelineThemes.obsidian', `beelineThemes.${theme}`);
         const proof = await runBrowserProof({ entry, mobile, width, shims: {
           ...shims,
@@ -110,7 +109,7 @@ it('Reproduction CWM1: +N running lists the other live workflows and opens the s
       }, 1800);`);
     for (const width of [320, 1180]) {
       for (const theme of ['obsidian', 'bone']) {
-        const shims = { ...webProofShims(mobile), ...legacyRouterProofShims() };
+        const shims = { ...webProofShims(mobile) };
         shims['react-native-unistyles'] = shims['react-native-unistyles']!.replace('beelineThemes.obsidian', `beelineThemes.${theme}`);
         const proof = await runBrowserProof({ entry, mobile, width, shims: {
           ...shims,

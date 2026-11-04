@@ -27,15 +27,7 @@ vi.mock('@react-native-community/netinfo', () => {
   return { default: netInfo };
 });
 
-vi.mock('@/buzz/router-owner', () => ({
-  routerOwnerCapabilities: () => ({
-    families: ['room-list', 'needs-you-count', 'room-head'],
-    authorityFencesV1: true,
-  }),
-  routerOwnerNegotiated: async () => {},
-  routerOwnerDisconnected: () => {},
-  routerOwnerReceive: () => {},
-}));
+
 
 import { AppState } from 'react-native';
 import {
@@ -291,284 +283,14 @@ describe('LiveConnection', () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it('excludes durable families before negotiation when authority storage is unavailable', async () => {
-    let resolve!: (value: { families: readonly []; authorityFencesV1: false }) => void;
-    const router = {
-      requestedCapabilities: () =>
-        new Promise<{ families: readonly []; authorityFencesV1: false }>((done) => {
-          resolve = done;
-        }),
-      negotiated: vi.fn(async () => {}),
-      disconnected: vi.fn(),
-      receive: vi.fn(),
-    };
-    const connection = new LiveConnection({
-      authorization: async () => 'token',
-      liveUrl: () => 'wss://server.example/v1/phone/live',
-      subscribeIdentityChange: () => () => {},
-      router,
-    });
-    await connection.register([], () => {});
-    expect(sockets).toHaveLength(0);
-    resolve({ families: [], authorityFencesV1: false });
-    await Promise.resolve();
-    await Promise.resolve();
-    sockets[0]!.open();
-    expect(JSON.parse(sockets[0]!.sent[0]!)).toEqual({
-      type: 'router-negotiate',
-      protocol: 1,
-      families: [],
-      authorityFencesV1: false,
-      usageCellV1: true,
-    });
-    connection.dispose();
-  });
 
-  it.each([true, false, undefined])(
-    'requires an explicit Room continuity acknowledgement (%s)',
-    async (capability) => {
-      const router = {
-        negotiated: vi.fn(async (_next: unknown) => {}),
-        disconnected: vi.fn(),
-        receive: vi.fn(),
-      };
-      const connection = new LiveConnection({
-        authorization: async () => 'token',
-        liveUrl: () => 'wss://server.example/v1/phone/live',
-        subscribeIdentityChange: () => () => {},
-        router,
-      });
-      await connection.register([], () => {});
-      sockets[0]!.open();
-      sockets[0]!.emit({
-        type: 'router-capabilities',
-        protocol: 1,
-        families: ['room-head'],
-        roomHeadContinuityV1: capability,
-      });
-      expect(router.negotiated.mock.calls[0]![0]).toMatchObject({
-        roomHeadContinuityV1: capability === true,
-      });
-      connection.dispose();
-    },
-  );
-
-  it('negotiates on the sole socket and holds pushes until the local owner is ready', async () => {
-    let ready!: () => void;
-    const router = {
-      negotiated: vi.fn(
-        (_next: unknown) =>
-          new Promise<void>((resolve) => {
-            ready = resolve;
-          }),
-      ),
-      disconnected: vi.fn(),
-      receive: vi.fn(),
-    };
-    const connection = new LiveConnection({
-      authorization: async () => 'token',
-      liveUrl: () => 'wss://server.example/v1/phone/live',
-      subscribeIdentityChange: () => () => {},
-      router,
-    });
-    await connection.register([], () => {});
-    sockets[0]!.open();
-    expect(JSON.parse(sockets[0]!.sent[0]!)).toEqual({
-      type: 'router-negotiate',
-      protocol: 1,
-      families: ['room-list', 'needs-you-count', 'room-head'],
-      authorityFencesV1: true,
-      usageCellV1: true,
-      roomHeadContinuityV1: true,
-    });
-    sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-list'] });
-    const frame = { kind: 'push-commit', batchId: 'batch' };
-    sockets[0]!.emit(frame);
-    const fence = { kind: 'authority-fence', scope: 'object', authorityScope: 'object:object' };
-    sockets[0]!.emit(fence);
-    expect(router.receive).not.toHaveBeenCalled();
-    expect(router.negotiated.mock.calls[0]![0]).toMatchObject({
-      generation: 1,
-      families: ['room-list'],
-    });
-    ready();
-    await Promise.resolve();
-    expect(router.receive.mock.calls).toEqual([[frame], [fence]]);
-    connection.dispose();
-  });
-
-  it('retains every large router frame while the phone owner finishes negotiation', async () => {
-    let ready!: () => void;
-    const router = { negotiated: vi.fn(() => new Promise<void>(resolve => { ready = resolve; })),
-      disconnected: vi.fn(), receive: vi.fn() };
-    const connection = new LiveConnection({ authorization: async () => 'token',
-      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
-    try {
-      await connection.register([], () => {}); sockets[0]!.open();
-      sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-list'] });
-      const frames = Array.from({ length: 40 }, (_, index) => ({ kind: 'push-part', batchId: 'large-workspace',
-        partIndex: index, facts: [{ text: 'x'.repeat(40 * 1024) }] }));
-      for (const frame of frames) sockets[0]!.emit(frame);
-      expect(sockets[0]!.closed).toBe(false);
-      expect(router.disconnected).not.toHaveBeenCalled();
-      expect(router.receive).not.toHaveBeenCalled();
-      ready(); await Promise.resolve();
-      expect(router.receive.mock.calls).toEqual(frames.map(frame => [frame]));
-      expect(sockets).toHaveLength(1);
-    } finally { connection.dispose(); }
-  });
-
-  it('does not let a Workspace reply downgrade an in-flight router negotiation', async () => {
-    const router = { negotiated: vi.fn(async (_next: unknown) => {}), disconnected: vi.fn(), receive: vi.fn() };
-    const connection = new LiveConnection({ authorization: async () => 'token',
-      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
-    try {
-      await connection.register([], () => {});
-      const read = connection.request('readWorkspaces', {});
-      sockets[0]!.open();
-      const request = sockets[0]!.sent.map(frame => JSON.parse(frame)).find(frame => frame.op === 'readWorkspaces');
-      sockets[0]!.emit({ t: 'res', id: request.id, ok: true, result: { workspaces: [] } });
-      await expect(read).resolves.toEqual({ workspaces: [] });
-      expect(router.negotiated).not.toHaveBeenCalled();
-      sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-list'], commandDedupV1: true });
-      sockets[0]!.emit({ type: 'sync-ok' });
-      await Promise.resolve();
-      expect(router.negotiated).toHaveBeenCalledOnce();
-      expect(router.negotiated.mock.calls[0]![0]).toMatchObject({ families: ['room-list'] });
-      expect(connection.commandState()).toMatchObject({ ready: true, commandDedupV1: true });
-    } finally { connection.dispose(); }
-  });
-
-  it.each([[true, true], [true, false], [false, true], [false, false]])('passes negotiated Tray families only with command=%s and authority=%s', async (commandDedupV1, authorityFencesV1) => {
-    const router = { negotiated: vi.fn(async (_next: unknown) => {}), disconnected: vi.fn(), receive: vi.fn() };
-    const connection = new LiveConnection({ authorization: async () => 'token',
-      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
-    try {
-      await connection.register([], () => {}); sockets[0]!.open();
-      sockets[0]!.emit({ type: 'router-capabilities', protocol: 1,
-        families: ['needs-you-tray', 'needs-you-saved-page'], commandDedupV1, authorityFencesV1 });
-      expect(router.negotiated.mock.calls[0]![0]).toMatchObject({ families: commandDedupV1 && authorityFencesV1 ? ['needs-you-tray', 'needs-you-saved-page'] : [] });
-    } finally { connection.dispose(); }
-  });
-
-  it('selects legacy once from an old-server acknowledgement without a fallback timer', async () => {
-    vi.useFakeTimers();
-    const router = {
-      negotiated: vi.fn(async (_next: unknown) => {}),
-      disconnected: vi.fn(),
-      receive: vi.fn(),
-    };
-    const connection = new LiveConnection({
-      authorization: async () => 'token',
-      liveUrl: () => 'wss://server.example/v1/phone/live',
-      subscribeIdentityChange: () => () => {},
-      router,
-    });
-    await connection.register([], () => {});
-    sockets[0]!.open();
-    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
-    expect(router.negotiated).not.toHaveBeenCalled();
-    sockets[0]!.emit({ type: 'sync-ok' });
-    sockets[0]!.emit({ type: 'sync-ok' });
-    expect(router.negotiated).toHaveBeenCalledTimes(1);
-    expect(router.negotiated.mock.calls[0]![0]).toMatchObject({ families: [] });
-    expect(vi.getTimerCount()).toBe(1);
-    connection.dispose();
-  });
-
-  it.each([true, false])(
-    'P10: old negotiated executors cannot send on a replacement socket (router=%s)',
-    async (selected) => {
-      type Negotiated = Parameters<
-        NonNullable<ConstructorParameters<typeof LiveConnection>[0]['router']>['negotiated']
-      >[0];
-      const router = {
-        negotiated: vi.fn(async (_next: Negotiated) => {}),
-        disconnected: vi.fn(),
-        receive: vi.fn(),
-      };
-      const connection = new LiveConnection({
-        authorization: async () => 'token',
-        liveUrl: () => 'wss://server.example/v1/phone/live',
-        subscribeIdentityChange: () => () => {},
-        router,
-      });
-      try {
-        await connection.register([], () => {});
-        sockets[0]!.open();
-        sockets[0]!.emit({
-          type: 'router-capabilities',
-          protocol: 1,
-          families: ['room-list'],
-          authorityFencesV1: true,
-          mediaMetadataV1: true,
-          usageCellV1: true,
-        });
-        await Promise.resolve();
-        const old = router.negotiated.mock.calls[0]![0];
-        sockets[0]!.drop();
-        await vi.waitFor(() => expect(sockets).toHaveLength(2));
-        sockets[1]!.open();
-        sockets[1]!.emit(
-          selected
-            ? {
-                type: 'router-capabilities',
-                protocol: 1,
-                families: ['room-list'],
-                mediaMetadataV1: true,
-              }
-            : { type: 'sync-ok' },
-        );
-        await Promise.resolve();
-        expect(router.negotiated.mock.calls[1]![0]).toMatchObject({
-          generation: 2,
-          families: selected ? ['room-list'] : [],
-          mediaMetadataV1: selected,
-        });
-        const before = [...sockets[1]!.sent];
-        const settled = [
-          old.execute({ family: 'room-list', workspaceId: 'workspace' }),
-          old.executeUsageCell!('agent'),
-          old.executeMetadata!('object'),
-          old.executeLink!('object'),
-          old.executePlayback!('object'),
-        ].map((promise) =>
-          promise.then(
-            () => 'resolved',
-            () => 'rejected',
-          ),
-        );
-        expect(sockets[1]!.sent).toEqual(before);
-        expect(await Promise.all(settled)).toEqual(Array(5).fill('rejected'));
-      } finally {
-        connection.dispose();
-      }
-    },
-  );
-
-
-  it('requires negotiated command support and preserves durable identity independently of request ids', async () => {
-    const router = { negotiated: vi.fn(async () => {}), disconnected: vi.fn(), receive: vi.fn() };
-    const connection = new LiveConnection({
-      authorization: async () => 'token',
-      liveUrl: () => 'wss://server.example/v1/phone/live',
-      subscribeIdentityChange: () => () => {},
-      router,
-    });
-    await connection.register([], () => {});
-    sockets[0]!.open();
-    await expect(
-      connection.requestCommand('markRead', { roomId: ROOM_A }, { v: 1, id: 'intent' }),
-    ).rejects.toThrow();
+  it('preserves durable command identity independently of request ids', async () => {
+    const { connection } = createConnection();
     const changed = vi.fn();
     connection.subscribeCommandCapabilities(changed);
-    sockets[0]!.emit({
-      type: 'router-capabilities',
-      protocol: 1,
-      families: [],
-      commandDedupV1: true,
-    });
-    await Promise.resolve();
+    await expect(connection.requestCommand('markRead', { roomId: ROOM_A }, { v: 1, id: 'intent' })).rejects.toThrow();
+    await connection.register([], () => {});
+    sockets[0]!.open();
     expect(connection.commandState()).toEqual({ generation: 1, commandDedupV1: true, ready: true });
     expect(changed).toHaveBeenCalledOnce();
     const pending = connection.requestCommand(
@@ -589,15 +311,6 @@ describe('LiveConnection', () => {
     await expect(pending).resolves.toEqual(receipt);
     connection.dispose();
     expect(connection.commandState().commandDedupV1).toBe(false);
-  });
-
-  it('rejects projection reads outside the local owner before any network admission', async () => {
-    const { connection } = createConnection();
-    await expect(
-      connection.request('readRouterSnapshot', { family: 'room-list', workspaceId: 'workspace' }),
-    ).rejects.toThrow('local router owner');
-    expect(sockets).toHaveLength(0);
-    connection.dispose();
   });
 
   it('foreground idle sends one ping after 30 seconds and traffic resets its clock', async () => {
@@ -632,20 +345,6 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('router frames waiting for readiness cannot replace the socket', async () => {
-    let ready!: () => void;
-    const router = { negotiated: vi.fn(() => new Promise<void>(resolve => { ready = resolve; })),
-      disconnected: vi.fn(), receive: vi.fn() };
-    const connection = new LiveConnection({ router, authorization: async () => 'token',
-      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {} });
-    await connection.register([], () => {}); sockets[0]!.open();
-    sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-head'] });
-    for (let i = 0; i < 40; i++) sockets[0]!.emit({ kind: 'router-unavailable', stream: 'workspace:w', families: ['room-head'], reason: 'listener' });
-    expect(sockets[0]!.closed).toBe(false); expect(router.disconnected).not.toHaveBeenCalled();
-    ready(); await vi.waitFor(() => expect(router.receive).toHaveBeenCalledTimes(40));
-    expect(sockets).toHaveLength(1); connection.dispose();
-  });
-
   it('a real socket replacement covers the visible Room while leaving other Rooms alone', async () => {
     vi.useFakeTimers();
     const { connection } = createConnection(); const first = vi.fn(), second = vi.fn();
@@ -675,7 +374,7 @@ describe('LiveConnection', () => {
     const { connection } = createConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => {});
     sockets[0]!.open();
-    const pending = connection.request('readRoom', { roomId: ROOM_A }, { timeoutMs: 1_000 });
+    const pending = connection.request('sendMessage', { roomId: ROOM_A, messageId: 'm', text: 'Text', attachments: [], mentions: [] }, { timeoutMs: 1_000 });
     const request = sockets[0]!.sent.map(frame => JSON.parse(frame)).find(frame => frame.t === 'req');
     await vi.advanceTimersByTimeAsync(1_000);
     expect(sockets[0]!.sent.filter(frame => JSON.parse(frame).type === 'ping')).toHaveLength(1);
@@ -692,7 +391,7 @@ describe('LiveConnection', () => {
     const { connection, foreground } = createConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => {});
     sockets[0]!.open(); sockets[0]!.autoPong = false;
-    const pending = connection.request('readRoom', { roomId: ROOM_A }, { timeoutMs: 1_000 }).catch(error => error);
+    const pending = connection.request('sendMessage', { roomId: ROOM_A, messageId: 'm', text: 'Text', attachments: [], mentions: [] }, { timeoutMs: 1_000 }).catch(error => error);
     foreground();
     await vi.advanceTimersByTimeAsync(1_000);
     connection.reportRequestDeadlineMissed();
@@ -2299,47 +1998,6 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('fences late router capabilities after the authorization flight expires', async () => {
-    vi.useFakeTimers();
-    const capabilities = { families: [] as const, authorityFencesV1: true };
-    let release!: (value: typeof capabilities) => void;
-    const requestedCapabilities = vi
-      .fn()
-      .mockImplementationOnce(
-        () =>
-          new Promise((resolve) => {
-            release = resolve;
-          }),
-      )
-      .mockResolvedValue(capabilities);
-    const connection = new LiveConnection({
-      authorization: async () => 'token',
-      liveUrl: () => 'wss://server.example/v1/phone/live',
-      subscribeIdentityChange: () => () => {},
-      router: {
-        requestedCapabilities,
-        negotiated: vi.fn(async () => {}),
-        disconnected: vi.fn(),
-        receive: vi.fn(),
-      },
-    });
-    await connection.register([], () => {});
-    await vi.advanceTimersByTimeAsync(15_000);
-    expect(sockets).toHaveLength(1);
-    expect(requestedCapabilities).toHaveBeenCalledTimes(2);
-    expect(connection.diagnostics().connecting).toBe(false);
-    release(capabilities);
-    await vi.advanceTimersByTimeAsync(10 * 60_000);
-    expect(sockets).toHaveLength(1);
-    expect(requestedCapabilities).toHaveBeenCalledTimes(2);
-    expect(sockets[0]!.closed).toBe(false);
-    connection.reconnectNow();
-    await vi.advanceTimersByTimeAsync(0);
-    expect(sockets).toHaveLength(1);
-    expect(sockets[0]!.closed).toBe(false);
-    connection.dispose();
-  });
-
   it('NATIVE-142-AUTH: retries transient authorization failure immediately and opens the waiting Room', async () => {
     vi.useFakeTimers();
     const authorization = vi
@@ -2518,54 +2176,72 @@ describe('phone socket request/reply', () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
-  it('M1: observes declared inputs locally without changing the legacy frame or starting background work', async () => {
-    const sockets = stubSockets(),
-      { connection, changeIdentity } = createConnection();
-    await connection.register([], () => {});
-    sockets[0]!.open();
-    const result = connection.request('countNeedsYou', { workspaceId: 'private-workspace' });
-    const frame = sockets[0]!.sent.find((value) => JSON.parse(value).t === 'req')!;
-    expect(frame).toBe(
-      JSON.stringify({
-        t: 'req',
-        id: 'phone-1',
-        op: 'countNeedsYou',
-        args: { workspaceId: 'private-workspace' },
-      }),
-    );
-    expect(connection.routeDiagnostics()).toEqual([
-      { route: 'phone.countNeedsYou', verdict: 'legacy-valid' },
-    ]);
-    expect(JSON.stringify(connection.routeDiagnostics())).not.toContain('private-workspace');
-    expect(connection.diagnostics()).not.toHaveProperty('routes');
-    sockets[0]!.emit({ t: 'res', id: 'phone-1', ok: true, result: { count: 2 } });
-    expect(await result).toEqual({ count: 2 });
-    const before = sockets[0]!.sent.slice();
-    await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);
-    expect(sockets).toHaveLength(1);
-    expect(sockets[0]!.sent.filter(frame => JSON.parse(frame).type !== 'ping')).toEqual(before);
-    changeIdentity();
-    expect(connection.routeDiagnostics()).toEqual([]);
-    connection.dispose();
+
+  it('plain read reconnects after a socket dies mid-read and returns the answer', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
+    const result = connection.request('readRoom', { roomId: ROOM_A });
+    await vi.advanceTimersByTimeAsync(0); sockets[0]!.open();
+    expect(sockets[0]!.sent.map(value => JSON.parse(value)).filter(frame => frame.t === 'req')).toHaveLength(1);
+    sockets[0]!.drop(); await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(2); sockets[1]!.open();
+    const retry = sockets[1]!.sent.map(value => JSON.parse(value)).find(frame => frame.t === 'req');
+    expect(retry).toMatchObject({ op: 'readRoom', args: { roomId: ROOM_A } });
+    sockets[1]!.emit({ t: 'res', id: retry.id, ok: true, result: { room: { id: ROOM_A }, messages: [] } });
+    await expect(result).resolves.toMatchObject({ room: { id: ROOM_A }, messages: [] });
+    expect(sockets).toHaveLength(2); connection.dispose();
   });
 
-  it('M1: a shadow codec mismatch cannot block or rewrite a legacy request', async () => {
-    const sockets = stubSockets(),
-      { connection } = createConnection();
-    await connection.register([], () => {});
-    sockets[0]!.open();
-    const result = connection.request('countNeedsYou', { workspaceId: 7 } as never);
-    const frame = sockets[0]!.sent
-      .map((value) => JSON.parse(value))
-      .find((value) => value.t === 'req');
-    expect(frame.args).toEqual({ workspaceId: 7 });
-    expect(connection.routeDiagnostics()).toEqual([
-      { route: 'phone.countNeedsYou', verdict: 'legacy-invalid' },
-    ]);
-    sockets[0]!.emit({ t: 'res', id: frame.id, ok: true, result: { count: 0 } });
-    expect(await result).toEqual({ count: 0 });
-    connection.dispose();
-    expect(connection.routeDiagnostics()).toEqual([]);
+  it('plain read failures share one replacement across concurrent screen reads', async () => {
+    const sockets = stubSockets(), {connection} = createConnection();
+    const room = connection.request('readRoom', {roomId:ROOM_A});
+    const workspaces = connection.request('readWorkspaces', {});
+    await vi.advanceTimersByTimeAsync(0); sockets[0]!.open(); sockets[0]!.drop();
+    await vi.advanceTimersByTimeAsync(0); expect(sockets).toHaveLength(2); sockets[1]!.open();
+    const frames=sockets[1]!.sent.map(frame=>JSON.parse(frame)).filter(frame=>frame.t==='req');
+    expect(frames).toHaveLength(2);
+    for(const frame of frames) sockets[1]!.emit({t:'res',id:frame.id,ok:true,result:frame.op==='readRoom'?{room:{id:ROOM_A}}:{workspaces:[]}});
+    await expect(room).resolves.toEqual({room:{id:ROOM_A}});await expect(workspaces).resolves.toEqual({workspaces:[]});
+    expect(sockets).toHaveLength(2);connection.dispose();
+  });
+
+  it('plain read stops after three server failures and Retry starts a new loop', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
+    const result = connection.request('readRoom', { roomId: ROOM_A }).catch(error => error);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sockets).toHaveLength(attempt + 1); sockets[attempt]!.open();
+      const frame = sockets[attempt]!.sent.map(value => JSON.parse(value)).find(frame => frame.t === 'req');
+      sockets[attempt]!.emit({ t: 'res', id: frame.id, ok: false, error: { code: 'unavailable', message: 'Read failed', retryable: true } });
+    }
+    expect(await result).toMatchObject({ message: 'Read failed' });
+    await vi.advanceTimersByTimeAsync(0); expect(sockets).toHaveLength(3);
+    const retried = connection.request('readRoom', { roomId: ROOM_A });
+    const frame = sockets[2]!.sent.map(value => JSON.parse(value)).filter(frame => frame.t === 'req').at(-1);
+    sockets[2]!.emit({ t: 'res', id: frame.id, ok: true, result: { room: { id: ROOM_A }, messages: [] } });
+    await expect(retried).resolves.toMatchObject({ room: { id: ROOM_A } }); connection.dispose();
+  });
+
+  it('plain read stops after three failed native handshakes without hanging', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
+    const result = connection.request('readRoom', { roomId: ROOM_A }).catch(error => error);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sockets).toHaveLength(attempt + 1); sockets[attempt]!.error();
+    }
+    expect((await result).name).toBe('PhoneSocketDisconnectedError');
+    await vi.advanceTimersByTimeAsync(0); expect(sockets).toHaveLength(3); connection.dispose();
+  });
+
+  it('plain read fails each unanswered request at its existing deadline even when pings answer', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
+    const result = connection.request('readRoom', { roomId: ROOM_A }, { timeoutMs: 100 }).catch(error => error);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sockets).toHaveLength(attempt + 1); sockets[attempt]!.open();
+      await vi.advanceTimersByTimeAsync(100);
+    }
+    expect(await result).toBeInstanceOf(MonolithRequestTimeoutError);
+    expect(sockets).toHaveLength(3); connection.dispose();
   });
 
   it('waits for open and matches reversed replies once, without live fanout', async () => {
@@ -2634,33 +2310,6 @@ describe('phone socket request/reply', () => {
     expect((await second).name).toBe('PhoneSocketDisconnectedError');
     connection.dispose();
   });
-  it('bounds pending calls, validates reply shape and frees a slot after refusal', async () => {
-    const sockets = stubSockets(),
-      { connection } = createConnection();
-    await connection.register([], () => {});
-    sockets[0]!.open();
-    const pending = Array.from({ length: 32 }, () =>
-      connection.request('readWorkspaces', {}).catch((e) => e),
-    );
-    await expect(connection.request('readWorkspaces', {})).rejects.toMatchObject({
-      code: 'busy',
-      retryable: true,
-    });
-    const id = sockets[0]!.sent.map((v) => JSON.parse(v)).find((v) => v.t === 'req').id;
-    sockets[0]!.emit({ t: 'res', id, ok: true });
-    await expect(connection.request('readWorkspaces', {})).rejects.toMatchObject({ code: 'busy' });
-    sockets[0]!.emit({
-      t: 'res',
-      id,
-      ok: false,
-      error: { code: 'access_denied', message: 'Owner only', retryable: false },
-    });
-    expect(await pending[0]).toMatchObject({ status: 403, message: 'Owner only' });
-    const next = connection.request('readWorkspaces', {}).catch((e) => e);
-    connection.dispose();
-    await Promise.all([...pending, next]);
-    expect(vi.getTimerCount()).toBe(0);
-  });
   it('sends the opening Room before optional socket reads and starts their deadline after draw', async () => {
     const sockets = stubSockets(),
       { connection } = createConnection();
@@ -2702,20 +2351,6 @@ describe('phone socket request/reply', () => {
       abandonRoomDraw(roomDrawGeneration());
       await Promise.allSettled(reads);
     }
-  });
-
-  it('rejects oversized UTF-8 frames before opening a socket', async () => {
-    const sockets = stubSockets(),
-      { connection } = createConnection();
-    await expect(
-      connection.request('sendRoomMessage', {
-        roomId: 'r',
-        messageId: 'm',
-        text: '🐝'.repeat(20_000),
-      }),
-    ).rejects.toMatchObject({ code: 'invalid_request' });
-    expect(sockets).toHaveLength(0);
-    connection.dispose();
   });
 });
 
@@ -2817,7 +2452,7 @@ describe('native brief-drop recovery', () => {
     connection.dispose();
   });
 
-  it('stops after a second authorization error and rejects the waiting call', async () => {
+  it('plain read stops after three authorization errors and rejects the waiting call', async () => {
     const sockets = stubSockets(),
       authorization = vi.fn().mockRejectedValue(new Error('offline'));
     const { connection } = createConnection(authorization);
@@ -2825,7 +2460,7 @@ describe('native brief-drop recovery', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect((await pending).message).toBe('offline');
     await vi.advanceTimersByTimeAsync(60_000);
-    expect(authorization).toHaveBeenCalledTimes(2);
+    expect(authorization).toHaveBeenCalledTimes(3);
     expect(sockets).toHaveLength(0);
     connection.dispose();
     expect(vi.getTimerCount()).toBe(0);

@@ -5,7 +5,7 @@ import { PostgresDatabase, type SqlDatabase } from './database.js';
 import { DaemonService } from './daemon-service.js';
 import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
 import { LiveHub } from './live.js';
-import { ROUTER_PROJECTION_SCHEMA } from './router-projection-schema.js';
+import { MEMBERSHIP_AUTHORITY_SCHEMA } from './membership-authority-schema.js';
 import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
 import { lockCornerLifecycle } from './corner-lifecycle.js';
 import { cancelCornerAgentCommands } from './corner-close.js';
@@ -60,7 +60,7 @@ describe.skipIf(!url)('real PostgreSQL owned control current authority',()=>{
           activity jsonb,agent_model text,created_at timestamptz DEFAULT now());
         CREATE TABLE agent_connections(agent_id text PRIMARY KEY,connection_id text,epoch bigint,instance_id text,released_at timestamptz);
         CREATE TABLE live_server_instances(instance_id text PRIMARY KEY,renewed_at timestamptz);`);
-      await reader.query(DURABLE_LIVE_SCHEMA);await reader.query(ROUTER_PROJECTION_SCHEMA);await reader.query(TURN_OWNERSHIP_SCHEMA);
+      await reader.query(DURABLE_LIVE_SCHEMA);await reader.query(MEMBERSHIP_AUTHORITY_SCHEMA);await reader.query(TURN_OWNERSHIP_SCHEMA);
       await reader.query(`INSERT INTO workspaces VALUES($1);`,[workspace]);
       await reader.query(`INSERT INTO rooms(id,workspace_id) VALUES($1,$2)`,[room,workspace]);
       await reader.query(`INSERT INTO memberships VALUES($1,NULL,'agent','member',NULL),($1,$2,'agent','member',NULL)`,[workspace,room]);

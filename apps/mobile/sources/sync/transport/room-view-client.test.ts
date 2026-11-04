@@ -1,4 +1,3 @@
-import type { ReadAuthority } from '@/buzz/read-authority';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const request = vi.hoisted(() => vi.fn());
 vi.mock('./live-connection', () => ({ sharedLiveConnection: () => ({ request }) }));
@@ -21,7 +20,7 @@ describe('Room view socket reads', () => {
   });
   it('dispatches the required Room list even when a previous Room has not drawn', async () => {
     request.mockRejectedValue(new Error('stop after dispatch'));
-    await client().chats({} as ReadAuthority, 'w').catch(() => {});
+    await client().chats('w').catch(() => {});
     expect(request).toHaveBeenCalledExactlyOnceWith('readChats', { workspaceId: 'w' },
       { timeoutMs: 15_000, signal: undefined, afterRoomDraw: false });
   });

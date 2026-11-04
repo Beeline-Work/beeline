@@ -1,4 +1,5 @@
-vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: vi.fn() }));
+vi.mock('@/sync/transport/live-connection',()=>({sharedLiveConnection:()=>({subscribeConnected:()=>()=>{},commandState:()=>({generation:1})})}));
+
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';

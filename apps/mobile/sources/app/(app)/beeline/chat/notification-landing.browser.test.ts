@@ -1,4 +1,3 @@
-import { legacyRouterProofShims } from '../../../../test-fixtures/router-proof';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -108,7 +107,7 @@ const roomView = {
 };
 
 function shims(mobile: string): Record<string, string> {
-  const base = { ...webProofShims(mobile), ...legacyRouterProofShims() };
+  const base = { ...webProofShims(mobile) };
   return {
     ...base,
     'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';

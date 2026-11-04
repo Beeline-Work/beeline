@@ -9,11 +9,6 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./phone-inputs": {
-      "types": "./dist/phone-inputs.d.ts",
-      "import": "./dist/phone-inputs.js",
-      "default": "./dist/phone-inputs.js"
-    },
     "./owner": {
       "types": "./dist/private/phone-owner.d.ts",
       "import": "./dist/private/phone-owner.js",

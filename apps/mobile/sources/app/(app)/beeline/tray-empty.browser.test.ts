@@ -1,4 +1,3 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -16,7 +15,7 @@ function dataShims(
   link: 'workspace' | 'active' | 'none' = 'workspace',
 ): Record<string, string> {
   return {
-    ...webProofShims(mobile), ...legacyRouterProofShims(),
+    ...webProofShims(mobile),
     'expo-router': `import React from 'react';
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
     export const useLocalSearchParams = () => (${link === 'workspace' ? "{ communityId: 'workspace-1' }" : '{}'});

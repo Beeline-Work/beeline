@@ -144,9 +144,8 @@ async function request(name, op, args) {
 }
 async function state() {
   const base = (await database.query('SELECT version FROM beeline_schema_state WHERE singleton')).rows[0].version;
-  const router = (await database.query('SELECT version FROM beeline_router_schema_state WHERE singleton')).rows[0].version;
-  assert.equal(base, 46); assert.equal(router, 61);
-  return { base, router };
+  assert.equal(base, 46);
+  return { base };
 }
 try {
   await admin.query(`CREATE DATABASE ${databaseName}`);

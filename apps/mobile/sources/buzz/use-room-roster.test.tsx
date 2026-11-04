@@ -5,8 +5,8 @@ import {afterEach,beforeEach,describe,expect,it,vi} from 'vitest';
 import {isWorkspaceView,type WorkspaceView} from '@beeline/buzz-client';
 const fixture=vi.hoisted(()=>({origin:'https://synthetic.invalid',storage:new Map<string,string>(),read:vi.fn(),error:vi.fn(),mode:'legacy' as 'legacy'|'router'|'pending',open:vi.fn(),acquire:vi.fn(),view:null as any,listeners:new Set<()=>void>()}));
 vi.mock('react-native',()=>({AppState:{currentState:'active'}}));
-vi.mock('./router-family',()=>({useRouterFamily:()=>fixture.mode}));
-vi.mock('./router-owner',()=>({acquireRouterLane:(...args:any[])=>fixture.acquire(...args),acquireRouterRoomRoster:(...args:any[])=>fixture.open(...args),retryRouterLane:vi.fn()}));
+
+
 vi.mock('@/auth/buzz-identity-storage',()=>({getEffectiveRelayUrl:async()=>fixture.origin}));
 vi.mock('./surface-storage',async()=>{
   const {SurfaceRegistry}=await import('./surface-registry');
@@ -36,26 +36,6 @@ beforeEach(()=>{
 });
 afterEach(()=>{if(tree)act(()=>tree.unmount());tree=undefined;});
 describe('F25 actual Room picker owner with the real shared registry',()=>{
-  it('negotiated picker mounts and closed renders admit nothing; only Open invokes its gesture owner and facts replace the visible DTO',async()=>{
-    fixture.mode='router';await act(async()=>{tree=create(<Picker/>);});
-    for(let n=0;n<1000;n++)await act(async()=>tree.update(<Picker revision={n}/>));
-    expect(fixture.acquire).not.toHaveBeenCalled();expect(fixture.open).not.toHaveBeenCalled();expect(fixture.read).not.toHaveBeenCalled();
-    await act(async()=>{openPicker!();tree.update(<Picker open/>);});
-    expect(fixture.open).toHaveBeenCalledTimes(1);expect(fixture.open.mock.calls[0]?.[0]).toBe(workspace);
-    expect(current[0]).toBe(fixture.view.value);expect(fixture.acquire).toHaveBeenCalledTimes(1);
-    const next={...fixture.view.value,revision:'2',members:[]};
-    await act(async()=>{fixture.view={...fixture.view,value:next};for(const wake of fixture.listeners)wake();});
-    expect(current[0]).toBe(next);expect(fixture.read).not.toHaveBeenCalled();
-    await act(async()=>tree.update(<Picker/>));expect(current[0]).toBeNull();
-    fixture.mode='pending';await act(async()=>tree.update(<Picker open/>));expect(current[0]).toBeNull();expect(fixture.read).not.toHaveBeenCalled();
-  });
-
-  it('an unavailable held Room reports through the existing picker error state without a fallback read',async()=>{
-    fixture.mode='router';fixture.open.mockImplementation(()=>{throw new Error('Roster Workspace is not held.');});
-    await act(async()=>{tree=create(<Picker/>);});
-    expect(()=>openPicker!()).not.toThrow();expect(fixture.error).toHaveBeenCalledTimes(1);
-    expect(fixture.read).not.toHaveBeenCalled();expect(fixture.acquire).not.toHaveBeenCalled();
-  });
 
   it('keeps a held roster visible for bylines but 1,000 closed-picker renders perform zero Workspace reads',async()=>{
     await mobileSurfaceCache.write(surfaceAddress(fixture.origin,viewer,'/workspace/:id',{workspaceId:workspace}),dto(),isWorkspaceView);

@@ -1,4 +1,3 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
 import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -35,7 +34,7 @@ describe('Reproduction R1: computer status', () => {
         }, 3100);`);
       const result = await runBrowserProof({ entry, mobile, width, budgetMs: 4000, head: '<style>#result{display:none}body{font-family:Arial,sans-serif}</style>', screenshotPath: path.join(mobile, 'evidence/squire-computers-r1/after.png'),
         shims: {
-          ...webProofShims(mobile), ...legacyRouterProofShims(),
+          ...webProofShims(mobile),
           'react-native-unistyles': webProofShims(mobile)['react-native-unistyles'].replace('beelineThemes.obsidian', 'beelineThemes.bone'),
           '@expo/vector-icons': 'export const Ionicons = () => null;',
           'expo-router': `import { useEffect } from 'react';

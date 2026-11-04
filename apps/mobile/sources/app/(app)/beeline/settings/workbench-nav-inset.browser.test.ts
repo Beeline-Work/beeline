@@ -1,4 +1,3 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -16,7 +15,7 @@ describe.skipIf(!existsSync(CHROME))('Workbench above the Android navigation bar
       entry: path.join(mobile, 'scripts/workbench-nav-inset-proof.tsx'),
       mobile,
       shims: {
-        ...webProofShims(mobile), ...legacyRouterProofShims(),
+        ...webProofShims(mobile),
         'react-native-safe-area-context':
           'export const useSafeAreaInsets = () => ({ top: 24, bottom: 48, left: 0, right: 0 });',
         'expo-router': `import React from 'react';

@@ -1,14 +1,13 @@
 import { once } from 'node:events';
-import { createServer, type Server } from 'node:http';
+import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-import WebSocket, { WebSocketServer } from 'ws';
+import WebSocket from 'ws';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import type { RouterCommandReceipt } from '@beeline/api-contract/router-command';
-import type { RouterFamily, RouterSnapshot, RouterSnapshotInput } from '@beeline/api-contract/router-protocol';
 import type { TokenAuth } from './auth.js';
 import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -47,7 +46,6 @@ beforeAll(async () => {
     '@/buzz/room-corner-store': `export const acceptCornerStatusFrame=()=>true;
       export const noteCornerLaneReleased=()=>{},noteCornerLaneSubscribed=()=>{},noteCornerSocketDropped=()=>{},noteRoomCornersChanged=()=>{};`,
     '@/sync/client-reset': 'export const subscribeClientReset=()=>()=>{};',
-    '@/buzz/router-owner': 'throw Error("Production navigation bridge is outside this transport proof");',
   };
   const outfile = path.join(bundleDirectory, 'mobile.mjs');
   const result = await build({
@@ -76,15 +74,12 @@ function capabilities(connection: Connection, matches: (state: ReturnType<Connec
   });
 }
 
-it.each(['policy-off', 'legacy-sync'] as const)(
-  'P10: actual mobile transport parks a lost command on %s and preserves identity on a later native recovery', async replacementWire => {
+it('preserves command identity across a lost receipt and explicit retry on another server', async () => {
   const viewer = 'a'.repeat(64), workspace = '11111111-1111-4111-8111-111111111111';
   const room = '22222222-2222-4222-8222-222222222222', message = 'c'.repeat(64);
   const db = await migratedDatabase(), servers: Server[] = [], sockets: WebSocket[] = [];
-  const legacyServers: WebSocketServer[] = [];
   const sent: Record<string, any>[] = [];
   let connection: Connection | undefined, dropReceipt = false, dropped = 0;
-  let snapshot: ((input: RouterSnapshotInput) => Promise<RouterSnapshot>) | undefined;
   const allowed = new Set<string>();
   const command = { v: 1 as const, id: 'mobile-recovery-reaction' };
   const http = vi.fn(() => { throw new Error('Unexpected HTTP fallback'); });
@@ -95,23 +90,11 @@ it.each(['policy-off', 'legacy-sync'] as const)(
     await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'owner'),($1,$2,$3,'owner')", [workspace, room, viewer]);
     await db.query("INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Synthetic message')", [message, room, viewer]);
     const origins: string[] = [];
-    for (const selected of [true, false]) {
+    for (let n = 0; n < 2; n++) {
       const live = new LiveHub(), phone = new PhoneService(db, 'http://proof.invalid', undefined, undefined, live);
-      let server: Server;
-      if (!selected && replacementWire === 'legacy-sync') {
-        // Exact pre-router sync acknowledgement from main f43bd3f86,
-        // server.ts:1095-1140. This is a wire fixture, not the historical image:
-        // it ignores negotiation and has no application operation handler.
-        server = createServer((_request, response) => { response.writeHead(404); response.end(); });
-        const legacy = new WebSocketServer({ server, path: '/v1/phone/live' });
-        legacyServers.push(legacy);
-        legacy.on('connection', client => client.on('message', raw => {
-          if (JSON.parse(raw.toString()).type === 'sync') client.send('{"type":"sync-ok"}');
-        }));
-      } else server = createBeelineServer({ database: db, live, phone,
+      const server = createBeelineServer({ database: db, live, phone,
         auth: { authenticatePhone: async () => viewer } as unknown as TokenAuth,
         daemon: {} as DaemonService, mediaMaximumBytes: 1,
-        ...(selected ? { routerProjections: { families: ['needs-you-count' as const], commandDedupV1: true, listenerReady: () => true } } : {}),
       });
       servers.push(server); server.listen(0, '127.0.0.1'); await once(server, 'listening');
       const origin = `ws://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -144,54 +127,28 @@ it.each(['policy-off', 'legacy-sync'] as const)(
     connection = new ConnectionClass({
       authorization: async () => 'fixture-token', liveUrl: () => `${origin}/v1/phone/live`,
       subscribeIdentityChange: () => () => {},
-      router: { requestedCapabilities: async () => ({ families: ['needs-you-count'], authorityFencesV1: true }),
-        negotiated: async (next: { families: readonly RouterFamily[]; execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> }) => {
-          if (next.families.includes('needs-you-count')) snapshot = next.execute;
-        }, disconnected: () => {}, receive: () => {} },
     });
     const ready = capabilities(connection, state => state.ready && state.commandDedupV1);
     await connection.register([], () => {}); await ready;
-    expect(snapshot).toBeTypeOf('function');
-    const originalSnapshot = snapshot!;
-    const snapshotInput = { family: 'needs-you-count' as const, workspaceId: workspace };
-    expect(await originalSnapshot(snapshotInput)).toMatchObject({ value: { count: 0 } });
     const initialGeneration = connection.commandState().generation;
     const args = { roomId: room, messageId: message, emoji: '👍' };
     origin = origins[1]!; dropReceipt = true;
-    const parked = capabilities(connection, state => state.ready && !state.commandDedupV1 && state.generation > initialGeneration);
+    const parked = capabilities(connection, state => state.ready && state.generation > initialGeneration);
     await expect(connection.requestCommand('reactToMessage', args, command)).rejects.toMatchObject({ name: 'PhoneSocketDisconnectedError' });
     await parked;
     expect(dropped).toBe(1); expect(sockets).toHaveLength(2);
-    expect(sent.filter(frame => frame.t === 'req')).toHaveLength(2);
-    // A retained owner callback cannot send an old selected read through the
-    // new, incapable physical socket.
-    await expect(originalSnapshot(snapshotInput)).rejects.toThrow();
-    await expect(connection.requestCommand('reactToMessage', args, command)).rejects.toMatchObject({ code: 'command_unavailable' });
-    expect(sent.filter(frame => frame.t === 'req')).toHaveLength(2);
-    expect((await db.query('SELECT reactions FROM messages WHERE id=$1', [message])).rows)
-      .toEqual([{ reactions: { '👍': [viewer] } }]);
-
-    origin = origins[0]!;
-    const recovered = capabilities(connection, state => state.ready && state.commandDedupV1);
-    // Retry observes a healthy connection; it cannot replace an incapable
-    // socket. A later native close is the transport's recovery evidence.
-    connection.reconnectNow();
-    expect(sockets).toHaveLength(2);
-    expect(connection.commandState()).toMatchObject({ generation: initialGeneration + 1, ready: true, commandDedupV1: false });
-    sockets.at(-1)!.close();
-    await recovered;
+    // Closing a command never replays it. Retry resends the original identity.
+    expect(sent.filter(frame => frame.t === 'req')).toHaveLength(1);
     expect(await connection.requestCommand('reactToMessage', args, command)).toMatchObject({ state: 'committed', commandId: command.id });
     const requests = sent.filter(frame => frame.t === 'req' && frame.command);
     expect(requests).toHaveLength(2); expect(requests[1]!.command).toEqual(requests[0]!.command);
-    expect(sent.filter(frame => frame.op === 'readRouterSnapshot')).toHaveLength(1);
     expect((await db.query('SELECT reactions FROM messages WHERE id=$1', [message])).rows)
       .toEqual([{ reactions: { '👍': [viewer] } }]);
     expect((await db.query('SELECT state FROM router_commands')).rows).toEqual([{ state: 'committed' }]);
-    expect(sockets).toHaveLength(3); expect(http).not.toHaveBeenCalled();
+    expect(sockets).toHaveLength(2); expect(http).not.toHaveBeenCalled();
   } finally {
     connection?.dispose();
     for (const socket of sockets) socket.terminate();
-    for (const legacy of legacyServers) await new Promise<void>(resolve => legacy.close(() => resolve()));
     for (const server of servers) await new Promise<void>(resolve => server.close(() => resolve()));
     await db.close(); vi.unstubAllGlobals();
   }

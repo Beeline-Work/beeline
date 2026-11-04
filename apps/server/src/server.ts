@@ -5,7 +5,6 @@ import { syncXSiteVisits } from './x-site-visits.js';
 import { dashboardFinances } from './operator-finances.js';
 import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
 import { parseRouterCommandIdentity } from '@beeline/api-contract/router-command';
-import { routerSocketProtocol, type RouterProjectionPolicy } from './router-socket.js';
 import { startConnectionWork } from './background-work.js';
 import { owedMentions } from './owed-mentions.js';
 import { serveEmailImage } from './email-images.js';
@@ -86,7 +85,6 @@ import { connectorLogo } from './workbench.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
-import { phoneReadLimits, type PhoneReadLimits } from './phone-read-limit.js';
 import type { ConnectionPresence } from './connection-presence.js';
 import {
   parseDashboardPlatforms,
@@ -144,9 +142,7 @@ export interface GitHubServerHooks {
 }
 
 export interface ServerOptions {
-  routerProjections?: RouterProjectionPolicy;
   /** Production enables this with the router; object storage and authority remain required. */
-  mediaMetadataV1?:boolean;
   operationOutcomes?: import('./operation-outcomes.js').OperationOutcomes;
   replay?: DurableLiveReplay;
   roomsMcp?: RoomsMcp;
@@ -207,8 +203,6 @@ export interface ServerOptions {
   authHandler?: (request: IncomingMessage, response: ServerResponse) => void;
   /** Exact browser origins allowed to call the bearer-authenticated HTTP API. */
   webAppOrigins?: readonly string[];
-  /** Per-identity limits on phone history and outline reads; defaults in phone-read-limit.ts. */
-  phoneReadLimits?: PhoneReadLimits;
   /** Protocol ping interval for helper sockets; tests shorten it. */
   liveHeartbeatMs?: number;
   /** Existing connection control owner; injectable without changing Node/pg clocks. */
@@ -549,8 +543,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   const intakeCheckpoints = new Map<WebSocket, () => void>();
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
-  const readLimits = options.phoneReadLimits ?? phoneReadLimits();
-  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, readLimits, options.phone.execute, requestErrorStatus);
+  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, options.phone.execute, requestErrorStatus);
   const server = createServer((request, response) => {
     if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
       void serveRunnableArtifact(request, response, gameOrigin, options.objectService).catch(() => {
@@ -887,7 +880,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       // Workspace and identity changes keep their commit order on this socket.
       let identityDelivery = Promise.resolve();
       const sendNeedsYouDelta = (event: LiveEvent, roomId: string) => {
-        if ((routerProtocol.supports('needs-you') && routerProtocol.supports('needs-you-count')) || !options.phone.liveNeedsYou) return;
+        if (!options.phone.liveNeedsYou) return;
         // A later projection must not overtake an earlier one and then be
         // overwritten by its stale count or slice on the same socket.
         needsYouDelivery = needsYouDelivery.then(() =>
@@ -900,7 +893,6 @@ export function createBeelineServer(options: ServerOptions): Server {
       };
       const releaseWorkspaces = options.live.subscribeAll((event) => {
         if (event.type === 'resource-change') {
-          if (event.usageOnly && routerProtocol.supportsUsage()) return;
           if (event.ownerId === principal.identityId)
             sendLive(JSON.stringify({ type: 'resource-change', roomId: '',
               resource: event.resource, ...(event.resourceId ? { resourceId: event.resourceId } : {}),
@@ -910,8 +902,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         if (event.type !== 'invalidate') return;
         if (event.roomId !== '') {
           if (releases.has(event.roomId)) return;
-          if (!event.messageId || !options.phone.liveNeedsYou ||
-              (routerProtocol.supports('needs-you') && routerProtocol.supports('needs-you-count'))) return;
+          if (!event.messageId || !options.phone.liveNeedsYou) return;
           const local = event.committedRow?.type === 'message' ? event.committedRow.row : null;
           const candidate = event.needsYouCandidate || event.reason === 'phone-write' ||
             event.agentId === principal.identityId ||
@@ -1081,21 +1072,9 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (oldest) pendingPaintTraces.delete(oldest);
         }
       };
-      const routerProtocol = routerSocketProtocol(options.database, principal.identityId, sendLive, options.routerProjections,
-        { live: options.live, phone: options.phone, rooms: () => [...releases.keys()],mediaMetadataV1:options.mediaMetadataV1===true && Boolean(options.objectService) });
-      client.once('close', () => routerProtocol.close());
-      let routerNegotiating = false;
       const handlePhoneRequest = phoneSocketRequests(client, principal.identityId,
-        async (name, args, ...rest) => {
-          if (name === 'readRouterSnapshot') {
-            routerProtocol.requireSnapshot(args);
-            if (rest[4] === undefined) return routerProtocol.snapshot(args as unknown as Parameters<typeof routerProtocol.snapshot>[0]);
-          }
-          if(name==='readRoomTools')routerProtocol.requireSnapshot({family:'room-head',roomId:args.roomId});
-          if (name === 'readAgentUsageCell') routerProtocol.requireUsage();
-          return dispatchPhoneOperation(name, args, ...rest);
-        }, sendLive, requestErrorStatus, principal.familyId,
-        (name, args, result, enqueue) => routerProtocol.fenceReply(name, args, result, enqueue));
+        dispatchPhoneOperation, sendLive, requestErrorStatus, principal.familyId,
+        (_name, _args, result, enqueue) => fenceCommandReceiptEnqueue(options.database, principal.identityId, result, enqueue));
       client.on('message', (raw) => {
         const frameBytes = Array.isArray(raw)
           ? raw.reduce((total, part) => total + part.length, 0)
@@ -1106,13 +1085,12 @@ export function createBeelineServer(options: ServerOptions): Server {
           sendLive(LIVE_PONG_FRAME);
           return;
         }
-        if (!routerNegotiating && frameBytes <= 32 && raw.toString() === '{"type":"sync"}') {
+        if (frameBytes <= 32 && raw.toString() === '{"type":"sync"}') {
           sendLive('{"type":"sync-ok"}');
           return;
         }
         try {
           const parsed = JSON.parse(raw.toString());
-          if (parsed?.type === 'router-negotiate') routerNegotiating = true;
           if (handlePhoneRequest(parsed)) return;
         } catch {
           liveErrors.invalid++;
@@ -1129,7 +1107,6 @@ export function createBeelineServer(options: ServerOptions): Server {
           }
           if (!message || typeof message !== 'object') return;
           const item = message as Record<string, unknown>;
-          if (await routerProtocol.handle(item)) { routerNegotiating = false; return; }
           if (item.type === 'sync' && options.replay) {
             const workspaces = await options.database.query<{ workspace_id: string }>(
               `SELECT workspace_id FROM memberships WHERE identity_id=$1
@@ -1293,17 +1270,6 @@ export function createBeelineServer(options: ServerOptions): Server {
                         draftWire.delete(`${event.roomId}:${event.agentId}:${event.turnId}:${event.kind}`);
                       sendFrame(event);
                     }
-                    return;
-                  }
-                  // Canonical facts own these durable families after negotiation.
-                  // Keep the separate ephemeral branch above and legacy corner
-                  // lists until their own family is migrated.
-                  if(event.reason!=='corner-status' && (routerProtocol.supports('room-head') ||
-                    (routerProtocol.supports('room-list') && previewRooms.has(roomId) && !viewedRooms.has(roomId)))){
-                    const row=event.committedRow?.type==='message'?event.committedRow.row:undefined;
-                    if(event.messageId && (event.needsYouCandidate || event.agentId===principal.identityId || event.reason==='phone-write' ||
-                        (row && (row.author_id===principal.identityId || row.presentation==='card' || row.presentation==='system' || isNeedsYouAsk(row.text)))))
-                      sendNeedsYouDelta(event,roomId);
                     return;
                   }
                   // committedRow is process-local authority input. Strip it
@@ -2614,8 +2580,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
 
   const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown,
     invokeLegacy?: () => Promise<unknown>, command?: import('@beeline/api-contract/router-command').RouterCommandIdentity) => {
-    if (['readRoomTools','readAgentUsageCell','readRouterSnapshot','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
-      throw new PhoneOperationError(409, { error: 'router_socket_required' });
+    if (['readRoomTools','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
+      throw new PhoneOperationError(409, { error: 'phone_socket_required' });
     const familyId = phoneFamilies.get(request);
     const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy, familyId, command);
     await fenceCommandReceiptEnqueue(options.database, identityId!, result, safeResult => {

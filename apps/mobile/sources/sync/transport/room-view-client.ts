@@ -1,4 +1,3 @@
-import type { ReadAuthority } from '@/buzz/read-authority';
 import { RoomViewHttpError, type RoomViewClientOptions } from '@beeline/buzz-client';
 import {
   readAgentVoiceCatalog,
@@ -209,7 +208,7 @@ export class RoomViewClient {
   ) {
     return this.implementation.previewAgentVoice(workspaceId, agentId, voiceId);
   }
-  chats(_authority: ReadAuthority, id: string) {
+  chats(id: string) {
     return this.implementation.chats(id);
   }
   room(id: string) {

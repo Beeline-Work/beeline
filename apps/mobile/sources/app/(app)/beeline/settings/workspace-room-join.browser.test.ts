@@ -2,7 +2,6 @@ import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
-import { legacyRouterProofShims } from '../../../../test-fixtures/router-proof';
 
 const WORKSPACE = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const FANTASTIK = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
@@ -14,7 +13,6 @@ function shims(mobile: string): Record<string, string> {
     visibility: 'public', archived: false, createdAt: 1700000000, updatedAt: 1700000000 }`;
   return {
     ...webProofShims(mobile),
-    ...legacyRouterProofShims(),
     'expo-router': `import React from 'react';
     export const router = { back: () => undefined, replace: () => undefined,
       push: (href) => { (globalThis.__pushed ??= []).push(href); } };

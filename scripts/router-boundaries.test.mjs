@@ -115,59 +115,11 @@ test('core cannot hide a transport in an imported test-named module', () => {
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
 
-test('the narrow public phone observer is allowed but owner factories remain private', () => {
-  assert.deepEqual(inspectSource('apps/mobile/sources/example.ts', 'import { observePhoneInput } from \"@beeline/net/phone-inputs\";').errors, []);
-  assert.ok(inspectSource('packages/net/src/phone-inputs.ts', 'export { AdmissionOwner } from \"./private/admission.js\";').errors.length);
-});
-
 
 test('only exact persisted owner may access the command executor, including aliases', () => {
   for (const source of ['socket.requestCommand(op,args,id)', 'const send = socket.requestCommand;', 'socket["requestCommand"](op,args,id)'])
     assert.ok(inspectSource('apps/mobile/sources/feature.ts', source).errors.length);
   assert.deepEqual(inspectSource('apps/mobile/sources/buzz/command-owner.ts', 'socket.requestCommand(op,args,id)').errors, []);
-});
-
-
-test('owner admission cannot escape through aliases, reexports or namespace access', () => {
-  for (const source of [
-    'import { routerOwnerArtifactAction as mint } from "@/buzz/router-owner";',
-    'export { routerOwnerArtifactAction } from "@/buzz/router-owner";',
-    'export * from "@/buzz/router-owner";',
-    'import * as owner from "@/buzz/router-owner";',
-    'const owner = require("@/buzz/router-owner");',
-    'const owner = await import("@/buzz/router-owner");',
-    'owner["routerOwnerArtifactAction"]("OpenArtifact", id);',
-  ]) assert.ok(inspectSource('apps/mobile/sources/feature.ts', source).errors.length, source);
-  assert.deepEqual(inspectSource('apps/mobile/sources/components/buzz/ArtifactCard.tsx',
-    'import { routerOwnerArtifactAction as act } from "@/buzz/router-owner";').errors, []);
-  assert.ok(inspectSource('apps/mobile/sources/components/buzz/ArtifactCard.tsx',
-    'import { routerOwnerArtifactViewport } from "@/buzz/router-owner";').errors.length);
-  assert.deepEqual(inspectSource('apps/mobile/sources/feature.ts',
-    'import { routerFamilyMode } from "@/buzz/router-owner";').errors, []);
-});
-
-
-test('features cannot install a substitute media or usage executor', () => {
-  for (const source of [
-    'import { installMediaCacheConnection as replace } from "@/buzz/media-cache-connection";',
-    'import { receiveMediaAuthorityRemoval } from "./buzz/media-cache-connection";',
-    'export * from "@/buzz/media-cache-connection";',
-    'import * as media from "@/buzz/media-cache-connection";',
-    'const usage = require("@/buzz/agent-usage-cell");',
-    'import { setUsageCellProfile as mint } from "@/buzz/agent-usage-cell";',
-  ]) assert.ok(inspectSource('apps/mobile/sources/feature.ts', source).errors.length, source);
-  assert.deepEqual(inspectSource('apps/mobile/sources/buzz/router-owner.ts',
-    'import { installMediaCacheConnection } from "./media-cache-connection";').errors, []);
-  assert.deepEqual(inspectSource('apps/mobile/sources/components/File.tsx',
-    'import { mediaMetadataFor } from "@/buzz/media-cache-connection";').errors, []);
-});
-
- test('usage admission belongs only to committed profile or desktop pane owners', () => {
-  const source = 'import { routerOwnerUsageProfile } from "@/buzz/router-owner";';
-  for (const path of ['app/(app)/beeline/agent-profile.tsx', 'app/(app)/beeline/chat/_chat-surface.tsx'])
-    assert.deepEqual(inspectSource('apps/mobile/sources/' + path, source).errors, []);
-  for (const path of ['buzz/use-agent-usage-cell.ts', 'components/buzz/AgentUsageSection.tsx', 'components/buzz/AgentProfileView.tsx'])
-    assert.ok(inspectSource('apps/mobile/sources/' + path, source).errors.length);
 });
 
 test('closed helper usage codecs are restricted to the existing machine adapters', () => {
@@ -197,86 +149,17 @@ test('closed turn controls cannot escape their two existing machine adapters', (
   assert.ok(inspectSource('packages/net/src/helper-activation-codecs.ts', 'export { AdmissionOwner } from "./private/admission.js";').errors.length);
 });
 
-test('Tray command and paint authority cannot escape their declared viewport and gesture wrappers',()=>{
-  for(const name of ['admitRouterTrayCommand','admitRouterTrayPaint','acquireRouterSavedContinuation']){
-    const source=`import { ${name} as mint } from '@/buzz/router-owner';`;
-    assert.deepEqual(inspectSource('apps/mobile/sources/buzz/router-tray.ts',source).errors,[]);
-    assert.ok(inspectSource('apps/mobile/sources/feature.ts',source).errors.length);
-  }
-  for(const source of [
-    "import { prepareTrayCommand as mint } from '@/buzz/router-tray';",
-    "import { acknowledgeRoutedTrayPaint } from './buzz/router-tray';",
-    "export * from '@/buzz/router-tray';",
-    "const mint=require('@/buzz/router-tray');",
-    "import * as tray from '@/buzz/router-tray';",
-  ])assert.ok(inspectSource('apps/mobile/sources/feature.ts',source).errors.length);
-  assert.deepEqual(inspectSource('apps/mobile/sources/app/(app)/beeline/tray.tsx',
-    "import { prepareTrayCommand, acknowledgeRoutedTrayPaint, useRoutedTray } from '@/buzz/router-tray';").errors,[]);
-});
-
-
-test('tool page admission belongs only to the existing explicit disclosure boundary',()=>{
-  assert.deepEqual(inspectSource('apps/mobile/sources/components/buzz/ActivityTimeline.tsx',
-    'import { readRouterToolPage } from "@/buzz/router-owner";').errors,[]);
-  assert.ok(inspectSource('apps/mobile/sources/components/Feature.tsx',
-    'import { readRouterToolPage } from "@/buzz/router-owner";').errors.length);
-});
-
-
-test('display resource authority stays within its four declared consumer adapters', () => {
-  const source = 'import { useRoutedResource } from "./router-resource";';
-  for (const name of ['use-room-workflow-run', 'workbench-surface', 'wallet-surface'])
-    assert.deepEqual(inspectSource(`apps/mobile/sources/buzz/${name}.ts`, source).errors, []);
-  for (const source of [
-    'import { useRoutedResource as escape } from "./router-resource";',
-    'export { useRoutedResource } from "./router-resource";',
-    'import * as resource from "./router-resource";',
-    'import("./router-resource");',
-  ]) assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts', source).errors.length);
-  assert.deepEqual(inspectSource('apps/mobile/sources/app/(app)/beeline/members.tsx',
-    'import { useRoutedResource } from "@/buzz/router-resource";').errors, []);
-  const owner = 'import { acquireRouterLane, retryRouterLane } from "./router-owner";';
-  assert.deepEqual(inspectSource('apps/mobile/sources/buzz/router-resource.ts', owner).errors, []);
-  for (const name of ['use-room-workflow-run', 'workbench-surface', 'wallet-surface'])
-    assert.ok(inspectSource(`apps/mobile/sources/buzz/${name}.ts`, owner).errors.length);
-});
-
-
-test('roster query and Room picker gestures stay in their declared adapters and screens',()=>{
-  for(const [name,adapter] of [['acquireRouterRosterQuery','use-routed-roster'],['acquireRouterRoomRoster','use-room-roster']]){
-    const source=`import { ${name} } from './router-owner';`;
-    assert.deepEqual(inspectSource(`apps/mobile/sources/buzz/${adapter}.ts`,source).errors,[]);
-    assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts',source).errors.length);
-  }
-  for(const [hook,module,screen] of [['useRoutedRoster','use-routed-roster','members.tsx'],['useRoomRoster','use-room-roster','chat/_chat-surface.tsx']]){
-    const source=`import { ${hook} } from '@/buzz/${module}';`;
-    assert.deepEqual(inspectSource(`apps/mobile/sources/app/(app)/beeline/${screen}`,source).errors,[]);
-    assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts',source).errors.length);
-    assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts',`export * from '@/buzz/${module}';`).errors.length);
-  }
-});
-
 test('server-indexed surface capability has one owner and no feature backdoor allowance', () => {
   const route = 'apps/mobile/sources/app/(app)/beeline/backdoor.tsx';
   const store = 'apps/mobile/sources/buzz/second-read-store.ts';
   for (const file of [route, store, 'apps/mobile/sources/sync/transport/second-read-client.ts']) for (const source of [
     "import {mobileSurfaceCache as cache} from '@/buzz/surface-storage'; import {isChatListView as valid} from '@beeline/buzz-client'; cache['write'](address, edited, valid);",
-    "sharedLiveConnection().request('readChats', {workspaceId: 'ws'});",
-    "monolithPhoneOperation('readTray', {workspaceId: 'ws'});",
-    "import {readServerSurface as run} from '@/sync/transport/monolith-operation';",
     "import {applyChatListDelta as reduce} from '@/buzz/chat-list-delta';",
-    "const token = {} as ReadAuthority;",
     "function valid(value:unknown):value is ChatListView {return true;} cache.write(address,edited,valid);",
     "cache.write<ChatListView>(address,edited,(value):value is ChatListView=>true);",
     "import {readChatList as run} from '@/buzz/server-read-owner';",
-    "const name='readChats'; sharedLiveConnection().request(name,{});",
-    "import {sharedLiveConnection as live} from '@/sync/transport/live-connection'; const connection=live(); connection.request(operation,{});",
-    "const request=sharedLiveConnection().request; request(operation,{});",
     "const {publish:commit}=cache; commit(address,edited,isChatListView);",
     "const mutate=cache.publish; mutate(address,edited,isChatListView);",
-    "import * as reads from '@/sync/transport/monolith-operation'; const run = reads['readServerSurface'];",
-    "const {readServerSurface:run}=await import('@/sync/transport/monolith-operation');",
-    "export {readServerSurface as run} from '@/sync/transport/monolith-operation';",
     "export * from '@/buzz/chat-list-delta';",
     "export * from '@/buzz/server-read-owner';",
   ]) assert.ok(inspectSource(file, source).errors.some(error => error.includes('server-indexed read authority')), `${file}: ${source}`);
@@ -292,4 +175,8 @@ test('read owner cannot export another execution handle from inside its allowed 
     'export { readAuthority };',
     'export function anotherRead() { return cache.write(address, value, guard); }',
   ]) assert.ok(inspectSource('apps/mobile/sources/buzz/server-read-owner.ts', source).errors.some(error => error.includes('server-indexed read authority')));
+});
+
+test('screens send plain reads through the existing socket without admission', () => {
+  assert.deepEqual(inspectSource('apps/mobile/sources/app/(app)/beeline/room.tsx', `import { monolithPhoneOperation } from '@/sync/transport/monolith-operation'; monolithPhoneOperation('readRoom', {roomId:'room'});`).errors, []);
 });

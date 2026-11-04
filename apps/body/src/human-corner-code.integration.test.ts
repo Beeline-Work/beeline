@@ -236,7 +236,15 @@ beforeEach(async () => {
     expiresAt: Date.now() + 60_000,
   }));
   connectionPresence = new ConnectionPresence(database, live);
-  server = createBeelineServer({ database, auth, phone, daemon, live, connectionPresence, objectService });
+  server = createBeelineServer({
+    database,
+    auth,
+    phone,
+    daemon,
+    live,
+    connectionPresence,
+    objectService,
+  });
   server.on('connection', (socket) => {
     serverSockets.add(socket);
     socket.on('close', () => serverSockets.delete(socket));

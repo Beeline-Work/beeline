@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-
 import { dispatchRoomOpenTap } from './room-open-prefetch';
 
 describe('room-open tap', () => {

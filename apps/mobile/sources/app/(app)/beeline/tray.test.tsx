@@ -9,23 +9,57 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
 const trayProtocol = vi.hoisted(() => ({
-  mode: 'legacy' as 'legacy' | 'router' | 'pending', value: null as any,
-  continuation:vi.fn(),admit: vi.fn(), paint: vi.fn(), prepare: vi.fn(), deliver: vi.fn(), cancel: vi.fn(), retry: vi.fn(),
+  mode: 'legacy' as 'legacy' | 'router' | 'pending',
+  value: null as any,
+  continuation: vi.fn(),
+  admit: vi.fn(),
+  paint: vi.fn(),
+  prepare: vi.fn(),
+  deliver: vi.fn(),
+  cancel: vi.fn(),
+  retry: vi.fn(),
 }));
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => trayProtocol.mode, holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
-vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => ({ canPrepare: () => true,
-  prepare: trayProtocol.prepare, deliver: trayProtocol.deliver, cancel: trayProtocol.cancel }) }));
+vi.mock('@/buzz/router-family', () => ({
+  useRouterFamily: () => trayProtocol.mode,
+  holdRouterConnection: () => () => {},
+}));
+vi.mock('@/buzz/router-chat-list', () => ({
+  acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy(),
+}));
+vi.mock('@/buzz/command-owner', () => ({
+  activeCommandOwner: () => ({
+    canPrepare: () => true,
+    prepare: trayProtocol.prepare,
+    deliver: trayProtocol.deliver,
+    cancel: trayProtocol.cancel,
+  }),
+}));
 vi.mock('@/buzz/router-owner', () => ({
   routerFamilyMode: () => trayProtocol.mode,
-  acquireRouterSavedContinuation: (...args:unknown[]) => {trayProtocol.continuation(...args);const view={state:'OPENING',value:null,cut:null,error:null};return {current:()=>view,release:()=>{}};},
+  acquireRouterSavedContinuation: (...args: unknown[]) => {
+    trayProtocol.continuation(...args);
+    const view = { state: 'OPENING', value: null, cut: null, error: null };
+    return { current: () => view, release: () => {} };
+  },
   acquireRouterLane: () => {
-    const view = { state: trayProtocol.value ? 'LIVE' : 'ABSENT', value: trayProtocol.value, cut: null, error: null };
-    return { current: () => view, release: () => {}, subscribe: () => () => {}, refreshVisibility: () => {} };
+    const view = {
+      state: trayProtocol.value ? 'LIVE' : 'ABSENT',
+      value: trayProtocol.value,
+      cut: null,
+      error: null,
+    };
+    return {
+      current: () => view,
+      release: () => {},
+      subscribe: () => () => {},
+      refreshVisibility: () => {},
+    };
   },
   routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: trayProtocol.retry, routerOwnerListPanel: () => {},
-  admitRouterTrayCommand: trayProtocol.admit, admitRouterTrayPaint: trayProtocol.paint,
+  retryRouterLane: trayProtocol.retry,
+  routerOwnerListPanel: () => {},
+  admitRouterTrayCommand: trayProtocol.admit,
+  admitRouterTrayPaint: trayProtocol.paint,
 }));
 
 const layout = vi.hoisted(() => ({ os: 'web', width: 1200 }));
@@ -34,7 +68,12 @@ const appState = vi.hoisted(() => ({
   listeners: new Set<(state: string) => void>(),
 }));
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
-const route = vi.hoisted(() => ({ params: { communityId: 'ws', workspaceName: 'Clover Workspace' } as { communityId?: string; workspaceName?: string } }));
+const route = vi.hoisted(() => ({
+  params: { communityId: 'ws', workspaceName: 'Clover Workspace' } as {
+    communityId?: string;
+    workspaceName?: string;
+  },
+}));
 const workspaceSet = vi.hoisted(() => ({
   active: null as string | null,
   workspaces: [] as { id: string }[],
@@ -325,12 +364,14 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
-  trayProtocol.mode = 'router'; trayProtocol.value = null;
+  trayProtocol.mode = 'router';
+  trayProtocol.value = null;
   trayProtocol.admit.mockReset().mockReturnValue({ wire: { operation: 'clearNeedsYouSection' } });
   trayProtocol.paint.mockReset().mockReturnValue([]);
   trayProtocol.prepare.mockReset().mockResolvedValue({ id: 'prepared-tray' });
   trayProtocol.deliver.mockReset().mockResolvedValue(undefined);
-  trayProtocol.cancel.mockReset().mockResolvedValue(undefined); trayProtocol.retry.mockReset();
+  trayProtocol.cancel.mockReset().mockResolvedValue(undefined);
+  trayProtocol.retry.mockReset();
   liveRegistrations.clear();
   resetClientState();
   auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'viewer' }));
@@ -369,7 +410,15 @@ async function renderTray(): Promise<ReactTestRenderer> {
 describe('negotiated Tray consumer', () => {
   it('renders canonical rows and sends no legacy read or gap reload', async () => {
     trayProtocol.mode = 'router';
-    trayProtocol.value = { needs: { items: [need()] }, saved: { windowId: 'window', rows: [{ bookmarkId: 'incarnation', order: '1,msg-1', before: 'anchor', value: bookmark() }] } };
+    trayProtocol.value = {
+      needs: { items: [need()] },
+      saved: {
+        windowId: 'window',
+        rows: [
+          { bookmarkId: 'incarnation', order: '1,msg-1', before: 'anchor', value: bookmark() },
+        ],
+      },
+    };
     const tree = await renderTray();
     expect(tree.root.findByProps({ testID: 'needs-you-ask-1' })).toBeDefined();
     expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeDefined();
@@ -378,36 +427,64 @@ describe('negotiated Tray consumer', () => {
     expect(trayProtocol.retry).not.toHaveBeenCalled();
   });
 
-  it.each([390, 1200])('opens a bookmark source through the Room route at width %s', async width => {
-    layout.width = width;
-    trayProtocol.value = { needs: { items: [] }, saved: { windowId: 'window', rows: [
-      { bookmarkId: 'incarnation', order: '1,msg-1', before: 'anchor', value: bookmark() },
-    ] } };
-    const tree = await renderTray();
-    await act(async () => tree.root.findByProps({ testID: 'bookmark-msg-1' }).props.onPress());
-    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/chat/[channelId]', params: {
-      channelId: 'corner-1', notificationMessageId: 'msg-1', notificationResponseId: 'bookmark:msg-1', communityId: 'ws',
-    } });
-    expect(roomRead).not.toHaveBeenCalled();
-    expect(phoneOperation).not.toHaveBeenCalled();
-  });
+  it.each([390, 1200])(
+    'opens a bookmark source through the Room route at width %s',
+    async (width) => {
+      layout.width = width;
+      trayProtocol.value = {
+        needs: { items: [] },
+        saved: {
+          windowId: 'window',
+          rows: [
+            { bookmarkId: 'incarnation', order: '1,msg-1', before: 'anchor', value: bookmark() },
+          ],
+        },
+      };
+      const tree = await renderTray();
+      await act(async () => tree.root.findByProps({ testID: 'bookmark-msg-1' }).props.onPress());
+      expect(navigation.push).toHaveBeenCalledWith({
+        pathname: '/beeline/chat/[channelId]',
+        params: {
+          channelId: 'corner-1',
+          notificationMessageId: 'msg-1',
+          notificationResponseId: 'bookmark:msg-1',
+          communityId: 'ws',
+        },
+      });
+      expect(roomRead).not.toHaveBeenCalled();
+      expect(phoneOperation).not.toHaveBeenCalled();
+    },
+  );
 
   it('opens a desktop Needs-you source through the Room route', async () => {
     trayProtocol.value = { needs: { items: [need()] }, saved: { windowId: 'window', rows: [] } };
     const tree = await renderTray();
     await act(async () => tree.root.findByProps({ testID: 'needs-you-ask-1' }).props.onPress());
-    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/chat/[channelId]', params: {
-      channelId: 'room-1', notificationMessageId: 'ask-1', notificationResponseId: 'needs-you:ask-1', communityId: 'ws',
-    } });
+    expect(navigation.push).toHaveBeenCalledWith({
+      pathname: '/beeline/chat/[channelId]',
+      params: {
+        channelId: 'room-1',
+        notificationMessageId: 'ask-1',
+        notificationResponseId: 'needs-you:ask-1',
+        communityId: 'ws',
+      },
+    });
   });
 
-  it('uses the existing Load More Saved button for one owned continuation and no legacy read',async()=>{
-    trayProtocol.mode='router';trayProtocol.continuation.mockClear();
-    trayProtocol.value={needs:{items:[]},saved:{windowId:'window',rows:[],next:'saved1.Y3Vyc29y'}};
-    const tree=await renderTray();expect(trayProtocol.continuation).not.toHaveBeenCalled();
-    await act(async()=>{tree.root.findByProps({testID:'bookmarks-more'}).props.onPress();});
+  it('uses the existing Load More Saved button for one owned continuation and no legacy read', async () => {
+    trayProtocol.mode = 'router';
+    trayProtocol.continuation.mockClear();
+    trayProtocol.value = {
+      needs: { items: [] },
+      saved: { windowId: 'window', rows: [], next: 'saved1.Y3Vyc29y' },
+    };
+    const tree = await renderTray();
+    expect(trayProtocol.continuation).not.toHaveBeenCalled();
+    await act(async () => {
+      tree.root.findByProps({ testID: 'bookmarks-more' }).props.onPress();
+    });
     expect(trayProtocol.continuation).toHaveBeenCalledTimes(1);
-    expect(trayProtocol.continuation.mock.calls[0]!.slice(0,2)).toEqual(['ws','saved1.Y3Vyc29y']);
+    expect(trayProtocol.continuation.mock.calls[0]!.slice(0, 2)).toEqual(['ws', 'saved1.Y3Vyc29y']);
     expect(phoneOperation).not.toHaveBeenCalled();
   });
 
@@ -415,15 +492,22 @@ describe('negotiated Tray consumer', () => {
     trayProtocol.mode = 'router';
     trayProtocol.value = { needs: { items: [need()] }, saved: { windowId: 'window', rows: [] } };
     const tree = await renderTray();
-    await act(async () => { tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress(); });
+    await act(async () => {
+      tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress();
+    });
     expect(trayProtocol.admit).toHaveBeenCalledWith('ws', {
-      operation: 'clearNeedsYouSection', input: { workspaceId: 'ws' },
+      operation: 'clearNeedsYouSection',
+      input: { workspaceId: 'ws' },
     });
     expect(trayProtocol.prepare).toHaveBeenCalledTimes(1);
     expect(trayProtocol.deliver).not.toHaveBeenCalled();
     expect(tree.root.findByProps({ testID: 'needs-you-ask-1' })).toBeDefined();
-    await act(async () => tree.root.findByProps({ testID: 'tray-clear-undo' })
-      .findByProps({ accessibilityRole: 'button' }).props.onPress());
+    await act(async () =>
+      tree.root
+        .findByProps({ testID: 'tray-clear-undo' })
+        .findByProps({ accessibilityRole: 'button' })
+        .props.onPress(),
+    );
     expect(trayProtocol.cancel).toHaveBeenCalledWith('prepared-tray');
     expect(trayProtocol.deliver).not.toHaveBeenCalled();
     expect(phoneOperation).not.toHaveBeenCalled();
@@ -439,7 +523,7 @@ describe('negotiated Tray consumer', () => {
       tree.root.findByType('FlatList' as never).props.onViewableItemsChanged({
         viewableItems: [{ isViewable: true, item: { type: 'needs', item: unseen } }],
       });
-      await new Promise(resolve => setTimeout(resolve, 10));
+      await new Promise((resolve) => setTimeout(resolve, 10));
     });
     expect(trayProtocol.paint).toHaveBeenCalledWith('ws', ['ask-1']);
     expect(trayProtocol.deliver).toHaveBeenCalledWith('prepared-tray');
@@ -448,7 +532,15 @@ describe('negotiated Tray consumer', () => {
 
   it('pending negotiation hides prior canonical rows and keeps every legacy read idle', async () => {
     trayProtocol.mode = 'router';
-    trayProtocol.value = { needs: { items: [need()] }, saved: { windowId: 'window', rows: [{ bookmarkId: 'incarnation', order: '1,msg-1', before: 'anchor', value: bookmark() }] } };
+    trayProtocol.value = {
+      needs: { items: [need()] },
+      saved: {
+        windowId: 'window',
+        rows: [
+          { bookmarkId: 'incarnation', order: '1,msg-1', before: 'anchor', value: bookmark() },
+        ],
+      },
+    };
     const tree = await renderTray();
     trayProtocol.mode = 'pending';
     await act(async () => tree.update(<TrayScreen />));

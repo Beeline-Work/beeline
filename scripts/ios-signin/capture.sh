@@ -68,6 +68,13 @@ xcrun simctl io "$device" recordVideo "$EVIDENCE/signin.mp4" > "$EVIDENCE/record
 record_pid=$!
 result=0
 for provider in github google; do
+  # Reproduction IOS-SIGNIN-CANCEL-1: deliberately cancel consent before
+  # continuing the normal provider path. Keep timestamps for server correlation.
+  date -u '+%Y-%m-%dT%H:%M:%SZ' > "$EVIDENCE/$provider-cancel-started.txt"
+  maestro --device "$device" test --test-output-dir "$EVIDENCE/$provider-cancel" \
+    -e "PROVIDER=$provider" "$HARNESS_DIR/scripts/ios-signin/cancel.yaml" \
+    > "$EVIDENCE/$provider-cancel-maestro.log" 2>&1 || result=1
+  date -u '+%Y-%m-%dT%H:%M:%SZ' > "$EVIDENCE/$provider-cancel-finished.txt"
   date -u '+%Y-%m-%dT%H:%M:%SZ' > "$EVIDENCE/$provider-started.txt"
   # One provider's failure must not suppress capture of the other.
   maestro --device "$device" test --test-output-dir "$EVIDENCE/$provider" \

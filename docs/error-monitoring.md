@@ -153,7 +153,11 @@ reads the durable five-minute deadline after restart and PostgreSQL notification
 re-arm it after arrivals. Pending rows from the former daily policy use this same
 deadline, so a deployment drains that backlog without another webhook. The legacy
 `last_daily_wake_at` column is retained for schema compatibility but no longer
-controls dispatch. An unavailable target keeps rows pending. This changes only
+controls dispatch. Deadline delays use the database clock, independent of host clock skew.
+An unavailable target keeps rows pending. Empty, refused or failed observations
+park without a recurring sweep or retry timer. A committed arrival, relevant
+recipient membership, triage authority or blocking-report change, or actual database/listener
+recovery admits another observation. This changes only
 Sentry arrivals; the standing daily feedback sweep keeps its existing cadence.
 The server setting `BEELINE_SENTRY_TRIAGE_AGENT_ID` selects the recipient and
 defaults to Jellybean (`7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877`).

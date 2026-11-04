@@ -8,12 +8,14 @@ import { statusBarStyleForTheme } from '@/components/StatusBarProvider';
 import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { useIsDesktop } from '@/utils/responsive';
 import { startMessageOutbox } from '@/buzz/message-outbox-runtime';
+import { useRouterNavigationOwner } from '@/buzz/use-router-navigation';
 
 export const unstable_settings = {
   initialRouteName: 'index',
 };
 
 export default function RootLayout() {
+  useRouterNavigationOwner();
   const pathname = usePathname();
   const pathnameRef = React.useRef(pathname);
   pathnameRef.current = pathname;

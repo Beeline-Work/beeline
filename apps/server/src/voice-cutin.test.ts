@@ -49,10 +49,10 @@ it.each([200, 400, 600, 800, 1200].flatMap(resumeMs =>
     const agent = { id: 'ruby', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' };
     const writes: string[] = [], revisions: string[] = [];
     const service = {
-      owner: 'owner', workspaceId: async () => 'workspace', endWorkspaceCalls: async () => {},
+      owner: 'owner', runtimeScope: async (roomId: string) => ({ workspaceId: 'workspace', authorityRoomId: roomId }), workspaceId: async () => 'workspace', endWorkspaceCalls: async () => {},
       callWorkState: async () => ({ pending: false, finishedAt: 0 }), hasCallWork: async () => false,
       endInactive: async () => false,
-      budget: { read: async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' }),
+      budget: { fence: async (_call: string, _owner: string, enqueue: () => void) => { enqueue(); return true; }, read: async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' }),
         record: async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' }), limitMs: 3600000 },
       config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
         stt: async (callback: typeof onSpeech) => { onSpeech = callback; return { send() {}, close() {} }; },

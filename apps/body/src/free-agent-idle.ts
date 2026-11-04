@@ -33,6 +33,7 @@ export class FreeAgentIdle {
   #lastWall: number;
   #lastMonotonic: number;
   #requesting = false;
+  #sleepAttempted = false;
   #timer: ReturnType<typeof setInterval> | undefined;
 
   constructor(private readonly options: FreeAgentIdleOptions) {
@@ -59,6 +60,7 @@ export class FreeAgentIdle {
   /** Anything that counts as work restarts the idle window. */
   noteActivity(): void {
     this.#lastActivity = this.#now();
+    this.#sleepAttempted = false;
   }
 
   /** One check; exposed for tests. Resolves once any sleep request settles. */
@@ -74,15 +76,18 @@ export class FreeAgentIdle {
         `resumed after ${Math.round((wallElapsed - monotonicElapsed) / 1000)}s asleep; reconnecting`,
       );
       this.#lastActivity = wall;
+      this.#sleepAttempted = false;
       this.options.onResume();
       return;
     }
     if (this.options.activeTurns() > 0) {
       this.#lastActivity = wall;
+      this.#sleepAttempted = false;
       return;
     }
-    if (this.#requesting || wall - this.#lastActivity < this.options.idleMs) return;
+    if (this.#requesting || this.#sleepAttempted || wall - this.#lastActivity < this.options.idleMs) return;
     this.#requesting = true;
+    this.#sleepAttempted = true;
     try {
       const accepted = await this.options.requestSleep();
       this.options.log?.(accepted ? 'idle; sleep accepted' : 'idle; sleep refused, work pending');
@@ -90,8 +95,8 @@ export class FreeAgentIdle {
       this.options.log?.(`sleep request failed: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.#requesting = false;
-      // Refused or failed: wait a whole idle window before asking again.
-      this.#lastActivity = this.#now();
+      // Refusal/uncertainty parks this idle episode. Actual activity or a
+      // detected resume, never elapsed failure time, starts another one.
     }
   }
 }

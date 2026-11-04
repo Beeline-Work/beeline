@@ -1,0 +1,96 @@
+{
+  "nativeApkSha256": "00eb69f56cce366a72e6b2631a473626e60050a69f12e7e2f5e2f35f927644be",
+  "historicalNativeSource": "62a2695724540f2a300bb2f06fd9994fd72ab713",
+  "nativeBinaryKind": "historical-source locally built APK; not exact Play-distributed binary",
+  "runtimeVersion": "40",
+  "repositoryHeadAtExport": "b3ca27adb37376def6bf1b9438c5f9b2dad31395",
+  "sourceFiles": {
+    "apps/mobile/sources/buzz/artifact.ts": {
+      "gitBlob": "3465f9ecafb25b08a32d3a7a1c192a40f588b5e7",
+      "sha256": "ab2ae21d09bc56b6511dfb6b45ecc6c84379d68a4d765591a5b82ce6638cf777",
+      "includedInFixtureSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-pdf.ts": {
+      "gitBlob": "66e6596bb9924e40f163e11ece31486a5cfa2370",
+      "sha256": "0a7c8f5c1a674e782f6455e57864ecba83ee27cc58386476fcc10bf9ca39e600",
+      "includedInFixtureSourceMap": true
+    },
+    "apps/mobile/sources/components/buzz/artifact-webview.ts": {
+      "gitBlob": "2fc55177c0cb451f8b878afed53a295533b938ad",
+      "sha256": "1761636f5c17fe82b8a59fb46f49e40d0d64e74f655f016adbf4a1756b57fe76",
+      "includedInFixtureSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-byte-store.ts": {
+      "gitBlob": "5afa9a42b255db2429f08faa6a9d1eed88e72334",
+      "sha256": "e5f2e46515c32aeccb0cc2bccc010e860d5fb5169afbc19119b4ec7dbeafb72f",
+      "includedInFixtureSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-byte-work.ts": {
+      "gitBlob": "276d803a74461b793482ec0e8a72edaec4baa3ba",
+      "sha256": "cc32838eadaf6f9da3a464b532b9a9e8cb90a766b3b054782f814f76a16da543",
+      "includedInFixtureSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-byte-digest.ts": {
+      "gitBlob": "9180481d5ade85e89a5360de29bc40359345966f",
+      "sha256": "6db6e31b5b60d0b9c3d5780abe9dd6b64d8ee2e20f4d3d611a73270161965dc0",
+      "includedInFixtureSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-byte-owner.ts": {
+      "gitBlob": "907f9f6a180929ab212e66ddeab402d437d7e63e",
+      "sha256": "1f5e4db066e96cd3109f81555fcff93c492036b6cade679d3b047ef9dfd3a143",
+      "includedInFixtureSourceMap": false
+    },
+    "apps/mobile/sources/buzz/host-scheduler.ts": {
+      "gitBlob": "f642f095cdb5a1d2cb770423231feb81f7427dc4",
+      "sha256": "86c7ee056788f259c91f748d812ff09e8f4c1effc2d4b11d7c66528cc30fe8c9",
+      "includedInFixtureSourceMap": true
+    },
+    "apps/mobile/sources/buzz/immutable-byte-cache.ts": {
+      "gitBlob": "21a86281cd6bce14efa2d014722d3fe9d44d9223",
+      "sha256": "14c807e62fefca9168cfc2aaedb1f2981e22d70ca0e6b64d0fea4357ba6bedca",
+      "includedInFixtureSourceMap": true
+    },
+    "apps/mobile/sources/buzz/byte-base64.ts": {
+      "gitBlob": "ac78259a3e2e9ce628bdbf310cef2562e1496868",
+      "sha256": "756dee8aadb6fc06d01be3706e2330ee24cc550f5c32e92291177b647b5444b1",
+      "includedInFixtureSourceMap": true
+    },
+    "apps/mobile/sources/components/buzz/ComputerSession.tsx": {
+      "gitBlob": "80e29f3715b1f2e9c0b4b50fad9d13b388e27fa8",
+      "sha256": "ef97eafacead179a576b33d705c686e9be4ec036fa6cc4fdc23fcae888552ed3",
+      "includedInFixtureSourceMap": true
+    },
+    "apps/mobile/sources/buzz/warm-computer-session.ts": {
+      "gitBlob": "80c0082633cf8097990586a742ea172e56b441e2",
+      "sha256": "4e33174834f2d257f062b25c2bb21c94a8f656dcc516930883c9779923a36fd7",
+      "includedInFixtureSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-viewport.ts": {
+      "gitBlob": "30438fcff786065c65e89e9abefa6b81392a0c52",
+      "sha256": "d33fd0186e50a61acbafdeeab4539f539410dee445daa33e20e81f3c79e46604",
+      "includedInFixtureSourceMap": true
+    }
+  },
+  "candidateBundleSha256": "dc84e09a6d52fbd83cb1108d591755ed5a80d96035e6ab772dffb8d4eacd41e4",
+  "fixtureUpdateId": "89814f5b-d336-42c5-87d7-20197bd2df9e",
+  "nativeApkRepacked": false,
+  "accountCreated": false,
+  "otaDeliveryProven": false,
+  "launchReceipt": {
+    "runtimeVersion": "40",
+    "successfulLaunches": 2,
+    "failedLaunches": 0,
+    "reportedNonEmbedded": true,
+    "reportedEmergencyFallback": false
+  },
+  "performanceScope": "Scoped store/read and digest helpers, not a physical phone or full end-to-end screen performance pass.",
+  "fixtureSources": {
+    "byte-probe.tsx": "c94aedcd337fc17fb79c203f4ac1e437fd0350044201e68b762536c9527d1299",
+    "computer-probe.tsx": "28d1f9118213683ef69a2a98cf6c1b3dc62892a8edd7450093cca9cb45f2d310",
+    "dock-adapter.tsx": "cf8330d460be54c12a5b7415a01d6e3019d4d0034aefca275270ff9300899e1d",
+    "entry.tsx": "ecb22cac7c4ba28370c7d19da068b3b3b155f86ca17a4073d84bb6d153013026",
+    "metadata-adapter.ts": "06486c02c6946bcc4b26d238903799294b0c829737d63aafcd9d50f5116fe24c",
+    "modal-adapter.ts": "64627d392a3c3eafe27f75da49df5e17f17a867477999efae22cd7f370aaab79",
+    "theme-init.ts": "da62019b38c08ecbe7d478442e456dc082e7c410fea1d29b16aa3f7d7b198502"
+  }
+}

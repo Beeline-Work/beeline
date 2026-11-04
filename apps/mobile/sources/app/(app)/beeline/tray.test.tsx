@@ -6,6 +6,28 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+// These fixtures exercise the negotiated legacy compatibility path. The actual
+// router owner/negotiation path has independent integration coverage.
+const trayProtocol = vi.hoisted(() => ({
+  mode: 'legacy' as 'legacy' | 'router' | 'pending', value: null as any,
+  continuation:vi.fn(),admit: vi.fn(), paint: vi.fn(), prepare: vi.fn(), deliver: vi.fn(), cancel: vi.fn(), retry: vi.fn(),
+}));
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => trayProtocol.mode, holdRouterConnection: () => () => {} }));
+vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => ({ canPrepare: () => true,
+  prepare: trayProtocol.prepare, deliver: trayProtocol.deliver, cancel: trayProtocol.cancel }) }));
+vi.mock('@/buzz/router-owner', () => ({
+  routerFamilyMode: () => trayProtocol.mode,
+  acquireRouterSavedContinuation: (...args:unknown[]) => {trayProtocol.continuation(...args);const view={state:'OPENING',value:null,cut:null,error:null};return {current:()=>view,release:()=>{}};},
+  acquireRouterLane: () => {
+    const view = { state: trayProtocol.value ? 'LIVE' : 'ABSENT', value: trayProtocol.value, cut: null, error: null };
+    return { current: () => view, release: () => {}, subscribe: () => () => {}, refreshVisibility: () => {} };
+  },
+  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
+  retryRouterLane: trayProtocol.retry, routerOwnerListPanel: () => {},
+  admitRouterTrayCommand: trayProtocol.admit, admitRouterTrayPaint: trayProtocol.paint,
+}));
+
 const layout = vi.hoisted(() => ({ os: 'web', width: 1200 }));
 const appState = vi.hoisted(() => ({
   current: 'active',
@@ -304,6 +326,12 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
+  trayProtocol.mode = 'legacy'; trayProtocol.value = null;
+  trayProtocol.admit.mockReset().mockReturnValue({ wire: { operation: 'clearNeedsYouSection' } });
+  trayProtocol.paint.mockReset().mockReturnValue([]);
+  trayProtocol.prepare.mockReset().mockResolvedValue({ id: 'prepared-tray' });
+  trayProtocol.deliver.mockReset().mockResolvedValue(undefined);
+  trayProtocol.cancel.mockReset().mockResolvedValue(undefined); trayProtocol.retry.mockReset();
   liveRegistrations.clear();
   resetClientState();
   auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'viewer' }));
@@ -338,6 +366,76 @@ async function renderTray(): Promise<ReactTestRenderer> {
   await act(async () => undefined);
   return tree;
 }
+
+describe('negotiated Tray consumer', () => {
+  it('renders canonical rows and sends no legacy read or gap reload', async () => {
+    trayProtocol.mode = 'router';
+    trayProtocol.value = { needs: { items: [need()] }, saved: { windowId: 'window', rows: [{ bookmarkId: 'incarnation', order: '1,msg-1', before: 'anchor', value: bookmark() }] } };
+    const tree = await renderTray();
+    expect(tree.root.findByProps({ testID: 'needs-you-ask-1' })).toBeDefined();
+    expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeDefined();
+    await returnToForeground();
+    expect(phoneOperation).not.toHaveBeenCalled();
+    expect(trayProtocol.retry).not.toHaveBeenCalled();
+  });
+
+  it('uses the existing Load More Saved button for one owned continuation and no legacy read',async()=>{
+    trayProtocol.mode='router';trayProtocol.continuation.mockClear();
+    trayProtocol.value={needs:{items:[]},saved:{windowId:'window',rows:[],next:'saved1.Y3Vyc29y'}};
+    const tree=await renderTray();expect(trayProtocol.continuation).not.toHaveBeenCalled();
+    await act(async()=>{tree.root.findByProps({testID:'bookmarks-more'}).props.onPress();});
+    expect(trayProtocol.continuation).toHaveBeenCalledTimes(1);
+    expect(trayProtocol.continuation.mock.calls[0]!.slice(0,2)).toEqual(['ws','saved1.Y3Vyc29y']);
+    expect(phoneOperation).not.toHaveBeenCalled();
+  });
+
+  it('a section Clear prepares at the tap, keeps canonical rows, and Undo cancels without a send', async () => {
+    trayProtocol.mode = 'router';
+    trayProtocol.value = { needs: { items: [need()] }, saved: { windowId: 'window', rows: [] } };
+    const tree = await renderTray();
+    await act(async () => { tree.root.findByProps({ testID: 'tray-clear-needs' }).props.onPress(); });
+    expect(trayProtocol.admit).toHaveBeenCalledWith('ws', {
+      operation: 'clearNeedsYouSection', input: { workspaceId: 'ws' },
+    });
+    expect(trayProtocol.prepare).toHaveBeenCalledTimes(1);
+    expect(trayProtocol.deliver).not.toHaveBeenCalled();
+    expect(tree.root.findByProps({ testID: 'needs-you-ask-1' })).toBeDefined();
+    await act(async () => tree.root.findByProps({ testID: 'tray-clear-undo' })
+      .findByProps({ accessibilityRole: 'button' }).props.onPress());
+    expect(trayProtocol.cancel).toHaveBeenCalledWith('prepared-tray');
+    expect(trayProtocol.deliver).not.toHaveBeenCalled();
+    expect(phoneOperation).not.toHaveBeenCalled();
+  });
+
+  it('routes a painted viewport through the screen command and never the legacy seen reducer', async () => {
+    trayProtocol.mode = 'router';
+    const unseen = need({ expiresAt: undefined });
+    trayProtocol.value = { needs: { items: [unseen] }, saved: { windowId: 'window', rows: [] } };
+    trayProtocol.paint.mockReturnValue([{ wire: { operation: 'markNeedsYouSeen' } }]);
+    const tree = await renderTray();
+    await act(async () => {
+      tree.root.findByType('FlatList' as never).props.onViewableItemsChanged({
+        viewableItems: [{ isViewable: true, item: { type: 'needs', item: unseen } }],
+      });
+      await new Promise(resolve => setTimeout(resolve, 10));
+    });
+    expect(trayProtocol.paint).toHaveBeenCalledWith('ws', ['ask-1']);
+    expect(trayProtocol.deliver).toHaveBeenCalledWith('prepared-tray');
+    expect(phoneOperation).not.toHaveBeenCalled();
+  });
+
+  it('pending negotiation hides prior canonical rows and keeps every legacy read idle', async () => {
+    trayProtocol.mode = 'router';
+    trayProtocol.value = { needs: { items: [need()] }, saved: { windowId: 'window', rows: [{ bookmarkId: 'incarnation', order: '1,msg-1', before: 'anchor', value: bookmark() }] } };
+    const tree = await renderTray();
+    trayProtocol.mode = 'pending';
+    await act(async () => tree.update(<TrayScreen />));
+    expect(tree.root.findAllByProps({ testID: 'needs-you-ask-1' })).toHaveLength(0);
+    expect(tree.root.findAllByProps({ testID: 'bookmark-msg-1' })).toHaveLength(0);
+    expect(tree.root.findByProps({ testID: 'tray-loader' })).toBeDefined();
+    expect(phoneOperation).not.toHaveBeenCalled();
+  });
+});
 
 describe.each([
   { surface: 'desktop', os: 'web', width: 1200, remove: true },
@@ -1713,6 +1811,7 @@ it.skipIf(!existsSync(CHROME)).each([false, true])('R12a Demonstrated: Chrome at
     head: '<script>Date.now = () => 1700000000999;</script>',
     shims: {
       ...webProofShims(mobile),
+      ...legacyTrayProofShims(),
       'expo-router': `import React from 'react';
         export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
         export const useLocalSearchParams = () => ({ communityId: 'workspace-1' });
@@ -1742,9 +1841,32 @@ it.skipIf(!existsSync(CHROME)).each([false, true])('R12a Demonstrated: Chrome at
   console.log('R12a Demonstrated, Chrome 760px:', result);
 }, 90_000);
 
+/** These UI proofs exercise the authenticated legacy cohort. Their esbuild
+ * bundles do not execute Vitest's vi.mock declarations above, so explicitly
+ * select the same family owner for both alias and relative imports.
+ */
+function legacyTrayProofShims(): Record<string, string> {
+  const owner = `const empty = Object.freeze({ state: 'ABSENT', value: null, cut: null, error: null });
+    export const routerFamilyMode = () => 'legacy';
+    export const acquireRouterSavedContinuation = () => { throw new Error('Legacy cannot open router continuation'); };
+    export const acquireRouterLane = () => ({ current: () => empty, release: () => {}, subscribe: () => () => {}, refreshVisibility: () => {} });
+    export const routerLaneSnapshot = () => empty;
+    export const retryRouterLane = () => {};
+    export const admitRouterTrayCommand = () => { throw new Error('Legacy proof cannot mint a router command'); };
+    export const admitRouterTrayPaint = () => { throw new Error('Legacy proof cannot mint a router paint'); };`;
+  const family = `export const useRouterFamily = () => 'legacy'; export const holdRouterConnection = () => () => {};`;
+  const commands = `export const activeCommandOwner = () => undefined;`;
+  return {
+    './router-owner': owner, '@/buzz/router-owner': owner,
+    './router-family': family, '@/buzz/router-family': family,
+    './command-owner': commands, '@/buzz/command-owner': commands,
+  };
+}
+
 function clearProofShims(mobile: string) {
   return {
     ...webProofShims(mobile),
+    ...legacyTrayProofShims(),
     'expo-router': `import React from 'react';
       export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
       export const useLocalSearchParams = () => ({ communityId: 'workspace-1' });

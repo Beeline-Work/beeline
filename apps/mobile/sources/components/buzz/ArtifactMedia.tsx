@@ -1,3 +1,4 @@
+import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import React, { useEffect, useState } from 'react';
 import { Image, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -8,6 +9,7 @@ import {
   artifactImageSource,
   fetchArtifactText,
   releaseArtifactImageSource,
+  subscribeArtifactBytesPurge,
 } from '@/buzz/artifact-link';
 
 type ImageSource = Awaited<ReturnType<typeof artifactImageSource>>;
@@ -32,27 +34,32 @@ export function ArtifactImage({
   style?: object;
   testID: string;
 }) {
+  const recovery = useArtifactRecoveryGeneration();
   const [source, setSource] = useState<ImageSource | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let live = true;
     let loaded: ImageSource | null = null;
+    const controller = new AbortController();
+    const stopPurge = subscribeArtifactBytesPurge(attachment, () => {
+      controller.abort(); releaseArtifactImageSource(loaded); setSource(null); setFailed(true);
+    });
     setFailed(false);
     setSource(null);
-    void artifactImageSource(attachment)
+    void artifactImageSource(attachment, { signal: controller.signal, preview: fit === 'cover' })
       .then((next) => {
         loaded = next;
-        if (live) setSource(next);
+        if (live && !controller.signal.aborted) setSource(next);
         else releaseArtifactImageSource(next);
       })
       .catch(() => {
         if (live) setFailed(true);
       });
     return () => {
-      live = false;
+      live = false; controller.abort(); stopPurge();
       releaseArtifactImageSource(loaded);
     };
-  }, [attachment]);
+  }, [attachment, fit, recovery]);
   if (failed) {
     return (
       <View style={[styles.placeholder, style]} testID="artifact-image-failed">
@@ -103,21 +110,25 @@ export function ArtifactText({
   crop: boolean;
   testID: string;
 }) {
+  const recovery = useArtifactRecoveryGeneration();
   const [text, setText] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let live = true;
-    void fetchArtifactText(attachment)
+    const controller = new AbortController();
+    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); setText(null); setFailed(true); });
+    setText(null); setFailed(false);
+    void fetchArtifactText(attachment, { signal: controller.signal, preview: crop })
       .then((next) => {
-        if (live) setText(next);
+        if (live && !controller.signal.aborted) setText(next);
       })
       .catch(() => {
         if (live) setFailed(true);
       });
     return () => {
-      live = false;
+      live = false; controller.abort(); stopPurge();
     };
-  }, [attachment]);
+  }, [attachment, crop, recovery]);
   if (failed) {
     return (
       <View style={styles.placeholder} testID="artifact-text-failed">

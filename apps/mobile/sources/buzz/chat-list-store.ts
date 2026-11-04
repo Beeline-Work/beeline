@@ -14,6 +14,9 @@ import { applyChatListCorners, cornerStoreClock, getRoomCornerSummary } from './
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 import { cacheRoomMessageDelta } from './cache-room-message-delta';
 import { currentSurfaceStamp } from './surface-clock';
+import { useRouterFamily } from './router-family';
+import { acquireRoutedChatList } from './router-chat-list';
+import { routerFamilyMode, routerLaneSnapshot } from './router-owner';
 
 export type ChatListKey = { readonly relayUrl: string; readonly viewerPubkey: string; readonly workspaceId: string };
 export type ChatListConsumer = { readonly visible: () => boolean; readonly onRead?: () => void; readonly onError?: (reason: unknown) => void };
@@ -235,29 +238,40 @@ function resetStores(): void {
 subscribeClientReset(resetStores);
 
 export function acquireChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
-  const id = idOf(key);
-  let store = stores.get(id);
-  if (!store) {
-    const created = new ChatListStore(key, () => { if (stores.get(id) === created) stores.delete(id); });
-    store = created;
-    stores.set(id, store);
-  }
-  const held = store;
-  const member = { ...consumer };
-  held.attach(member);
-  let released = false;
-  return {
-    current: () => held.current(), confirmed: () => held.confirmed(),
-    subscribe: (listener) => held.subscribe(listener), force: () => held.force(), catchUp: () => held.catchUp(),
-    release: () => { if (!released) { released = true; held.detach(member); } },
-    remove: () => { released = true; return held.remove(); },
-  };
+  // The negotiated router owner creates and retires the old-server store.
+  return acquireRoutedChatList(key, consumer, () => {
+    const id = idOf(key);
+    let store = stores.get(id);
+    if (!store) {
+      const created = new ChatListStore(key, () => { if (stores.get(id) === created) stores.delete(id); });
+      store = created;
+      stores.set(id, store);
+    }
+    const held = store;
+    const member = { ...consumer };
+    held.attach(member);
+    let released = false;
+    return {
+      current: () => held.current(), confirmed: () => held.confirmed(),
+      subscribe: (listener) => held.subscribe(listener), force: () => held.force(), catchUp: () => held.catchUp(),
+      release: () => { if (!released) { released = true; held.detach(member); } },
+      remove: () => { released = true; return held.remove(); },
+    };
+  });
 }
+
 export function liveChatList(key: ChatListKey): ChatListView | null {
+  const mode = routerFamilyMode('room-list');
+  if (mode === 'pending') return null;
+  if (mode === 'router') {
+    const view = routerLaneSnapshot({ family: 'room-list', workspaceId: key.workspaceId });
+    return view.state === 'LIVE' && isChatListView(view.value) ? view.value : null;
+  }
   const store = stores.get(idOf(key));
   return store?.confirmed() ? store.current() : null;
 }
 export function chatListSnapshot(key: ChatListKey): ChatListView | null {
+  if (routerFamilyMode('room-list') !== 'legacy') return liveChatList(key);
   return mobileSurfaceCache.peek(addressOf(key), isChatListView);
 }
 export function refreshChatList(key: ChatListKey): void { stores.get(idOf(key))?.force(); }
@@ -279,6 +293,7 @@ function sameTranscriptContext(before: ChatListView | null, after: ChatListView 
 export type UseChatListOptions = { readonly visible?: () => boolean; readonly onError?: (reason: unknown) => void;
   readonly transcriptRoomId?: string };
 export function useChatList(key: ChatListKey | null, options: UseChatListOptions = {}): ChatListView | null {
+  const mode = useRouterFamily('room-list');
   const [value, setValue] = useState<ChatListView | null>(null);
   const painted = useRef<ChatListView | null>(null);
   const optionsRef = useRef(options);
@@ -302,6 +317,10 @@ export function useChatList(key: ChatListKey | null, options: UseChatListOptions
     handle.catchUp();
     return () => { stop(); handle.release(); };
   }, [id]);
+  // A retained sidebar cannot expose its prior private projection while a
+  // replacement connection has not negotiated and reauthorized its family.
+  if (mode === 'pending') return null;
+  if (mode === 'router') return key ? liveChatList(key) : null;
   // Other local interactions still read the newest canonical ordering and DTO.
   return options.transcriptRoomId && key ? liveChatList(key) ?? value : value;
 }

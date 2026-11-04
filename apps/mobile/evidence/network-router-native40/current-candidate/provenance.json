@@ -1,0 +1,101 @@
+{
+  "nativeApkSha256": "00eb69f56cce366a72e6b2631a473626e60050a69f12e7e2f5e2f35f927644be",
+  "historicalNativeSource": "62a2695724540f2a300bb2f06fd9994fd72ab713",
+  "nativeBinaryKind": "historical-source locally built APK; not exact Play-distributed binary",
+  "runtimeVersion": "40",
+  "repositoryHeadAtExport": "b1b8ea12591c684a80fb1e27c3c75fdc93ad1042",
+  "sourceFiles": {
+    "apps/mobile/sources/buzz/artifact.ts": {
+      "gitBlob": "3465f9ecafb25b08a32d3a7a1c192a40f588b5e7",
+      "sha256": "ab2ae21d09bc56b6511dfb6b45ecc6c84379d68a4d765591a5b82ce6638cf777",
+      "includedInSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-pdf.ts": {
+      "gitBlob": "66e6596bb9924e40f163e11ece31486a5cfa2370",
+      "sha256": "0a7c8f5c1a674e782f6455e57864ecba83ee27cc58386476fcc10bf9ca39e600",
+      "includedInSourceMap": true
+    },
+    "apps/mobile/sources/components/buzz/artifact-webview.ts": {
+      "gitBlob": "2fc55177c0cb451f8b878afed53a295533b938ad",
+      "sha256": "1761636f5c17fe82b8a59fb46f49e40d0d64e74f655f016adbf4a1756b57fe76",
+      "includedInSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-byte-store.ts": {
+      "gitBlob": "5afa9a42b255db2429f08faa6a9d1eed88e72334",
+      "sha256": "e5f2e46515c32aeccb0cc2bccc010e860d5fb5169afbc19119b4ec7dbeafb72f",
+      "includedInSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-byte-work.ts": {
+      "gitBlob": "276d803a74461b793482ec0e8a72edaec4baa3ba",
+      "sha256": "cc32838eadaf6f9da3a464b532b9a9e8cb90a766b3b054782f814f76a16da543",
+      "includedInSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-byte-digest.ts": {
+      "gitBlob": "9180481d5ade85e89a5360de29bc40359345966f",
+      "sha256": "6db6e31b5b60d0b9c3d5780abe9dd6b64d8ee2e20f4d3d611a73270161965dc0",
+      "includedInSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-byte-owner.ts": {
+      "gitBlob": "907f9f6a180929ab212e66ddeab402d437d7e63e",
+      "sha256": "1f5e4db066e96cd3109f81555fcff93c492036b6cade679d3b047ef9dfd3a143",
+      "includedInSourceMap": false
+    },
+    "apps/mobile/sources/buzz/host-scheduler.ts": {
+      "gitBlob": "f642f095cdb5a1d2cb770423231feb81f7427dc4",
+      "sha256": "86c7ee056788f259c91f748d812ff09e8f4c1effc2d4b11d7c66528cc30fe8c9",
+      "includedInSourceMap": true
+    },
+    "apps/mobile/sources/buzz/immutable-byte-cache.ts": {
+      "gitBlob": "21a86281cd6bce14efa2d014722d3fe9d44d9223",
+      "sha256": "14c807e62fefca9168cfc2aaedb1f2981e22d70ca0e6b64d0fea4357ba6bedca",
+      "includedInSourceMap": true
+    },
+    "apps/mobile/sources/buzz/byte-base64.ts": {
+      "gitBlob": "ac78259a3e2e9ce628bdbf310cef2562e1496868",
+      "sha256": "756dee8aadb6fc06d01be3706e2330ee24cc550f5c32e92291177b647b5444b1",
+      "includedInSourceMap": true
+    },
+    "apps/mobile/sources/components/buzz/ComputerSession.tsx": {
+      "gitBlob": "25deacbd57af9f92da4dfb378b9f7569b4cffaa4",
+      "sha256": "0a877f8436d96a83da28d2f2c05fb21ca619127ece5d31cff3253829b6c24e8d",
+      "includedInSourceMap": true
+    },
+    "apps/mobile/sources/buzz/warm-computer-session.ts": {
+      "gitBlob": "80c0082633cf8097990586a742ea172e56b441e2",
+      "sha256": "4e33174834f2d257f062b25c2bb21c94a8f656dcc516930883c9779923a36fd7",
+      "includedInSourceMap": true
+    },
+    "apps/mobile/sources/buzz/artifact-viewport.ts": {
+      "gitBlob": "30438fcff786065c65e89e9abefa6b81392a0c52",
+      "sha256": "d33fd0186e50a61acbafdeeab4539f539410dee445daa33e20e81f3c79e46604",
+      "includedInSourceMap": true
+    }
+  },
+  "candidateBundleSha256": "599662e6223a91e44fc27b2a7b13f222b0acc5e33377b74e395f3763ac3422ff",
+  "fixtureUpdateId": "3c286ab3-1de1-4547-b1f1-9b3c880f3429",
+  "nativeApkRepacked": false,
+  "accountCreated": false,
+  "otaDeliveryProven": false,
+  "launchReceipt": {
+    "runtimeVersion": "40",
+    "successfulLaunches": 7,
+    "failedLaunches": 0
+  },
+  "historicalRelease": {
+    "run": 40028613502,
+    "job": 120671174743,
+    "androidVersionCode": 138,
+    "artifact": 12533408754,
+    "retentionDays": 1,
+    "artifactLookup": "404 after retention; historical-source build authorized by firstmate036"
+  },
+  "fixtureSources": {
+    "byte-probe.tsx": "dedee85a8b179f6caad7711277c33ec6a7a941feff981e4e00d061f7b01dabe4",
+    "computer-probe.tsx": "8f76a1f27675e754f0bdf1a7c922fc399d97b7e7e1518bd5ccabb463ec0e8651",
+    "dock-adapter.tsx": "cf8330d460be54c12a5b7415a01d6e3019d4d0034aefca275270ff9300899e1d",
+    "entry.tsx": "04b877b0ec1cb59026a12224a8be78e037a58e6344b30a9113646006585cf436",
+    "metadata-adapter.ts": "06486c02c6946bcc4b26d238903799294b0c829737d63aafcd9d50f5116fe24c",
+    "modal-adapter.ts": "64627d392a3c3eafe27f75da49df5e17f17a867477999efae22cd7f370aaab79",
+    "theme-init.ts": "eab6080aaaeac599934e4a4089519996e83a38ff1e104569cd006315f9ac59ec"
+  }
+}

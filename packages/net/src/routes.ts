@@ -1,3 +1,5 @@
+import { routeCodecs, type WireOutput } from './route-codecs.js';
+import type { Codec } from './wire-codec.js';
 import type { PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 
@@ -94,6 +96,12 @@ const phoneOperations = {
   readIdentitySettings: true,
   readNeedsYou: true,
   readRoom: true,
+  readRoomTools: true,
+  readRouterSnapshot: true,
+  readMediaMetadata: true,
+  readAgentUsageCell: true,
+  readMediaLink: true,
+  readMediaPlayback: true,
   readScheduledWork: true,
   readStarPrompt: true,
   readTray: true,
@@ -111,6 +119,7 @@ const phoneOperations = {
   redeemInvite: true,
   refreshAgentModelCatalog: true,
   refreshAgentUsage: true,
+  refreshWallet:true,
   registerPushDevice: true,
   removeAgent: true,
   removeRoomMember: true,
@@ -282,6 +291,9 @@ const daemonOperations = {
   postAgentToolScheduleIndex: true,
   postAgentTurnReceipt: true,
   postAgentUsage: true,
+  readCommandActivation: true,
+  publishAgentUsageAccount: true,
+  attachAgentUsageAccount: true,
   postBackgroundToolCompletion: true,
   postComputerSession: true,
   postConnectionUsage: true,
@@ -356,13 +368,22 @@ type LegacyRoute<K extends RouteId> = Readonly<{
   id: K;
   operation: K extends `${string}.${infer N}` ? N : never;
   compatibility: 'legacy-only';
-  transport: K extends PhoneId ? 'main-socket' : 'machine-socket';
+  transport: K extends 'phone.uploadMedia' ? 'file-bytes' : K extends PhoneId ? 'main-socket' : 'machine-socket';
+  params: Codec<RouteInput<K>>;
+  result: Codec<WireOutput<K>>;
+  exception?: { id: 'file-bytes'; existingSite: string; reason: string };
   migration: 'M2-M4' | 'M5';
 }>;
 function legacyEntries(prefix: 'phone' | 'daemon', operations: object) {
   return Object.keys(operations).map(operation => [`${prefix}.${operation}`, Object.freeze({
     id: `${prefix}.${operation}`, operation, compatibility: 'legacy-only',
-    transport: prefix === 'phone' ? 'main-socket' : 'machine-socket',
+    ...routeCodecs(`${prefix}.${operation}` as RouteId),
+    transport: prefix === 'phone' && operation === 'uploadMedia' ? 'file-bytes' : prefix === 'phone' ? 'main-socket' : 'machine-socket',
+    ...(prefix === 'phone' && operation === 'uploadMedia' ? { exception: Object.freeze({
+      id: 'file-bytes',
+      existingSite: 'apps/mobile/sources/sync/transport/monolith-rig-transport.ts::session-fetch',
+      reason: 'Documented media upload exception: binary file bodies use HTTP /v1/phone/media, not the JSON socket.',
+    }) } : {}),
     migration: prefix === 'phone' ? 'M2-M4' : 'M5',
   })]);
 }

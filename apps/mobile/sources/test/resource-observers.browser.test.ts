@@ -1,3 +1,4 @@
+import { legacyRouterProofShims } from '../test-fixtures/router-proof';
 import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -63,7 +64,7 @@ describe('resource observers in the desktop web renderer', () => {
           output.workflowReads = globalThis.__workflowReads;
           output.workflowText = document.querySelector('[data-testid="corner-objective-line-workflow-copy"]')?.textContent;
           document.getElementById('result').textContent = JSON.stringify(output); }, 9000);`);
-      const shims = webProofShims(mobile);
+      const shims = { ...webProofShims(mobile), ...legacyRouterProofShims() };
       shims['react-native-unistyles'] = shims['react-native-unistyles'].replace('buzz: beelineThemes.obsidian', `buzz: beelineThemes.obsidian, colors: { groupped: { background: '#171717' }, divider: '#333', text: '#eee', textSecondary: '#aaa', surface: '#222' }`);
       const result = await runBrowserProof({ entry, mobile, width: 1200, budgetMs: 10000, shims: {
         ...shims,
@@ -134,7 +135,7 @@ describe('resource observers in the desktop web renderer', () => {
         contract: { slug: 'demo', description: 'Demo', initial: 'work', roles: {}, states: { work: { kind: 'terminal' } } }, history: [],
       };
       const result = await runBrowserProof({ entry, mobile, width: 1000, shims: {
-        ...webProofShims(mobile),
+        ...webProofShims(mobile), ...legacyRouterProofShims(),
         'expo-router': `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]);
           export const useLocalSearchParams = () => ({ roomId: 'corner', runId: 'run' }); export const router = { back() {}, replace() {}, push() {} };`,
         '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ publicKey: 'a' });`,
@@ -177,17 +178,17 @@ describe('resource observers in the desktop web renderer', () => {
         const push = () => globalThis.__listener({ monolithLive: { type: 'invalidate', roomId: 'corner', reason: 'message' } });
         setTimeout(() => globalThis.__listener({ monolithLive: { type: 'subscribed', roomId: 'corner' } }), 150);
         for (let i = 1; i <= 5; i++) setTimeout(push, i * 200);
-        setTimeout(() => { globalThis.__streakNotices = notices; globalThis.__streakText = errorLine()?.textContent; globalThis.__recover = true; push(); }, 3200);
+        setTimeout(() => { globalThis.__streakNotices = notices; globalThis.__streakText = errorLine()?.textContent; globalThis.__recover = true; globalThis.__listener({monolithLive:{type:'subscribed',roomId:'corner',resumed:false}}); }, 3200);
         setTimeout(() => { globalThis.__clearedAfterSuccess = !errorLine(); }, 3400);
         setTimeout(() => { globalThis.__recover = false; push(); }, 3500);
         setTimeout(() => { globalThis.__secondError = errorLine()?.textContent; globalThis.__noticesAfterSuccess = notices;
-          globalThis.__recover = true; push(); }, 4800);
+          globalThis.__recover = true; globalThis.__listener({monolithLive:{type:'subscribed',roomId:'corner',resumed:false}}); }, 4800);
         setTimeout(() => { document.getElementById('result').textContent = JSON.stringify({
           streakNotices: globalThis.__streakNotices, noticesAfterSuccess: globalThis.__noticesAfterSuccess,
           streakText: globalThis.__streakText, visibleError: globalThis.__secondError,
           clearedAfterSuccess: globalThis.__clearedAfterSuccess, retryRecovered: !errorLine(), reads: globalThis.__reads }); }, 5100);`);
       const result = await runBrowserProof({ entry, mobile, width: 1000, budgetMs: 5500, shims: {
-        ...webProofShims(mobile),
+        ...webProofShims(mobile), ...legacyRouterProofShims(),
         'expo-router': `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]);`,
         '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({ register: async (_, listener) => { globalThis.__listener = listener; return () => {}; } });`,
         '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async () => {

@@ -1,3 +1,6 @@
+import type { AgentUsageCell } from './helper-usage.js';
+import type { MediaMetadata, MediaLink } from './media-metadata.js';
+import type { RouterSnapshotInput, RouterSnapshot } from './router-protocol.js';
 import type { RepositoryOnboardingAction } from './repository-onboarding.js';
 import { PHONE_ROUTE_READ_OPERATIONS, type PhoneRouteOperationMap } from './phone-route-operations.js';
 import type { RoomSubscriptionListResult } from './subscriptions.js';
@@ -90,6 +93,12 @@ export type CornerMergeHold = {
 };
 
 export type PhoneOperationMap = PhoneRouteOperationMap & {
+  readAgentUsageCell: { input: { agentId: string }; output: AgentUsageCell };
+  readRoomTools: { input: import('./phone-types.js').RoomToolReference & { before?: string; messageId?: string }; output: import('./phone-types.js').RoomToolPage };
+  readRouterSnapshot: { input: RouterSnapshotInput; output: RouterSnapshot };
+  readMediaMetadata: { input: { objectId: string }; output: MediaMetadata };
+  readMediaLink: { input: { objectId: string }; output: MediaLink };
+  readMediaPlayback: { input: { objectId: string }; output: MediaLink };
   /** A short-lived browser viewer token, issued only to people who may steer its agent. */
   openComputerSession: { input: { id: string }; output: { access: string } };
   /** Explicitly return a live browser to its agent; closing a viewer is not a handback. */
@@ -275,6 +284,8 @@ export type PhoneOperationMap = PhoneRouteOperationMap & {
   /** One tap creates the wallet bound to the viewer's identity. */
   createWallet: { input: CreateWalletInput; output: WalletView };
   readWallet: { input: ReadWalletInput; output: WalletView };
+  /** Explicit owner refresh; provider reconciliation is never a snapshot. */
+  refreshWallet: {input:EmptyInput;output:WalletView};
   sendFromWallet: { input: SendFromWalletInput; output: WalletSendOutcome };
   grantWalletDelegation: { input: GrantWalletDelegationInput; output: GrantWalletDelegationResult };
   revokeWalletDelegation: { input: Record<string, never>; output: void };
@@ -290,6 +301,12 @@ export type PhoneOperationMap = PhoneRouteOperationMap & {
  */
 export const PHONE_READ_OPERATIONS = [
   ...PHONE_ROUTE_READ_OPERATIONS,
+  'readRoomTools',
+  'readRouterSnapshot',
+  'readAgentUsageCell',
+  'readMediaMetadata',
+  'readMediaLink',
+  'readMediaPlayback',
   'openComputerSession',
   'revealWebhookToken',
   'listRoomSubscriptions',

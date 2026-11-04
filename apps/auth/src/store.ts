@@ -647,6 +647,15 @@ export class AuthStore {
 
   async migrate(): Promise<void> {
     for (const migration of MIGRATIONS) await this.database.query(migration);
+    await this.database.query(`CREATE OR REPLACE FUNCTION beeline_auth_ticket_completion() RETURNS trigger AS $$
+      BEGIN
+        PERFORM pg_notify('beeline_command_completion',json_build_object(
+          'principal','auth','operation','ticket','commandId',NEW.ticket_hash)::text);
+        RETURN NULL;
+      END; $$ LANGUAGE plpgsql`);
+    await this.database.query('DROP TRIGGER IF EXISTS beeline_auth_ticket_completion ON beeline_bind_tickets');
+    await this.database.query(`CREATE TRIGGER beeline_auth_ticket_completion AFTER INSERT OR UPDATE ON beeline_bind_tickets
+      FOR EACH ROW EXECUTE FUNCTION beeline_auth_ticket_completion()`);
   }
 
   async createFlow(stateHash: string, flow: OidcFlow): Promise<void> {

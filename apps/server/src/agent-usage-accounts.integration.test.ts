@@ -79,7 +79,7 @@ beforeEach(async () => {
   );
   live = new LiveHub();
   const client = new PgliteListenClient(db);
-  listener = new PostgresLiveListener(db, live, () => client, 1);
+  listener = new PostgresLiveListener(db, live, () => client);
   void listener.run();
   await vi.waitFor(() => expect(client.listenerCount('notification')).toBe(1));
   daemon = new DaemonService(db, live);

@@ -1,3 +1,4 @@
+import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { expect, it } from 'vitest';
@@ -10,7 +11,7 @@ for (const system of [false, true])
         `disclosure edges and touch targets: ${width}px ${theme}, system=${system}`,
         async () => {
           const mobile = process.cwd();
-          const shims = webProofShims(mobile);
+          const shims = { ...webProofShims(mobile), ...legacyRouterProofShims() };
           shims['react-native-unistyles'] = shims['react-native-unistyles'].replace(
             'beelineThemes.obsidian',
             `beelineThemes.${theme}`,

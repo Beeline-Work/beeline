@@ -10,7 +10,6 @@ import {
   runAvatarGeneration,
   useAvatarGeneration,
 } from '@/buzz/avatar-generation';
-import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { SettingsRow } from './SettingsRow';
 
 export function SoulPortraitControls({
@@ -18,13 +17,11 @@ export function SoulPortraitControls({
   soul,
   disabled,
   generate,
-  refresh,
 }: {
   detail: AgentDetailView;
   soul: string;
   disabled: boolean;
   generate: (soul: string) => Promise<void>;
-  refresh: () => Promise<AgentDetailView>;
 }) {
   const agentId = detail.agent.identity.pubkey;
   const job = useAvatarGeneration(agentId);
@@ -34,8 +31,6 @@ export function SoulPortraitControls({
   const requestActive = useRef(false);
   const cancelWaitRef = useRef<(() => void) | null>(null);
   const judgeRef = useRef<((next: AgentDetailView) => void) | null>(null);
-  const refreshRef = useRef(refresh);
-  refreshRef.current = refresh;
   useEffect(
     () => () => {
       generation.current += 1;
@@ -51,23 +46,6 @@ export function SoulPortraitControls({
     if (!avatarGenerationShowsPending(job, detail)) judgeRef.current?.(detail);
   }, [agentId, detail, job]);
 
-  useEffect(() => {
-    if (!detail.avatarGenerationPending || job.pending) return;
-    let disposed = false;
-    let stop: (() => void) | undefined;
-    void sharedLiveConnection().register([], (event) => {
-      if (disposed || !('monolithLive' in event)) return;
-      const live = event.monolithLive;
-      if ((live.type === 'resource-change' && live.resource === 'agent' &&
-          live.resourceId === agentId) ||
-          (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect'))
-        void refreshRef.current().catch(() => undefined);
-    }).then((release) => {
-      if (disposed) release();
-      else stop = release;
-    });
-    return () => { disposed = true; stop?.(); };
-  }, [agentId, detail.avatarGenerationPending, job.pending]);
 
   const draw = async () => {
     if (pending || requestActive.current || disabled || !soul.trim()) return;
@@ -82,13 +60,8 @@ export function SoulPortraitControls({
         );
         if (!confirmed || attempt !== generation.current) return;
         const previous = detail.avatarGenerationId;
-        let stop: (() => void) | undefined;
         let settle: (() => void) | undefined;
         let fail: ((reason: Error) => void) | undefined;
-        let reading = false;
-        let queued = false;
-        let accepted = false;
-        let earlySignal = false;
         const completed = new Promise<void>((resolve, reject) => {
           settle = resolve;
           fail = reject;
@@ -100,34 +73,14 @@ export function SoulPortraitControls({
             fail?.(new Error('The avatar job ended without saving a new avatar. Check the agent’s DM and retry.'));
         };
         judgeRef.current = judge;
-        const check = () => {
-          if (attempt !== generation.current) return;
-          if (reading) { queued = true; return; }
-          reading = true;
-          void refreshRef.current().then(judge).catch(() => undefined).finally(() => {
-            reading = false;
-            if (queued) { queued = false; check(); }
-          });
-        };
+        // The parent owns the shared Agent detail lane. Only its next server
+        // DTO can complete this wait; the portrait never starts another read.
         try {
-          stop = await sharedLiveConnection().register([], (event) => {
-            if (!('monolithLive' in event) || attempt !== generation.current) return;
-            const live = event.monolithLive;
-            if (!((live.type === 'resource-change' && live.resource === 'agent' &&
-                live.resourceId === agentId) ||
-                (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')))
-              return;
-            if (!accepted) earlySignal = true;
-            else check();
-          });
           await generate(soul.trim());
-          accepted = true;
-          if (earlySignal) check();
           await completed;
         } finally {
           cancelWaitRef.current = null;
           judgeRef.current = null;
-          stop?.();
         }
       });
     } finally {

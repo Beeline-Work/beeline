@@ -203,3 +203,21 @@ it.each([
 ])('allows dynamic data and unrelated writer implementation: %s', (source) => {
   assertCatalogUsage(scanSystemMessageWording(fixture(source)));
 });
+
+
+it('selects actual conditional phrase origins without importing an unrelated control reason', () => {
+  const sources = fixture(
+    `const metadata={ack:{accepted:false,reason:'stale'}};
+     const outcome=ready?{queued:true,agentId:'transport-only'}:{queued:false,reason:systemMessage('notice')};
+     line(db,{verb:systemMessage('notice'),consequence:outcome.reason});`,
+  );
+  assertCatalogUsage(scanSystemMessageWording(sources));
+});
+
+it.each([
+  `const outcome=ready?{queued:true}:{queued:false,reason:'new inline failure'};line(db,{verb:systemMessage('notice'),consequence:outcome.reason});`,
+  `const outcome={reason:'new inline failure'};const alias=outcome;line(db,{verb:systemMessage('notice'),consequence:alias.reason});`,
+  `function outcome(){return {reason:'new inline failure'}}line(db,{verb:systemMessage('notice'),consequence:outcome().reason});`,
+])('still rejects fixed prose selected from the actual reason field: %s', source => {
+  expect(()=>assertCatalogUsage(scanSystemMessageWording(fixture(source)))).toThrow(/Add\/use a key/);
+});

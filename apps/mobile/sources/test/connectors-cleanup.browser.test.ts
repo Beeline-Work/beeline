@@ -1,3 +1,4 @@
+import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
 import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { it, expect } from 'vitest';
@@ -17,7 +18,7 @@ it.each(['bone', 'obsidian'])('CONNECTORS-1: %s removes a disconnected row despi
         await wait(()=>!find('ai-client-grok'));globalThis.releaseStale();await new Promise(r=>setTimeout(r,300));
         document.getElementById('result').textContent=JSON.stringify({before,attention,after:document.body.innerText,removed:!find('ai-client-grok')});
       }run().catch(e=>document.getElementById('result').textContent=JSON.stringify({error:String(e)}));`);
-    const shims=webProofShims(mobile);
+    const shims={...webProofShims(mobile), ...legacyRouterProofShims()};
     shims['react-native-unistyles']=shims['react-native-unistyles'].replace('beelineThemes.obsidian','beelineThemes.'+palette);
     Object.assign(shims,{
       '@expo/vector-icons':'export const Ionicons=()=>null;',

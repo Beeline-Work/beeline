@@ -119,15 +119,9 @@ export class ObjectService {
     );
     if (!keys.rows.length) return;
     const storage = this.#requireStorage();
-    const remove = async (key: string) => {
-      for (let attempt = 0; attempt < 3; attempt++) {
-        try { await storage.deleteObject(key); return; }
-        catch (error) { if (attempt === 2) throw error; }
-      }
-    };
     for (let offset = 0; offset < keys.rows.length; offset += 8) {
       const results = await Promise.allSettled(
-        keys.rows.slice(offset, offset + 8).map((row) => remove(row.key)),
+        keys.rows.slice(offset, offset + 8).map((row) => storage.deleteObject(row.key)),
       );
       const failed = results.find((result) => result.status === 'rejected');
       if (failed?.status === 'rejected') throw failed.reason;

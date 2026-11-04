@@ -1,3 +1,4 @@
+import { subscribeCommandCompletion } from './command-completion.js';
 import { observeFunnelAuth } from './signin-funnel.js';
 import { recordSigninAttempt } from './signin-attempts.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -53,6 +54,7 @@ export async function createMonolithAuth(
   const pairing = new PhoneService(database, publicOrigin);
   const app = buildAuthServer({
     store,
+    subscribeCompletion: (ticketHash, wake) => subscribeCommandCompletion({principal:'auth',operation:'ticket',commandId:ticketHash},wake),
     onFunnelAuth: (input) => observeFunnelAuth(database, input),
     onSigninAttempt: (input) => recordSigninAttempt(database, input),
     completeRepositoryInstallation: options.completeRepositoryInstallation,

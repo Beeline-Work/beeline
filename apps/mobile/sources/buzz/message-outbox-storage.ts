@@ -20,7 +20,7 @@ function relayScope(relayOrigin: string): string {
 
 const appOutboxes = new Map<string, MessageOutbox>();
 const roomHandles = new Map<string, ReturnType<typeof roomOutboxHandle>>();
-let delivery: { send(event: NostrEvent): Promise<AgentMessageWriteResult>; rejection(error: unknown): string | undefined };
+let delivery: { send(event: NostrEvent, cause?: 'send' | 'reconnect'): Promise<AgentMessageWriteResult>; rejection(error: unknown): string | undefined; reconcile?(ids:ReadonlySet<string>):Promise<void> };
 export function configureMessageOutboxDelivery(next: typeof delivery): void { delivery = next; }
 
 export function getMessageOutbox(relayOrigin: string, identity: Pick<Identity, 'publicKey'>): MessageOutbox {
@@ -44,6 +44,8 @@ export function getMessageOutbox(relayOrigin: string, identity: Pick<Identity, '
       for (const old of mutations.getAllKeys()) if (old.startsWith(prefix) && old !== key) mutations.delete(old);
     },
     send: event => delivery.send(event),
+    sendWithCause: (event, cause) => delivery.send(event, cause),
+    reconcile: ids => delivery.reconcile?.(ids) ?? Promise.resolve(),
     rejection: error => delivery.rejection(error),
   });
   appOutboxes.set(key, owner);

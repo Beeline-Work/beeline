@@ -1,3 +1,4 @@
+import { checkNativeUpdate, reloadNativeUpdate } from '@/hooks/useUpdates';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { reportClientError } from '@/buzz/client-error-report';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
@@ -272,16 +273,14 @@ export default function BuzzIdentitySettings() {
     manualUpdateRunning.current = true;
     dispatchManualUpdate({ type: 'start-check' });
     try {
-      const update = await Updates.checkForUpdateAsync();
-      if (!update.isAvailable) {
-        dispatchManualUpdate({ type: 'latest' });
-        return;
+      const update = await checkNativeUpdate(stage => dispatchManualUpdate({
+        type: stage === 'available' ? 'update-available' : 'update-downloaded',
+      }));
+      if (!update.available) {
+        if (update.downloadFailed) throw new Error('download failed');
+        dispatchManualUpdate({ type: 'latest' }); return;
       }
-      dispatchManualUpdate({ type: 'update-available' });
-      const fetched = await Updates.fetchUpdateAsync();
-      if (!fetched.isNew && !fetched.isRollBackToEmbedded) throw new Error('download failed');
-      dispatchManualUpdate({ type: 'update-downloaded' });
-      await Updates.reloadAsync();
+      await reloadNativeUpdate();
     } catch {
       dispatchManualUpdate({ type: 'failed' });
     } finally {

@@ -39,7 +39,7 @@ soul. Existing free agents keep their names.
   The legacy hello teaches Room replies, corners and connectors, then asks what the person is working on. It contains no repository card; the agent offers one only for coding or GitHub-connection intent.
   The hello tags the owner through the normal mention/push path and uses the
   agent's actual handle. It creates no model turn or Machine. The first real
-  queued work provisions the Machine through `FreeAgentService.kick` or the sweep.
+  queued work provisions the Machine through `FreeAgentService.kick` or committed deadline recovery.
   A creator owns at most
   `BEELINE_FREE_AGENT_MAX_PER_OWNER` (default 3) free agents.
 - **First boot.** The image builds the thin Beeline helper and its MCP entrypoint
@@ -59,22 +59,24 @@ soul. Existing free agents keep their names.
   stops an old fallback helper after five minutes plus ten seconds; installer
   attempts are bounded to two minutes. Establishing the runtime cancels both
   startup watchdogs.
-- **Sleep.** The helper reports idleness at `POST /v1/free-agents/sleep` 60 s after the
+- **Sleep.** The helper admits one idle episode at `POST /v1/free-agents/sleep` 60 s after the
   last turn ends. The server refuses while a wake is pending or a connector
   install/sign-in is active. The idle reaper respects the same connector work;
-  completion, failure or disconnect releases that protection. Otherwise it records
+  completion, failure or disconnect releases that protection. A refused or uncertain helper request stays parked until actual activity
+  or resume starts a new idle episode. Otherwise the server records
   `sleeping` and asks Fly to suspend the Machine. If suspend fails, it stops the
   Machine. A helper behind the announced release asks for `refresh` and gets a stop,
   so its next boot installs the new release. The helper never updates in place.
-- **Wake.** Before starting an existing Machine, the server compares its image
+- **Wake.** The Fly adapter submits one start request per admitted action. HTTP 412 and lost replies return to the owner without a timer or resubmission (`fly-machines.test.ts`). Before starting an existing Machine, the server compares its image
   with the configured published digest and updates it while keeping its complete
   configuration and persistent rootfs. Cold boot reconciles the broker marker
   directory anchor after an image replacement, preserving its account binding.
   Every committed `agent_commands` INSERT for a free agent calls
   `FreeAgentService.wake`. A committed connector-assignment notification also
   wakes a free agent with active connector installation or sign-in work, through
-  the same budget and start-limit fences. The leader sweep retries both kinds of
-  work every 15 s. Wakes are never
+  the same budget and start-limit fences. Committed family sources and stored command, turn-cap, idle and retention
+  deadlines admit leader recovery; there is no 15-second sweep. A failed
+  provider observation parks until an actual input or recovery boundary. Wakes are never
   suppressed for an offline Machine (`agentMachineOfflineSql` exempts free agents). A
   released connection keeps presence `online`, `held`, `asleep`, so mentions never get
   "its helper is offline". On resume the helper sees the wall clock jump past its
@@ -92,7 +94,7 @@ soul. Existing free agents keep their names.
   Workspace owner/admin. Removal from any Workspace retires the free-agent runtime,
   matching the existing global daemon retirement. Its transaction keeps a permanent `removed_at` tombstone,
   revokes model/bootstrap and daemon access, and records `removed`. After commit,
-  cleanup deletes the Fly Machine without delaying the removal. The leader retries
+  cleanup deletes the Fly Machine without delaying the removal. A later committed source or real recovery can revisit
   failed deletion, including a Machine created by provisioning already in flight.
   Removed agents cannot bootstrap, wake, reap back into service, or be replaced by
   `--add-free-agent` in that Workspace. Beebee's server-posted first hello ends by explaining how
@@ -170,21 +172,17 @@ restart and needs no image rebuild.
 OpenRouter holds each running call's prompt plus `max_tokens` cost against an
 account in-flight budget. A call that does not fit gets HTTP 402 with
 `error.metadata.reason` `in_flight_budget_exhausted` and a `Retry-After`. The
-proxy waits for `Retry-After` (5 s when absent) and tries again, for up to 3
-minutes from the first such refusal and never past the turn cap. When the
-wait would not end inside that time, the proxy does not wait: the 402 passes
-through and the reservation is refunded. The call's
-reservation stays in place and settles once, whatever the number of attempts.
-Retries happen before any byte reaches the Machine. Other 402 reasons and other
-errors pass through and are refunded.
+proxy returns that first refusal and its `Retry-After` metadata immediately,
+refunds the reservation once, and releases its call slot. It never waits and
+resubmits. A separately admitted model call can obtain a fresh result. Other
+402 reasons and other errors retain their existing refusal/refund behavior.
 
 Each server process runs at most `BEELINE_FREE_AGENT_MAX_CONCURRENT_CALLS`
 (default 8) upstream calls at once, across all free agents. Further calls wait
-in arrival order. A call keeps its slot while it waits out a `Retry-After`.
-Time in this queue does not count toward the 3-minute retry window. A queued
-call gives up when its caller disconnects or its turn reaches the 15-minute
-cap, refunds its reservation and gets HTTP 503. The limit is per process:
-production runs two machines, so the real ceiling is twice the setting.
+in arrival order. A queued call gives up when its caller disconnects or its
+turn reaches the 15-minute cap, refunds its reservation and gets HTTP 503.
+The limit is per process: production runs two machines, so the real ceiling
+is twice the setting.
 
 Helper model calls require a claimed `input`/`resume` command with a live lease and a
 claim younger than the hard turn cap. Pending and completed commands do not
@@ -241,7 +239,8 @@ local command intake across prompt retries. Activity does not extend it. The
 helper cancels the prompt, publishes a short note inviting another message, and
 discards the session. The leader reaper cancels overdue claimed commands after
 the cap plus 60 seconds of grace and stops their Machine even if it is still
-reporting activity. The existing idle, reaper and deletion intervals are unchanged.
+reporting activity. Idle, hard-turn and deletion durations are unchanged; the leader arms stored
+record deadlines rather than recurring discovery intervals.
 
 Pi shell commands leave a delivery window before that cap. The generated
 `pi-turn-budget.ts` extension reads the current command intake time for each

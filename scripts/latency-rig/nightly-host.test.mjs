@@ -197,7 +197,8 @@ test('one-shot CLI without a serial uses the adb before/after diff', async (t) =
 test('install once per changed lock hash, irrespective of head; failed installs remain retryable', async (t) => {
   const f = await fixture(t);
   const installs = async () => (await f.commands()).filter((row) => row.command === 'npm');
-  assert.equal(f.run().status, 0);
+  const initialRun = f.run();
+  assert.equal(initialRun.status, 0, initialRun.stderr);
   const initial = await readFile(join(f.state, 'dependencies-head'), 'utf8');
   assert.equal((await installs()).length, 2);
   assert.equal(f.run({ TEST_HEAD: 'b'.repeat(40) }).status, 0);

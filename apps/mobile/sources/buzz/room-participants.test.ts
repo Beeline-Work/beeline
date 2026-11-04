@@ -40,13 +40,13 @@ describe('Room participant presentation', () => {
     expect(formatRoomParticipantList(['A', 'B', 'C', 'D', 'E'])).toBe('A, B, C, D, E');
   });
 
-  it('reads models on Room entry and keeps the cached roster across later reads', () => {
+  it('waits for an actually visible roster surface even when the Room has no cached roster', () => {
     const firstRead = {
       activeWorkspaceId: 'workspace',
       cachedWorkspaceId: null,
       rosterSurfaceVisible: false,
     };
-    expect(shouldReadWorkspaceRoster(firstRead)).toBe(true);
+    expect(shouldReadWorkspaceRoster(firstRead)).toBe(false);
     expect(shouldReadWorkspaceRoster({ ...firstRead, cachedWorkspaceId: 'workspace' })).toBe(
       false,
     );

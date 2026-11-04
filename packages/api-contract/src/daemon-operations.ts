@@ -1,3 +1,6 @@
+import type { CommandActivationInput, CommandActivationSnapshot } from './helper-activation.js';
+import type { OwnedModelCredential } from './helper-model.js';
+import type { UsageAccountPublicationResult, UsageAccountReference, UsageWriteSource } from './helper-usage.js';
 import type { TurnReplay } from './turn-replay.js';
 import type { SquireApprovalDetails } from './approval-copy.js';
 import type { RepositoryOnboardingCard } from './repository-onboarding.js';
@@ -317,7 +320,7 @@ export type DaemonOperationMap = {
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
   >;
-  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly recoveryContext?: string; readonly coalescedContext?: string; readonly source?: RoomInboxResult['items'][number]; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
+  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly modelCredential?: OwnedModelCredential; readonly recoveryContext?: string; readonly coalescedContext?: string; readonly source?: RoomInboxResult['items'][number]; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
   acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
@@ -555,7 +558,10 @@ export type DaemonOperationMap = {
   postAgentToolMandate: Operation<PostAgentToolMandateInput, WriteResult>;
   getAgentAvatar: Operation<RoomInput, { readonly drawing: unknown; readonly soul: unknown }>;
   postAgentAvatar: Operation<RoomInput & { readonly drawing: unknown }, WriteResult>;
-  postAgentUsage: Operation<AgentInput & { readonly usage: AgentUsage }, WriteResult>;
+  postAgentUsage: Operation<AgentInput & { readonly usage: AgentUsage; readonly usageSource?:UsageWriteSource }, WriteResult>;
+  readCommandActivation: Operation<CommandActivationInput, CommandActivationSnapshot>;
+  publishAgentUsageAccount: Operation<AgentInput & { readonly usage: AgentUsage; readonly revision: string; readonly ownerId: string; readonly source: { readonly connectionId: string; readonly epoch: number } }, WriteResult & UsageAccountPublicationResult>;
+  attachAgentUsageAccount: Operation<AgentInput & UsageAccountReference & { readonly source: { readonly connectionId: string; readonly epoch: number } }, WriteResult>;
   getAgentUsage: Operation<AgentInput, AgentUsage | null>;
   /** The helper's answer to one owner-requested usage refresh. */
   answerUsageRefresh: Operation<
@@ -1302,6 +1308,9 @@ export type RetractLiveOutputInput = TurnOutputAuthority &
     readonly kind: 'draft' | 'thought';
   };
 export type PostTurnReceiptInput = AgentRoomInput & {
+  /** Current owner ends model-dependent work without claiming provider failure
+   * or delivery. An unreadable private journal ends only owner authority, not provider outcome. */
+  readonly modelOwnerEnd?: Readonly<{ requestId: string } | { journalUnavailable: true }>;
   readonly trace?: TurnReplay;
   readonly requestId: string;
   /**

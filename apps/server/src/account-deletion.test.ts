@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
-import { migrate } from './database.js';
+import { migrate, type SqlDatabase } from './database.js';
 import { claimAgentCommand } from './agent-command.js';
 import { setCornerHold } from './corner-holds.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
@@ -604,17 +604,50 @@ describe('deleteAccount', () => {
     await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 0);
   });
 
+  it('refuses a newly expanded archival scope before erasing the account instead of taking lifecycle under authority', async () => {
+    const addedCorner='66666666-6666-4666-8666-666666666666';
+    const transaction=database.transaction.bind(database);
+    let inserted=false;
+    // Inject a real source change after the discovery read. This isolated
+    // transaction fixture tests scope expansion/rollback; cross-pool lock
+    // ordering is covered separately by the real PostgreSQL ownership proof.
+    const wrap=(tx:SqlDatabase):SqlDatabase=>({transaction:work=>tx.transaction(inner=>work(wrap(inner))),query:async(sql,args)=>{
+      const result=await tx.query(sql,args);
+      if(!inserted&&sql.includes(cornerOwnerSql('c.id'))&&sql.includes('ORDER BY c.id')&&!sql.includes('FOR KEY SHARE')){
+        inserted=true;
+        await tx.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'New synthetic corner')`,[addedCorner,WORKSPACE,ROOM]);
+        await insertCornerFacts(tx,{cornerId:addedCorner,ownerAgentId:AGENT,workerAgentId:AGENT,commissionedBy:OWNER});
+      }
+      return result;
+    }});
+    const observe=vi.spyOn(database,'transaction').mockImplementation(work=>transaction(tx=>work(wrap(tx))));
+    try{
+      await expect(phone.execute('deleteAccount',{},OWNER)).rejects.toThrow('Account changed while deletion was being prepared');
+      expect(inserted).toBe(true);
+      await expectRowCount(`SELECT 1 FROM identities WHERE id=ANY($1)`,[[OWNER,AGENT]],2);
+      await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NULL`,[CORNER],1);
+      await expectRowCount(`SELECT 1 FROM rooms WHERE id=$1`,[addedCorner],0);
+      expect(storage.blobs.size).toBeGreaterThan(0);
+    }finally{observe.mockRestore();}
+  });
+
   it('keeps owned object rows and the account retryable when storage deletion fails', async () => {
     const key = `media/${OWNER}/${'n'.repeat(64)}`;
     const original = storage.deleteObject.bind(storage);
     const deleting = vi.spyOn(storage, 'deleteObject')
-      .mockRejectedValueOnce(new Error('storage unavailable'))
-      .mockRejectedValueOnce(new Error('storage unavailable'))
-      .mockRejectedValueOnce(new Error('storage unavailable'));
+      .mockImplementation(async candidate => {
+        if (candidate === key) throw new Error('storage unavailable');
+        await original(candidate);
+      });
     await expect(phone.execute('deleteAccount', {}, OWNER)).rejects.toThrow('storage unavailable');
     await expectRowCount(`SELECT 1 FROM identities WHERE id=$1`, [OWNER], 1);
     await expectRowCount(`SELECT 1 FROM objects WHERE key=$1`, [key], 1);
     expect(storage.blobs.has(key)).toBe(true);
+    expect(deleting.mock.calls.filter(([candidate]) => candidate === key)).toHaveLength(1);
+    const attempts = deleting.mock.calls.length;
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try { await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000); } finally { vi.useRealTimers(); }
+    expect(deleting).toHaveBeenCalledTimes(attempts);
     deleting.mockImplementation(original);
     await phone.execute('deleteAccount', {}, OWNER);
     expect(storage.blobs.has(key)).toBe(false);

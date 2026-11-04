@@ -1,3 +1,12 @@
+import { readRoomTools } from './room-tool-projection.js';
+import { dispatchTrayDecisionCommand, isTrayDecisionCommand } from './tray-decision-command.js';
+import { helperUsageEnabled, readAgentUsageCell } from './helper-usage.js';
+import { readMediaMetadata } from './phone-media.js';
+import { runnableOrigin } from './runnable-artifact.js';
+import { captureCommandCoverage } from './router-command-coverage.js';
+import { ROUTER_FAMILIES, type RouterFamily } from '@beeline/api-contract/router-protocol';
+import { parseRouterCommandIdentity, type RouterCommandIdentity } from '@beeline/api-contract/router-command';
+import { RouterCommandLedger, CommandDigestConflict, InvalidCommandArguments } from './router-command-ledger.js';
 import { randomUUID } from 'node:crypto';
 import {
   MESSAGE_SEARCH_QUERY_MAX_BYTES, PHONE_READ_OPERATIONS, messageSearchTerms,
@@ -22,6 +31,16 @@ const quiet = new Set<string>([
   'voiceJoin', 'voiceLeave', 'voiceIdle', 'voiceResume',
   'saveAgentVoice', 'previewAgentVoice',
 ]);
+/** Closed opt-in list: reviewed DB-only paths; provider ceremonies have no
+ * generic retry adapter. Keep legacy hints until projection closure is proven. */
+export const ATOMIC_ROUTER_COMMANDS = new Set([
+  'markRead', 'markUnread', 'reactToMessage', 'deleteRoomMessage',
+  'setMessageBookmark', 'clearMessageBookmarks', 'markNeedsYouSeen',
+  'clearNeedsYou', 'clearNeedsYouSection',
+  'deleteRoomSchedule',
+]);
+const preparedMessageCommands = new Set(['sendRoomMessage', 'sendRoomReply']);
+const scheduledStopCommands=new Set(['deleteRoomSchedule','deleteRoomSubscription']);
 const clientErrorLimit = new IdentityRateLimit('client-error', 12);
 function refuse(status: number, error: string): never {
   throw new PhoneOperationError(status, { error });
@@ -60,12 +79,40 @@ export function createPhoneOperationDispatcher(
   options: ServerOptions,
   readLimits: PhoneReadLimits,
   legacyOperation: PhoneService['execute'],
-  errorStatus: (error: unknown) => number,
+  errorStatus: (error: unknown) => number = error => error instanceof PhoneOperationError ? error.status : 500,
 ) {
+  const ledger = new RouterCommandLedger(options.database);
   const execute = async (name: string, input: Record<string, unknown>, viewerId: string,
     invokeLegacy?: () => Promise<unknown>, familyId?: string): Promise<unknown> => {
     const phone = options.phone;
     switch (name) {
+      case 'readAgentUsageCell': {
+        if(!helperUsageEnabled())refuse(409,'usage_cell_unavailable');
+        const cell=await readAgentUsageCell(options.database,required(input,'agentId'),viewerId);
+        if(!cell.allowed)refuse(403,'usage_cell_authority');return cell;
+      }
+      case 'readMediaMetadata': return readMediaMetadata(options.database,uuid(input,'objectId'),viewerId);
+      case 'readMediaLink':
+      case 'readMediaPlayback': {
+        const objectId=uuid(input,'objectId');
+        if(!options.objectService)refuse(503,'object_storage_unavailable');
+        await readMediaMetadata(options.database,objectId,viewerId);
+        if(name==='readMediaLink')return found(await options.objectService.mediaLink(objectId));
+        const origin=runnableOrigin();if(!origin)refuse(503,'game_host_unavailable');
+        return found(await options.objectService.runnableLink(objectId,origin));
+      }
+      case 'readRouterSnapshot': {
+        if (!(ROUTER_FAMILIES as readonly unknown[]).includes(input.family)) refuse(400,'invalid_router_family');
+        const family = input.family as RouterFamily;
+        const roomId = input.roomId === undefined ? undefined : uuid(input,'roomId');
+        const roomScoped=family==='room-head'||family==='room-scheduled-work'||family==='room-workflows';
+        if (roomScoped !== Boolean(roomId)) refuse(400,'invalid_router_scope');
+        if(family==='agent-profile')return phone.readRouterSnapshot({family,workspaceId:uuid(input,'workspaceId'),agentId:required(input,'agentId')},viewerId);
+        if(family==='owner-workbench'||family==='owner-wallet')return phone.readRouterSnapshot({family},viewerId);
+        return phone.readRouterSnapshot(roomScoped
+          ? {family,roomId:roomId!,...(input.workspaceId ? {workspaceId:uuid(input,'workspaceId')} : {})}
+          : {family,workspaceId:uuid(input,'workspaceId')},viewerId);
+      }
       case 'readWorkspaces': return phone.readWorkspaces(viewerId);
       case 'readWorkspace': return found(await phone.readWorkspace(uuid(input, 'workspaceId'), viewerId));
       case 'readWorkspaceMembers': {
@@ -93,6 +140,12 @@ export function createPhoneOperationDispatcher(
           if (error instanceof MessageSearchTooBroadError) refuse(422, 'query_too_broad');
           throw error;
         }
+      }
+      case 'readRoomTools': {
+        if(!readLimits.history.admit(viewerId))refuse(429,'too_many_requests');
+        const anchor=required(input,'anchor'),before=optional(input,'before'),target=optional(input,'messageId');
+        if([anchor,before,target].some(value=>value!==undefined&&(!value.length||value.length>128)))refuse(400,'invalid_tool_target');
+        return readRoomTools(options.database,{roomId:uuid(input,'roomId'),anchor,...(before?{before}:{}),...(target?{messageId:target}:{})},viewerId);
       }
       case 'readRoom': return found(await phone.readRoom(uuid(input, 'roomId'), viewerId));
       case 'readHistory':
@@ -205,14 +258,60 @@ export function createPhoneOperationDispatcher(
   };
 
   const dispatch = async (name: string, input: Record<string, unknown>, viewerId: string, signal?: AbortSignal,
-    invokeLegacy?: () => Promise<unknown>, familyId?: string): Promise<unknown> => {
+    invokeLegacy?: () => Promise<unknown>, familyId?: string, command?: RouterCommandIdentity): Promise<unknown> => {
     if (!viewerId) refuse(401, 'phone_token_required');
     if (!PHONE_OPERATION_NAMES.has(name as never)) refuse(404, 'unknown_phone_operation');
     if (!input || typeof input !== 'object' || Array.isArray(input)) refuse(400, 'invalid_args');
     signal?.throwIfAborted();
     const startedAt = Date.now();
     // Let admitted writes settle atomically. Never race a transaction against socket closure.
-    const result = await execute(name, input, viewerId, invokeLegacy, familyId);
+    let identity: RouterCommandIdentity | undefined;
+    if (command !== undefined) {
+      try { identity = parseRouterCommandIdentity(command); }
+      catch { refuse(400, 'invalid_command_identity'); }
+      if (!ATOMIC_ROUTER_COMMANDS.has(name) && !preparedMessageCommands.has(name)&&!scheduledStopCommands.has(name)&&!isTrayDecisionCommand(name))
+        refuse(400, 'command_operation_not_supported');
+    }
+    if (identity && preparedMessageCommands.has(name) && input.messageId !== identity.id)
+      refuse(400, 'command_message_identity_mismatch');
+    if(identity&&scheduledStopCommands.has(name)){
+      uuid(input,'roomId');
+      if(name==='deleteRoomSchedule')uuid(input,'scheduleId');else if(required(input,'subscriptionId').length>512)refuse(400,'invalid_subscriptionId');
+    }
+    let result: unknown;
+    let receipt;
+    let performed = false;
+    const effect = () => { performed = true;
+      if(identity&&scheduledStopCommands.has(name))return options.phone.stopScheduledWorkCommand(name as 'deleteRoomSchedule'|'deleteRoomSubscription',
+        input as {roomId:string;scheduleId?:string;subscriptionId?:string},viewerId);
+      return execute(name, input, viewerId, invokeLegacy, familyId);
+    };
+    try {
+      if (identity) {
+        if(isTrayDecisionCommand(name))return await dispatchTrayDecisionCommand(ledger,options.phone,options.live,name,input,viewerId,identity);
+        const key = { principal: viewerId, operation: name, commandId: identity.id };
+        receipt = ATOMIC_ROUTER_COMMANDS.has(name)
+          ? await ledger.atomic(key, input, tx => options.phone.withCommandTransaction(tx, effect),
+              scheduledStopCommands.has(name)?undefined:tx => captureCommandCoverage(tx, input, viewerId))
+          : await ledger.external(key, input, async () => {
+              const sent = await effect() as { messageId?: unknown }|undefined;
+              // External/post-commit paths carry the stable effect identity only.
+              // Their earlier optional DTO cannot be certified at a later cut.
+              return scheduledStopCommands.has(name)?null:{ messageId: sent?.messageId };
+            }, scheduledStopCommands.has(name)?undefined:tx => captureCommandCoverage(tx, input, viewerId));
+        result = receipt.result;
+        if (receipt.state !== 'committed') {
+          if (command) return receipt;
+          refuse(409, receipt.state === 'result-expired' ? 'command_result_expired' : 'command_outcome_unknown');
+        }
+      } else result = await execute(name, input, viewerId, invokeLegacy, familyId);
+    } catch (error) {
+      if (error instanceof CommandDigestConflict) refuse(409, 'command_identity_conflict');
+      if (error instanceof InvalidCommandArguments) refuse(400, 'invalid_command_arguments');
+      throw error;
+    }
+    // Replaying a receipt must not replay post-commit hooks or notifications.
+    if (command && !performed) return receipt;
     if ((name === 'sendRoomMessage' || name === 'sendRoomReply') && typeof input.roomId === 'string')
       void options.github?.onWebhook?.('beeline:human-message', { cornerId: input.roomId })
         .catch(error => console.error('[server] human-triggered merge recovery failed:', error));
@@ -220,14 +319,16 @@ export function createPhoneOperationDispatcher(
       : result && typeof (result as { roomId?: unknown }).roomId === 'string' ? (result as { roomId: string }).roomId : undefined;
     if (roomId && !quiet.has(name)) {
       const messageId = result && typeof (result as { messageId?: unknown }).messageId === 'string'
-        ? (result as { messageId: string }).messageId : undefined;
+        ? (result as { messageId: string }).messageId
+        : (name === 'reactToMessage' || name === 'deleteRoomMessage') && result && typeof (result as { id?: unknown }).id === 'string'
+          ? (result as { id: string }).id : undefined;
       options.live.publish({ type: 'invalidate', roomId, reason: 'phone-write',
         ...(messageId ? { messageId } : {}),
         ...(messageId && (name === 'sendRoomMessage' || name === 'sendRoomReply')
           ? { trace: { id: randomUUID(), databaseAt: Date.now(), emittedAt: Date.now(), startedAt } } : {}),
       });
     }
-    return result;
+    return command ? receipt : result;
   };
   return async (...args: Parameters<typeof dispatch>): Promise<unknown> => {
     try {

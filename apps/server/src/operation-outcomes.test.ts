@@ -177,7 +177,7 @@ it('C3 uses an empty release when unset and stores short codes rather than error
   expect((await counts()).rows).toEqual([expect.objectContaining({ code: 'Error', release: '' })]);
 });
 
-it('C3 registers a five-minute per-instance background job and drains it on shutdown', async () => {
+it('C3 arms one pending-count deadline per instance and drains admitted work on shutdown', async () => {
   vi.useFakeTimers();
   vi.spyOn(console, 'log').mockImplementation(() => {});
   const runner = new BackgroundJobRunner();
@@ -221,4 +221,51 @@ it('C3 compares refusal counts and rates with exposed historical days for the sa
   expect(Number(rows[0]!.refusal_rate)).toBeCloseTo(10 / 110);
   expect(Number(rows[0]!.median_refusal_rate)).toBeCloseTo(4 / 104);
   expect(rows[1]).toMatchObject({ release: 'new-release', baseline_days: 0, median_daily_refused: null, median_refusal_rate: null });
+});
+
+
+it('an empty outcome owner performs no repeated database work during an idle day', async () => {
+  vi.useFakeTimers();
+  const query = vi.spyOn(db, 'query');
+  const stop = startOperationOutcomeFlush(db, new OperationOutcomes('idle'), new BackgroundJobRunner());
+  await db.query('SELECT 1'); await vi.advanceTimersByTimeAsync(0);
+  query.mockClear();
+  await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+  expect(query).not.toHaveBeenCalled();
+  expect(vi.getTimerCount()).toBe(0);
+  await stop();
+});
+
+it('failed outcome persistence parks until a genuinely new outcome supplies work', async () => {
+  vi.useFakeTimers(); vi.spyOn(console, 'error').mockImplementation(() => {});
+  const outcomes = new OperationOutcomes('parked');
+  const stop = startOperationOutcomeFlush(db, outcomes, new BackgroundJobRunner());
+  await db.query('SELECT 1'); await vi.advanceTimersByTimeAsync(0);
+  const query = vi.spyOn(db, 'query'); query.mockRejectedValueOnce(new Error('synthetic database failure'));
+  outcomes.record('readRoom', 200, '');
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+  const attempts = query.mock.calls.length;
+  await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+  expect(query).toHaveBeenCalledTimes(attempts);
+  expect(vi.getTimerCount()).toBe(0);
+  outcomes.record('readRoom', 403, 'denied');
+  await vi.advanceTimersByTimeAsync(5 * 60_000);
+  await stop();
+  expect((await counts()).rows.reduce((sum, row) => sum + Number(row.count), 0)).toBe(2);
+});
+
+
+it('durable expired outcome rows drain in bounded batches and the empty owner then parks', async () => {
+  await db.query(`INSERT INTO operation_outcomes_hourly
+    SELECT now()-interval '15 days','expired'||n,403,'Error','old',1 FROM generate_series(1,2001) n`);
+  vi.useFakeTimers();
+  const query = vi.spyOn(db, 'query');
+  const stop = startOperationOutcomeFlush(db, new OperationOutcomes('expiry'), new BackgroundJobRunner());
+  await db.query('SELECT 1'); await vi.advanceTimersByTimeAsync(60_000);
+  expect((await counts()).rows).toEqual([]);
+  expect(query.mock.calls.filter(([sql]) => sql.startsWith('DELETE'))).toHaveLength(2);
+  query.mockClear();
+  await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+  expect(query).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  await stop();
 });

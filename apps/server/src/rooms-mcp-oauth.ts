@@ -11,6 +11,7 @@ import { tokenHash } from './auth.js';
 import { connectMcp, refreshMcp, MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
 import { setMcpMemberWebhook, McpToolError, ensureMcpMember, mcpMemberId, setMcpMemberProfile } from './rooms-mcp-members.js';
 import { MCP_STARTER_ROUTINE, agentHandleFromName, uniqueAgentHandle } from '@beeline/api-contract/phone';
+import { subscribeCommandCompletion,waitForCommittedChange } from './command-completion.js';
 
 export const MCP_READ = 'rooms:read';
 export const MCP_WRITE = 'rooms:write';
@@ -158,9 +159,12 @@ export function sessionMessageConsent(fallback: boolean, codex = false): string 
 export interface McpPrincipal { hash: string; client_id: string; identity_id: string; member_id: string | null; scope: string }
 
 export class RoomsMcpOAuth {
+  private readonly handoffWaits=new Map<string,number>();
+  private handoffWaitCount=0;
   readonly origin: string;
   readonly resource: string;
-  constructor(readonly database: SqlDatabase, origin: string, readonly auth: TokenAuth, readonly joinHost = 'join.usebeeline.app') {
+  constructor(readonly database: SqlDatabase, origin: string, readonly auth: TokenAuth,
+    readonly joinHost = 'join.usebeeline.app', private readonly completionReady: () => boolean = () => false) {
     joinOrigin(origin, joinHost); // Validate the configured alias at startup.
     this.origin = new URL(origin).origin;
     this.resource = `${this.origin}/mcp`;
@@ -513,6 +517,38 @@ export class RoomsMcpOAuth {
       if (request.method === 'POST' && path === '/mcp/oauth/handoff') {
         const input = await mcpBody(request);
         const state = string(input.state, 128);
+        if(input.completionV1===true){
+          if(!/^[A-Za-z0-9_-]{32,128}$/.test(state)||!Number.isSafeInteger(input.waitMs)||Number(input.waitMs)<1||Number(input.waitMs)>600_000)
+            throw new Refusal('invalid_request','handoff_invalid');
+          if(!this.completionReady()){mcpJson(response,503,{error:'completion_unavailable'});return true;}
+          const hash=tokenHash(state),held=this.handoffWaits.get(hash)??0;
+          if(held>=2||this.handoffWaitCount>=128){
+            mcpJson(response,429,{error:'completion_capacity'});return true;
+          }
+          this.handoffWaits.set(hash,held+1);
+          this.handoffWaitCount++;
+          const controller=new AbortController(),abort=()=>controller.abort();response.once('close',abort);
+          // Acknowledge the held channel immediately; the existing client
+          // connect/header deadlines remain separate from its ceremony expiry.
+          response.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});response.flushHeaders();
+          try{
+            // The opt-in receipt is replayable until its existing expiry. PKCE
+            // and the token endpoint still consume the authorization code once.
+            const row=await waitForCommittedChange(
+              wake=>subscribeCommandCompletion({principal:'oauth',operation:'mcp-handoff',commandId:hash},wake),
+              async()=>this.completionReady()?(await this.database.query<{code:string|null;error:string|null}>(
+                'SELECT code,error FROM rooms_mcp_handoffs WHERE state_hash=$1 AND expires_at>now()',[hash])).rows[0]:undefined,
+              Number(input.waitMs),controller.signal);
+            response.end(JSON.stringify(row?(row.code?{code:row.code}:{error:row.error??'access_denied'}):{error:'authorization_pending'}));return true;
+          }catch{
+            if(!controller.signal.aborted)response.end(JSON.stringify({error:'completion_unavailable'}));return true;
+          }
+          finally{
+            response.removeListener('close',abort);
+            this.handoffWaitCount--;
+            const current=this.handoffWaits.get(hash)??1;if(current<=1)this.handoffWaits.delete(hash);else this.handoffWaits.set(hash,current-1);
+          }
+        }
         const row = (await this.database.query<{ code: string | null; error: string | null }>(
           'DELETE FROM rooms_mcp_handoffs WHERE state_hash=$1 AND expires_at>now() RETURNING code,error', [tokenHash(state)])).rows[0];
         if (!row) { mcpJson(response, 400, { error: 'authorization_pending' }); return true; }

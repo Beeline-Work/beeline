@@ -1,10 +1,11 @@
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   artifactImageSource: vi.fn(),
+  purgeListeners: new Set<() => void>(),
   releaseArtifactImageSource: vi.fn(),
   fetchArtifactText: vi.fn(),
 }));
@@ -34,11 +35,14 @@ vi.mock('react-native-unistyles', () => ({
   },
 }));
 vi.mock('@/buzz/artifact-link', () => ({
+  subscribeArtifactBytesPurge: (_attachment: unknown, listener: () => void) => { mocks.purgeListeners.add(listener); return () => { mocks.purgeListeners.delete(listener); }; },
   artifactImageSource: mocks.artifactImageSource,
   releaseArtifactImageSource: mocks.releaseArtifactImageSource,
   fetchArtifactText: mocks.fetchArtifactText,
 }));
 
+import { resetClientState } from '@/sync/client-reset';
+import { installMediaCacheConnection, mediaMetadataFor, suspendMediaCacheConnection } from '@/buzz/media-cache-connection';
 import { ARTIFACT_TEXT_PREVIEW_LINES } from '@/buzz/artifact';
 import { ArtifactImage, ArtifactText } from './ArtifactMedia';
 
@@ -56,6 +60,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   mocks.artifactImageSource.mockReset();
+  mocks.purgeListeners.clear();
   mocks.releaseArtifactImageSource.mockReset();
   mocks.fetchArtifactText.mockReset();
 });
@@ -72,10 +77,14 @@ function attachment(overrides: Record<string, unknown> = {}) {
   };
 }
 
+const mountedRenderers: ReactTestRenderer[] = [];
+afterEach(() => { act(() => mountedRenderers.splice(0).forEach(tree => tree.unmount())); });
+
 function render(element: React.ReactElement): ReactTestRenderer {
   let renderer!: ReactTestRenderer;
   act(() => {
     renderer = create(element);
+    mountedRenderers.push(renderer);
   });
   return renderer;
 }
@@ -187,6 +196,47 @@ describe('the raster artifact view', () => {
     await flush();
     act(() => renderer.unmount());
     expect(mocks.releaseArtifactImageSource).toHaveBeenCalledWith(source);
+  });
+
+  it('a committed removal aborts and clears the current image without reloading it', async () => {
+    const source = { uri: 'blob:private-image' }; mocks.artifactImageSource.mockResolvedValue(source);
+    const renderer = render(<ArtifactImage attachment={attachment()} fit="contain" testID="artifact-image" />);
+    await flush(); const signal = mocks.artifactImageSource.mock.calls[0]![1].signal as AbortSignal;
+    act(() => { for (const clear of mocks.purgeListeners) clear(); });
+    expect(signal.aborted).toBe(true); expect(mocks.releaseArtifactImageSource).toHaveBeenCalledWith(source);
+    expect(renderer.root.findAll((node: any) => node.type === 'Image')).toHaveLength(0);
+    expect(mocks.artifactImageSource).toHaveBeenCalledTimes(1); act(() => renderer.unmount());
+  });
+
+  it('a healthy capable reconnect retries a parked visible source once, without remount or a fabricated focus', async () => {
+    mocks.artifactImageSource.mockRejectedValueOnce(new Error('interrupted')).mockResolvedValue({ uri: 'blob:recovered' });
+    const renderer = render(<ArtifactImage attachment={attachment()} fit="contain" testID="artifact-image" />);
+    await flush(); expect(renderer.root.findAllByProps({ testID: 'artifact-image-failed' }).length).toBeGreaterThan(0);
+    const connection = { origin: 'https://synthetic.test', principal: 'reader', generation: 10, mediaMetadataV1: true, executeMetadata: async () => { throw new Error('not used by mocked bytes'); } };
+    act(() => { installMediaCacheConnection(connection); }); await flush();
+    expect(hostNode(renderer, 'artifact-image').props.source.uri).toBe('blob:recovered');
+    expect(mocks.artifactImageSource).toHaveBeenCalledTimes(2);
+    act(() => { installMediaCacheConnection(connection); }); await flush();
+    expect(mocks.artifactImageSource).toHaveBeenCalledTimes(2);
+    act(() => { suspendMediaCacheConnection(); }); await flush();
+    expect(mocks.artifactImageSource).toHaveBeenCalledTimes(2);
+  });
+
+  it('a visible old-server source recovers once after explicit legacy negotiation without a metadata read or remount', async () => {
+    resetClientState();
+    mocks.artifactImageSource.mockImplementation(async () => {
+      await mediaMetadataFor('https://synthetic.test', 'reader', '11111111-1111-4111-8111-111111111111');
+      return { uri: 'blob:legacy-recovered' };
+    });
+    const renderer = render(<ArtifactImage attachment={attachment()} fit="contain" testID="artifact-image" />);
+    await flush(); expect(renderer.root.findAllByProps({ testID: 'artifact-image-failed' }).length).toBeGreaterThan(0);
+    const executeMetadata = vi.fn(async () => { throw new Error('Legacy must not send metadata JSON.'); });
+    const receipt = { origin: 'https://synthetic.test', principal: 'reader', generation: 1, mediaMetadataV1: false, executeMetadata };
+    act(() => { installMediaCacheConnection(receipt); }); await flush();
+    expect(hostNode(renderer, 'artifact-image').props.source.uri).toBe('blob:legacy-recovered');
+    expect(mocks.artifactImageSource).toHaveBeenCalledTimes(2); expect(executeMetadata).not.toHaveBeenCalled();
+    act(() => { installMediaCacheConnection(receipt); }); await flush();
+    expect(mocks.artifactImageSource).toHaveBeenCalledTimes(2);
   });
 
   it('releases a source that lands after the view is already gone', async () => {

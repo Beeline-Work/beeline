@@ -632,3 +632,18 @@ about 10% sampled and left unscaled, while taps are unsampled. Rates can exceed
 attribution basis from the website's persisted X context. They must not be read as
 exact conversion probabilities. The separate dashboard frontend can render these
 additive rows next to site visits through its existing proxy.
+
+
+## Explicit provider refresh
+
+The server runs no hourly finance collection or minute X report/site-visit job.
+The existing authenticated dashboard request reads finances on operator demand;
+X report and site-visit displays use stored observations. The private proxy may
+submit `POST /v1/admin/dashboard/refresh` with exactly one `scope` value:
+`finances`, `x-reports`, or `x-site-visits`. It uses the existing server-only
+bearer secret. Each request admits one bounded collection; missing credentials
+leave observations unavailable. No failure schedules another observation.
+
+Committed X signup conversions remain delivery obligations with the same
+provider deduplication ID. A committed row or its stored next-attempt timestamp
+wakes only that delivery lane; no pending row means no observation timer.

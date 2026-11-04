@@ -3,12 +3,50 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./phone-inputs": {
+      "types": "./dist/phone-inputs.d.ts",
+      "import": "./dist/phone-inputs.js",
+      "default": "./dist/phone-inputs.js"
+    },
+    "./owner": {
+      "types": "./dist/private/phone-owner.d.ts",
+      "import": "./dist/private/phone-owner.js",
+      "default": "./dist/private/phone-owner.js"
+    },
+    "./helper-codecs": {
+      "types": "./dist/helper-codecs.d.ts",
+      "import": "./dist/helper-codecs.js",
+      "default": "./dist/helper-codecs.js"
+    },
+    "./helper-activation-codecs": {
+      "types": "./dist/helper-activation-codecs.d.ts",
+      "import": "./dist/helper-activation-codecs.js",
+      "default": "./dist/helper-activation-codecs.js"
+    },
+    "./helper-turn-codecs": {
+      "types": "./dist/helper-turn-codecs.d.ts",
+      "import": "./dist/helper-turn-codecs.js",
+      "default": "./dist/helper-turn-codecs.js"
+    }
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run --minWorkers=1 --maxWorkers=2"
   },
-  "dependencies": { "@beeline/api-contract": "*" },
-  "devDependencies": { "typescript": "^5.6.3", "vitest": "^2.1.4" }
+  "dependencies": {
+    "@beeline/api-contract": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.4"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts"
 }

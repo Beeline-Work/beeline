@@ -1,10 +1,11 @@
 import React from 'react';
-import { AppState, BackHandler, Linking, Platform, ScrollView, Text, View } from 'react-native';
+import { BackHandler, Linking, Platform, ScrollView, Text, View } from 'react-native';
 import * as Application from 'expo-application';
 import { StyleSheet } from 'react-native-unistyles';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import type { MobileMinimum, StorePlatform } from '@beeline/api-contract/mobile-minimum';
 import { fetchStoreUpdate, hourlyStoreUpdateCheck, STORE_LISTINGS } from '@/buzz/store-update';
+import { subscribeUpdateConnections } from '@/buzz/update-connections';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { Button } from '@/components/buzz/Button';
 import { BeelineGlyphPaint } from '@/components/buzz/BeelineGlyphPaint';
@@ -40,6 +41,8 @@ export function StoreUpdateScreen({ minimum, installed, platform }: {
 /** Root replacement keeps sign-in, deep links and Android Back behind the gate. */
 export function StoreUpdateGate({ children, fontsReady = true }: { children: React.ReactNode; fontsReady?: boolean }) {
   const [minimum, setMinimum] = React.useState<MobileMinimum | null>(null);
+  const initialCheck = React.useRef(false);
+  const lastConnection = React.useRef(-1);
   React.useEffect(() => {
     if (Platform.OS !== 'android' && Platform.OS !== 'ios') return;
     let active = true;
@@ -49,9 +52,12 @@ export function StoreUpdateGate({ children, fontsReady = true }: { children: Rea
       void checkStoreUpdate()
         .then(result => { if (active && current === generation) setMinimum(result); });
     };
-    check();
-    const subscription = AppState.addEventListener('change', state => { if (state === 'active') check(); });
-    return () => { active = false; subscription.remove(); };
+    if (!initialCheck.current) { initialCheck.current = true; check(); }
+    const stop = subscribeUpdateConnections(epoch => {
+      if (epoch <= lastConnection.current) return;
+      lastConnection.current = epoch; check();
+    });
+    return () => { active = false; stop(); };
   }, []);
   React.useEffect(() => {
     if (!minimum || Platform.OS !== 'android') return;

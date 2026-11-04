@@ -31,10 +31,9 @@ for (const theme of ['bone', 'obsidian']) {
     '@/components/buzz/MonoMarkdown': 'export const MonoMarkdown=()=>null;',
     '@/components/buzz/ArtifactMedia':
       'export const ArtifactImage=()=>null;export const ArtifactText=()=>null;',
-    '@/buzz/artifact-preview-cache':
-      'export const artifactPreviewCachePath=()=>"";export const probeArtifactPreview=async()=>null;export const snapshotArtifactPreview=async()=>null;',
+    '@/buzz/router-owner': 'export const routerOwnerArtifactAction=()=>{};',
     '@/buzz/artifact-link':
-      'export const artifactBase64=async()=>"";export const artifactPdfLocalUri=async()=>"";export const fetchArtifactBytes=async()=>new Uint8Array();export const fetchArtifactText=async()=>"";export const openArtifactInBrowserOrExplain=async()=>{};',
+      'export const artifactImageSource=async()=>({uri:""});export const releaseArtifactImageSource=()=>{};export const subscribeArtifactBytesPurge=()=>()=>{};export const artifactBase64=async()=>"";export const artifactPdfLocalUri=async()=>"";export const fetchArtifactBytes=async()=>new Uint8Array();export const fetchArtifactText=async()=>"";export const openArtifactInBrowserOrExplain=async()=>{};',
   });
   const dir = path.join(out, `${phase}-${theme}`);
   await mkdir(dir, { recursive: true });

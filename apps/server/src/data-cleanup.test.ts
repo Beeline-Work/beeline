@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { BackgroundWork } from './background-work.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { compactPushClaims, compactWebhookDeliveries } from './database.js';
 import {
   cancelArchivedCornerAssignments,
@@ -50,10 +51,41 @@ describe('release data cleanup', () => {
     await db.query(`INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,created_at)
       SELECT $1,$2,'/v1/media/example','abandoned','text/plain',5,now()-interval '2 days' FROM generate_series(1,1001)`, [ROOM, AGENT]);
     const loop = new PendingAttachmentCleanupLoop(db);
-    expect(await loop.runOnce(0)).toBe(1000);
-    expect(await loop.runOnce(1)).toBe(0);
-    expect(await loop.runOnce(3600000)).toBe(1);
+    expect(await loop.runOnce()).toBe(1000);
+    expect(await loop.nextDelayMs()).toBe(0);
+    expect(await loop.runOnce()).toBe(1);
+    expect(await loop.nextDelayMs()).toBeGreaterThan(23 * 3600_000);
     expect(await sweepPendingAttachments(db)).toBe(0);
+  });
+
+  it('ATTACHMENT-DEADLINE: empty and active queues park until a real eligibility change', async () => {
+    const loop = new PendingAttachmentCleanupLoop(db);
+    let clock = 0;
+    const work = new BackgroundWork(() => clock, () => {});
+    const run = vi.fn(async () => { await loop.runOnce(); return loop.nextDelayMs(); });
+    work.addDeadline('attachments', run);
+    expect(await work.run(false)).toBe(Infinity);
+    clock += 24 * 3600_000;
+    expect(await work.run(false)).toBe(Infinity);
+    expect(run).toHaveBeenCalledTimes(1);
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Agent')`, [AGENT]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Space')`, [WORKSPACE]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [ROOM,WORKSPACE]);
+    await db.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+      VALUES($1,'active',$2,'working','generation')`, [ROOM,AGENT]);
+    await db.query(`INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id,created_at)
+      VALUES($1,$2,'/v1/media/test','test','text/plain',1,'active',now()-interval '2 days')`, [ROOM,AGENT]);
+    work.wake('attachments');
+    expect(await work.run(false)).toBe(Infinity);
+    expect(await loop.nextDelayMs()).toBeUndefined();
+    await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [ROOM]);
+    expect(await loop.nextDelayMs()).toBe(0);
+    work.wake('attachments');
+    expect(await work.run(false)).toBe(Infinity);
+    expect((await db.query('SELECT count(*)::int count FROM agent_pending_attachments')).rows).toEqual([{ count: 0 }]);
+    clock += 24 * 3600_000;
+    await work.run(false);
+    expect(run).toHaveBeenCalledTimes(3);
   });
 
   it('expires old webhook ids in bounded migration batches', async () => {

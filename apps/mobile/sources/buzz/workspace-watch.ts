@@ -1,7 +1,9 @@
+import { AppState } from 'react-native';
 import { isWorkspaceView, type Identity, type WorkspaceView } from '@beeline/buzz-client';
 import { BuzzRigTransport } from '@/sync/transport';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 import { workspaceRecordScope } from './workspace-records';
+import { workspaceWatchChanges } from './workspace-watch-change';
 
 type Listener = { signal: () => void; error?: (reason: unknown) => void };
 
@@ -24,7 +26,8 @@ const watches = new Map<string, Watch>();
  * One watch per Workspace for mounted roster readers (Members and profiles).
  * Room filters cover grants and other Room activity; an empty filter hears
  * identity-wide membership invalidations and socket reconnects. Every signal
- * makes each reader refresh what it shows. A Workspace id is not a Room id.
+ * refreshes only for durable roster/profile/authority changes. Ephemeral
+ * Room traffic is not a roster change. A Workspace id is not a Room id.
  */
 export function watchWorkspace(
   identity: Identity,
@@ -73,10 +76,11 @@ function openWatch(key: string, identity: Identity, relayUrl: string, workspaceI
   };
   watch.change = relay.then(async (client) => {
     const release = await client.surfaceSubscribe([], (event) => {
-      const live = event && typeof event === 'object' && 'monolithLive' in event
-        ? event.monolithLive as { type?: string; reason?: string }
-        : undefined;
-      if (live?.type !== 'invalidate' || (live.reason !== 'postgres:memberships' && live.reason !== 'reconnect')) return;
+      if (AppState.currentState === 'background' || AppState.currentState === 'inactive') return;
+      if (!event || !('monolithLive' in event)) return;
+      const current = mobileSurfaceCache.peek(address, isWorkspaceView);
+      const memberIds = current && new Set([...current.members, ...current.agents].map(member => member.identity.pubkey));
+      if (!workspaceWatchChanges(event, { workspaceId, principal: identity.publicKey, memberIds: memberIds ?? undefined })) return;
       for (const listener of watch.listeners) listener.signal();
     });
     if (watch.closed) release();
@@ -97,7 +101,11 @@ function openWatch(key: string, identity: Identity, relayUrl: string, workspaceI
       // No Room to hear: a filter without Rooms would register for every
       // identity-wide event instead.
       const next = effective.length
-        ? await (await relay).surfaceSubscribe(effective, () => {
+        ? await (await relay).surfaceSubscribe(effective, (event) => {
+          if (AppState.currentState === 'background' || AppState.currentState === 'inactive') return;
+          const current = mobileSurfaceCache.peek(address, isWorkspaceView);
+          const memberIds = current && new Set([...current.members, ...current.agents].map(member => member.identity.pubkey));
+          if (!workspaceWatchChanges(event, { workspaceId, principal: identity.publicKey, memberIds: memberIds ?? undefined })) return;
           for (const listener of watch.listeners) listener.signal();
         })
         : undefined;

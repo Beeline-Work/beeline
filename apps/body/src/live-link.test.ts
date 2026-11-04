@@ -69,6 +69,11 @@ class LiveServer {
           // Every agent that registers is taken, as the real server takes a valid token.
           if (frame.type === 'register')
             client.send(JSON.stringify({ type: 'registered', agentId: frame.agentId }));
+          if(frame.type==='subscribe'){
+            client.send(JSON.stringify({type:'subscribed',agentId:frame.agentId,roomId:frame.roomId,capabilities:{pushIntake:true}}));
+            client.send(JSON.stringify({type:'commands',agentId:frame.agentId,roomId:frame.roomId,commandProtocol:1,commands:[]}));
+            client.send(JSON.stringify({type:'inbox',agentId:frame.agentId,roomId:frame.roomId,items:[]}));
+          }
         });
       });
     });
@@ -190,16 +195,17 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
     });
   });
 
-  it.each([408, 429, 503])('reconnects after a retryable %s upgrade, honouring Retry-After', async (status) => {
-    const { server, client } = await harness();
-    server.answer = (attempt) =>
-      attempt === 1
-        ? { kind: 'refuse', status, headers: { 'Retry-After': '1' } }
-        : { kind: 'accept' };
-    client.setRoomsChangedListener(() => undefined);
-    await vi.waitFor(() => expect(client.link.state).toBe('open'), { timeout: 5_000 });
+  it.each([408, 429, 503])('parks a retryable %s upgrade; Retry-After admits only a later real boundary', async status => {
+    const {server,client}=await harness();
+    server.answer=attempt=>attempt===1?{kind:'refuse',status,headers:{'Retry-After':'0.1'}}:{kind:'accept'};
+    client.setRoomsChangedListener(()=>undefined);
+    await vi.waitFor(()=>expect(server.upgrades).toHaveLength(1));
+    await vi.waitFor(()=>expect(client.link.state).toBe('disconnected'));
+    client.link.reconnectNow();expect(server.upgrades).toHaveLength(1);
+    await new Promise(resolve=>setTimeout(resolve,300));
+    expect(server.upgrades).toHaveLength(1);
+    client.link.reconnectNow();await vi.waitFor(()=>expect(client.channel.isOpen()).toBe(true));
     expect(server.upgrades).toHaveLength(2);
-    expect(server.upgrades[1]! - server.upgrades[0]!).toBeGreaterThanOrEqual(950);
   });
 
   it.each([400, 401, 403, 404, 410])('does not reconnect after a permanent %s upgrade refusal', async (status) => {
@@ -213,17 +219,14 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
     expect(client.link.state).toBe('refused');
   });
 
-  it('abandons a handshake that gets no answer and reconnects after the handshake timeout', async () => {
-    const { server, proxy, client, sockets } = await harness();
-    proxy.blackhole = true;
-    const started = Date.now();
-    client.setRoomsChangedListener(() => undefined);
-    await vi.waitFor(() => expect(sockets.length).toBeGreaterThanOrEqual(2), { timeout: 5_000 });
-    expect(Date.now() - started).toBeGreaterThanOrEqual(TIMING.handshakeTimeoutMs - 20);
-    expect(server.upgrades).toHaveLength(0);
-    proxy.blackhole = false;
-    await vi.waitFor(() => expect(client.link.state).toBe('open'), { timeout: 5_000 });
-    expect(server.openClients()).toHaveLength(1);
+  it('parks an unanswered initial handshake until an actual path recovery', async()=>{
+    const {server,proxy,client,sockets}=await harness();proxy.blackhole=true;
+    client.setRoomsChangedListener(()=>undefined);
+    await vi.waitFor(()=>expect(client.link.state).toBe('disconnected'),{timeout:2000});
+    await new Promise(resolve=>setTimeout(resolve,TIMING.handshakeTimeoutMs*2));
+    expect(sockets).toHaveLength(1);expect(server.upgrades).toHaveLength(0);
+    proxy.blackhole=false;client.link.reconnectNow();
+    await vi.waitFor(()=>expect(client.channel.isOpen()).toBe(true));expect(sockets).toHaveLength(2);
   });
 
   it('pings a half-open socket once after a failed fetch, drops it at the pong deadline, and reconnects', async () => {
@@ -241,6 +244,7 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
     const closed = new Promise<number>((resolve) => first.once('close', () => resolve(Date.now())));
     expect((await closed) - suspectedAt).toBeGreaterThanOrEqual(TIMING.pongTimeoutMs - 20);
     proxy.blackhole = false;
+    if(client.link.state==='disconnected')client.link.reconnectNow();
     await vi.waitFor(() => expect(client.link.state).toBe('open'), { timeout: 5_000 });
     expect(sockets.length).toBeGreaterThanOrEqual(2);
     expect(sockets.at(-1)).not.toBe(first);
@@ -285,39 +289,16 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
     expect(client.link.state).toBe('open');
   });
 
-  it('backs off failed connects to the cap and resets only after a socket lived long enough', async () => {
-    const { server, client } = await harness({ random: () => 1 });
-    let accept = false;
-    server.answer = () => (accept ? { kind: 'accept' } : { kind: 'refuse', status: 502 });
-    client.setRoomsChangedListener(() => undefined);
-    await vi.waitFor(() => expect(server.upgrades.length).toBeGreaterThanOrEqual(7), {
-      timeout: 10_000,
-    });
-    const gaps = server.upgrades.slice(1).map((at, index) => at - server.upgrades[index]!);
-    // 40, 80, 160, 320, 320, 320: doubling from the base, capped.
-    expect(gaps[0]).toBeGreaterThanOrEqual(35);
-    expect(gaps[1]).toBeGreaterThanOrEqual(75);
-    expect(gaps[2]).toBeGreaterThanOrEqual(155);
-    expect(gaps[3]).toBeGreaterThanOrEqual(315);
-    expect(gaps[4]).toBeGreaterThanOrEqual(315);
-    expect(Math.max(...gaps.slice(0, 6))).toBeLessThan(TIMING.backoffMaxMs + 250);
-
-    // A socket that opens but dies young is still a failed connect.
-    accept = true;
-    await vi.waitFor(() => expect(server.openClients()).toHaveLength(1), { timeout: 5_000 });
-    const young = server.upgrades.length;
-    server.openClients()[0]!.terminate();
-    await vi.waitFor(() => expect(server.upgrades.length).toBe(young + 1), { timeout: 5_000 });
-    expect(server.upgrades.at(-1)! - server.upgrades.at(-2)!).toBeGreaterThanOrEqual(315);
-
-    // One that lived past the stable window resets the backoff.
-    await vi.waitFor(() => expect(server.openClients()).toHaveLength(1), { timeout: 5_000 });
-    await new Promise((resolve) => setTimeout(resolve, TIMING.stableSocketMs + 50));
-    const stable = server.upgrades.length;
-    const closedAt = Date.now();
-    server.openClients()[0]!.terminate();
-    await vi.waitFor(() => expect(server.upgrades.length).toBe(stable + 1), { timeout: 5_000 });
-    expect(server.upgrades.at(-1)! - closedAt).toBeLessThan(TIMING.backoffMaxMs);
+  it('does not reset an incident after a brief unauthenticated replacement open',async()=>{
+    const {server,client}=await harness();let accepts=true;
+    server.answer=()=>accepts?{kind:'accept'}:{kind:'refuse',status:502};
+    client.setRoomsChangedListener(()=>undefined);
+    await vi.waitFor(()=>expect(client.channel.isOpen()).toBe(true));
+    accepts=false;server.openClients()[0]!.terminate();
+    await vi.waitFor(()=>expect(server.upgrades).toHaveLength(2));
+    await new Promise(resolve=>setTimeout(resolve,600));expect(server.upgrades).toHaveLength(2);
+    accepts=true;client.link.reconnectNow();
+    await vi.waitFor(()=>expect(client.channel.isOpen()).toBe(true));expect(server.upgrades).toHaveLength(3);
   });
 
   it('resubscribes, fires every open wake and the update check on every open', async () => {
@@ -328,7 +309,8 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
     client.setRoomsChangedListener(rooms);
     client.setConnectorAssignmentListener(connectors);
     client.onLiveOpen(updateCheck);
-    client.liveSubscribe('room-1', `1000,${'a'.repeat(64)}`);
+    let ready=false;
+    client.liveSubscribe('room-1', `1000,${'a'.repeat(64)}`,undefined,connected=>{ready=connected;});
     for (let open = 1; open <= 2; open++) {
       await vi.waitFor(() =>
         expect(server.frames.filter((frame) => frame.type === 'subscribe')).toHaveLength(open),
@@ -337,6 +319,8 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
       expect(rooms).toHaveBeenLastCalledWith();
       expect(connectors).toHaveBeenCalledTimes(open);
       expect(updateCheck).toHaveBeenCalledTimes(open);
+      await vi.waitFor(()=>expect(ready).toBe(true));
+      ready=false;
       server.openClients()[0]?.terminate();
     }
     expect(server.frames.filter((frame) => frame.type === 'subscribe').at(-1)).toMatchObject({
@@ -388,6 +372,7 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
     expect(closedAt - deadAt).toBeGreaterThanOrEqual(TIMING.heartbeatTimeoutMs - SERVER_PING_MS - 20);
     expect(closedAt - deadAt).toBeLessThan(TIMING.heartbeatTimeoutMs + 300);
     proxy.blackhole = false;
+    if(client.link.state==='disconnected')client.link.reconnectNow();
     await vi.waitFor(() =>
       expect(server.frames.filter((frame) => frame.type === 'subscribe')).toHaveLength(2), { timeout: 5_000 });
     server.push({ type: 'inbox', agentId: 'agent', roomId: 'room-1', items: [{ id: 'after-outage' }] });

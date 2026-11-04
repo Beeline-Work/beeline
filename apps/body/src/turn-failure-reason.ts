@@ -26,6 +26,7 @@ export function redactToolDetail(value: string): string {
     )
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/gi, '[REDACTED]')
     .replace(/\b(?:bat|brt|bdt|bde)_[A-Za-z0-9_-]{43}\b/g, '[REDACTED]')
+    .replace(/\bbfmc_v1\.[a-f0-9]{32}\.[a-f0-9]{64}\b/gi, '[REDACTED]')
     .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
     .replace(/\b(Bearer\s+)[^\s,]+/gi, '$1[REDACTED]')
     .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]')

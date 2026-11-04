@@ -1,0 +1,26 @@
+{
+  "proof": "apps/server/src/router-room-continuity.integration.test.ts",
+  "measurements": [
+    {
+      "cohort": "local PGlite; synthetic authorized Rooms",
+      "audience": 16,
+      "statements": 8,
+      "audienceQueries": 1,
+      "builders": 0,
+      "wireBytes": 10821,
+      "facts": 16,
+      "limits": "Metadata fanout is linear in DB audience. No real PostgreSQL CPU/WAL or native parse/render claim; cohort remains disabled."
+    },
+    {
+      "cohort": "local PGlite; synthetic authorized Rooms",
+      "audience": 128,
+      "statements": 8,
+      "audienceQueries": 1,
+      "builders": 0,
+      "wireBytes": 80728,
+      "facts": 128,
+      "limits": "Metadata fanout is linear in DB audience. No real PostgreSQL CPU/WAL or native parse/render claim; cohort remains disabled."
+    }
+  ],
+  "activation": "disabled; no equal-load production CPU/WAL/native claim"
+}

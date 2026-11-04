@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => ({
   platform: 'android', openURL: vi.fn(async () => {}), back: vi.fn(),
+  epoch: 1, connected: null as null | (() => void),
   foreground: null as null | ((state: string) => void),
 }));
 vi.mock('react-native', () => ({
@@ -14,6 +15,10 @@ vi.mock('react-native', () => ({
   BackHandler: { addEventListener: (_: string, handler: () => boolean) => { state.back = vi.fn(handler); return { remove: vi.fn() }; } },
   AppState: { addEventListener: (_: string, handler: (state: string) => void) => { state.foreground = handler; return { remove: vi.fn() }; } },
 }));
+vi.mock('@/sync/transport/live-connection',()=>({sharedLiveConnection:()=>({
+  commandState:()=>({generation:state.epoch}),
+  subscribeConnected:(listener:()=>void)=>{state.connected=listener;return()=>{state.connected=null;};},
+})}));
 vi.mock('expo-application', () => ({ nativeApplicationVersion: '0.2.22' }));
 vi.mock('react-native-safe-area-context', () => ({ SafeAreaView: 'SafeAreaView' }));
 vi.mock('@/buzz/runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.test' }) }));
@@ -23,6 +28,7 @@ import { StoreUpdateGate, StoreUpdateScreen } from './StoreUpdateGate';
 
 let testNow = Date.now();
 beforeEach(() => {
+  state.epoch=1;state.connected=null;state.foreground=null;
   testNow += 60 * 60 * 1000;
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(testNow);
@@ -67,11 +73,15 @@ it('replaces navigation below the minimum, consumes Back and opens normally at e
   expect(request).toHaveBeenCalledTimes(1);
   vi.setSystemTime(Date.now() + 1);
   await act(async () => { state.foreground?.('active'); });
+  expect(request).toHaveBeenCalledTimes(1);
+  await act(async()=>{state.connected?.();state.connected?.();});
   expect(request).toHaveBeenCalledTimes(2);
   expect(tree!.root.findAllByType('div')).toHaveLength(1);
   request.mockResolvedValueOnce(new Response('{}'));
   vi.setSystemTime(Date.now() + 60 * 60 * 1000);
   await act(async () => { state.foreground?.('active'); });
+  expect(request).toHaveBeenCalledTimes(2);
+  state.epoch+=1;await act(async()=>{state.connected?.();});
   expect(request).toHaveBeenCalledTimes(3);
   expect(tree!.root.findAllByType('div')).toHaveLength(1);
   await act(async () => tree!.unmount());

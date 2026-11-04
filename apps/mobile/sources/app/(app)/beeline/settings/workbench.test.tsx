@@ -1,3 +1,6 @@
+// This suite exercises an installed old-server path, with explicit legacy negotiation.
+vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
 import * as React from 'react';
 import * as WebBrowser from 'expo-web-browser';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.

@@ -1,3 +1,14 @@
+import { helperUsageCodecs } from '@beeline/net/helper-codecs';
+import { helperActivationCodecs } from '@beeline/net/helper-activation-codecs';
+import { helperTurnCodecs } from '@beeline/net/helper-turn-codecs';
+import { HELPER_TURN_MAX_FRAME_BYTES } from '@beeline/api-contract/helper-turn-ownership';
+import { turnOwnershipEnabled } from './turn-ownership.js';
+import { helperActivationEnabled,fenceCommandActivationEnqueue } from './helper-activation.js';
+import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
+import { HELPER_OVERLAY_MAX_FRAME_BYTES } from '@beeline/api-contract/helper-overlay';
+import { helperUsageEnabled } from './helper-usage.js';
+import { applyHelperOverlay, helperOverlayEnabled, subscribeHelperOverlayDemand } from './helper-overlay.js';
+import { changesDaemonInbox } from './daemon-inbox-cause.js';
 import { randomUUID } from 'node:crypto';
 import type { VaultSaveRelay } from './vault-save-relay.js';
 import { HELPER_UPDATE_CLOSE_CODE, HELPER_UPDATE_CLOSE_REASON } from '@beeline/api-contract/daemon';
@@ -5,7 +16,7 @@ import type { WebSocket } from 'ws';
 import { isTransientDatabaseConnectionError } from './database.js';
 import type { TokenAuth } from './auth.js';
 import type { ConnectionPresence } from './connection-presence.js';
-import type { DaemonService } from './daemon-service.js';
+import type { DaemonService, OwnedModelClaimCapability } from './daemon-service.js';
 import type { HelperVersionGate } from './helper-version-gate.js';
 import { helperVersionBelowMinimum } from './helper-version-gate.js';
 import type { LiveHub, LiveTrace } from './live.js';
@@ -112,6 +123,7 @@ export class DaemonAgentSession {
   readonly connectionId = randomUUID();
   epoch: number | undefined;
   readonly #releases = new Map<string, () => void>();
+  readonly #subscriptionIntents = new Map<string, Record<string, unknown>>();
   readonly #wakeReleases: Array<() => void> = [];
   #tasks = 0;
   #queuedBytes = 0;
@@ -119,8 +131,18 @@ export class DaemonAgentSession {
   #closed = false;
   #claimed = false;
   #forUpdate = false;
+  #turnOwnershipAccepted = false;
+  #ownedModelCapability?: OwnedModelClaimCapability;
   readonly #projections = new Set<Promise<unknown>>();
   #checkpointPending = false;
+
+  readonly #overlayReleases=new Map<string,()=>void>();
+  usageOwnerId:string|undefined;
+  get usageAccountV1():boolean{return this.presence.usageAccountV1===true&&helperUsageEnabled()&&this.usageOwnerId!==undefined&&this.epoch!==undefined;}
+  get overlayV1():boolean{return this.presence.overlayV1===true&&helperOverlayEnabled()&&this.epoch!==undefined;}
+  get activationContextV1():boolean{return this.presence.activationContextV1===true&&helperActivationEnabled()&&this.epoch!==undefined;}
+  get turnOwnershipV1():boolean{return this.#turnOwnershipAccepted&&Number.isSafeInteger(this.epoch)&&Number(this.epoch)>0;}
+  get ownedModelV1():boolean{return this.turnOwnershipV1&&this.#ownedModelCapability!==undefined&&this.deps.daemon.ownedModelReady();}
 
   constructor(
     private readonly deps: DaemonLiveDependencies,
@@ -130,6 +152,11 @@ export class DaemonAgentSession {
       lifecycleId?: string;
       releaseVersion?: string;
       sourceSha?: string;
+      overlayV1?: boolean;
+      usageAccountV1?:boolean;
+      activationContextV1?:boolean;
+      turnOwnershipV1?:boolean;
+      ownedModelV1?:boolean;
     } = {},
   ) {
     const { live, database } = deps;
@@ -255,7 +282,14 @@ export class DaemonAgentSession {
         return;
       }
       this.epoch = epoch;
+      const requested = this.presence.turnOwnershipV1 === true && turnOwnershipEnabled();
+      const model = requested ? await this.deps.daemon.negotiateOwnedModel(this.agentId,
+        { connectionId: this.connectionId, epoch }, this.presence.ownedModelV1 === true) : undefined;
+      this.#ownedModelCapability = model?.capability;
+      this.#turnOwnershipAccepted = requested && (model?.freeAgent !== true || model.capability !== undefined);
       this.deps.registry.settled(this);
+      if(this.presence.usageAccountV1&&helperUsageEnabled())this.usageOwnerId=(await this.deps.database.query<{owner_id:string|null}>(
+        'SELECT owner_id FROM agents WHERE agent_id=$1',[this.agentId])).rows[0]?.owner_id??undefined;
     } catch (error) {
       console.error('[presence] connection claim failed', error instanceof Error ? error.message : String(error));
     }
@@ -271,12 +305,29 @@ export class DaemonAgentSession {
   /** Queue one frame behind this agent's earlier frames. */
   frame(raw: Record<string, unknown>, frameBytes: number): void {
     if (this.#closed) return;
+    if((raw.type==='overlay-update'||raw.type==='usage-operation'||raw.type==='activation-context'||raw.type==='turn-operation')&&frameBytes>HELPER_OVERLAY_MAX_FRAME_BYTES){
+      this.deps.errors.overload++;this.transport.drop(1009,'overlay frame capacity exceeded');this.close();return;
+    }
     if (this.#tasks >= MAX_LIVE_SESSION_TASKS ||
         this.#queuedBytes + frameBytes > MAX_LIVE_SESSION_QUEUED_BYTES) {
       this.deps.errors.overload++;
       this.transport.drop(1013, 'live admission overloaded');
       this.close();
       return;
+    }
+    // Cancellation does no database work and must fence an already awaited
+    // projection immediately, rather than queue behind that same projection.
+    if (raw.type === 'unsubscribe' && typeof raw.roomId === 'string') {
+      if (!this.transport.admit(raw)) return;
+      this.#subscriptionIntents.delete(raw.roomId);
+      this.#overlayReleases.get(raw.roomId)?.(); this.#overlayReleases.delete(raw.roomId);
+      this.#releases.get(raw.roomId)?.(); this.#releases.delete(raw.roomId);
+      return;
+    }
+    if (raw.type === 'subscribe') {
+      const rooms = Array.isArray(raw.roomIds) ? raw.roomIds : [raw.roomId];
+      if (rooms.length <= MAX_LIVE_SUBSCRIBE_FRAME_ROOMS)
+        for (const room of rooms) if (typeof room === 'string' && room) this.#subscriptionIntents.set(room, raw);
     }
     this.#tasks++;
     this.#queuedBytes += frameBytes;
@@ -303,6 +354,8 @@ export class DaemonAgentSession {
         this.close();
       }
     }).finally(() => {
+      for (const [roomId, intent] of this.#subscriptionIntents)
+        if (intent === raw) this.#subscriptionIntents.delete(roomId);
       this.#tasks--;
       this.#queuedBytes -= frameBytes;
     });
@@ -312,9 +365,12 @@ export class DaemonAgentSession {
     if (this.#closed) return;
     this.#forUpdate = forUpdate;
     this.#closed = true;
+    this.#ownedModelCapability = undefined;
     for (const release of this.#wakeReleases.splice(0)) release();
     for (const release of this.#releases.values()) release();
     this.#releases.clear();
+    this.#subscriptionIntents.clear();
+    for(const release of this.#overlayReleases.values())release();this.#overlayReleases.clear();
     this.deps.registry.release(this);
     void this.#releaseConnection();
   }
@@ -329,7 +385,82 @@ export class DaemonAgentSession {
 
   async #process(item: Record<string, unknown>): Promise<void> {
     if (!this.transport.admit(item)) return;
+    if (item.type === 'turn-operation') {
+      const operation = item.operation;
+      if (!this.turnOwnershipV1 || this.epoch === undefined || typeof item.requestId !== 'string' ||
+          !item.requestId || item.requestId.length > 128 ||
+          (operation !== 'claimAgentCommand' && operation !== 'postAgentTurnReceipt' && operation !== 'acknowledgeAgentCommand')) return;
+      try {
+        if (Object.keys(item).some(key => !['type', 'agentId', 'requestId', 'operation', 'input'].includes(key)))
+          throw new Error('Turn unknown frame field');
+        const input = helperTurnCodecs(operation).params.parse(item.input);
+        if ('agentId' in input && input.agentId !== this.agentId) throw new Error('Turn registration mismatch');
+        const source = { connectionId: this.connectionId, epoch: this.epoch };
+        const result = helperTurnCodecs(operation).result.parse(await this.deps.daemon.execute(operation, input, this.agentId, source, this.#ownedModelCapability));
+        const reply = { type: 'turn-result', requestId: item.requestId, result };
+        if (Buffer.byteLength(JSON.stringify(reply)) > HELPER_TURN_MAX_FRAME_BYTES) throw new Error('Turn reply capacity');
+        await this.deps.daemon.fenceOwnedTurnReply(this.agentId, source, input, () => {
+          if (!this.#closed && this.transport.isOpen()) this.transport.send(reply);
+        }, operation === 'claimAgentCommand');
+      } catch {
+        if (!this.#closed && this.transport.isOpen())
+          this.transport.send({ type: 'turn-result', requestId: item.requestId, error: 'turn_operation_unconfirmed' });
+      }
+      return;
+    }
+    if(item.type==='activation-context'){
+      if(!this.activationContextV1||typeof item.requestId!=='string'||!item.requestId||item.requestId.length>128)return;
+      try{
+        if(Object.keys(item).some(key=>!['type','requestId','agentId','input'].includes(key)))throw new Error('Activation unknown frame field');
+        const input=helperActivationCodecs.params.parse(item.input);
+        if(input.agentId!==this.agentId||input.source.connectionId!==this.connectionId||input.source.epoch!==this.epoch)
+          throw new Error('Activation registration source mismatch');
+        const snapshot=helperActivationCodecs.result.parse(await this.deps.daemon.readCommandActivation(input,this.agentId));
+        const accepted=await fenceCommandActivationEnqueue(this.deps.database,snapshot,current=>{
+          const reply={type:'activation-context-result',requestId:item.requestId,result:current};
+          if(Buffer.byteLength(JSON.stringify(reply))+256>HELPER_OVERLAY_MAX_FRAME_BYTES)throw new Error('Activation reply capacity');
+          if(!this.#closed&&this.transport.isOpen())this.transport.send(reply);
+        });
+        if(!accepted)throw new Error('Activation source changed before enqueue');
+      }catch{
+        if(!this.#closed&&this.transport.isOpen())this.transport.send({type:'activation-context-result',requestId:item.requestId,error:'activation_context_refused'});
+      }
+      return;
+    }
+    if(item.type==='usage-operation'){
+      const names=['publishAgentUsageAccount','attachAgentUsageAccount','postAgentUsage'] as const;
+      if(!this.usageAccountV1||typeof item.requestId!=='string'||!item.requestId||item.requestId.length>128||
+        !names.includes(item.operation as typeof names[number]))return;
+      let input:Record<string,unknown>|undefined;
+      try{input=helperUsageCodecs(item.operation as typeof names[number]).params.parse(item.input) as unknown as Record<string,unknown>;}catch{
+        this.transport.send({type:'usage-result',requestId:item.requestId,error:'usage_operation_invalid'});return;
+      }
+      const sourceInput=item.operation==='postAgentUsage'?input?.usageSource:input;
+      const control=sourceInput&&typeof sourceInput==='object'?sourceInput as Record<string,unknown>:undefined;
+      const source=control?.source&&typeof control.source==='object'?control.source as Record<string,unknown>:undefined;
+      try{
+        if(!input||input.agentId!==this.agentId||source?.connectionId!==this.connectionId||source.epoch!==this.epoch||
+          (item.operation!=='attachAgentUsageAccount'&&control?.ownerId!==this.usageOwnerId))throw new Error('Usage registration source mismatch');
+        const operation=item.operation as typeof names[number];
+        const rawResult=await this.deps.daemon.execute(operation,input as unknown as DaemonOperationMap[typeof operation]['input'],this.agentId);
+        const result=helperUsageCodecs(operation).result.parse(rawResult);
+        const reply={type:'usage-result',requestId:item.requestId,result};
+        if(Buffer.byteLength(JSON.stringify(reply))>HELPER_OVERLAY_MAX_FRAME_BYTES)throw new Error('Usage reply capacity');
+        if(!this.#closed&&this.transport.isOpen())this.transport.send(reply);
+      }catch{
+        if(!this.#closed&&this.transport.isOpen())this.transport.send({type:'usage-result',requestId:item.requestId,error:'usage_operation_refused'});
+      }
+      return;
+    }
+    if(item.type==='overlay-update'){
+      if(!this.overlayV1||typeof item.requestId!=='string'||item.requestId.length>128||this.epoch===undefined)return;
+      const result=await applyHelperOverlay(this.deps.database,this.agentId,{connectionId:this.connectionId,epoch:this.epoch},item.frame);
+      if(result.event){const event={...result.event,localOrigin:true as const};this.deps.live.publish(event);}
+      if(!this.#closed&&this.transport.isOpen())this.transport.send({type:'overlay-ack',requestId:item.requestId,...result.ack});
+      return;
+    }
     if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
+      this.#overlayReleases.get(item.roomId)?.();this.#overlayReleases.delete(item.roomId);
       this.#releases.get(item.roomId)?.();
       this.#releases.delete(item.roomId);
       return;
@@ -357,7 +488,8 @@ export class DaemonAgentSession {
     }
     const readableRooms = await this.deps.phone.canReadRooms(requestedRoomIds, this.agentId);
     for (const roomId of requestedRoomIds) {
-      if (!readableRooms.has(roomId) || this.#releases.has(roomId) || this.#closed) continue;
+      if (!readableRooms.has(roomId) || this.#releases.has(roomId) || this.#closed ||
+          this.#subscriptionIntents.get(roomId) !== item) continue;
       await this.#subscribe(roomId, item);
     }
   }
@@ -366,6 +498,16 @@ export class DaemonAgentSession {
     const { live, daemon } = this.deps;
     const transport = this.transport;
     const agentId = this.agentId;
+    const requestId = typeof item.requestId === 'string' && item.requestId.length > 0 && item.requestId.length <= 128
+      ? item.requestId : undefined;
+    const correlation = requestId ? { requestId } : {};
+    const wantsInbox = item.inbox !== false;
+    let active = true;
+    if(this.overlayV1&&!this.#overlayReleases.has(roomId)){
+      this.#overlayReleases.set(roomId,subscribeHelperOverlayDemand(this.deps.database,roomId,demand=>{
+        if(!this.#closed&&transport.isOpen())transport.send({type:'overlay-demand',...demand});
+      }));
+    }
     let cursor = isInboxCursor(item.cursor) ? item.cursor : undefined;
     let replaying = false;
     let replayRequested = false;
@@ -374,12 +516,13 @@ export class DaemonAgentSession {
     let commandsRequested = false;
     let commandTrigger: { reason: string; trace: LiveTrace } | undefined;
     const replay = async (trigger?: { reason: string; trace: LiveTrace }) => {
+      if (!wantsInbox || !active || this.#closed) return;
       replayRequested = true;
       if (trigger) replayTrigger = trigger;
       if (replaying) return;
       replaying = true;
       try {
-        while (replayRequested && transport.isOpen() && !this.#closed) {
+        while (replayRequested && active && transport.isOpen() && !this.#closed) {
           replayRequested = false;
           const inbox = await daemon.execute(
             'getRoomInbox',
@@ -390,19 +533,21 @@ export class DaemonAgentSession {
             },
             agentId,
           );
-          if (this.#closed || !transport.isOpen()) return;
+          if (!active || this.#closed || !transport.isOpen()) return;
           cursor = inbox.cursor ?? cursor;
           const currentTrigger = replayTrigger;
           replayTrigger = undefined;
           transport.send({
             type: 'inbox',
             roomId,
+            ...correlation,
             items: inbox.items,
             ...(cursor ? { cursor } : {}),
             ...(currentTrigger ? { trigger: currentTrigger } : {}),
           });
         }
       } catch (error) {
+        if (!active || this.#closed) return;
         console.error(
           '[live] daemon replay failed',
           error instanceof Error ? error.message : String(error),
@@ -413,26 +558,30 @@ export class DaemonAgentSession {
       }
     };
     const pushCommands = async (trigger?: { reason: string; trace: LiveTrace }) => {
+      if (!active || this.#closed) return;
       commandsRequested = true;
       if (trigger) commandTrigger = trigger;
       if (commandsPushing) return;
       commandsPushing = true;
       try {
-        while (commandsRequested && transport.isOpen() && !this.#closed) {
+        while (commandsRequested && active && transport.isOpen() && !this.#closed) {
           commandsRequested = false;
-          const page = await daemon.execute('getAgentCommands', { roomId }, agentId);
-          if (this.#closed || !transport.isOpen()) return;
+          const page = await daemon.execute('getAgentCommands', { roomId }, agentId,
+            this.turnOwnershipV1 ? { connectionId: this.connectionId, epoch: this.epoch! } : undefined);
+          if (!active || this.#closed || !transport.isOpen()) return;
           const currentTrigger = commandTrigger;
           commandTrigger = undefined;
           transport.send({
             type: 'commands',
             roomId,
+            ...correlation,
             commandProtocol: page.commandProtocol,
             commands: page.commands,
             ...(currentTrigger ? { trigger: currentTrigger } : {}),
           });
         }
       } catch (error) {
+        if (!active || this.#closed) return;
         console.error(
           '[live] daemon command push failed',
           error instanceof Error ? error.message : String(error),
@@ -442,9 +591,8 @@ export class DaemonAgentSession {
         commandsPushing = false;
       }
     };
-    this.#releases.set(
-      roomId,
-      live.subscribe(roomId, (event) => {
+    const unsubscribe = live.subscribe(roomId, (event) => {
+        if (!active || this.#closed) return;
         // Presence and streaming overlays are not durable inbox
         // invalidations. Replaying for them turns every evidence
         // refresh into an unrelated Room read on every daemon
@@ -484,9 +632,9 @@ export class DaemonAgentSession {
           if (transport.isOpen()) transport.send({ type: 'corner-complete', roomId });
           return;
         }
-        void this.#projection(() => replay(trigger));
-      }),
-    );
+        if (wantsInbox && changesDaemonInbox(event)) void this.#projection(() => replay(trigger));
+      });
+    this.#releases.set(roomId, () => { active = false; unsubscribe(); });
     const lifecycleId =
       typeof item.lifecycleId === 'string' && item.lifecycleId.length <= 128
         ? item.lifecycleId
@@ -504,21 +652,24 @@ export class DaemonAgentSession {
       } catch (error) {
         console.error('[presence] startup announcement failed', error);
       }
-    if (!transport.isOpen() || this.#closed) return;
+    if (!active || !transport.isOpen() || this.#closed) return;
+    // Read under the existing admission slot before certifying subscription
+    // recovery. A successful control frame alone is never a caught-up owner.
+    await replay();
+    await pushCommands();
+    if (!active || !transport.isOpen() || this.#closed) return;
     transport.send({
       type: 'subscribed',
       roomId,
+      ...correlation,
       capabilities: {
+        initialSnapshotsV1: true,
+        inboxSnapshot: wantsInbox,
         pushIntake: true,
         connectionPresence: Boolean(this.deps.connectionPresence),
         discoveryWake: true,
       },
     });
-    // Both projections use the app pool. Keep one session's startup
-    // reads inside its single admission slot instead of doubling
-    // connection demand during a reconnect fan-in.
-    await replay();
-    await pushCommands();
   }
 }
 
@@ -759,6 +910,11 @@ export function serveMachineSocket(
           ...(typeof item.releaseVersion === 'string' ? { releaseVersion: item.releaseVersion } : {}),
           ...(typeof item.sourceSha === 'string' ? { sourceSha: item.sourceSha } : {}),
           ...(typeof item.available === 'boolean' ? { available: item.available } : {}),
+          ...(item.overlayV1===true?{overlayV1:true}:{}),
+          ...(item.usageAccountV1===true?{usageAccountV1:true}:{}),
+          ...(item.activationContextV1===true?{activationContextV1:true}:{}),
+          ...(item.turnOwnershipV1===true?{turnOwnershipV1:true}:{}),
+          ...(item.ownedModelV1===true?{ownedModelV1:true}:{}),
         },
       );
       sessions.set(agentId, session);
@@ -767,12 +923,17 @@ export function serveMachineSocket(
       if (session.closed || sessions.get(agentId) !== session) return;
       // Older helpers need only the protocol heartbeat. New helpers explicitly
       // opt in, so rolling server/helper releases stay compatible both ways.
-      if (item.intakeHeartbeat === true) checkpointAgents.add(agentId);
+      if (item.intakeHeartbeat === true && !session.turnOwnershipV1) checkpointAgents.add(agentId);
       else checkpointAgents.delete(agentId);
       send({
         type: 'registered',
         agentId,
-        capabilities: { discoveryWake: true, pushIntake: true, intakeHeartbeat: item.intakeHeartbeat === true },
+        capabilities: { initialSnapshotsV1: true, discoveryWake: true, pushIntake: true, intakeHeartbeat: item.intakeHeartbeat === true && !session.turnOwnershipV1,
+          ...(session.turnOwnershipV1 ? {turnOwnershipV1:true,turnConnectionId:session.connectionId,turnConnectionEpoch:session.epoch} : {}),
+          ...(session.ownedModelV1 ? {ownedModelV1:true} : {}),
+          ...(session.overlayV1?{overlayV1:true}:{}),
+          ...(session.activationContextV1?{activationContextV1:true,activationConnectionId:session.connectionId,activationConnectionEpoch:session.epoch}:{}),
+          ...(session.usageAccountV1?{usageAccountV1:true,usageOwnerId:session.usageOwnerId,usageConnectionId:session.connectionId,usageConnectionEpoch:session.epoch}:{}) },
       });
     } catch (error) {
       deps.errors.internal++;

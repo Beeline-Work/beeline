@@ -392,7 +392,7 @@ jobs:
           if [ "$SHIPPED" = true ]; then
             npm run build -w @beeline/nostr
             npm run build -w @beeline/api-contract
-            npm run build -w @beeline/buzz-client
+            npm run build -w @beeline/buzz-client && npm run build -w @beeline/net
             npm run build -w @beeline/body
           fi
           npm run build -w usebeeline
@@ -579,7 +579,7 @@ jobs:
           set -euo pipefail
           npm run build -w @beeline/nostr
           npm run build -w @beeline/api-contract
-          npm run build -w @beeline/buzz-client
+          npm run build -w @beeline/buzz-client && npm run build -w @beeline/net
       - uses: ./.github/actions/daemon-leg
         if: needs.helper_linux.outputs.shipped != 'true'
         with:
@@ -810,7 +810,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/npm-ci-timed.sh
-          npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
+          npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/net
       - uses: ./.github/actions/eas-cli
       # Pages keeps one deployment per commit, so a second deploy of the same
       # release SHA is ignored. When the helper ships, its Pages deploy carries

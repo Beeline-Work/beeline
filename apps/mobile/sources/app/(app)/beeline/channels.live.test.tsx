@@ -7,8 +7,21 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RoomViewHttpError, type ChatListItem, type ChatListView, type WorkspaceListView } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 
+// These fixtures exercise the negotiated legacy compatibility path. The actual
+// router owner/negotiation path has independent integration coverage.
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => deck.routerMode, holdRouterConnection: () => () => {} }));
+vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+vi.mock('@/buzz/router-owner', () => ({
+  routerFamilyMode: () => 'legacy',
+  acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
+    subscribe: () => () => {}, refreshVisibility: () => {} }),
+  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
+  retryRouterLane: () => {}, routerOwnerListPanel: () => {},
+}));
+
 const deck = vi.hoisted(() => ({
   appState: 'active' as string,
+  routerMode: 'legacy' as 'legacy' | 'router' | 'pending',
   withholdWorkspaceSnapshot: false,
   appStateListeners: [] as Array<(state: string) => void>,
   bottomInset: 0,
@@ -387,6 +400,7 @@ beforeEach(() => {
   vi.mocked(mobileSurfaceCache.read).mockReset().mockResolvedValue(null);
   resetRoomCornerStore();
   deck.appState = 'active';
+  deck.routerMode = 'legacy';
   deck.appStateListeners = [];
   deck.bottomInset = 0;
   deck.renderRows = false;
@@ -619,6 +633,19 @@ describe('Deleted workspace removal', () => {
     expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
     await act(async () => renderer.unmount());
   });
+});
+
+it('hides the retained private deck when negotiated family capability becomes pending', async () => {
+  const renderer = await mountDeck();
+  expect(paintedRows(renderer).length).toBeGreaterThan(0);
+  deck.routerMode = 'router';
+  await act(async () => renderer.update(React.createElement(BuzzChannels)));
+  deck.routerMode = 'pending';
+  await act(async () => renderer.update(React.createElement(BuzzChannels)));
+  const rows = renderer.root.findAll((node: any) => node.type === 'SectionList' && node.props.testID === 'room-list')
+    .flatMap((node: any) => node.props.sections.flatMap((section: any) => section.data));
+  expect(rows).toEqual([]);
+  await act(async () => renderer.unmount());
 });
 
 describe('Room list gestures', () => {

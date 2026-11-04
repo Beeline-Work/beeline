@@ -1,3 +1,7 @@
+import { HelperUsageChannel } from './helper-usage-channel.js';
+import { HelperActivationChannel } from './helper-activation-channel.js';
+import { HelperOverlayChannel } from './helper-overlay-channel.js';
+import { HelperTurnChannel } from './helper-turn-channel.js';
 import WebSocket from 'ws';
 import { helperVersion } from './helper-version.js';
 import { unknownServerEventLogger } from './unknown-server-event.js';
@@ -5,12 +9,6 @@ import { LIVE_LINK_TIMING, LiveLink, type LiveLinkTiming, type LiveSocketFactory
 
 /** Subprotocol of the one socket a helper machine holds for all of its agents. */
 export const MACHINE_SOCKET_PROTOCOL = 'beeline.machine.1';
-
-/** Re-registration after the server dropped or refused one agent. */
-const REGISTRATION_BACKOFF_BASE_MS = 1_000;
-const REGISTRATION_BACKOFF_MAX_MS = 30_000;
-/** Only a registration that lived this long resets its backoff. */
-const STABLE_REGISTRATION_MS = 30_000;
 
 export interface AgentChannelHandlers {
   /** The registration frame: the agent's own token and presence metadata. */
@@ -31,16 +29,33 @@ export interface AgentChannelHandlers {
  * can drop or refuse one agent without touching the others.
  */
 export class AgentChannel {
+  readonly turn = new HelperTurnChannel(frame => this.send(frame), () => this.isOpen());
+  readonly activation=new HelperActivationChannel(frame=>this.send(frame),()=>this.activationScope()!==undefined);
+  #activationSource:{connectionId:string;epoch:number}|undefined;
+  activationContextSelected=false;
+  activationScope():{origin:string;generation:number;source:{connectionId:string;epoch:number}}|undefined{
+    return this.#activationSource&&this.isOpen()?{origin:this.machine.origin,generation:this.reconnects,source:this.#activationSource}:undefined;
+  }
+  readonly usage=new HelperUsageChannel(frame=>this.send(frame),()=>this.usageAccountScope()!==undefined);
+  readonly overlay=new HelperOverlayChannel(frame=>this.send(frame),()=>this.isOpen());
+  #usageOwnerId:string|undefined;
+  #usageSource:{connectionId:string;epoch:number}|undefined;
+  usageAccountSelected=false;
+  usageAccountScope():{origin:string;ownerId:string;generation:number;source:{connectionId:string;epoch:number}}|undefined{
+    return this.#usageOwnerId&&this.#usageSource&&this.isOpen()?{origin:this.machine.origin,ownerId:this.#usageOwnerId,generation:this.reconnects,source:this.#usageSource}:undefined;
+  }
   #wanted = false;
   #registered = false;
   /** A register frame is in flight on the current socket. */
   #pending = false;
   #refused = false;
-  #registeredAt: number | undefined;
-  #failures = 0;
-  #retry: ReturnType<typeof setTimeout> | undefined;
+  #recovered = false;
+  #replacementSpent = false;
   #registrations = 0;
   #intakeHeartbeat = false;
+  /** Current-server correlation is required before accepting initial data. */
+  initialSnapshotsV1 = false;
+  #initialRecoveryPending = false;
   #intakeDeadline: ReturnType<typeof setTimeout> | undefined;
   readonly #openListeners = new Set<() => void>();
 
@@ -75,12 +90,18 @@ export class AgentChannel {
   stop(): void {
     if (!this.#wanted) return;
     this.#wanted = false;
+    this.turn.suspend();
+    this.#activationSource=undefined;this.activation.suspend();
+    this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
+    this.usage.suspend();
+    this.overlay.suspend();
     this.#clearIntakeDeadline();
-    clearTimeout(this.#retry);
-    this.#retry = undefined;
     if (this.#registered) this.send({ type: 'unregister' });
     this.#registered = false;
     this.#pending = false;
+    this.#initialRecoveryPending = false;
+    this.initialSnapshotsV1 = false;
+    this.#recovered = false;
     this.machine.unwant(this);
   }
 
@@ -103,28 +124,48 @@ export class AgentChannel {
   /** The socket opened: ask the server to take this agent. */
   register(): void {
     if (!this.#wanted || this.#registered || this.#pending || this.#refused) return;
-    clearTimeout(this.#retry);
-    this.#retry = undefined;
     // Pending before the send: an answer can arrive before send() returns.
     this.#pending = true;
     this.#armIntakeDeadline();
     if (!this.machine.link.send(JSON.stringify({
-      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true,
+      ...this.handlers.registration(), type: 'register', agentId: this.agentId, intakeHeartbeat: true, overlayV1:true, usageAccountV1:true, activationContextV1:true, turnOwnershipV1:true,
     }))) this.#pending = false;
   }
 
   /** @internal Routed by the machine link. */
   receive(event: Record<string, unknown>): void {
     if (event.type === 'registered') {
+      const pending = this.#pending;
       this.#pending = false;
       if (!this.#wanted || this.#registered) return;
+      // A registration completing after its deadline cannot resurrect its owner.
+      if (!pending) {
+        this.machine.link.send(JSON.stringify({ type: 'unregister', agentId: this.agentId }));
+        return;
+      }
       this.#registered = true;
+      this.initialSnapshotsV1 = (event.capabilities as {initialSnapshotsV1?:unknown}|undefined)?.initialSnapshotsV1 === true;
+      const turnCapabilities = event.capabilities as { turnOwnershipV1?: unknown; turnConnectionId?: unknown; turnConnectionEpoch?: unknown } | undefined;
+      this.turn.negotiate(turnCapabilities?.turnOwnershipV1 === true && typeof turnCapabilities.turnConnectionId === 'string' &&
+        Number.isSafeInteger(turnCapabilities.turnConnectionEpoch) && Number(turnCapabilities.turnConnectionEpoch) > 0
+        ? { connectionId: turnCapabilities.turnConnectionId, epoch: Number(turnCapabilities.turnConnectionEpoch) } : undefined,
+        turnCapabilities?.turnOwnershipV1 === true);
+      const activationCapabilities=event.capabilities as {activationContextV1?:unknown;activationConnectionId?:unknown;activationConnectionEpoch?:unknown}|undefined;
+      if(activationCapabilities?.activationContextV1===true)this.activationContextSelected=true;
+      this.#activationSource=activationCapabilities?.activationContextV1===true&&typeof activationCapabilities.activationConnectionId==='string'&&
+        Number.isSafeInteger(activationCapabilities.activationConnectionEpoch)&&Number(activationCapabilities.activationConnectionEpoch)>0
+        ?{connectionId:activationCapabilities.activationConnectionId,epoch:Number(activationCapabilities.activationConnectionEpoch)}:undefined;
+      const usageCapabilities=event.capabilities as {usageAccountV1?:unknown;usageOwnerId?:unknown;usageConnectionId?:unknown;usageConnectionEpoch?:unknown}|undefined;
+      this.usageAccountSelected=usageCapabilities?.usageAccountV1===true;
+      this.#usageOwnerId=this.usageAccountSelected&&typeof usageCapabilities?.usageOwnerId==='string'?usageCapabilities.usageOwnerId:undefined;
+      this.#usageSource=this.usageAccountSelected&&typeof usageCapabilities?.usageConnectionId==='string'&&Number.isSafeInteger(usageCapabilities.usageConnectionEpoch)&&Number(usageCapabilities.usageConnectionEpoch)>0
+        ?{connectionId:usageCapabilities.usageConnectionId,epoch:Number(usageCapabilities.usageConnectionEpoch)}:undefined;
+      this.overlay.negotiate((event.capabilities as {overlayV1?:unknown}|undefined)?.overlayV1===true);
       this.#intakeHeartbeat = Boolean(
         (event.capabilities as { intakeHeartbeat?: unknown } | undefined)?.intakeHeartbeat === true,
       );
       this.#clearIntakeDeadline();
       if (this.#intakeHeartbeat) this.#armIntakeDeadline();
-      this.#registeredAt = Date.now();
       this.#registrations += 1;
       this.handlers.onOpen();
       this.machine.registered();
@@ -138,7 +179,7 @@ export class AgentChannel {
       return;
     }
     if (event.type === 'intake-ready') {
-      if (this.#registered && this.#intakeHeartbeat) this.#armIntakeDeadline();
+      if (this.#registered && this.#intakeHeartbeat && !this.#initialRecoveryPending) this.#armIntakeDeadline();
       return;
     }
     if (event.type === 'register-refused') {
@@ -151,31 +192,37 @@ export class AgentChannel {
       this.handlers.onRefused?.(code);
       if (this.#refused) {
         this.#wanted = false;
-        clearTimeout(this.#retry);
-        this.#retry = undefined;
         // A helper with only refused agents must not keep opening sockets
         // that the server will immediately close for having no registration.
         this.machine.unwant(this);
-      } else this.#retryLater();
+      }
       return;
     }
     if (event.type === 'unregistered') {
       if (!this.#registered) return;
       console.warn(`[machine-link] server dropped agent ${this.agentId}: ${String(event.reason)}`);
+      const recovered=this.#recovered;
       this.#ended();
-      this.#retryLater();
+      if(recovered && !this.#replacementSpent){this.#replacementSpent=true;this.register();}
       return;
     }
+    if(this.#registered&&(this.turn.receive(event)||this.overlay.receive(event)||this.usage.receive(event)||this.activation.receive(event)))return;
     if (this.#registered) this.handlers.onMessage(event);
   }
 
   /** @internal The machine socket closed: every registration ended with it. */
   socketClosed(): void {
+    this.turn.suspend();
+    this.#activationSource=undefined;this.activation.suspend();
+    this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
+    this.usage.suspend();
+    this.overlay.suspend();
     this.#clearIntakeDeadline();
-    clearTimeout(this.#retry);
-    this.#retry = undefined;
     this.#pending = false;
     if (this.#registered) this.#ended();
+    this.#initialRecoveryPending = false;
+    this.initialSnapshotsV1 = false;
+    this.#recovered = false;
   }
 
   /** @internal Machine-wide frames (release notices, force-update). */
@@ -199,36 +246,50 @@ export class AgentChannel {
     this.#intakeDeadline = setTimeout(() => {
       this.#intakeDeadline = undefined;
       if (!this.#wanted) return;
-      console.warn(`[machine-link] agent ${this.agentId} ${this.#pending ? 'registration' : 'intake'} stalled; reconnecting`);
-      this.machine.reconnectNow();
+      console.warn(`[machine-link] agent ${this.agentId} ${this.#pending ? 'registration' : 'intake'} stalled; parked`);
+      // A missing registration/intake acknowledgement is not an independent
+      // recovery boundary and cannot reopen the machine repeatedly.
+      this.#pending = false;
+      if(this.#registered) {
+        this.send({ type: 'unregister' });
+        this.#ended();
+      }
     }, this.machine.intakeTimeoutMs ?? LIVE_LINK_TIMING.heartbeatTimeoutMs);
     this.#intakeDeadline.unref?.();
   }
 
   #ended(): void {
-    const registeredAt = this.#registeredAt;
+    this.turn.suspend();
+    this.#activationSource=undefined;this.activation.suspend();
+    this.#usageOwnerId=undefined;this.#usageSource=undefined;this.usageAccountSelected=false;
+    this.usage.suspend();
+    this.overlay.suspend();
     this.#registered = false;
+    this.initialSnapshotsV1 = false;
+    this.#initialRecoveryPending = false;
     this.#clearIntakeDeadline();
-    this.#registeredAt = undefined;
-    if (registeredAt !== undefined && Date.now() - registeredAt >= STABLE_REGISTRATION_MS)
-      this.#failures = 0;
+    this.#recovered = false;
     this.handlers.onClose();
   }
 
-  #retryLater(): void {
-    if (!this.#wanted || this.#retry) return;
-    const ceiling = Math.min(
-      REGISTRATION_BACKOFF_MAX_MS,
-      REGISTRATION_BACKOFF_BASE_MS * 2 ** this.#failures,
-    );
-    this.#failures += 1;
-    // Full jitter: agents dropped together do not come back in lockstep.
-    this.#retry = setTimeout(() => {
-      this.#retry = undefined;
-      if (this.machine.link.isOpen()) this.register();
-    }, Math.floor(this.machine.random() * ceiling));
-    this.#retry.unref?.();
+  /** Authentication plus current demanded-lane acknowledgements. */
+  recovered(): void {
+    if(!this.isOpen() || this.#recovered)return;
+    this.#initialRecoveryPending=false;
+    this.#clearIntakeDeadline();
+    if(this.#intakeHeartbeat)this.#armIntakeDeadline();
+    this.#recovered=true;this.#replacementSpent=false;
+    this.machine.recovered();
   }
+  /** One admission deadline for initial demanded data; controls cannot renew it. */
+  awaitInitialRecovery(): void {
+    if(!this.isOpen() || this.#initialRecoveryPending)return;
+    this.#initialRecoveryPending=true;
+    this.#recovered=false;
+    this.#armIntakeDeadline();
+  }
+  get recoveryComplete(): boolean {return this.#recovered;}
+
 }
 
 /**
@@ -280,6 +341,8 @@ export class MachineLink {
     });
   }
 
+  get origin():string{return new URL(this.options.baseUrl).origin;}
+
   setHelperIdentity(identity: { releaseVersion?: string; sourceSha?: string }): void {
     this.#identity = {
       releaseVersion: helperVersion(identity.releaseVersion),
@@ -299,6 +362,12 @@ export class MachineLink {
     }
   }
 
+  /** Reset one incident only when every owned agent has caught up. */
+  recovered(): void {
+    if([...this.#channels.values()].every(channel=>channel.isOpen() && channel.recoveryComplete))
+      this.link.markRecovered();
+  }
+
   /** A later channel for the same agent (an in-process restart) replaces the earlier one. */
   attach(agentId: string, handlers: AgentChannelHandlers): AgentChannel {
     return new AgentChannel(this, agentId, handlers);
@@ -310,7 +379,11 @@ export class MachineLink {
     this.#channels.set(channel.agentId, channel);
     if (previous && previous !== channel) previous.socketClosed();
     if (this.link.isOpen()) channel.register();
-    else this.link.start();
+    else {
+      this.link.start();
+      // A newly attached agent/configuration is an independent demand boundary.
+      if(this.link.state==='disconnected')this.link.reconnectNow();
+    }
   }
 
   /** @internal */

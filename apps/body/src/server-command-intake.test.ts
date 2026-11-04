@@ -29,7 +29,7 @@ async function context() {
   return new CommandExecutionContext(dir);
 }
 function socketApi(execute: ReturnType<typeof vi.fn>) {
-  let state: ((connected: boolean, capabilities?: { pushIntake: boolean; connectionPresence: boolean }) => void) | undefined;
+  let state: ((connected: boolean, capabilities?: { pushIntake: boolean; connectionPresence: boolean; connectionGeneration?: number }) => void) | undefined;
   let commands: ((commands: readonly AgentCommand[]) => void) | undefined;
   const api = {
     execute,
@@ -39,7 +39,7 @@ function socketApi(execute: ReturnType<typeof vi.fn>) {
       return vi.fn();
     }),
   } as unknown as DaemonApiClient;
-  return { api, connected: () => state?.(true, { pushIntake: true, connectionPresence: true }),
+  return { api, connected: (generation?:number) => state?.(true, { pushIntake: true, connectionPresence: true,...(generation===undefined?{}:{connectionGeneration:generation}) }),
     disconnected: () => state?.(false),
     unsupported: () => state?.(true, { pushIntake: false, connectionPresence: true }),
     push: (rows: AgentCommand[]) => commands?.(rows) };
@@ -71,7 +71,7 @@ describe('command intake mechanics', () => {
     expect(run).toHaveBeenCalledTimes(2);
   });
 
-  it('WAKE-STORM: a rate-limited turn requeues once and resumes after reset despite pushed snapshots', async () => {
+  it('WAKE-STORM: rate-limit time alone never resumes; an actual later command boundary does', async () => {
     const ctx = await context();
     vi.useFakeTimers();
     const abort = new AbortController();
@@ -99,6 +99,8 @@ describe('command intake mechanics', () => {
     }
     expect(run).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(101_000);
+    expect(run).toHaveBeenCalledOnce();
+    socket.push([command('retry')]);
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2));
     await intake;
   });
@@ -181,6 +183,8 @@ describe('command intake mechanics', () => {
         rows.set(row.id, row);
         queued.set(row.id, row);
         push();
+      } else if (req.url === '/recover') {
+        for (const socket of sockets.clients) socket.send(JSON.stringify({type:'config-changed',agentId:'agent'}));
       } else if (req.url?.endsWith('/getAgentCommands')) {
         res.end(JSON.stringify({ commandProtocol: 1, commands: [...queued.values()] }));
         return;
@@ -214,13 +218,15 @@ describe('command intake mechanics', () => {
         socket.send(JSON.stringify({ type: 'subscribed', roomId: 'room', agentId: 'agent',
           capabilities: { pushIntake: true, connectionPresence: true } }));
         push();
+        socket.send(JSON.stringify({type:'inbox',roomId:'room',agentId:'agent',items:[]}));
       }
     }));
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
     const address = server.address() as { port: number };
     const origin = `http://127.0.0.1:${address.port}`;
     const api = new DaemonApiClient(origin, 'test-token', 'agent');
-    const offWatch = api.liveSubscribe('room');
+    let ready=false;
+    const offWatch = api.liveSubscribe('room',undefined,undefined,connected=>{ready=connected;});
     const onLeave = vi.fn(() => {
       if (firstLeave) { firstLeave = false; throw new Error('onLeave failure'); }
     });
@@ -229,8 +235,10 @@ describe('command intake mechanics', () => {
       if (ctx.current) { await leave(); throw new Error('leave failure'); }
       await leave();
     });
+    let recover: (()=>void)|undefined;
+    api.setConfigChangedListener(()=>recover?.());
     const running = runServerCommandIntake({ api, roomId: 'room', agentId: 'agent',
-      context: ctx, signal: abort.signal, stop: vi.fn(), onLeave,
+      context: ctx, signal: abort.signal, stop: vi.fn(), onLeave, onRecovery:callback=>{recover=callback;},
       onError: (error) => errors.push(error),
       run: async (row) => {
         if (!requeued) {
@@ -243,11 +251,22 @@ describe('command intake mechanics', () => {
         await ctx.bind(api).execute('postRoomMessage', { roomId: 'room', text: `Answer: ${row.source.body}` });
       } });
     try {
-      await vi.waitFor(() => expect(api.metrics().subscriptionsSent).toBeGreaterThanOrEqual(2));
+      // Both consumers share one Room subscription; readiness requires the
+      // committed commands and inbox snapshots, not a duplicate subscribe.
+      await vi.waitFor(() => expect(ready).toBe(true));
+      expect(api.metrics().subscriptionsSent).toBe(1);
       offWatch();
       for (const id of ['first', 'next']) {
         await fetch(`${origin}/messages`, { method: 'POST', body: JSON.stringify({ id, body: id }) });
-        if (id === 'first') await vi.waitFor(() => expect(answers).toHaveLength(2), { timeout: 3000 });
+        if (id === 'first') {
+          await vi.waitFor(()=>expect(claimFailure).toBe(false));
+          // Elapsed Retry-After permits eligibility but admits no retry. An
+          // actual later configuration event is the independent boundary.
+          await new Promise(resolve=>setTimeout(resolve,350));
+          expect(answers).toHaveLength(0);
+          await fetch(`${origin}/recover`,{method:'POST'});
+          await vi.waitFor(() => expect(answers).toHaveLength(2), { timeout: 3000 });
+        }
       }
       await vi.waitFor(() => expect(answers).toHaveLength(3), { timeout: 3000 });
       expect(answers).toEqual(['Answer: first', 'Answer: first', 'Answer: next']);
@@ -317,24 +336,22 @@ describe('command intake mechanics', () => {
     expect(request.mock.calls.filter(([url]) => String(url).endsWith('/claimAgentCommand'))).toHaveLength(2);
   });
 
-  it('R2d: retries a transient claim in the same generation and runs once', async () => {
-    const abort = new AbortController();
-    const ctx = await context();
-    let claims = 0;
-    const execute = vi.fn(async (name: string) => {
-      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [command()] };
-      if (name === 'claimAgentCommand' && ++claims === 1) throw new DaemonApiError('x', 503, true);
-      return { id: 'ok' };
+  it('R2d: a real configuration recovery retries a transient claim in the same generation once', async () => {
+    const abort = new AbortController(),ctx=await context();
+    let claims=0,recover:(()=>void)|undefined,failed!:()=>void;
+    const failure=new Promise<void>(resolve=>{failed=resolve;});
+    const execute=vi.fn(async(name:string)=>{
+      if(name==='getAgentCommands')return {commandProtocol:1,commands:[command()]};
+      if(name==='claimAgentCommand'&&++claims===1)throw new DaemonApiError('x',503,true);
+      return {id:'ok'};
     });
-    const run = vi.fn(async () => abort.abort());
-    const timeout = setTimeout(() => abort.abort(), 1000);
-    await runServerCommandIntake({ api: socketApi(execute).api, roomId: 'room', agentId: 'agent',
-      context: ctx, signal: abort.signal, run, stop: vi.fn() });
-    clearTimeout(timeout);
+    const run=vi.fn(async()=>abort.abort());
+    const running=runServerCommandIntake({api:socketApi(execute).api,roomId:'room',agentId:'agent',
+      context:ctx,signal:abort.signal,run,stop:vi.fn(),onClaimFailed:failed,onRecovery:callback=>{recover=callback;}});
+    await failure;expect(run).not.toHaveBeenCalled();recover!();await running;
     expect(run).toHaveBeenCalledOnce();
-    const attempts = execute.mock.calls.filter(([name]) => name === 'claimAgentCommand');
-    expect(attempts).toHaveLength(2);
-    expect(attempts[0]).toEqual(attempts[1]);
+    const attempts=execute.mock.calls.filter(([name])=>name==='claimAgentCommand');
+    expect(attempts).toHaveLength(2);expect(attempts[0]).toEqual(attempts[1]);
   });
 
   it.each([409, 403])('R2d: treats a %s claim refusal as final', async (status) => {
@@ -352,36 +369,26 @@ describe('command intake mechanics', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
-  it('R2d: honors Retry-After, bounds backoff, and throws exhaustion to the supervisor', async () => {
-    vi.useFakeTimers();
-    const ctx = await context();
-    const error = new DaemonApiError('unavailable', 503, true, 'unavailable', 800);
-    const times: number[] = [];
-    const execute = vi.fn(async (name: string) => {
-      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [command()] };
-      times.push(Date.now());
-      throw error;
+  it('R2d: parks one uncertain claim; elapsed Retry-After and duplicate acks never retry it', async () => {
+    vi.useFakeTimers(); const abort=new AbortController();
+    const execute=vi.fn(async(name:string)=>{
+      if(name==='getAgentCommands')return{commandProtocol:1,commands:[command()]};
+      throw new DaemonApiError('unavailable',503,true,'unavailable',800);
     });
-    const onClaimFailed = vi.fn();
-    const run = vi.fn();
-    const failed = runServerCommandIntake({ api: socketApi(execute).api, roomId: 'room', agentId: 'agent',
-      context: ctx, run, stop: vi.fn(), onClaimFailed }).catch((err) => err);
+    const socket=socketApi(execute),run=vi.fn(),onClaimFailed=vi.fn();
+    const running=runServerCommandIntake({api:socket.api,roomId:'room',agentId:'agent',context:await context(),
+      signal:abort.signal,run,stop:vi.fn(),onClaimFailed});
     await vi.advanceTimersByTimeAsync(0);
-    expect(times).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(799);
-    expect(times).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1);
-    expect(times).toHaveLength(2);
-    await vi.advanceTimersByTimeAsync(800);
-    expect(times).toHaveLength(3);
-    await vi.advanceTimersByTimeAsync(1000);
-    expect(await failed).toBe(error);
-    expect(times.slice(1).map((time, i) => time - times[i]!)).toEqual([800, 800, 1000]);
-    expect(onClaimFailed).toHaveBeenCalledOnce();
-    expect(run).not.toHaveBeenCalled();
+    socket.connected(1);await vi.advanceTimersByTimeAsync(0);
+    await vi.advanceTimersByTimeAsync(86_400_000);
+    socket.connected(1);await vi.advanceTimersByTimeAsync(0);
+    expect(execute.mock.calls.filter(([name])=>name==='claimAgentCommand')).toHaveLength(1);
+    socket.disconnected();socket.connected(2);await vi.advanceTimersByTimeAsync(0);
+    expect(execute.mock.calls.filter(([name])=>name==='claimAgentCommand')).toHaveLength(2);
+    abort.abort();await running;expect(run).not.toHaveBeenCalled();expect(onClaimFailed).toHaveBeenCalledTimes(2);
   });
 
-  it('R2d: aborts a claim backoff without another attempt or a busy mark', async () => {
+  it('R2d: aborts a parked claim without another attempt or a busy mark', async () => {
     vi.useFakeTimers();
     const abort = new AbortController();
     const execute = vi.fn(async (name: string) => {
@@ -398,21 +405,21 @@ describe('command intake mechanics', () => {
     expect(onClaimFailed).toHaveBeenCalledOnce();
   });
 
-  it('R2d: retries a lost network response with the same claim identity', async () => {
-    const abort = new AbortController();
-    let claims = 0;
-    const execute = vi.fn(async (name: string) => {
-      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [command()] };
-      if (++claims === 1) throw new TypeError('fetch failed', { cause: { code: 'ECONNRESET' } });
-      return { id: 'ok' };
+  it('R2d: a real recovery retries a lost network response with the immutable claim identity', async () => {
+    const abort=new AbortController();let claims=0,recover:(()=>void)|undefined,failed!:()=>void;
+    const failure=new Promise<void>(resolve=>{failed=resolve;});
+    const execute=vi.fn(async(name:string)=>{
+      if(name==='getAgentCommands')return {commandProtocol:1,commands:[command()]};
+      if(++claims===1)throw new TypeError('fetch failed',{cause:{code:'ECONNRESET'}});
+      return {id:'ok'};
     });
-    const run = vi.fn(async () => abort.abort());
-    await runServerCommandIntake({ api: socketApi(execute).api, roomId: 'room', agentId: 'agent',
-      context: await context(), signal: abort.signal, run, stop: vi.fn() });
+    const run=vi.fn(async()=>abort.abort());
+    const running=runServerCommandIntake({api:socketApi(execute).api,roomId:'room',agentId:'agent',
+      context:await context(),signal:abort.signal,run,stop:vi.fn(),onClaimFailed:failed,onRecovery:callback=>{recover=callback;}});
+    await failure;expect(run).not.toHaveBeenCalled();recover!();await running;
     expect(run).toHaveBeenCalledOnce();
-    const attempts = execute.mock.calls.filter(([name]) => name === 'claimAgentCommand');
-    expect(attempts).toHaveLength(2);
-    expect(attempts[0]).toEqual(attempts[1]);
+    const attempts=execute.mock.calls.filter(([name])=>name==='claimAgentCommand');
+    expect(attempts).toHaveLength(2);expect(attempts[0]).toEqual(attempts[1]);
   });
 
   it('R2e: releases a failed context entry, posts failure, and runs the next input', async () => {

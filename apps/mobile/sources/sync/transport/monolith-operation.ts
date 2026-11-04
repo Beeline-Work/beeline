@@ -116,16 +116,9 @@ export async function monolithPhoneOperation<Name extends keyof PhoneOperationMa
       result = await sharedLiveConnection().request(name, args, requestOptions);
     } catch (error) {
       if (name !== 'redeemInvite' || !ambiguous(error)) throw error;
-      // Redemption is retry-safe for the same identity and token: a committed
-      // join returns its Workspace/Room with joined=false. Confirm once on the
-      // replacement socket instead of calling an unknown result a failed join.
-      try {
-        result = await sharedLiveConnection().request(name, args, requestOptions);
-      } catch (confirmationError) {
-        if (ambiguous(confirmationError) || (confirmationError instanceof PhoneSocketError && confirmationError.retryable))
-          throw new Error('Your join is not confirmed yet. Try Join again to check its result.');
-        throw confirmationError;
-      }
+      // An ambiguous receipt does not authorize a second command. Preserve
+      // uncertainty until a separate explicit Join action checks the same token.
+      throw new Error('Your join is not confirmed yet. Try Join again to check its result.');
     }
     if (['createWorkspace', 'sendRoomMessage', 'sendRoomReply'].includes(name))
       void import('@/auth/signin-funnel').then(module => module.funnelSuccessfulOperation(name)).catch(() => undefined);

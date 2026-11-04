@@ -1,5 +1,8 @@
 vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 vi.mock('./Button', () => ({ Button: 'Button' }));
+// The runnable boundary has its own suite; this pane suite verifies selection
+// and layout without loading the trusted connection/native identity owner.
+vi.mock('./RunnableArtifact', () => ({ RunnableArtifact: 'RunnableArtifact' }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -65,6 +68,7 @@ vi.mock('react-native-unistyles', () => ({
   useUnistyles: () => ({ theme }),
 }));
 vi.mock('@/buzz/artifact-link', () => ({
+  subscribeArtifactBytesPurge: () => () => {},
   fetchArtifactBytes: mocks.fetchArtifactBytes,
   fetchArtifactText: mocks.fetchArtifactText,
   openArtifactInBrowserOrExplain: mocks.openArtifactInBrowserOrExplain,

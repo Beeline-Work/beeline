@@ -1,0 +1,106 @@
+{
+  "finding": "F13",
+  "proof": "P11 equal-workload initial Room statement/WAL/bytes gate",
+  "tools": 200,
+  "toolOutputBytes": 32768,
+  "readWorkload": {
+    "samples": [
+      {
+        "legacy": {
+          "statements": 2,
+          "queryResultBytes": 6743384,
+          "wireBytes": 6616398,
+          "elapsedMs": 788.7621249999975,
+          "nodeCpuMicros": 70883,
+          "walBytes": 0
+        },
+        "candidate": {
+          "statements": 8,
+          "queryResultBytes": 2507,
+          "wireBytes": 2629,
+          "elapsedMs": 39.560574000002816,
+          "nodeCpuMicros": 10318,
+          "walBytes": 1168
+        }
+      },
+      {
+        "legacy": {
+          "statements": 2,
+          "queryResultBytes": 6743384,
+          "wireBytes": 6616398,
+          "elapsedMs": 140.91743100000167,
+          "nodeCpuMicros": 62708,
+          "walBytes": 0
+        },
+        "candidate": {
+          "statements": 8,
+          "queryResultBytes": 2507,
+          "wireBytes": 2629,
+          "elapsedMs": 35.81412000000273,
+          "nodeCpuMicros": 6533,
+          "walBytes": 0
+        }
+      },
+      {
+        "legacy": {
+          "statements": 2,
+          "queryResultBytes": 6743384,
+          "wireBytes": 6616398,
+          "elapsedMs": 168.0652480000026,
+          "nodeCpuMicros": 161641,
+          "walBytes": 0
+        },
+        "candidate": {
+          "statements": 8,
+          "queryResultBytes": 2507,
+          "wireBytes": 2629,
+          "elapsedMs": 41.07810299999983,
+          "nodeCpuMicros": 8529,
+          "walBytes": 0
+        }
+      },
+      {
+        "legacy": {
+          "statements": 2,
+          "queryResultBytes": 6743384,
+          "wireBytes": 6616398,
+          "elapsedMs": 104.89158899999893,
+          "nodeCpuMicros": 39501,
+          "walBytes": 0
+        },
+        "candidate": {
+          "statements": 8,
+          "queryResultBytes": 2507,
+          "wireBytes": 2629,
+          "elapsedMs": 47.7457510000022,
+          "nodeCpuMicros": 97925,
+          "walBytes": 0
+        }
+      },
+      {
+        "legacy": {
+          "statements": 2,
+          "queryResultBytes": 6743384,
+          "wireBytes": 6616398,
+          "elapsedMs": 114.69068699999843,
+          "nodeCpuMicros": 41887,
+          "walBytes": 0
+        },
+        "candidate": {
+          "statements": 8,
+          "queryResultBytes": 2507,
+          "wireBytes": 2629,
+          "elapsedMs": 32.66454200000226,
+          "nodeCpuMicros": 4952,
+          "walBytes": 0
+        }
+      }
+    ],
+    "scope": "Same authorized 200-tool collapsed Room open; local Node CPU/elapsed, not production PostgreSQL CPU or native paint"
+  },
+  "status": "FAIL",
+  "error": {
+    "name": "AssertionError",
+    "message": "candidate statements 8 exceed legacy 2"
+  }
+}

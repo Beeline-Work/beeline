@@ -152,7 +152,7 @@ function safeFileName(attachment: DaemonAttachment, index: number, taken: Set<st
 /**
  * Download every attachment of one message into `dir`. Never throws: a skipped
  * or failed download degrades to a reason for that file. Successful cached
- * copies are reused; temporary fetch failures get at most three attempts.
+ * copies are reused; failed downloads return their first failure.
  */
 export async function deliverAttachments(
   attachments: readonly DaemonAttachment[],
@@ -175,24 +175,8 @@ export async function deliverAttachments(
       if (previous) return previous;
       try {
         await mkdir(dir, { recursive: true });
-        // Each delivery makes at most three attempts at temporary media failures.
-        let fetched: BoundedFetchResult | undefined;
-        for (let attempt = 1; attempt <= 3; attempt += 1) {
-          try {
-            fetched = await fetchBoundedBytes(attachment.url, fetchImpl);
-            if (
-              attempt < 3 &&
-              (fetched.status >= 500 || fetched.status === 408 || fetched.status === 429)
-            )
-              continue;
-            break;
-          } catch (error) {
-            if (error instanceof BoundedSizeError || attempt === 3) throw error;
-          }
-        }
-        if (!fetched) throw new Error('no download response');
-        // 410 Gone is the server's own word for the TTL sweep, and the one
-        // status that is never worth a retry.
+        const fetched = await fetchBoundedBytes(attachment.url, fetchImpl);
+        // 410 Gone is the server's explicit media expiry outcome.
         if (fetched.status === 410) return { attachment, reason: EXPIRED_REASON };
         if (!fetched.ok) throw new Error(`HTTP ${fetched.status}`);
         const path = join(dir, names[index]!);

@@ -1,3 +1,4 @@
+import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
 import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -62,7 +63,7 @@ describe('wallet connect in the desktop web renderer', () => {
         }, 5800);
         }`,
       );
-      const shims = webProofShims(mobile);
+      const shims = {...webProofShims(mobile), ...legacyRouterProofShims()};
       const result = await runBrowserProof({
         entry,
         mobile,

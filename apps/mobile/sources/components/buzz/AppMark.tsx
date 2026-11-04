@@ -43,12 +43,7 @@ const BUNDLED_MARKS: Record<string, number> = {
   runway: runwayMark,
 };
 
-/** Public favicon lookup; requests go to Google rather than the credential's service. */
-export function serviceFaviconUrl(domain: string): string {
-  return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(domain)}&sz=64`;
-}
-
-/** A consistent tile for apps, with the official public favicon when available. */
+/** Bundled or server-provided mark; missing marks use the existing local glyph. */
 export function AppMark({
   name,
   mark,
@@ -74,9 +69,7 @@ export function AppMark({
     ? undefined
     : logo && !failedUris.includes(logo)
       ? logo
-      : domain
-        ? serviceFaviconUrl(domain)
-        : undefined;
+      : undefined;
   const showImage = uri && !failedUris.includes(uri);
   return (
     <View

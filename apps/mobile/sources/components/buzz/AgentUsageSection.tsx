@@ -20,8 +20,6 @@ import { Typography } from '@/constants/Typography';
 
 /** Longer than the server's 20 s wait for the helper, so its answer always arrives first. */
 export const USAGE_REFRESH_CLIENT_TIMEOUT_MS = 25_000;
-/** Opening a Profile whose numbers are older than this reads them again once. */
-export const USAGE_AUTO_REFRESH_SECONDS = 2 * 60;
 
 type Tone = 'warning' | 'danger' | undefined;
 /** One column of the Usage cell: a window, an allowance, or a spend figure. */
@@ -170,7 +168,7 @@ export function usageCell(
  * Owner-only USAGE section: one cell, one column per window (approved mock). A
  * harness that never reported anything still gets the section and its note.
  * A refresh shows a spinner and what it is reading, then the new numbers or
- * why there are none; a Profile whose numbers are over 2 min old reads once.
+ * why there are none. Only the existing Refresh action requests a provider read.
  */
 export function AgentUsageSection({ usage, harness, onRefresh }: {
   usage?: AgentUsage; harness?: string; onRefresh?: () => Promise<unknown>;
@@ -205,20 +203,15 @@ export function AgentUsageSection({ usage, harness, onRefresh }: {
     };
     // A late answer still settles this attempt and replaces the timeout's line.
     timer.current = setTimeout(() => settle({ status: 'no_answer' }), USAGE_REFRESH_CLIENT_TIMEOUT_MS);
-    void Promise.resolve()
-      .then(onRefresh)
+    let reply: Promise<unknown>;
+    try { reply = onRefresh(); }
+    catch { settle({ status: 'failed', reason: "Beeline didn't answer" }); return; }
+    void Promise.resolve(reply)
       .then(
         (value) => settle(readUsageRefreshOutcome(value) ?? { status: 'fresh' }),
         () => { if (timer.current !== undefined) settle({ status: 'failed', reason: "Beeline didn't answer" }); },
       );
   }, [onRefresh]);
-  const hasUsage = usage !== undefined;
-  React.useEffect(() => {
-    if (!hasUsage || !canRefresh) return;
-    if (Date.now() / 1000 - (updatedAt.current ?? 0) > USAGE_AUTO_REFRESH_SECONDS) refresh();
-    // Once per Profile: the section is keyed by agent.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasUsage, canRefresh]);
   const machine = usage?.machine;
   const reading = `Refreshing · reading ${usageProvider(harness, Boolean(usage?.spend))}${machine ? ` on ${machine}` : ''}`;
   return (

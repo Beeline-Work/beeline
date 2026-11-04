@@ -1,3 +1,4 @@
+import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import { funnelOnboarding } from '@/auth/signin-funnel';
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, Text, View } from 'react-native';
@@ -5,11 +6,14 @@ import { StyleSheet } from 'react-native-unistyles';
 import type { AttachmentReference } from '@beeline/buzz-client';
 import { runnableArtifactUrl } from '@/buzz/artifact-link';
 import { mediaIdFromUrl } from '@/buzz/artifact';
+import { mediaMetadataAvailable, retainMediaObjectDisplay, subscribeMediaCacheBoundary } from '@/buzz/media-cache-connection';
+import { routerOwnerArtifactAction } from '@/buzz/router-owner';
 import { useSandboxWebView, useSandboxWebViewStatus } from './sandbox-webview';
 import { Button } from './Button';
 
 /** Deliberately no message bridge or injected script, including in error states. */
 export function RunnableArtifact({ attachment }: { attachment: AttachmentReference }) {
+  const recovery = useArtifactRecoveryGeneration();
   const [url, setUrl] = useState<string>();
   const [failed, setFailed] = useState(false);
   const [navigationStopped, setNavigationStopped] = useState(false);
@@ -26,6 +30,14 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
   }, [attachment.url]);
   useEffect(() => {
     let live = true;
+    const objectId = mediaIdFromUrl(attachment.url);
+    const releaseDisplay = objectId ? retainMediaObjectDisplay(objectId) : () => {};
+    const stopAuthority = subscribeMediaCacheBoundary(event => {
+      const objectId = mediaIdFromUrl(attachment.url);
+      if (event.kind === 'revoke' && mediaMetadataAvailable() && !event.objectIds.includes(objectId ?? '') &&
+          event.authorityScope !== `object:${objectId}`) return;
+      live = false; setUrl(undefined); setFailed(true);
+    });
     setUrl(undefined);
     setFailed(false);
     setNavigationStopped(false);
@@ -39,16 +51,20 @@ export function RunnableArtifact({ attachment }: { attachment: AttachmentReferen
       },
     );
     return () => {
-      live = false;
+      live = false; stopAuthority(); releaseDisplay();
     };
-  }, [attachment.url, attempt]);
+  }, [attachment.url, attempt, recovery]);
   if (navigationStopped) {
     return (
       <View style={styles.placeholder} testID="runnable-artifact-navigation-stopped">
         <Text style={styles.text}>This page tried to open another page and was closed.</Text>
         <Button
           label="Reopen"
-          onPress={() => setAttempt((value) => value + 1)}
+          onPress={() => {
+            const objectId = mediaIdFromUrl(attachment.url);
+            if (objectId) routerOwnerArtifactAction('RunArtifact', objectId);
+            setAttempt((value) => value + 1);
+          }}
           testID="runnable-artifact-reopen"
         />
       </View>

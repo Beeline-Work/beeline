@@ -31,14 +31,23 @@ it('renews the same human-controlled share over three upstream lifetimes between
   renewals.close();
 });
 
-it('retries a transient provider failure without ending the share', async () => {
-  const { renewals, call, persist, reaped } = fixture();
+it('stops after one uncertain renewal until another explicit share action', async () => {
+  const { renewals, client, call, persist, reaped } = fixture();
   call.mockRejectedValueOnce(new Error('transport lost'));
-  await vi.advanceTimersByTimeAsync(5_600);
-  expect(call).toHaveBeenCalledTimes(2);
-  expect(persist).toHaveBeenCalledOnce();
+  await vi.advanceTimersByTimeAsync(10*60_000);
+  expect(call).toHaveBeenCalledOnce();expect(persist).not.toHaveBeenCalled();
   expect(reaped).not.toHaveBeenCalled();
+  renewals.track('session',client,result());await vi.advanceTimersByTimeAsync(500);
+  expect(call).toHaveBeenCalledTimes(2);expect(persist).toHaveBeenCalledOnce();
   renewals.close();
+});
+
+it('does not let an old failed renewal end a newer explicit share',async()=>{
+  const {renewals,client,call,reaped}=fixture();let reject!:(error:Error)=>void;
+  call.mockImplementationOnce(()=>new Promise((_resolve,fail)=>{reject=fail;}));
+  await vi.advanceTimersByTimeAsync(500);renewals.track('session',client,result());
+  reject(new Error('late old transport failure'));await vi.advanceTimersByTimeAsync(500);
+  expect(reaped).not.toHaveBeenCalled();expect(call).toHaveBeenCalledTimes(2);renewals.close();
 });
 
 it('stops maintenance when the Beeline share was explicitly ended', async () => {
@@ -68,4 +77,19 @@ it('ignores a renewal response that arrives after the helper stops', async () =>
   finish(result());
   await vi.advanceTimersByTimeAsync(3_000);
   expect(persist).not.toHaveBeenCalled();
+});
+
+it.each([false, true])('F21: a held old persistence result (%s) cannot retire a replacement share', async persisted => {
+  const { renewals, client, call, persist, reaped } = fixture();
+  let finish!: (value: boolean) => void;
+  persist.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  try {
+    await vi.advanceTimersByTimeAsync(500);
+    expect(persist).toHaveBeenCalledOnce();
+    renewals.track('session', client, result());
+    finish(persisted); await vi.advanceTimersByTimeAsync(500);
+    expect(call).toHaveBeenCalledTimes(2);
+    expect(persist).toHaveBeenCalledTimes(2);
+    expect(reaped).not.toHaveBeenCalled();
+  } finally { renewals.close(); }
 });

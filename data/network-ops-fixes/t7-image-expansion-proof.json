@@ -1,0 +1,147 @@
+{
+  "status": "PASS",
+  "historical": {
+    "id": "sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+    "sourceSha": "f43bd3f86e4c7a30aa75378df82fcbda10027c72",
+    "version": "network-ops-t7-historical-proof",
+    "dockerfileSha256": "b0256f3ad0139de439981132dde28d98e2dd4c90195e180b1cfffd9c92dcc31b",
+    "lockfileSha256": "6a852a857d5f41a6b403d5ec8a869ce4d1791e3bd7c5efb0d25a62698fa6a338",
+    "node": "v22.23.3",
+    "packagedTestFixtures": {
+      "auth": true,
+      "body": true
+    }
+  },
+  "candidate": {
+    "id": "sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b",
+    "sourceSha": "4e51e032786647c72742323070c2f95326710f73",
+    "version": "network-ops-t7-candidate-proof",
+    "dockerfileSha256": "5b4ce67aa3ab519fc0bddcc16285befa5b7800b2b550adb707afd2bfa25306db",
+    "lockfileSha256": "1a36b9a09a3df51414365470f038b2725363515d6e2d82661f294f117a35bdc8",
+    "node": "v22.23.3",
+    "packagedTestFixtures": {
+      "auth": false,
+      "body": false
+    }
+  },
+  "startup": [
+    {
+      "name": "beeline-network-ops-t7-ba416b50a2-a",
+      "imageId": "sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+      "health": {
+        "/healthz": {
+          "ok": true
+        },
+        "/readyz": {
+          "ok": true
+        },
+        "/version": {
+          "version": "network-ops-t7-historical-proof",
+          "sourceSha": "f43bd3f86e4c7a30aa75378df82fcbda10027c72"
+        }
+      }
+    },
+    {
+      "name": "beeline-network-ops-t7-ba416b50a2-b",
+      "imageId": "sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+      "health": {
+        "/healthz": {
+          "ok": true
+        },
+        "/readyz": {
+          "ok": true
+        },
+        "/version": {
+          "version": "network-ops-t7-historical-proof",
+          "sourceSha": "f43bd3f86e4c7a30aa75378df82fcbda10027c72"
+        }
+      }
+    },
+    {
+      "name": "beeline-network-ops-t7-ba416b50a2-a",
+      "imageId": "sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b",
+      "health": {
+        "/healthz": {
+          "ok": true
+        },
+        "/readyz": {
+          "ok": true
+        },
+        "/version": {
+          "version": "network-ops-t7-candidate-proof",
+          "sourceSha": "4e51e032786647c72742323070c2f95326710f73"
+        }
+      }
+    },
+    {
+      "name": "beeline-network-ops-t7-ba416b50a2-a",
+      "imageId": "sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+      "health": {
+        "/healthz": {
+          "ok": true
+        },
+        "/readyz": {
+          "ok": true
+        },
+        "/version": {
+          "version": "network-ops-t7-historical-proof",
+          "sourceSha": "f43bd3f86e4c7a30aa75378df82fcbda10027c72"
+        }
+      }
+    }
+  ],
+  "shutdown": [
+    {
+      "name": "beeline-network-ops-t7-ba416b50a2-a",
+      "exitCode": 0,
+      "oomKilled": false
+    },
+    {
+      "name": "beeline-network-ops-t7-ba416b50a2-a",
+      "exitCode": 0,
+      "oomKilled": false
+    },
+    {
+      "name": "beeline-network-ops-t7-ba416b50a2-a",
+      "exitCode": 0,
+      "oomKilled": false
+    },
+    {
+      "name": "beeline-network-ops-t7-ba416b50a2-b",
+      "exitCode": 0,
+      "oomKilled": false
+    }
+  ],
+  "fullEntrypoints": true,
+  "productionAuthSyntheticToken": true,
+  "runtimeNetwork": "none; task-owned PG Unix socket only",
+  "oldImagesSurviveFullMigration": true,
+  "oldNewLegacyWireEqual": true,
+  "writesBeforeAndAfterSwitch": true,
+  "rollbackWithoutSchemaRestore": true,
+  "repeatedMigration": true,
+  "markers": {
+    "base": 46,
+    "router": 61
+  },
+  "plan": {
+    "previousImageRef": "registry.fly.io/beeline-server@sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+    "secondPreviousImageRef": "registry.fly.io/beeline-server@sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+    "split": false,
+    "newImageRef": "registry.fly.io/beeline-server@sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b",
+    "canaryMachineId": "a",
+    "secondMachineId": "b",
+    "steps": [
+      "migrate",
+      "update:a:registry.fly.io/beeline-server@sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b",
+      "watch:a:90s",
+      "update:b:registry.fly.io/beeline-server@sha256:fcb1fbd694d7344f1a5241875251b259bc23153ca4c6688386a5964e92a13f4b"
+    ],
+    "rollbackSteps": [
+      "update:a:registry.fly.io/beeline-server@sha256:d510608fc06ec7cf7386c81128753f23302f92906eed1538e264632b203ec209",
+      "fail-release"
+    ]
+  },
+  "injectedCanaryFailure": "after startup; watcher/Fly execution not exercised",
+  "scope": "Local full-image policy-off expansion smoke; not a separate expansion release, deployed ledger-aware floor, real canary watcher, native or production proof"
+}

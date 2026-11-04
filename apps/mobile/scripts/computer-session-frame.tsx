@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client';
 import { View } from 'react-native';
 import { ComputerSessionCard, ComputerSessionViewer } from '../sources/components/buzz/ComputerSession';
 import { beelineThemes } from '../sources/buzz/groknight';
+import { observeArtifactRows, setArtifactViewportActive } from '../sources/buzz/artifact-viewport';
 
 // @ts-expect-error esbuild embeds the font as a data URL.
 import regular from '../sources/assets/fonts/SpaceGrotesk-Regular.ttf';
@@ -29,6 +30,8 @@ const session = {
   status: ended ? 'ended' as const : 'live' as const,
   access: readOnly ? undefined : 'mock-viewer-access',
 };
+observeArtifactRows('frame-share', ['frame-message']);
+setArtifactViewportActive('frame-share', true);
 
 const sheet = document.createElement('style');
 sheet.textContent = `@font-face{font-family:SpaceGrotesk-Regular;src:url(${regular})}
@@ -58,7 +61,7 @@ function CardRoom() {
     <div className="phone-top"><span className="back">‹</span><span className="face">✦</span><span>Design Room</span></div>
     <div className="room"><div className="time">TODAY · 9:41 AM</div><div className="agent">Moth · agent</div>
       <div className="line">{readOnly ? 'I reached the sign in step. An allowed member can finish it in the browser.' : 'I reached the sign in step. The browser is ready for you to finish it.'}</div>
-      <div className="card-wrap"><ComputerSessionCard session={session} /></div></div>
+      <div className="card-wrap"><ComputerSessionCard messageId="frame-message" roomId="frame-share" session={session} /></div></div>
     <div className="composer"><div className="composer-inner">Message Design Room</div></div></div>;
 }
 
@@ -71,7 +74,7 @@ function Desktop() {
     <div className="room-item">⌕ &nbsp; Search</div><div className="room-item">✦ &nbsp; Design Room</div><div className="room-item"># &nbsp; General</div></div>
     <div className="transcript"><div className="head">Design Room</div><div className="body"><div className="time">TODAY · 9:41 AM</div>
       <div className="agent">Moth · agent</div><div className="line">I reached the sign in step. The browser is ready for you to finish it.</div>
-      <ComputerSessionCard session={session} isDesktop /></div></div>
+      <ComputerSessionCard messageId="frame-message" roomId="frame-share" session={session} isDesktop /></div></div>
     <div className="pane"><div className="pane-head">Browser</div><div className="pane-stream"><ComputerSessionViewer session={session} onClose={() => {}} /></div></div></div>;
 }
 

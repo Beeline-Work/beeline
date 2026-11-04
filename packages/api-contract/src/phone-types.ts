@@ -177,7 +177,12 @@ export type RoomViewHeader = {
   readonly updatedAt?: number;
 };
 
+export type RoomToolReference = { readonly roomId: string; readonly anchor: string };
+export type RoomToolPage = { readonly roomId: string; readonly messages: readonly RoomViewMessage[];
+  readonly next?: string; readonly authority: import('./router-protocol.js').RouterAuthorityCertificate };
 export type RoomViewActivity = {
+  readonly toolGroup?: RoomToolReference & { readonly count: number };
+  readonly toolOutput?: RoomToolReference & { readonly messageId: string };
   readonly kind: 'thinking' | 'tool' | 'output' | 'summary' | 'note';
   readonly title: string;
   /**
@@ -415,6 +420,8 @@ export type MessageBookmarkView = {
   readonly available: boolean;
   readonly author?: RoomViewIdentity;
   readonly text?: string;
+  /** Server-authored preview; the existing Room/message target opens the source. */
+  readonly textTruncated?: true;
 };
 
 /**

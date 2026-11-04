@@ -63,8 +63,34 @@ describe('delivery-driven presence', () => {
   it('starts no repeating command, commander wake, or corner attention sweep', async()=>{
     const interval=vi.spyOn(backgroundWork,'startConnectionWork');
     await presence.start();
-    expect(interval.mock.calls.map(call=>call[1])).toEqual([30000]);
+    expect(interval.mock.calls.map(call=>call[1])).toEqual([]);
     interval.mockRestore();
+  });
+  it('renews one aggregate lease only while it owns connections and ignores a replaced socket close',async()=>{
+    const interval=vi.spyOn(globalThis,'setTimeout'),clear=vi.spyOn(globalThis,'clearTimeout'),query=vi.spyOn(database,'query');
+    try{
+      await presence.start();expect(interval.mock.calls.filter(call=>call[1]===30000)).toHaveLength(0);
+      await presence.claimConnection(AGENT,{connectionId:'older'});
+      const leaseCalls=interval.mock.calls.flatMap((call,index)=>call[1]===30000?[index]:[]);
+      expect(leaseCalls).toHaveLength(1);const timer=interval.mock.results[leaseCalls[0]!]!.value;
+      await presence.claimConnection(AGENT,{connectionId:'newer'});
+      expect(query.mock.calls.filter(([sql])=>sql.includes('INSERT INTO live_server_instances'))).toHaveLength(1);
+      expect(query.mock.calls.some(([sql])=>sql.includes('WITH stale AS'))).toBe(false);
+      await presence.releaseConnection(AGENT,'older');expect(clear).not.toHaveBeenCalledWith(timer);
+      await presence.releaseConnection(AGENT,'newer');expect(clear).toHaveBeenCalledWith(timer);
+    }finally{interval.mockRestore();clear.mockRestore();query.mockRestore();}
+  });
+  it('keeps a phone-only server lease alive until the last actual phone releases it',async()=>{
+    const interval=vi.spyOn(globalThis,'setTimeout'),clear=vi.spyOn(globalThis,'clearTimeout'),query=vi.spyOn(database,'query');
+    const first=presence.holdServerConnection(),second=presence.holdServerConnection();
+    try{
+      await presence.renewLease();
+      const leaseCalls=interval.mock.calls.flatMap((call,index)=>call[1]===30000?[index]:[]);
+      expect(leaseCalls).toHaveLength(1);const timer=interval.mock.results[leaseCalls[0]!]!.value;
+      expect(query.mock.calls.filter(([sql])=>sql.includes('INSERT INTO live_server_instances'))).toHaveLength(1);
+      first();first();expect(clear).not.toHaveBeenCalledWith(timer);
+      second();expect(clear).toHaveBeenCalledWith(timer);
+    }finally{first();second();interval.mockRestore();clear.mockRestore();query.mockRestore();}
   });
   it('re-sends pending work on both connection and reconnect without a periodic tick',async()=>{
     const command=await createAgentCommand(database,{roomId:ROOM,agentId:AGENT,sourceMessageId:null,reason:'human_tag'});

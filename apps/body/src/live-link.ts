@@ -5,19 +5,10 @@ import { isNetworkFailure } from './network-failure.js';
 
 export { isNetworkFailure };
 
-/**
- * The helper machine's one live socket to the server.
- *
- * The socket is disposable: any failed or silent connection is dropped and a
- * new one is opened after backoff, with no limit on attempts. Nothing here
- * reads from the server on a timer; the only timers are the reconnect backoff,
- * the handshake deadline, the pong deadline of a socket already suspected,
- * and the heartbeat deadline: the server pings every open socket, and one
- * that hears no ping for `heartbeatTimeoutMs` is dead even if it looks open.
- *
- *   disconnected → connecting → open ⇄ suspect
- *   any state → update-required or refused (terminal: never reconnects)
- */
+/** The helper machine's one live socket. Initial failure parks. A healthy
+ * authenticated socket may get one replacement after an actual close; a brief
+ * unauthenticated open cannot reset the incident. Explicit recovery admits one
+ * attempt. Existing heartbeat/pong/handshake deadlines are liveness controls. */
 export type LiveLinkState = 'disconnected' | 'connecting' | 'open' | 'suspect' | 'update-required' | 'refused';
 
 export type LiveSocketFactory = (
@@ -31,11 +22,12 @@ export interface LiveLinkTiming {
   handshakeTimeoutMs: number;
   /** A suspect socket that does not answer a ping in this window is dropped. */
   pongTimeoutMs: number;
+  /** Legacy timing shape only; reconnect never uses a backoff timer. */
   backoffBaseMs: number;
   backoffMaxMs: number;
-  /** Only a socket that lived this long resets the backoff. */
+  /** Legacy timing shape only; authenticated catch-up certifies recovery. */
   stableSocketMs: number;
-  /** After a stable socket closes, the first retry waits up to this long. */
+  /** Legacy timing shape only; no jittered retry is scheduled. */
   stableCloseJitterMs: number;
   /** TCP keepalive finds an idle, silently dead socket without server traffic. */
   keepAliveDelayMs: number;
@@ -67,20 +59,16 @@ export function retryAfterMs(value: string | null | undefined): number | undefin
 export class LiveLink {
   #state: LiveLinkState = 'disconnected';
   #socket: WebSocket | undefined;
-  #openedAt: number | undefined;
-  #failedConnects = 0;
-  #retryAfterMs = 0;
-  #reconnect: ReturnType<typeof setTimeout> | undefined;
+  #retryUntil = 0;
+  #replacementSpent = false;
+  #recovered = false;
   #pongDeadline: ReturnType<typeof setTimeout> | undefined;
   #heartbeatDeadline: ReturnType<typeof setTimeout> | undefined;
   #wanted = false;
-  /** The next reconnect skips its backoff (`reconnectNow`). */
-  #immediate = false;
   #updateAnnounced = false;
   #reconnects = 0;
   readonly #openListeners = new Set<() => void>();
   readonly #timing: LiveLinkTiming;
-  readonly #random: () => number;
   readonly #now: () => number;
 
   constructor(
@@ -98,7 +86,6 @@ export class LiveLink {
     },
   ) {
     this.#timing = { ...LIVE_LINK_TIMING, ...options.timing };
-    this.#random = options.random ?? Math.random;
     this.#now = options.now ?? Date.now;
   }
 
@@ -123,8 +110,10 @@ export class LiveLink {
 
   start(): void {
     if (this.#state === 'update-required' || this.#state === 'refused') return;
+    if (this.#wanted) return;
     this.#wanted = true;
-    if (!this.#socket && !this.#reconnect) this.#connect();
+    this.#replacementSpent = false;
+    if (!this.#socket && this.#now() >= this.#retryUntil) this.#connect();
   }
 
   stop(forUpdate = false): void {
@@ -137,22 +126,28 @@ export class LiveLink {
       forUpdate ? HELPER_UPDATE_CLOSE_REASON : undefined);
   }
 
-  /**
-   * Replace the socket now, without backoff. A free agent's Machine calls this
-   * after it resumes from suspension: its old socket may look open but the
-   * server has already let it go.
-   */
+  /** A distinct external resume/path/credential/user boundary admits one try.
+   * Retry-After remains an eligibility bound; it never schedules an attempt. */
   reconnectNow(): void {
-    if (!this.#wanted || this.#state === 'update-required' || this.#state === 'refused') return;
-    clearTimeout(this.#reconnect);
-    this.#reconnect = undefined;
+    if (!this.#wanted || this.#state === 'update-required' || this.#state === 'refused' ||
+        this.#now() < this.#retryUntil) return;
+    this.#replacementSpent = false;
+    this.#recovered = false;
     const socket = this.#socket;
-    if (!socket) {
-      this.#connect();
-      return;
-    }
-    this.#immediate = true;
-    socket.terminate();
+    this.#socket = undefined;
+    this.#clearTimers();
+    socket?.terminate();
+    if (socket) this.options.onClose();
+    this.#reconnects += 1;
+    this.#connect();
+  }
+
+  /** Called once authentication and every currently demanded subscription are
+   * acknowledged. Transport open or duplicate frames alone never certify it. */
+  markRecovered(): void {
+    if (!this.isOpen() || this.#recovered) return;
+    this.#recovered = true;
+    this.#replacementSpent = false;
   }
 
   send(data: string): boolean {
@@ -200,8 +195,6 @@ export class LiveLink {
   }
 
   #clearTimers(): void {
-    clearTimeout(this.#reconnect);
-    this.#reconnect = undefined;
     clearTimeout(this.#pongDeadline);
     this.#pongDeadline = undefined;
     clearTimeout(this.#heartbeatDeadline);
@@ -230,7 +223,7 @@ export class LiveLink {
     });
     this.#socket = socket;
     this.#state = 'connecting';
-    this.#openedAt = undefined;
+    this.#recovered = false;
     socket.on?.('upgrade', (response: IncomingMessage) => {
       response.socket?.setKeepAlive?.(true, this.#timing.keepAliveDelayMs);
     });
@@ -246,7 +239,7 @@ export class LiveLink {
       if (status !== 426) {
         // Any other refusal (502, 503, a proxy page) ends this attempt now;
         // without this the handshake would wait forever for a close.
-        this.#retryAfterMs = retryAfterMs(headerValue(response.headers?.['retry-after'])) ?? 0;
+        this.#retryUntil = this.#now() + (retryAfterMs(headerValue(response.headers?.['retry-after'])) ?? 0);
         socket.terminate();
         return;
       }
@@ -282,7 +275,6 @@ export class LiveLink {
     socket.onopen = () => {
       if (this.#socket !== socket) return;
       this.#state = 'open';
-      this.#openedAt = this.#now();
       this.#armHeartbeat(socket);
       this.options.onOpen();
       for (const listener of [...this.#openListeners]) {
@@ -304,39 +296,18 @@ export class LiveLink {
       this.#pongDeadline = undefined;
       clearTimeout(this.#heartbeatDeadline);
       this.#heartbeatDeadline = undefined;
-      const openedAt = this.#openedAt;
-      this.#openedAt = undefined;
+      const recovered = this.#recovered;
+      this.#recovered = false;
       if (this.#state !== 'update-required' && this.#state !== 'refused') this.#state = 'disconnected';
       this.options.onClose();
       if (this.#state === 'update-required' || this.#state === 'refused' || !this.#wanted) return;
-      this.#scheduleReconnect(openedAt);
+      if (!recovered || this.#replacementSpent || this.#now() < this.#retryUntil) return;
+      this.#replacementSpent = true;
+      this.#reconnects += 1;
+      this.#connect();
     };
   }
 
-  #scheduleReconnect(openedAt: number | undefined): void {
-    let delay: number;
-    if (openedAt !== undefined && this.#now() - openedAt >= this.#timing.stableSocketMs) {
-      this.#failedConnects = 0;
-      delay = this.#random() * this.#timing.stableCloseJitterMs;
-    } else {
-      // Full jitter keeps a host's agents from reconnecting in lockstep.
-      const ceiling = Math.min(
-        this.#timing.backoffMaxMs,
-        this.#timing.backoffBaseMs * 2 ** this.#failedConnects,
-      );
-      this.#failedConnects += 1;
-      delay = this.#random() * ceiling;
-    }
-    delay = this.#immediate ? 0 : Math.floor(Math.max(delay, this.#retryAfterMs));
-    this.#immediate = false;
-    this.#retryAfterMs = 0;
-    this.#reconnects += 1;
-    this.#reconnect = setTimeout(() => {
-      this.#reconnect = undefined;
-      if (this.#wanted && !this.#socket && this.#state !== 'update-required') this.#connect();
-    }, delay);
-    this.#reconnect.unref?.();
-  }
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {

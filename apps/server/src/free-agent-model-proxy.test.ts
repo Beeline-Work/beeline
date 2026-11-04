@@ -10,7 +10,6 @@ import {
   handleFreeAgentModelRequest,
   StreamUsageReader,
   reserveAllowance,
-  retryAfterMs,
   promptTokenBound,
   type FreeAgentModelProxyOptions,
 } from './free-agent-model-proxy.js';
@@ -745,7 +744,7 @@ describe('free agent model proxy', () => {
     console.log('Demonstrated FREE-CAP-1: requested 65536 reply tokens; upstream max_tokens 32768.');
   });
 
-  it('FREE-INFLIGHT-1: 20 parallel calls ride out the in-flight 402 with at most 8 upstream calls running', async () => {
+  it('FREE-INFLIGHT-1: 20 parallel calls return the first in-flight refusal with at most 8 upstream calls running', async () => {
     config = { ...CONFIG, dailyTokenCap: 1_000_000, lifetimeTokenCap: 0 };
     const refused = new Set<string>();
     let running = 0;
@@ -791,13 +790,11 @@ describe('free agent model proxy', () => {
       await pendingResponses;
     }
     const responses = await pendingResponses;
-    expect(responses).toEqual(Array(20).fill({ status: 200, content: 'done' }));
-    expect(attempts).toBe(40);
+    expect(responses).toEqual(Array(20).fill({ status: 402, content: undefined }));
+    expect(attempts).toBe(20);
     expect(peak).toBeLessThanOrEqual(8);
     expect(peak).toBe(8);
-    // Each call settles once, at its reported usage: 200 uncached + 40 completion + ceil(300 * 0.25).
-    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(20 * 315);
-    console.log(`Demonstrated FREE-INFLIGHT-1: 20/20 calls HTTP 200 after an in-flight 402 each; ${attempts} upstream attempts, peak ${peak} in flight; charged ${20 * 315} tokens once each.`);
+    expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 0, lifetime: 0 });
   }, 15_000);
 
   it('passes other 402 refusals through without retry and refunds them', async () => {
@@ -812,8 +809,9 @@ describe('free agent model proxy', () => {
 
   it.each([
     { name: 'a 1 s turn cap', limits: { maxTurnMs: 1_000 }, retryAfter: '120' },
-    { name: 'the 3-minute retry window', limits: {}, retryAfter: '181' },
-  ])('FREE-INFLIGHT-DEADLINE: does not retry when Retry-After outlasts $name', async ({ limits, retryAfter }) => {
+    { name: 'a zero Retry-After', limits: {}, retryAfter: '0' },
+    { name: 'a long Retry-After', limits: {}, retryAfter: '181' },
+  ])('FREE-INFLIGHT-DEADLINE: returns refusal metadata for $name without retry', async ({ limits, retryAfter }) => {
     config = { ...CONFIG, limits: { ...DEFAULT_FREE_AGENT_LIMITS, ...limits } };
     reply = () => new Response(JSON.stringify({ error: { code: 402, message: 'in-flight budget exhausted',
       metadata: { reason: 'in_flight_budget_exhausted' } } }),
@@ -821,15 +819,26 @@ describe('free agent model proxy', () => {
     const started = Date.now();
     const response = await call({ messages: [{ role: 'user', content: 'hi' }] });
     expect(response.status).toBe(402);
+    expect(response.headers.get('retry-after')).toBe(retryAfter);
     expect((await response.json()).error.metadata.reason).toBe('in_flight_budget_exhausted');
+    vi.useFakeTimers();
+    try { await vi.advanceTimersByTimeAsync(24 * 60 * 60_000); }
+    finally { vi.useRealTimers(); }
     expect(Date.now() - started).toBeLessThan(5_000);
     expect(upstream).toHaveLength(1);
     expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 0, lifetime: 0 });
   });
 
-  it('reads Retry-After as seconds or an HTTP date', () => {
-    expect(retryAfterMs('120')).toBe(120_000);
-    expect(retryAfterMs(new Date(10_000).toUTCString(), 4_000)).toBe(6_000);
-    expect(retryAfterMs(null)).toBe(5_000);
+  it('a separately admitted model call can succeed after a refusal', async () => {
+    reply = () => new Response('{"error":{"metadata":{"reason":"in_flight_budget_exhausted"}}}', { status: 402 });
+    const first = await call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(first.status).toBe(402); await first.text();
+    expect(upstream).toHaveLength(1);
+    reply = () => Response.json({ choices: [{ message: { content: 'done' } }], usage: { prompt_tokens: 10, completion_tokens: 5 } });
+    const second = await call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(second.status).toBe(200);
+    expect((await second.json()).choices[0].message.content).toBe('done');
+    expect(upstream).toHaveLength(2);
+    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(15);
   });
 });

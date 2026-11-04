@@ -84,10 +84,55 @@
       "import": "./dist/x-attribution.js",
       "default": "./dist/x-attribution.js"
     },
+    "./router-protocol": {
+      "types": "./dist/router-protocol.d.ts",
+      "import": "./dist/router-protocol.js",
+      "default": "./dist/router-protocol.js"
+    },
+    "./router-command": {
+      "types": "./dist/router-command.d.ts",
+      "import": "./dist/router-command.js",
+      "default": "./dist/router-command.js"
+    },
+    "./media-metadata": {
+      "types": "./dist/media-metadata.d.ts",
+      "import": "./dist/media-metadata.js",
+      "default": "./dist/media-metadata.js"
+    },
+    "./helper-model": {
+      "types": "./dist/helper-model.d.ts",
+      "import": "./dist/helper-model.js",
+      "default": "./dist/helper-model.js"
+    },
+    "./helper-overlay": {
+      "types": "./dist/helper-overlay.d.ts",
+      "import": "./dist/helper-overlay.js",
+      "default": "./dist/helper-overlay.js"
+    },
+    "./helper-usage": {
+      "types": "./dist/helper-usage.d.ts",
+      "import": "./dist/helper-usage.js",
+      "default": "./dist/helper-usage.js"
+    },
+    "./helper-activation": {
+      "types": "./dist/helper-activation.d.ts",
+      "import": "./dist/helper-activation.js",
+      "default": "./dist/helper-activation.js"
+    },
     "./system-message-catalog": {
       "types": "./dist/system-message-catalog.d.ts",
       "import": "./dist/system-message-catalog.js",
       "default": "./dist/system-message-catalog.js"
+    },
+    "./helper-turn-ownership": {
+      "types": "./dist/helper-turn-ownership.d.ts",
+      "import": "./dist/helper-turn-ownership.js",
+      "default": "./dist/helper-turn-ownership.js"
+    },
+    "./helper-model-receipt": {
+      "types": "./dist/helper-model-receipt.d.ts",
+      "import": "./dist/helper-model-receipt.js",
+      "default": "./dist/helper-model-receipt.js"
     }
   },
   "scripts": {

@@ -88,7 +88,6 @@ function Proof() {
             canEdit
             avatarDisabled={false}
             onGenerateAvatar={async () => undefined}
-            refreshAgent={async () => detail}
             editing={false}
             saving={false}
             nameDraft={detail.agent.identity.name}

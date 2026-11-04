@@ -4,6 +4,7 @@ import { agentToolsFor, callAgentTool, daemonOperationIsSafeToRepeat } from './r
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 const payload = {
@@ -60,6 +61,7 @@ describe('wallet MCP identity and signing', () => {
       await expect(callAgentTool('app_tool', { app:'beeline:wallet', tool:tool.replace('wallet_', ''), args }, 'wallet-call')).resolves.toBe('{"ok":true}');
     expect(calls).toHaveLength(9);
     expect(calls.find((call) => call.name === 'walletContractCall')?.body).toEqual({
+      completionV1: true,
       agentId: 'agent-1',
       roomId: 'corner-1',
       chain: 'arbitrum',
@@ -69,6 +71,8 @@ describe('wallet MCP identity and signing', () => {
     });
     for (const call of calls)
       expect(call.body).toMatchObject({ agentId: 'agent-1', roomId: 'corner-1' });
+    for (const call of calls.filter(call => ['walletPay', 'walletSwap', 'walletContractCall'].includes(call.name)))
+      expect(call.body.completionV1).toBe(true);
     expect(calls.at(-1)).toEqual({
       name: 'walletSignTypedData',
       body: { ...payload, agentId: 'agent-1', roomId: 'corner-1' },
@@ -86,6 +90,26 @@ describe('wallet MCP identity and signing', () => {
     expect(typed.inputSchema.required).toEqual(['domain', 'types', 'primaryType', 'message']);
     expect(typed.description).toContain('authorize transfers');
     expect(catalog.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining(['contract_call', 'link_request', 'link_wait']));
+  });
+
+  it('returns an uncertain payment as pending and never redispatches it on elapsed time', async () => {
+    vi.useFakeTimers();
+    vi.stubEnv('BEELINE_DAEMON_AGENT_ID', 'agent-1');
+    vi.stubEnv('BEELINE_DAEMON_CORNER_ID', 'corner-1');
+    vi.stubEnv('BEELINE_DAEMON_BASE_URL', 'http://localhost:1234');
+    vi.stubEnv('BEELINE_DAEMON_TOKEN', 'test-token');
+    vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', '');
+    const result = { outcome: 'pending', reason: 'Transaction submission is UNKNOWN. Do not resubmit this intent.' };
+    const fetched = vi.fn(async (_url: unknown, init: RequestInit) => {
+      expect(JSON.parse(String(init.body))).toMatchObject({ completionV1: true, agentId: 'agent-1' });
+      return Response.json(result);
+    });
+    vi.stubGlobal('fetch', fetched);
+    expect(JSON.parse(await callAgentTool('app_tool', { app: 'beeline:wallet', tool: 'pay',
+      args: { chain: 'base', asset: 'usdc', amount: '1', to: `0x${'1'.repeat(40)}` } }, 'uncertain-payment'))).toEqual(result);
+    await vi.advanceTimersByTimeAsync(86_400_000);
+    expect(fetched).toHaveBeenCalledTimes(1);
+    expect(daemonOperationIsSafeToRepeat('walletPay', {})).toBe(false);
   });
 
 });

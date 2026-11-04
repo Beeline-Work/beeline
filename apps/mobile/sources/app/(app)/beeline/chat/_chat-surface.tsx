@@ -1,3 +1,7 @@
+import { artifactObjectIdsFromVisibleRows, observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
+import { routerOwnerArtifactViewport, routerOwnerUsageProfile } from '@/buzz/router-owner';
+import { useSurfaceFocus } from '@/buzz/use-surface-focus';
+import { prepareRouterMessageGesture } from '@/buzz/command-message-gesture';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
@@ -835,6 +839,7 @@ export function BuzzChatSurface({
       let releaseView: (() => void) | undefined;
       const updateViewing = (viewing: boolean) => {
         if (!decodedId) return;
+        setArtifactViewportActive(decodedId, viewing);
         if (viewing) releaseView ??= sharedLiveConnection().view(decodedId);
         else {
           releaseView?.();
@@ -1194,6 +1199,12 @@ export function BuzzChatSurface({
   }, [firstUnreadMessageId, isCorner]);
   const resolvedChannelName = roomSurface?.room.name ?? routeChannelTitle ?? null;
   const activeCommunityId = roomSurface?.room.workspaceId ?? routeCommunityId ?? null;
+  const usageProfileFocused = useSurfaceFocus();
+  const committedUsageProfileId = desktopExperience && profileKind === 'agent' && activeCommunityId ? profileAgentId : null;
+  useEffect(() => {
+    if (!usageProfileFocused) return;
+    routerOwnerUsageProfile(committedUsageProfileId);
+  }, [committedUsageProfileId, usageProfileFocused]);
   // The DM header, the repository-change guard, mentions and forwarding read
   // the app-level Room list, which stays live while this Room is open.
   const [chatListRelayUrl, setChatListRelayUrl] = useState<string | null>(null);
@@ -1957,9 +1968,9 @@ export function BuzzChatSurface({
   // "add" section was always empty and the only visible path led to the
   // pairing command (captain report C74). The transcript paints the shared
   // `/workspace/:id` entry, so Members, profile receipts and settings reach
-  // every byline at once. It reads the roster on entry so every agent byline
-  // can name its model, and again whenever the roster sheet or member picker
-  // opens; the last roster stays visible until the fresh response lands.
+  // every byline at once. A closed picker observes the canonical held answer;
+  // only opening the roster sheet or member picker reads its missing/fresh
+  // candidates. Room entry alone never reads data for a future picker.
   useEffect(() => {
     workspaceRosterScopeRef.current = null;
     setWorkspaceRoster(null);
@@ -3044,6 +3055,8 @@ export function BuzzChatSurface({
       const visibleRows = viewableItems
         .filter((token) => token.isViewable)
         .map((token) => token.item);
+      routerOwnerArtifactViewport(decodedId, artifactObjectIdsFromVisibleRows(visibleRows));
+      observeArtifactRows(decodedId, visibleRows.flatMap(messageBoundaryIds));
       transcriptPositions.observeVisibleRows(visibleRows);
       // The list recomputes viewability on scroll AND on every committed
       // update, so an arrival that lands below the fold reports itself unseen
@@ -3058,7 +3071,7 @@ export function BuzzChatSurface({
       // report scrolls to it again.
       scrollController.observeVisibleRows(visibleRows);
     },
-    [advanceReadCursor, observeVisibleMessages, scrollController, transcriptPositions],
+    [decodedId, advanceReadCursor, observeVisibleMessages, scrollController, transcriptPositions],
   );
   // The viewport pass above owns the read boundary, but it does not run when
   // an arrival only changes which row is NEWEST while the list already rests
@@ -4056,6 +4069,14 @@ export function BuzzChatSurface({
         isCorner ||
         Boolean(mentionedAgent) ||
         (roomAgents.length === 1 && roomParticipants.length <= 2);
+      // Prepare immutable final message bytes inside this existing gesture,
+      // before the paint yield. Upload-dependent legacy sends keep their path.
+      const routerPrepared = activePendingAttachments.length === 0 && !viewer?.screenshotBase64
+        ? prepareRouterMessageGesture({ roomId: decodedId, principal: userPubkey, text,
+            attachments: viewer?.artifact ? [viewer.artifact] : [],
+            mentions: [...new Set([...mentionedPubkeys, ...(mentionedAgent ? [mentionedAgent] : [])])],
+            ...(preparedReply?.reference ? { parentMessageId: preparedReply.reference.eventId } : {}),
+          }) : undefined;
       setReceivedSteer(null);
       setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
 
@@ -4091,6 +4112,7 @@ export function BuzzChatSurface({
       }
       let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
       try {
+        if (routerPrepared) await routerPrepared.persisted;
         // A warm/partial snapshot can paint before the hydration effect has
         // published its transport state. Sending is still a valid operation:
         // construct the monolith transport on demand rather than
@@ -4105,6 +4127,7 @@ export function BuzzChatSurface({
         // ■ on a dictated message drops it at any step before it enters the Room.
         const dictationCancelled = () => {
           if (!dictated?.cancelled) return false;
+          if (routerPrepared) void routerPrepared.cancelBeforeSend().catch(() => undefined);
           setPendingAck(null);
           if (provisionalId) removeOptimistic(preparedEvent?.id ?? provisionalId);
           if (desktopExperience) setDesktopDeliveryState(null);
@@ -4136,7 +4159,7 @@ export function BuzzChatSurface({
         if (dictationCancelled()) return;
         // Sign before append. The authoritative event id is the optimistic row
         // identity and the durable outbox key from its first frame onward.
-        preparedEvent = preparedReply?.reference
+        preparedEvent = routerPrepared?.event ?? (preparedReply?.reference
           ? await sendTransport.composeReplyMessage(
               text,
               preparedReply.reference,
@@ -4152,7 +4175,7 @@ export function BuzzChatSurface({
                     ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
                   }
                 : undefined,
-            );
+            ));
         if (addressesAgent) {
           setPendingAck((current) =>
             current ? { ...current, requestId: preparedEvent!.id } : current,
@@ -5782,7 +5805,7 @@ export function BuzzChatSurface({
       }
       if (item.computerSession) {
         return (
-          <ComputerSessionCard session={item.computerSession} isDesktop={desktopExperience}
+          <ComputerSessionCard session={item.computerSession} messageId={item.id} roomId={decodedId} isDesktop={desktopExperience}
           agentHandle={item.authorIdentity?.kind === 'agent' ? item.authorIdentity.handle : undefined} />
         );
       }

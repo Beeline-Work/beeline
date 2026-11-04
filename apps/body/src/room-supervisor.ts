@@ -1,142 +1,47 @@
 import { isStandingRuntimeFault, retryNotBefore } from './retry-barrier.js';
-import { DaemonApiError } from './daemon-api-client.js';
-/** Failure backoff grows to this ceiling and continues until recovery. */
-export const ROOM_RETRY_DELAYS_MS: readonly number[] = [1_000, 5_000, 30_000];
 
-/**
- * Keeps Room and corner intakes, and the discovery reconcile, alive across
- * failed reads without idle polling. Ordinary failures retry at capped
- * backoff; an authority refusal waits for a live open or discovery wake.
- */
+/** One attempt per actual connection/discovery/configuration boundary. Failure
+ * and Retry-After never create a timer that authorizes observation. */
 export class RoomSupervisor {
   readonly #parked = new Set<() => void>();
+  readonly #configurationWaits = new Set<() => void>();
   #wakes = 0;
   #configurationChanges = 0;
-  readonly #configurationWaits = new Set<() => void>();
-
-  constructor(private readonly delaysMs: readonly number[] = ROOM_RETRY_DELAYS_MS) {}
-
-  /** The live socket opened or discovery was woken: every waiting loop retries now. */
-  wake(): void {
-    this.#wakes += 1;
-    for (const resume of [...this.#parked]) resume();
-  }
-
-  /** Called only by the server's configuration event, never discovery/reconnect. */
+  constructor(_legacyDelaysMs?: readonly number[]) {}
+  wake(): void {this.#wakes++;for(const resume of [...this.#parked])resume();}
   configurationChanged(): void {
-    this.#configurationChanges++;
-    for (const resume of [...this.#configurationWaits]) resume();
+    this.#configurationChanges++;for(const resume of [...this.#configurationWaits])resume();this.wake();
   }
-
-  /** Wakes so far; a wait that started from an older count does not wait. */
-  get wakes(): number {
-    return this.#wakes;
-  }
-
-  /** Number of delay steps before ordinary failure backoff reaches its ceiling. */
-  get retries(): number {
-    return this.delaysMs.length;
-  }
-
-  /**
-   * Wait before retrying failure number `failures` (1-based). Within the
-   * bound the fixed delay applies, and a wake may cut it short; past the bound
-   * only a wake (or the abort) ends the wait. A wake that already arrived
-   * after `since` (a `wakes` count) ends it at once, so none is lost.
-   */
-  retryDelay(failures: number, signal?: AbortSignal, since = this.#wakes): Promise<void> {
-    const delay = this.delaysMs[failures - 1];
-    return new Promise<void>((resolve) => {
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const done = () => {
-        clearTimeout(timer);
-        this.#parked.delete(done);
-        signal?.removeEventListener('abort', done);
-        resolve();
+  get wakes():number{return this.#wakes;}
+  /** Kept for discovery callers: the automatic retry budget is zero. */
+  get retries():number{return 0;}
+  retryDelay(_failures:number,signal?:AbortSignal,since=this.#wakes,notBefore=0):Promise<void>{
+    return new Promise(resolve=>{
+      const inspect=()=>{
+        if(!signal?.aborted && (this.#wakes===since || Date.now()<notBefore))return;
+        this.#parked.delete(inspect);signal?.removeEventListener('abort',inspect);resolve();
       };
-      this.#parked.add(done);
-      signal?.addEventListener('abort', done, { once: true });
-      if (signal?.aborted || this.#wakes !== since) {
-        done();
-        return;
-      }
-      if (delay !== undefined) {
-        timer = setTimeout(done, delay);
-        timer.unref?.();
-      }
+      this.#parked.add(inspect);signal?.addEventListener('abort',inspect,{once:true});inspect();
     });
   }
-
-  /**
-   * Run one Room or corner intake under supervision: a failed read never ends
-   * it. `run` resolves only when the intake itself is finished (aborted or
-   * closed); it calls `progress` once its reads succeed again, which restores
-   * the full retry budget. The intake rejects only after its active turn has
-   * settled, so re-entering cannot claim the same command twice.
-   */
-  async supervise(
-    label: string,
-    signal: AbortSignal | undefined,
-    run: (progress: () => void) => Promise<void>,
-  ): Promise<void> {
-    let failures = 0;
-    for (;;) {
-      const since = this.#wakes;
-      const configuration = this.#configurationChanges;
-      try {
-        await run(() => {
-          failures = 0;
-        });
-        return;
-      } catch (error) {
-        if (signal?.aborted) return;
-        failures += 1;
-        const retryAt = retryNotBefore(error);
-        const standing = isStandingRuntimeFault(error);
-        const parked =
-          error instanceof DaemonApiError &&
-          !error.retryable &&
-          error.status >= 400 &&
-          error.status < 500;
-        console.error(
-          `[thin-core] ${label} intake failed; ${
-            standing ? 'waiting for a configuration change'
-              : retryAt !== undefined ? `waiting until ${new Date(retryAt).toISOString()}`
-              : parked
-              ? 'waiting for the next live open or discovery wake'
-              : `retry ${failures} in ${this.delaysMs[Math.min(failures, this.delaysMs.length) - 1]}ms`
-          }:`,
-          error,
-        );
-        if (retryAt !== undefined || standing) {
-          // Routine discovery, reconnects and other corners' errors cannot
-          // shorten a provider reset or repair a rejected adapter protocol.
-          await new Promise<void>(resolve => {
-            let timer: ReturnType<typeof setTimeout> | undefined;
-            const done = () => {
-              clearTimeout(timer);
-              this.#configurationWaits.delete(done);
-              signal?.removeEventListener('abort', done);
-              resolve();
+  async supervise(label:string,signal:AbortSignal|undefined,run:(progress:()=>void)=>Promise<void>):Promise<void>{
+    for(;;){
+      const since=this.#wakes,configuration=this.#configurationChanges;
+      try{await run(()=>undefined);return;}
+      catch(error){
+        if(signal?.aborted)return;
+        const standing=isStandingRuntimeFault(error),notBefore=retryNotBefore(error)??0;
+        console.error(`[thin-core] ${label} intake failed; waiting for ${standing?'a configuration change':'an independent recovery boundary'}:`,error);
+        if(standing){
+          await new Promise<void>(resolve=>{
+            const inspect=()=>{
+              if(!signal?.aborted && configuration===this.#configurationChanges)return;
+              this.#configurationWaits.delete(inspect);signal?.removeEventListener('abort',inspect);resolve();
             };
-            signal?.addEventListener('abort', done, { once: true });
-            if (standing) this.#configurationWaits.add(done);
-            if (signal?.aborted || standing && configuration !== this.#configurationChanges) done();
-            else if (!standing) {
-              timer = setTimeout(done, Math.min(2_147_483_647, Math.max(0, retryAt! - Date.now()) + 50 + Math.floor(Math.random() * 250)));
-              timer.unref?.();
-            }
+            this.#configurationWaits.add(inspect);signal?.addEventListener('abort',inspect,{once:true});inspect();
           });
-          if (signal?.aborted) return;
-          continue;
-        }
-        await this.retryDelay(
-          parked ? this.delaysMs.length + 1 : Math.min(failures, this.delaysMs.length),
-          signal,
-          since,
-        );
-        if (signal?.aborted) return;
-        if (parked) failures = 0;
+        }else await this.retryDelay(0,signal,since,notBefore);
+        if(signal?.aborted)return;
       }
     }
   }

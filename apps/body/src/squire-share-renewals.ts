@@ -46,12 +46,13 @@ export class SquireShareRenewals {
     for (const id of this.shares.keys()) this.stop(id);
   }
 
-  private schedule(share: Renewal, retry = false): void {
+  private schedule(share: Renewal): void {
     if (this.shares.get(share.sessionId) !== share) return;
     const remaining = share.expiresAt - Date.now();
-    // Leave room for the MCP client's 210-second timeout and transport recovery.
+    // The current live lease permits one renewal before its actual expiry.
+    // Leave room for the MCP client's existing terminal request deadline.
     const margin = Math.min(4 * 60_000, Math.max(1, remaining / 2));
-    const delay = retry ? 5_000 : Math.max(1, remaining - margin);
+    const delay = Math.max(1, remaining - margin);
     share.timer = setTimeout(() => { void this.renew(share); }, delay);
     share.timer.unref?.();
   }
@@ -76,16 +77,22 @@ export class SquireShareRenewals {
       const lease = shareResult(result);
       if (lease.upstreamUrl !== share.upstreamUrl || lease.expiresAt <= share.expiresAt)
         throw new Error('Squire did not renew the existing share');
-      if (!(await this.persist({ sessionId: share.sessionId, ...lease }))) {
+      const persisted = await this.persist({ sessionId: share.sessionId, ...lease });
+      // Persistence can finish after an explicit replacement. Its old result
+      // cannot retire or rearm the new live-session lease.
+      if (this.shares.get(share.sessionId) !== share) return;
+      if (!persisted) {
         this.stop(share.sessionId);
         return;
       }
       share.expiresAt = lease.expiresAt;
       this.schedule(share);
     } catch {
-      // Transport failures cannot end the browser. Retry on the same owner;
-      // do not copy provider error text or bearer URLs into diagnostics.
-      this.schedule(share, true);
+      // A failed/uncertain renewal cannot authorize another attempt. The
+      // existing stored expiry ends this view; an unfenced end command could
+      // close a newer explicit share while its response is in flight.
+      if(this.shares.get(share.sessionId)!==share)return;
+      this.stop(share.sessionId);
     }
   }
 }

@@ -1,3 +1,4 @@
+import { helperOverlayDemand, helperOverlayEnabled } from './helper-overlay.js';
 import type { SqlDatabase } from './database.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 
@@ -27,15 +28,15 @@ export async function clearStalePhoneViews(database: Pick<SqlDatabase, 'query'>,
  */
 export class PhoneViewing {
   private readonly sessions = new Map<string, { identityId: string; rooms: Set<string> }>();
-  private readonly pending = new Set<Promise<void>>();
+  private readonly pending = new Set<Promise<unknown>>();
 
   constructor(private readonly database: Pick<SqlDatabase, 'query'>, private readonly instanceId: string) {}
 
-  view(sessionId: string, identityId: string, roomId: string, viewing: boolean): Promise<void> {
+  view(sessionId: string, identityId: string, roomId: string, viewing: boolean): Promise<number|undefined> {
     return this.track(this.setView(sessionId, identityId, roomId, viewing));
   }
 
-  private async setView(sessionId: string, identityId: string, roomId: string, viewing: boolean): Promise<void> {
+  private async setView(sessionId: string, identityId: string, roomId: string, viewing: boolean): Promise<number|undefined> {
     if (!viewing) {
       const session = this.sessions.get(sessionId);
       if (!session?.rooms.delete(roomId)) return;
@@ -73,6 +74,7 @@ export class PhoneViewing {
       if (session.rooms.size === 0) this.sessions.delete(sessionId);
       return;
     }
+    if(helperOverlayEnabled())return (await helperOverlayDemand(this.database,roomId)).viewingRevision;
   }
 
   /** The socket closed: every Room it was viewing stops holding pushes. */
@@ -91,7 +93,7 @@ export class PhoneViewing {
     await Promise.all([...this.pending]);
   }
 
-  private track(task: Promise<void>): Promise<void> {
+  private track<T>(task: Promise<T>): Promise<T> {
     this.pending.add(task);
     void task.finally(() => this.pending.delete(task)).catch(() => undefined);
     return task;

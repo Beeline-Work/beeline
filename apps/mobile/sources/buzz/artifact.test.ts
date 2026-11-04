@@ -13,6 +13,7 @@ import {
   injectCspMeta,
   mediaIdFromUrl,
   wrapArtifactMarkup,
+  wrapArtifactSandbox,
 } from './artifact';
 
 /**
@@ -183,10 +184,13 @@ describe('media id extraction', () => {
 
 describe('CSP meta injection', () => {
   it('declares the plan policy: no default source, inline styles, data images only', () => {
-    expect(ARTIFACT_CSP).toBe("default-src 'none'; style-src 'unsafe-inline'; img-src data:");
+    expect(ARTIFACT_CSP).toContain("default-src 'none'");
+    expect(ARTIFACT_CSP).toContain("base-uri 'none'");
+    expect(ARTIFACT_CSP).toContain("form-action 'none'");
+    expect(ARTIFACT_CSP).toContain("frame-src 'none'");
   });
 
-  it('injects the meta as the first head element so our policy wins', () => {
+  it('injects the enforced meta before authored styles and policies', () => {
     const html = '<!doctype html><html><head><style>p{}</style></head><body></body></html>';
     const wrapped = injectCspMeta(html);
     expect(wrapped.indexOf(ARTIFACT_CSP)).toBeGreaterThan('<!doctype html><html><head>'.length - 1);
@@ -198,7 +202,19 @@ describe('CSP meta injection', () => {
     expect(wrapped).toContain(
       `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`,
     );
-    expect(wrapped.endsWith('<p>no head</p>')).toBe(true);
+    expect(wrapped).toContain('<p>no head</p>');
+    expect(wrapped.startsWith('<!doctype html><html><head><meta')).toBe(true);
+  });
+
+  it.each([
+    '<meta http-equiv="Content-Security-Policy" content="default-src *"><img src="https://untrusted.invalid/early">',
+    '<img src="https://untrusted.invalid/before-head"><html><head><style>p{}</style></head></html>',
+    '<!-- <head> --> <img src="https://untrusted.invalid/comment-head">',
+    '<!doctype html SYSTEM ">broken"><meta http-equiv=refresh content="0;url=https://untrusted.invalid/">',
+  ])('places enforced policy before every authored byte even for malformed document %s', html => {
+    const wrapped = injectCspMeta(html);
+    expect(wrapped.startsWith(`<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`)).toBe(true);
+    expect(wrapped.indexOf(ARTIFACT_CSP)).toBeLessThan(wrapped.indexOf(html));
   });
 
   it('injects into a document with an existing CSP meta ahead of it', () => {
@@ -210,6 +226,18 @@ describe('CSP meta injection', () => {
 });
 
 describe('markup wrapping', () => {
+  it('keeps arbitrary authored tags and attributes inside the native browser sandbox', () => {
+    const payload = '<meta http-equiv="refresh" content="0;url=https://untrusted.invalid"><img src=x onerror="escape()"></iframe><p title="&quot;">contents</p>';
+    const html = wrapArtifactSandbox(payload);
+    expect(html).toContain('<iframe sandbox="" srcdoc="');
+    expect(html.match(/<iframe/g)).toHaveLength(1);
+    expect(html.match(/<\/iframe>/g)).toHaveLength(1);
+    expect(html).not.toContain('<meta http-equiv="refresh"');
+    expect(html).not.toContain('<img src=x');
+    expect(html).toContain('&amp;quot;');
+    expect(html.indexOf(ARTIFACT_CSP)).toBeLessThan(html.indexOf('<iframe'));
+  });
+
   it('rides HTML through with the injected policy and caps the preview height', () => {
     const wrapped = wrapArtifactMarkup('<html><body><p>hi</p></body></html>', 'html');
     expect(wrapped).toContain(ARTIFACT_CSP);
@@ -258,10 +286,18 @@ describe('the initial-load navigation guard', () => {
   it('allows exactly the first request and denies every later one', () => {
     const guard = createInitialLoadGuard();
     // Android fires the guard for the initial load too: the first request is
-    // allowed whatever its URL.
+    // allowed only for the declared initial source.
     expect(guard.allow('about:blank')).toBe(true);
     expect(guard.allow('https://evil.example/next')).toBe(false);
     expect(guard.allow('data:text/html,<p>x</p>')).toBe(false);
+  });
+
+  it('an external redirect cannot claim the first native request; exact local/pinned sources still load once', () => {
+    const html = createInitialLoadGuard(); expect(html.allow('https://untrusted.invalid/first')).toBe(false);
+    expect(html.allow('about:blank')).toBe(true); expect(html.allow('about:blank')).toBe(false);
+    const file = createInitialLoadGuard('file:///cache/object.pdf');
+    expect(file.allow('file:///cache/other.pdf')).toBe(false); expect(file.allow('file:///cache/object.pdf')).toBe(true);
+    expect(file.allow('file:///cache/object.pdf')).toBe(false);
   });
 
   it('each render gets its own gate', () => {

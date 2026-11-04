@@ -28,6 +28,7 @@ vi.mock('expo-linking', () => ({
   createURL: (p: string) => `beeline://${p}`,
   addEventListener: vi.fn(() => ({ remove: vi.fn() })),
 }));
+vi.mock('expo-updates', () => ({ updateId: null, isEmbeddedLaunch: true }));
 vi.mock('expo-web-browser', () => ({
   maybeCompleteAuthSession: vi.fn(),
   openAuthSessionAsync: vi.fn(),

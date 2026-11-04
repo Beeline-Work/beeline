@@ -7,12 +7,10 @@ import {TRAY_CLOCK_READINESS_SCHEMA} from './tray-clock-readiness.js';
 import {TRAY_CLOCK_KINDS,type TrayClockClaim} from './tray-clock-protocol.js';
 export * from './tray-clock-protocol.js';
 
-/** Uninstalled lifecycle capture + transaction-only expiry primitives. There is
- * deliberately no runner, timer, readiness setter or background owner adapter.
- * Future tray.expire MUST enter the exact aggregate-owner fenced transaction;
- * these SQL tests alone cannot establish production job ownership. Choice due
- * records are exposed separately and cannot be consumed without its real domain
- * terminal handler. No phone read creates/repairs any of these rows. */
+/** Release-installed lifecycle capture and transaction-only expiry primitives.
+ * TrayClockWork supplies the existing aggregate-owner fenced transaction. Choice
+ * due records use their real domain terminal handler. No phone read creates or
+ * repairs any of these rows, and this schema owns no runner or timer. */
 export const TRAY_CLOCK_SOURCE_SCHEMA = `
 ${liveControlNotificationSchema()}
 CREATE TABLE IF NOT EXISTS tray_clock_sources (

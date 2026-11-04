@@ -149,7 +149,7 @@ export interface GitHubServerHooks {
 
 export interface ServerOptions {
   routerProjections?: RouterProjectionPolicy;
-  /** Enable only after the media authority schema/fence cohort is proved. */
+  /** Production enables this with the router; object storage and authority remain required. */
   mediaMetadataV1?:boolean;
   operationOutcomes?: import('./operation-outcomes.js').OperationOutcomes;
   replay?: DurableLiveReplay;

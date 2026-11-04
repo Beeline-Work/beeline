@@ -246,7 +246,7 @@ export function routerOwnerListPanel(visible: boolean): void {
  * Unsupported storage keeps the legacy cohort, without suppressing its hints. */
 export function routerOwnerCapabilities(): { families: readonly LaneFamily[]; authorityFencesV1: boolean; scheduledWorkCoverageV1: boolean } {
   const ready = routerAuthorityStorageReady();
-  return { families: ready ? ['room-list', 'needs-you-count', 'room-head','room-workflows','agent-profile','owner-workbench','owner-wallet',...(routerCommandStorageReady()?['room-scheduled-work' as const]:[])] : [], authorityFencesV1: ready, scheduledWorkCoverageV1: ready&&routerCommandStorageReady() };
+  return { families: ready ? ['room-list', 'needs-you-count', 'room-head','room-workflows','workspace-roster','agent-profile','owner-workbench','owner-wallet',...(routerCommandStorageReady()?['room-scheduled-work' as const,'needs-you-tray' as const,'needs-you-saved-page' as const]:[])] : [], authorityFencesV1: ready, scheduledWorkCoverageV1: ready&&routerCommandStorageReady() };
 }
 
 /** Sole transport owner calls this only after authentication and negotiation.

@@ -42,8 +42,8 @@ export class BackgroundEnqueueContractError extends Error {
   constructor() { super('Background enqueue must finish synchronously and return undefined'); this.name = 'BackgroundEnqueueContractError'; }
 }
 
-/** Schema export only. Production schema installation and per-job readiness
- * remain outside this unselected private core. No recurring scan or outbox. */
+/** Installed by the release migration. Job-specific composition supplies
+ * readiness outside this core. No recurring scan or outbox. */
 export const BACKGROUND_OWNERSHIP_SCHEMA = `
 CREATE TABLE IF NOT EXISTS background_leader_owners (
   name text PRIMARY KEY CHECK(name='background'),

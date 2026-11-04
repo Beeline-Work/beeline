@@ -33,7 +33,7 @@ beforeEach(() => { fixture.authorityReady = true;fixture.commandsReady=true; fix
 describe('real mobile router owner', () => {
   it('refuses an additive family until its local assembly is implemented without minting a read',async()=>{
     const execute=vi.fn(async()=>snapshot());
-    expect(routerOwnerCapabilities().families).not.toContain('needs-you-saved-page');
+    expect(routerOwnerCapabilities().families).toContain('needs-you-saved-page');
     await expect(routerOwnerNegotiated({generation:1,families:['unimplemented' as never],execute})).rejects.toThrow('Unsupported router family');
     expect(execute).not.toHaveBeenCalled();
     expect(fixture.storage.write).not.toHaveBeenCalled();
@@ -123,9 +123,9 @@ describe('real mobile router owner', () => {
     fixture.authorityReady = false;
     expect(routerOwnerCapabilities()).toEqual({ families: [], authorityFencesV1: false, scheduledWorkCoverageV1:false });
     fixture.authorityReady = true;
-    expect(routerOwnerCapabilities()).toEqual({ families: ['room-list', 'needs-you-count', 'room-head','room-workflows','agent-profile','owner-workbench','owner-wallet','room-scheduled-work'], authorityFencesV1: true,scheduledWorkCoverageV1:true });
+    expect(routerOwnerCapabilities()).toEqual({ families: ['room-list', 'needs-you-count', 'room-head','room-workflows','workspace-roster','agent-profile','owner-workbench','owner-wallet','room-scheduled-work','needs-you-tray','needs-you-saved-page'], authorityFencesV1: true,scheduledWorkCoverageV1:true });
     fixture.commandsReady=false;
-    expect(routerOwnerCapabilities()).toEqual({families:['room-list','needs-you-count','room-head','room-workflows','agent-profile','owner-workbench','owner-wallet'],authorityFencesV1:true,scheduledWorkCoverageV1:false});
+    expect(routerOwnerCapabilities()).toEqual({families:['room-list','needs-you-count','room-head','room-workflows','workspace-roster','agent-profile','owner-workbench','owner-wallet'],authorityFencesV1:true,scheduledWorkCoverageV1:false});
   });
   it('mount alone creates no pass; committed navigation admits one count-only read', async () => {
     const execute = vi.fn(async (_input: RouterSnapshotInput) => snapshot());

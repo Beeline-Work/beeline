@@ -11,7 +11,7 @@ export type TrayClockDrain = Readonly<{
   continuation: boolean;
 }>;
 
-/** Uninstalled. Reuses the existing aggregate owner/90s lease; this creates no
+/** Release-installed. Reuses the existing aggregate owner/90s lease; this creates no
  * leader, evidence loop, retained receipt history or provider callback. The
  * ephemeral row queues an exact owner check at actual SQL COMMIT and deletes
  * itself there, matching the existing turn-owned effect fence pattern. */

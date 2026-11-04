@@ -1,3 +1,7 @@
+import { BACKGROUND_OWNERSHIP_SCHEMA } from './background-ownership.js';
+import { TRAY_CLOCK_SOURCE_SCHEMA } from './tray-clock-source.js';
+import { TRAY_CLOCK_OWNER_SCHEMA } from './tray-clock-owner.js';
+import { TRAY_CLOCK_WORK_SCHEMA } from './tray-clock-work.js';
 import { DISPLAY_DEADLINE_SOURCE_SCHEMA } from './deadline-expiry-source.js';
 import { SENTRY_WAKE_SOURCE_SCHEMA } from './sentry-wake-source.js';
 import { CONNECTOR_OFFER_EXPIRY_SCHEMA } from './connector-offer-expiry.js';
@@ -264,7 +268,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 // Router readiness has its own marker, written only after all migrations finish.
 // The expansion image (router off) becomes the switch release's rollback floor.
 export const REQUIRED_SCHEMA_VERSION = 46;
-export const REQUIRED_ROUTER_SCHEMA_VERSION = 61;
+export const REQUIRED_ROUTER_SCHEMA_VERSION = 62;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -3581,6 +3585,10 @@ export async function migrate(
   await ddlScript('Helper command activation', HELPER_ACTIVATION_SCHEMA);
   await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);
   await ddlScript('Background obligation sources', BACKGROUND_DUE_SOURCE_SCHEMA);
+  await ddlScript('Router background ownership', BACKGROUND_OWNERSHIP_SCHEMA);
+  await ddlScript('Tray clock sources and readiness', TRAY_CLOCK_SOURCE_SCHEMA);
+  await ddlScript('Tray clock commit ownership', TRAY_CLOCK_OWNER_SCHEMA);
+  await ddlScript('Tray clock work streams', TRAY_CLOCK_WORK_SCHEMA);
   if (!options.deferData) await migrateData(database);
 }
 

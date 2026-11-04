@@ -21,8 +21,6 @@ describe('Room open occupancy', () => {
     expect(surface).toContain('onPress={retryHydration}');
   });
 
-
-
   it('pushes the Room without a stack animation stealing the tap-to-pixel budget', () => {
     const chatScreen = layout.slice(layout.indexOf('beeline/chat/[channelId]'));
     expect(chatScreen).toContain("animation: 'none'");

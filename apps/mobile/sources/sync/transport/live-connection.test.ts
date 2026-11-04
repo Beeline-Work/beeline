@@ -300,6 +300,39 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('does not let a Workspace reply downgrade an in-flight router negotiation', async () => {
+    const router = { negotiated: vi.fn(async (_next: unknown) => {}), disconnected: vi.fn(), receive: vi.fn() };
+    const connection = new LiveConnection({ authorization: async () => 'token',
+      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
+    try {
+      await connection.register([], () => {});
+      const read = connection.request('readWorkspaces', {});
+      sockets[0]!.open();
+      const request = sockets[0]!.sent.map(frame => JSON.parse(frame)).find(frame => frame.op === 'readWorkspaces');
+      sockets[0]!.emit({ t: 'res', id: request.id, ok: true, result: { workspaces: [] } });
+      await expect(read).resolves.toEqual({ workspaces: [] });
+      expect(router.negotiated).not.toHaveBeenCalled();
+      sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-list'], commandDedupV1: true });
+      sockets[0]!.emit({ type: 'sync-ok' });
+      await Promise.resolve();
+      expect(router.negotiated).toHaveBeenCalledOnce();
+      expect(router.negotiated.mock.calls[0]![0]).toMatchObject({ families: ['room-list'] });
+      expect(connection.commandState()).toMatchObject({ ready: true, commandDedupV1: true });
+    } finally { connection.dispose(); }
+  });
+
+  it.each([[true, true], [true, false], [false, true], [false, false]])('passes negotiated Tray families only with command=%s and authority=%s', async (commandDedupV1, authorityFencesV1) => {
+    const router = { negotiated: vi.fn(async (_next: unknown) => {}), disconnected: vi.fn(), receive: vi.fn() };
+    const connection = new LiveConnection({ authorization: async () => 'token',
+      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
+    try {
+      await connection.register([], () => {}); sockets[0]!.open();
+      sockets[0]!.emit({ type: 'router-capabilities', protocol: 1,
+        families: ['needs-you-tray', 'needs-you-saved-page'], commandDedupV1, authorityFencesV1 });
+      expect(router.negotiated.mock.calls[0]![0]).toMatchObject({ families: commandDedupV1 && authorityFencesV1 ? ['needs-you-tray', 'needs-you-saved-page'] : [] });
+    } finally { connection.dispose(); }
+  });
+
   it('selects legacy once from an old-server acknowledgement without a fallback timer', async () => {
     vi.useFakeTimers();
     const router = { negotiated: vi.fn(async (_next: unknown) => {}), disconnected: vi.fn(), receive: vi.fn() };

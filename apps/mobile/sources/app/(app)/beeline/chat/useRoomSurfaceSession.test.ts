@@ -1561,7 +1561,8 @@ describe('canonical Room updates', () => {
 
 
 describe('Room session with the real canonical owner', () => {
-  it.each([false, true])('keeps a sent row across canonical push ordering (interval during opening=%s)', async duringOpening => {
+  it.each(['live', 'opening', 'opening-with-unrelated-revocation'])('keeps a sent row across canonical push ordering (%s)', async ordering => {
+    const duringOpening = ordering !== 'live';
     const { routerOwnerNavigation, routerOwnerNegotiated, routerOwnerReceive } = await import('@/buzz/router-owner');
     const { sha256 } = await import('@noble/hashes/sha2.js');
     const { bytesToHex, utf8ToBytes } = await import('@noble/hashes/utils.js');
@@ -1601,6 +1602,15 @@ describe('Room session with the real canonical owner', () => {
       });
     };
     await push(51, 52, []);
+    if (ordering === 'opening-with-unrelated-revocation') {
+      const otherRoom = '33333333-3333-4333-8333-333333333333';
+      const deniedScopes = [{ authorityScope: `room:${otherRoom}`, epoch: '1' }];
+      await act(async () => {
+        routerOwnerReceive({ kind: 'authority-fence', scope: otherRoom, authorityScope: `room:${otherRoom}`,
+          mode: 'deny', authority: { scopes: deniedScopes, digest: hash(deniedScopes) } });
+        for (let i = 0; i < 100; i++) await Promise.resolve();
+      });
+    }
     if (duringOpening) {
       await act(async () => { resolveOpening(); for (let i = 0; i < 100; i++) await Promise.resolve(); });
       expect(current.roomSurface?.messages).toEqual([]);

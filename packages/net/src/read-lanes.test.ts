@@ -177,6 +177,55 @@ describe('local read lanes (P2)', () => {
     expect(reads).toBe(1);
   });
 
+  it('preserves opening Room A continuity while revoking and discarding Room B', async () => {
+    const a = { family: 'room-head', roomId: 'room-a' } as const;
+    const b = { family: 'room-head', roomId: 'room-b' } as const;
+    const cert = (roomId: string) => ({ digest: roomId, scopes: [...authority.scopes, { authorityScope: `room:${roomId}`, epoch: '1' }] });
+    const initial = (roomId: string): LaneSnapshot => ({ ...snapshot(51), atomicGroup: `room-head:${roomId}:ada`,
+      authority: cert(roomId), value: { messages: [] } });
+    const stored = new Map<string, unknown>();
+    let resolveA!: (value: LaneSnapshot) => void, resolveB!: (value: LaneSnapshot) => void, reads = 0;
+    const lanes = new ReadLanes(identity, () => true, {
+      write: async (key, encoded) => { stored.set(key, JSON.parse(encoded)); },
+      remove: async key => { stored.delete(key); }, fence: async () => {},
+    });
+    lanes.connected(1, ['room-head'], async input => {
+      reads++;
+      return new Promise<LaneSnapshot>(done => {
+        if (input.roomId === a.roomId) resolveA = done; else resolveB = done;
+      });
+    });
+    lanes.demand(a, {}, permit); lanes.demand(b, {}, permit); await drain();
+    const privateB = { messages: [{ id: 'private-b', text: 'Room B private message' }] };
+    await lanes.accept({ from: snapshot(51).cut, to: snapshot(52).cut, facts: [{
+      atomicGroup: initial(b.roomId).atomicGroup, authority: cert(b.roomId),
+      payload: { kind: 'scope-replace', family: 'room-head', scope: b.roomId, value: privateB },
+    }] });
+    expect(lanes.peek(a)).toMatchObject({ state: 'OPENING', value: null });
+    expect(lanes.peek(b)).toMatchObject({ state: 'OPENING', value: null });
+    await lanes.revoke(`room:${b.roomId}`, '1');
+    expect(lanes.peek(b)).toMatchObject({ state: 'REVOKED', value: null });
+    expect(stored.has(JSON.stringify([identity.origin, identity.principal, initial(b.roomId).atomicGroup]))).toBe(false);
+    resolveA(initial(a.roomId));
+    resolveB({ ...initial(b.roomId), value: privateB }); await drain();
+    const message = { id: 'prepared-event', text: 'router90-send-repro' };
+    const value = { messages: [message] };
+    await lanes.accept({ from: snapshot(52).cut, to: snapshot(54).cut, facts: [
+      { atomicGroup: initial(a.roomId).atomicGroup, authority: cert(a.roomId),
+        payload: { kind: 'scope-replace', family: 'room-head', scope: a.roomId, value } },
+      { atomicGroup: initial(b.roomId).atomicGroup, authority: cert(b.roomId),
+        payload: { kind: 'scope-replace', family: 'room-head', scope: b.roomId, value: privateB } },
+    ] }); await drain();
+    expect(lanes.peek(a)).toMatchObject({ state: 'LIVE', value, cut: { through: 54 } });
+    expect(lanes.peek(b)).toMatchObject({ state: 'REVOKED', value: null });
+    expect(stored.has(JSON.stringify([identity.origin, identity.principal, initial(b.roomId).atomicGroup]))).toBe(false);
+    const savedA = stored.get(JSON.stringify([identity.origin, identity.principal, initial(a.roomId).atomicGroup])) as {
+      entries: { snapshot: LaneSnapshot }[];
+    };
+    expect(savedA.entries.map(entry => entry.snapshot.value)).toEqual([value]);
+    expect(reads).toBe(2);
+  });
+
   it('classifies opening intervals only against the returned Room Workspace', async () => {
     const room = { family: 'room-head', roomId: 'room-a' } as const;
     let resolve!: (value: LaneSnapshot) => void;

@@ -35,7 +35,44 @@ describe('shared retained lane intervals',()=>{
     const control:LaneFact={atomicGroup:'room:a',authority,payload:{kind:'authority',scope:'a',authorityScope:'room:a',allowed:false}};
     const body=interval(0,[fact('private'),control]);one.add(body);two.add(body,[body.facts[0]!]);
     store.prune(item=>item.payload.kind==='authority');
-    expect([...one.values()][0]!.batch.facts).toEqual([control]);expect(two.size).toBe(0);
+    expect([...one.values()][0]!.batch.facts).toEqual([control]);
+    expect(two.take()).toEqual([{ ...body, facts: [] }]);
+    expect(two.size).toBe(0);
+  });
+  it.each([false, true])('retains empty intervals and classification across repeated pruning (future=%s)', future => {
+    const store = new LaneStaging(), stage = store.stage(future);
+    const empty = interval(0, []);
+    const classified: LaneBatch = { ...interval(1, [fact('private')]), scheduledWorkClassification: {
+      kind: 'scheduled-work-classification', version: 1,
+      authorityBarrier: { stream: 'authority:p', epoch: 'a', segment: 's', through: 2, protocol: 1 },
+    } };
+    stage.add(empty); stage.add(classified);
+    store.prune(() => false); store.prune(() => false);
+    expect(stage.take()).toEqual([empty, { ...classified, facts: [] }]);
+    expect(stage.size).toBe(0);
+  });
+  it.each([false, true])('keeps original byte charges after pruning private payloads (future=%s)', future => {
+    const store = new LaneStaging(), stage = store.stage(future);
+    const body = interval(0, [fact('x'.repeat(200 * 1024))]);
+    stage.add(body);
+    const bytes = [...stage.values()][0]!.bytes;
+    store.prune(() => false);
+    expect([...stage.values()][0]).toEqual({ batch: { ...body, facts: [] }, bytes });
+    if (!future) stage.add(interval(1, [fact('x'.repeat(200 * 1024))]));
+    expect(() => stage.add(interval(2, [fact('x'.repeat(100 * 1024))]))).toThrow('overflow');
+    stage.clear();
+    expect(() => stage.add(interval(3, [fact('x'.repeat(200 * 1024))]))).not.toThrow();
+  });
+  it.each([false, true])('keeps count limits after pruning every payload (future=%s)', future => {
+    const store = new LaneStaging(), stage = store.stage(future);
+    const limit = future ? 16 : 17;
+    for (let i = 0; i < limit; i++) stage.add(interval(i, [fact('private')]));
+    store.prune(() => false);
+    expect(stage.size).toBe(limit);
+    expect([...stage.values()].every(value => value.batch.facts.length === 0)).toBe(true);
+    expect(() => stage.add(interval(limit, []))).toThrow('overflow');
+    expect(stage.take()).toHaveLength(limit);
+    expect(() => stage.add(interval(limit, []))).not.toThrow();
   });
   it('keeps the stricter future-only limit and deduplicates same-consumer references',()=>{
     const store=new LaneStaging(),future=store.stage(true),body=interval(0,[fact('small')]);

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { backfillAgentHandles, migrate, migrateData, MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
+import { backfillAgentHandles, migrate, migrateData, PostgresDatabase } from './database.js';
 import { alreadyNoOp, alreadySatisfied, normalizeDefault, lockedTables, noOpCheck, logLockHolders, normalizeTriggerDefinition, runMigrationStep, satisfiedCheck, splitMigrationStatements, triggerAlreadyCurrent, triggerPair } from './migration-steps.js';
 
 const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
@@ -269,7 +269,7 @@ describe('already-done drops and nullability', () => {
     });
     expect(noOpCheck('DROP TABLE IF EXISTS old_rows')).toEqual({ kind: 'drop-relation', relation: 'old_rows' });
     expect(noOpCheck('ALTER TABLE t DROP CONSTRAINT IF EXISTS c, ADD CONSTRAINT c CHECK (a > 0)')).toBeNull();
-    expect(noOpCheck('ALTER TABLE t ALTER COLUMN a SET DEFAULT now()')).toBeNull();
+    expect(noOpCheck('ALTER TABLE t ALTER COLUMN a SET DEFAULT now()')).toEqual({kind:'alter',relation:'t',clauses:[{kind:'default',name:'a',expr:'now()'}]});
     expect(noOpCheck('ALTER TABLE t DROP COLUMN a')).toBeNull();
   });
 

@@ -25,4 +25,3 @@ export interface CommandActivationSnapshot extends CommandActivationInput {
   readonly repository:DaemonOperationMap['getRoomRepositoryState']['output'];
   readonly corner?:DaemonOperationMap['getCornerRestoreState']['output'];
 }
-

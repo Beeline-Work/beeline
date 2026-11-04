@@ -94,7 +94,11 @@ BEGIN
 DROP TRIGGER IF EXISTS beeline_mcp_stream_member ON rooms_mcp_members;
 CREATE TRIGGER beeline_mcp_stream_member AFTER INSERT ON rooms_mcp_members FOR EACH ROW EXECUTE FUNCTION beeline_mcp_stream_member();
 `;
-export interface McpStreamCursor { epoch: string; through: number; pending?:true }
+export interface McpStreamCursor {
+  epoch: string; through: number;
+  /** The stored cut is unchanged, but its owed backlog still has more pages. */
+  pending?:true;
+}
 interface McpWakeCursor {createdAt:string;id:string}
 interface McpStreamPage {
   nextWakeCursor?:McpWakeCursor; moreWakes?:boolean;

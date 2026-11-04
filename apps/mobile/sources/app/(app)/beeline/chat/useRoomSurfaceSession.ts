@@ -1231,6 +1231,12 @@ export function useRoomSurfaceSession({
       try {
         if (openingFrame) {
           await yieldToPaint();
+          // A frame callback can precede Fabric's native mount. The tap owns
+          // the fresh read already, and its cached response can release the
+          // existing visible-row barrier. Keep outbox/transport setup from
+          // rendering over that first native frame. Direct links still start
+          // their own read here, so must not wait for its response first.
+          if (hasPrefetchedRoomOpen(channelId)) await waitForRoomDraw();
           if (cancelled) return;
         }
         markRoomOpen('session-effect', channelId);

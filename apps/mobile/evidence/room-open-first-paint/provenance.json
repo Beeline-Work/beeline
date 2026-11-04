@@ -1,0 +1,68 @@
+{
+  "baselineSource": "525dfedb5e1f351e4493a8c2bbf52f5d41a49568",
+  "productionSource": "98c2a49a4f3df909e8fd3fc32ae39129f6f8367b",
+  "productionVersion": "v0.1.142",
+  "nativeRuntime": "40",
+  "nativeVersionCode": 27,
+  "nativeVersionName": "0.2.22",
+  "emulator": "emulator-5634",
+  "proofWorkspace": "bee11e00-0000-4000-8000-000000000105",
+  "proofRoom": "bee11e00-0000-4000-8000-000000000103",
+  "bundles": {
+    "before": {
+      "sha256": "00a5d606a44f7b02848e6aa0f8899b2060bc73dfc7092ac228cb53aaea3c3e9a",
+      "source": "525dfedb5e1f351e4493a8c2bbf52f5d41a49568",
+      "updateId": "01a1a402-e5da-72bd-8bdb-33640bc84d49",
+      "nativeRuntime": "40",
+      "arm": "before"
+    },
+    "no-swipe": {
+      "sha256": "0e9850c9e56075ffde815c01fdd290ee75423e5d7c337a0790fa0eca2ae54289",
+      "source": "525dfedb5e1f351e4493a8c2bbf52f5d41a49568",
+      "updateId": "01a1a402-e5da-72bd-8bdb-33640bc84d49",
+      "nativeRuntime": "40",
+      "arm": "no-swipe"
+    },
+    "after-final": {
+      "sha256": "3ae6d532f89cef6d74b34d4647ca03893804dd29660518ea70d94e4321513454",
+      "source": "525dfedb5e1f351e4493a8c2bbf52f5d41a49568",
+      "updateId": "01a1a402-e5da-72bd-8bdb-33640bc84d49",
+      "nativeRuntime": "40",
+      "arm": "after-final"
+    },
+    "after-draw": {
+      "sha256": "859a98b73fb887e56a1181545f00ac417bfb7a6e99f74c012b7385da5ff926e0",
+      "source": "525dfedb5e1f351e4493a8c2bbf52f5d41a49568",
+      "updateId": "01a1a402-e5da-72bd-8bdb-33640bc84d49",
+      "nativeRuntime": "40",
+      "arm": "after-draw"
+    },
+    "before-paired": {
+      "sha256": "16bd8851ea9482b3d52e5cf14a53031884ff2ed3f9a1dd8be7347b5df8923fd5",
+      "source": "525dfedb5e1f351e4493a8c2bbf52f5d41a49568",
+      "updateId": "01a1a402-e5da-72bd-8bdb-33640bc84d49",
+      "nativeRuntime": "40",
+      "arm": "before-paired"
+    },
+    "after-proxy": {
+      "sha256": "5f3c554892068c471144c80f60b29a8af7c505554e5b8af80acdd33fe0da49cb",
+      "source": "525dfedb5e1f351e4493a8c2bbf52f5d41a49568",
+      "updateId": "01a1a402-e5da-72bd-8bdb-33640bc84d49",
+      "nativeRuntime": "40",
+      "arm": "after-proxy"
+    }
+  },
+  "acceptanceArms": [
+    "paired-before",
+    "paired-after"
+  ],
+  "pairedOrder": "10 trials, before/after order reversed on odd trials; cold then warm in each arm",
+  "instrumentation": "Production profiling renderer, Root/Room Profilers, transcript commit/content-size probes; six records per buffered log line; same hooks in paired arms.",
+  "network": "Existing production live socket; no network controller, message sends, or new product call sites.",
+  "cold": "New app process, first Room open from the Room list; existing scoped stored Room DTO retained.",
+  "nativeFrame": "First valid HWUI frame whose DrawStart follows transcript commit; incomplete/flagged emulator frames are rejected.",
+  "scope": "A native completion proxy, not physical scanout/optical timing; small shared-host/proof-account session.",
+  "nativeApkSha256": "00eb69f56cce366a72e6b2631a473626e60050a69f12e7e2f5e2f35f927644be",
+  "afterOverlay": "Room changes in this commit, plus a subsequently withdrawn Tray readiness experiment. The Tray-only code does not execute during Room acceptance; measured Room code is unchanged.",
+  "trayExperiment": "Excluded from product fix: Clear/Undo commit+rAF p95 206.142/151.740 ms. Not native HWUI completion."
+}

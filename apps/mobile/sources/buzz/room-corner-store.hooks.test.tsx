@@ -5,6 +5,8 @@ import { beforeEach, expect, it } from 'vitest';
 import type { CornerListItem } from '@beeline/api-contract/phone';
 import {
   acceptCornerStatusFrame,
+  applyArchivedCorners,
+  cornerReadMark,
   noteCornerLaneSubscribed,
   resetRoomCornerStore,
   useRoomCornerSummaries,
@@ -27,6 +29,21 @@ const frame = (sequence: number, state: string) => ({
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   resetRoomCornerStore();
+});
+
+it('keeps summary readers out of archived-page commits', () => {
+  noteCornerLaneSubscribed('parent', false);
+  acceptCornerStatusFrame(frame(1, 'working'));
+  let renders = 0;
+  function Summary() { useRoomCornerSummary('parent'); renders++; return null; }
+  let tree: any;
+  act(() => { tree = create(<Summary />); });
+  const mounted = renders;
+  act(() => applyArchivedCorners('parent', [row('done')], undefined, false, cornerReadMark('parent')));
+  expect(renders).toBe(mounted);
+  act(() => acceptCornerStatusFrame(frame(2, 'waiting')));
+  expect(renders).toBe(mounted + 1);
+  act(() => tree.unmount());
 });
 
 it('gives every Room list reader the newest summary, and none after a client reset', async () => {

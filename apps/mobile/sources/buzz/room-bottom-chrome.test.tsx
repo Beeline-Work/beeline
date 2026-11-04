@@ -66,6 +66,7 @@ import { TurnBandSlot, TurnProgressLine, TurnSettledLine } from '@/components/bu
 import { beelineThemes, groknight } from './groknight';
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import { phoneTranscriptTailPadding } from './room-scroll-follow';
+import * as turnClock from './turn-clock';
 import {
   COMPOSER_TOP_GAP,
   TURN_LINE_BAR_MARGIN_BOTTOM,
@@ -343,4 +344,73 @@ describe('jump disc follows native status measurements', () => {
     expect(style.bottom).toBe(4);
     act(() => renderer.unmount());
   });
+});
+
+it('commits the working counter only when its displayed second changes', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(100_000);
+  let commits = 0;
+  let tree: ReactTestRenderer | undefined;
+  try {
+    act(() => { tree = create(<React.Profiler id="working" onRender={() => { commits++; }}>
+      <TurnProgressLine label="Thinking" startedAt={90} testID="clock-render-budget" />
+    </React.Profiler>); });
+    const mounted = commits;
+    for (let tick = 0; tick < 7; tick++) act(() => vi.advanceTimersByTime(125));
+    expect(commits).toBe(mounted);
+    act(() => vi.advanceTimersByTime(125));
+    expect(commits).toBe(mounted + 1);
+    expect(hostByTestID(tree!, 'clock-render-budget-elapsed').props.children).toBe('11s');
+  } finally {
+    act(() => tree?.unmount());
+    vi.useRealTimers();
+  }
+});
+
+it('keeps streaming parent renders outside the working line and uses the latest Stop action', () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(100_000);
+  const render = vi.spyOn(turnClock, 'formatWorkingCounter');
+  const stop = vi.fn();
+  const scene = (tick: number, stopping = false) => <TurnProgressLine label="Thinking"
+    startedAt={90} stopping={stopping} onStop={() => stop(tick)} testID="stream-clock" />;
+  let tree: ReactTestRenderer | undefined;
+  try {
+    act(() => { tree = create(scene(0)); });
+    render.mockClear();
+    for (let tick = 1; tick <= 20; tick++) act(() => tree!.update(scene(tick)));
+    expect(render).not.toHaveBeenCalled();
+    act(() => hostByTestID(tree!, 'stream-clock-stop').props.onPress());
+    expect(stop).toHaveBeenCalledWith(20);
+    act(() => tree!.update(scene(21, true)));
+    expect(hostByTestID(tree!, 'stream-clock-elapsed').props.children).toBe('10s · stopping');
+  } finally {
+    act(() => tree?.unmount());
+    render.mockRestore();
+    vi.useRealTimers();
+  }
+});
+
+it('keeps Stop on the committed turn while a streaming transition suspends', async () => {
+  const stop = vi.fn();
+  let ready = false;
+  let resume!: () => void;
+  const pending = new Promise<void>(resolve => { resume = resolve; });
+  function Gate({ wait }: { wait: boolean }) { if (wait && !ready) throw pending; return null; }
+  const scene = (turn: number, wait: boolean) => <React.Suspense fallback={null}>
+    <TurnProgressLine label="Thinking" startedAt={90} onStop={() => stop(turn)} testID="committed-clock" />
+    <Gate wait={wait} />
+  </React.Suspense>;
+  let tree: ReactTestRenderer | undefined;
+  try {
+    await act(async () => { tree = create(scene(1, false), { unstable_isConcurrent: true }); });
+    await act(async () => { React.startTransition(() => tree!.update(scene(2, true))); });
+    act(() => hostByTestID(tree!, 'committed-clock-stop').props.onPress());
+    expect(stop).toHaveBeenLastCalledWith(1);
+    await act(async () => { ready = true; resume(); });
+    act(() => hostByTestID(tree!, 'committed-clock-stop').props.onPress());
+    expect(stop).toHaveBeenLastCalledWith(2);
+  } finally {
+    await act(async () => tree?.unmount());
+  }
 });

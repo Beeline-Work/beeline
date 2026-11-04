@@ -5,6 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ChatListItem } from '@beeline/buzz-client';
 import { ConversationRow } from './ConversationRow';
 import { applyChatListCorners, resetRoomCornerStore } from '@/buzz/room-corner-store';
+import * as rowPresentation from '@/buzz/room-list-row';
+import { observeMessageOutbox } from '@/buzz/message-outbox-observer';
+import type { MessageOutbox, MessageOutboxRecord } from '@/buzz/message-outbox';
 
 vi.mock('react-native', () => {
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
@@ -78,6 +81,64 @@ function renderRow(
 }
 
 describe('ConversationRow preview', () => {
+  it('renders only the changed conversation when the server replaces a list', () => {
+    const render = vi.spyOn(rowPresentation, 'roomRowPreview');
+    const action = () => undefined;
+    const items = Array.from({ length: 12 }, (_, index) => ({
+      room: { id: `row-${index}`, name: `Room ${index}`, updatedAt: 100 },
+      latestMessage,
+    } as ChatListItem));
+    const rows = (values: ChatListItem[]) => <>{values.map(item => (
+      <ConversationRow key={item.room.id} item={item} viewer="viewer" now={100_000}
+        onPress={action} onPin={action} testID={item.room.id} />
+    ))}</>;
+    let tree: ReturnType<typeof create>;
+    try {
+      act(() => { tree = create(rows(items)); });
+      render.mockClear();
+      const replacement = structuredClone(items);
+      replacement[0] = { ...replacement[0]!, latestMessage: { ...latestMessage, text: 'New arrival' } };
+      act(() => tree!.update(rows(replacement)));
+      expect(render).toHaveBeenCalledTimes(1);
+      expect(render.mock.calls[0]![0].latestMessage?.text).toBe('New arrival');
+    } finally {
+      act(() => tree?.unmount());
+      render.mockRestore();
+    }
+  });
+
+  it('does not render conversations when another Room changes its outbox', () => {
+    const render = vi.spyOn(rowPresentation, 'roomRowPreview');
+    let records: readonly MessageOutboxRecord[] = [];
+    let publish: () => void = () => undefined;
+    const stop = observeMessageOutbox({
+      snapshot: () => records,
+      subscribe: (listener: () => void) => { publish = listener; return () => undefined; },
+    } as unknown as MessageOutbox);
+    const action = () => undefined;
+    let tree: ReturnType<typeof create>;
+    try {
+      act(() => { tree = create(<ConversationRow
+        item={{ room: { id: 'unrelated', name: 'Unrelated', updatedAt: 100 }, latestMessage } as ChatListItem}
+        viewer="viewer" now={100_000} onPress={action} onPin={action} testID="unrelated" />); });
+      render.mockClear();
+      records = [{ event: { tags: [['h', 'other-room']] }, row: { text: 'Not sent' }, reason: 'Denied' } as MessageOutboxRecord];
+      act(() => publish());
+      expect(render).not.toHaveBeenCalled();
+      records = [{ ...records[0]!, event: { tags: [['h', 'unrelated']] }, row: { text: 'Own refusal' } } as MessageOutboxRecord];
+      act(() => publish());
+      expect(render).toHaveBeenCalledOnce();
+      render.mockClear();
+      records = [{ ...records[0]!, seen: true }];
+      act(() => publish());
+      expect(render).toHaveBeenCalledOnce();
+    } finally {
+      act(() => tree?.unmount());
+      stop();
+      observeMessageOutbox();
+      render.mockRestore();
+    }
+  });
   it.each([false, true])(
     'hides empty corner controls and keeps unread dots (desktop=%s)',
     (desktop) => {

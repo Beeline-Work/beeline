@@ -1083,7 +1083,7 @@ describe('Room deck live path', () => {
     const conversation = row!.root.findByType(ConversationRow);
     expect(conversation.props.selected).toBeUndefined();
     expect(conversation.props.cornersExpanded).toBe(false);
-    act(() => conversation.props.onToggleCorners());
+    act(() => conversation.props.onToggleCorners(conversation.props.item.room.id));
     expect(router.push).not.toHaveBeenCalled();
     let opened: ReactTestRenderer;
     await act(async () => {
@@ -1116,7 +1116,7 @@ describe('Room deck live path', () => {
     const conversation = row!.root.findByType(ConversationRow);
     vi.mocked(router.push).mockClear();
     await act(async () => {
-      await conversation.props.onLongPressCorners();
+      await conversation.props.onLongPressCorners(conversation.props.item.room.id);
     });
 
     expect(deck.createCorner).toHaveBeenCalledOnce();
@@ -1161,14 +1161,14 @@ describe('Room deck live path', () => {
       node.children.map((child: any) => (typeof child === 'string' ? child : text(child))).join('');
 
     await act(async () => {
-      void conversation.props.onLongPressCorners();
+      void conversation.props.onLongPressCorners(conversation.props.item.room.id);
     });
     expect(text(toast.root.findByProps({ testID: 'corner-open-pending' }))).toBe(
       'Opening corner…Waiting for server · 0s',
     );
     // A second press while the first waits says so instead of doing nothing.
     await act(async () => {
-      void conversation.props.onLongPressCorners();
+      void conversation.props.onLongPressCorners(conversation.props.item.room.id);
     });
     expect(deck.createCorner).toHaveBeenCalledOnce();
     expect(text(toast.root.findByProps({ testID: 'corner-open-pending' }))).toBe(

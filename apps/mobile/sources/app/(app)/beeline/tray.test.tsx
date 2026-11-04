@@ -189,6 +189,8 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 
 import TrayScreen from './tray';
 import { ButtonRow } from '@/components/buzz/ButtonRow';
+import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
+import * as needFormatting from '@/buzz/needs-you';
 import { applyNeedsYouLiveDelta, useNeedsYouCount, useTrayList, holdNeedsYou, acknowledgePaintedNeedsYou } from '@/buzz/needs-you-store';
 import { resetClientState } from '@/sync/client-reset';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
@@ -366,6 +368,27 @@ async function renderTray(): Promise<ReactTestRenderer> {
   await act(async () => undefined);
   return tree;
 }
+
+it('renders only the changed Needs-you cell when a projection replaces unchanged DTOs', () => {
+  const render = vi.spyOn(needFormatting, 'needsYouExpiryLabel');
+  const action = () => undefined;
+  const items = [need({ messageId: 'a' }), need({ messageId: 'b' })];
+  const cells = (values: typeof items) => <>{values.map(item => <NeedsYouCell
+    key={item.messageId} item={item} now={1_700_000_000_000} desktop={false}
+    onOpen={action} onDismiss={action} />)}</>;
+  let tree: ReactTestRenderer | undefined;
+  try {
+    act(() => { tree = create(cells(items)); });
+    render.mockClear();
+    const next = structuredClone(items);
+    next[0] = { ...next[0]!, text: 'A changed question' };
+    act(() => tree!.update(cells(next)));
+    expect(render).toHaveBeenCalledOnce();
+  } finally {
+    act(() => tree?.unmount());
+    render.mockRestore();
+  }
+});
 
 describe('negotiated Tray consumer', () => {
   it('renders canonical rows and sends no legacy read or gap reload', async () => {

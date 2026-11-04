@@ -6,6 +6,7 @@ import { takePendingBrowserShare } from '@/buzz/pending-browser-share';
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { useRoomSearch } from '@/buzz/use-room-search';
+import { useScopedCallbacks } from '@/buzz/use-stable';
 import {
   useNeedsYouCount,
 } from '@/buzz/needs-you-store';
@@ -658,6 +659,24 @@ export default function BuzzChannels() {
     [transport],
   );
 
+  // A list update changes one DTO, not every Room's event handlers.
+  const rowActions = useScopedCallbacks({
+    press: (roomId: string) => {
+      if (!roomListGestures.canInteract()) return;
+      swipeableRefs.current.get(roomId)?.close();
+      openRoom(roomId);
+    },
+    pin: (roomId: string) => {
+      if (roomListGestures.canInteract()) void togglePin(roomId);
+    },
+    toggleCorners: (roomId: string) => {
+      if (roomListGestures.canInteract()) cornerDropdowns.toggle(roomId);
+    },
+    newCorner: (roomId: string) => {
+      if (roomListGestures.canInteract()) void openNewCorner(roomId);
+    },
+  }, `${identity?.publicKey ?? ''}:${activeCommunityId ?? ''}`);
+
   const selectWorkspace = useCallback(
     (workspaceId: string | null) => {
       if (!workspaceId) return;
@@ -1114,25 +1133,15 @@ export default function BuzzChannels() {
                       item={item}
                       viewer={chatList.viewer.pubkey}
                       now={ageNow}
-                      onPress={() => {
-                        if (!roomListGestures.canInteract()) return;
-                        swipeableRefs.current.get(item.room.id)?.close();
-                        openRoom(item.room.id);
-                      }}
+                      onPress={rowActions.press}
                       pinned={pinned.includes(item.room.id)}
-                      onPin={() => {
-                        if (roomListGestures.canInteract()) void togglePin(item.room.id);
-                      }}
+                      onPin={rowActions.pin}
                       cornersExpanded={cornersExpanded}
-                      onToggleCorners={() => {
-                        if (roomListGestures.canInteract()) cornerDropdowns.toggle(item.room.id);
-                      }}
+                      onToggleCorners={rowActions.toggleCorners}
                       onLongPressCorners={
                         viewerIsAgent
                           ? undefined
-                          : () => {
-                              if (roomListGestures.canInteract()) void openNewCorner(item.room.id);
-                            }
+                          : rowActions.newCorner
                       }
                       testID={`room-${item.room.id}`}
                     />

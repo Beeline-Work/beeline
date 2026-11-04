@@ -1066,6 +1066,19 @@ export default function BuzzMembers({
 
   const displayedError = roster.error ?? (profileAgentId&&routedAgent.mode!=='legacy'?routedAgent.error:null) ?? error ?? workspaceError;
   const busy = working !== null;
+  const viewerPubkey = surface?.viewer.identity.pubkey;
+  const openRosterPerson = React.useCallback((pubkey: string) => {
+    router.push({
+      pathname: pubkey === viewerPubkey ? '/beeline/settings' : '/beeline/human-profile',
+      params: { communityId: workspaceId, memberId: pubkey },
+    } as Href);
+  }, [viewerPubkey, workspaceId]);
+  const openRosterAgent = React.useCallback((pubkey: string) => {
+    router.push({
+      pathname: '/beeline/agent-profile',
+      params: { communityId: workspaceId, agentId: pubkey },
+    } as Href);
+  }, [workspaceId]);
   if (profileAgentId) {
     return (
       <AgentProfileView
@@ -1393,15 +1406,7 @@ export default function BuzzMembers({
           handle={member.identity.handle}
           kind="human"
           name={member.identity.name}
-          onPress={() =>
-            router.push({
-              pathname:
-                member.identity.pubkey === surface.viewer.identity.pubkey
-                  ? '/beeline/settings'
-                  : '/beeline/human-profile',
-              params: { communityId: workspaceId, memberId: member.identity.pubkey },
-            } as Href)
-          }
+          onPress={openRosterPerson}
           pubkey={member.identity.pubkey}
           chevron="right"
           role={member.role}
@@ -1516,12 +1521,7 @@ export default function BuzzMembers({
                     model={member.model}
                     usage={member.usage}
                     name={member.identity.name}
-                    onPress={() =>
-                      router.push({
-                        pathname: '/beeline/agent-profile',
-                        params: { communityId: workspaceId, agentId: member.identity.pubkey },
-                      } as Href)
-                    }
+                    onPress={openRosterAgent}
                     ownerHandle={member.owner?.handle}
                     pubkey={member.identity.pubkey}
                     testID={`agent-${member.identity.pubkey}-identity`}

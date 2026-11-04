@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useOutboxRecords } from '@/buzz/message-outbox-observer';
-import { outboxRoomId } from '@/buzz/message-outbox';
+import { useRoomOutboxFailure } from '@/buzz/message-outbox-observer';
 import { voiceCallHumanNames } from '@/buzz/voice-call-members';
 import React from 'react';
+import equal from 'fast-deep-equal';
 import { Pressable, Text, View } from 'react-native';
 import Animated, {
   Easing,
@@ -26,7 +26,7 @@ import { useRoomCornerSummary } from '@/buzz/room-corner-store';
 import { CornerGlyph } from './CornerGlyph';
 import { PinGlyph } from './PinGlyph';
 
-export function ConversationRow({
+export const ConversationRow = React.memo(function ConversationRow({
   item,
   viewer,
   now,
@@ -44,21 +44,20 @@ export function ConversationRow({
   item: ChatListItem;
   viewer?: string;
   now: number;
-  onPress: () => void;
-  onPin: () => void;
+  onPress: (roomId: string) => void;
+  onPin: (roomId: string) => void;
   pinned?: boolean;
   selected?: boolean;
   desktop?: boolean;
   cornersExpanded?: boolean;
-  onToggleCorners?: () => void;
+  onToggleCorners?: (roomId: string) => void;
   /** Tap of the corner glyph opens the Room's corner list instead of toggling it. */
-  onOpenCorners?: () => void;
+  onOpenCorners?: (roomId: string) => void;
   /** Long-press of the corner glyph opens a new corner in this Room. */
-  onLongPressCorners?: () => void;
+  onLongPressCorners?: (roomId: string) => void;
   testID: string;
 }) {
-  const outbox = useOutboxRecords();
-  const refused = outbox.filter(record => outboxRoomId(record) === item.room.id && record.reason && !record.seen).at(-1);
+  const refused = useRoomOutboxFailure(item.room.id);
   const name = roomRowName(item);
   const preview = roomRowPreview(item, viewer);
   const call = item.voiceCall && !item.voiceCall.endedAt ? item.voiceCall : null;
@@ -102,8 +101,8 @@ export function ConversationRow({
       accessibilityHint={onLongPressCorners ? 'Long press to open a new corner' : undefined}
       delayLongPress={onLongPressCorners ? 450 : undefined}
       hitSlop={8}
-      onLongPress={onLongPressCorners}
-      onPress={onOpenCorners ?? onToggleCorners}
+      onLongPress={onLongPressCorners ? () => onLongPressCorners(item.room.id) : undefined}
+      onPress={onOpenCorners || onToggleCorners ? () => (onOpenCorners ?? onToggleCorners)?.(item.room.id) : undefined}
       style={[styles.cornerToggle, cornerPosition]}
       testID={`${testID}-corners`}
     >
@@ -116,8 +115,8 @@ export function ConversationRow({
   return (
     <View style={[styles.row, selected && styles.selected]}>
       <Pressable
-        onPress={onPress}
-        onLongPress={onPin}
+        onPress={() => onPress(item.room.id)}
+        onLongPress={() => onPin(item.room.id)}
         accessibilityRole="button"
         accessibilityHint="Long press to toggle this conversation's pin"
         accessibilityLabel={`${name.sigil}${name.name}${status ? `, ${status}` : ''}${pinned ? ', pinned' : ''}`}
@@ -126,7 +125,7 @@ export function ConversationRow({
           { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin conversation' },
         ]}
         onAccessibilityAction={(event) => {
-          if (event.nativeEvent.actionName === 'pin') onPin();
+          if (event.nativeEvent.actionName === 'pin') onPin(item.room.id);
         }}
         style={({ pressed }) => [
           styles.rowPressable,
@@ -198,7 +197,15 @@ export function ConversationRow({
       {hasCorners && cornerMark}
     </View>
   );
-}
+}, (previous, next) => {
+  const { item: beforeItem, now: beforeNow, ...before } = previous;
+  const { item: afterItem, now: afterNow, ...after } = next;
+  // Server snapshots can replace unchanged DTOs. Compare their values while
+  // retaining every callback in the comparison, so actions never go stale.
+  return equal(before, after) && equal(beforeItem, afterItem) &&
+    compactRelativeTime(beforeItem.latestMessage?.createdAt ?? beforeItem.room.updatedAt, beforeNow) ===
+    compactRelativeTime(afterItem.latestMessage?.createdAt ?? afterItem.room.updatedAt, afterNow);
+});
 
 const styles = StyleSheet.create((theme) => ({
   liveVoice: { ...theme.buzz.type.meta, color: theme.buzz.accent },

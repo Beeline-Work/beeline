@@ -104,7 +104,8 @@ describe('Members page layout contract', () => {
       source.indexOf('</KeyboardAwareScrollView>', agentsStart),
     );
     expect(agents).toContain('chevron="right"');
-    expect(agents).toContain("pathname: '/beeline/agent-profile'");
+    expect(agents).toContain('onPress={openRosterAgent}');
+    expect(source).toContain("pathname: '/beeline/agent-profile'");
     expect(agents).not.toContain("direction={open ? 'down' : 'right'}");
     expect(agents).not.toContain('agent-${selectedAgent.agent.identity.pubkey}-model-config');
   });

@@ -1,6 +1,7 @@
 import { type AgentUsage, usageDollars, usageTokens } from '@beeline/api-contract/phone';
 import { usageTime } from '@/buzz/agent-usage';
 import React, { type ReactNode } from 'react';
+import equal from 'fast-deep-equal';
 import { Text, type AccessibilityRole, type AccessibilityState } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { fallbackMemberHandle } from '@/buzz/member-display';
@@ -25,7 +26,7 @@ type SharedRowProps = {
   handle?: string;
   inset?: IndexRowProps['inset'];
   name: string;
-  onPress?: () => void;
+  onPress?: (pubkey: string) => void;
   pubkey: string;
   seed?: string;
   testID: string;
@@ -112,7 +113,7 @@ export function memberRosterModel(member: { kind: 'human' } | { kind: 'agent'; m
  * Members page and Room/corner roster sheets; callers retain only their
  * actions, detail panels, and which edge owns the section divider.
  */
-export function MemberRosterRow(props: MemberRosterRowProps) {
+export const MemberRosterRow = React.memo(function MemberRosterRow(props: MemberRosterRowProps) {
   const usage = props.kind === 'agent' ? memberRosterUsage(props.usage) : undefined;
   const title = props.title ?? memberRosterTitle(props);
   const subtitle = props.subtitle ?? memberRosterSubtitle(props);
@@ -156,7 +157,7 @@ export function MemberRosterRow(props: MemberRosterRowProps) {
           alive={props.kind === 'agent' ? props.alive : undefined}
         />
       }
-      onPress={props.onPress}
+      onPress={props.onPress ? () => props.onPress?.(props.pubkey) : undefined}
       testID={props.testID}
       title={title}
       titleAside={memberRosterModel(props)}
@@ -164,7 +165,13 @@ export function MemberRosterRow(props: MemberRosterRowProps) {
       value={props.value}
     />
   );
-}
+}, (previous, next) => {
+  // Usage snapshots can replace equal DTOs. React elements on the trailing
+  // axis retain React's identity comparison rather than walking their owners.
+  const { trailing: beforeTrailing, ...before } = previous;
+  const { trailing: afterTrailing, ...after } = next;
+  return beforeTrailing === afterTrailing && equal(before, after);
+});
 
 const styles = StyleSheet.create((theme) => {
   const { buzz: hull } = theme;

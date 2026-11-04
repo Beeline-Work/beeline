@@ -7,7 +7,20 @@ import React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 
+const rowRender = vi.hoisted(() => vi.fn());
+vi.mock('./IndexRow', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./IndexRow')>();
+  return {
+    ...actual,
+    IndexRow: (props: React.ComponentProps<typeof actual.IndexRow>) => {
+      rowRender(props.testID);
+      return React.createElement(actual.IndexRow, props);
+    },
+  };
+});
+
 vi.mock('react-native', () => ({
+  Pressable: 'Pressable',
   Text: 'Text',
   TouchableOpacity: 'TouchableOpacity',
   View: 'View',
@@ -36,6 +49,7 @@ vi.mock('./IdentityMark', () => ({ IdentityMark: 'IdentityMark' }));
 vi.mock('./ChevronGlyph', () => ({ CHEVRON_ROW_SIZE: 16, ChevronGlyph: 'ChevronGlyph' }));
 
 import { MemberRosterRow, memberRosterModel, memberRosterSubtitle } from './MemberRosterRow';
+import { IndexRow } from './IndexRow';
 
 beforeAll(() => {
   (
@@ -44,6 +58,29 @@ beforeAll(() => {
 });
 
 describe('MemberRosterRow', () => {
+  it('reuses unchanged roster DTOs and keeps identity actions current', () => {
+    let renderer!: ReactTestRenderer;
+    const press = vi.fn();
+    const rows = (changed: boolean, onPress = press) => ['one', 'two'].map((pubkey) => (
+      <MemberRosterRow key={pubkey} kind="agent" divider="bottom" pubkey={pubkey}
+        name={changed && pubkey === 'two' ? 'Renamed' : pubkey} handle={pubkey}
+        usage={{ windows: [], updatedAt: 1 }} onPress={onPress} testID={pubkey} />
+    ));
+    act(() => { renderer = create(<>{rows(false)}</>); });
+    rowRender.mockClear();
+    act(() => { renderer.update(<>{rows(true)}</>); });
+    expect(rowRender.mock.calls.map(([id]) => id)).toEqual(['two']);
+    act(() => { renderer.root.findAllByType(IndexRow)[0].props.onPress(); });
+    expect(press).toHaveBeenCalledWith('one');
+    const latest = vi.fn();
+    rowRender.mockClear();
+    act(() => { renderer.update(<>{rows(true, latest)}</>); });
+    expect(rowRender).toHaveBeenCalledTimes(2);
+    act(() => { renderer.root.findAllByType(IndexRow)[1].props.onPress(); });
+    expect(latest).toHaveBeenCalledWith('two');
+    act(() => { renderer.unmount(); });
+  });
+
   it('formats a human with only the role under the single handle title', () => {
     let renderer!: ReactTestRenderer;
     act(() => {

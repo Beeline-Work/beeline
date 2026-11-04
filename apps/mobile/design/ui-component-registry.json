@@ -360,7 +360,7 @@
     "components/buzz/TranscriptReference.tsx": ["TranscriptReference", "contents"],
     "components/buzz/TranscriptScrubber.tsx": ["TranscriptScrubber"],
     "components/buzz/TrayGlyph.tsx": ["TrayGlyph", "glyph"],
-    "components/buzz/TurnProgressLine.tsx": ["TurnBandSlot", "TurnProgressLine", "TurnSettledLine"],
+    "components/buzz/TurnProgressLine.tsx": ["TurnBandSlot", "TurnProgressLine", "TurnProgressLineBody", "TurnSettledLine"],
     "components/buzz/UiSizeSetting.tsx": ["UiSizeSetting"],
     "components/buzz/ViewerConversationDock.tsx": ["ViewerConversationDock"],
     "components/buzz/VoiceBar.tsx": ["VoiceBar", "VoiceAgentStrip"],

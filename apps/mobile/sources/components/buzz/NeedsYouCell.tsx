@@ -3,6 +3,7 @@ import { TranscriptFactRow } from './IndexRow';
 import { ContentTarget } from '@/components/buzz/IndexRow';
 import { Button } from './Button';
 import React, { useRef, useState } from 'react';
+import equal from 'fast-deep-equal';
 import { Pressable, Text, View } from 'react-native';
 import { Swipeable } from 'react-native-gesture-handler';
 import { StyleSheet } from 'react-native-unistyles';
@@ -54,7 +55,7 @@ function sourcePath(item: NeedsYouItemView): string {
  * its own ceremony. A phone swipes any cell right to dismiss it from the tray;
  * a pointer hovers to reveal DISMISS. Dismissal does not decide an approval.
  */
-export function NeedsYouCell({
+export const NeedsYouCell = React.memo(function NeedsYouCell({
   item,
   now,
   desktop,
@@ -281,7 +282,7 @@ export function NeedsYouCell({
       {cell}
     </Swipeable>
   );
-}
+}, equal);
 
 /** The pointer's dismiss: its offset from the cell's right edge and its touch box. */
 const DISMISS_RIGHT = 4;

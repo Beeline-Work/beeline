@@ -172,11 +172,11 @@
   },
   {
     "file": "components/buzz/ConversationRow.tsx",
-    "line": 118,
+    "line": 122,
     "rule": "6a",
     "detail": "raw text target",
-    "id": "20608bd2d9d5e42ef153",
-    "control": "<Pressable onPress={onPress} onLongPress={onPin} accessibilityRole=\"button\" accessibilityHint=\"Long press to toggle this conversation's pin\" accessibilityLabel={`${name.sigil}${name.name}${status ? `, ${status}` : ''}${pinned ? ', pinned' : ''}`} accessibilityState={selected ? { selected: true } : undefined} accessibilityActions={[ { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin convers",
+    "id": "bdf26b385831b6677384",
+    "control": "<Pressable onPress={() => onPress(item.room.id)} onLongPress={() => onPin(item.room.id)} accessibilityRole=\"button\" accessibilityHint=\"Long press to toggle this conversation's pin\" accessibilityLabel={`${name.sigil}${name.name}${status ? `, ${status}` : ''}${pinned ? ', pinned' : ''}`} accessibilityState={selected ? { selected: true } : undefined} accessibilityActions={[ { name: 'pin', label: pinn",
     "reason": "Shared conversation content row with long-press pin interaction."
   },
   {

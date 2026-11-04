@@ -1,0 +1,9 @@
+{
+  "updateId": "da3e1476-6923-48cf-bfd5-05b4fca22c63",
+  "runtime": "40",
+  "bundleSha256": "1b4f839a703ae96cf6a66612224210011e678c1eba74bc0e9fbac4bcde92ec92",
+  "candidateSource": "ca54fc4c9534e94e4508ba482f1023d4b377c33e",
+  "note": "Installer checkout remains at submitted head; source archive is from the pipeline gate repository at candidateSource.",
+  "installerCheckoutHead": "504f1f103a78778aed7291d631c0e2a2c829a0cc",
+  "sdkSources": "ca54fc4c9534e94e4508ba482f1023d4b377c33e"
+}

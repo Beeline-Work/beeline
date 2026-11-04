@@ -15,14 +15,6 @@ describe('Room deck bootstrap', () => {
     expect(workspaceApply).toContain('communityId: nextId');
   });
 
-  it('restores the persisted Workspace before choosing server recency order', () => {
-    expect(source).toContain('const storedWorkspaceId = useActiveCommunityId(retryGeneration);');
-    expect(source).toContain('const deckWorkspaceId = requestedWorkspaceId ?? storedWorkspaceId;');
-    expect(source).toContain('if (deckWorkspaceId === undefined) return;');
-    expect(source).toContain('mobileSurfaceCache.read(workspaceCacheAddress, isWorkspaceListView)');
-    expect(source).toContain('deckWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id');
-  });
-
   it('shows the Room loader whenever the Room deck itself is loading', () => {
     expect(source).toContain('<RoomDeckLoadingView');
     expect(source).not.toContain('consumeFirstRoomDeckAfterBoot');

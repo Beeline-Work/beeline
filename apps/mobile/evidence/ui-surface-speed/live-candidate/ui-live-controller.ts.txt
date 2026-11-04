@@ -1,0 +1,80 @@
+// Temporary native QA controller, excluded from shipped source.
+import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
+import { BuzzRigTransport, RoomViewClient } from '@/sync/transport';
+import { getMessageOutbox } from '@/buzz/message-outbox-storage';
+import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
+import { latencyRouteMatches } from '@/buzz/latency-frame-trace';
+import { applyArchivedCorners, cornerReadMark, getRoomCornerSummary, getRoomCorners } from '@/buzz/room-corner-store';
+import { router } from 'expo-router';
+import { setWorkingProof } from '@/ui-working-proof-state';
+const endpoint='http://10.0.2.2:18979',roomId='392e6046-9224-4fce-8224-72a734fd4abe';
+const outboxIds=new Set<string>();let cornerId:string|undefined;
+async function post(path:string,value:unknown){await fetch(endpoint+'/'+path,{method:'POST',body:JSON.stringify(value)});}
+console.warn('[UI_CANDIDATE] ca54fc4c9534e94e4508ba482f1023d4b377c33e');
+async function loop(){
+ let name='';
+ try{
+  const command=await(await fetch(endpoint+'/next')).json();
+  if(command){
+   name=command.name;const identity=await loadBuzzIdentity();if(!identity)throw new Error('Missing identity');
+   const client=new RoomViewClient({baseUrl:await getEffectiveRelayUrl(),identity});
+   const room=await client.room(roomId);
+   if(room.members.length!==1||room.members[0]?.identity.pubkey!==identity.publicKey||room.members[0]?.identity.kind!=='human')throw new Error('Private Room is not self-only');
+   const transport=new BuzzRigTransport(identity),outbox=getMessageOutbox(getBuzzRuntimeConfig().monolithUrl,identity);
+   let details:unknown={};
+   console.warn('[UI_COMMAND] '+JSON.stringify({name,kind:command.kind,t:performance.now()}));
+   await post('started',{name,kind:command.kind,selfOnly:true});
+   switch(command.kind){
+    case 'check':{
+     const workspace=await client.workspace(room.room.workspaceId);
+     details={roomId,workspaceId:room.room.workspaceId,memberCount:room.members.length,
+      agents:workspace.agents.map((a:any)=>({id:a.identity?.pubkey??a.pubkey,name:a.identity?.name??a.name,keys:Object.keys(a),alive:a.alive,connected:a.connected})),
+      members:workspace.members.map(m=>({id:m.identity.pubkey,name:m.identity.name,kind:m.identity.kind})),
+      turns:room.latestAgentTurns,listVisible:latencyRouteMatches('/beeline/channels')};break;
+    }
+    case 'arrival':{
+     if(!latencyRouteMatches('/beeline/channels'))throw new Error('Room list must be visible');
+     const event=await transport.composeMessage({sessionId:roomId,text:'ui-native-live-'+name});
+     const result=await transport.publishPreparedMessage(event);details={messageId:result.messageId};break;
+    }
+    case 'refusal':{
+     const target=command.unrelated?'11111111-1111-4111-8111-111111111111':roomId;
+     const event=await transport.composeMessage({sessionId:target,text:'ui-native-outbox-diagnostic'});
+     const sample=room.messages.find(m=>m.presentation==='message');if(!sample)throw new Error('Missing seed message');
+     await outbox.enqueue(event,{...sample,id:event.id,text:'ui-native-outbox-diagnostic',createdAt:event.created_at});
+     await outbox.fail(event.id,'native-ui-proof-refusal');outboxIds.add(event.id);
+     details={id:event.id,roomId:target,reason:outbox.get(event.id)?.reason};break;
+    }
+    case 'clear-refusal':{
+     await outbox.acknowledgeFailures(roomId);for(const id of outboxIds)await outbox.remove(id);outboxIds.clear();details={remainingFixtureRecords:0};break;
+    }
+    case 'corner-create':{
+     const value=await transport.operation('createHumanCorner',{roomId,title:'ui-native-corner-proof'});cornerId=value.id;details={cornerId};break;
+    }
+    case 'corner-close':{
+     if(!cornerId)throw new Error('No fixture corner');await transport.operation('requestCornerClose',{roomId:cornerId});details={cornerId};break;
+    }
+    case 'archive-read':{
+     const summary=getRoomCornerSummary(roomId),mark=cornerReadMark(roomId),page=await client.corners(roomId,{archived:true});
+     applyArchivedCorners(roomId,page.corners,page.nextArchived,false,mark);
+     details={archivedIds:page.corners.map(c=>c.corner.id),summaryIdentityPreserved:summary===getRoomCornerSummary(roomId),archivedStored:getRoomCorners(roomId).archived?.corners.length};break;
+    }
+    case 'bookmark':{
+     const message=room.messages.find(m=>m.text.startsWith('ui-'));if(!message)throw new Error('Missing owned fixture message');
+     await transport.operation('setMessageBookmark',{roomId,messageId:message.id,bookmarked:command.saved===true});
+     details={messageId:message.id,bookmarked:command.saved===true};break;
+    }
+    case 'working':{
+     setWorkingProof({turn:command.turn??'proof-A',stopped:false});
+     if(!latencyRouteMatches('/beeline/live-working-proof'))router.push('/beeline/live-working-proof' as never);
+     details={turn:command.turn??'proof-A',nativeComponentHost:true};break;
+    }
+    case 'back':router.back();break;
+    default:throw new Error('Unknown proof command');
+   }
+   await post('result',{name,kind:command.kind,selfOnly:true,done:true,details});
+  }
+ }catch(error){await post('result',{name,error:String(error)}).catch(()=>undefined);}
+ setTimeout(loop,500);
+}
+setTimeout(loop,5000);

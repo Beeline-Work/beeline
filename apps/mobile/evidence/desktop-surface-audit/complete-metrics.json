@@ -1,0 +1,109 @@
+{
+  "description": "Final AppImage observations after removing a discarded console-wrapper experiment. Trusted input to second animation frame and semantic content markers; shared-host upper bounds, not an isolated benchmark.",
+  "events": [
+    {
+      "type": "route",
+      "path": "/",
+      "width": 1280,
+      "at": 730
+    },
+    {
+      "type": "route",
+      "path": "/beeline/channels",
+      "width": 1280,
+      "at": 1711
+    },
+    {
+      "type": "route",
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103",
+      "width": 480,
+      "at": 4612
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 871.0000000000009,
+      "width": 480,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "#proof",
+      "duration": 873,
+      "width": 480
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 273.9999999999982,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 66.99999999999818,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 130,
+      "width": 480,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "route",
+      "path": "/beeline/channels",
+      "width": 480,
+      "at": 69608
+    },
+    {
+      "type": "route",
+      "path": "/beeline/settings",
+      "width": 1280,
+      "at": 73234
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 1179,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "Play Review \u2014 Settings",
+      "duration": 1206,
+      "width": 1280
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 258,
+      "width": 480,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 149,
+      "width": 480,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 359,
+      "width": 480,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "route",
+      "path": "/beeline/channels",
+      "width": 480,
+      "at": 77169
+    }
+  ]
+}

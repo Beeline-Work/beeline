@@ -1,0 +1,805 @@
+{
+  "description": "Native baseline instrumented input to second animation frame and semantic content markers. Includes initial F8 diagnostic key events; an upper bound, not isolated benchmarking. Build overlapped captures.",
+  "events": [
+    {
+      "type": "route",
+      "path": "/",
+      "width": 1280,
+      "at": 617
+    },
+    {
+      "type": "route",
+      "path": "/beeline/onboarding",
+      "width": 1280,
+      "at": 1374
+    },
+    {
+      "type": "route",
+      "path": "/review/[redacted]",
+      "width": 480,
+      "at": 12003
+    },
+    {
+      "type": "route",
+      "path": "/beeline/channels",
+      "width": 480,
+      "at": 12341.000000000002
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 60.00000000000182,
+      "width": 480,
+      "path": "/beeline/channels"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 37.999999999992724,
+      "width": 1280,
+      "path": "/beeline/channels"
+    },
+    {
+      "type": "route",
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103",
+      "width": 1280,
+      "at": 98262
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 423,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "#proof",
+      "duration": 1801,
+      "width": 1280
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 132,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 110,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 110,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 72,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 73,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 63,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 114,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 74,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 33,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 188,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 113,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 92,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 83.99999999998545,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 39.00000000001455,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 54,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 48,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 66,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 46.00000000001455,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 58.99999999998545,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 43.99999999998545,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 108,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 62,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 57,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 135,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 235,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 434.99999999998545,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 408,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 129.00000000001455,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 240.00000000001455,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 138,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 345,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 325,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 308.00000000001455,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 519,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 56,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 117.9999999999709,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 1642,
+      "width": 1280,
+      "path": "/beeline/corners/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "Room corners",
+      "duration": 1642,
+      "width": 1280
+    },
+    {
+      "type": "route",
+      "path": "/beeline/corners/bee11e00-0000-4000-8000-000000000103",
+      "width": 1280,
+      "at": 153746
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 170,
+      "width": 1280,
+      "path": "/beeline/corners/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 53,
+      "width": 1280,
+      "path": "/beeline/corners/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 46,
+      "width": 1280,
+      "path": "/beeline/corners/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 464,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000104"
+    },
+    {
+      "type": "route",
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000104",
+      "width": 1280,
+      "at": 181418
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 35,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000104"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 113,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000104"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 58,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000104"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 67,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000104"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 41,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000104"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 16,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000104"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 34,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000104"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 469,
+      "width": 1280,
+      "path": "/beeline/tray"
+    },
+    {
+      "type": "route",
+      "path": "/beeline/tray",
+      "width": 1280,
+      "at": 184490
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 45.000000000029104,
+      "width": 1280,
+      "path": "/beeline/tray"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 36,
+      "width": 1280,
+      "path": "/beeline/tray"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 185,
+      "width": 1280,
+      "path": "/beeline/members"
+    },
+    {
+      "type": "route",
+      "path": "/beeline/members",
+      "width": 1280,
+      "at": 187860
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 23,
+      "width": 1280,
+      "path": "/beeline/members"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "Members",
+      "duration": 661,
+      "width": 1280
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 35.000000000029104,
+      "width": 1280,
+      "path": "/beeline/members"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 47,
+      "width": 1280,
+      "path": "/beeline/members"
+    },
+    {
+      "type": "content-timeout",
+      "label": "Tray, 1 need you",
+      "width": 1280
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 34.000000000029104,
+      "width": 1280,
+      "path": "/beeline/members"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 480,
+      "width": 1280,
+      "path": "/beeline/members"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "Add agents",
+      "duration": 480,
+      "width": 1280
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 59,
+      "width": 1280,
+      "path": "/beeline/members"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 61,
+      "width": 1280,
+      "path": "/beeline/members"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 53.999999999970896,
+      "width": 1280,
+      "path": "/beeline/members"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 161.9999999999709,
+      "width": 1280,
+      "path": "/beeline/tray"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 16.000000000029104,
+      "width": 1280,
+      "path": "/beeline/tray"
+    },
+    {
+      "type": "route",
+      "path": "/beeline/settings",
+      "width": 1280,
+      "at": 212403
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 651.0000000000291,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "Play Review \u2014 Settings",
+      "duration": 651.0000000000291,
+      "width": 1280
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 72.0000000000291,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 34,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 244,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "Play Review \u2014 Settings",
+      "duration": 244,
+      "width": 1280
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 23,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 36,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 38.000000000029104,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 108,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 31,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 24,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 240,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 32.000000000029104,
+      "width": 1920,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 19.999999999970896,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 197,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "route",
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103",
+      "width": 1280,
+      "at": 260048.99999999997
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 208.0000000000291,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "#proof",
+      "duration": 228,
+      "width": 1280
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 11.000000000029104,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 32.00000000005821,
+      "width": 480,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "route",
+      "path": "/",
+      "width": 1280,
+      "at": 447
+    },
+    {
+      "type": "route",
+      "path": "/beeline/channels",
+      "width": 1280,
+      "at": 976
+    },
+    {
+      "type": "route",
+      "path": "/beeline/tray",
+      "width": 1280,
+      "at": 23552
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 204,
+      "width": 1280,
+      "path": "/beeline/tray"
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 180,
+      "width": 1280,
+      "path": "/beeline/members"
+    },
+    {
+      "type": "route",
+      "path": "/beeline/members",
+      "width": 1280,
+      "at": 24545
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "Members",
+      "duration": 200,
+      "width": 1280
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 270.00000000000364,
+      "width": 1280,
+      "path": "/beeline/members"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "Add agents",
+      "duration": 363.00000000000364,
+      "width": 1280
+    },
+    {
+      "type": "content-timeout",
+      "label": "Tray, 1 need you",
+      "width": 1280
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "keydown",
+      "duration": 171,
+      "width": 1280,
+      "path": "/beeline/tray"
+    },
+    {
+      "type": "route",
+      "path": "/beeline/tray",
+      "width": 1280,
+      "at": 50631
+    },
+    {
+      "type": "route",
+      "path": "/beeline/settings",
+      "width": 1280,
+      "at": 51810
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 592.0000000000073,
+      "width": 1280,
+      "path": "/beeline/settings"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "Play Review \u2014 Settings",
+      "duration": 613.0000000000073,
+      "width": 1280
+    },
+    {
+      "type": "route",
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103",
+      "width": 1280,
+      "at": 143093
+    },
+    {
+      "type": "input-paint-bound",
+      "kind": "pointerdown",
+      "duration": 1237,
+      "width": 1280,
+      "path": "/beeline/chat/bee11e00-0000-4000-8000-000000000103"
+    },
+    {
+      "type": "content-paint-bound",
+      "label": "#proof",
+      "duration": 1398,
+      "width": 1280
+    }
+  ]
+}

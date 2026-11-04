@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 
-const fixture = vi.hoisted(() => ({ connected: undefined as (() => void) | undefined, disconnected: undefined as (() => void) | undefined, state: 3, request: vi.fn(), holds: 0, stores: new Map<string, Map<string, string>>() }));
+const fixture = vi.hoisted(() => ({ connected: undefined as (() => void) | undefined, disconnected: undefined as (() => void) | undefined, state: 3, generation: 1, request: vi.fn(), holds: 0, stores: new Map<string, Map<string, string>>() }));
 vi.mock('react-native', () => ({ AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) } }));
 vi.mock('expo-crypto', () => ({ getRandomBytes: (length: number) => new Uint8Array(length).fill(7) }));
 vi.mock('@/auth/signin-funnel', () => ({ funnelSuccessfulOperation: async () => undefined }));
@@ -11,7 +11,12 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
 vi.mock('@/buzz/runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://server.example' }) }));
 vi.mock('@/auth/monolith-session', () => ({ MONOLITH_REQUEST_TIMEOUT_MS: 15_000, MonolithRequestTimeoutError: class extends Error {}, monolithSession: { fetch: vi.fn() } }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
-  request: fixture.request,
+  // Writes must arrive through the installed command bridge, never raw RPC.
+  request: () => { throw new Error('Raw write bypass'); },
+  commandState: () => ({ generation: fixture.generation, ready: fixture.state === 1, commandDedupV1: true }),
+  requestCommand: async (operation: string, input: { messageId: string }, command: { id: string }, options: unknown) => ({
+    v: 1, operation, commandId: command.id, state: 'committed', result: await fixture.request(operation, input, options),
+  }),
   diagnostics: () => ({ state: fixture.state }),
   subscribeConnected: (listener: () => void) => { fixture.connected = listener; return () => { fixture.connected = undefined; }; },
   subscribeDisconnected: (listener: () => void) => { fixture.disconnected = listener; return () => { fixture.disconnected = undefined; }; },
@@ -58,7 +63,7 @@ it('R2 app startup flushes the persisted owner over the one phone operation path
     expect(fixture.request).toHaveBeenCalledTimes(2);
     await vi.advanceTimersByTimeAsync(2);
     expect(owner.state(interrupted.id)?.text).toBe('Not sent yet · no connection');
-    fixture.state = 1; fixture.connected!();
+    fixture.state = 1; fixture.generation++; fixture.connected!();
     await vi.advanceTimersByTimeAsync(0);
     expect(owner.get(interrupted.id)).toBeUndefined();
     const attempts = fixture.request.mock.calls.filter(([, input]) => input.messageId === interrupted.id);

@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 const request = vi.hoisted(() => vi.fn());
-vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ request }) }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: request, MonolithPhoneOperationError: class extends Error {} }));
 import { reportRoomPageObservation } from './room-page-observation';
 it('defers successful observations until draw and reports failed reads without waiting for a Room', async () => {
   await reportRoomPageObservation(123, false);

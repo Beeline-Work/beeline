@@ -4,15 +4,15 @@ import { dispatchTrayDecisionCommand, isTrayDecisionCommand } from './tray-decis
 import { helperUsageEnabled, readAgentUsageCell } from './helper-usage.js';
 import { readMediaMetadata } from './phone-media.js';
 import { runnableOrigin } from './runnable-artifact.js';
-import { captureCommandCoverage } from './router-command-coverage.js';
+import { immediateCommandResult, captureCommandCoverage } from './router-command-coverage.js';
 import { ROUTER_FAMILIES, type RouterFamily } from '@beeline/api-contract/router-protocol';
 import { parseRouterCommandIdentity, type RouterCommandIdentity } from '@beeline/api-contract/router-command';
 import { RouterCommandLedger, CommandDigestConflict, InvalidCommandArguments } from './router-command-ledger.js';
 import { randomUUID } from 'node:crypto';
 import {
-  MESSAGE_SEARCH_QUERY_MAX_BYTES, PHONE_READ_OPERATIONS, messageSearchTerms,
+  MESSAGE_SEARCH_QUERY_MAX_BYTES, PHONE_READ_OPERATIONS, isPhoneReadOperation, messageSearchTerms,
 } from '@beeline/api-contract/phone';
-import { PHONE_OPERATION_NAMES, MessageSearchTooBroadError, parseArchivedCornerCursor, type PhoneService } from './phone-service.js';
+import { PHONE_OPERATION_NAMES, MessageSearchTooBroadError, parseArchivedCornerCursor } from './phone-service.js';
 import { recordOperatorFunctionEvent } from './operator-dashboard.js';
 import { IdentityRateLimit, type PhoneReadLimits } from './phone-read-limit.js';
 import { VoiceBudgetExceeded } from './voice-budget.js';
@@ -34,7 +34,7 @@ const quiet = new Set<string>([
 ]);
 /** Closed opt-in list: reviewed DB-only paths; provider ceremonies have no
  * generic retry adapter. Keep legacy hints until projection closure is proven. */
-export const ATOMIC_ROUTER_COMMANDS = new Set([
+const ATOMIC_ROUTER_COMMANDS = new Set([
   'markRead', 'markUnread', 'reactToMessage', 'deleteRoomMessage',
   'setMessageBookmark', 'clearMessageBookmarks', 'markNeedsYouSeen',
   'clearNeedsYou', 'clearNeedsYouSection',
@@ -79,12 +79,11 @@ function isIanaTimeZone(value: string): boolean {
 export function createPhoneOperationDispatcher(
   options: ServerOptions,
   readLimits: PhoneReadLimits,
-  legacyOperation: PhoneService['execute'],
   errorStatus: (error: unknown) => number = error => error instanceof PhoneOperationError ? error.status : 500,
 ) {
   const ledger = new RouterCommandLedger(options.database);
   const execute = async (name: string, input: Record<string, unknown>, viewerId: string,
-    invokeLegacy?: () => Promise<unknown>, familyId?: string): Promise<unknown> => {
+    familyId?: string): Promise<unknown> => {
     const phone = options.phone;
     switch (name) {
       case 'readAgentUsageCell': {
@@ -255,13 +254,12 @@ export function createPhoneOperationDispatcher(
             (network as { serverProcessingMs: number }).serverProcessingMs), jsResponseDelay as number | undefined);
         return;
       }
-      default: return invokeLegacy ? invokeLegacy()
-        : legacyOperation.call(phone, name as never, input as never, viewerId, undefined, familyId, true);
+      default: return phone.execute(name as never, input as never, viewerId, undefined, familyId, true);
     }
   };
 
   const dispatch = async (name: string, input: Record<string, unknown>, viewerId: string, signal?: AbortSignal,
-    invokeLegacy?: () => Promise<unknown>, familyId?: string, command?: RouterCommandIdentity): Promise<unknown> => {
+    familyId?: string, command?: RouterCommandIdentity): Promise<unknown> => {
     if (!viewerId) refuse(401, 'phone_token_required');
     if (!PHONE_OPERATION_NAMES.has(name as never)) refuse(404, 'unknown_phone_operation');
     if (!input || typeof input !== 'object' || Array.isArray(input)) refuse(400, 'invalid_args');
@@ -272,49 +270,68 @@ export function createPhoneOperationDispatcher(
     if (command !== undefined) {
       try { identity = parseRouterCommandIdentity(command); }
       catch { refuse(400, 'invalid_command_identity'); }
-      if (!ATOMIC_ROUTER_COMMANDS.has(name) && !preparedMessageCommands.has(name)&&!scheduledStopCommands.has(name)&&!isTrayDecisionCommand(name))
-        refuse(400, 'command_operation_not_supported');
+      if (isPhoneReadOperation(name, input)) refuse(400, 'command_operation_not_supported');
     }
-    if (identity && preparedMessageCommands.has(name) && input.messageId !== identity.id)
+    // Supported installed apps still send the old HTTP/socket shape (the wire
+    // identity is optional in PhoneRequestFrame). Adapt it here, never around
+    // command admission. Only keyed old message sends can recover a lost reply.
+    if (!isPhoneReadOperation(name, input) && !identity) identity = { v: 1,
+      id: preparedMessageCommands.has(name) && typeof input.messageId === 'string' && /^[0-9a-f]{64}$/.test(input.messageId)
+        ? input.messageId : `old-wire:${randomUUID()}` };
+    if (identity && command !== undefined && preparedMessageCommands.has(name) && input.messageId !== identity.id)
       refuse(400, 'command_message_identity_mismatch');
-    if(identity&&scheduledStopCommands.has(name)){
+    if(identity&&command !== undefined&&scheduledStopCommands.has(name)){
       uuid(input,'roomId');
       if(name==='deleteRoomSchedule')uuid(input,'scheduleId');else if(required(input,'subscriptionId').length>512)refuse(400,'invalid_subscriptionId');
     }
-    let result: unknown;
+    let result: unknown, originalResult: unknown;
     let receipt;
     let performed = false;
     const effect = () => { performed = true;
-      if(identity&&scheduledStopCommands.has(name))return options.phone.stopScheduledWorkCommand(name as 'deleteRoomSchedule'|'deleteRoomSubscription',
+      if(identity&&command !== undefined&&scheduledStopCommands.has(name))return options.phone.stopScheduledWorkCommand(name as 'deleteRoomSchedule'|'deleteRoomSubscription',
         input as {roomId:string;scheduleId?:string;subscriptionId?:string},viewerId);
-      return execute(name, input, viewerId, invokeLegacy, familyId);
+      return execute(name, input, viewerId, familyId);
     };
     try {
       if (identity) {
-        if(isTrayDecisionCommand(name))return await dispatchTrayDecisionCommand(ledger,options.phone,options.live,name,input,viewerId,identity);
+        if (command !== undefined && isTrayDecisionCommand(name)) {
+          let fresh: { result: unknown } | undefined;
+          const decision = await dispatchTrayDecisionCommand(ledger, options.phone, options.live, name, input, viewerId, identity,
+            result => { fresh = { result }; });
+          return fresh ? immediateCommandResult(decision, fresh.result) : decision;
+        }
         const key = { principal: viewerId, operation: name, commandId: identity.id };
-        receipt = ATOMIC_ROUTER_COMMANDS.has(name)
-          ? await ledger.atomic(key, input, tx => options.phone.withCommandTransaction(tx, effect),
-              scheduledStopCommands.has(name)?undefined:tx => captureCommandCoverage(tx, input, viewerId))
-          : await ledger.external(key, input, async () => {
-              const sent = await effect() as { messageId?: unknown }|undefined;
-              // External/post-commit paths carry the stable effect identity only.
-              // Their earlier optional DTO cannot be certified at a later cut.
-              return scheduledStopCommands.has(name)?null:{ messageId: sent?.messageId };
-            }, scheduledStopCommands.has(name)?undefined:tx => captureCommandCoverage(tx, input, viewerId));
-        result = receipt.result;
+        if (ATOMIC_ROUTER_COMMANDS.has(name) && command !== undefined) {
+          receipt = await ledger.atomic(key, input, tx => options.phone.withCommandTransaction(tx, effect),
+            scheduledStopCommands.has(name) ? undefined : tx => captureCommandCoverage(tx, input, viewerId));
+        } else {
+          let immediate: unknown;
+          receipt = await ledger.external(key, input, async () => {
+            immediate = originalResult = await effect();
+            // Provider tokens, sign-in URLs, private DTOs and mutable authority
+            // cannot become replayable convenience data without their own
+            // proof. Persist the outcome; release only this execution's result.
+            return preparedMessageCommands.has(name) ? { messageId: (immediate as {messageId?: unknown})?.messageId } : null;
+          }, command !== undefined && preparedMessageCommands.has(name) ? tx => captureCommandCoverage(tx, input, viewerId) : undefined);
+          if (performed && (!command || !preparedMessageCommands.has(name))) receipt = immediateCommandResult(receipt, immediate);
+        }
+        result = !command && performed ? originalResult : receipt.result;
         if (receipt.state !== 'committed') {
           if (command) return receipt;
           refuse(409, receipt.state === 'result-expired' ? 'command_result_expired' : 'command_outcome_unknown');
         }
-      } else result = await execute(name, input, viewerId, invokeLegacy, familyId);
+      } else {
+        // The only identity-free effect capability is statically a read.
+        if (!isPhoneReadOperation(name, input)) refuse(400, 'command_identity_required');
+        result = await execute(name, input, viewerId, familyId);
+      }
     } catch (error) {
       if (error instanceof CommandDigestConflict) refuse(409, 'command_identity_conflict');
       if (error instanceof InvalidCommandArguments) refuse(400, 'invalid_command_arguments');
       throw error;
     }
     // Replaying a receipt must not replay post-commit hooks or notifications.
-    if (command && !performed) return receipt;
+    if (identity && !performed) return command ? receipt : result;
     if ((name === 'sendRoomMessage' || name === 'sendRoomReply') && typeof input.roomId === 'string')
       void options.github?.onWebhook?.('beeline:human-message', { cornerId: input.roomId })
         .catch(error => console.error('[server] human-triggered merge recovery failed:', error));

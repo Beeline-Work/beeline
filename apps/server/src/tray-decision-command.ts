@@ -133,17 +133,18 @@ async function lockDecision(database: SqlDatabase, operation: TrayDecisionOperat
  * before flushing is recovered by committed sources, never by replay hooks. */
 export async function dispatchTrayDecisionCommand(ledger: RouterCommandLedger, phone: PhoneService, live: LiveHub,
   operation: TrayDecisionOperation, input: Record<string, unknown>, viewerId: string,
-  identity: RouterCommandIdentity): Promise<RouterCommandReceipt<null>> {
+  identity: RouterCommandIdentity, onFreshResult?: (result: unknown) => void): Promise<RouterCommandReceipt<null>> {
   if (!isTrayDecisionCommand(operation)) throw new CommandRefusalError('Unsupported Tray decision command', 400);
   validateInput(operation, input);
   identity = parseRouterCommandIdentity(identity);
   const notifications: (() => void)[] = [];
-  let receipt: RouterCommandReceipt<null>;
+  let receipt: RouterCommandReceipt<null>, fresh: { result: unknown } | undefined;
   try {
     receipt = await ledger.atomic({ principal: viewerId, operation, commandId: identity.id }, input, async transaction => {
       const current = await lockDecision(transaction, operation, input, viewerId);
-      await phone.withCommandTransaction(transaction, () => phone.applyTrayDecisionCommand(operation,
+      const result = await phone.withCommandTransaction(transaction, () => phone.applyTrayDecisionCommand(operation,
         input as PhoneOperationMap[TrayDecisionOperation]['input'], viewerId, notification => { notifications.push(notification); }));
+      fresh = { result };
       notifications.push(() => live.publish({ type: 'invalidate', roomId: current.room_id, reason: 'phone-write' }));
       return null;
     });
@@ -152,5 +153,8 @@ export async function dispatchTrayDecisionCommand(ledger: RouterCommandLedger, p
     throw error;
   }
   for (const notification of notifications) notification();
+  // Only this successful execution may release the original authorized DTO.
+  // Replays retain the existing outcome-only receipt and never rerun effects.
+  if (fresh) onFreshResult?.(fresh.result);
   return receipt;
 }

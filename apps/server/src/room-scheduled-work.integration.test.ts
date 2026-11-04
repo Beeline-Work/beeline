@@ -82,16 +82,16 @@ describe('complete negotiated Scheduled Work family',()=>{
   it('an actual durable Stop completion settles the command while its committed source supplies the complete display without another read',async()=>{
     await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
       VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":10}','Stop this task','2099-01-01')`,[SCHEDULE,WS,ROOM,AGENT,OWNER]);
-    const c=connection(),dispatch=createPhoneOperationDispatcher({database:db,phone,live:c.live} as ServerOptions,phoneReadLimits(),phone.execute);
+    const c=connection(),dispatch=createPhoneOperationDispatcher({database:db,phone,live:c.live} as ServerOptions,phoneReadLimits());
     try{
       await c.start();await c.demand();expect((c.lanes.peek(input()).value as {schedules:unknown[]}).schedules).toHaveLength(1);
       const args={roomId:ROOM,scheduleId:SCHEDULE},command={v:1 as const,id:'actual-scheduled-stop'};
       let receipt:unknown;
-      const batch=await c.change(async()=>{receipt=await dispatch('deleteRoomSchedule',args,OWNER,undefined,undefined,undefined,command);});
+      const batch=await c.change(async()=>{receipt=await dispatch('deleteRoomSchedule',args,OWNER,undefined,undefined,command);});
       expect(receipt).toMatchObject({state:'committed',operation:'deleteRoomSchedule',commandId:command.id});
       expect(c.lanes.peek(input())).toMatchObject({state:'LIVE',value:{schedules:[],subscriptions:[]},cut:batch.to});expect(c.reads()).toBe(1);
       const head=(await db.query(`SELECT sequence::text FROM live_streams WHERE id=$1`,[`workspace:${WS}`])).rows[0]!.sequence;
-      expect(await dispatch('deleteRoomSchedule',args,OWNER,undefined,undefined,undefined,command)).toEqual(receipt);
+      expect(await dispatch('deleteRoomSchedule',args,OWNER,undefined,undefined,command)).toEqual(receipt);
       expect((await db.query(`SELECT sequence::text FROM live_streams WHERE id=$1`,[`workspace:${WS}`])).rows[0]!.sequence).toBe(head);expect(c.reads()).toBe(1);
     }finally{c.protocol.close();}
   });

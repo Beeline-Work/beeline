@@ -88,3 +88,28 @@ describe('P7 durable private command owner', () => {
     expect(intents.view()).toHaveLength(100);
   });
 });
+
+describe('general phone command admission', () => {
+  it('persists secret-bearing intent identity and digest without persisting the payload or replaying it after restart', async () => {
+    let disk: readonly CommandIntent[] = [];
+    const { intents } = owner(vi.fn(async records => { disk = structuredClone(records); }));
+    const record = await intents.prepare({ wire: { operation: 'completeAgentSignIn',
+      input: canonical({ roomId: 'room', messageId: 'message', code: 'synthetic-private-key' }) }, isCurrent: () => true });
+    expect(record.bytes).toContain('synthetic-private-key');
+    expect(JSON.stringify(disk)).not.toContain('synthetic-private-key');
+    expect(disk[0]).toMatchObject({ id: record.id, digest: record.digest, transient: true, bytes: 'null' });
+    const restarted = owner().intents;
+    restarted.restore(disk);
+    const send = vi.fn();
+    expect(() => restarted.dispatch(restarted.view()[0]!, { kind: 'initial', generation: 1, commandDedupV1: true }, send))
+      .toThrow('payload requires a new explicit action');
+    expect(send).not.toHaveBeenCalled();
+    const dispatch = vi.fn(async (operation, args, command) => {
+      expect(args).toMatchObject({ code: 'synthetic-private-key' });
+      return { v: 1 as const, operation, commandId: command.id, state: 'committed' as const };
+    });
+    await intents.dispatch(record, { kind: 'initial', generation: 1, commandDedupV1: true }, dispatch);
+    expect(dispatch).toHaveBeenCalledOnce();
+    expect(JSON.stringify(disk)).not.toContain('synthetic-private-key');
+  });
+});

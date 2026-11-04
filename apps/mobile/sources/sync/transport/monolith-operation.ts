@@ -1,5 +1,7 @@
+import { canonicalJson } from '@beeline/net/phone-inputs';
+import { clientResetGeneration } from '@/sync/client-reset';
 import { appErrorCopy } from '@/buzz/app-error-copy';
-import type { PhoneOperationMap } from '@beeline/api-contract/phone';
+import { isPhoneReadOperation, type PhoneCommandOperation, type PhoneOperationMap } from '@beeline/api-contract/phone';
 import { MONOLITH_REQUEST_TIMEOUT_MS, MonolithRequestTimeoutError } from '@/auth/monolith-session';
 import { sharedLiveConnection } from './live-connection';
 import { PhoneSocketDisconnectedError, PhoneSocketError } from './phone-socket-error';
@@ -60,24 +62,24 @@ function repeatableWrite(name: string, input: unknown): boolean {
 export function phoneOperationRequestOptions(
   name: string,
   input: unknown,
-  options?: { timeoutMs?: number },
-): { timeoutMs: number } {
+  options?: { timeoutMs?: number; signal?: AbortSignal; afterRoomDraw?: boolean },
+): { timeoutMs: number; signal?: AbortSignal; afterRoomDraw?: boolean } {
   // Redemption can commit for 30 seconds after admission, even if the phone
   // disconnects. Wait beyond that server transaction deadline before checking.
-  if (name === 'redeemInvite') return { timeoutMs: options?.timeoutMs ?? 40_000 };
+  if (name === 'redeemInvite') return { ...options, timeoutMs: options?.timeoutMs ?? 40_000 };
   // Repository installation may wait for GitHub's installation propagation;
   // retain its existing longer deadline rather than cutting it to the default.
-  if (name === 'actOnRepositoryCard') return { timeoutMs: options?.timeoutMs ?? 60_000 };
+  if (name === 'actOnRepositoryCard') return { ...options, timeoutMs: options?.timeoutMs ?? 60_000 };
   // Creation can rotate a user grant, mint an installation grant, then create
   // the repository: 3 sequential GitHub calls × 15s, plus local work.
-  if (name === 'createGitHubRepository') return { timeoutMs: options?.timeoutMs ?? 60_000 };
+  if (name === 'createGitHubRepository') return { ...options, timeoutMs: options?.timeoutMs ?? 60_000 };
   // The queue/recovery merge path can make 22 sequential GitHub calls (15s
   // each) and two bounded retry-read backoffs (90s each). Keep 30s for local
   // work. The call-count table in evidence/operation-deadlines documents it.
-  if (name === 'approveCornerMerge') return { timeoutMs: options?.timeoutMs ?? 540_000 };
+  if (name === 'approveCornerMerge') return { ...options, timeoutMs: options?.timeoutMs ?? 540_000 };
   const readDeadline = DATABASE_READS.has(name) || repeatableWrite(name, input);
-  if (!readDeadline) return { timeoutMs: options?.timeoutMs ?? 20_000 };
-  return { timeoutMs: options?.timeoutMs ?? MONOLITH_REQUEST_TIMEOUT_MS };
+  if (!readDeadline) return { ...options, timeoutMs: options?.timeoutMs ?? 20_000 };
+  return { ...options, timeoutMs: options?.timeoutMs ?? MONOLITH_REQUEST_TIMEOUT_MS };
 }
 
 export class MonolithPhoneOperationError extends Error {
@@ -85,6 +87,7 @@ export class MonolithPhoneOperationError extends Error {
     readonly operation: keyof PhoneOperationMap,
     readonly status: number,
     readonly code: string,
+    readonly socketCode?: string,
   ) {
     super(`Monolith ${String(operation)} failed (${status}): ${code}`);
     this.name = 'MonolithPhoneOperationError';
@@ -101,31 +104,46 @@ export function phoneOperationFailureReason(error: unknown): string {
   return appErrorCopy(error);
 }
 
+/** Public feature facade. It never holds a raw write capability: the typed
+ * branch below can call RPC only for reads; every write delegates to the one
+ * persisted intent owner before any transport admission. */
 export async function monolithPhoneOperation<Name extends keyof PhoneOperationMap>(
-  name: Name,
-  input: PhoneOperationMap[Name]['input'],
-  options?: { timeoutMs?: number },
+  name: Name, input: PhoneOperationMap[Name]['input'],
+  options?: { timeoutMs?: number; signal?: AbortSignal; afterRoomDraw?: boolean },
+): Promise<PhoneOperationMap[Name]['output']> {
+  if (!isPhoneReadOperation(name, input)) return executePhoneCommand(name as PhoneCommandOperation, input as never, options) as Promise<PhoneOperationMap[Name]['output']>;
+  try {
+    return await sharedLiveConnection().request(name, input as never, phoneOperationRequestOptions(name, input, options)) as PhoneOperationMap[Name]['output'];
+  } catch (error) {
+    if (error instanceof PhoneSocketError) throw new MonolithPhoneOperationError(name, error.status, error.message, error.code);
+    throw error;
+  }
+}
+
+/** Preserve operation-specific UI errors and deadlines at the existing seam. */
+async function executePhoneCommand<Name extends PhoneCommandOperation>(
+  name: Name, input: PhoneOperationMap[Name]['input'], options?: { timeoutMs?: number; signal?: AbortSignal; afterRoomDraw?: boolean },
 ): Promise<PhoneOperationMap[Name]['output']> {
   try {
-    const args =
-      name === 'createWorkspace' ? { ...input, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } : input,
-      requestOptions = phoneOperationRequestOptions(name, input, options);
-    let result: PhoneOperationMap[Name]['output'];
-    const ambiguous = (error: unknown) => error instanceof MonolithRequestTimeoutError || error instanceof PhoneSocketDisconnectedError;
-    try {
-      result = await sharedLiveConnection().request(name, args, requestOptions);
-    } catch (error) {
-      if (name !== 'redeemInvite' || !ambiguous(error)) throw error;
-      // An ambiguous receipt does not authorize a second command. Preserve
-      // uncertainty until a separate explicit Join action checks the same token.
-      throw new Error('Your join is not confirmed yet. Try Join again to check its result.');
-    }
+    // Capture the immutable action and identity epoch before the first await.
+    const generation = clientResetGeneration();
+    input = JSON.parse(canonicalJson(input));
+    const { activeCommandOwner } = await import('@/buzz/command-owner');
+    if (generation !== clientResetGeneration()) throw new Error('Command identity changed');
+    // Identity bootstrap owns activation; a feature cannot install a new owner.
+    if (!activeCommandOwner()) await import('@/buzz/message-outbox-runtime').then(module => module.startMessageOutbox());
+    const owner = activeCommandOwner();
+    if (generation !== clientResetGeneration()) throw new Error('Command identity changed');
+    if (!owner) throw new Error('Command identity unavailable');
+    const args = name === 'createWorkspace' ? { ...input, timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone } : input;
+    const result = await owner.execute(name, args, phoneOperationRequestOptions(name, input, options));
     if (['createWorkspace', 'sendRoomMessage', 'sendRoomReply'].includes(name))
       void import('@/auth/signin-funnel').then(module => module.funnelSuccessfulOperation(name)).catch(() => undefined);
     return result;
   } catch (error) {
-    if (error instanceof PhoneSocketError)
-      throw new MonolithPhoneOperationError(name, error.status, error.message);
+    if (name === 'redeemInvite' && (error instanceof MonolithRequestTimeoutError || error instanceof PhoneSocketDisconnectedError))
+      throw new Error('Your join is not confirmed yet. Try Join again to check its result.');
+    if (error instanceof PhoneSocketError) throw new MonolithPhoneOperationError(name, error.status, error.message, error.code);
     throw error;
   }
 }

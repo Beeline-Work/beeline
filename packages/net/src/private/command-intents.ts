@@ -1,15 +1,131 @@
 import type { RouterCommandReceipt } from '@beeline/api-contract/router-command';
 import { canonical } from './canonical.js';
 
-const OPERATIONS = ['sendRoomMessage','sendRoomReply','markRead','markUnread','reactToMessage',
-  'deleteRoomMessage','setMessageBookmark','clearMessageBookmarks','markNeedsYouSeen','clearNeedsYou','clearNeedsYouSection',
-  'deleteRoomSchedule','deleteRoomSubscription','decideAgentGrant','decideWritePermission','skipChoice'] as const;
-export type IntentOperation = typeof OPERATIONS[number];
+export type IntentOperation = import('@beeline/api-contract/phone').PhoneCommandOperation;
+// Exhaustive command storage policy: credentials, bulk media and session-bound
+// controls persist only their digest. No caller can disable payload redaction.
+const OPERATIONS = {
+  readNeedsYou: 'durable',
+  readTray: 'durable',
+  markRead: 'durable',
+  markUnread: 'durable',
+  voiceJoin: 'transient',
+  voiceLeave: 'transient',
+  voiceIdle: 'transient',
+  voiceResume: 'transient',
+  saveAgentVoice: 'durable',
+  previewAgentVoice: 'transient',
+  reportPageLoad: 'transient',
+  reportClientError: 'transient',
+  handbackComputerSession: 'durable',
+  endComputerSession: 'durable',
+  rotateWebhookToken: 'durable',
+  deleteRoomSubscription: 'durable',
+  setCornerHold: 'durable',
+  completeWelcomeCards: 'durable',
+  answerStarPrompt: 'durable',
+  sendRoomMessage: 'durable',
+  sendRoomReply: 'durable',
+  reactToMessage: 'durable',
+  deleteRoomMessage: 'durable',
+  setMessageBookmark: 'durable',
+  clearMessageBookmarks: 'durable',
+  reportMessageIssue: 'durable',
+  markNeedsYouSeen: 'durable',
+  clearNeedsYou: 'durable',
+  clearNeedsYouSection: 'durable',
+  deleteRoomSchedule: 'durable',
+  startOwnedWorkflow: 'durable',
+  cancelAgentTurn: 'durable',
+  actOnRepositoryCard: 'durable',
+  createHumanCorner: 'durable',
+  requestCornerClose: 'durable',
+  setCornerLocked: 'durable',
+  decideApprovalCard: 'durable',
+  decideWritePermission: 'durable',
+  decideAgentGrant: 'durable',
+  revokeAgentGrant: 'durable',
+  acceptConnectorOffer: 'durable',
+  createRoomPoll: 'durable',
+  answerChoice: 'durable',
+  skipChoice: 'durable',
+  createWorkspace: 'durable',
+  updateWorkspace: 'durable',
+  leaveWorkspace: 'durable',
+  deleteWorkspace: 'durable',
+  addWorkspaceMember: 'durable',
+  removeWorkspaceMember: 'durable',
+  createRoom: 'durable',
+  updateRoomPushState: 'transient',
+  updateRoom: 'durable',
+  deleteRoom: 'durable',
+  leaveRoom: 'durable',
+  closeChat: 'durable',
+  reopenChat: 'durable',
+  addRoomMember: 'durable',
+  removeRoomMember: 'durable',
+  resolveDirectMessage: 'durable',
+  createInvite: 'durable',
+  redeemInvite: 'transient',
+  createAgentPairingCode: 'durable',
+  claimAgentPairing: 'transient',
+  updateAgentSoul: 'durable',
+  updateAgentModelSelection: 'durable',
+  refreshAgentUsage: 'durable',
+  refreshAgentModelCatalog: 'durable',
+  completeAgentSignIn: 'transient',
+  updateAgentYolo: 'durable',
+  updateAgentWake: 'transient',
+  updateAgentAccessPolicy: 'durable',
+  removeAgent: 'durable',
+  updatePersonProfile: 'durable',
+  updateIdentityFace: 'durable',
+  updateIdentitySpeakingSpeed: 'durable',
+  updateIdentityPushLevel: 'durable',
+  setRoomRepository: 'durable',
+  setRoomTargetBranch: 'durable',
+  removeRoomRepository: 'durable',
+  dispatchRoomWorkflow: 'durable',
+  approveCornerMerge: 'durable',
+  beginGitHubIdentityBind: 'transient',
+  completeGitHubIdentityBind: 'transient',
+  recoverGitHubIdentity: 'transient',
+  adoptGitHubHandle: 'durable',
+  claimManagedHandle: 'durable',
+  beginGitHubInstallation: 'transient',
+  createGitHubRepository: 'durable',
+  uploadMedia: 'transient',
+  registerPushDevice: 'transient',
+  unregisterPushDevice: 'transient',
+  sendPushTest: 'durable',
+  deleteAccount: 'durable',
+  reportRunningUpdate: 'transient',
+  disconnectAiClient: 'durable',
+  pairConnector: 'durable',
+  cancelGoogleSignIn: 'transient',
+  beginGoogleSignIn: 'durable',
+  disconnectGoogleSignIn: 'durable',
+  beginLinkSignIn: 'durable',
+  cancelLinkSignIn: 'transient',
+  disconnectLinkSignIn: 'durable',
+  unpairConnector: 'durable',
+  connectWorkbenchApp: 'durable',
+  beginAppSignIn: 'durable',
+  completeAppSignIn: 'transient',
+  disconnectWorkbenchApp: 'durable',
+  revokeConnectionGrants: 'durable',
+  createWallet: 'durable',
+  refreshWallet: 'durable',
+  sendFromWallet: 'durable',
+  grantWalletDelegation: 'durable',
+  revokeWalletDelegation: 'durable',
+} satisfies Record<IntentOperation, 'durable' | 'transient'>;
+const validOperation = (value: unknown): value is IntentOperation => typeof value === 'string' && Object.hasOwn(OPERATIONS, value);
 export type IntentState = 'prepared' | 'sending' | 'pending' | 'unknown' | 'committed' | 'refused' | 'cancelled';
 export type CommandPartition = Readonly<{ origin: string; principal: string }>;
 export interface CommandIntent extends CommandPartition {
   readonly v: 1; readonly id: string; readonly operation: IntentOperation; readonly schema: 1;
-  readonly bytes: string; readonly digest: string; readonly preparedAt: number;
+  readonly transient?: true; readonly bytes: string; readonly digest: string; readonly preparedAt: number;
   readonly state: IntentState; readonly sent: boolean;
 }
 export interface CommandIntentStorage {
@@ -69,7 +185,9 @@ export class CommandIntents {
     let pending = 0, bytes = 0;
     if (records.length > 200) throw new Error('command storage capacity');
     for (const record of records) {
-      if (!record || record.v !== 1 || record.schema !== 1 || !OPERATIONS.includes(record.operation) ||
+      if (!record || record.v !== 1 || record.schema !== 1 || !validOperation(record.operation) ||
+          (record.transient !== undefined && record.transient !== true) ||
+          (OPERATIONS[record.operation] === 'transient' && record.transient !== true) ||
           !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(record.id) || !/^[0-9a-f]{64}$/.test(record.digest) ||
           typeof record.origin !== 'string' || !record.origin || typeof record.principal !== 'string' || !record.principal ||
           !Number.isSafeInteger(record.preparedAt) || record.preparedAt < 0 || typeof record.sent !== 'boolean' ||
@@ -91,8 +209,9 @@ export class CommandIntents {
    */
   prepare(admitted: AdmittedCommand, newIntent = false): Promise<CommandIntent> {
     if (!this.partition || !admitted.isCurrent()) throw new Error('command admission inactive');
-    if (!(OPERATIONS as readonly string[]).includes(admitted.wire.operation)) throw new Error('command operation unsupported');
+    if (!validOperation(admitted.wire.operation)) throw new Error('command operation unsupported');
     const operation = admitted.wire.operation as IntentOperation;
+    const transient = OPERATIONS[operation] === 'transient';
     const input = canonical(JSON.parse(admitted.wire.input));
     if (input !== admitted.wire.input) throw new Error('command input not canonical');
     const partition = this.partition, owner = partitionKey(partition);
@@ -123,7 +242,7 @@ export class CommandIntents {
       const digest = await this.hash('beeline-command:canonical-v1\n' + canonical({ schema: 1, operation, args }));
       if (!/^[0-9a-f]{64}$/.test(digest)) throw new Error('command digest invalid');
       const record: CommandIntent = Object.freeze({ ...partition, v: 1, schema: 1, id, operation,
-        bytes: input, digest, preparedAt, state: 'prepared', sent: false });
+        bytes: input, ...(transient ? { transient: true as const } : {}), digest, preparedAt, state: 'prepared', sent: false });
       await this.saveWith(key, record);
       this.records.set(key, record);
       return { ...record };
@@ -150,6 +269,8 @@ export class CommandIntents {
     if (!attempt.commandDedupV1) throw new Error('command dedup unavailable');
     if (!Number.isSafeInteger(attempt.generation) || attempt.generation < 0) throw new Error('command connection generation invalid');
     const current = this.require(key);
+    // Digest-only restored intents cannot redispatch a missing secret or media body.
+    if (current.transient && current.bytes === 'null') throw new Error('Command payload requires a new explicit action');
     if (terminal(current.state)) return Promise.resolve({ ...current });
     if (current.state === 'sending') throw new Error('command already sending');
     if (attempt.kind === 'initial' && current.state !== 'prepared') throw new Error('uncertain command requires reconnect or Retry');
@@ -230,7 +351,7 @@ export class CommandIntents {
     const complete = [...next.entries()].filter(([,item]) => terminal(item.state));
     // Terminal local display records may compact; uncertain intents never do.
     for (const [old] of complete.slice(0, Math.max(0, complete.length - 100))) next.delete(old);
-    await this.storage.save([...next.values()].map(item => ({ ...item })));
+    await this.storage.save([...next.values()].map(item => ({ ...item, ...(item.transient ? { bytes: 'null' } : {}) })));
     // Mirror compaction only after the atomic save has succeeded.
     for (const old of this.records.keys()) if (!next.has(old)) this.records.delete(old);
   }

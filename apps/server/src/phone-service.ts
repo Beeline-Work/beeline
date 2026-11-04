@@ -1156,12 +1156,12 @@ export class PhoneService {
    * and immediate-after-own-transaction notification behavior. */
   async applyTrayDecisionCommand(operation: TrayDecisionOperation,
     input: PhoneOperationMap[TrayDecisionOperation]['input'], viewerId: string,
-    defer: (notification: () => void) => void): Promise<void> {
+    defer: (notification: () => void) => void): Promise<unknown> {
     if (!(this.database as CommandScopedDatabase).active) throw new Error('Tray decision requires its durable command transaction');
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(operation)) throw new Error(REVIEW_IDENTITY_MESSAGE);
-    if (operation === 'decideAgentGrant') await this.decideAgentGrant(input as Input<'decideAgentGrant'>, viewerId, defer);
-    else if (operation === 'decideWritePermission') await this.execute(operation, input as Input<'decideWritePermission'>, viewerId);
-    else if (operation === 'skipChoice') await this.execute(operation, input as Input<'skipChoice'>, viewerId);
+    if (operation === 'decideAgentGrant') return this.decideAgentGrant(input as Input<'decideAgentGrant'>, viewerId, defer);
+    else if (operation === 'decideWritePermission') return this.execute(operation, input as Input<'decideWritePermission'>, viewerId);
+    else if (operation === 'skipChoice') return this.execute(operation, input as Input<'skipChoice'>, viewerId);
     else throw new Error('Unsupported Tray decision command');
   }
 

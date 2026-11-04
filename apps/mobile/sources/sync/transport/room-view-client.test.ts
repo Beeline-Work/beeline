@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 const request = vi.hoisted(() => vi.fn());
+const command = vi.hoisted(() => vi.fn());
+vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => ({ execute: command }) }));
 vi.mock('./live-connection', () => ({ sharedLiveConnection: () => ({ request }) }));
 vi.mock('@/auth/monolith-session', () => ({ MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
   MonolithRequestTimeoutError: class extends Error {} }));
@@ -9,7 +11,7 @@ import { PhoneSocketError } from './phone-socket-error';
 import { noteLiveFrame } from './live-frame-epoch';
 const fixture = { workspaces: [], viewer: { pubkey: 'a'.repeat(64), kind: 'human', name: 'Owner' }, truncated: false, watchFilters: [] };
 const client = () => new RoomViewClient({ baseUrl: 'https://legacy.example', identity: { publicKey: 'a'.repeat(64), secretKey: new Uint8Array(32) } });
-beforeEach(() => { request.mockReset(); });
+beforeEach(() => { request.mockReset(); command.mockReset(); });
 describe('Room view socket reads', () => {
   it('validates the DTO returned on the socket', async () => {
     request.mockResolvedValueOnce(fixture);
@@ -66,8 +68,17 @@ describe('Room view socket reads', () => {
       ['readHistoryAround', { roomId: 'r', messageId: 'm' }],
       ['readAgent', { workspaceId: 'w', agentId: 'a', workCursor: 'work-cursor' }],
       ['readCorners', { roomId: 'r', archived: true, before: 'corner-cursor' }],
+    ]);
+    expect(command.mock.calls.map(([op, args]) => [op, args])).toEqual([
       ['saveAgentVoice', { workspaceId: 'w', agentId: 'a', voiceId: 'voice' }],
       ['markRead', { roomId: 'r', messageId: 'm' }],
     ]);
   });
+});
+
+it('keeps the Room client refusal contract when voice selection crosses command admission', async () => {
+  command.mockRejectedValueOnce(new PhoneSocketError('access_denied', 'Only an owner may choose a voice', false));
+  await expect(client().setAgentVoice('w', 'a', 'voice')).rejects.toMatchObject({ status: 403, code: 'access_denied' });
+  expect(command).toHaveBeenCalledOnce();
+  expect(request).not.toHaveBeenCalled();
 });

@@ -1932,7 +1932,7 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
-  it('keeps an open socket and in-flight send through a healthy foreground return', async () => {
+  it('keeps an open socket and in-flight read through a healthy foreground return', async () => {
     vi.useFakeTimers();
     const { connection, foreground, authorization } = createConnection();
     const disconnected = vi.fn();
@@ -1940,11 +1940,7 @@ describe('LiveConnection', () => {
     await connection.register([{ '#h': [ROOM_A] }], () => undefined);
     await vi.advanceTimersByTimeAsync(0);
     sockets[0]!.open();
-    const pending = connection.request('sendRoomMessage', {
-      roomId: ROOM_A,
-      messageId: 'm',
-      text: 'hello',
-    });
+    const pending = connection.request('readRoom', { roomId: ROOM_A });
     void pending.catch(() => {});
     const request = JSON.parse(sockets[0]!.sent.at(-1)!);
     foreground();
@@ -2000,13 +1996,9 @@ describe('LiveConnection', () => {
       sockets[0]!.open();
       sockets[0]!.autoPong = false;
       foreground();
-      const pending = connection.request('sendRoomMessage', {
-        roomId: ROOM_A,
-        messageId: 'm',
-        text: 'hello',
-      });
+      const pending = connection.request('readRoom', { roomId: ROOM_A });
       const frame = JSON.parse(sockets[0]!.sent.at(-1)!);
-      expect(frame).toMatchObject({ t: 'req', op: 'sendRoomMessage' });
+      expect(frame).toMatchObject({ t: 'req', op: 'readRoom' });
       sockets[0]!.emit({ t: 'res', id: frame.id, ok: true, result: { messageId: 'm' } });
       await expect(pending).resolves.toEqual({ messageId: 'm' });
       await vi.advanceTimersByTimeAsync(4_999);
@@ -2613,13 +2605,13 @@ describe('phone socket request/reply', () => {
     connection.dispose();
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('rejects in-flight sends on close and queued reads on identity change', async () => {
+  it('rejects in-flight requests on close and queued reads on identity change', async () => {
     const sockets = stubSockets(),
       { connection, changeIdentity } = createConnection();
     await connection.register([], () => {});
     sockets[0]!.open();
     const first = connection
-      .request('sendRoomMessage', { roomId: 'r', messageId: 'm', text: 'hello' })
+      .request('readRoom', { roomId: 'r' })
       .catch((e) => e);
     sockets[0]!.drop();
     expect((await first).name).toBe('PhoneSocketDisconnectedError');
@@ -2708,11 +2700,7 @@ describe('phone socket request/reply', () => {
     const sockets = stubSockets(),
       { connection } = createConnection();
     await expect(
-      connection.request('sendRoomMessage', {
-        roomId: 'r',
-        messageId: 'm',
-        text: '🐝'.repeat(20_000),
-      }),
+      connection.request('searchMessages', { workspaceId: 'w', query: '🐝'.repeat(20_000) }),
     ).rejects.toMatchObject({ code: 'invalid_request' });
     expect(sockets).toHaveLength(0);
     connection.dispose();
@@ -2730,18 +2718,14 @@ describe('native brief-drop recovery', () => {
     vi.unstubAllGlobals();
   });
 
-  it('keeps an unsent text through a close callback and dispatches it once on reopen', async () => {
+  it('keeps an unsent read through a close callback and dispatches it once on reopen', async () => {
     const sockets = stubSockets(),
       { connection } = createConnection();
     const release = await connection.register([], () => {});
     sockets[0]!.open();
     release(); // The pending call alone must hold recovery, even without a screen.
     sockets[0]!.readyState = 3; // Native closure precedes its JS callback.
-    const pending = connection.request('sendRoomMessage', {
-      roomId: ROOM_A,
-      messageId: 'm',
-      text: 'hello',
-    });
+    const pending = connection.request('readRoom', { roomId: ROOM_A });
     void pending.catch(() => {});
     expect(sockets[0]!.sent.some((value) => JSON.parse(value).t === 'req')).toBe(false);
     sockets[0]!.drop();
@@ -2752,7 +2736,7 @@ describe('native brief-drop recovery', () => {
       .map((value) => JSON.parse(value))
       .filter((frame) => frame.t === 'req');
     expect(frames).toHaveLength(1);
-    expect(frames[0]).toMatchObject({ op: 'sendRoomMessage', args: { messageId: 'm' } });
+    expect(frames[0]).toMatchObject({ op: 'readRoom', args: { roomId: ROOM_A } });
     sockets[1]!.emit({ t: 'res', id: frames[0].id, ok: true, result: { messageId: 'm' } });
     await expect(pending).resolves.toEqual({ messageId: 'm' });
     connection.dispose();
@@ -2772,11 +2756,7 @@ describe('native brief-drop recovery', () => {
       )
       .mockResolvedValue('recovered');
     const { connection } = createConnection(authorization);
-    const pending = connection.request('sendRoomMessage', {
-      roomId: ROOM_A,
-      messageId: 'm',
-      text: 'hello',
-    });
+    const pending = connection.request('readRoom', { roomId: ROOM_A });
     void pending.catch(() => {});
     fail(new Error('transient refresh failure'));
     await vi.advanceTimersByTimeAsync(0);
@@ -2876,11 +2856,7 @@ describe('native brief-drop recovery', () => {
     await connection.register([], () => {});
     await vi.advanceTimersByTimeAsync(16_000);
     expect(sockets[0]!.closed).toBe(false);
-    const pending = connection.request('sendRoomMessage', {
-      roomId: ROOM_A,
-      messageId: 'm',
-      text: 'hello',
-    });
+    const pending = connection.request('readRoom', { roomId: ROOM_A });
     void pending.catch(() => {});
     sockets[0]!.open();
     const frame = sockets[0]!.sent
@@ -2890,4 +2866,10 @@ describe('native brief-drop recovery', () => {
     await expect(pending).resolves.toEqual({ messageId: 'm' });
     connection.dispose();
   });
+});
+
+it('refuses a raw state-changing operation even when a caller casts around the read-only type', async () => {
+  const { connection } = createConnection();
+  await expect(connection.request('sendFromWallet' as never, {} as never)).rejects.toMatchObject({ code: 'command_required' });
+  connection.dispose();
 });

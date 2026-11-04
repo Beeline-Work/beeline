@@ -13,6 +13,10 @@ const controls = vi.hoisted(() => ({
 }));
 const mmkv = vi.hoisted(() => ({ stores: new Map<string, Map<string, string>>() }));
 
+// Transport routing uses an admitted-command seam; persistence is exercised
+// by command-owner.integration.test.ts rather than native sign-in modules.
+vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => ({ execute: controls.request }) }));
+
 vi.mock('@/auth/signin-funnel', () => ({ funnelSuccessfulOperation: controls.activation }));
 
 vi.mock('react-native', () => ({

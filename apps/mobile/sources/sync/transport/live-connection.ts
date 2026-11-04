@@ -1,3 +1,4 @@
+import { isPhoneReadOperation, type PhoneReadOperation, type PhoneReadInput } from '@beeline/api-contract/phone';
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import type { MediaMetadata, MediaLink } from '@beeline/api-contract/phone';
 import { parseRouterCommandIdentity, type RouterCommandIdentity, type RouterCommandReceipt } from '@beeline/api-contract/router-command';
@@ -244,9 +245,10 @@ export class LiveConnection {
   }
 
   /** Each call owns one slow threshold and one reply; reconnect never resends it. */
-  request<Name extends keyof PhoneOperationMap>(
-    op: Name, args: PhoneOperationMap[Name]['input'], options: SocketRequestOptions = {},
+  request<Name extends PhoneReadOperation>(
+    op: Name, args: PhoneReadInput<Name>, options: SocketRequestOptions = {},
   ): Promise<PhoneOperationMap[Name]['output']> {
+    if (!isPhoneReadOperation(op, args)) return Promise.reject(new PhoneSocketError('command_required', 'Writes require the command owner', false));
     if (['readRouterSnapshot', 'readRoomTools', 'readMediaMetadata', 'readMediaLink', 'readMediaPlayback'].includes(op)) return Promise.reject(
       new PhoneSocketError('owner_required', 'This read requires the local router owner', false));
     const generation = this.generation;
@@ -271,14 +273,23 @@ export class LiveConnection {
 
   /** The prepared intent owner supplies immutable identity; transport never
    * retries it, regenerates it or downgrades it to a legacy write. */
-  requestCommand(operation: string, args: unknown, command: RouterCommandIdentity,
+  private requestCommand(operation: string, args: unknown, command: RouterCommandIdentity,
     options: SocketRequestOptions = {}): Promise<RouterCommandReceipt> {
     const state = this.commandState();
     if (!state.ready || !state.commandDedupV1) return Promise.reject(
       new PhoneSocketError('command_unavailable', 'Durable commands are unavailable on this connection', false));
     let identity: RouterCommandIdentity;
     try { identity = parseRouterCommandIdentity(command); } catch (error) { return Promise.reject(error); }
-    return this.startRequest(operation, args, options, identity) as Promise<RouterCommandReceipt>;
+    const generation = this.generation;
+    const start = () => {
+      if (generation !== this.generation) return Promise.reject(new MonolithSessionChangedError());
+      const current = this.commandState();
+      if (!current.ready || !current.commandDedupV1) return Promise.reject(
+        new PhoneSocketError('command_unavailable', 'Durable commands are unavailable on this connection', false));
+      return this.startRequest(operation, args, options, identity) as Promise<RouterCommandReceipt>;
+    };
+    const draw = (options.afterRoomDraw ?? ['markRead', 'reportPageLoad'].includes(operation)) ? waitForRoomDraw(options.signal) : undefined;
+    return draw ? draw.then(start) : start();
   }
 
   private startRequest(op: string, args: unknown, options: SocketRequestOptions,
@@ -1214,7 +1225,10 @@ function productionRouterBridge(): RouterOwnerBridge {
     },
     refresh: roomId => {
       const current = epoch;
-      if (pending) void pending.then(owner => { if (current === epoch) owner.routerOwnerRefresh(roomId); }).catch(() => {});
+      if (pending) void pending.then(async () => {
+        const { routerOwnerRefresh } = await import('@/buzz/router-owner');
+        if (current === epoch) routerOwnerRefresh(roomId);
+      }).catch(() => {});
     },
     receive: frame => {
       const current = epoch;

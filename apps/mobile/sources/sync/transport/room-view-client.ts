@@ -1,3 +1,5 @@
+import { isPhoneReadOperation, type PhoneCommandOperation } from '@beeline/api-contract/phone';
+import { monolithPhoneOperation, MonolithPhoneOperationError } from './monolith-operation';
 import { RoomViewHttpError, type RoomViewClientOptions } from '@beeline/buzz-client';
 import {
   readAgentVoiceCatalog,
@@ -146,13 +148,15 @@ class MonolithRoomViewClient {
   }
   private async request<Name extends keyof PhoneOperationMap>(name: Name, input: PhoneOperationMap[Name]['input'], signal?: AbortSignal): Promise<PhoneOperationMap[Name]['output']> {
     try {
-      const result = await sharedLiveConnection().request(name, input, { signal, timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-        ...(name === 'readChats' ? { afterRoomDraw: false } : {}) });
+      const result = await (isPhoneReadOperation(name, input) ? sharedLiveConnection().request(name, input as never, { signal, timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
+        ...(name === 'readChats' ? { afterRoomDraw: false } : {}) })
+        : monolithPhoneOperation(name as PhoneCommandOperation, input as never, { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS })) as PhoneOperationMap[Name]['output'];
       if (name === 'readRoom') markRoomOpen('wire-headers');
       return result;
     } catch (error) {
       if (error instanceof MonolithRequestTimeoutError) throw new RoomViewHttpError(0, 'timeout');
       if (error instanceof PhoneSocketError) throw new RoomViewHttpError(error.status, error.code);
+      if (error instanceof MonolithPhoneOperationError) throw new RoomViewHttpError(error.status, error.socketCode ?? error.code);
       throw error;
     }
   }

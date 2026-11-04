@@ -1,3 +1,4 @@
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { Platform } from 'react-native';
 
 export type ClientErrorScope = 'conversation' | 'voice-join' | 'voice-cleanup' | 'app' | 'native-crash';
@@ -46,11 +47,11 @@ export async function reportNativeCrash(report: NativeCrashReport): Promise<bool
 
 async function sendClientError(scope: ClientErrorScope, cause: unknown, native?: NativeCrashReport): Promise<boolean> {
   try {
-    const [{ sharedLiveConnection }, { loadAppConfig }, updates] = await Promise.all([
-      import('@/sync/transport/live-connection'), import('@/sync/appConfig'), import('expo-updates'),
+    const [{ loadAppConfig }, updates] = await Promise.all([
+      import('@/sync/appConfig'), import('expo-updates'),
     ]);
     const config = loadAppConfig();
-    await sharedLiveConnection().request('reportClientError', { scope, ...errorDiagnostic(cause, native ? 64 : 6), platform: Platform.OS,
+    await monolithPhoneOperation('reportClientError', { scope, ...errorDiagnostic(cause, native ? 64 : 6), platform: Platform.OS,
         platformVersion: native?.platformVersion ?? String(Platform.Version ?? ''), releaseSha: native?.releaseSha ?? config.releaseSha ?? config.buildCommitSha ?? '',
         runtimeVersion: native?.runtimeVersion ?? updates.runtimeVersion ?? '', updateId: native?.updateId ?? updates.updateId ?? '',
         ...(native ? { device: native.device, appVersion: native.appVersion, crashTimestamp: String(native.timestamp) } : {}) }, { timeoutMs: 5000 });

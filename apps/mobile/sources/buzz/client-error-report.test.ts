@@ -2,7 +2,7 @@ import { expect, it, vi } from 'vitest';
 const capture = vi.hoisted(() => vi.fn());
 vi.mock('./sentry', () => ({ captureMobileError: capture }));
 const send = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined));
-vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ request: send }) }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: send }));
 vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'https://proof.test' }) }));
 vi.mock('@/sync/appConfig', () => ({ loadAppConfig: () => ({ releaseSha: 'proof-sha' }) }));
 vi.mock('expo-updates', () => ({ runtimeVersion: '34', updateId: 'test-update' }));

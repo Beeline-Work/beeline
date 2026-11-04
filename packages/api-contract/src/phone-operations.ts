@@ -294,7 +294,8 @@ export type PhoneOperationMap = PhoneRouteOperationMap & {
 };
 
 /**
- * Operations that only read. The server publishes no Room invalidation after
+ * Operation names with a read-only form. isPhoneReadOperation also checks the
+ * input of legacy read-and-mark-seen forms. The server publishes no Room invalidation after
  * one: a phone rereads on that signal, so a read that announced itself would
  * make every open phone read again, its own included, without end. A phone
  * may also repeat one on a fresh connection when the first attempt stalls.
@@ -372,6 +373,21 @@ export type {
   WalletSendOutcome,
   WalletView,
 } from './wallet.js';
+
+/** The raw RPC capability only admits reads. All remaining contract operations
+ * require immutable command admission, regardless of transport or UI family. */
+export type PhoneReadOperation = typeof PHONE_READ_OPERATIONS[number];
+export type PhoneCommandOperation = Exclude<keyof PhoneOperationMap, PhoneReadOperation> | 'readNeedsYou' | 'readTray';
+export type PhoneReadInput<Name extends PhoneReadOperation> = Name extends 'readNeedsYou' | 'readTray'
+  ? PhoneOperationMap[Name]['input'] & { readonly markSeen: false } : PhoneOperationMap[Name]['input'];
+export function isPhoneReadOperation(name: string, input?: unknown): name is PhoneReadOperation {
+  if (!(PHONE_READ_OPERATIONS as readonly string[]).includes(name)) return false;
+  // Installed apps retain read-and-mark-seen; that form is a command. New
+  // preview reads must explicitly decline the write before using raw RPC.
+  if (name === 'readNeedsYou' || name === 'readTray')
+    return Boolean(input && typeof input === 'object' && (input as { markSeen?: boolean }).markSeen === false);
+  return true;
+}
 
 export type EmptyInput = Record<string, never>;
 export type WorkspaceInput = { readonly workspaceId: string };

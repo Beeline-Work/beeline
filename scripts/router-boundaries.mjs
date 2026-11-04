@@ -9,7 +9,7 @@ export const INVENTORY = 'packages/net/migration-sites.json';
 const ROOTS = ['apps/server/src', 'apps/body/src', 'apps/api/src', 'apps/auth/src', 'apps/mobile/sources', 'apps/mobile/modules',
   'apps/mobile/index.ts', 'apps/mobile/src-tauri/src', 'packages'];
 const PUBLIC_ENTRIES = ['packages/net/src/index.ts', 'packages/net/src/phone-inputs.ts', 'packages/net/src/helper-codecs.ts', 'packages/net/src/helper-activation-codecs.ts', 'packages/net/src/helper-turn-codecs.ts'];
-const SKIP = new Set(['node_modules', 'dist', 'build', '.git', 'target', 'Pods', '__tests__', 'fixtures']);
+const SKIP = new Set(['node_modules', 'dist', 'build', '.git', 'target', 'Pods', '__tests__', 'fixtures', 'test-fixtures']);
 const SOURCE = /\.(?:[cm]?[jt]sx?|swift|kt|java|m|mm|rs)$/;
 const TEST = /\.(?:test|spec|typecheck)\.[^.]+$|\.d\.ts$|\/test-support[^/]*\.[^.]+$/;
 const LIBRARIES = [...NETWORK_LIBRARIES, 'node:http', 'node:https', 'node:http2', 'node:net',
@@ -212,6 +212,141 @@ function inspectConnectionOwners(file, source, errors) {
   visit(source);
 }
 
+function inspectPhoneCommandAccess(file, source, errors) {
+  if (!file.startsWith(MOBILE)) return;
+  const readers = new Set([MOBILE + 'sync/transport/monolith-operation.ts', MOBILE + 'sync/transport/room-view-client.ts', LIVE_BRIDGE]);
+  const bindings = new Set(['sharedLiveConnection']);
+  const connections = new Set();
+  const resolve = specifier => specifier?.startsWith('.')
+    ? path.posix.normalize(path.posix.join(path.posix.dirname(file), specifier)).replace(/\.[cm]?[jt]sx?$/, '')
+    : specifier?.replace(/^@\//, MOBILE);
+  const liveModule = value => value && ts.isStringLiteralLike(value) && resolve(value.text) === LIVE_BRIDGE.replace(/\.ts$/, '');
+  function collect(node) {
+    if (ts.isImportDeclaration(node) && liveModule(node.moduleSpecifier) && node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings))
+      for (const item of node.importClause.namedBindings.elements)
+        if ((item.propertyName ?? item.name).text === 'sharedLiveConnection') bindings.add(item.name.text);
+    ts.forEachChild(node, collect);
+  }
+  collect(source);
+  const unwrap = node => ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node) ? unwrap(node.expression) : node;
+  const isConnection = value => {
+    const node = unwrap(value);
+    return ts.isIdentifier(node) && connections.has(node.text) || ts.isCallExpression(node) &&
+      (ts.isIdentifier(node.expression) && bindings.has(node.expression.text) || ts.isPropertyAccessExpression(node.expression) && node.expression.name.text === 'sharedLiveConnection');
+  };
+  // Fixed point covers local aliases without relying on their chosen names.
+  let changed;
+  do {
+    changed = false;
+    function aliases(node) {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && isConnection(node.initializer) && !connections.has(node.name.text)) {
+        connections.add(node.name.text); changed = true;
+      }
+      ts.forEachChild(node, aliases);
+    }
+    aliases(source);
+  } while (changed);
+  const reject = () => errors.push(`${file}: raw phone request capability belongs to the read adapters; writes require the persisted intent owner`);
+  function visit(node) {
+    const member = ts.isPropertyAccessExpression(node) ? node.name.text
+      : ts.isElementAccessExpression(node) && node.argumentExpression && ts.isStringLiteralLike(node.argumentExpression) ? node.argumentExpression.text : undefined;
+    if (member === 'request' && !readers.has(file) && isConnection(node.expression)) reject();
+    // A generic raw request call remains forbidden even if a cast hid its type.
+    if (ts.isCallExpression(node) && node.arguments.length >= 2 && !readers.has(file)) {
+      const expression = node.expression;
+      // Web Locks are local storage serialization, not a phone RPC.
+      const localLock = expression.getText(source) === 'navigator.locks.request';
+      if (!localLock && (ts.isPropertyAccessExpression(expression) && expression.name.text === 'request' ||
+          ts.isElementAccessExpression(expression) && ts.isStringLiteralLike(expression.argumentExpression) && expression.argumentExpression.text === 'request')) reject();
+    }
+    if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name)) {
+      for (const item of node.name.elements) {
+        const name = (item.propertyName ?? item.name).getText(source).replace(/['"]/g, '');
+        if (name === 'requestCommand' && ![MOBILE + 'buzz/command-owner.ts', LIVE_BRIDGE].includes(file))
+          errors.push(`${file}: durable command executor belongs to the persisted intent owner`);
+        if (name === 'request' && !readers.has(file) && node.initializer && isConnection(node.initializer)) reject();
+      }
+    }
+    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        ts.isIdentifier(node.expression) && node.expression.text === 'require') &&
+        node.arguments[0] && ts.isStringLiteralLike(node.arguments[0]) &&
+        resolve(node.arguments[0].text) === MOBILE + 'buzz/command-owner' && file !== MOBILE + 'sync/transport/monolith-operation.ts') reject();
+    // Installing another owner or forwarding its private bridge is a bypass.
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier) &&
+        resolve(node.moduleSpecifier.text) === MOBILE + 'buzz/command-owner' && !node.isTypeOnly && !node.importClause?.isTypeOnly) {
+      const names = node.importClause?.namedBindings;
+      if (ts.isExportDeclaration(node) || node.importClause?.name || !names || !ts.isNamedImports(names)) reject();
+      else for (const item of names.elements) if (!item.isTypeOnly && ['activateCommandOwner', 'MobileCommandOwner'].includes((item.propertyName ?? item.name).text) && file !== MOBILE + 'buzz/message-outbox-runtime.ts') reject();
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+
+// Only the phone ingress owner may mint a fresh-result release, and only
+// the actual server ingress may install its dispatcher. Reexports cannot
+// forward either capability to a second owner under an innocent alias.
+function inspectPhoneServerOwners(file, source, errors) {
+  if (!file.startsWith('apps/server/src/')) return;
+  const rules = {
+    'apps/server/src/phone-operations': { createPhoneOperationDispatcher: 'apps/server/src/server.ts' },
+    'apps/server/src/router-command-coverage': { immediateCommandResult: 'apps/server/src/phone-operations.ts' },
+  };
+  const effectOwners = new Set(['apps/server/src/phone-operations.ts', 'apps/server/src/phone-service.ts',
+    // Rooms MCP is a separately authenticated, consenting-human boundary.
+    'apps/server/src/rooms-mcp.ts']);
+  const services = new Set(['phone']);
+  const constructors = new Set(['PhoneService']);
+  const phone = node => ts.isIdentifier(node) && services.has(node.text) ||
+    ts.isPropertyAccessExpression(node) && node.name.text === 'phone' ||
+    ts.isNewExpression(node) && ts.isIdentifier(node.expression) && constructors.has(node.expression.text);
+  let changed;
+  do {
+    changed = false;
+    function collect(node) {
+      if (ts.isImportDeclaration(node) && node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier) && node.moduleSpecifier.text.endsWith('phone-service.js') && node.importClause?.namedBindings && ts.isNamedImports(node.importClause.namedBindings))
+        for (const item of node.importClause.namedBindings.elements) if ((item.propertyName ?? item.name).text === 'PhoneService') constructors.add(item.name.text);
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer && phone(node.initializer) && !services.has(node.name.text)) {
+        services.add(node.name.text); changed = true;
+      }
+      ts.forEachChild(node, collect);
+    }
+    collect(source);
+  } while (changed);
+  function visit(node) {
+    const member = ts.isPropertyAccessExpression(node) ? node.name.text
+      : ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) ? node.argumentExpression.text : undefined;
+    if (member === 'execute' && phone(node.expression) && !effectOwners.has(file))
+      errors.push(`${file}: phone effects belong to the single command dispatcher`);
+    if (ts.isVariableDeclaration(node) && ts.isObjectBindingPattern(node.name) && node.initializer && phone(node.initializer) && !effectOwners.has(file) &&
+        node.name.elements.some(item => (item.propertyName ?? item.name).getText(source) === 'execute'))
+      errors.push(`${file}: phone effect capability cannot be extracted`);
+    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword || ts.isIdentifier(node.expression) && node.expression.text === 'require') && node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), node.arguments[0].text)).replace(/\.[cm]?[jt]sx?$/, '');
+      if (Object.hasOwn(rules, target)) errors.push(`${file}: phone command capability cannot be dynamically forwarded`);
+    }
+    if (['immediateCommandResult', 'createPhoneOperationDispatcher'].includes(member) &&
+        !['apps/server/src/phone-operations.ts', 'apps/server/src/server.ts', 'apps/server/src/router-command-coverage.ts'].includes(file))
+      errors.push(`${file}: phone command capability belongs to its declared owner`);
+
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && !node.isTypeOnly && !node.importClause?.isTypeOnly &&
+        node.moduleSpecifier && ts.isStringLiteralLike(node.moduleSpecifier)) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), node.moduleSpecifier.text)).replace(/\.[cm]?[jt]sx?$/, '');
+      if (Object.hasOwn(rules, target)) {
+        const names = node.importClause?.namedBindings;
+        if (ts.isExportDeclaration(node) || node.importClause?.name || !names || !ts.isNamedImports(names))
+          errors.push(`${file}: phone command capability cannot be forwarded`);
+        else for (const item of names.elements) {
+          const owner = rules[target][(item.propertyName ?? item.name).text];
+          if (!item.isTypeOnly && owner && owner !== file) errors.push(`${file}: phone command capability belongs to ${owner}`);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+
 export function inspectSource(file, text) {
   const errors = [];
   const inCore = file.startsWith('packages/net/src/');
@@ -234,6 +369,8 @@ export function inspectSource(file, text) {
       ts.forEachChild(node, commandAccess);
     }
     commandAccess(source);
+    inspectPhoneCommandAccess(file, source, errors);
+    inspectPhoneServerOwners(file, source, errors);
     inspectOwnerAccess(file, source, errors);
     inspectGestureWrappers(file, source, errors);
     inspectConnectionOwners(file, source, errors);
@@ -295,6 +432,14 @@ export function scanRouterTree(root) {
   for (const file of files) {
     const text = readFileSync(path.join(root, file), 'utf8');
     if (file.startsWith('packages/net/src/')) graph.set(file, imports(file, text));
+    // Test hosts bundle production code with native seams. They are fixtures,
+    // not runtime ingress; production cannot hide a request by importing them.
+    for (const edge of imports(file, text)) {
+      const target = edge.specifier?.startsWith('.')
+        ? path.posix.normalize(path.posix.join(path.posix.dirname(file), edge.specifier))
+        : edge.specifier?.replace(/^@\//, MOBILE);
+      if (target?.includes('/test-fixtures/')) errors.push(`${file}: production cannot import test fixtures`);
+    }
     const result = inspectSource(file, text);
     errors.push(...result.errors);
     for (const hit of result.hits) {

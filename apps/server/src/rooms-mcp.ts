@@ -369,6 +369,8 @@ export class RoomsMcp {
       const client = { id: principal.client_id, name: source.name };
       let stored;
       try {
+        // Separate consenting-human OAuth boundary: this domain call preserves
+        // MCP source attribution and its own idempotency, outside phone RPC.
         stored = replyTo
         ? await this.phone.execute('sendRoomReply', { roomId, text, parentMessageId: replyTo, ...(messageId ? { messageId } : {}) }, member, client)
         : await this.phone.execute('sendRoomMessage', { roomId, text, ...(messageId ? { messageId } : {}) }, member, client);

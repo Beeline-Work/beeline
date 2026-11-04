@@ -153,6 +153,8 @@
       "expo": false,
       "entry": [
         "index.ts",
+        // tsc executes the negative phone command capability assertions.
+        "sources/sync/transport/phone-command-boundary.typecheck.ts",
         // WEB-OUTBOX-3446 invokes the exported-bundle startup proof by path.
         "scripts/outbox-startup-bundle-proof.mjs",
         // CONNECT-RING-1 selects the native entry and Metro adapter by path.

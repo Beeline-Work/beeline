@@ -255,3 +255,52 @@ test('roster query and Room picker gestures stay in their declared adapters and 
     assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts',`export * from '@/buzz/${module}';`).errors.length);
   }
 });
+
+test('phone write backdoors fail in the current route tree, including aliased and destructured capabilities', () => {
+  const file = 'apps/mobile/sources/app/(app)/beeline/backdoor.tsx';
+  for (const source of [
+    "socket.request('sendFromWallet', input)",
+    "navigator.locks.request('key',{mode:'exclusive'},()=>socket.request('sendFromWallet',input))",
+    "socket['request']('reactToMessage', input)",
+    "import { sharedLiveConnection as live } from '@/sync/transport/live-connection'; const a=live(); const b=a; const send=b.request; send('sendFromWallet',input);",
+    "import { sharedLiveConnection as live } from '@/sync/transport/live-connection'; const { request: send }=live(); send('sendFromWallet',input);",
+    "const { requestCommand: send } = socket; send(op,args,id);",
+    "export { MobileCommandOwner as Backdoor } from '@/buzz/command-owner';",
+    "import { activateCommandOwner as install } from '@/buzz/command-owner';",
+  ]) assert.ok(inspectSource(file, source).errors.length, source);
+  assert.deepEqual(inspectSource('apps/mobile/sources/sync/transport/monolith-operation.ts',
+    'sharedLiveConnection().request(name,input)').errors, []);
+});
+
+test('a second phone ingress or fresh-result mint cannot escape the declared server owners', () => {
+  for (const source of [
+    "import { createPhoneOperationDispatcher as backdoor } from './phone-operations.js';",
+    "export { createPhoneOperationDispatcher } from './phone-operations.js';",
+    "import { immediateCommandResult as forge } from './router-command-coverage.js';",
+    "export * from './router-command-coverage.js';",
+  ]) assert.ok(inspectSource('apps/server/src/backdoor.ts', source).errors.length, source);
+});
+
+test('a phone route cannot invoke or extract the domain executor around command admission', () => {
+  for (const source of [
+    "options.phone.execute('sendFromWallet', input, viewer)",
+    "const p=options.phone; const alias=p; alias['execute'](name,input,viewer)",
+    "const {execute: send}=options.phone; send(name,input,viewer)",
+    "import { PhoneService as Service } from './phone-service.js'; const p=new Service(db); p.execute(name,input,viewer)",
+    "const module=await import('./phone-operations.js');",
+  ]) assert.ok(inspectSource('apps/server/src/route.ts', source).errors.length, source);
+  assert.deepEqual(inspectSource('apps/server/src/phone-operations.ts', 'phone.execute(name,input,viewer)').errors, []);
+});
+
+test('test host folders stay outside runtime scope and cannot hide a production import', () => {
+  const proof = fileURLToPath(new URL('../.beeline-proof/', import.meta.url));
+  mkdirSync(proof, { recursive: true });
+  const root = mkdtempSync(path.join(proof, 'phone-host-scope-'));
+  try {
+    mkdirSync(path.join(root, 'apps/server/src/test-fixtures'), { recursive: true });
+    writeFileSync(path.join(root, 'apps/server/src/test-fixtures/host.ts'), 'export const run=()=>import(filename);');
+    assert.deepEqual(scanRouterTree(root).errors, []);
+    writeFileSync(path.join(root, 'apps/server/src/route.ts'), "import {run} from './test-fixtures/host';");
+    assert.ok(scanRouterTree(root).errors.some(error => error.includes('production cannot import test fixtures')));
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

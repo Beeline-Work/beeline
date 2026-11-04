@@ -23,6 +23,15 @@ function isReceipt(value: unknown): value is RouterCommandReceipt {
   return receipt.v === 1 && typeof receipt.commandId === 'string' && typeof receipt.operation === 'string' &&
     ['committed','pending','unknown','result-expired'].includes(String(receipt.state));
 }
+// A fresh, service-authorized result is allowed on its original response only.
+// Weak identity cannot be forged by a persisted receipt or a wire field. Generic
+// provider ceremonies persist outcome-only receipts, never credentials/DTOs.
+const immediateResults = new WeakSet<object>();
+export function immediateCommandResult(receipt: RouterCommandReceipt, result: unknown): RouterCommandReceipt {
+  const value = { ...receipt, result: result ?? null };
+  immediateResults.add(value);
+  return value;
+}
 /** The authenticated principal may learn its durable command outcome after
  * losing Room access. Only a currently authorized, matching certificate may
  * release the saved convenience data. Revocation/regrant never relabels that
@@ -30,6 +39,7 @@ function isReceipt(value: unknown): value is RouterCommandReceipt {
 export async function fenceCommandReceiptEnqueue(database: SqlDatabase, viewer: string, value: unknown,
   enqueue: (safeReceipt: unknown) => undefined): Promise<void> {
   if (!isReceipt(value)) { enqueue(value); return; }
+  if (immediateResults.has(value)) { enqueue(value); return; }
   const outcome: RouterCommandReceipt = { v: 1, operation: value.operation, commandId: value.commandId, state: value.state };
   if (!value.coverage || value.state !== 'committed') { enqueue(outcome); return; }
   await database.transaction(async tx => {

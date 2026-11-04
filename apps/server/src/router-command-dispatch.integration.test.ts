@@ -25,22 +25,22 @@ describe('P7 dispatcher durable command adapter', () => {
   function server() {
     const live = new LiveHub(), phone = new PhoneService(db, 'https://test.invalid');
     const options = { database: db, phone, live } as ServerOptions;
-    return { dispatch: createPhoneOperationDispatcher(options, phoneReadLimits(), phone.execute), live };
+    return { dispatch: createPhoneOperationDispatcher(options, phoneReadLimits()), live, phone };
   }
-  it('selects outcome-only Tray decisions through the real dispatcher and never invokes the legacy override or coverage builder',async()=>{
+  it('selects outcome-only Tray decisions through the real dispatcher without a caller-supplied executor or coverage builder',async()=>{
     const agent='d'.repeat(64);
     await db.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')",[agent]);
     await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)',[agent,VIEWER]);
     await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'member'),($1,$2,$3,'member')",[WORKSPACE,ROOM,agent]);
     const choice=await db.transaction(tx=>postRoomChoice(tx,{roomId:ROOM,agentId:agent,mode:'question',prompt:'Synthetic?',
       options:[{label:'One',consequence:'Use one'},{label:'Two',consequence:'Use two'}],ttlSeconds:300}));
-    const first=server(),second=server(),legacy=vi.fn(async()=>{throw new Error('Legacy bypass');});
+    const first=server(),second=server();
     const input={choiceId:choice.choiceId},identity={v:1 as const,id:'tray-dispatch-skip'};
-    const receipt=await first.dispatch('skipChoice',input,VIEWER,undefined,legacy,undefined,identity);
-    expect(receipt).toMatchObject({state:'committed',operation:'skipChoice',result:null});expect(receipt).not.toHaveProperty('coverage');
+    const receipt=await first.dispatch('skipChoice',input,VIEWER,undefined,undefined,identity);
+    expect(receipt).toMatchObject({state:'committed',operation:'skipChoice',result:{choiceId:choice.choiceId,status:'skipped'}});expect(receipt).not.toHaveProperty('coverage');
     const publish=vi.spyOn(second.live,'publish');
-    expect(await second.dispatch('skipChoice',input,VIEWER,undefined,legacy,undefined,identity)).toEqual(receipt);
-    expect(publish).not.toHaveBeenCalled();expect(legacy).not.toHaveBeenCalled();
+    expect(await second.dispatch('skipChoice',input,VIEWER,undefined,undefined,identity)).toEqual({...receipt as object,result:null});
+    expect(publish).not.toHaveBeenCalled();
     expect((await db.query('SELECT status FROM room_choices WHERE id=$1',[choice.choiceId])).rows).toEqual([{status:'skipped'}]);
   });
   it('retry on a second dispatcher preserves a toggled reaction and does not announce twice', async () => {
@@ -48,42 +48,83 @@ describe('P7 dispatcher durable command adapter', () => {
     const publish = vi.spyOn(second.live, 'publish');
     const args = { roomId: ROOM, messageId: MESSAGE, emoji: '👍' };
     const identity = { v: 1 as const, id: 'reaction-once' };
-    const receipt = await first.dispatch('reactToMessage', args, VIEWER, undefined, undefined, undefined, identity);
-    const replay = await second.dispatch('reactToMessage', args, VIEWER, undefined, undefined, undefined, identity);
+    const receipt = await first.dispatch('reactToMessage', args, VIEWER, undefined, undefined, identity);
+    const replay = await second.dispatch('reactToMessage', args, VIEWER, undefined, undefined, identity);
     expect(replay).toEqual(receipt);
     expect((await db.query('SELECT reactions FROM messages WHERE id=$1', [MESSAGE])).rows[0]?.reactions).toEqual({ '👍': [VIEWER] });
     expect(publish).not.toHaveBeenCalled();
-    await expect(second.dispatch('reactToMessage', { ...args, emoji: '❤️' }, VIEWER, undefined, undefined, undefined, identity))
+    await expect(second.dispatch('reactToMessage', { ...args, emoji: '❤️' }, VIEWER, undefined, undefined, identity))
       .rejects.toMatchObject({ status: 409, payload: { error: 'command_identity_conflict' } });
   });
-  it('legacy requests keep their original response and toggle semantics without opting in', async () => {
+  it('supported old-wire requests keep their result and toggle semantics through command admission', async () => {
     const { dispatch } = server(), args = { roomId: ROOM, messageId: MESSAGE, emoji: '👍' };
     const result = await dispatch('reactToMessage', args, VIEWER);
     expect(result).toMatchObject({ id: MESSAGE });
     expect(result).not.toHaveProperty('commandId');
     await dispatch('reactToMessage', args, VIEWER);
     expect((await db.query('SELECT reactions FROM messages WHERE id=$1', [MESSAGE])).rows[0]?.reactions).toEqual({});
-    expect((await db.query('SELECT * FROM router_commands')).rows).toEqual([]);
+    expect((await db.query('SELECT state FROM router_commands')).rows).toEqual([{state:'committed'},{state:'committed'}]);
   });
-  it('unsupported provider operations reject metadata before invoking the legacy effect', async () => {
-    const { dispatch } = server(), effect = vi.fn(async () => ({ paid: true }));
-    await expect(dispatch('voiceJoin', { roomId: ROOM }, VIEWER, undefined, effect, undefined, { v: 1, id: 'provider' }))
+  it('wallet effects claim before execution and never redispatch after receipt loss or server replacement', async () => {
+    const first = server(), second = server();
+    const effect = vi.spyOn(first.phone, 'execute').mockImplementation(async () => {
+      expect((await db.query('SELECT state FROM router_commands')).rows).toEqual([{ state: 'pending' }]);
+      return { sent: true } as never;
+    });
+    const bypass = vi.spyOn(second.phone, 'execute');
+    const args = { amount: '1', address: 'synthetic-destination' }, identity = { v: 1 as const, id: 'wallet-once' };
+    expect(await first.dispatch('sendFromWallet', args, VIEWER, undefined, undefined, identity))
+      .toMatchObject({ state: 'committed', result: { sent: true } });
+    expect(await second.dispatch('sendFromWallet', args, VIEWER, undefined, undefined, identity))
+      .toMatchObject({ state: 'committed', result: null });
+    expect(effect).toHaveBeenCalledOnce(); expect(bypass).not.toHaveBeenCalled();
+    await expect(second.dispatch('sendFromWallet', { ...args, amount: '2' }, VIEWER, undefined, undefined, identity))
+      .rejects.toMatchObject({ status: 409, payload: { error: 'command_identity_conflict' } });
+    expect((await db.query('SELECT result FROM router_commands')).rows).toEqual([{ result: null }]);
+  });
+  it('an ambiguous external effect remains unknown across server replacement and cannot be paid again', async () => {
+    const first = server(), second = server();
+    const paid = vi.spyOn(first.phone, 'execute').mockRejectedValue(new Error('provider response lost'));
+    const bypass = vi.spyOn(second.phone, 'execute');
+    const identity = { v: 1 as const, id: 'wallet-unknown' }, args = { amount: '1' };
+    await expect(first.dispatch('sendFromWallet', args, VIEWER, undefined, undefined, identity)).rejects.toThrow('provider response lost');
+    expect(await second.dispatch('sendFromWallet', args, VIEWER, undefined, undefined, identity)).toMatchObject({ state: 'unknown' });
+    expect(paid).toHaveBeenCalledOnce(); expect(bypass).not.toHaveBeenCalled();
+  });
+  it('credentials travel only on the original authorized result, never in durable receipts or replay', async () => {
+    const first = server(), second = server();
+    vi.spyOn(first.phone, 'execute').mockResolvedValue({ token: 'synthetic-private-token' } as never);
+    const args = { roomId: ROOM, subscriptionId: 'synthetic' }, identity = { v: 1 as const, id: 'rotate-once' };
+    const result = await first.dispatch('rotateWebhookToken', args, VIEWER, undefined, undefined, identity);
+    const enqueue = vi.fn(() => undefined);
+    await fenceCommandReceiptEnqueue(db, VIEWER, result, enqueue);
+    expect(enqueue).toHaveBeenLastCalledWith(expect.objectContaining({ result: { token: 'synthetic-private-token' } }));
+    expect(JSON.stringify((await db.query('SELECT * FROM router_commands')).rows)).not.toContain('synthetic-private-token');
+    const replay = await second.dispatch('rotateWebhookToken', args, VIEWER, undefined, undefined, identity);
+    await fenceCommandReceiptEnqueue(db, VIEWER, replay, enqueue);
+    expect(enqueue).toHaveBeenLastCalledWith({ v: 1, operation: 'rotateWebhookToken', commandId: identity.id, state: 'committed' });
+    // Recreating an object from the wire cannot forge original-result authority.
+    await fenceCommandReceiptEnqueue(db, VIEWER, JSON.parse(JSON.stringify(result)), enqueue);
+    expect(enqueue).toHaveBeenLastCalledWith({ v: 1, operation: 'rotateWebhookToken', commandId: identity.id, state: 'committed' });
+  });
+  it('read operations reject command metadata rather than minting a write intent', async () => {
+    const { dispatch } = server();
+    await expect(dispatch('readRoom', { roomId: ROOM }, VIEWER, undefined, undefined, { v: 1, id: 'read' }))
       .rejects.toMatchObject({ status: 400, payload: { error: 'command_operation_not_supported' } });
-    expect(effect).not.toHaveBeenCalled();
     expect((await db.query('SELECT * FROM router_commands')).rows).toEqual([]);
   });
   it('keeps the original effect cut and fences private convenience data after revoke/regrant', async () => {
     const { dispatch } = server();
     const args = { roomId: ROOM, messageId: MESSAGE, emoji: '👍' };
     const identity = { v: 1 as const, id: 'authority-race' };
-    const original = await dispatch('reactToMessage', args, VIEWER, undefined, undefined, undefined, identity) as RouterCommandReceipt;
+    const original = await dispatch('reactToMessage', args, VIEWER, undefined, undefined, identity) as RouterCommandReceipt;
     expect(original.coverage?.cut.stream).toBe(`workspace:${WORKSPACE}`);
     expect(original.result).toMatchObject({ id: MESSAGE });
     const accepted = vi.fn(() => undefined);
     await fenceCommandReceiptEnqueue(db, VIEWER, original, accepted);
     expect(accepted).toHaveBeenCalledWith(original);
     await db.query('UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2', [VIEWER, ROOM]);
-    const replay = await dispatch('reactToMessage', args, VIEWER, undefined, undefined, undefined, identity) as RouterCommandReceipt;
+    const replay = await dispatch('reactToMessage', args, VIEWER, undefined, undefined, identity) as RouterCommandReceipt;
     const revoked = vi.fn(() => undefined);
     await fenceCommandReceiptEnqueue(db, VIEWER, replay, revoked);
     expect(revoked).toHaveBeenCalledWith({ v: 1, operation: 'reactToMessage', commandId: identity.id, state: 'committed' });
@@ -97,14 +138,39 @@ describe('P7 dispatcher durable command adapter', () => {
     const { dispatch } = server(), controller = new AbortController();
     controller.abort(new Error('cancel before send'));
     await expect(dispatch('reactToMessage', { roomId: ROOM, messageId: MESSAGE, emoji: '👍' }, VIEWER,
-      controller.signal, undefined, undefined, { v: 1, id: 'cancelled' })).rejects.toThrow('cancel before send');
+      controller.signal, undefined, { v: 1, id: 'cancelled' })).rejects.toThrow('cancel before send');
     expect((await db.query('SELECT * FROM router_commands')).rows).toEqual([]);
     expect((await db.query('SELECT reactions FROM messages WHERE id=$1', [MESSAGE])).rows[0]?.reactions).toEqual({});
   });
   it('does not claim command completion when a DB-only operation is refused', async () => {
     const { dispatch } = server();
     await expect(dispatch('deleteRoomMessage', { roomId: ROOM, messageId: 'd'.repeat(64) }, VIEWER,
-      undefined, undefined, undefined, { v: 1, id: 'missing' })).rejects.toThrow();
+      undefined, undefined, { v: 1, id: 'missing' })).rejects.toThrow();
     expect((await db.query('SELECT * FROM router_commands')).rows).toEqual([]);
   });
+});
+
+it('legacy read-and-mark-seen enters command admission while explicit previews remain pure reads', async () => {
+  const db = await migratedDatabase();
+  try {
+    const phone = new PhoneService(db, 'https://test.invalid');
+    vi.spyOn(phone, 'execute').mockResolvedValue({ items: [] } as never);
+    const dispatch = createPhoneOperationDispatcher({ database: db, phone, live: new LiveHub() } as ServerOptions, phoneReadLimits());
+    await dispatch('readNeedsYou', { workspaceId: WORKSPACE, markSeen: false }, VIEWER);
+    expect((await db.query('SELECT operation FROM router_commands')).rows).toEqual([]);
+    await dispatch('readNeedsYou', { workspaceId: WORKSPACE }, VIEWER);
+    expect((await db.query('SELECT operation,state FROM router_commands')).rows).toEqual([{ operation: 'readNeedsYou', state: 'committed' }]);
+  } finally { await db.close(); }
+});
+
+it('void writes retain old-wire undefined results and a serializable command acknowledgement', async () => {
+  const db = await migratedDatabase();
+  try {
+    const phone = new PhoneService(db, 'https://test.invalid');
+    vi.spyOn(phone, 'execute').mockResolvedValue(undefined as never);
+    const dispatch = createPhoneOperationDispatcher({ database: db, phone, live: new LiveHub() } as ServerOptions, phoneReadLimits());
+    await expect(dispatch('sendPushTest', {}, VIEWER)).resolves.toBeUndefined();
+    const receipt = await dispatch('sendPushTest', {}, VIEWER, undefined, undefined, { v: 1, id: 'void-write' });
+    expect(JSON.parse(JSON.stringify(receipt))).toMatchObject({ state: 'committed', result: null });
+  } finally { await db.close(); }
 });

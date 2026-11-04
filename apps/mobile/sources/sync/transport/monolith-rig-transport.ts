@@ -341,6 +341,8 @@ export class MonolithRigTransport {
   }
 
   async uploadMedia(bytes: Uint8Array, mimeType: string): Promise<any> {
+    // Binary bodies exceed the JSON socket limit; this inventoried byte lane
+    // is separate from state-changing PhoneOperationMap command admission.
     const response = await monolithSession.fetch(`${this.baseUrl}/v1/phone/media`, {
       method: 'POST',
       headers: { 'content-type': mimeType },

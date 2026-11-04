@@ -45,7 +45,8 @@ export function startMessageOutbox(): Promise<void> {
     active = owner;
     const unwatch = observeMessageOutbox(owner);
     const uncommands = commands.subscribe(record => {
-      if (record.state === 'committed') void owner.remove(record.id);
+      if (record.state === 'committed' && (record.operation === 'sendRoomMessage' || record.operation === 'sendRoomReply'))
+        void owner.remove(record.id);
     });
     const uncapabilities = commandConnection.subscribeCommandCapabilities?.(() => { void commands.negotiated(); });
     // Named integration hook for the shared connection's connected state.

@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PhoneSocketDisconnectedError, PhoneSocketError } from './phone-socket-error';
 const request = vi.hoisted(() => vi.fn());
+const command = vi.hoisted(() => vi.fn());
+vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => ({ execute: command }) }));
 vi.mock('./live-connection', () => ({ sharedLiveConnection: () => ({ request }) }));
 vi.mock('@/auth/monolith-session', () => ({
   MONOLITH_REQUEST_TIMEOUT_MS: 15_000,
@@ -10,7 +12,7 @@ vi.mock('@/auth/signin-funnel', () => ({ funnelSuccessfulOperation: vi.fn() }));
 import { monolithPhoneOperation, phoneOperationFailureReason, phoneOperationRequestOptions } from './monolith-operation';
 import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
 
-beforeEach(() => { request.mockReset(); });
+beforeEach(() => { request.mockReset(); command.mockReset().mockImplementation((...args) => request(...args)); });
 afterEach(() => { vi.useRealTimers(); });
 describe('phone operations over the shared socket', () => {
   it('sends the operation and input once with the existing deadline', async () => {
@@ -57,4 +59,14 @@ describe('phone operations over the shared socket', () => {
     await expect(monolithPhoneOperation('redeemInvite', { token: 'invite' })).rejects.toThrow('invite not found');
     expect(request).toHaveBeenCalledOnce();
   });
+});
+
+it('delegates writes to command admission while the raw connection receives only reads', async () => {
+  command.mockResolvedValueOnce({ outcome: 'sent' });
+  await expect(monolithPhoneOperation('sendFromWallet', {} as never)).resolves.toEqual({ outcome: 'sent' });
+  expect(command).toHaveBeenCalledOnce();
+  expect(request).not.toHaveBeenCalled();
+  request.mockResolvedValueOnce({ count: 1 });
+  await expect(monolithPhoneOperation('countNeedsYou', { workspaceId: 'w' })).resolves.toEqual({ count: 1 });
+  expect(request).toHaveBeenCalledExactlyOnceWith('countNeedsYou', { workspaceId: 'w' }, { timeoutMs: 15_000 });
 });

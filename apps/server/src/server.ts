@@ -550,7 +550,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   const invitePreview = new InvitePreviewAccess(options.database);
   const phoneViewing = new PhoneViewing(options.database, options.connectionPresence?.instanceId ?? randomUUID());
   const readLimits = options.phoneReadLimits ?? phoneReadLimits();
-  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, readLimits, options.phone.execute, requestErrorStatus);
+  const dispatchPhoneOperation = createPhoneOperationDispatcher(options, readLimits, requestErrorStatus);
   const server = createServer((request, response) => {
     if (gameOrigin && request.headers.host === new URL(gameOrigin).host) {
       void serveRunnableArtifact(request, response, gameOrigin, options.objectService).catch(() => {
@@ -1089,7 +1089,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         async (name, args, ...rest) => {
           if (name === 'readRouterSnapshot') {
             routerProtocol.requireSnapshot(args);
-            if (rest[4] === undefined) return routerProtocol.snapshot(args as unknown as Parameters<typeof routerProtocol.snapshot>[0]);
+            if (rest[3] === undefined) return routerProtocol.snapshot(args as unknown as Parameters<typeof routerProtocol.snapshot>[0]);
           }
           if(name==='readRoomTools')routerProtocol.requireSnapshot({family:'room-head',roomId:args.roomId});
           if (name === 'readAgentUsageCell') routerProtocol.requireUsage();
@@ -2613,11 +2613,11 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   }
 
   const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown,
-    invokeLegacy?: () => Promise<unknown>, command?: import('@beeline/api-contract/router-command').RouterCommandIdentity) => {
+    command?: import('@beeline/api-contract/router-command').RouterCommandIdentity) => {
     if (['readRoomTools','readAgentUsageCell','readRouterSnapshot','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
       throw new PhoneOperationError(409, { error: 'router_socket_required' });
     const familyId = phoneFamilies.get(request);
-    const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy, familyId, command);
+    const result = await dispatchPhoneOperation(name, input, identityId!, undefined, familyId, command);
     await fenceCommandReceiptEnqueue(options.database, identityId!, result, safeResult => {
       if (safeResult === undefined) {
         response.writeHead(204, { 'cache-control': 'private, no-store' });
@@ -2794,8 +2794,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     let command;
     try { command = commandValue === undefined ? undefined : parseRouterCommandIdentity(commandValue); }
     catch { throw new PhoneOperationError(400, { error: 'invalid_command_identity' }); }
-    await operation(name, input, undefined,
-      () => options.phone.execute(name as never, input as never, identityId!, undefined, phoneFamilies.get(request), true), command);
+    await operation(name, input, undefined, command);
     return;
   }
 

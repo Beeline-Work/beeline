@@ -22,3 +22,5 @@ export function observePhoneInput(operation: unknown, input: unknown): InputObse
   try { codecs[name]!.parse(input); return { route, verdict: 'legacy-valid' }; }
   catch { return { route, verdict: 'legacy-invalid' }; }
 }
+// Canonical command bytes are data; minting and dispatch remain owner-private.
+export { canonicalJson } from './wire-codec.js';

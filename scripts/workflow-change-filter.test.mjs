@@ -268,13 +268,15 @@ test('representative PRs request fewer hosted runners without hiding check conte
   const serverJobs = ['server-suite-shard', 'server-claim-latency', 'server-suite',
     'server-integration', 'production-corpus-replay', 'auth-image', 'server-test-selection'];
   const expectedJobs = {
-    'mobile-only': [...commonJobs, ...mobileJobs, 'frame-budget', 'state-upgrade'],
+    'mobile-only': [...commonJobs, ...mobileJobs, 'frame-budget', 'state-upgrade', 'server-test-selection'],
     mixed: [...commonJobs, ...mobileJobs, ...serverJobs, 'frame-budget', 'state-upgrade'],
     'mixed-components': [...commonJobs, ...mobileJobs, ...serverJobs],
   };
   const examples = [
     { name: 'server-only', files: ['apps/server/src/index.ts'], before: 25, after: 19 },
-    { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 10 },
+    // The independent server selector runs for every code PR, even when the
+    // Body/mobile graph would force a full fallback or discover a server edge.
+    { name: 'mobile-only', files: ['apps/mobile/sources/buzz/x.ts'], before: 8, after: 11 },
     { name: 'mixed', files: ['apps/server/src/index.ts', 'apps/mobile/sources/buzz/x.ts'], before: 29, after: 24 },
     { name: 'mixed-components', files: ['apps/server/src/index.ts', 'apps/mobile/sources/components/example.tsx'], before: 27, after: 22 },
     { name: 'docs-only', files: ['docs/foo.md'], before: 34, after: 4 },
@@ -298,6 +300,8 @@ test('representative PRs request fewer hosted runners without hiding check conte
     }
     console.log(`${example.name}: baseline=${example.before} current=${runners} runner jobs (skipped checks excluded)`);
     assert.equal(runners, example.after, example.name);
+    assert.equal(selectedJobs.includes('server-test-selection'), gates.code === 'true',
+      `${example.name}: server coverage selection is independent of coarse module gates`);
     if (expectedJobs[example.name]) {
       assert.deepEqual(selectedJobs.sort(), expectedJobs[example.name].toSorted(), example.name);
     }

@@ -19,7 +19,8 @@ function shims(mobile: string): Record<string, string> {
     export const useRouter = () => ({ back: () => undefined, push: () => undefined });
     export const router = { push: () => undefined, replace: () => undefined, back: () => undefined };`,
     '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {}
-    export const monolithPhoneOperation = async (name) =>
+    export const readServerSurface=(_authority,...args)=>monolithPhoneOperation(...args);
+      export const monolithPhoneOperation = async (name) =>
       name === 'readNeedsYou' ? { items: [] }
         : name === 'readScheduledWork' ? { roomName: 'alpha', agentNames: [], schedules: [], subscriptions: [] }
         : name === 'listRoomWorkflowRuns' ? { workflows: [] } : { bookmarks: [] };

@@ -170,8 +170,8 @@ The procedure for the \`feedback-triage\` workflow (\`docs/workflows/feedback-tr
 Discover \`app_tool(app:beeline:workflow)\`, then use \`tool:start\` and bind \`triager\`
 to yourself. Advance each step with \`tool:advance\`. Run daily at 07:00
 America/New_York, after the 06:00 walk. The run ends after presenting its ranked
-list (or nothing to build), having checked earlier fixes in verify. The 09:00
-morning card is the only place the owner approves follow-up work.
+list (or nothing to build), having checked earlier fixes in verify. Routine agent fixes open directly from the ranked list. Reviewer PASS plus green
+checks lands them under the existing merge authority; the owner keeps a hold as veto.
 
 End every step with its handoff in the same turn. A turn that ends without one hands
 the step on, and once nobody is left the run takes \`timeout\` and fails.
@@ -274,7 +274,7 @@ other session errors and crashes fail; a missing host program is a setup finding
 Report each failing check with
 \`report_feedback(category:bug)\` naming the adapter/version and the observed
 stage, attach the returned item id, and add it to \`adapterFindings\`. Assess and
-propose fixes through the same morning-card approval path as other findings; a local
+dispatch routine fixes through the same reviewed fix-loop path as other findings; a local
 missing install calls for that concrete setup step rather than an unrelated code
 fix. Never hide an authentication requirement by injecting a key.
 
@@ -318,13 +318,16 @@ fixed. Use followUp from scripts/feedback-signals.mjs for timestamp classificati
 Carry forward every unfinished entry; never drop an item because its row resolved.
 Advance checked with signalChecks, including queried window and release evidence.
 
-## Morning-card follow-up (outside this workflow)
+## Fix-loop follow-up (outside this workflow)
 
-Present supplies the ranked list to the 09:00 morning card and ends the run.
-After the owner's yes on that card, Ruby opens fix corners as an existing agent
-action outside this workflow, using the guidance below.
+Present supplies the ranked list to the daily fix loop and ends the run.
+Ruby opens routine fix corners as an existing agent action without per-item
+pre-approval. A reviewer PASS on the exact head plus green checks lands them;
+the owner's hold remains a veto. Product decisions and destructive operations
+still follow their existing authority. Report opened corners and held decisions
+on the fix-loop card.
 
-Only repeated agent signals or problems a person actually felt are eligible. Check for an existing corner by signal and item ids and reuse it. For each problem approved on the morning card, Ruby calls \`open_corner\` in this Room. Give it a brief that
+Only repeated agent signals or problems a person actually felt are eligible. Check for an existing corner by signal and item ids and reuse it. For each eligible routine fix, Ruby calls \`open_corner\` in this Room. Give it a brief that
 describes the problem in your own words, lists its item ids, and requires the fix
 pull request body to carry the line \`Feedback items: <ids>\`. The repository is
 public: the brief and the pull request must never quote a report, and never name

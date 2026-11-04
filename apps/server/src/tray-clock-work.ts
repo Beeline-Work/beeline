@@ -39,7 +39,7 @@ export type TrayClockWorkOptions={
   now?:()=>number;
 };
 
-/** Unselected private composition. This owns no connection, lock, renewal,
+/** Shared production composition. This owns no connection, lock, renewal,
  * provider or timer: the existing BackgroundLeader supplies its real lock
  * backend and arms only this runner's returned actual minimum delay. */
 export class TrayClockWork{

@@ -383,7 +383,11 @@ it.each(['dm', 'room', 'parent'] as const)('Reproduction CORNER-ROOM-2: keeps th
   expect(storedEvents).toHaveLength(kind === 'room' ? 1 : 0);
   if (kind !== 'room') expect((await phone.readRoom(R,OUTSIDER))!.viewer.readCursor?.unreadCount).toBe(0);
   if (kind === 'room') expect(prRows[0].githubEvent).toMatchObject({ action: 'merged', cornerId: opened.cornerId });
-  const storedRoomOpening = (await db.query(`SELECT card FROM messages WHERE room_id=$1 AND card->>'cornerId'=$2`, [R, opened.cornerId])).rows[0];
+  // Legacy readRoom exposes both the static opening and the distinct GitHub
+  // event. Select the opening by its identity, never physical query row order.
+  const storedRoomOpening = (await db.query(`SELECT card FROM messages
+    WHERE room_id=$1 AND card->>'cornerId'=$2 AND ($3::text IS NULL OR id=$3)`,
+    [R, opened.cornerId, roomOpening?.id ?? null])).rows[0];
   expect(storedRoomOpening?.card.type).toBe(kind === 'room' ? 'corner-open' : undefined);
   snapshots[`${kind}-merged`] = merged;
   // Closing an independent corner follows the phone action, with no extra row.

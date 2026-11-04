@@ -6,3 +6,7 @@ export function validateWorkflowProjection(value:unknown):boolean{
   try{jsonCodec(displayShapes,displayResults['phone.listRoomWorkflowRuns'],64*1024).parse(value);
     return (value as {workflows:unknown[]}).workflows.length<=30;}catch{return false;}
 }
+
+export function validateScheduledWorkProjection(value:unknown):boolean{
+  try{jsonCodec(displayShapes,displayResults['phone.readScheduledWork'],64*1024).parse(value);return true;}catch{return false;}
+}

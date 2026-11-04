@@ -1,3 +1,4 @@
+import { ROOM_VIEW_TOOL_ROW_LIMIT } from '@beeline/api-contract/phone';
 import { retryOwedMentions } from './owed-mentions.js';
 import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { captureServerError } from './sentry.js';
@@ -18,7 +19,7 @@ import { ARTIFACT_TTL_HOURS, MEDIA_SWEEP_INTERVAL_MS, mediaTtlHours } from './me
 import type { ObjectStorage } from './object-storage.js';
 import { apnsReadClearBatch } from './apns-push.js';
 import { firebaseReadClearBatch } from './firebase-push.js';
-import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
+import { EXPIRE_PUSH_CLAIMS_SQL, TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import type { ObjectService } from './object-service.js';
 import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
 import { addressedToPersonSql } from './corner-owed.js';
@@ -340,6 +341,7 @@ export class PushDeliveryLoop {
     // Candidate messages expire after an hour. A terminal claim outside that
     // window cannot suppress a future push.
     // Retain mobile claims for read-clear for at most a week.
+    await this.database.query(EXPIRE_PUSH_CLAIMS_SQL, [1000]);
     await this.database.query(TERMINAL_PUSH_CLAIMS_SQL, [1000]);
     await this.database.query(`DELETE FROM push_outbox_retirements WHERE (message_id,device_token) IN (
       SELECT message_id,device_token FROM push_outbox_retirements
@@ -808,14 +810,14 @@ export class PushDeliveryLoop {
             WHERE m.id=queue.message_id AND turn.status='working')
         ) OR EXISTS (
           SELECT 1 FROM push_delivery_claims claim WHERE claim.message_id=queue.message_id
-            AND claim.device_token=queue.device_token AND claim.status IN ('delivered','failed','suppressed')))
+            AND claim.device_token=queue.device_token AND claim.status IN ('delivered','failed','suppressed','uncertain')))
       RETURNING queue.message_id,queue.device_token,queue.expires_at)
       INSERT INTO push_outbox_retirements(message_id,device_token,reason)
       SELECT message_id,device_token,
         CASE WHEN expires_at<=now() THEN 'expired' ELSE 'ineligible' END FROM retired
       WHERE NOT EXISTS (SELECT 1 FROM push_delivery_claims claim
         WHERE claim.message_id=retired.message_id AND claim.device_token=retired.device_token
-          AND claim.status IN ('delivered','failed','suppressed'))
+          AND claim.status IN ('delivered','failed','suppressed','uncertain'))
       ON CONFLICT(message_id,device_token) DO UPDATE SET reason=EXCLUDED.reason,retired_at=now()`,
       [JSON.stringify(due.rows), JSON.stringify(candidates.rows),
         [this.sender && 'android', this.iosSender && 'ios', this.webSender && 'web'].filter(Boolean)]);
@@ -989,7 +991,32 @@ export class MediaExpiryLoop {
   }
 }
 
+// Ephemeral scan cursor: restart/leader changes only revisit already-clean corners.
+let archivedToolCursor: string | null = null;
+/** Keep the same tool/output window the phone reads; prose and durable facts survive. */
+export async function pruneArchivedToolActivity(database: SqlDatabase): Promise<void> {
+  const corners = (await database.query<{ id: string }>(`SELECT id FROM rooms
+    WHERE parent_id IS NOT NULL AND archived_at IS NOT NULL
+      AND ($1::uuid IS NULL OR id>$1::uuid) ORDER BY id LIMIT 20`, [archivedToolCursor])).rows;
+  if (!corners.length) { archivedToolCursor = null; return; }
+  const deleted = await database.query(`DELETE FROM messages WHERE id IN (
+    SELECT old.id FROM rooms corner CROSS JOIN LATERAL (
+      SELECT message.id FROM messages message
+      WHERE message.room_id=corner.id AND message.presentation='activity'
+        AND message.durable_fact IS NULL AND EXISTS (
+          SELECT 1 FROM jsonb_array_elements(message.activity) item
+          WHERE item->>'kind' IN ('tool','output'))
+      ORDER BY message.created_at DESC,message.id DESC
+      OFFSET ${ROOM_VIEW_TOOL_ROW_LIMIT} LIMIT 1000
+    ) old WHERE corner.id=ANY($1::uuid[]) AND corner.archived_at IS NOT NULL
+    LIMIT 1000
+  ) RETURNING id`, [corners.map(corner => corner.id)]);
+  // Drain this slice before advancing, so a large corner does not wait a full scan.
+  if (deleted.rows.length < 1000) archivedToolCursor = corners.at(-1)!.id;
+}
+
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
+  await pruneArchivedToolActivity(database);
   await cleanupUnfinishedAppSignIns(database, true);
   await retryOwedMentions(database);
   // Legacy routing repair remains separate from committed delivery ownership.
@@ -998,6 +1025,8 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
   const expired = [
     ['agent_turn_traces', "created_at<now()-interval '30 days'"],
     ['room_push_views', 'expires_at<now()'],
+    ['workspace_join_notification_devices', "notification_id IN (SELECT id FROM workspace_join_notifications WHERE created_at<now()-interval '1 hour')"],
+    ['workspace_join_notifications', "created_at<now()-interval '1 hour'"],
     // A corner's assignment commands are its worker, owner and opening provenance
     // (corner-worker.ts): they stay for the corner's life.
     ['agent_commands', "state IN ('complete','cancelled') AND completed_at<now()-interval '30 days' AND NOT (reason IN ('corner_objective','human_tag') AND room_id IN (SELECT id FROM rooms WHERE parent_id IS NOT NULL))"],

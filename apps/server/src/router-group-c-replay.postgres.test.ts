@@ -17,12 +17,56 @@ const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-
 const input: RouterSnapshotInput = { family: 'room-list', workspaceId: workspace };
 function deferred<T = void>() { let resolve!: (value: T) => void; const promise = new Promise<T>(done => { resolve = done; }); return { promise, resolve }; }
 
+async function walPosition(admin: Pool): Promise<string> {
+  return (await admin.query('SELECT pg_current_wal_insert_lsn()::text position')).rows[0]!.position;
+}
+
+async function expectNoReaderWal(admin: Pool, before: string, after: string): Promise<void> {
+  if (before === after) return;
+  // WAL is cluster-wide: the background writer can emit a standby snapshot or
+  // checkpoint while readers do no writes. Inspect only the captured interval.
+  // A committed marker AFTER that interval flushes it for pg_walinspect; the
+  // marker itself is outside the measurement and never touches application rows.
+  await admin.query("SELECT pg_logical_emit_message(true, 'beeline-replay-proof-fence', '')");
+  const records = (await admin.query(`SELECT resource_manager, record_type, xid::text, block_ref
+    FROM pg_get_wal_records_info($1::pg_lsn,$2::pg_lsn)`, [before, after])).rows;
+  expect(records.length).toBeGreaterThan(0);
+  expect(records.filter(record => !(record.xid === '0' && !record.block_ref && (
+    record.resource_manager === 'Standby' && record.record_type === 'RUNNING_XACTS' ||
+    record.resource_manager === 'XLOG' && record.record_type === 'CHECKPOINT_ONLINE'
+  )))).toEqual([]);
+}
+
 // This isolates the real protocol/coordinator/drain/authority cost. The narrow
 // fixture builder is explicitly synthetic, so neither its CPU nor its query
 // counts establish whole-PhoneService or production workload non-regression.
 describe.skipIf(!url)('Group C P5/P6/P11 two-pool replay sharing', () => {
+  it('attributes background checkpoint WAL separately and rejects a real table write', async () => {
+    const admin = new Pool({ connectionString: url, max: 1 });
+    const table = `replay_wal_control_${randomUUID().replaceAll('-', '')}`;
+    try {
+      await admin.query('CREATE EXTENSION IF NOT EXISTS pg_walinspect');
+      await admin.query(`CREATE TABLE ${table}(value text)`);
+      const beforeCheckpoint = await walPosition(admin);
+      await admin.query('CHECKPOINT');
+      const afterCheckpoint = await walPosition(admin);
+      expect(afterCheckpoint).not.toBe(beforeCheckpoint);
+      await expectNoReaderWal(admin, beforeCheckpoint, afterCheckpoint);
+      const beforeWrite = await walPosition(admin);
+      await admin.query(`INSERT INTO ${table} VALUES('a read must never do this')`);
+      await expect(expectNoReaderWal(admin, beforeWrite, await walPosition(admin))).rejects.toMatchObject({
+        name: 'AssertionError',
+        actual: expect.arrayContaining([expect.objectContaining({ resource_manager: 'Heap' })]),
+      });
+    } finally {
+      await admin.query(`DROP TABLE IF EXISTS ${table}`);
+      await admin.end();
+    }
+  });
+
   it('F13: sixteen readers per server share one base build per cut; both real LISTEN owners deliver the committed replacement without WAL writes', async () => {
     const schema = `group_c_replay_${randomUUID().replaceAll('-', '')}`, admin = new Pool({ connectionString: url, max: 1 });
+    await admin.query('CREATE EXTENSION IF NOT EXISTS pg_walinspect');
     await admin.query(`CREATE SCHEMA ${schema}`);
     const config = { connectionString: url, options: `-c search_path=${schema},public`, max: 4 };
     const databases = [new PostgresDatabase('', 4, { pool: new Pool(config) }), new PostgresDatabase('', 4, { pool: new Pool(config) })];
@@ -72,10 +116,10 @@ describe.skipIf(!url)('Group C P5/P6/P11 two-pool replay sharing', () => {
           await protocol.handle({ type: 'router-negotiate', protocol: 1, families: ['room-list'] });
         }
       }
-      const before = (await admin.query('SELECT pg_current_wal_insert_lsn()::text position')).rows[0]!.position;
+      const before = await walPosition(admin);
       const snapshots = await Promise.all(protocols.map(protocol => protocol.snapshot(input)));
-      const after = (await admin.query('SELECT pg_current_wal_insert_lsn()::text position')).rows[0]!.position;
-      expect(after).toBe(before); expect(builds).toEqual([1, 1]);
+      const after = await walPosition(admin);
+      await expectNoReaderWal(admin, before, after); expect(builds).toEqual([1, 1]);
       expect(snapshots.every(snapshot => JSON.stringify(snapshot) === JSON.stringify(snapshots[0]))).toBe(true);
       const baselineStatements = [...statements];
       await db.transaction(async tx => {
@@ -85,10 +129,10 @@ describe.skipIf(!url)('Group C P5/P6/P11 two-pool replay sharing', () => {
       });
       // Capture WAL after the writer's actual effect/cause. Pure fanout must
       // add no WAL of its own, irrespective of reader count.
-      const writerCut = (await admin.query('SELECT pg_current_wal_insert_lsn()::text position')).rows[0]!.position;
+      const writerCut = await walPosition(admin);
       await Promise.all(committed);
-      const deliveredCut = (await admin.query('SELECT pg_current_wal_insert_lsn()::text position')).rows[0]!.position;
-      expect(deliveredCut).toBe(writerCut); expect(builds).toEqual([2, 2]); expect(errors).toEqual([]);
+      const deliveredCut = await walPosition(admin);
+      await expectNoReaderWal(admin, writerCut, deliveredCut); expect(builds).toEqual([2, 2]); expect(errors).toEqual([]);
       for (const output of frames) {
         const parts = output.filter(frame => frame.kind === 'push-part');
         expect(parts).toHaveLength(1); expect(output.filter(frame => frame.kind === 'push-commit')).toHaveLength(1);

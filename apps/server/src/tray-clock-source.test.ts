@@ -50,6 +50,21 @@ describe('uninstalled durable Tray clock source',()=>{
   });
   afterEach(async()=>{await db.close();});
 
+  it('allocates no clock rows or source locks for an ordinary bulk insert/delete',async()=>{
+    await db.transaction(async tx=>{
+      const held=async()=>Number((await tx.query<{count:string}>(`SELECT count(*)::text count FROM pg_locks
+        WHERE locktype='advisory' AND pid=pg_backend_pid()`)).rows[0]!.count);
+      const before=await held();
+      await tx.query(`INSERT INTO messages(id,room_id,author_id,text)
+        SELECT 'ordinary-'||item,$1,$2,'ordinary statement' FROM generate_series(1,128)item`,[room,author]);
+      expect(await held()).toBe(before);
+      expect((await tx.query(`SELECT * FROM tray_clock_sources`)).rows).toEqual([]);
+      expect((await tx.query(`SELECT * FROM tray_clock_deadlines`)).rows).toEqual([]);
+      await tx.query(`DELETE FROM messages WHERE id LIKE 'ordinary-%'`);
+      expect(await held()).toBe(before);
+    });
+  });
+
   it('does not change committed eligibility/basis with wall time, then journals one exact elapsed transition',async()=>{
     await question();const pending=await claim(),basis=await readTrayClockBasis(db,workspace);
     expect(basis).toMatchObject({revision:'0',ready:false});expect(await readTrayClockDue(clock)).toEqual([]);

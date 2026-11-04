@@ -82,3 +82,200 @@ bounded display adapter and permits its hook only from workflow, Workbench, Wall
 Members profile consumers; 28 scanner regressions include rejection of aliases,
 forwarding, dynamic imports and direct consumer lane authority. The inventory
 and CI gate are unchanged. Affected owner/workflow consumer tests were rerun.
+
+## Members and picker continuation
+
+The Members list now consumes the canonical `workspace-roster` DTO directly on
+its negotiated path. It detaches the Workspace cache/watch/scheduler and keeps
+search text local until the existing Submit gesture. Search and Load More open
+bounded, sealed windows anchored to the held server roster revision. The server
+checks that revision in the same read-only snapshot as authorization and rows;
+the enqueue check holds the shared authority lock. A committed roster change
+advances one Workspace roster domain and an independent bounded control stream,
+retiring stale windows without a query refresh. Ordinary Room message traffic
+neither rebuilds a roster nor invalidates an anchored roster window.
+
+The Room picker now uses the extracted production `useRoomRoster` hook. A
+negotiated picker gesture binds its Workspace to the held canonical Room DTO;
+mounts, bylines, closed-sheet renders and query observers cannot admit that read.
+Closing the final picker releases demand, so connection recovery excludes it.
+Legacy pickers retain the real shared registry and its single-flight behavior.
+The public display adapter remains closed to declared families and exact
+consumer paths; scanner regressions cover the new gesture wrappers.
+
+Validation for this continuation uses one Vitest suite/process at a time and
+`--maxWorkers=2`. Each PostgreSQL scenario retains its 20-second deadline; only
+cold migration setup uses the previously approved 120-second deadline.
+
+| Proof | Result |
+| --- | --- |
+| `router-phone-group-a.postgres.test.ts` | 11 pass, including `F03: sealed search windows` (unrelated message builds/reads0, membership retires window, stale snapshot refused, old certificate enqueue0). |
+| `members.management.test.tsx` | 83 pass, including `F03 negotiated Members` (1,000 edits/transient frames read0, exact committed role painted, only Submit admits query) and existing shared profile/portrait test. |
+| `router-owner.test.ts` | 31 pass, including query observer/read refusal, held-revision binding, wrong-Workspace picker refusal and closed-picker recovery0. |
+| `use-room-roster.test.tsx` | 5 pass: unavailable Room reports through the existing error state without a fallback read; actual negotiated hook, 1,000 closed renders, two legacy opens/one real registry flight, synchronous Workspace/origin hiding. |
+| `owner-resources.router.test.tsx` | 3 pass after integration. |
+| Core lanes/groups/admission/display codecs/Room folds | 34/11/14/2/9 pass respectively. |
+| Router boundary regressions and bundle gates | 29/3 pass; byte budgets remain 90112 raw / 24576 gzip. |
+
+The P1 public-barrel expectation now names the exact three allowed values:
+`routes` and the two pure display validators. It continues to reject every
+additional public value, including admission factories and executors. The
+Scheduled Work validator uses the complete generated display schema outside the
+private owner entry, preserving the unchanged bundle limits and validation.
+
+All ten whole findings remain **Open**. These are concrete remaining gaps,
+not failed source gates being hidden or skipped:
+
+- F03/F20: `routerOwnerCapabilities` still does not advertise `workspace-roster`.
+  Human Profile still uses `watchWorkspace` and `workspaceMembers`; roster agent
+  usage has not moved to visible independent usage-cell consumers. The new pure
+  roster deliberately omits provider usage/presence enrichment. Advertising the
+  family before those consumers move would suppress useful legacy behavior.
+- F08: connection detail and wallet history still use
+  `useFreshWorkbenchSurface`; those consumers have no complete owner-family
+  proof in this change.
+- F09: the shared profile snapshot remains on its Workspace stream, including
+  private configuration. The required private-owner/public-profile split is
+  not established by the portrait and current-authority proofs.
+- F24: the new two-server decision workload exercises `skipChoice`. Complete
+  native command migration and every decision variant/cohort remain unproven.
+- F02/F04/F05/F06/F20/F25 and the findings above: these source/renderer proofs
+  do not execute the installed Android/iOS, old OTA, browser/Tauri, old helper
+  and mixed-server matrix required by spec M6. Authentication is synthetic and
+  committed notifications use the explicitly documented independent LISTEN
+  bridge, rather than proving the production listener/recovery path.
+
+The integrator owns `closure-ledger.md`; this worker leaves its rows unchanged
+and reports the exact scoped evidence and remaining gaps here and in the PR.
+No production capability, UI, network-channel allowance, assertion budget or
+scenario deadline was enabled or increased.
+
+Final continuation checks: all five strict PostgreSQL gates pass with zero
+skips after the integrator merge; the broader eleven-scenario run also passes.
+The 192 listed serial core/consumer cases pass (208 total with PostgreSQL).
+Full root typecheck, the dedicated proof typecheck and all eight workspace
+builds pass. Dead-code baseline holds at five existing findings with zero
+introduced. Codec check, router scanner, architecture20, phone channels72/72,
+29 scanner regressions and three bundle gates pass. No whole-finding closure
+or production/installed-cohort result is implied by those scoped results.
+
+## CI continuation and integration repair
+
+The failed Group A server collection imported portable phone registry code from
+under the mobile tsconfig; server-only CI does not install Expo. The two server
+Vitest configs now retain the repository's class-field semantics directly,
+avoiding that unrelated config lookup. The legacy browser shim explicitly
+rejects the new roster query/picker action exports, so old-server fixtures can
+import the current screens without acquiring new authority. Both changed
+Members error-row evidence selectors still bind exact current production JSX;
+the complete 46-case inventory remains intact.
+
+Inherited failures are owned by the integrator, per firstmate instruction010.
+A single shared-package load rerun stopped before tests because its prepared
+root dependency cache was missing; no repeated load rerun or budget increase
+was used. Its original emulator-log race and the inherited mobile/server cases
+were reported to the integrator rather than duplicated in this continuation.
+
+After composing the continuation with the rebased integration head `f9d8473f3`,
+full root typecheck and dependency builds pass. Serial focused verification
+passes 16 real PostgreSQL scenarios plus 138 consumer/core cases: actual phone
+owner31, Members83, picker5, owner hooks3, admission14 and display schemas2.
+Boundary regressions29, bundle gates3, architecture20 and phone channels72/72
+pass. The merge preserves the integrator's shim controls and added schema
+assertions along with the continuation's new roster exports and full Scheduled
+Work display validator. Whole-finding and installed-cohort status stays Open;
+remote CI readiness is reported separately after checking the exact PR head.
+
+## Second remote-CI follow-up
+
+The Workspace roster contains the Workspace header and manager settings. Its
+canonical `workspaces` cause must therefore continue to select the roster,
+independently of a complete-empty Scheduled Work cause. The continuation had
+removed that dependency. Restoring it makes the unchanged 17-case source-plan
+suite pass; no expected family or assertion was removed. A dedicated roster
+cause in the same transaction coalesces through the existing family Set.
+
+The continuation is now rebased onto router head `40d842a73`, which already
+contains the integrator's Tray evidence-selector and replay I/O-boundary fixes.
+Both new roster modules import the authority-lock constant from the base's
+new dependency-light owner module. These are the only implementation repairs
+in this follow-up.
+
+Fresh serial verification passes 45 Vitest cases: source planning17, complete
+browser evidence3 (all46 inventory cases), real PostgreSQL11 plus strict5,
+and the single replay follow-up9. All PostgreSQL closure cases pass with zero
+skips. Root typecheck, codec generation, bundle3, boundary regressions29,
+architecture20 and phone inventory72/72 pass. Limits and assertions remain
+unchanged. The latest router-head shard2 failure is in `voice-cutin.test.ts`
+timer-state handling and was reported to firstmate; it is outside Group A.
+Remote green status must still be verified for the newly rebased PR head.
+
+## CI hold release: timer and phone-auth composition
+
+Firstmate released the CI hold after the shared timer and urgent phone-auth
+repairs landed. Router integration head `5a3dd9632` merged cleanly into this
+continuation, preserving the repository's native I/O scheduler configuration
+and the Group A portable-proof transform.
+
+Fresh affected local verification passes **261 cases across nine serial
+Vitest suites** at `--maxWorkers=2`: source planning17, shared timer15, real
+PostgreSQL11 plus strict5, Members83, actual router owner31, picker5, owner
+Workbench/wallet3 and main live connection91. The PostgreSQL closure suites
+have zero skips. Full root typecheck, dependency builds, bundle3, boundary
+regressions29, architecture20 and phone inventory72/72 pass. All46 evidence
+selectors still bind exact production JSX. No assertion or budget changed.
+
+Per instruction014, this composition is pushed once and receives one fresh
+remote CI run. Whole-finding/cohort closure remains Open, and remote completion
+is reported separately as green checks or a concrete failed-job result.
+
+## Main-landing hold: exact-head CI diagnosis
+
+Checks run `41750860991` at `973daf49a` failed four jobs, comprising two leaf
+suites and two aggregate gates. Shard4 has three failing MCP negotiation
+assertions: the synthetic OAuth fixture omits `resource`, and the joined-stream
+route throws before its capability refusal. The pending router integration
+already repairs that fixture in `1c559d844` using the production OAuth
+constructor. Applying that upstream file temporarily makes all four negotiation
+cases pass, including the unchanged zero-application-read assertion; the local
+file was then restored rather than duplicating the inherited repair.
+
+Shard7 has one failing Tray mutable-source assertion. An agent shared with a
+second Workspace exposes its owner in that Workspace's public roster as well
+as its profile. Group A's dedicated roster source correctly adds the exact
+`roster-projection` fact on ownership transfer; the older test expected only
+`profile-projection`. The assertion now requires exactly those two facts in
+order, retaining rejection of every unrelated Tray or other source fact. The
+whole 16-case Tray suite passes. No production code, limits or authority checks
+changed. Both suites were run separately with `--maxWorkers=2`.
+
+At diagnosis, current main `5547a106b` contains neither router proof suite;
+the router PR has not landed there yet. Firstmate instruction015 holds all
+pushes and combined-branch merges until that landing and an explicit release
+to retarget this continuation to main. The two downstream aggregate failures
+are consequences of the failing server shards, not additional test failures.
+
+
+## Main integration after router landing
+
+Firstmate instruction016 releases the hold after the router landed on main.
+This continuation now targets main `f1ec3c759`. The merge uses the exact 45-file
+Group A delta from the previous integrated base over the current main tree,
+avoiding duplicate-history add/add resolutions while preserving all unrelated
+main files and its phone-auth, timer, media and MCP fixture repairs. Local
+commit `c17886ff2` remains in the merge history and its exact Tray assertion is
+retained. No production behavior was changed to satisfy that assertion.
+
+Fresh verification passes **336 cases across 15 serial Vitest suites**, each
+with `--maxWorkers=2`: MCP negotiation4, Tray mutable source16, source
+planning17, real PostgreSQL11 plus strict5, Members83, actual phone owner31,
+picker5, owner hooks3, live connection91, lanes34, atomic groups11,
+admission14, display2 and Room folds9. All16 PostgreSQL cases pass without
+skips. Full root typecheck, dependency builds, codec generation, bundle3,
+boundary regressions29, architecture checks and phone inventory72/72 pass;
+all46 production evidence selectors remain valid. Scenario deadlines, exact
+assertions, byte budgets and production capability settings remain unchanged.
+
+Per instruction016 this merged head receives one push and one CI round.
+Remote readiness must be checked on that exact head; the ten whole findings
+remain Open for the consumer/cohort obligations documented above.

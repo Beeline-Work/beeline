@@ -11,7 +11,7 @@ export type TrayClockDrain = Readonly<{
   continuation: boolean;
 }>;
 
-/** Uninstalled. Reuses the existing aggregate owner/90s lease; this creates no
+/** Release-installed. Reuses the existing aggregate owner/90s lease; this creates no
  * leader, evidence loop, retained receipt history or provider callback. The
  * ephemeral row queues an exact owner check at actual SQL COMMIT and deletes
  * itself there, matching the existing turn-owned effect fence pattern. */
@@ -34,7 +34,7 @@ BEGIN
    END IF;
    RETURN;
  END IF;
- INSERT INTO tray_clock_owner_fences VALUES(txid_current(),owner_instance,owner_generation,owner_nonce);
+ INSERT INTO tray_clock_owner_fences(transaction_id,instance_id,generation,claim_nonce) VALUES(txid_current(),owner_instance,owner_generation,owner_nonce);
 END;
 $$;
 CREATE OR REPLACE FUNCTION beeline_commit_tray_clock_owner() RETURNS trigger LANGUAGE plpgsql AS $$

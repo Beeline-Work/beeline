@@ -1,3 +1,7 @@
+import { BACKGROUND_OWNERSHIP_SCHEMA } from './background-ownership.js';
+import { TRAY_CLOCK_SOURCE_SCHEMA } from './tray-clock-source.js';
+import { TRAY_CLOCK_OWNER_SCHEMA } from './tray-clock-owner.js';
+import { TRAY_CLOCK_WORK_SCHEMA } from './tray-clock-work.js';
 import { DISPLAY_DEADLINE_SOURCE_SCHEMA } from './deadline-expiry-source.js';
 import { SENTRY_WAKE_SOURCE_SCHEMA } from './sentry-wake-source.js';
 import { CONNECTOR_OFFER_EXPIRY_SCHEMA } from './connector-offer-expiry.js';
@@ -15,6 +19,7 @@ import { commandCompletionSchema } from './command-completion.js';
 import { ROUTER_PROJECTION_SCHEMA, ROUTER_EXTRA_CAPTURE_SCHEMA } from './router-projection-schema.js';
 import { ROUTER_PROFILE_SCHEMA } from './router-profile-source.js';
 import { ROUTER_OWNER_SCHEMA } from './router-owner-source.js';
+import { ROUTER_ROSTER_SCHEMA } from './router-roster-source.js';
 import { SCHEDULED_WORK_AUTHORITY_SCHEMA } from './scheduled-work-authority.js';
 import { ROOM_SCHEDULES_CAPTURE_SCHEMA } from './room-schedules-capture.js';
 import { ROUTER_COMMAND_SCHEMA } from './router-command-ledger.js';
@@ -76,7 +81,6 @@ import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 import { CORNER_GITHUB_CACHE_MIRROR_SQL, backfillCornerLifecycleRuns, deleteStoredCornerWorkflows } from './corner-lifecycle.js';
 import { backfillFeedbackTriageWorkflow, backfillFeedbackSignalWalk, backfillWorkspaceWalkHistory } from './feedback-triage-workflow.js';
 import { backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, closeStaleWorkflowGateChoices } from './workflow-runs.js';
-import { retireAgentClasses } from './agent-class-retirement.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
 import {
@@ -264,7 +268,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 // Router readiness has its own marker, written only after all migrations finish.
 // The expansion image (router off) becomes the switch release's rollback floor.
 export const REQUIRED_SCHEMA_VERSION = 46;
-export const REQUIRED_ROUTER_SCHEMA_VERSION = 61;
+export const REQUIRED_ROUTER_SCHEMA_VERSION = 62;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -851,9 +855,8 @@ ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS read_through timestam
 ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS receipt jsonb;
 ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS completed_at timestamptz;
 
--- Retained but unused: agent classes and weight tiers were removed
--- (retireAgentClasses clears it). Kept so an older server image stays
--- compatible during a rolling update; a later migration can drop it.
+-- Retained for serving/rollback compatibility after completed class retirement.
+-- The reviewed drop is staged in scripts/audit-decisions-drop-columns.sql.
 ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS weight_tier_rules jsonb;
 
 CREATE TABLE IF NOT EXISTS rooms (
@@ -994,7 +997,7 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS squire_report jsonb;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS squire_work jsonb NOT NULL DEFAULT '{}'::jsonb;
 -- The harness is posted alongside the model catalog on every activation
 -- (same cadence as selected_model). custom_tags is retained but unused:
--- agent tags were removed (retireAgentClasses clears it).
+-- agent tags were removed; the reviewed contract drop waits for old images.
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS harness text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS custom_tags jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE agents DROP CONSTRAINT IF EXISTS agents_model_unavailable_check;
@@ -2560,7 +2563,7 @@ ALTER TABLE operator_function_events ADD COLUMN IF NOT EXISTS js_response_delay_
   CHECK (js_response_delay_ms >= 0 AND js_response_delay_ms <= 600000);
 ALTER TABLE push_delivery_claims DROP CONSTRAINT IF EXISTS push_delivery_claims_status_check;
 ALTER TABLE push_delivery_claims ADD CONSTRAINT push_delivery_claims_status_check
-  CHECK (status IN ('claimed', 'delivered', 'failed', 'suppressed', 'retryable'));
+  CHECK (status IN ('claimed', 'delivered', 'failed', 'suppressed', 'retryable', 'uncertain'));
 
 -- Release announcements and their queued device-registration replays are retired.
 DROP TABLE IF EXISTS push_release_catchups;
@@ -3230,7 +3233,7 @@ export async function migrate(
     database, 'push_delivery_claims_terminal_idx',
     `CREATE INDEX CONCURRENTLY push_delivery_claims_terminal_idx
      ON push_delivery_claims(completed_at)
-     WHERE status IN ('delivered','suppressed','failed')`,
+     WHERE status IN ('delivered','suppressed','failed','uncertain')`,
   ));
   await runMigrationStep('pending read-clear claim index', () => createIndexConcurrently(
     database, 'push_delivery_claims_read_clear_idx',
@@ -3569,6 +3572,7 @@ export async function migrate(
   await ddlScript('router projection extra sources', ROUTER_EXTRA_CAPTURE_SCHEMA);
   await ddlScript('router profile sources', ROUTER_PROFILE_SCHEMA);
   await ddlScript('router owner sources', ROUTER_OWNER_SCHEMA);
+  await ddlScript('router roster source',ROUTER_ROSTER_SCHEMA);
   await ddlScript('scheduled work authority', SCHEDULED_WORK_AUTHORITY_SCHEMA);
   await ddlScript('scheduled work sources', ROOM_SCHEDULES_CAPTURE_SCHEMA);
   await ddlScript('server lease deadlines', SERVER_LEASE_DEADLINE_SCHEMA);
@@ -3581,6 +3585,10 @@ export async function migrate(
   await ddlScript('Helper command activation', HELPER_ACTIVATION_SCHEMA);
   await ddlScript('push outbox', PUSH_OUTBOX_SCHEMA);
   await ddlScript('Background obligation sources', BACKGROUND_DUE_SOURCE_SCHEMA);
+  await ddlScript('Router background ownership', BACKGROUND_OWNERSHIP_SCHEMA);
+  await ddlScript('Tray clock sources and readiness', TRAY_CLOCK_SOURCE_SCHEMA);
+  await ddlScript('Tray clock commit ownership', TRAY_CLOCK_OWNER_SCHEMA);
+  await ddlScript('Tray clock work streams', TRAY_CLOCK_WORK_SCHEMA);
   if (!options.deferData) await migrateData(database);
 }
 
@@ -3675,8 +3683,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     reconcileCornerMergeBlockers(database));
   if (blockers)
     console.log(`reconcileCornerMergeBlockers: dispatched ${blockers} implementer command(s)`);
-  const classes = await dataStep('agent class retirement', () => retireAgentClasses(database));
-  if (classes.runs) console.log(`retireAgentClasses: converted ${classes.runs} workflow run(s)`);
+  // Agent class retirement completed before the audit cleanup. Compatibility
+  // columns remain until serving and rollback images no longer read them.
   const reviewers = await dataStep('corner reviewers', () =>
     reconcileConfiguredCornerReviewers(database));
   console.log(

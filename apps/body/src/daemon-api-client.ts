@@ -1,5 +1,6 @@
 import { HELPER_USAGE_OPERATIONS, type HelperUsageOperation } from './helper-usage-channel.js';
 import { invalidateUsageAccountAttachment } from './helper-usage-publisher.js';
+import { postChangedAgentUsage } from './helper-usage-binding.js';
 import {
   isAgentCommand,
   type AgentCommand,
@@ -444,7 +445,10 @@ export class DaemonApiClient {
     }
     if((HELPER_USAGE_OPERATIONS as readonly string[]).includes(String(name)) &&
       (name!=='postAgentUsage'||candidate.usageSource!==undefined||this.channel.usageAccountSelected)){
-      if(name==='postAgentUsage'&&candidate.usageSource===undefined)throw new Error('Negotiated usage source required');
+      // Existing collectors need not construct protocol ownership metadata.
+      // Bind their report to this negotiated actor before the single socket write.
+      if(name==='postAgentUsage'&&candidate.usageSource===undefined)
+        return postChangedAgentUsage(this,this.agentId,(input as Input<'postAgentUsage'>).usage) as Promise<Output<Name>>;
       this.requestCount++;this.inFlight++;
       try{
         const result=await this.channel.usage.request(name as HelperUsageOperation,input as never);

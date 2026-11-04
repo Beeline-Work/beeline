@@ -202,8 +202,9 @@ export class ConnectionPresence {
     this.#leaseTimer = (this.lease.connectionWork ?? startConnectionWork)(tick, this.#leaseRenewMs);
   }
 
-  /** A healthy authenticated phone also owns viewing/push suppression rows.
-   * Share the same aggregate lease with helpers, with an idempotent release. */
+  /** A live phone or composed background owner retains the aggregate lease.
+   * Phones also own viewing/push suppression rows. Share the existing helper
+   * renewal with an idempotent release, never a separate evidence loop. */
   holdServerConnection():()=>void {
     if(this.#stopped)return ()=>{};
     this.#phoneConnections++;

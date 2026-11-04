@@ -1,6 +1,6 @@
-const profileLane=vi.hoisted(()=>({mode:'legacy' as 'legacy'|'pending'|'router',view:null as any,listeners:new Set<()=>void>(),acquire:vi.fn(),retry:vi.fn()}));
+const profileLane=vi.hoisted(()=>({mode:'legacy' as 'legacy'|'pending'|'router',view:null as any,listeners:new Set<()=>void>(),acquire:vi.fn(),query:vi.fn(),retry:vi.fn()}));
 vi.mock('@/buzz/router-family',()=>({useRouterFamily:()=>profileLane.mode}));
-vi.mock('@/buzz/router-owner',()=>({routerOwnerUsageProfile:vi.fn(),acquireRouterLane:(...args:any[])=>profileLane.acquire(...args),retryRouterLane:(...args:any[])=>profileLane.retry(...args)}));
+vi.mock('@/buzz/router-owner',()=>({routerOwnerUsageProfile:vi.fn(),acquireRouterRosterQuery:(...args:any[])=>profileLane.query(...args),acquireRouterLane:(...args:any[])=>profileLane.acquire(...args),retryRouterLane:(...args:any[])=>profileLane.retry(...args)}));
 vi.mock('@/buzz/use-agent-usage-cell', () => ({ useAgentUsageCell: () => ({ mode: 'legacy', cell: null }) }));
 vi.mock('@/utils/responsive', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/responsive')>()), useIsDesktop: () => false }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
@@ -520,6 +520,29 @@ function baseAgent() {
     watchFilters: [],
   };
 }
+
+it('F03 negotiated Members render exact roster facts and admit search only on submit, never text editing or transient frames',async()=>{
+  const {MemberRosterRow}=await import('@/components/buzz/MemberRosterRow');
+  profileLane.mode='router';profileLane.view={state:'LIVE',value:{...baseWorkspace(),revision:'1'},error:null,cut:null};
+  const renderer=await render();
+  expect(profileLane.acquire.mock.calls.map(call=>call[0])).toEqual([{family:'workspace-roster',workspaceId:WORKSPACE}]);
+  const field=()=>renderer.root.findAll((node:any)=>node.props.testID==='members-search'&&node.props.onChangeText)[0]!;
+  for(let n=0;n<1000;n++){
+    await act(async()=>field().props.onChangeText(`edited-${n}`));
+    for(const listener of liveListeners)listener({monolithLive:{type:'presence',roomId:'',agentId:AGENT,status:'online'}});
+  }
+  expect(profileLane.query).not.toHaveBeenCalled();expect(roomView.workspace).not.toHaveBeenCalled();expect(roomView.workspaceMembers).not.toHaveBeenCalled();
+  const next={...profileLane.view.value,revision:'2',members:profileLane.view.value.members.map((member:any)=>
+    member.identity.pubkey===MEMBER?{...member,role:'spectator'}:member)};
+  await act(async()=>{profileLane.view={...profileLane.view,value:next};for(const wake of profileLane.listeners)wake();});
+  expect(renderer.root.findAllByType(MemberRosterRow).find((row:any)=>row.props.pubkey===MEMBER)?.props.role).toBe('spectator');
+  profileLane.query.mockImplementation(()=>({current:()=>({state:'LIVE',value:{...next,members:[],agents:[],peopleTotal:0,agentTotal:0},error:null,cut:null}),
+    release:()=>{},subscribe:()=>()=>{}}));
+  await act(async()=>field().props.onSubmitEditing());
+  expect(profileLane.query.mock.calls[0]?.[0]).toEqual({family:'workspace-roster',workspaceId:WORKSPACE,query:{revision:'2',q:'edited-999'}});
+  expect(renderer.root.findAllByType(MemberRosterRow)).toHaveLength(0);
+  expect(roomView.workspace).not.toHaveBeenCalled();expect(roomView.workspaceMembers).not.toHaveBeenCalled();expect(liveListeners.size).toBe(0);
+});
 
 it('F09 negotiated native profile and portrait consume one canonical detail; transient frames never read another profile or Workspace',async()=>{
   const {AgentProfileView}=await import('@/components/buzz/AgentProfileView');

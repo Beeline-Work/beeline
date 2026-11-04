@@ -18,7 +18,7 @@ const MENTION_EVENT = {
   }, required: ['roomId', 'messageId', 'memberId', 'replyRule', 'idempotencyKey', 'text', 'author'], additionalProperties: false },
 };
 /** Same wording list_mentions returns on a pending wake, so a webhook and a poll agree. */
-export const MCP_ORDER_WAKE_HINT = 'Do the work, then call report with this address.';
+export const MCP_ORDER_WAKE_HINT = 'Pass this order id as commandId on tool calls. Do the work, then call report with this address and commandId.';
 export const MCP_WAKE_HINT = 'Handle it, then call no_reply_needed with this address and this wake\'s id as commandId if nothing needs posting.';
 export function mcpWakeHint(kind: string | null | undefined): string {
   return kind === 'order' ? MCP_ORDER_WAKE_HINT : MCP_WAKE_HINT;

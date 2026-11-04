@@ -5,9 +5,9 @@ import type {SqlDatabase} from './database.js';
 export {readTrayClockBasisCause,type TrayClockBasisCause} from './tray-clock-protocol.js';
 
 const WORKSPACE_BIRTH=`CREATE TRIGGER beeline_tray_clock_workspace_birth AFTER INSERT ON workspaces FOR EACH ROW EXECUTE FUNCTION beeline_tray_clock_workspace_birth();`;
-/** Embedded after clock tables and the existing control notifier. All source
- * routines remain uninstalled/unselected in production until root's migration
- * floor and rollout proofs pass. No per-reader migration state exists. */
+/** Installed after clock tables and the existing control notifier by the release
+ * migration. The aggregate owner reconciles existing sources; no per-reader
+ * migration state exists. */
 export const TRAY_CLOCK_READINESS_SCHEMA=`
 ${TRAY_CLOCK_HEALTH_SCHEMA}
 CREATE TABLE IF NOT EXISTS tray_clock_readiness_floor(

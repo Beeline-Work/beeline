@@ -1,0 +1,287 @@
+{
+  "description": "Production web v0.1.142: trusted pointer/key to second requestAnimationFrame, an upper bound on next paint; mixed navigation and typing sample, not a load-completion metric",
+  "samples": [
+    {
+      "kind": "pointerdown",
+      "ms": 201.2000002861023,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 32.09999990463257,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 9.599999904632568,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 32.700000286102295,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 30.100000381469727,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 23.800000190734863,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 22,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 30.700000286102295,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 27.300000190734863,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 24.09999990463257,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 19.300000190734863,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 30.5,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 26.199999809265137,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 23.699999809265137,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 20.90000009536743,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 19.199999809265137,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 16.09999990463257,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 27.799999713897705,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 25.199999809265137,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 23.59999990463257,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 22.799999713897705,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 22,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 21.399999618530273,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 20.899999618530273,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 20.299999713897705,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 19.699999809265137,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 19.199999809265137,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 17.5,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 26.899999618530273,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 23.299999713897705,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 31.800000190734863,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 29.09999990463257,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 37.19999980926514,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 31.700000286102295,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 34.5,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 22.800000190734863,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 39.69999980926514,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 40.90000009536743,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 24,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 30.800000190734863,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 20.300000190734863,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 34.299999713897705,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 56.5,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 26.200000286102295,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 26.899999618530273,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 33.19999980926514,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 35.89999961853027,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 21.299999713897705,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 31.299999713897705,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 21.40000009536743,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 34.200000286102295,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 31.100000381469727,
+      "width": 1280
+    },
+    {
+      "kind": "keydown",
+      "ms": 22.199999809265137,
+      "width": 1280
+    },
+    {
+      "kind": "pointerdown",
+      "ms": 100.40000009536743,
+      "width": 1280
+    },
+    {
+      "kind": "pointerdown",
+      "ms": 90.40000009536743,
+      "width": 1280
+    },
+    {
+      "kind": "pointerdown",
+      "ms": 99,
+      "width": 1280
+    }
+  ],
+  "maxMs": 201.2000002861023,
+  "over150ms": 1
+}

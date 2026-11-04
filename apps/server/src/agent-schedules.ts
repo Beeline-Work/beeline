@@ -109,7 +109,8 @@ export class AgentScheduleLoop {
         `SELECT greatest(0,ceil(extract(epoch FROM (schedule.next_run_at-clock_timestamp()))*1000))::float8 delay_ms
          FROM agent_schedules schedule
          JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
-         WHERE ${unfailedSchedule} AND (schedule.workflow_run IS NOT NULL OR (
+         WHERE (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)
+           AND ${unfailedSchedule} AND (schedule.workflow_run IS NOT NULL OR (
            EXISTS(SELECT 1 FROM identities creator WHERE creator.id=schedule.creator_id
              AND (creator.kind='human' OR creator.id=schedule.agent_id))
            AND EXISTS(SELECT 1 FROM identities agent WHERE agent.id=schedule.agent_id AND agent.kind='agent')
@@ -144,6 +145,7 @@ export class AgentScheduleLoop {
        JOIN memberships agent_membership ON agent_membership.room_id=schedule.room_id
          AND agent_membership.identity_id=schedule.agent_id AND agent_membership.removed_at IS NULL
        WHERE schedule.next_run_at <= $1 AND schedule.workflow_run IS NULL AND ${unfailedSchedule}
+         AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)
        ORDER BY schedule.next_run_at,schedule.id LIMIT 100`,
       [now],
     );
@@ -171,6 +173,7 @@ export class AgentScheduleLoop {
                  AND agent_membership.identity_id=schedule.agent_id
                  AND agent_membership.removed_at IS NULL
                WHERE schedule.id=$1 AND schedule.next_run_at <= $2 AND schedule.workflow_run IS NULL AND ${unfailedSchedule}
+                 AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)
                FOR UPDATE OF schedule`,
               [candidate.id, now],
             )

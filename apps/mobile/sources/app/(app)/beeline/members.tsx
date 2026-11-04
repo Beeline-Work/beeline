@@ -1,3 +1,4 @@
+import {useRoutedRoster} from '@/buzz/use-routed-roster';
 import { useAgentUsageCell } from '@/buzz/use-agent-usage-cell';
 import { isUsageCellOnlyChange } from '@/buzz/agent-usage-cell';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
@@ -266,14 +267,16 @@ export default function BuzzMembers({
         : null,
     [identity?.publicKey, relayUrl, workspaceId, agentId],
   );
-  const surface = useSurfaceSnapshot(workspaceAddress, isWorkspaceView);
+  const roster=useRoutedRoster(workspaceId,focused&&!profileAgentId);
+  const cachedWorkspace=useSurfaceSnapshot(roster.mode==='legacy'?workspaceAddress:null,isWorkspaceView);
+  const surface=roster.mode==='legacy'?cachedWorkspace:roster.value;
   const routedAgent = useRoutedResource('agent-profile', workspaceId && profileAgentId
     ? {family:'agent-profile',workspaceId,agentId:profileAgentId} : undefined, focused&&!!profileAgentId);
   const cachedAgent = useSurfaceSnapshot(profileAgentId&&routedAgent.mode!=='legacy'?null:agentAddress, isAgentDetailView);
   const profileMode=profileAgentId?routedAgent.mode:'legacy';
   const selectedAgent = profileAgentId&&routedAgent.mode!=='legacy' ? routedAgent.value : cachedAgent;
   const setSelectedAgent = (value: AgentDetailView | null) => {
-    if(profileAgentId&&routedAgent.mode!=='legacy')return;
+    if(roster.mode!=='legacy'||profileAgentId&&routedAgent.mode!=='legacy')return;
     if (!value) {
       setLocalAgentId(null);
       return;
@@ -517,7 +520,7 @@ export default function BuzzMembers({
         current?.publicKey === nextIdentity.publicKey ? current : nextIdentity,
       );
       setRelayUrl(nextRelayUrl);
-      if(profileAgentId&&routedAgent.mode!=='legacy')return;
+      if(roster.mode!=='legacy'||profileAgentId&&routedAgent.mode!=='legacy')return;
       // Every Members instance (the list under an agent profile included)
       // paints the one shared entry; rows and totals read the shared records,
       // which hear every write of this entry.
@@ -556,7 +559,7 @@ export default function BuzzMembers({
       schedulerRef.current = null;
       setRosterQuery('');
     };
-  }, [focused, retryGeneration, workspaceId, profileAgentId,routedAgent.mode]);
+  }, [focused, retryGeneration, workspaceId, profileAgentId,routedAgent.mode,roster.mode]);
 
   const closeAgentSettings = () => {
     agentRequestGenerationRef.current += 1;
@@ -667,7 +670,7 @@ export default function BuzzMembers({
   }, [focused, requestedAction, surface]);
 
   useEffect(() => {
-    if (!focused || !identity || !relayUrl || !workspaceId) return;
+    if (roster.mode!=='legacy'||!focused || !identity || !relayUrl || !workspaceId) return;
     const q = memberQuery.trim();
     if (!q) {
       setRosterQuery('');
@@ -690,10 +693,13 @@ export default function BuzzMembers({
     };
     // Search is a dedicated server read; identity/relay are the auth it needs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focused, memberQuery, identity, relayUrl, workspaceId]);
+  }, [focused, memberQuery, identity, relayUrl, workspaceId,roster.mode]);
 
   const loadMoreMembers = async (kind: 'human' | 'agent') => {
     if (!surface || rosterLoading) return;
+    if(roster.mode==='router'){
+      try{roster.more(kind);}catch(reason){setError(appErrorCopy(reason,'Could not load more members.'));}return;
+    }
     const q = memberQuery.trim();
     const page = workspacePage(recordScope, q);
     setRosterLoading(true);
@@ -1058,7 +1064,7 @@ export default function BuzzMembers({
     };
   }, [selectedAgent]);
 
-  const displayedError = (profileAgentId&&routedAgent.mode!=='legacy'?routedAgent.error:null) ?? error ?? workspaceError;
+  const displayedError = roster.error ?? (profileAgentId&&routedAgent.mode!=='legacy'?routedAgent.error:null) ?? error ?? workspaceError;
   const busy = working !== null;
   if (profileAgentId) {
     return (
@@ -1356,25 +1362,25 @@ export default function BuzzMembers({
   if (!surface) {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
-        <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />
+        <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => {if(roster.mode==='router'){roster.retry();return;}setRetryGeneration((value) => value + 1);}} />
       </View>
     );
   }
 
   const canManage = surface.viewer.permissions.manage;
   const page = workspacePage(recordScope, rosterQuery);
-  const people = workspaceRows<WorkspaceView['members'][number]>(
+  const people = roster.mode==='router'?surface.members:workspaceRows<WorkspaceView['members'][number]>(
     recordScope,
     page.people?.ids ?? [],
   );
-  const agents = workspaceRows<WorkspaceView['agents'][number]>(
+  const agents = roster.mode==='router'?surface.agents:workspaceRows<WorkspaceView['agents'][number]>(
     recordScope,
     page.agents?.ids ?? [],
   );
-  const peopleTotal = page.people?.total;
-  const agentTotal = page.agents?.total;
-  const canLoadMorePeople = Boolean(page.people?.truncated) && !rosterLoading;
-  const canLoadMoreAgents = Boolean(page.agents?.truncated) && !rosterLoading;
+  const peopleTotal = roster.mode==='router'?surface.peopleTotal:page.people?.total;
+  const agentTotal = roster.mode==='router'?surface.agentTotal:page.agents?.total;
+  const canLoadMorePeople = (roster.mode==='router'?surface.membersTruncated:Boolean(page.people?.truncated)) && !rosterLoading&&!roster.loading;
+  const canLoadMoreAgents = (roster.mode==='router'?surface.agentsTruncated:Boolean(page.agents?.truncated)) && !rosterLoading&&!roster.loading;
 
   const personRow = (member: (typeof people)[number]) => {
     return (
@@ -1432,7 +1438,7 @@ export default function BuzzMembers({
           titleTestID="members-title"
         />
         {!!displayedError && (
-          <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); schedulerRef.current?.force(); }} />
+          <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); if(roster.mode==='router'){roster.retry();return;}schedulerRef.current?.force(); }} />
         )}
         <KeyboardAwareScrollView
           bottomOffset={16}
@@ -1448,6 +1454,7 @@ export default function BuzzMembers({
             autoCorrect={false}
             editable={!busy}
             onChangeText={setMemberQuery}
+            onSubmitEditing={()=>{if(roster.mode==='router')try{roster.search(memberQuery.trim());}catch(reason){setError(appErrorCopy(reason,'Could not search members.'));}}}
             placeholder="Search members"
             placeholderTextColor={theme.buzz.textMuted}
             returnKeyType="search"

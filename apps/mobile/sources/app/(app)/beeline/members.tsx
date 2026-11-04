@@ -1067,18 +1067,24 @@ export default function BuzzMembers({
   const displayedError = roster.error ?? (profileAgentId&&routedAgent.mode!=='legacy'?routedAgent.error:null) ?? error ?? workspaceError;
   const busy = working !== null;
   const viewerPubkey = surface?.viewer.identity.pubkey;
-  const openRosterPerson = React.useCallback((pubkey: string) => {
-    router.push({
-      pathname: pubkey === viewerPubkey ? '/beeline/settings' : '/beeline/human-profile',
-      params: { communityId: workspaceId, memberId: pubkey },
-    } as Href);
-  }, [viewerPubkey, workspaceId]);
-  const openRosterAgent = React.useCallback((pubkey: string) => {
-    router.push({
-      pathname: '/beeline/agent-profile',
-      params: { communityId: workspaceId, agentId: pubkey },
-    } as Href);
-  }, [workspaceId]);
+  const openRosterPerson = React.useCallback(
+    (pubkey: string) => {
+      router.push({
+        pathname: pubkey === viewerPubkey ? '/beeline/settings' : '/beeline/human-profile',
+        params: { communityId: workspaceId, memberId: pubkey },
+      } as Href);
+    },
+    [viewerPubkey, workspaceId],
+  );
+  const openRosterAgent = React.useCallback(
+    (pubkey: string) => {
+      router.push({
+        pathname: '/beeline/agent-profile',
+        params: { communityId: workspaceId, agentId: pubkey },
+      } as Href);
+    },
+    [workspaceId],
+  );
   if (profileAgentId) {
     return (
       <AgentProfileView

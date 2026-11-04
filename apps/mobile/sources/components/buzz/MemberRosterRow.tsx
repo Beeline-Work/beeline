@@ -113,65 +113,68 @@ export function memberRosterModel(member: { kind: 'human' } | { kind: 'agent'; m
  * Members page and Room/corner roster sheets; callers retain only their
  * actions, detail panels, and which edge owns the section divider.
  */
-export const MemberRosterRow = React.memo(function MemberRosterRow(props: MemberRosterRowProps) {
-  const usage = props.kind === 'agent' ? memberRosterUsage(props.usage) : undefined;
-  const title = props.title ?? memberRosterTitle(props);
-  const subtitle = props.subtitle ?? memberRosterSubtitle(props);
-  const address = title.slice(1);
-  // Presence is not spoken: it ages out while an idle agent waits on its
-  // socket, so only a live turn is named, matching the ring.
-  const workingState = props.kind === 'agent' && props.alive ? ', working' : '';
+export const MemberRosterRow = React.memo(
+  function MemberRosterRow(props: MemberRosterRowProps) {
+    const usage = props.kind === 'agent' ? memberRosterUsage(props.usage) : undefined;
+    const title = props.title ?? memberRosterTitle(props);
+    const subtitle = props.subtitle ?? memberRosterSubtitle(props);
+    const address = title.slice(1);
+    // Presence is not spoken: it ages out while an idle agent waits on its
+    // socket, so only a live turn is named, matching the ring.
+    const workingState = props.kind === 'agent' && props.alive ? ', working' : '';
 
-  return (
-    <IndexRow
-      accessibilityLabel={
-        props.accessibilityLabel ??
-        `${title}, ${props.kind === 'human' ? 'person' : 'agent'}${workingState}, at ${address}`
-      }
-      accessibilityRole={props.accessibilityRole}
-      accessibilityState={props.accessibilityState}
-      chevron={props.chevron}
-      density={props.density}
-      description={subtitle}
-      descriptionContent={
-        subtitle !== undefined && usage ? (
-          <Text numberOfLines={1} style={styles.subtitle}>
-            {subtitle}
-            <Text style={usage.tone === 'danger' ? styles.danger : styles.warning}>
-              {` · ${usage.text}`}
+    return (
+      <IndexRow
+        accessibilityLabel={
+          props.accessibilityLabel ??
+          `${title}, ${props.kind === 'human' ? 'person' : 'agent'}${workingState}, at ${address}`
+        }
+        accessibilityRole={props.accessibilityRole}
+        accessibilityState={props.accessibilityState}
+        chevron={props.chevron}
+        density={props.density}
+        description={subtitle}
+        descriptionContent={
+          subtitle !== undefined && usage ? (
+            <Text numberOfLines={1} style={styles.subtitle}>
+              {subtitle}
+              <Text style={usage.tone === 'danger' ? styles.danger : styles.warning}>
+                {` · ${usage.text}`}
+              </Text>
             </Text>
-          </Text>
-        ) : undefined
-      }
-      disabled={props.disabled}
-      divider={props.divider}
-      inset={props.inset}
-      leading={
-        <IdentityMark
-          kind={props.kind}
-          seed={props.seed ?? props.pubkey}
-          avatarUrl={props.avatarUrl}
-          face={props.face}
-          name={props.name}
-          size={38}
-          alive={props.kind === 'agent' ? props.alive : undefined}
-        />
-      }
-      onPress={props.onPress ? () => props.onPress?.(props.pubkey) : undefined}
-      testID={props.testID}
-      title={title}
-      titleAside={memberRosterModel(props)}
-      trailing={props.trailing}
-      value={props.value}
-    />
-  );
-}, (previous, next) => {
-  // Usage snapshots can replace equal DTOs. React elements on the trailing
-  // axis retain React's identity comparison rather than walking their owners.
-  const { trailing: beforeTrailing, ...before } = previous;
-  const { trailing: afterTrailing, ...after } = next;
-  return beforeTrailing === afterTrailing && equal(before, after);
-});
+          ) : undefined
+        }
+        disabled={props.disabled}
+        divider={props.divider}
+        inset={props.inset}
+        leading={
+          <IdentityMark
+            kind={props.kind}
+            seed={props.seed ?? props.pubkey}
+            avatarUrl={props.avatarUrl}
+            face={props.face}
+            name={props.name}
+            size={38}
+            alive={props.kind === 'agent' ? props.alive : undefined}
+          />
+        }
+        onPress={props.onPress ? () => props.onPress?.(props.pubkey) : undefined}
+        testID={props.testID}
+        title={title}
+        titleAside={memberRosterModel(props)}
+        trailing={props.trailing}
+        value={props.value}
+      />
+    );
+  },
+  (previous, next) => {
+    // Usage snapshots can replace equal DTOs. React elements on the trailing
+    // axis retain React's identity comparison rather than walking their owners.
+    const { trailing: beforeTrailing, ...before } = previous;
+    const { trailing: afterTrailing, ...after } = next;
+    return beforeTrailing === afterTrailing && equal(before, after);
+  },
+);
 
 const styles = StyleSheet.create((theme) => {
   const { buzz: hull } = theme;

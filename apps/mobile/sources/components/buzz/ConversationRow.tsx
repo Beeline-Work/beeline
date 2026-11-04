@@ -26,186 +26,221 @@ import { useRoomCornerSummary } from '@/buzz/room-corner-store';
 import { CornerGlyph } from './CornerGlyph';
 import { PinGlyph } from './PinGlyph';
 
-export const ConversationRow = React.memo(function ConversationRow({
-  item,
-  viewer,
-  now,
-  onPress,
-  onPin,
-  pinned = false,
-  selected = false,
-  desktop = false,
-  cornersExpanded = false,
-  onToggleCorners,
-  onOpenCorners,
-  onLongPressCorners,
-  testID,
-}: {
-  item: ChatListItem;
-  viewer?: string;
-  now: number;
-  onPress: (roomId: string) => void;
-  onPin: (roomId: string) => void;
-  pinned?: boolean;
-  selected?: boolean;
-  desktop?: boolean;
-  cornersExpanded?: boolean;
-  onToggleCorners?: (roomId: string) => void;
-  /** Tap of the corner glyph opens the Room's corner list instead of toggling it. */
-  onOpenCorners?: (roomId: string) => void;
-  /** Long-press of the corner glyph opens a new corner in this Room. */
-  onLongPressCorners?: (roomId: string) => void;
-  testID: string;
-}) {
-  const refused = useRoomOutboxFailure(item.room.id);
-  const name = roomRowName(item);
-  const preview = roomRowPreview(item, viewer);
-  const call = item.voiceCall && !item.voiceCall.endedAt ? item.voiceCall : null;
-  const [callNow, setCallNow] = React.useState(() => Date.now());
-  React.useEffect(() => {
-    if (!call) return;
-    setCallNow(Date.now());
-    const timer = setInterval(() => setCallNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [call?.id]);
-  const reason = roomRowAttentionReason(item);
-  const needsYou = Boolean(reason);
-  const showReason = item.agentState === 'needs-you' && reason;
-  const status = needsYou ? 'needs you' : item.unread ? 'new messages' : null;
-  const cornerSummary = useRoomCornerSummary(item.room.id);
-  const hasCorners = roomRowShowsCornerMark(item, cornerSummary);
-  const cornerCount = cornerSummary?.openCorners.filter((corner) => corner.mine).length ?? 0;
-  const cornerPosition = desktop ? styles.desktopCornerToggle : styles.mobileCornerToggle;
-  const cornerRotation = useSharedValue(cornersExpanded ? 1 : 0);
-  React.useEffect(() => {
-    cornerRotation.value = withTiming(cornersExpanded ? 1 : 0, {
-      duration: 180,
-      easing: Easing.out(Easing.cubic),
-      reduceMotion: ReduceMotion.System,
-    });
-  }, [cornerRotation, cornersExpanded]);
-  const cornerRotationStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${cornerRotation.value * 135}deg` }],
-  }));
-  // Measure the actual control. A positioned wrapper can report a different
-  // native window rect from the glyph it encloses.
-  const cornerMark = (
-    <Pressable
-      accessibilityLabel={
-        onOpenCorners
-          ? `Open corners of ${name.sigil}${name.name}`
-          : `${cornersExpanded ? 'Collapse' : 'Expand'} ${cornerCount} corners`
-      }
-      accessibilityRole="button"
-      accessibilityState={onOpenCorners ? undefined : { expanded: cornersExpanded }}
-      accessibilityHint={onLongPressCorners ? 'Long press to open a new corner' : undefined}
-      delayLongPress={onLongPressCorners ? 450 : undefined}
-      hitSlop={8}
-      onLongPress={onLongPressCorners ? () => onLongPressCorners(item.room.id) : undefined}
-      onPress={onOpenCorners || onToggleCorners ? () => (onOpenCorners ?? onToggleCorners)?.(item.room.id) : undefined}
-      style={[styles.cornerToggle, cornerPosition]}
-      testID={`${testID}-corners`}
-    >
-      <Animated.View style={cornerRotationStyle}>
-        <CornerGlyph size={13} />
-      </Animated.View>
-    </Pressable>
-  );
-
-  return (
-    <View style={[styles.row, selected && styles.selected]}>
+export const ConversationRow = React.memo(
+  function ConversationRow({
+    item,
+    viewer,
+    now,
+    onPress,
+    onPin,
+    pinned = false,
+    selected = false,
+    desktop = false,
+    cornersExpanded = false,
+    onToggleCorners,
+    onOpenCorners,
+    onLongPressCorners,
+    testID,
+  }: {
+    item: ChatListItem;
+    viewer?: string;
+    now: number;
+    onPress: (roomId: string) => void;
+    onPin: (roomId: string) => void;
+    pinned?: boolean;
+    selected?: boolean;
+    desktop?: boolean;
+    cornersExpanded?: boolean;
+    onToggleCorners?: (roomId: string) => void;
+    /** Tap of the corner glyph opens the Room's corner list instead of toggling it. */
+    onOpenCorners?: (roomId: string) => void;
+    /** Long-press of the corner glyph opens a new corner in this Room. */
+    onLongPressCorners?: (roomId: string) => void;
+    testID: string;
+  }) {
+    const refused = useRoomOutboxFailure(item.room.id);
+    const name = roomRowName(item);
+    const preview = roomRowPreview(item, viewer);
+    const call = item.voiceCall && !item.voiceCall.endedAt ? item.voiceCall : null;
+    const [callNow, setCallNow] = React.useState(() => Date.now());
+    React.useEffect(() => {
+      if (!call) return;
+      setCallNow(Date.now());
+      const timer = setInterval(() => setCallNow(Date.now()), 1000);
+      return () => clearInterval(timer);
+    }, [call?.id]);
+    const reason = roomRowAttentionReason(item);
+    const needsYou = Boolean(reason);
+    const showReason = item.agentState === 'needs-you' && reason;
+    const status = needsYou ? 'needs you' : item.unread ? 'new messages' : null;
+    const cornerSummary = useRoomCornerSummary(item.room.id);
+    const hasCorners = roomRowShowsCornerMark(item, cornerSummary);
+    const cornerCount = cornerSummary?.openCorners.filter((corner) => corner.mine).length ?? 0;
+    const cornerPosition = desktop ? styles.desktopCornerToggle : styles.mobileCornerToggle;
+    const cornerRotation = useSharedValue(cornersExpanded ? 1 : 0);
+    React.useEffect(() => {
+      cornerRotation.value = withTiming(cornersExpanded ? 1 : 0, {
+        duration: 180,
+        easing: Easing.out(Easing.cubic),
+        reduceMotion: ReduceMotion.System,
+      });
+    }, [cornerRotation, cornersExpanded]);
+    const cornerRotationStyle = useAnimatedStyle(() => ({
+      transform: [{ rotate: `${cornerRotation.value * 135}deg` }],
+    }));
+    // Measure the actual control. A positioned wrapper can report a different
+    // native window rect from the glyph it encloses.
+    const cornerMark = (
       <Pressable
-        onPress={() => onPress(item.room.id)}
-        onLongPress={() => onPin(item.room.id)}
+        accessibilityLabel={
+          onOpenCorners
+            ? `Open corners of ${name.sigil}${name.name}`
+            : `${cornersExpanded ? 'Collapse' : 'Expand'} ${cornerCount} corners`
+        }
         accessibilityRole="button"
-        accessibilityHint="Long press to toggle this conversation's pin"
-        accessibilityLabel={`${name.sigil}${name.name}${status ? `, ${status}` : ''}${pinned ? ', pinned' : ''}`}
-        accessibilityState={selected ? { selected: true } : undefined}
-        accessibilityActions={[
-          { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin conversation' },
-        ]}
-        onAccessibilityAction={(event) => {
-          if (event.nativeEvent.actionName === 'pin') onPin(item.room.id);
-        }}
-        style={({ pressed }) => [
-          styles.rowPressable,
-          desktop && styles.desktopRow,
-          desktop && selected && styles.desktopSelectedRow,
-          !desktop && styles.mobileRow,
-          item.unread && styles.unreadRow,
-          pressed && styles.pressed,
-        ]}
-        testID={testID}
+        accessibilityState={onOpenCorners ? undefined : { expanded: cornersExpanded }}
+        accessibilityHint={onLongPressCorners ? 'Long press to open a new corner' : undefined}
+        delayLongPress={onLongPressCorners ? 450 : undefined}
+        hitSlop={8}
+        onLongPress={onLongPressCorners ? () => onLongPressCorners(item.room.id) : undefined}
+        onPress={
+          onOpenCorners || onToggleCorners
+            ? () => (onOpenCorners ?? onToggleCorners)?.(item.room.id)
+            : undefined
+        }
+        style={[styles.cornerToggle, cornerPosition]}
+        testID={`${testID}-corners`}
       >
-        <View style={styles.copy}>
-          <View style={styles.heading}>
-            {pinned && (
-              <View style={styles.pin} testID={`${testID}-pinned`}>
-                <PinGlyph color={styles.sigil.color} size={10} />
-              </View>
-            )}
-            <Text numberOfLines={1} style={[styles.name, item.unread && styles.unreadName]}>
-              <Text style={styles.sigil}>{name.sigil}</Text>
-              {name.name}
-            </Text>
-          </View>
-          <View style={styles.previewLine}>
-            <Text
-              numberOfLines={desktop ? 2 : 1}
-              style={[
-                styles.preview,
-                item.unread && !showReason && styles.unreadPreview,
-                showReason && !call && styles.reason,
-              ]}
-              testID={`${testID}-preview`}
-            >
-              {refused ? <><Text style={styles.notSent}><Ionicons name="alert-circle-outline" size={13} color={styles.notSent.color} /> Not sent:</Text> {refused.row.text}</> : call ? <><Text style={styles.liveVoice}>●</Text> Ongoing call: {voiceCallHumanNames(call, viewer)}</> : showReason ? (
-                showReason
-              ) : (
-                <>
-                  {preview.attribution !== 'none' && preview.text !== NO_ACTIVITY_PREVIEW && (
-                    <Text style={preview.attribution === 'self' ? styles.quiet : styles.author}>
-                      {preview.attribution === 'self' ? 'you' : `@${preview.handle}`}
-                      <Text style={styles.quiet}>{'\u00a0\u00b7\u00a0'}</Text>
-                    </Text>
-                  )}
-                  {preview.text}
-                </>
-              )}
-            </Text>
-            <Text style={[styles.age, call && styles.liveVoice]} testID={`${testID}-age`}>
-              {call ? voiceDuration(callNow / 1000 - call.startedAt) : compactRelativeTime(item.latestMessage?.createdAt ?? item.room.updatedAt, now)}
-            </Text>
-          </View>
-        </View>
-        <View style={styles.statusCell}>
-          <View style={styles.statusSlot}>
-            {status && (
-              <View
-                accessibilityLabel={status}
-                accessibilityRole="image"
-                style={[styles.statusMark, needsYou && styles.needsRing]}
-                testID={`${testID}-${needsYou ? 'needs-you' : 'unread'}`}
-              >
-                <View style={styles.dot} />
-              </View>
-            )}
-          </View>
-          <View style={styles.statusSlot} />
-        </View>
+        <Animated.View style={cornerRotationStyle}>
+          <CornerGlyph size={13} />
+        </Animated.View>
       </Pressable>
-      {hasCorners && cornerMark}
-    </View>
-  );
-}, (previous, next) => {
-  const { item: beforeItem, now: beforeNow, ...before } = previous;
-  const { item: afterItem, now: afterNow, ...after } = next;
-  // Server snapshots can replace unchanged DTOs. Compare their values while
-  // retaining every callback in the comparison, so actions never go stale.
-  return equal(before, after) && equal(beforeItem, afterItem) &&
-    compactRelativeTime(beforeItem.latestMessage?.createdAt ?? beforeItem.room.updatedAt, beforeNow) ===
-    compactRelativeTime(afterItem.latestMessage?.createdAt ?? afterItem.room.updatedAt, afterNow);
-});
+    );
+
+    return (
+      <View style={[styles.row, selected && styles.selected]}>
+        <Pressable
+          onPress={() => onPress(item.room.id)}
+          onLongPress={() => onPin(item.room.id)}
+          accessibilityRole="button"
+          accessibilityHint="Long press to toggle this conversation's pin"
+          accessibilityLabel={`${name.sigil}${name.name}${status ? `, ${status}` : ''}${pinned ? ', pinned' : ''}`}
+          accessibilityState={selected ? { selected: true } : undefined}
+          accessibilityActions={[
+            { name: 'pin', label: pinned ? 'Unpin conversation' : 'Pin conversation' },
+          ]}
+          onAccessibilityAction={(event) => {
+            if (event.nativeEvent.actionName === 'pin') onPin(item.room.id);
+          }}
+          style={({ pressed }) => [
+            styles.rowPressable,
+            desktop && styles.desktopRow,
+            desktop && selected && styles.desktopSelectedRow,
+            !desktop && styles.mobileRow,
+            item.unread && styles.unreadRow,
+            pressed && styles.pressed,
+          ]}
+          testID={testID}
+        >
+          <View style={styles.copy}>
+            <View style={styles.heading}>
+              {pinned && (
+                <View style={styles.pin} testID={`${testID}-pinned`}>
+                  <PinGlyph color={styles.sigil.color} size={10} />
+                </View>
+              )}
+              <Text numberOfLines={1} style={[styles.name, item.unread && styles.unreadName]}>
+                <Text style={styles.sigil}>{name.sigil}</Text>
+                {name.name}
+              </Text>
+            </View>
+            <View style={styles.previewLine}>
+              <Text
+                numberOfLines={desktop ? 2 : 1}
+                style={[
+                  styles.preview,
+                  item.unread && !showReason && styles.unreadPreview,
+                  showReason && !call && styles.reason,
+                ]}
+                testID={`${testID}-preview`}
+              >
+                {refused ? (
+                  <>
+                    <Text style={styles.notSent}>
+                      <Ionicons
+                        name="alert-circle-outline"
+                        size={13}
+                        color={styles.notSent.color}
+                      />{' '}
+                      Not sent:
+                    </Text>{' '}
+                    {refused.row.text}
+                  </>
+                ) : call ? (
+                  <>
+                    <Text style={styles.liveVoice}>●</Text> Ongoing call:{' '}
+                    {voiceCallHumanNames(call, viewer)}
+                  </>
+                ) : showReason ? (
+                  showReason
+                ) : (
+                  <>
+                    {preview.attribution !== 'none' && preview.text !== NO_ACTIVITY_PREVIEW && (
+                      <Text style={preview.attribution === 'self' ? styles.quiet : styles.author}>
+                        {preview.attribution === 'self' ? 'you' : `@${preview.handle}`}
+                        <Text style={styles.quiet}>{'\u00a0\u00b7\u00a0'}</Text>
+                      </Text>
+                    )}
+                    {preview.text}
+                  </>
+                )}
+              </Text>
+              <Text style={[styles.age, call && styles.liveVoice]} testID={`${testID}-age`}>
+                {call
+                  ? voiceDuration(callNow / 1000 - call.startedAt)
+                  : compactRelativeTime(item.latestMessage?.createdAt ?? item.room.updatedAt, now)}
+              </Text>
+            </View>
+          </View>
+          <View style={styles.statusCell}>
+            <View style={styles.statusSlot}>
+              {status && (
+                <View
+                  accessibilityLabel={status}
+                  accessibilityRole="image"
+                  style={[styles.statusMark, needsYou && styles.needsRing]}
+                  testID={`${testID}-${needsYou ? 'needs-you' : 'unread'}`}
+                >
+                  <View style={styles.dot} />
+                </View>
+              )}
+            </View>
+            <View style={styles.statusSlot} />
+          </View>
+        </Pressable>
+        {hasCorners && cornerMark}
+      </View>
+    );
+  },
+  (previous, next) => {
+    const { item: beforeItem, now: beforeNow, ...before } = previous;
+    const { item: afterItem, now: afterNow, ...after } = next;
+    // Server snapshots can replace unchanged DTOs. Compare their values while
+    // retaining every callback in the comparison, so actions never go stale.
+    return (
+      equal(before, after) &&
+      equal(beforeItem, afterItem) &&
+      compactRelativeTime(
+        beforeItem.latestMessage?.createdAt ?? beforeItem.room.updatedAt,
+        beforeNow,
+      ) ===
+        compactRelativeTime(
+          afterItem.latestMessage?.createdAt ?? afterItem.room.updatedAt,
+          afterNow,
+        )
+    );
+  },
+);
 
 const styles = StyleSheet.create((theme) => ({
   liveVoice: { ...theme.buzz.type.meta, color: theme.buzz.accent },

@@ -5,7 +5,9 @@ let records: readonly MessageOutboxRecord[] = [];
 const listeners = new Set<() => void>();
 function subscribe(listener: () => void) {
   listeners.add(listener);
-  return () => { listeners.delete(listener); };
+  return () => {
+    listeners.delete(listener);
+  };
 }
 export function observeMessageOutbox(owner?: MessageOutbox): () => void {
   const publish = () => {

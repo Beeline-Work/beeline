@@ -190,9 +190,11 @@ export default function BuzzChannels() {
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
-  const workspaceListAddress = useMemo(() => identity && relayUrl
-    ? surfaceAddress(relayUrl, identity.publicKey, '/workspaces') : null,
-    [identity?.publicKey, relayUrl]);
+  const workspaceListAddress = useMemo(
+    () =>
+      identity && relayUrl ? surfaceAddress(relayUrl, identity.publicKey, '/workspaces') : null,
+    [identity?.publicKey, relayUrl],
+  );
   const workspaceList = useSurfaceSnapshot(workspaceListAddress, isWorkspaceListView);
   // Only a live read (never a cached one) may say "you have no Workspace".
   const [confirmedWorkspaceCount, setConfirmedWorkspaceCount] = useState<number | null>(null);
@@ -249,22 +251,29 @@ export default function BuzzChannels() {
   );
   const activeCommunityId =
     requestedWorkspaceId ?? chatList?.workspace.id ?? communities[0]?.communityId ?? null;
-  const workspaceDetailAddress = useMemo(() => identity && relayUrl && activeCommunityId
-    ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', { workspaceId: activeCommunityId })
-    : null, [identity?.publicKey, relayUrl, activeCommunityId]);
+  const workspaceDetailAddress = useMemo(
+    () =>
+      identity && relayUrl && activeCommunityId
+        ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', {
+            workspaceId: activeCommunityId,
+          })
+        : null,
+    [identity?.publicKey, relayUrl, activeCommunityId],
+  );
   const workspaceDetail = useSurfaceSnapshot(workspaceDetailAddress, isWorkspaceView);
   const activeCommunity =
     communities.find((entry) => entry.communityId === activeCommunityId) ?? null;
   const viewerIsAgent = chatList?.viewer.kind === 'agent';
   const canManageWorkspace =
     chatList?.workspace.role === 'owner' || chatList?.workspace.role === 'admin';
-  const [roomName, setRoomName, roomNameDraft]= useTextDraft(
+  const [roomName, setRoomName, roomNameDraft] = useTextDraft(
     `new-room:${activeCommunityId}`,
     '',
     identity?.publicKey ?? null,
   );
   const { query, setQuery, searchOpen, setSearchOpen } = useRoomSearch(
-    activeCommunityId ?? null, identity?.publicKey ?? null,
+    activeCommunityId ?? null,
+    identity?.publicKey ?? null,
   );
   const { pinned, pinsLoaded, togglePin, pinError } = useRoomPins(
     identity?.publicKey,
@@ -284,7 +293,11 @@ export default function BuzzChannels() {
     ),
   );
   const chatSections = useMemo(
-    () => roomListSections(filterConversations(chatList?.chats ?? [], query, filter, pinned), !query.trim() && filter === 'all'),
+    () =>
+      roomListSections(
+        filterConversations(chatList?.chats ?? [], query, filter, pinned),
+        !query.trim() && filter === 'all',
+      ),
     [chatList?.chats, query, filter, pinned],
   );
   const searchClient = useMemo(
@@ -447,7 +460,10 @@ export default function BuzzChannels() {
         nextIdentity.publicKey,
         '/workspaces',
       );
-      const cachedWorkspaces = await mobileSurfaceCache.read(workspaceCacheAddress, isWorkspaceListView);
+      const cachedWorkspaces = await mobileSurfaceCache.read(
+        workspaceCacheAddress,
+        isWorkspaceListView,
+      );
       if (cancelled) return;
       const selectedId = deckWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
       let selectedWorkspaceRemoved = false;
@@ -508,7 +524,11 @@ export default function BuzzChannels() {
       // copy; the deck paints it and reports whether it is on view.
       const chats = selectedId
         ? acquireChatList(
-            { relayUrl: nextRelayUrl, viewerPubkey: nextIdentity.publicKey, workspaceId: selectedId },
+            {
+              relayUrl: nextRelayUrl,
+              viewerPubkey: nextIdentity.publicKey,
+              workspaceId: selectedId,
+            },
             {
               visible: deckVisible,
               onRead: () => {
@@ -523,7 +543,10 @@ export default function BuzzChannels() {
                 setError(appErrorCopy(reason));
                 // A deleted Workspace's old route may be restored from storage
                 // before the authoritative workspace read has reconciled it.
-                if (reason instanceof RoomViewHttpError && (reason.status === 403 || reason.status === 404))
+                if (
+                  reason instanceof RoomViewHttpError &&
+                  (reason.status === 403 || reason.status === 404)
+                )
                   workspaceRefresh?.force();
               },
             },
@@ -612,9 +635,15 @@ export default function BuzzChannels() {
     const address = surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', {
       workspaceId: activeCommunityId,
     });
-    void mobileSurfaceCache.read(address, isWorkspaceView)
-      .then((cached) => cached ?? mobileSurfaceCache.fetch(address, isWorkspaceView,
-        () => http.workspace(activeCommunityId)))
+    void mobileSurfaceCache
+      .read(address, isWorkspaceView)
+      .then(
+        (cached) =>
+          cached ??
+          mobileSurfaceCache.fetch(address, isWorkspaceView, () =>
+            http.workspace(activeCommunityId),
+          ),
+      )
       .catch((reason) => {
         if (!cancelled) setError(appErrorCopy(reason));
       });
@@ -660,22 +689,25 @@ export default function BuzzChannels() {
   );
 
   // A list update changes one DTO, not every Room's event handlers.
-  const rowActions = useScopedCallbacks({
-    press: (roomId: string) => {
-      if (!roomListGestures.canInteract()) return;
-      swipeableRefs.current.get(roomId)?.close();
-      openRoom(roomId);
+  const rowActions = useScopedCallbacks(
+    {
+      press: (roomId: string) => {
+        if (!roomListGestures.canInteract()) return;
+        swipeableRefs.current.get(roomId)?.close();
+        openRoom(roomId);
+      },
+      pin: (roomId: string) => {
+        if (roomListGestures.canInteract()) void togglePin(roomId);
+      },
+      toggleCorners: (roomId: string) => {
+        if (roomListGestures.canInteract()) cornerDropdowns.toggle(roomId);
+      },
+      newCorner: (roomId: string) => {
+        if (roomListGestures.canInteract()) void openNewCorner(roomId);
+      },
     },
-    pin: (roomId: string) => {
-      if (roomListGestures.canInteract()) void togglePin(roomId);
-    },
-    toggleCorners: (roomId: string) => {
-      if (roomListGestures.canInteract()) cornerDropdowns.toggle(roomId);
-    },
-    newCorner: (roomId: string) => {
-      if (roomListGestures.canInteract()) void openNewCorner(roomId);
-    },
-  }, `${identity?.publicKey ?? ''}:${activeCommunityId ?? ''}`);
+    `${identity?.publicKey ?? ''}:${activeCommunityId ?? ''}`,
+  );
 
   const selectWorkspace = useCallback(
     (workspaceId: string | null) => {
@@ -781,8 +813,11 @@ export default function BuzzChannels() {
           name,
           private: true,
         });
-        if (githubScope) await updateGitHubAccess(githubScope,
-          (current) => ({ ...current, candidates: [...current.candidates, repository] }));
+        if (githubScope)
+          await updateGitHubAccess(githubScope, (current) => ({
+            ...current,
+            candidates: [...current.candidates, repository],
+          }));
         setPendingRepo(repository);
         return repository;
       } catch (reason) {
@@ -795,70 +830,74 @@ export default function BuzzChannels() {
     [transport],
   );
 
-  const createRoom = useCallback(async (repository: RepoCandidate | null) => {
-    const name = roomName.trim();
-    if (
-      !validRoomSlug(name) ||
-      !transport ||
-      !activeCommunityId ||
-      creatingRoom ||
-      creatingRepository ||
-      !canManageWorkspace
-    )
-      return;
-    setCreatingRoom(true);
-    setError(null);
-    const clearSubmittedRoom = roomNameDraft.capture();
-    let publishAcknowledged = false;
-    try {
-      await transport.createRoom(name, {
-        communityId: activeCommunityId,
-        visibility: inviteOnly ? 'invite-only' : 'public',
-        repository: repository ?? undefined,
-        onPublished: () => {
-          publishAcknowledged = true;
+  const createRoom = useCallback(
+    async (repository: RepoCandidate | null) => {
+      const name = roomName.trim();
+      if (
+        !validRoomSlug(name) ||
+        !transport ||
+        !activeCommunityId ||
+        creatingRoom ||
+        creatingRepository ||
+        !canManageWorkspace
+      )
+        return;
+      setCreatingRoom(true);
+      setError(null);
+      const clearSubmittedRoom = roomNameDraft.capture();
+      let publishAcknowledged = false;
+      try {
+        await transport.createRoom(name, {
+          communityId: activeCommunityId,
+          visibility: inviteOnly ? 'invite-only' : 'public',
+          repository: repository ?? undefined,
+          onPublished: () => {
+            publishAcknowledged = true;
+            clearSubmittedRoom();
+            setInviteOnly(false);
+            setPendingRepo(null);
+            setShowRepoPicker(false);
+            setShowCreateRoom(false);
+            chatStore.current?.force();
+          },
+        });
+        if (!publishAcknowledged) {
           clearSubmittedRoom();
           setInviteOnly(false);
           setPendingRepo(null);
           setShowRepoPicker(false);
           setShowCreateRoom(false);
-          chatStore.current?.force();
-        },
-      });
-      if (!publishAcknowledged) {
-        clearSubmittedRoom();
-        setInviteOnly(false);
-        setPendingRepo(null);
-        setShowRepoPicker(false);
-        setShowCreateRoom(false);
+        }
+        chatStore.current?.force();
+      } catch (reason) {
+        setError(
+          publishAcknowledged
+            ? appErrorCopy(reason, `${ROOM_LABEL} created, but membership is still syncing.`)
+            : appErrorCopy(reason, `Could not create ${ROOM_LABEL}.`),
+        );
+      } finally {
+        setCreatingRoom(false);
       }
-      chatStore.current?.force();
-    } catch (reason) {
-      setError(
-        publishAcknowledged
-          ? appErrorCopy(reason, `${ROOM_LABEL} created, but membership is still syncing.`)
-          : appErrorCopy(reason, `Could not create ${ROOM_LABEL}.`),
-      );
-    } finally {
-      setCreatingRoom(false);
-    }
-  }, [
-    activeCommunityId,
-    canManageWorkspace,
-    creatingRoom,
-    creatingRepository,
-    inviteOnly,
-    roomName,
-    roomNameDraft,
-    transport,
-  ]);
+    },
+    [
+      activeCommunityId,
+      canManageWorkspace,
+      creatingRoom,
+      creatingRepository,
+      inviteOnly,
+      roomName,
+      roomNameDraft,
+      transport,
+    ],
+  );
 
   const landing = deckLanding({
-    workspaces: confirmedWorkspaceCount !== null
-      ? { status: 'ready', count: confirmedWorkspaceCount }
-      : error
-        ? { status: 'failed' }
-        : { status: 'pending' },
+    workspaces:
+      confirmedWorkspaceCount !== null
+        ? { status: 'ready', count: confirmedWorkspaceCount }
+        : error
+          ? { status: 'failed' }
+          : { status: 'pending' },
     chats: chatList ? 'ready' : error ? 'failed' : 'pending',
   });
   const noWorkspace = landing.kind === 'choice';
@@ -917,18 +956,28 @@ export default function BuzzChannels() {
 
   if (landing.kind === 'error') {
     if (error === connectionErrorTitle) {
-      return <RoomDeckUnavailableView
-        style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
-        onReconnect={() => {
-          reconnectNow();
-          setError(null);
-          setRetryGeneration((value) => value + 1);
-        }}
-      />;
+      return (
+        <RoomDeckUnavailableView
+          style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
+          onReconnect={() => {
+            reconnectNow();
+            setError(null);
+            setRetryGeneration((value) => value + 1);
+          }}
+        />
+      );
     }
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <IndexRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); setRetryGeneration((value) => value + 1); }} />
+        <IndexRow
+          title={error!}
+          description={connectionErrorDescription}
+          action="Retry"
+          onPress={() => {
+            setError(null);
+            setRetryGeneration((value) => value + 1);
+          }}
+        />
       </View>
     );
   }
@@ -957,12 +1006,37 @@ export default function BuzzChannels() {
           {!isDesktop && <CommunityDrawerTrigger community={activeCommunity} />}
           {!isDesktop && activeCommunityId && (
             <View style={styles.headerActions}>
-              <Button label="" iconOnly variant="quiet" accessibilityLabel="Members" testID="workspace-members"
+              <Button
+                label=""
+                iconOnly
+                variant="quiet"
+                accessibilityLabel="Members"
+                testID="workspace-members"
                 icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
-                onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: activeCommunityId } } as never)} />
-                <TrayGlyph size={22} color={styles.trayGlyph.color} cutColor={styles.trayGlyph.backgroundColor}
-                  testID="workspace-tray" needsYouCount={needsYouCount} filled={false}
-                  onPress={() => router.push({ pathname: '/beeline/tray', params: { communityId: activeCommunityId, workspaceName: chatList?.workspace.name ?? '' } } as never)} />
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/members',
+                    params: { communityId: activeCommunityId },
+                  } as never)
+                }
+              />
+              <TrayGlyph
+                size={22}
+                color={styles.trayGlyph.color}
+                cutColor={styles.trayGlyph.backgroundColor}
+                testID="workspace-tray"
+                needsYouCount={needsYouCount}
+                filled={false}
+                onPress={() =>
+                  router.push({
+                    pathname: '/beeline/tray',
+                    params: {
+                      communityId: activeCommunityId,
+                      workspaceName: chatList?.workspace.name ?? '',
+                    },
+                  } as never)
+                }
+              />
             </View>
           )}
         </InlineRow>
@@ -975,13 +1049,10 @@ export default function BuzzChannels() {
             query={query}
             onQuery={setQuery}
             counts={counts}
-
           />
         )}
         <ConnectionStatus />
-        {pinError && (
-          <IndexRow title={pinError} />
-        )}
+        {pinError && <IndexRow title={pinError} />}
         <NewRoomDialog
           draftContext={activeCommunityId ?? ''}
           visible={showCreateRoom}
@@ -1032,7 +1103,17 @@ export default function BuzzChannels() {
             appearance={{ control: styles.errorBar, label: styles.error }}
           />
         )}
-        {!!error && error !== connectionErrorTitle && <View style={styles.failureInset}><IndexRow inset="flush" title={error} description={connectionErrorDescription} action="Retry" onPress={refreshNow} /></View>}
+        {!!error && error !== connectionErrorTitle && (
+          <View style={styles.failureInset}>
+            <IndexRow
+              inset="flush"
+              title={error}
+              description={connectionErrorDescription}
+              action="Retry"
+              onPress={refreshNow}
+            />
+          </View>
+        )}
         {isDesktop ? (
           chatList.chats.length === 0 ? (
             <EmptyRoomActions
@@ -1076,9 +1157,18 @@ export default function BuzzChannels() {
               }
               renderSectionHeader={({ section }) =>
                 section.title && !query.trim() ? (
-                  <RoomListSectionHeader title={section.title} inset="roomList"
-                    actionAccessibilityLabel={section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'}
-                    onAction={viewerIsAgent || (section.kind === 'rooms' && !canManageWorkspace) ? undefined : () => compose(section.kind === 'rooms' ? 'room' : 'message')} />
+                  <RoomListSectionHeader
+                    title={section.title}
+                    inset="roomList"
+                    actionAccessibilityLabel={
+                      section.kind === 'rooms' ? 'Create a new Room' : 'Start a direct message'
+                    }
+                    onAction={
+                      viewerIsAgent || (section.kind === 'rooms' && !canManageWorkspace)
+                        ? undefined
+                        : () => compose(section.kind === 'rooms' ? 'room' : 'message')
+                    }
+                  />
                 ) : null
               }
               ListFooterComponent={
@@ -1138,11 +1228,7 @@ export default function BuzzChannels() {
                       onPin={rowActions.pin}
                       cornersExpanded={cornersExpanded}
                       onToggleCorners={rowActions.toggleCorners}
-                      onLongPressCorners={
-                        viewerIsAgent
-                          ? undefined
-                          : rowActions.newCorner
-                      }
+                      onLongPressCorners={viewerIsAgent ? undefined : rowActions.newCorner}
                       testID={`room-${item.room.id}`}
                     />
                     {!item.directMessage && cornersExpanded && (

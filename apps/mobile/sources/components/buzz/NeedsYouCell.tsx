@@ -76,9 +76,11 @@ export const NeedsYouCell = React.memo(function NeedsYouCell({
   const [hovered, setHovered] = useState(false);
   const [busy, setBusy] = useState<number | null>(null);
   const sending = useRef(false);
-  const unifiedApproval = item.approval && ['grant', 'write-access', 'connector', 'squire'].includes(item.approval.kind);
+  const unifiedApproval =
+    item.approval && ['grant', 'write-access', 'connector', 'squire'].includes(item.approval.kind);
   const subject = unifiedApproval ? item.approval!.subject : item.text;
-  const approval = item.approval?.detail === subject ? { ...item.approval, detail: undefined } : item.approval;
+  const approval =
+    item.approval?.detail === subject ? { ...item.approval, detail: undefined } : item.approval;
   const sharedGrant = approval?.kind === 'grant' && approval.facts !== undefined;
   const age = compactRelativeTime(item.createdAt, now);
   const stale = now / 1000 - item.createdAt > STALE_SECONDS;
@@ -91,7 +93,9 @@ export const NeedsYouCell = React.memo(function NeedsYouCell({
   const meta = [
     ...(!unifiedApproval && approval?.forName ? [`for ${approval.forName}`] : []),
     sourcePath(item),
-    ...(unifiedApproval ? [approval?.forName ? `for @${approval.forName.replace(/^@/, '')}` : 'for you'] : []),
+    ...(unifiedApproval
+      ? [approval?.forName ? `for @${approval.forName.replace(/^@/, '')}` : 'for you']
+      : []),
     ...(expiry ? [approval?.kind === 'choice' ? expiry.replace('expires', 'closes') : expiry] : []),
   ].join(' · ');
   const send = async (action: NeedsYouActionView, index: number) => {
@@ -148,26 +152,41 @@ export const NeedsYouCell = React.memo(function NeedsYouCell({
         ) : null}
       </View>
       <Text
-        style={[styles.text, approval ? !sharedGrant && approval.literal && styles.literal : styles.quote]}
+        style={[
+          styles.text,
+          approval ? !sharedGrant && approval.literal && styles.literal : styles.quote,
+        ]}
         testID={`needs-you-text-${item.messageId}`}
       >
-        {sharedGrant ? approval.purpose ?? approval.detail ?? subject : subject}
+        {sharedGrant ? (approval.purpose ?? approval.detail ?? subject) : subject}
       </Text>
-      {sharedGrant ? approval.facts?.map((fact) => (
-        <TranscriptFactRow key={fact.label} label={fact.label} value={fact.value} />
-      )) : null}
+      {sharedGrant
+        ? approval.facts?.map((fact) => (
+            <TranscriptFactRow key={fact.label} label={fact.label} value={fact.value} />
+          ))
+        : null}
       {approval?.script ? (
         <View>
-          <LedgerDisclosure expanded={scriptOpen}
+          <LedgerDisclosure
+            expanded={scriptOpen}
             rowTestID={`needs-you-script-${item.messageId}-toggle`}
-            accessibilityLabel="Script" accessibilityState={{ expanded: scriptOpen }}
-            onPress={(event) => { event.stopPropagation(); setScriptOpen((open) => !open); }}>
+            accessibilityLabel="Script"
+            accessibilityState={{ expanded: scriptOpen }}
+            onPress={(event) => {
+              event.stopPropagation();
+              setScriptOpen((open) => !open);
+            }}
+          >
             {`Script · ${approval.script.contents.replace(/\r?\n$/, '').split('\n').length} lines`}
           </LedgerDisclosure>
-          {scriptOpen ? <View style={styles.script}>
-            <Text style={styles.detail}>{approval.script.path}</Text>
-            <Text style={styles.literal} testID={`needs-you-script-${item.messageId}`}>{approval.script.contents}</Text>
-          </View> : null}
+          {scriptOpen ? (
+            <View style={styles.script}>
+              <Text style={styles.detail}>{approval.script.path}</Text>
+              <Text style={styles.literal} testID={`needs-you-script-${item.messageId}`}>
+                {approval.script.contents}
+              </Text>
+            </View>
+          ) : null}
         </View>
       ) : null}
       {approval?.detail && !choiceActions && !sharedGrant ? (
@@ -231,32 +250,47 @@ export const NeedsYouCell = React.memo(function NeedsYouCell({
           {actions.some((action) => action.kind !== 'choice') ? (
             <ButtonRow
               style={styles.actions}
-              actions={actions.map((action, index) => ({ action, index })).sort((a, b) => {
-                const denied = (action: NeedsYouActionView) => (action.kind === 'grant' || action.kind === 'write-access') && action.decision === 'deny';
-                return Number(denied(b.action)) - Number(denied(a.action));
-              }).flatMap(({ action, index }) =>
-                action.kind === 'choice'
-                  ? []
-                  : [
-                      {
-                        label: action.label,
-                        // Squire's own ceremony is this cell's one action, so it is the primary.
-                        variant: action.kind === 'skip-choice' ? 'quiet' : (action.kind === 'external' || (action.kind === 'grant' ? action.decision === 'always' : action.kind === 'write-access' && action.decision !== 'deny')) ? 'primary' : 'secondary',
-                        accessibilityRole: 'button',
-                        ...(action.kind === 'external' ? { destination: 'external' as const } : {}),
-                        disabled: busy !== null,
-                        loading: busy === index,
-                        testID: `needs-you-action-${item.messageId}-${index}`,
-                        description: action.detail ? (
-                          <Text style={styles.detail}>{action.detail}</Text>
-                        ) : undefined,
-                        onPress: (event) => {
-                          event.stopPropagation();
-                          void send(action, index);
+              actions={actions
+                .map((action, index) => ({ action, index }))
+                .sort((a, b) => {
+                  const denied = (action: NeedsYouActionView) =>
+                    (action.kind === 'grant' || action.kind === 'write-access') &&
+                    action.decision === 'deny';
+                  return Number(denied(b.action)) - Number(denied(a.action));
+                })
+                .flatMap(({ action, index }) =>
+                  action.kind === 'choice'
+                    ? []
+                    : [
+                        {
+                          label: action.label,
+                          // Squire's own ceremony is this cell's one action, so it is the primary.
+                          variant:
+                            action.kind === 'skip-choice'
+                              ? 'quiet'
+                              : action.kind === 'external' ||
+                                  (action.kind === 'grant'
+                                    ? action.decision === 'always'
+                                    : action.kind === 'write-access' && action.decision !== 'deny')
+                                ? 'primary'
+                                : 'secondary',
+                          accessibilityRole: 'button',
+                          ...(action.kind === 'external'
+                            ? { destination: 'external' as const }
+                            : {}),
+                          disabled: busy !== null,
+                          loading: busy === index,
+                          testID: `needs-you-action-${item.messageId}-${index}`,
+                          description: action.detail ? (
+                            <Text style={styles.detail}>{action.detail}</Text>
+                          ) : undefined,
+                          onPress: (event) => {
+                            event.stopPropagation();
+                            void send(action, index);
+                          },
                         },
-                      },
-                    ],
-              )}
+                      ],
+                )}
             />
           ) : null}
         </View>

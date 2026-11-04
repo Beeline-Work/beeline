@@ -40,8 +40,9 @@ export const STOP_HIT_SLOP = (44 - TURN_LINE_ROW_MIN_HEIGHT) / 2;
  * walks the label's left edge back and forth, so the mark sits in one fixed
  * `MARK_CELL` square and the label's x never depends on it. The counter starts from the server receipt's own
  * `createdAt` (unix seconds), so it reads correctly even when the app opened
- * mid-turn. The ticking interval lives entirely inside this tiny leaf — it
- * never recreates the transcript.
+ * mid-turn. The ticking interval lives entirely inside the memoized body and
+ * updates state only when the displayed second changes; without a receipt
+ * time it schedules no interval. It never recreates the transcript.
  *
  * The same live treatment also covers the short local "sending…" bridge. It
  * expires at its deadline. Accepted but unclaimed commands stay silent.
@@ -59,7 +60,9 @@ export function TurnProgressLine(props: React.ComponentProps<typeof TurnProgress
   // A stream replaces its parent's Stop closure on every tick. Keep the paint
   // boundary stable while the action reads the latest committed turn.
   const stopRef = React.useRef(props.onStop);
-  React.useLayoutEffect(() => { stopRef.current = props.onStop; });
+  React.useLayoutEffect(() => {
+    stopRef.current = props.onStop;
+  });
   const stop = React.useCallback(() => stopRef.current?.(), []);
   return <TurnProgressLineBody {...props} onStop={props.onStop ? stop : undefined} />;
 }
@@ -92,8 +95,11 @@ const TurnProgressLineBody = React.memo(function TurnProgressLineBody({
     if (startedAt == null) return;
     const tick = () => {
       const next = Date.now();
-      setNow(previous => elapsedSeconds(startedAt * 1_000, previous) === elapsedSeconds(startedAt * 1_000, next)
-        ? previous : next);
+      setNow((previous) =>
+        elapsedSeconds(startedAt * 1_000, previous) === elapsedSeconds(startedAt * 1_000, next)
+          ? previous
+          : next,
+      );
     };
     tick();
     const timer = setInterval(tick, SPINNER_STEP_MS);
@@ -114,7 +120,10 @@ const TurnProgressLineBody = React.memo(function TurnProgressLineBody({
       testID={testID}
     >
       <HullLivePulse style={styles.row}>
-        <View style={[styles.glyphCell, styles.leadingGlyph]} testID={testID ? `${testID}-glyph` : undefined}>
+        <View
+          style={[styles.glyphCell, styles.leadingGlyph]}
+          testID={testID ? `${testID}-glyph` : undefined}
+        >
           <BeelineMarkSpinner live />
         </View>
         <Text numberOfLines={1} style={styles.label}>

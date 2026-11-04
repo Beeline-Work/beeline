@@ -1,6 +1,6 @@
 # Phone surface rendering proof
 
-This change isolates unchanged Room rows from list, outbox and corner-page updates; isolates the thinking line from streaming parent updates; and memoizes unchanged Needs You cells. It changes no layout or transcript/send implementation.
+This change isolates unchanged Room rows from list, outbox and corner-page updates; isolates the thinking line from streaming parent updates; and memoizes unchanged roster rows and Needs You cells. It changes no layout or transcript/send implementation.
 
 ## Measurement scope
 
@@ -20,42 +20,41 @@ The tables and per-sample data are generated from the retained logs and framesta
 
 `p50 / p95`; arrows mean before → after. Navigation render cost is the largest root-profiler render within each transition. Body counts are committed renders across the measured transition, including hidden screens. Native timing begins immediately before the adb input command, so it conservatively includes command dispatch overhead. App JS-touch timestamps are also retained in the JSON.
 
-| Surface (10 samples/arm) | Peak root render ms | Room-row bodies | Native-frame proxy ms | After proxy p95 <150 / <450 |
-| --- | ---: | ---: | ---: | :---: |
-| Room list return | 83.0 / 247.0 → 36.5 / 81.2 | 28.0 / 28.0 → 0.0 / 3.0 | 444.8 / 682.2 → 221.3 / 292.5 | no / yes |
-| Tray open | 25.3 / 66.5 → 19.7 / 51.9 | 0.0 / 14.0 → 0.0 / 0.0 | 335.0 / 689.8 → 231.4 / 495.7 | no / no |
-| Members open | 156.1 / 210.4 → 43.5 / 70.6 | 28.0 / 28.0 → 0.0 / 0.0 | 478.7 / 947.2 → 204.8 / 381.3 | no / yes |
-| Corner list open | 232.7 / 923.3 → 101.8 / 158.7 | 28.0 / 30.0 → 1.0 / 1.0 | 783.2 / 3404.8 → 179.9 / 394.8 | no / yes |
-| Room open | 253.6 / 720.9 → 189.7 / 453.8 | 14.0 / 14.0 → 0.0 / 0.0 | not comparable (0/10 → 2/10 native matches) | unproven |
-| App foreground | 90.9 / 278.8 → 43.3 / 97.5 | 14.0 / 42.0 → 0.0 / 0.0 | 678.0 / 1079.6 → 289.5 / 434.9 | no / yes |
+| Surface (10 samples/arm) |           Peak root render ms |         Room-row bodies |                       Native-frame proxy ms | After proxy p95 <150 / <450 |
+| ------------------------ | ----------------------------: | ----------------------: | ------------------------------------------: | :-------------------------: |
+| Room list return         |    83.0 / 247.0 → 36.5 / 81.2 | 28.0 / 28.0 → 0.0 / 3.0 |               444.8 / 682.2 → 221.3 / 292.5 |          no / yes           |
+| Tray open                |     25.3 / 66.5 → 19.7 / 51.9 |  0.0 / 14.0 → 0.0 / 0.0 |               335.0 / 689.8 → 231.4 / 495.7 |           no / no           |
+| Members open             |   156.1 / 210.4 → 43.5 / 70.6 | 28.0 / 28.0 → 0.0 / 0.0 |               478.7 / 947.2 → 204.8 / 381.3 |          no / yes           |
+| Corner list open         | 232.7 / 923.3 → 101.8 / 158.7 | 28.0 / 30.0 → 1.0 / 1.0 |              783.2 / 3404.8 → 179.9 / 394.8 |          no / yes           |
+| Room open                | 253.6 / 720.9 → 189.7 / 453.8 | 14.0 / 14.0 → 0.0 / 0.0 | not comparable (0/10 → 2/10 native matches) |          unproven           |
+| App foreground           |    90.9 / 278.8 → 43.3 / 97.5 | 14.0 / 42.0 → 0.0 / 0.0 |              678.0 / 1079.6 → 289.5 / 434.9 |          no / yes           |
 
 The members fix additionally reduces MemberRosterRow body counts from **16 / 16 to 4 / 4**. Peak members-surface render cost falls from 62.6 / 183.7 → 34.6 / 61.5 ms. Each identity renders once per page open. The intermediate after pass without member-row memoization is retained in the JSON.
 
 Room open has data-ready markers in all samples, but usually no later native draw: the static content draw can precede the existing double-requestAnimationFrame marker. Its ready-marker latency is 1422.9 / 2199.7 → 976.7 / 1767.4 ms. Neither those delayed markers nor the two surviving native matches establish first paint. They must not be converted into a passing paint claim. Corner navigation starts one second after opening its parent Room, so pending parent work can overlap; the root duration includes that work.
 
-| Live update (20 samples/arm) | Peak root render ms | Body renders | Arrival → native-frame proxy ms | After proxy p95 <150 |
-| --- | ---: | ---: | ---: | :---: |
-| Room-list message arrival | 64.9 / 91.8 → 34.5 / 50.5 | 32.0 / 32.0 → 1.0 / 1.0 | 148.1 / 215.6 → 93.3 / 115.3 | yes |
-| Tray Saved add/remove | 6.4 / 11.9 → 5.1 / 7.8 | 3.0 / 3.0 → 1.0 / 1.0 | 37.3 / 52.0 → 29.6 / 40.3 | yes |
+| Live update (20 samples/arm) |       Peak root render ms |            Body renders | Arrival → native-frame proxy ms | After proxy p95 <150 |
+| ---------------------------- | ------------------------: | ----------------------: | ------------------------------: | :------------------: |
+| Room-list message arrival    | 64.9 / 91.8 → 34.5 / 50.5 | 32.0 / 32.0 → 1.0 / 1.0 |    148.1 / 215.6 → 93.3 / 115.3 |         yes          |
+| Tray Saved add/remove        |    6.4 / 11.9 → 5.1 / 7.8 |   3.0 / 3.0 → 1.0 / 1.0 |       37.3 / 52.0 → 29.6 / 40.3 |         yes          |
 
 For message arrival, unchanged Room-row bodies fall from **30 / 30 to 0 / 0**, and only the changed row renders in the after arm. Total root render work per arrival falls from 113.5 / 167.6 → 63.3 / 85.1 ms. The tray still receives one cell render per update; this change removes the other two rather than ignoring changed DTOs or callbacks.
 
-| Thinking fixture | Before | After |
-| --- | ---: | ---: |
-| Capture seconds | 20.43 | 20.78 |
-| Streaming parent body renders | 307 | 312 |
-| Working-line body renders | 307 | 21 |
-| All root commits, render ms p50 / p95 | 1.1 / 1.6 | 0.2 / 1.1 |
+| Thinking fixture                           |      Before |       After |
+| ------------------------------------------ | ----------: | ----------: |
+| Capture seconds                            |       20.43 |       20.78 |
+| Streaming parent body renders              |         307 |         312 |
+| Working-line body renders                  |         307 |          21 |
+| All root commits, render ms p50 / p95      |   1.1 / 1.6 |   0.2 / 1.1 |
 | Counter effect → native frame ms p50 / p95 | 29.9 / 37.3 | 33.2 / 38.4 |
 
 **Budget result:** these captures demonstrate less JavaScript work and a sub-150-ms p95 arrival/update proxy. They do **not** establish the universal 150/450-ms painted-time invariant. The tray proxy tail remains above 450 ms, navigation/foreground proxies exceed 150 ms, Room first paint is unresolved, and the shared-host/account drift prevents a calibrated navigation claim. Physical-device or compositor/optical paint proof and the independently owned transcript work remain necessary. No timing pass is inferred from a missing sample.
-
 
 ## Exact-candidate native behavioral validation
 
 The [fresh native evidence packet](live-candidate/README.md) records the seven requested scenarios on candidate `ca54fc4c9534e94e4508ba482f1023d4b377c33e`, with all four phone SDKs freshly compiled from that revision. Its provenance identifies the installed runtime-40 bundle on reserved emulator-5628. The retained screenshots show actual native paint, not test-renderer output. Controller and host source copies are evidence only; they are not installed routes or shipped implementation.
 
-**Re-evaluation of test-2:** the earlier authentication/device evidence blocker is resolved by the driver's exact-candidate packet. Inspection supports passing outcomes for Room arrival/refusal presentation, gestures, corner summary/archive isolation, current member destinations and Tray updates. The working-line counter and latest Stop callback pass at the native component interface in a controlled streaming host; server-agent cancellation remains untested. Refusals are set through the real durable outbox owner, rather than a new server rejection path. Logs include independent age-label updates and preceding navigation work; whole-file render totals must not be treated as the render count for a single command. Stale working-host accessibility dumps are excluded.
+**Re-evaluation of test-2:** the earlier authentication/device evidence blocker is resolved by the driver's exact-candidate packet. Inspection supports passing outcomes for Room arrival/refusal presentation, gestures, corner summary/archive isolation, current member destinations and Tray updates. The working-line counter and latest Stop callback pass at the native component interface in a controlled streaming host; server-agent cancellation remains untested. Refusals are set through the real durable outbox owner, rather than a new server rejection path. The driver reports that logs include independent age-label updates and preceding navigation work; those logs are not retained in the fresh packet, and whole-file render totals must not be treated as the render count for a single command. Stale working-host accessibility dumps are excluded.
 
 Scenario seven uses the authorized same-session A/B records above; no fresh timing run is claimed. Arrival/update native-frame proxy p95 **115.3/40.3 ms meets 150 ms**. Room-list return **292.5**, members **381.3**, corners **394.8** and foreground **434.9 ms** are below 450 ms but above 150 ms. Tray **495.7 ms exceeds 450 ms**, and Room first paint remains unproven. These are proxies, not certified painted deadlines. This is the explicitly accepted measured partial improvement; remaining budget work belongs to a separate worker.
 
@@ -72,7 +71,7 @@ The packet records cleanup of outbox fixtures, pin and bookmark, with the create
 
 ## Reproduction and build provenance
 
-Rebuild the workspace SDKs first, following `docs/agent-mobile.md`. Metro resolves their built outputs. A checkout SHA alone does not identify the code in a native bundle.
+Follow the [phone dependency build invariant](../../../../docs/agent-mobile.md#mobile-client) before exporting a native bundle.
 
 The first current-main profiling export could not load production Rooms because its local `@beeline/net/dist` was stale: the bundled AdmissionOwner lacked `focusOwner` and `releaseOwner` and had old route policies. After freshly compiling net and verifying the other 85 bundled api-contract/nostr/buzz-client modules against fresh compilation, current main loaded the production Room list. The earlier failure is not evidence of a current-main/server compatibility regression.
 

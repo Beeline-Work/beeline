@@ -80,6 +80,8 @@ type RouterOwnerBridge = {
 type LiveConnectionDeps = {
   router?: RouterOwnerBridge;
   authorization: () => Promise<string>;
+  /** Discard only the access token rejected by an unopened socket. */
+  invalidateAuthorization?: (token: string) => void;
   liveUrl: () => string;
   /** Fires on an identity or relay change. */
   subscribeIdentityChange: (listener: () => void) => () => void;
@@ -400,8 +402,8 @@ export class LiveConnection {
     return true;
   }
 
-  private rejectRequests(): void {
-    for (const request of this.requests.values()) request.reject(new PhoneSocketDisconnectedError());
+  private rejectRequests(reason: unknown = new PhoneSocketDisconnectedError()): void {
+    for (const request of this.requests.values()) request.reject(reason);
   }
 
   /** Safe transport metadata for a recovery receipt; no URL or authorization. */
@@ -534,6 +536,7 @@ export class LiveConnection {
    */
   reconnectNow(): void {
     this.recoverySpent = false;
+    this.handshakeRecoveryUsed = false;
     this.replaceSocket();
   }
 
@@ -642,6 +645,9 @@ export class LiveConnection {
   private dropConnection(): void {
     this.clearHealthChallenge();
     this.resetRouterState();
+    this.authorizationAttempt += 1;
+    clearTimeout(this.authorizationDeadline);
+    this.authorizationDeadline = undefined;
     this.rejectRequests();
     setConnectionState('disconnected');
     this.generation += 1;
@@ -684,12 +690,31 @@ export class LiveConnection {
     }
   }
 
+  private authorizationDeadline?: ReturnType<typeof setTimeout>;
+  private handshakeRecoveryUsed = false;
+  private authorizationAttempt = 0;
+
   private ensureSocket(): Promise<void> {
     if (this.socket) return Promise.resolve();
     if (this.connectInFlight) return this.connectInFlight;
     // A connect from before an identity change settles after the next one starts.
     setConnectionState('connecting');
-    const flight: Promise<void> = this.connect().finally(() => {
+    const attempt = ++this.authorizationAttempt;
+    let deadline: ReturnType<typeof setTimeout> | undefined;
+    const timeout = new Promise<void>((resolve) => {
+      deadline = setTimeout(() => {
+        if (attempt === this.authorizationAttempt) {
+          this.authorizationAttempt += 1;
+          setConnectionState('disconnected');
+          this.rejectRequests(new MonolithRequestTimeoutError());
+        }
+        resolve();
+      }, 15_000);
+      this.authorizationDeadline = deadline;
+    });
+    const flight: Promise<void> = Promise.race([this.connect(attempt), timeout]).finally(() => {
+      clearTimeout(deadline);
+      if (this.authorizationDeadline === deadline) this.authorizationDeadline = undefined;
       if (this.connectInFlight === flight) this.connectInFlight = undefined;
     });
     this.connectInFlight = flight;
@@ -702,14 +727,15 @@ export class LiveConnection {
    * and then closes or errors starts one new attempt immediately, with no
    * timer. That attempt does not start another if it never opens.
    */
-  private async connect(): Promise<void> {
+  private async connect(attempt: number): Promise<void> {
     const generation = this.generation;
     try {
       const token = await this.deps.authorization();
+      if (generation !== this.generation || attempt !== this.authorizationAttempt) return;
       const requested = this.deps.router?.requestedCapabilities
         ? await this.deps.router.requestedCapabilities()
         : { families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true, scheduledWorkCoverageV1:false };
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || attempt !== this.authorizationAttempt) return;
       if (this.registrations.size === 0 && this.requests.size === 0) {
         setConnectionState('disconnected');
         return;
@@ -721,6 +747,7 @@ export class LiveConnection {
       next.onopen = () => {
         if (this.socket !== next) return;
         this.socketReachedOpen = true;
+        this.handshakeRecoveryUsed = false;
         setConnectionState('connected');
         this.socketEpoch += 1;
         if (this.deps.router) next.send(JSON.stringify({ type: 'router-negotiate', protocol: 1,
@@ -761,6 +788,7 @@ export class LiveConnection {
         const reachedOpen = this.socketReachedOpen;
         this.forgetSocket();
         if (reachedOpen) this.recoverOpenedSocket();
+        else this.recoverRejectedHandshake(token);
       };
       next.onerror = () => {
         if (this.socket !== next) return;
@@ -771,11 +799,26 @@ export class LiveConnection {
         this.forgetSocket();
         next.close();
         if (reachedOpen) this.recoverOpenedSocket();
+        else this.recoverRejectedHandshake(token);
       };
-    } catch {
-      if (generation !== this.generation) return;
+    } catch (reason) {
+      if (generation !== this.generation || attempt !== this.authorizationAttempt) return;
       setConnectionState('disconnected');
+      this.rejectRequests(reason);
     }
+  }
+
+  private recoverRejectedHandshake(token: string): void {
+    // Native WebSocket does not reliably expose the HTTP 401 status. Renew
+    // once after an unopened socket fails; persistent offline failures stop.
+    if (!this.deps.invalidateAuthorization) return;
+    this.deps.invalidateAuthorization(token);
+    if (this.handshakeRecoveryUsed) return;
+    this.handshakeRecoveryUsed = true;
+    // Initial reads already failed on the rejected socket. Its first success
+    // must cover roomless Workspace discovery too, just like a reconnect.
+    for (const registration of this.registrations.values()) registration.sawOpen = true;
+    this.recoverOpenedSocket();
   }
 
   /** Drop ownership. The caller decides whether this close starts a new socket. */
@@ -1175,6 +1218,7 @@ export function sharedLiveConnection(): LiveConnection {
   shared ??= new LiveConnection({
     router: productionRouterBridge(),
     authorization: () => monolithSession.authorization(),
+    invalidateAuthorization: (token) => monolithSession.invalidateAuthorization(token),
     liveUrl: () => `${getBuzzRuntimeConfig().monolithUrl.replace(/^http/, 'ws')}/v1/phone/live`,
     subscribeIdentityChange: subscribeClientReset,
     subscribeNetworkChange: (listener) => {

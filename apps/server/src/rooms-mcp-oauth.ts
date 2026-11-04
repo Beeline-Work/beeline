@@ -1,5 +1,7 @@
+import { createWorkspace, defaultWorkspaceName } from './workspace-creation.js';
 import { renderMcpWorkspaceSelection, MCP_WORKSPACE_SCRIPT, MCP_WORKSPACE_STYLE } from './rooms-mcp-consent-ui.js';
 import { readFileSync } from 'node:fs';
+import { joinOrigin } from './rooms-mcp-endpoints.js';
 import { fetchMcpLogo, bundledMcpLogo, mcpClientName } from './rooms-mcp-logos.js';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -101,8 +103,8 @@ class Refusal extends Error {
   // params carries body parameter names when the body is refused before it can be read as input.
   constructor(error: string, readonly reason: string, readonly params?: string[]) { super(error); }
 }
-const RESOURCE_PATHS = ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp'];
-const ISSUER_PATHS = ['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/mcp'];
+const RESOURCE_PATHS = ['/.well-known/oauth-protected-resource', '/.well-known/oauth-protected-resource/mcp', '/.well-known/oauth-protected-resource/join'];
+const ISSUER_PATHS = ['/.well-known/oauth-authorization-server', '/.well-known/oauth-authorization-server/mcp', '/.well-known/oauth-authorization-server/join'];
 // Schemes a browser runs or reads locally instead of handing to an app.
 const BLOCKED_SCHEMES = ['javascript:', 'data:', 'file:', 'vbscript:', 'blob:', 'about:', 'filesystem:', 'ftp:', 'ftps:', 'ws:', 'wss:', 'mailto:', 'tel:', 'intent:'];
 function redirectUri(value: unknown): string {
@@ -161,7 +163,9 @@ export class RoomsMcpOAuth {
   private handoffWaitCount=0;
   readonly origin: string;
   readonly resource: string;
-  constructor(readonly database: SqlDatabase, origin: string, readonly auth: TokenAuth,private readonly completionReady:()=>boolean=()=>false) {
+  constructor(readonly database: SqlDatabase, origin: string, readonly auth: TokenAuth,
+    readonly joinHost = 'join.usebeeline.app', private readonly completionReady: () => boolean = () => false) {
+    joinOrigin(origin, joinHost); // Validate the configured alias at startup.
     this.origin = new URL(origin).origin;
     this.resource = `${this.origin}/mcp`;
   }
@@ -232,12 +236,15 @@ export class RoomsMcpOAuth {
     } else if (secret !== undefined || basic) throw new Refusal('invalid_client', 'client_secret_unexpected');
     return clientId;
   }
-  /** RFC 8707 resource: optional, and either this MCP URL or the server origin, with or without a trailing slash. */
+  /** RFC 8707: existing resource/origin and the configured aliases name the same MCP service. */
   private isResource(value: unknown): boolean {
     if (value === undefined) return true;
     if (typeof value !== 'string') return false;
+    // URI clients (including Muse) may preserve the bare origin or its slash.
+    // Both name the same resource; discovery consistently publishes the slash.
     const trimmed = value.replace(/\/$/, '');
-    return trimmed === this.resource || trimmed === this.origin;
+    const short = joinOrigin(this.origin, this.joinHost);
+    return [this.resource, this.origin, `${this.origin}/join`, short, `${short}/join`, `${short}/mcp`].includes(trimmed);
   }
   async audit(principal: McpPrincipal, operation: string, outcome: string): Promise<void> {
     await this.database.query(`INSERT INTO rooms_mcp_audit(client_id,identity_id,operation,outcome) VALUES($1,$2,$3,$4)`,
@@ -278,7 +285,13 @@ export class RoomsMcpOAuth {
     let tokenInput: Record<string, unknown> | undefined;
     try {
       if (request.method === 'GET' && RESOURCE_PATHS.includes(path)) {
-        mcpJson(response, 200, { resource: this.resource, authorization_servers: [this.origin], scopes_supported: [MCP_READ, MCP_WRITE], bearer_methods_supported: ['header'] }); return true;
+        const short = joinOrigin(this.origin, this.joinHost);
+        const origin = request.headers.host?.toLowerCase() === new URL(short).host ? short : this.origin;
+        const suffix = path.slice('/.well-known/oauth-protected-resource'.length);
+        const resource = suffix ? `${origin}${suffix}` : origin === short ? `${origin}/` : this.resource;
+        // One existing issuer owns sign-in and consent for all aliases. Clients
+        // send the resource from this document unchanged to that issuer.
+        mcpJson(response, 200, { resource, authorization_servers: [this.origin], scopes_supported: [MCP_READ, MCP_WRITE], bearer_methods_supported: ['header'] }); return true;
       }
       if (request.method === 'GET' && ISSUER_PATHS.includes(path)) {
         mcpJson(response, 200, { issuer: this.origin, authorization_endpoint: `${this.origin}/mcp/oauth/authorize`,
@@ -412,7 +425,7 @@ export class RoomsMcpOAuth {
           const plate = memberLogo ? `<img class="plate" src="${escape(memberLogo)}" alt="">` : `<span class="plate" aria-hidden="true">${escape((name[0] ?? 'C').toUpperCase())}</span>`;
           const publisher = PUBLISHERS[flow.name.toLowerCase()];
           const terms = publisher ? `${escape(publisher)}'s privacy terms` : 'its own privacy terms';
-          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div>${renderMcpWorkspaceSelection(workspaces.rows)}<p class="head">It can</p><div class="perms"><div class="perm"><strong>Read public Rooms in selected Workspaces</strong><span>It joins their public Rooms, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div>${flow.redirect_uri === `${this.origin}/mcp/oauth/handoff` ? `<p class="fine">${sessionMessageConsent(flow.claude_inbound_fallback, flow.name === 'Codex')}</p>` : ''}<p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form id="mcp-consent-form" method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Webhook URL (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For clients with their own HTTPS receiver. For ChatGPT or Codex dots using MCP Events, leave these fields blank; the host supplies its callback when you ask it to monitor mentions. Paste a receiver token with or without &#39;Bearer &#39;.</p></div><div class="field"><label for="wake_key">Auth token (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form><section class="routine" aria-label="Starter instructions"><h2>Starter instructions</h2><p class="fine">Paste into this agent’s saved instructions or existing routine prompt.</p><ol id="starter-routine" class="routine-text">${MCP_STARTER_ROUTINE.split('\n').filter(line => line.trim()).map(line => `<li>${escape(line)}</li>`).join('\n')}</ol><button class="copy" id="copy-routine" type="button">Copy</button><p class="copy-status" id="copy-status" role="status"></p></section>`);
+          this.page(response, `Add ${flow.name} to your team`, `${this.brand(flow)}<h1>Add ${client} to your team</h1>${who}<p class="head">Joins as</p><div class="joins">${plate}<div class="who-am"><div class="name">${escape(name)}</div><div class="tag">@${escape(handle)} · ${client}</div></div><a class="edit" href="/mcp/oauth/consent?flow=${flow.id}&amp;edit=1">Edit</a></div>${renderMcpWorkspaceSelection(workspaces.rows, defaultWorkspaceName(flow.identity_name))}<p class="head">It can</p><div class="perms"><div class="perm"><strong>Read public Rooms in selected Workspaces</strong><span>It joins their public Rooms, like your other agents. Add or remove it in any Room under Members.</span></div><div class="perm"><strong>Post as ${escape(name)}</strong><span>Its messages show as ${escape(name)}, never as you. Allowing it is your approval for it to answer anyone in a Room who tags it.</span></div><div class="perm"><strong>Act like your other agents</strong><span>It can order agents, open corners, review and merge through the same checks. It cannot spend from your wallet or run commands on your machines.</span></div></div>${flow.redirect_uri === `${this.origin}/mcp/oauth/handoff` ? `<p class="fine">${sessionMessageConsent(flow.claude_inbound_fallback, flow.name === 'Codex')}</p>` : ''}<p class="fine">Room text it reads goes to ${client} under ${terms}. Remove it any time in Settings, under Connectors.</p><form id="mcp-consent-form" method="post" action="/mcp/oauth/consent"><input type="hidden" name="flow" value="${flow.id}"><div class="field"><label for="wake_url">Webhook URL (optional)</label><input id="wake_url" name="wake_url" type="url" maxlength="2048" autocomplete="off"><p>For clients with their own HTTPS receiver. For ChatGPT or Codex dots using MCP Events, leave these fields blank; the host supplies its callback when you ask it to monitor mentions. Paste a receiver token with or without &#39;Bearer &#39;.</p></div><div class="field"><label for="wake_key">Auth token (optional)</label><input id="wake_key" name="wake_key" type="password" maxlength="512" autocomplete="new-password"></div><div class="row"><button class="btn" name="decision" value="deny">Cancel</button><button class="btn primary" name="decision" value="allow">Allow</button></div></form><section class="routine" aria-label="Starter instructions"><h2>Starter instructions</h2><p class="fine">Paste into this agent’s saved instructions or existing routine prompt.</p><ol id="starter-routine" class="routine-text">${MCP_STARTER_ROUTINE.split('\n').filter(line => line.trim()).map(line => `<li>${escape(line)}</li>`).join('\n')}</ol><button class="copy" id="copy-routine" type="button">Copy</button><p class="copy-status" id="copy-status" role="status"></p></section>`);
         }
         return true;
       }
@@ -437,7 +450,18 @@ export class RoomsMcpOAuth {
           const target = new URL(flow.redirect_uri);
           target.searchParams.set('state', flow.state); target.searchParams.set('iss', this.origin);
           if (input.decision === 'allow') {
-            const workspaceIds = typeof input.workspace_ids === 'string' ? [input.workspace_ids] : input.workspace_ids;
+            let workspaceIds = typeof input.workspace_ids === 'string' ? [input.workspace_ids] : input.workspace_ids;
+            if (input.workspace_selection === '1' && (workspaceIds === undefined || (Array.isArray(workspaceIds) && !workspaceIds.length))) {
+              // Serialize simultaneous first connections for this person. Only an account
+              // with no current Workspace may turn an empty selection into first-run creation.
+              await db.query('SELECT id FROM identities WHERE id=$1 FOR UPDATE', [flow.identity_id]);
+              const memberships = await db.query(`SELECT 1 FROM memberships WHERE identity_id=$1
+                AND room_id IS NULL AND removed_at IS NULL LIMIT 1`, [flow.identity_id]);
+              if (!memberships.rowCount) {
+                const workspace = await createWorkspace(db, { name: defaultWorkspaceName(flow.identity_name) }, flow.identity_id);
+                workspaceIds = [workspace.id];
+              }
+            }
             if (input.workspace_selection !== '1' || !Array.isArray(workspaceIds) || !workspaceIds.length
               || workspaceIds.some(id => typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)))
               throw new Refusal('invalid_request', 'workspaces_invalid');

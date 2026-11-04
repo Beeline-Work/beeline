@@ -64,6 +64,20 @@ describe('MCP workspace consent', () => {
     expect(html).toContain('id="selection-error" role="status">Select at least one');
     expect(html).not.toContain('<script>');
   });
+  it('explains first-run creation with no picker and leaves Allow enabled', () => {
+    const html = renderMcpWorkspaceSelection([], "Robin's team");
+    expect(html).toContain('Allow will create your Workspace, Robin&#39;s team, with a public #general Room.');
+    expect(html).toContain('name="workspace_selection" value="1"');
+    expect(html).not.toContain('type="checkbox"');
+    expect(html).not.toContain('Select at least one');
+    const allow = { disabled: false };
+    runInNewContext(MCP_WORKSPACE_SCRIPT, { document: {
+      getElementById: (id: string) => id === 'mcp-consent-form' ? { querySelector: () => allow } : null,
+      querySelectorAll: () => [],
+    } });
+    expect(allow.disabled).toBe(false);
+    expect(renderMcpWorkspaceSelection([], '<script>')).toContain('&lt;script&gt;');
+  });
   it('shows the no-selection guidance for an empty eligible list and uses static progressive enhancement', () => {
     const html = renderMcpWorkspaceSelection([]);
     expect(html).toContain('Select at least one Workspace');

@@ -328,7 +328,8 @@ describe('LiveConnection', () => {
         authorityFencesV1: true, mediaMetadataV1: true, usageCellV1: true });
       await Promise.resolve();
       const old = router.negotiated.mock.calls[0]![0];
-      connection.reconnectNow(); await Promise.resolve(); await Promise.resolve();
+      connection.reconnectNow();
+      await vi.waitFor(() => expect(sockets).toHaveLength(2));
       sockets[1]!.open(); sockets[1]!.emit(selected
         ? { type: 'router-capabilities', protocol: 1, families: ['room-list'], mediaMetadataV1: true }
         : { type: 'sync-ok' });
@@ -1785,6 +1786,79 @@ describe('LiveConnection', () => {
 
     connection.dispose();
   });
+  it('renews a rejected cached access token once and stops if the replacement handshake fails', async () => {
+    vi.useFakeTimers();
+    const invalidateAuthorization = vi.fn();
+    const authorization = vi.fn().mockResolvedValueOnce('cached-access').mockResolvedValue('renewed-access');
+    const connection = new LiveConnection({ authorization, invalidateAuthorization,
+      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {} });
+    const received = vi.fn();
+    await connection.register([], received);
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.error();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(invalidateAuthorization).toHaveBeenCalledExactlyOnceWith('cached-access');
+    expect(sockets[1]!.protocols).toEqual(['bearer.renewed-access']);
+    sockets[1]!.error();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets).toHaveLength(2);
+    connection.dispose();
+  });
+
+  it('covers Workspace discovery when the first successful socket follows a rejected handshake', async () => {
+    vi.useFakeTimers();
+    const received = vi.fn();
+    const connection = new LiveConnection({ authorization: vi.fn().mockResolvedValue('token'),
+      invalidateAuthorization: vi.fn(), liveUrl: () => 'wss://server.example/v1/phone/live',
+      subscribeIdentityChange: () => () => {} });
+    await connection.register([], received);
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[0]!.error();
+    await vi.advanceTimersByTimeAsync(0);
+    sockets[1]!.open();
+    expect(received).toHaveBeenCalledExactlyOnceWith({
+      monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' },
+    });
+    connection.dispose();
+  });
+
+  it('expires a stuck authorization flight so Reconnect can obtain credentials again', async () => {
+    vi.useFakeTimers();
+    const authorization = vi.fn().mockImplementationOnce(() => new Promise(() => {}))
+      .mockResolvedValue('recovered-access');
+    const { connection } = createConnection(authorization);
+    await connection.register([], () => {});
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(connection.diagnostics().connecting).toBe(false);
+    connection.reconnectNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets[0]!.protocols).toEqual(['bearer.recovered-access']);
+    connection.dispose();
+  });
+
+  it('fences late router capabilities after the authorization flight expires', async () => {
+    vi.useFakeTimers();
+    const capabilities = { families: [] as const, authorityFencesV1: true };
+    let release!: (value: typeof capabilities) => void;
+    const requestedCapabilities = vi.fn()
+      .mockImplementationOnce(() => new Promise(resolve => { release = resolve; }))
+      .mockResolvedValue(capabilities);
+    const connection = new LiveConnection({ authorization: async () => 'token',
+      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {},
+      router: { requestedCapabilities, negotiated: vi.fn(async () => {}), disconnected: vi.fn(), receive: vi.fn() } });
+    await connection.register([], () => {});
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(sockets).toHaveLength(0);
+    expect(connection.diagnostics().connecting).toBe(false);
+    connection.reconnectNow();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(1);
+    release(capabilities);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(sockets).toHaveLength(1);
+    connection.dispose();
+  });
+
   it('reconnects after an authorization failure only on a later recovery event', async () => {
     vi.useFakeTimers();
     const authorization = vi.fn();
@@ -2067,7 +2141,7 @@ describe('phone socket request/reply', () => {
     const frames = () => sockets[0]!.sent.map(v => JSON.parse(v)).filter(v => v.t === 'req');
     expect(frames().map(v => v.op)).toEqual(['readRoom']);
     sockets[0]!.emit({ t: 'res', id: frames()[0].id, ok: true, result: {} }); await required;
-    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(10_000);
     expect(frames().map(v => v.op)).toEqual(['readRoom']);
     observeVisibleRoomRows('r', ['newest']); finishRoomDraw('newest', 'r'); await vi.advanceTimersByTimeAsync(0);
     expect(frames().map(v => v.op)).toEqual(['readRoom', 'readChats']);

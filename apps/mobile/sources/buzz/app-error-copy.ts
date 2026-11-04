@@ -7,7 +7,7 @@ export function appErrorCopy(reason: unknown, fallback = 'Could not complete req
   const message = typeof reason === 'string' ? reason : typeof record?.message === 'string' ? record.message : '';
   const status = typeof record?.status === 'number' ? record.status : Number(message.match(/(?:\(|\bHTTP(?: status)?[ :]+)([45]\d{2})\b/)?.[1]);
   const clientFailure = status >= 400 && status < 500;
-  if (status >= 500 || (!clientFailure && /network (?:request failed|unavailable)|failed to fetch|networkerror|timed? ?out|timeout|load failed|did not answer|\boffline\b/i.test(message + ' ' + (record?.name ?? '')))) return connectionErrorTitle;
+  if (status >= 500 || (!clientFailure && /network (?:request failed|unavailable)|failed to fetch|networkerror|connection closed before|timed? ?out|timeout|load failed|did not answer|\boffline\b/i.test(message + ' ' + (record?.name ?? '')))) return connectionErrorTitle;
   if (!clientFailure && /^(?:Type|Reference|Syntax|Range|URI|Eval)Error$/.test(String(record?.name ?? ''))) return fallback;
   // Some operation adapters carry human refusals in a plain Error, without HTTP metadata.
   const serverMessage = clientFailure && typeof record?.code === 'string' && !/^[\w.-]+$/.test(record.code) ? record.code : message;

@@ -38,7 +38,7 @@ not Pidoong. This demonstrates the underlying user path while MFA blocks the
 real target; it does not establish host subscription or timer behavior.
 
 After handback: list installed connectors without deleting the old bridge; add
-Beeline Rooms at `https://server.usebeeline.app/mcp`; confirm the dot can list its
+Beeline Rooms at `https://join.usebeeline.app`; confirm the dot can list its
 Rooms; ask the host to monitor mentions; tag its exact handle in a Room and capture
 the reply screenshot and both message ids. If host events actually fail, record
 that evidence, configure the recurring `list_mentions` task in the host, and

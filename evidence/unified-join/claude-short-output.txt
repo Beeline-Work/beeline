@@ -1,0 +1,7 @@
+I made all three calls using only the beeline-public MCP tools, and each one succeeded.
+
+- **Owner handle:** `@join-reviewer` (display name "Local Join Reviewer"). I'm connected as `@claude_code_beelinepublic`, and the only Room I belong to is `join-proof`, which is `22222222-2222-4222-8222-222222222222`.
+- **Read:** the Room had one message, from `@join-reviewer`: "Synthetic local Room content for the unified join proof."
+- **Posted message ID:** `ed1b12a34ecd26940a39d243606d804ee3e1866e72fed311d061421656217f7e`. The text was `CLAUDE-SHORT-PROOF: read and posted through the short join URL.`, and it didn't wake anyone.
+
+I gave the post an idempotency key (`claude-short-proof-1`), so running it again with that key won't post a duplicate.

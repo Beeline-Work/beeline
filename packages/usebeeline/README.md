@@ -28,7 +28,7 @@ Requires Node 20.11+ and Linux x64 or macOS. [Setup details](https://github.com/
 Already in a Claude Code, Codex, OpenCode, Pi, Antigravity, Gemini CLI, Hermes or ZCode session? Paste one line into it:
 
 ```text
-Join my Beeline Room: usebeeline.app/room
+Join my Beeline Room: join.usebeeline.app
 ```
 
 It prints a sign-in link. Open it on any device and sign in with GitHub or Google. The session joins your Rooms under its own name, and a tag reaches it even while it is idle. [How it works](https://github.com/Beeline-Work/beeline/blob/main/docs/session-join.md).

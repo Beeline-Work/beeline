@@ -96,6 +96,8 @@ export class GitHubAccountMismatchError extends Error {
 
 export class MonolithSession {
   private readonly identityListeners = new Set<() => void>();
+  private readonly sessionRequiredListeners = new Set<() => void>();
+  private sessionRequired = false;
   private access?: { token: string; expiresAt: number; identityId: string };
   private refreshToken?: string;
   private refreshInFlight?: Promise<string>;
@@ -192,23 +194,7 @@ export class MonolithSession {
     });
     if (!response.ok) throw new MonolithSessionRequiredError();
     const tokens = (await response.json()) as MonolithTokens;
-    await this.accept(tokens, true, revision);
-    const acceptedRevision = this.credentialRevision;
-    await this.mutateCredentials(async () => {
-      if (acceptedRevision !== this.credentialRevision) throw new MonolithSessionChangedError();
-      await (
-        await this.secureStorage()
-      ).setItemAsync(
-        ACCESS_KEY,
-        JSON.stringify({
-          token: tokens.accessToken,
-          expiresAt: tokens.accessExpiresAt,
-          identityId: tokens.identityId,
-          reviewSecretHash: bytesToHex(sha256(utf8ToBytes(secret))),
-        }),
-      );
-      if (acceptedRevision !== this.credentialRevision) throw new MonolithSessionChangedError();
-    });
+    await this.accept(tokens, true, revision, undefined, bytesToHex(sha256(utf8ToBytes(secret))));
     return tokens.identityId;
   }
 
@@ -237,6 +223,7 @@ export class MonolithSession {
   }
 
   async identityId(): Promise<string | null> {
+    if (this.sessionRequired) return null;
     return this.access?.identityId ?? (await this.secureStorage()).getItemAsync(IDENTITY_KEY);
   }
 
@@ -246,6 +233,14 @@ export class MonolithSession {
     return () => {
       this.identityListeners.delete(listener);
     };
+  }
+
+  /** Replay confirmed revocation to routes that mount after cold-start auth.
+   * This signal never waits on native credential cleanup or another read. */
+  subscribeSessionRequired(listener: () => void): () => void {
+    this.sessionRequiredListeners.add(listener);
+    if (this.sessionRequired) listener();
+    return () => { this.sessionRequiredListeners.delete(listener); };
   }
 
   private identityChanged(): void {
@@ -271,6 +266,7 @@ export class MonolithSession {
         return;
       this.credentialRevision += 1;
       this.sessionRevision += 1;
+      this.sessionRequired = false;
       this.access = undefined;
       this.refreshToken = undefined;
       this.accessRestoreAttempted = false;
@@ -342,15 +338,32 @@ export class MonolithSession {
   }
 
   async authorization(fetchImpl: typeof fetch = this.fetchImpl): Promise<string> {
+    if (this.sessionRequired) throw new MonolithSessionRequiredError();
     const current = this.validAccessToken();
     if (current) return current;
     if (!this.access) {
-      if (!this.accessRestoreAttempted) this.accessRestoreInFlight ??= this.restoreAccess();
+      if (!this.accessRestoreAttempted && !this.accessRestoreInFlight) {
+        const restore = this.restoreAccess().catch((error) => {
+          this.accessRestoreAttempted = false;
+          throw error;
+        }).finally(() => {
+          if (this.accessRestoreInFlight === restore) this.accessRestoreInFlight = undefined;
+        });
+        this.accessRestoreInFlight = restore;
+      }
       if (this.accessRestoreInFlight) await this.accessRestoreInFlight;
       const restored = this.validAccessToken();
       if (restored) return restored;
     }
     return this.refresh(fetchImpl);
+  }
+
+  /** A failed live handshake may have presented access the server no longer accepts.
+   * Keep the device session, and never evict a newer token accepted meanwhile. */
+  invalidateAuthorization(rejectedToken: string): void {
+    if (this.access?.token !== rejectedToken) return;
+    this.access = undefined;
+    this.accessRestoreAttempted = true;
   }
 
   private validAccessToken(): string | undefined {
@@ -362,11 +375,20 @@ export class MonolithSession {
   private async restoreAccess(): Promise<void> {
     this.accessRestoreAttempted = true;
     const revision = this.credentialRevision;
-    const storage = await this.secureStorage();
-    const [raw, identityId] = await Promise.all([
-      storage.getItemAsync(ACCESS_KEY),
-      storage.getItemAsync(IDENTITY_KEY),
-    ]);
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), MONOLITH_REFRESH_TIMEOUT_MS);
+    let raw: string | null;
+    let identityId: string | null;
+    try {
+      [raw, identityId] = await untilAborted(this.secureStorage().then(storage => Promise.all([
+        storage.getItemAsync(ACCESS_KEY), storage.getItemAsync(IDENTITY_KEY),
+      ])), controller.signal);
+    } catch (error) {
+      if (controller.signal.aborted) throw new MonolithRequestTimeoutError();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
     if (!raw || this.access || revision !== this.credentialRevision) return;
     try {
       const value: unknown = JSON.parse(raw);
@@ -497,9 +519,6 @@ export class MonolithSession {
 
   private async performRefresh(fetchImpl: typeof fetch): Promise<string> {
     const revision = this.credentialRevision;
-    const refreshToken =
-      this.refreshToken ?? (await (await this.secureStorage()).getItemAsync(REFRESH_KEY));
-    if (!refreshToken) throw new MonolithSessionRequiredError();
     // Every caller shares this refresh, so a stalled one must still settle.
     const controller = new AbortController();
     let timedOut = false;
@@ -509,6 +528,13 @@ export class MonolithSession {
     }, MONOLITH_REFRESH_TIMEOUT_MS);
     let response: Response;
     try {
+      const refreshToken = this.refreshToken ?? await untilAborted(
+        this.secureStorage().then(storage => storage.getItemAsync(REFRESH_KEY)), controller.signal);
+      if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
+      // A startup probe may race an exchange whose native writes are still
+      // pending. Missing credentials do not authorize clearing that exchange,
+      // or emitting another reset from an already signed-out session.
+      if (!refreshToken) throw new MonolithSessionRequiredError();
       response = await untilAborted(
         fetchImpl(`${this.baseUrl}/v1/auth/refresh`, {
           method: 'POST',
@@ -521,7 +547,12 @@ export class MonolithSession {
       if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
       this.assertSharedRefresh(refreshToken);
       if (response.status === 401) {
-        await this.clear();
+        this.sessionRequired = true;
+        const cleanup = this.clear();
+        for (const listener of [...this.sessionRequiredListeners]) {
+          try { listener(); } catch { /* Navigation cannot block credential cleanup. */ }
+        }
+        await untilAborted(cleanup, controller.signal);
         throw new MonolithSessionRequiredError();
       }
       if (!response.ok) throw new MonolithRefreshError(response.status);
@@ -529,7 +560,7 @@ export class MonolithSession {
         response.json() as Promise<MonolithTokens>,
         controller.signal,
       );
-      await this.accept(tokens, false, revision, refreshToken);
+      await untilAborted(this.accept(tokens, false, revision, refreshToken), controller.signal);
       return tokens.accessToken;
     } catch (error) {
       if (timedOut) {
@@ -547,6 +578,7 @@ export class MonolithSession {
     signedIn = false,
     expectedRevision = this.credentialRevision,
     previousRefresh?: string,
+    acceptedReviewSecretHash?: string,
   ): Promise<void> {
     if (!tokens.accessToken || !tokens.refreshToken || !tokens.identityId)
       throw new Error('Invalid monolith session response');
@@ -558,7 +590,7 @@ export class MonolithSession {
       const storage = await this.secureStorage();
       const previousId = this.access?.identityId ?? (await storage.getItemAsync(IDENTITY_KEY));
       if (signedIn || previousId !== tokens.identityId) this.sessionRevision += 1;
-      let reviewSecretHash: string | undefined;
+      let reviewSecretHash = acceptedReviewSecretHash;
       if (!signedIn && previousId === tokens.identityId) {
         try {
           const saved = JSON.parse((await storage.getItemAsync(ACCESS_KEY)) ?? 'null') as {
@@ -585,6 +617,7 @@ export class MonolithSession {
         ),
       ]);
       if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
+      this.sessionRequired = false;
       this.refreshToken = tokens.refreshToken;
       this.access = {
         token: tokens.accessToken,

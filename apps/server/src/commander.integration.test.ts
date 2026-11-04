@@ -2267,3 +2267,60 @@ it('OBJECTIVE-BRIEF: no-brief objectives use the opening order and plan fills on
   expect(await readCornerObjective(db,opened.cornerId)).toBe('Filled navigation');
   expect((await db.query(`SELECT count(*)::int n FROM corner_brief_revisions WHERE corner_id=$1`,[opened.cornerId])).rows[0]).toEqual({n:0});
 });
+
+it('Reproduction RETURN-ADDRESS: an agent order without an explicit return address reports to its parent commander', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await db.query(`UPDATE agent_commands SET private_payload=private_payload-'fromRoomId' WHERE id=$1`, [turn.id]);
+  await daemon.execute('report', { ...authority(turn), status: 'blocked', text: 'blocked: need a decision' }, WORKER);
+  const returned = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
+  expect(returned).toHaveLength(1);
+  expect(returned[0]!.source.body).toBe('blocked: need a decision');
+  await claim(returned[0]!);
+});
+
+it('Reproduction RETURN-ADDRESS: a report whose parent expired retains the recorded human source route', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await daemon.execute('report', { ...authority(turn), status: 'blocked', text: 'blocked: decision needed' }, WORKER);
+  const returned = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
+  await claim(returned);
+  // Production feedback fb_135f018e: the report parent was gone, but its
+  // root_source_message_id still named the human's original Room order.
+  await db.query('DELETE FROM agent_commands WHERE id=$1', [order.id]);
+  await db.query('UPDATE messages SET deleted_at=now() WHERE id=$1', [order.sourceMessageId]);
+  await expect(daemon.execute('report', { ...authority(returned), status: 'needs_decision', text: 'needs-decision: approve the next step?' }, RUBY))
+    .rejects.toThrow('no commander return address');
+  await db.query('UPDATE messages SET deleted_at=NULL WHERE id=$1', [order.sourceMessageId]);
+  await daemon.execute('report', { ...authority(returned), status: 'needs_decision', text: 'needs-decision: approve the next step?' }, RUBY);
+  expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.text === 'needs-decision: approve the next step?')).toHaveLength(1);
+});
+
+it('Reproduction POST-ID: different explicit replies receive their own stored ids and identical retries reuse them', async () => {
+  const { mentionReplyKey, mentionReplyId } = await import('./owed-mentions.js');
+  const key = await mentionReplyKey(db, RUBY, DM, order.sourceMessageId);
+  expect(key).toBeDefined();
+  const legacyId = mentionReplyId(key!);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,reply_to_message_id,root_message_id)
+    VALUES($1,$2,$3,'Opened the fix.',$4,$4)`, [legacyId, DM, RUBY, order.sourceMessageId]);
+  const post = (text: string) => daemon.execute('postCornerMessage', {
+    ...authority(order), cornerId: DM, replyTo: order.sourceMessageId, text,
+  }, RUBY);
+  const first = await post('Opened the fix.');
+  expect(first.id).toBe(legacyId);
+  const second = await post('The fix is complete.');
+  expect(second.id).not.toBe(first.id);
+  expect((await post('The fix is complete.')).id).toBe(second.id);
+  expect((await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY).map(m => m.text))
+    .toEqual(expect.arrayContaining(['Opened the fix.', 'The fix is complete.']));
+  expect((await db.query('SELECT id FROM messages WHERE id=ANY($1::text[])', [[first.id, second.id]])).rowCount).toBe(2);
+});
+
+it('Reproduction REPLY-ONCE: a direct human reply retried three times stores and wakes once', async () => {
+  const parent = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: 'Is the boot fix approved?' }, RUBY);
+  const messageId = randomBytes(32).toString('hex');
+  for (let attempt = 0; attempt < 3; attempt++) {
+    expect((await phone.execute('sendRoomReply', { roomId: DM, messageId, parentMessageId: parent.id,
+      text: '@ruby is this still current? Approved in that case' }, HUMAN)).messageId).toBe(messageId);
+  }
+  expect((await db.query('SELECT id FROM messages WHERE id=$1', [messageId])).rowCount).toBe(1);
+  expect((await db.query('SELECT id FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [messageId, RUBY])).rowCount).toBe(1);
+});

@@ -1,5 +1,7 @@
 # Corner authority and lifecycle invariants
 
+Report wakes whose incoming command has expired may recover only their recorded root human message route in the same Workspace; ordinary membership checks still apply. Explicit threaded posts deduplicate identical text while different text gets its own receipt. Coverage and incident limits: [report and post delivery proof](report-post-delivery-proof.md) (`RETURN-ADDRESS`, `POST-ID`, `REPLY-ONCE`).
+
 Report review evidence comes from the reporting turn (`createAgentCommand.reportSource`), while its parent retains the commander's incoming order for one-step-up routing. A repair completion may follow a new head without inheriting its commander's stale review verdict. A current reviewer report retains its own head; stale verdicts remain fenced. Coverage: `commander-order-target.integration.test.ts`, Reproduction `report-commander-refused`.
 
 Batched reports carry every source attachment through explicit reports and automatic completions. Carried files follow their source's commander return route; content deduplication happens after recipient selection. Coverage: `commander-recovery.integration.test.ts` (`FILE-HANDOFF`); built HTTP and file-opening proof: `node --import tsx scripts/prove-report-files.mjs` after building the server.

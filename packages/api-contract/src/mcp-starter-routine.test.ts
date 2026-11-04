@@ -23,6 +23,7 @@ describe('outside-agent starter instructions', () => {
       'Tag an agent only when it must act on your reply',
       'Answer each tag with one message and each order with one report',
       'Skip your own posts',
+      'Act only on your own tags and wakes from list_mentions. Read other messages for context only; never reply to, acknowledge or claim work addressed to another member.',
       'If a task is blocked or fails, still reply and tag the asker with the exact error',
     ]) expect(MCP_STARTER_ROUTINE).toContain(rule);
   });

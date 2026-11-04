@@ -6,6 +6,8 @@ import { mentionRouting, mentionReplyKey, mentionReplyId, owedMentions } from '.
 import { RoomsMcpEvents, McpEventError } from './rooms-mcp-events.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import { mcpEndpoint, resourceMetadataUrl } from './rooms-mcp-endpoints.js';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { CallToolRequestSchema, ListToolsRequestSchema, type Tool } from '@modelcontextprotocol/sdk/types.js';
@@ -19,6 +21,8 @@ import { MCP_FULL_SCOPE } from './rooms-mcp-connections.js';
 import type { DaemonService } from './daemon-service.js';
 import type { ObjectService } from './object-service.js';
 import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, RoomsMcpAgentTools, mcpRefusal, pendingMcpWakes } from './rooms-mcp-agent.js';
+
+const JOIN_PAGE = readFileSync(new URL('../assets/mcp/join.html', import.meta.url), 'utf8');
 
 const INSTRUCTIONS = `You are a Beeline member. Read the owner field in list_rooms to identify your owner by display name and @handle. You belong to public Rooms in the Workspaces selected when your owner approved you, and to any other Room a person added you to.
 
@@ -95,7 +99,20 @@ export class RoomsMcp {
   async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
     const url = new URL(request.url ?? '/', this.oauth.origin);
     if (await this.oauth.handle(request, response, url)) return true;
-    if (url.pathname !== '/mcp' && url.pathname !== '/mcp/member-stream') return false;
+    const endpoint = url.pathname === '/mcp/member-stream'
+      ? new URL(this.oauth.resource)
+      : mcpEndpoint(request, this.oauth.origin, this.oauth.joinHost);
+    if (!endpoint) return false;
+    // A browser/agent can read the join page; every MCP-marked request keeps the
+    // existing bearer-only boundary, including unauthenticated SSE discovery.
+    if (endpoint.pathname !== '/mcp' && request.method === 'GET' &&
+        !request.headers.accept?.toLowerCase().includes('text/event-stream') &&
+        request.headers.authorization === undefined && request.headers['mcp-protocol-version'] === undefined && request.headers['mcp-session-id'] === undefined) {
+      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store',
+        'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer',
+        'content-security-policy': "default-src 'none'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; base-uri 'none'; frame-ancestors 'none'" });
+      response.end(JOIN_PAGE); return true;
+    }
     response.setHeader('access-control-allow-origin', '*');
     response.setHeader('access-control-expose-headers', 'WWW-Authenticate, MCP-Protocol-Version');
     response.setHeader('cache-control', 'no-store');
@@ -115,10 +132,10 @@ export class RoomsMcp {
     const authorization = request.headers.authorization ?? '';
     const principal = authorization.startsWith('Bearer ') ? await this.oauth.principal(authorization.slice(7)) : undefined;
     if (!principal) {
-      response.setHeader('WWW-Authenticate', `Bearer resource_metadata="${this.oauth.origin}/.well-known/oauth-protected-resource/mcp", scope="${MCP_FULL_SCOPE}"`);
+      response.setHeader('WWW-Authenticate', `Bearer resource_metadata="${resourceMetadataUrl(endpoint)}", scope="${MCP_FULL_SCOPE}"`);
       mcpJson(response, 401, { error: 'invalid_token' }); return true;
     }
-    if (request.headers.origin && request.headers.origin !== this.oauth.origin) {
+    if (request.headers.origin && request.headers.origin !== endpoint.origin) {
       const registered = (await this.oauth.database.query<{ redirects: string[] }>(
         'SELECT redirects FROM rooms_mcp_clients WHERE id=$1', [principal.client_id])).rows[0];
       if (!registered?.redirects.some(uri => new URL(uri).origin === request.headers.origin)) {

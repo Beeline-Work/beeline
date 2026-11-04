@@ -120,3 +120,27 @@ instead of assuming a fixed number of promise turns.
 unchanged phone/router/base-aware architecture guards. The previous server and
 bundle validation remains applicable: this additional delta changes neither.
 Capability remains off, and native/cohort closure is unchanged.
+
+## MCP negotiation fixture correction (instruction057)
+
+The composed main join endpoint reads `RoomsMcpOAuth.resource`, a service URL
+initialized by its real constructor from the configured origin. The negotiation
+test's hand-written OAuth object omitted it, reproducing three409→500 failures.
+The fixture now uses the production constructor and stubs only authentication
+and admission; its zero-application-read assertions remain unchanged.
+
+The real HTTP/OAuth `MCP-STREAM-RESOURCE` cases issue tokens through an exchange
+that omits `resource` and `redirect_uri`. With the deployment flag off and with it
+on but the committed listener unready, these tokens receive409
+`member_stream_unavailable`. Missing, invalid and revoked bearer credentials
+receive401 `invalid_token` and canonical resource discovery. The configured
+service URL is independent of the bearer token, so the missing-fixture property
+is not reachable by omitting a token-exchange parameter. No production handler
+change or new authorization gate is needed.
+
+Validation: `rooms-mcp-negotiation.test.ts` **4/4 pass**; `rooms-mcp.test.ts`
+selected with `--testNamePattern 'MCP-STREAM-RESOURCE|MCP-TOKEN-1'` **3/3 pass**
+(the other157 cases are deliberately unselected); server `tsc --noEmit` passes.
+Both suites ran serially with `--maxWorkers=2 --minWorkers=1` and a4096 MiB heap.
+This preserves F15 negotiation coverage; whole-finding closure and rollout
+capability remain unchanged.

@@ -1021,6 +1021,28 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ token_type: 'Bearer' });
   });
+  it.each([false, true])('MCP-STREAM-RESOURCE: an exchange without resource reaches the intended refusal (enabled=%s)', async enabled => {
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', enabled ? '1' : undefined);
+    try {
+      const grant = await authorize();
+      const issued = await exchange(grant, { resource: undefined, redirect_uri: undefined });
+      expect(issued.status).toBe(200);
+      const { access_token: token } = await issued.json() as { access_token: string };
+      const endpoint = origin + '/mcp/member-stream?mentions=0';
+      // The fixture uses the real OAuth service and its default unready listener.
+      // Missing request resource never makes the service's configured URL absent.
+      const stream = await fetch(endpoint, { headers: { authorization: `Bearer ${token}` } });
+      expect(stream.status).toBe(409);
+      expect(await stream.json()).toEqual({ error: 'member_stream_unavailable' });
+      await db.query('UPDATE rooms_mcp_tokens SET revoked_at=now() WHERE hash=$1', [tokenHash(token)]);
+      for (const headers of [{}, { authorization: 'Bearer invalid-token' }, { authorization: `Bearer ${token}` }]) {
+        const refused = await fetch(endpoint, { headers });
+        expect(refused.status).toBe(401);
+        expect(await refused.json()).toEqual({ error: 'invalid_token' });
+        expect(refused.headers.get('www-authenticate')).toContain(`${origin}/.well-known/oauth-protected-resource/mcp`);
+      }
+    } finally { vi.unstubAllEnvs(); }
+  });
   it('accepts the server origin or MCP URL as resource, with or without a trailing slash, and refuses other hosts', async () => {
     for (const resource of [origin, origin + '/', origin + '/mcp/']) {
       expect([resource, (await exchange(await authorize(), { resource })).status]).toEqual([resource, 200]);

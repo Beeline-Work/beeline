@@ -144,3 +144,26 @@ selected with `--testNamePattern 'MCP-STREAM-RESOURCE|MCP-TOKEN-1'` **3/3 pass**
 Both suites ran serially with `--maxWorkers=2 --minWorkers=1` and a4096 MiB heap.
 This preserves F15 negotiation coverage; whole-finding closure and rollout
 capability remain unchanged.
+
+## Schema rollout and contention integration
+
+Main `776405f0cd7d1b2c9eb7322663a9066d10017304` introduced four conflicts
+after the negotiation correction. Their resolution retains main's same-turn
+queue before database checkout, the router's current authority/model credential
+fences, and single-attempt transactions. Sentry uses nonblocking dispatch and
+singleton acquisition; lock refusal returns no retry deadline while retaining
+the pending batch. Explicit later admission can deliver it once. The existing
+60-second incident setup deadline is retained.
+
+Main also preserves two columns read by older serving images and adds its
+post-drain contract guard. These additive repairs change the schema relative to
+earlier byte-identical notification-migration evidence. Historical image proofs
+are not promoted to proof of this candidate or of the deployed recovery floor.
+
+[Merge evidence](rollout-main-integration-validation.json): **42 server
+cases in eight serial suites** and **75 Node checks** pass, including
+real PostgreSQL contention/authority/model/lost-reply proofs and repeated
+schema overlap. All8 builds, full root typecheck, the existing architecture and
+phone/router/workflow guards, and main's schema compatibility guard pass.
+The full combined candidate remains capability-off; this is neither rollout
+approval nor an additional whole-finding closure.

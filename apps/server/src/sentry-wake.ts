@@ -112,12 +112,18 @@ export async function receiveSentryWake(db: SqlDatabase, raw: Buffer,
 }
 
 /** The command and batch acknowledgement commit together under a cross-machine row lock.
- * False parks an empty or currently unauthorized batch; it creates no retry deadline. */
+ * False parks an empty, unauthorized or busy batch; it creates no retry deadline. */
 export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgentFromEnv()): Promise<boolean> {
-  return db.transaction(async tx => {
+  try { return await db.transaction(async tx => {
+    // Reserve dispatch before the singleton without holding a connection behind
+    // another writer. Contention parks until an actual source/recovery event.
+    const dispatch = await tx.query<{ acquired: boolean }>(
+      `SELECT pg_try_advisory_xact_lock(hashtext($1)) acquired`,
+      [`commander-wakes:${TRIAGE}:${agentId}`]);
+    if (!dispatch.rows[0]?.acquired) return false;
     const state = await tx.query<{ wake_due: boolean }>(`SELECT
       (last_wake_at IS NULL OR last_wake_at<=now()-interval '5 minutes') wake_due
-      FROM sentry_wake_state WHERE singleton FOR UPDATE`);
+      FROM sentry_wake_state WHERE singleton FOR UPDATE SKIP LOCKED`);
     if (!state.rows[0]) return false;
     if (!state.rows[0].wake_due) return true;
     const issues = await tx.query<{ issue_id: string; level: string; title: string; permalink: string; event_count: string }>(
@@ -136,7 +142,13 @@ export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgen
     await tx.query(`UPDATE sentry_wake_issues SET pending=false,last_digested_at=clock_timestamp(),last_digested_level=level WHERE pending`);
     await tx.query(`UPDATE sentry_wake_state SET last_wake_at=clock_timestamp() WHERE singleton`);
     return true;
-  });
+  }); } catch (error) {
+    if ((error as { code?: string } | null)?.code !== '55P03') throw error;
+    // FK/trigger locks can still be busy after the dispatch reservation.
+    // Rollback retains the batch and clock; no failed-observation retry is due.
+    console.warn('[sentry-wake] dispatch deferred while database rows are busy');
+    return false;
+  }
 }
 
 /** Remaining duration comes from the same database clock as batch admission. */

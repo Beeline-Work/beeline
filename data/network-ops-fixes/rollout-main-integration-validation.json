@@ -1,0 +1,88 @@
+{
+  "sourceParents": [
+    "1c559d844899b41a349e79eb364978e323337d4b",
+    "776405f0cd7d1b2c9eb7322663a9066d10017304"
+  ],
+  "scope": "Schema rollout/contention main integration; isolated loopback PostgreSQL/PGlite. No deployment, production or installed-cohort proof.",
+  "runner": {
+    "nodeOptions": "--max-old-space-size=4096",
+    "vitestArgs": [
+      "--maxWorkers=2",
+      "--minWorkers=1"
+    ],
+    "execution": "one suite at a time"
+  },
+  "passed": 42,
+  "suiteSelections": 8,
+  "vitest": [
+    {
+      "workspace": "apps/server",
+      "file": "src/incident-deadlocks.test.ts",
+      "passed": 7,
+      "logSha256": "ac06c737bdacd3becff950d573dfdae51d234628d7c8b6debb0ccbd0fb688c6c"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/sentry-wake.test.ts",
+      "passed": 14,
+      "logSha256": "90e0ee3156f35398346fe8dda580b3408a7edc9cac497d38db9e93666181bbd1"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/database-one-attempt.postgres.test.ts",
+      "passed": 2,
+      "logSha256": "16e307efa8639cff21ddb3b7b4d1db55fcc15a0149a20eea897c749754b26f18"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/rollout-overlap.test.ts",
+      "passed": 2,
+      "logSha256": "e7ef74ac0dbad8e70ef490e75bd00899f826bc19444c80fc3d6d624e1ad88d7b"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/rooms-mcp-negotiation.test.ts",
+      "passed": 4,
+      "logSha256": "638d45b35b604afa249d6faee6f3782a226cfbee9c671f0c56b3101e8902b6d1"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/turn-ownership-authority.postgres.test.ts",
+      "passed": 1,
+      "logSha256": "0f3d808f1e0a7e419f85fbcc8e7ec4b09db588355746922d50fc5d20e128ee0e"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/turn-ownership.postgres.test.ts",
+      "passed": 1,
+      "logSha256": "b60d9c60d2cc0c75b745944971d5509edca6525d72aefe1952b318dfc9f61da7"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/owned-model.postgres.test.ts",
+      "passed": 11,
+      "logSha256": "9fa334e62afce0da10454570bb6cd55742ca5960dd8c848f54f629d3a42fb285"
+    }
+  ],
+  "node": [
+    {
+      "file": "scripts/rollout-schema.test.mjs",
+      "passed": 4,
+      "logSha256": "b950c30f9fa62815e51d1ceaf17a78011a975b30d88ec598b305b4522f5d20ca"
+    },
+    {
+      "file": "scripts/unified-release.test.mjs",
+      "passed": 71,
+      "logSha256": "56be013588386e0014955969e8497bfed1c726085256ff866b73d64fce88f40e"
+    }
+  ],
+  "checks": [
+    "8 workspace builds",
+    "full root typecheck",
+    "base-aware architecture: 20 rules",
+    "rollout schema compatibility against main",
+    "phone network inventory: 72 sites / 72 entries",
+    "router boundaries: 158 inventoried, no production opt-in",
+    "workflow paths: 139 references"
+  ]
+}

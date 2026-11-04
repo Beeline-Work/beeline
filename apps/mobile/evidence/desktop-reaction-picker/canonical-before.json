@@ -1,0 +1,41 @@
+{
+  "status": 200,
+  "messages": [
+    {
+      "id": "0000000000000000000000000000000000000000000000000000000000000001",
+      "text": "Desktop reaction proof — original message"
+    },
+    {
+      "id": "0000000000000000000000000000000000000000000000000000000000000002",
+      "text": "Follow-up message directly below the original"
+    },
+    {
+      "id": "0000000000000000000000000000000000000000000000000000000000000003",
+      "text": "Hover React, move onto the thumbs-up, then click."
+    },
+    {
+      "id": "0000000000000000000000000000000000000000000000000000000000000004",
+      "text": "This Workspace and database are local to this task."
+    },
+    {
+      "id": "0000000000000000000000000000000000000000000000000000000000000005",
+      "text": "A reaction must stay attached to the original message."
+    },
+    {
+      "id": "0000000000000000000000000000000000000000000000000000000000000006",
+      "text": "Later rows must not capture the emoji hit target."
+    },
+    {
+      "id": "0000000000000000000000000000000000000000000000000000000000000007",
+      "text": "Check the picker near the transcript edge too."
+    },
+    {
+      "id": "0000000000000000000000000000000000000000000000000000000000000008",
+      "text": "One more reply for a realistic ledger."
+    },
+    {
+      "id": "0000000000000000000000000000000000000000000000000000000000000009",
+      "text": "Bottom message for viewport-edge placement."
+    }
+  ]
+}

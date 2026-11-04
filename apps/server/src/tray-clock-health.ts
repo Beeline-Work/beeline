@@ -62,6 +62,7 @@ export class TrayClockHealth{
  async publish(epoch:BackgroundEpoch):Promise<void>{
   await this.ownership.withTransaction(epoch,'tray.readiness',async db=>{
    const result=await db.query(`INSERT INTO tray_clock_health
+    (id,instance_id,generation,claim_nonce,lock_backend_pid,lock_backend_start,source_epoch,source_through,readiness_epoch,readiness_through)
     SELECT 1,owner.instance_id,owner.generation,owner.claim_nonce,owner.lock_backend_pid,owner.lock_backend_start,
       source.epoch,source.sequence,readiness.epoch,readiness.sequence
     FROM background_leader_owners owner

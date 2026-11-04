@@ -1,5 +1,5 @@
 import {parkOwnedModelTerminal,OwnedModelOwnerEndRefusal} from './owned-model-parking.js';
-import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, ownedTurnOperationSupported, registerOwnedEffectFence } from './turn-ownership.js';
+import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, usesOwnedTurnAdapter, registerOwnedEffectFence } from './turn-ownership.js';
 import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
 import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, isOwnedModelUnknownGenerationError } from './owned-model-credential.js';
 import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
@@ -652,11 +652,12 @@ export class DaemonService {
         WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3 LIMIT 1`,
         [scopedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId, candidate.generationId])).rowCount);
     }
-    if (ownedIntent && !ownedTurnOperationSupported(String(name)))
-      throw new ExpectedRefusalError('Owned command adapter is not enabled for this operation');
+    // An owned claim must not remove existing tools. Operations without a
+    // dedicated adapter keep their established provider/permission path while
+    // retaining the command's generation and final commit fences below.
     // Provider reads happen before the command transaction. Reports may be
     // delivered in the commander's Room, so refresh their origin corners too.
-    if (!ownedIntent && !this.commandTransaction && scopedRoom && this.github) {
+    if (!(ownedIntent && usesOwnedTurnAdapter(String(name))) && !this.commandTransaction && scopedRoom && this.github) {
       if (['getAgentCommands', 'claimAgentCommand'].includes(name)) {
         const origins = await this.database.query<{ corner_id: string }>(
           `SELECT DISTINCT COALESCE(review_context->>'cornerId',room_id::text) corner_id

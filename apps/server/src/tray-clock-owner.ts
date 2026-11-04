@@ -34,7 +34,7 @@ BEGIN
    END IF;
    RETURN;
  END IF;
- INSERT INTO tray_clock_owner_fences VALUES(txid_current(),owner_instance,owner_generation,owner_nonce);
+ INSERT INTO tray_clock_owner_fences(transaction_id,instance_id,generation,claim_nonce) VALUES(txid_current(),owner_instance,owner_generation,owner_nonce);
 END;
 $$;
 CREATE OR REPLACE FUNCTION beeline_commit_tray_clock_owner() RETURNS trigger LANGUAGE plpgsql AS $$

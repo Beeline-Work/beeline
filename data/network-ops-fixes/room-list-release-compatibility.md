@@ -1,6 +1,6 @@
 # Room-list release investigation
 
-Firstmate instruction 063; investigation on 2026-11-04 UTC. **The reported native profiling-build failure remains unexplained. This report does not clear that release blocker.** A local main client against a local main server loads successfully; a protocol mismatch has not been reproduced in either release-order window.
+Firstmate instruction 063; investigation on 2026-11-04 UTC. **Resolved by the UI lane (firstmate instruction 064): its failing build contained stale local `net/dist`; rebuilding fresh main loads the Room list.** This is a build-output mismatch, not an expected client/server release-window failure. The independent local main/main and release-window checks below also pass. The native resolution is reported by firstmate; this lane did not rerun that device proof.
 
 ## Evidence and limits
 
@@ -28,7 +28,7 @@ All nine cases passed. The candidate is the working tree for https://github.com/
 
 This is a **historical-source Node/PGlite proof**, not an installed-native40 proof or a production-image test. Each client bundles its corresponding archived shared SDK source. Server external/workspace dependencies come from the current installation. Authentication, Android host services and MMKV native storage are synthetic host implementations; actual React rendering, Hermes, native credentials, production account data, deployment proxy and production server configuration are outside this proof. The server runs the actual HTTP/WebSocket factory and migrations, not the full service entrypoint and its background services.
 
-The result shows no unavoidable Room-list protocol break from releasing server and OTA together, server first, or OTA first in this fixture. It cannot establish that every user's native build will work or explain away the original failure.
+Together with the fresh-build native result reported by firstmate, the matrix shows no unavoidable Room-list protocol break from releasing server and OTA together, server first, or OTA first in this fixture. It cannot establish that every user's native build will work or explain away the original failure.
 
 ## Independent activation defects found and fixed
 
@@ -46,6 +46,6 @@ Validation after the fixes:
 - Phone scanner: **72/72**; router boundaries: **158**; no inventory or enforcement weakened.
 - Twelve-Room local matrix: **9/9 passed**, including the actual candidate router path.
 
-## Remaining release evidence
+## Native investigation handoff and resolution
 
-The UI proof lane needs one failing-build capture containing socket open/close code and reason, RPC operation and result/error code, and exceptions from capability loading/owner initialization. Do not log bearer tokens, credentials or response payloads. In particular, capture `connect()`'s rejected capability import and the rejection handler around `router.negotiated()`, which currently hide their detailed reasons from the supplied log. Then rerun that same native build against the local release stack or a synthetic-account equivalent. Until that evidence identifies the discrepancy, the correct native release conclusion is **unresolved**, not “expected release window” or “activation fixes it.”
+The UI proof lane needs one failing-build capture containing socket open/close code and reason, RPC operation and result/error code, and exceptions from capability loading/owner initialization. Do not log bearer tokens, credentials or response payloads. In particular, capture `connect()`'s rejected capability import and the rejection handler around `router.negotiated()`, which currently hide their detailed reasons from the supplied log. Then rerun that same native build against the local release stack or a synthetic-account equivalent. This was the requested diagnostic handoff before instruction 064 identified stale local `net/dist` and confirmed that fresh main loads. No source workaround for that stale-build failure was added. The activation negotiation fixes above address separate defects discovered by the local matrix. Activation CI failures remain a separate follow-up; this report does not declare those gates green.

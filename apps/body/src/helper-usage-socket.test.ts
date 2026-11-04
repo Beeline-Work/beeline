@@ -36,6 +36,19 @@ describe('actual daemon usage transport selection',()=>{
     api.closeLive();await expect(postChangedAgentUsage(api,agent,{...usage,context:{used:20,size:100}})).rejects.toThrow('unavailable');
     expect(fetcher).not.toHaveBeenCalled();
   });
+  it('binds an existing collector report to the selected usage source without a new refusal',async()=>{
+    const {api,socket,fetcher}=fixture(true),usage={updatedAt:300,windows:[],context:{used:37,size:100}};
+    await api.execute('postAgentUsage',{agentId:agent,usage});
+    await api.execute('postAgentUsage',{agentId:agent,usage:{...usage,updatedAt:301}});
+    const writes=socket.frames.filter(frame=>frame.type==='usage-operation');
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatchObject({operation:'postAgentUsage',input:{usage,
+      usageSource:{v:1,ownerId:owner,source,revision:expect.any(Number)}}});
+    expect(fetcher).not.toHaveBeenCalled();
+    api.closeLive();
+    await expect(api.execute('postAgentUsage',{agentId:agent,usage:{...usage,context:{used:40,size:100}}})).rejects.toThrow('unavailable');
+    expect(fetcher).not.toHaveBeenCalled();
+  });
   it('keeps the explicit initial old-server postAgentUsage cohort on its existing HTTP adapter',async()=>{
     const {api,socket,fetcher}=fixture(false);await postChangedAgentUsage(api,agent,{updatedAt:100,windows:[],context:{used:10,size:100}});
     expect(fetcher).toHaveBeenCalledOnce();expect(socket.frames.some(frame=>frame.type==='usage-operation')).toBe(false);

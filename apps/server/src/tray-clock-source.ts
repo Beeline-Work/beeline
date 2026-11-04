@@ -98,6 +98,12 @@ RETURNS boolean LANGUAGE plpgsql AS $$
 DECLARE wanted jsonb; prior tray_clock_sources%ROWTYPE; entry jsonb; current_incarnation text; current_revision bigint;
 BEGIN
  IF source_name NOT IN ('message','seen','choice') OR (source_name='seen')<>(reader_key<>'') THEN RAISE EXCEPTION 'invalid Tray clock source'; END IF;
+ wanted:=beeline_tray_clock_desired(source_name,source_key,reader_key);
+ -- Ordinary messages have no clock to capture. Do not retain an advisory lock
+ -- per unrelated row until a bulk INSERT commits. Lifecycle callers already
+ -- hold the source row; existing source rows still take the serialization path.
+ IF wanted='[]'::jsonb AND NOT EXISTS(SELECT 1 FROM tray_clock_sources
+   WHERE source_kind=source_name AND source_id=source_key AND reader_id=reader_key) THEN RETURN false; END IF;
  -- Serializes concurrent first capture before a registry row exists. Not a
  -- global authority lock or provider lock; scope is this exact source key.
  PERFORM pg_advisory_xact_lock(hashtextextended('tray-clock:'||jsonb_build_array(source_name,source_key,reader_key)::text,0));
@@ -140,6 +146,9 @@ CREATE OR REPLACE FUNCTION beeline_tray_clock_retire(source_name text,source_key
 RETURNS void LANGUAGE plpgsql AS $$
 DECLARE retired_source tray_clock_sources%ROWTYPE;
 BEGIN
+ -- Deleting an unrelated message must not allocate a source lock either.
+ IF NOT EXISTS(SELECT 1 FROM tray_clock_sources
+   WHERE source_kind=source_name AND source_id=source_key AND reader_id=reader_key) THEN RETURN; END IF;
  PERFORM pg_advisory_xact_lock(hashtextextended('tray-clock:'||jsonb_build_array(source_name,source_key,reader_key)::text,0));
  UPDATE tray_clock_sources SET retired=true,revision=revision+1,desired='[]'::jsonb
    WHERE source_kind=source_name AND source_id=source_key AND reader_id=reader_key AND NOT retired RETURNING * INTO retired_source;
@@ -259,7 +268,9 @@ DROP TRIGGER IF EXISTS beeline_tray_clock_message_retire ON messages;
 CREATE TRIGGER beeline_tray_clock_message_retire BEFORE DELETE OR UPDATE OF id ON messages
  FOR EACH ROW WHEN (OLD.id IS NOT NULL) EXECUTE FUNCTION beeline_tray_clock_capture();
 DROP TRIGGER IF EXISTS beeline_tray_clock_message_insert ON messages;
-CREATE TRIGGER beeline_tray_clock_message_insert AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION beeline_tray_clock_capture();
+CREATE TRIGGER beeline_tray_clock_message_insert AFTER INSERT ON messages FOR EACH ROW
+ WHEN (${askingMessageSql('NEW')} OR NEW.card_type IN ('agent-sign-in','squire-approval'))
+ EXECUTE FUNCTION beeline_tray_clock_capture();
 DROP TRIGGER IF EXISTS beeline_tray_clock_message_change ON messages;
 CREATE TRIGGER beeline_tray_clock_message_change AFTER UPDATE ON messages FOR EACH ROW
  WHEN (ROW(OLD.id,OLD.room_id,OLD.created_at,OLD.presentation,OLD.deleted_at,${askingMessageSql('OLD')},OLD.card_type,OLD.card->'expiresAt',OLD.card->'status',OLD.card->'approvalId',OLD.card->'ownerId',OLD.card->'sourceRoomId')

@@ -102,10 +102,13 @@ it('Reproduction MERGE-DEADLOCK-1: rolls back a deadlocked archival and commits 
   const retryDatabase: SqlDatabase = {
     query: db.query.bind(db),
     transaction: work => db.transaction(async tx => {
+      const previouslyArchived = await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [C]);
       const result = await work(tx);
       // Fail after all writes: rollback must leave the next event fresh authority.
+      // Repository notes now commit independently after archival; observing an
+      // already archived corner in that transaction is not another attempt.
       const archived = await tx.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [C]);
-      if (archived.rowCount && ++attempts === 1)
+      if (!previouslyArchived.rowCount && archived.rowCount && ++attempts === 1)
         throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
       return result;
     }),

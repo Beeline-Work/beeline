@@ -1,15 +1,22 @@
 // Runs on a hosted runner so an offline release runner cannot hide a failed preflight.
+exports.runnerMatrix = (inputs = {}) => [
+  { label: 'production', runner: '["self-hosted", "beeline-prod-host"]' },
+  { label: 'android', runner: '["self-hosted", "beeline-android"]' },
+  { label: 'ios', runner: '["self-hosted", "macOS", "X64", "ios-builder"]' },
+].filter(({ label }) => inputs[label] !== false && inputs[label] !== 'false');
+
 exports.validateRunnerResults = async ({ github, context, core }) => {
   // The workflow dependency is the completion signal. Inspect its result once.
   const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
     ...context.repo, run_id: context.runId, per_page: 100,
   });
-  const probes = jobs.filter(job => job.name.startsWith('Runner probe '));
-  if (probes.length !== 3 || probes.some(job => job.status !== 'completed'))
+  const required = exports.runnerMatrix(context.payload?.inputs).map(({ label }) => `Runner probe ${label}`);
+  const probes = jobs.filter(job => required.includes(job.name));
+  if (required.some(name => !probes.some(job => job.name === name)) || probes.some(job => job.status !== 'completed'))
     throw new Error('Release runner completion is unavailable; inspect queued/offline labels before proceeding.');
   const failed = probes.filter(job => job.conclusion !== 'success');
   if (failed.length) throw new Error(`Release runner probes failed: ${failed.map(job => job.name).join(', ')}`);
-  core.info('All release runner labels executed node -v successfully.');
+  core.info('Selected release runner labels executed node -v successfully.');
 };
 
 exports.triageFailure = async ({ github, context, run = context.payload.workflow_run }) => {

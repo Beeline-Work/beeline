@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { compareReleasedRuntime, enforceReleasedRuntime } from './release-preflight-native.mjs';
 const require = createRequire(import.meta.url);
-const { triageFailure, validateRunnerResults, recoverFailures } = require('./release-preflight.cjs');
+const { triageFailure, validateRunnerResults, recoverFailures, runnerMatrix } = require('./release-preflight.cjs');
 
 test('forced release failure creates exactly one triage issue even after redelivery and closure', async () => {
   const issues = [];
@@ -44,6 +44,29 @@ test('runner completion inspects once and fails closed for incomplete or failed 
   await assert.rejects(validateRunnerResults({github,context,core}),/probes failed/);assert.equal(reads,3);
   const workflow=readFileSync('.github/workflows/release-preflight.yml','utf8');
   assert.match(workflow,/runners_online:\n    needs: runner\n    if: always\(\)/);
+});
+
+test('preflight probes and requires only selected release platforms', async () => {
+  for (const selected of ['production', 'android', 'ios']) {
+    const inputs = Object.fromEntries(['production', 'android', 'ios'].map(label => [label, String(label === selected)]));
+    let jobs = ['production', 'android', 'ios'].map(label => ({ name: `Runner probe ${label}`,
+      status: label === selected ? 'completed' : 'queued', conclusion: label === selected ? 'success' : null }));
+    const github = { paginate: async () => jobs, rest: { actions: { listJobsForWorkflowRun() {} } } };
+    const context = { repo: {}, runId: 42, payload: { inputs } }, core = { info() {} };
+    await validateRunnerResults({ github, context, core });
+    assert.deepEqual(runnerMatrix(inputs).map(probe => probe.label), [selected]);
+    jobs = jobs.filter(job => job.name === `Runner probe ${selected}`);
+    await validateRunnerResults({ github, context, core });
+    jobs[0].conclusion = 'failure';
+    await assert.rejects(validateRunnerResults({ github, context, core }), /probes failed/);
+    jobs = [];
+    await assert.rejects(validateRunnerResults({ github, context, core }), /completion is unavailable/);
+  }
+  assert.deepEqual(runnerMatrix({ production: false, android: false, ios: false }), []);
+  const workflow = readFileSync('.github/workflows/release-preflight.yml', 'utf8');
+  assert.match(workflow, /runnerMatrix\(context.payload.inputs\)/);
+  assert.match(workflow, /include: \$\{\{ fromJSON\(needs.select.outputs.matrix\) \}\}/);
+  for (const platform of ['production', 'android', 'ios']) assert.match(workflow, new RegExp(`${platform}:\\n        description:.*\\n        type: boolean`));
 });
 
 test('compares native fingerprints and shipped pins independently for each platform', () => {

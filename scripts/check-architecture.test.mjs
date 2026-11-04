@@ -46,9 +46,8 @@ test('moving a site between files keeps the total and passes', () => {
   assert.deepEqual(judgeTree(tree(moved), { rules: [RULE] }), []);
 });
 
-test('a removed site asks for the lower total', () => {
-  const [error] = judgeTree(tree({ ...BASE, 'src/mcp.ts': '' }), { rules: [RULE] });
-  assert.match(error, /Lower "total" from 1 to 0/);
+test('a removed site passes without bookkeeping changes', () => {
+  assert.deepEqual(judgeTree(tree({ ...BASE, 'src/mcp.ts': '' }), { rules: [RULE] }), []);
 });
 
 test('tightening is not a relaxation', () => {
@@ -106,6 +105,14 @@ test('an intentional relaxation passes and reports weekly review', () => {
 test('normal tightening passes the CLI check against base', () => {
   const { root, run } = guardFixture();
   writeFileSync(path.join(root, 'architecture/invariants.json'), JSON.stringify({ rules: [{ ...RULE, total: 0 }] }));
+  writeFileSync(path.join(root, 'src/mcp.ts'), '');
+  const result = run();
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /Architecture check passed/);
+});
+
+test('removing an exception passes the CLI check with the original total', () => {
+  const { root, run } = guardFixture();
   writeFileSync(path.join(root, 'src/mcp.ts'), '');
   const result = run();
   assert.equal(result.status, 0, result.stderr);

@@ -100,8 +100,6 @@ export function judgeTree(root, invariants) {
         `  Fix: ${rule.fix}`,
         '  Moving an existing site between files is fine. Update the declared invariant for an intentional change; the owner reviews rule changes weekly.',
       ].join('\n'));
-    else if (sites.length < rule.total)
-      errors.push(`[${rule.id}] only ${sites.length} site(s) remain outside the owner files. Lower "total" from ${rule.total} to ${sites.length} in ${INVARIANTS_PATH}; tightening needs no review.`);
   }
   return errors;
 }

@@ -35,7 +35,7 @@
 
 - **Installed agent programs are authoritative.** Connect lists all supported harnesses and checks the selected program before probing. Runtime startup preserves missing-program install hints in Room receipts. Claude/Codex/Pi adapters receive the user program paths; adapter updates follow npm latest with a 24-hour publish-age delay, side-by-side installs and the shared session-start check before atomic adoption; optional bundled harness binaries remain omitted. The daily feedback-triage adapter check uses no login or credential. Commands, overrides and proof: [installed agent programs](agent-programs.md).
 
-Handoff tools refuse local proof paths, including relative generated files, file URLs and key=value citations. Upload proofs with `post_artifact` and cite their attachment filenames in reports; orders must carry required files through the target brief. Tracked relative source citations remain valid. Regression: `read-only-mcp.report.test.ts`; two-agent built-service proof: `npm run prove:report-files` (`handoff-files-unreachable`).
+Handoff tools deliver reports, posts and orders that name private paths, with an advisory warning to the sender that recipients may not be able to open them. Upload deliverable files with `post_artifact` and cite their attachment filenames; required brief files still travel through the target brief. Tracked relative source citations remain valid. Regression: `read-only-mcp.report.test.ts`; two-agent built-service proof: `npm run prove:report-files` (`handoff-files-unreachable`).
 
 ## Lifecycle, commands and model selection
 

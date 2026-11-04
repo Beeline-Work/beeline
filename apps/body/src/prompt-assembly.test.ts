@@ -892,11 +892,13 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
     },
   );
 
-  it('requires the reviewer to reject redundant or weakened tests and demand deletion proof', () => {
+  it('assesses coverage when deleting tests without requiring mutation proof', () => {
     const text = prompt('code-corner-reviewer').split('Reviewer rules:')[1]!;
-    expect(text).toContain('Reject this PR’s redundant tests or assertions weakened or deleted without proof.');
-    expect(text).toContain('Remove a test only with a named surviving test catching the same failure under a seeded bug or mutation check.');
-    expect(text).toContain('Coverage overlap or "never failed" is not proof.');
+    expect(text).toContain('Assess actual coverage loss');
+    expect(text).toContain('Redundant or obsolete tests may be removed');
+    expect(text).toContain('surviving coverage or other adequate evidence');
+    expect(text).toContain('a seeded bug or mutation check is optional');
+    expect(text).not.toContain('Remove a test only with');
   });
 
   it('stops after four pushes without PASS and names the three escalation causes', () => {

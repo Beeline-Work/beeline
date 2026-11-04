@@ -29,7 +29,7 @@ export function postChangedAgentUsage(api:DaemonApiClient,agentId:string,usage:A
   const scope=api.channel?.usageAccountScope?.();
   if(!scope){
     if(selectedWriters.has(api)||api.channel?.usageAccountSelected)return Promise.reject(new Error('Usage source unavailable; write remains parked'));
-    return api.execute('postAgentUsage',{agentId,usage});
+    return Promise.reject(new Error('Usage source required; write remains parked'));
   }
   selectedWriters.add(api);
   const key=JSON.stringify([scope.origin,scope.ownerId,agentId]),actor=JSON.stringify(scope.source);

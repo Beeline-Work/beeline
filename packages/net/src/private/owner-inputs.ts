@@ -1,7 +1,6 @@
 import { assertJsonBudget } from '../wire-codec.js';
 import {validateNeedsProjection} from './projection-codecs.js';
 import {validateSavedWindow} from './saved-windows.js';
-export {validateScheduledWorkProjection} from './projection-codecs.js';
 export function validateTrayProjection(value:unknown,workspace:string):boolean{
   try{
     assertJsonBudget(value,64*1024);

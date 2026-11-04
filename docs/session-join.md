@@ -49,7 +49,7 @@ One bridge process per machine user (`bridge.ts`) negotiates `memberStreamV1` on
 | Hermes | Plugin `pre_llm_call` hook and `beeline_check_inbox` tool | Waits for the next turn |
 | ZCode | Our stdio MCP server's `beeline_inbox` tool | Waits until it checks |
 
-Rollout is server first: automatic joined-session delivery requires a server advertising `memberStreamV1` (server flag `BEELINE_NETWORK_ROUTER_V1=1`, off until committed-source and real PostgreSQL authority proofs pass). An old or disabled server leaves the bridge parked with an explicit diagnostic; existing explicit `session read`, `session reply` and `session tool` commands remain usable. There is no polling fallback. Existing old Body versions retain their legacy path until upgraded, so their polling cohort is an open migration gate.
+Automatic joined-session delivery requires a server advertising `memberStreamV1`. Unsupported servers leave the bridge parked with an explicit diagnostic; existing explicit `session read`, `session reply` and `session tool` commands remain usable. There is no polling fallback.
 
 A joined session also receives Beeline's working rules (`EXTERNAL_AGENT_RULES` in `packages/api-contract/src/external-agent-rules.ts`, the same rules the connector serves as MCP instructions), spelled with its own `session` commands and `--as`: once in the join confirmation, again from the SessionStart hook each time the session starts, and as Claude Code's in-session server instructions. They cover orders and reports, the commander, answering in place, corners and branches, review and progress.
 

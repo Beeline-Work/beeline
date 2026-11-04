@@ -1,16 +1,11 @@
 # Command activation context
 
-`BEELINE_NETWORK_ROUTER_V1=1` is the single temporary router rollout setting. Activation still negotiates its own server-first protocol capability.
-It remains disabled by default. The database migration installs compact
-Workspace authority heads and source triggers; a native runtime number does not
-enable this protocol.
+Activation negotiates its protocol on the existing machine socket. The database migration installs compact Workspace authority heads and source triggers; a native runtime number does not establish protocol support.
 
 A claimed durable command owns setup. Its identity includes the agent, Room,
 Workspace, command ID, generation and actual authenticated connection ID/epoch.
 Body requests `readCommandActivation` only through its existing machine socket.
-Generic daemon HTTP and generic Body operation dispatch refuse this route. An
-initial old-server cohort keeps the existing reads. A selected context parks
-after capability loss rather than falling back to HTTP.
+Generic daemon HTTP and generic Body operation dispatch refuse this route. A context parks after capability loss rather than falling back to HTTP.
 
 The server runs the existing configuration, Workspace roster, grant, repository
 and optional corner setup readers in one repeatable-read, read-only transaction.

@@ -33,11 +33,9 @@ import { router, useLocalSearchParams, useNavigation, type Href } from 'expo-rou
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AGENT_NAME_MAX_LENGTH,
-  SurfaceRefreshScheduler,
   isAgentDetailView,
   isAllowedAgentModelConfigCategory,
   isReasonableAgentName,
-  isWorkspaceView,
   type AgentDetailView,
   type AgentModelConfigInput,
   type AgentModelConfigOption,
@@ -71,15 +69,10 @@ import { Typography } from '@/constants/Typography';
 import { BuzzCommunityShell } from '@/components/buzz/CommunityRail';
 import { workspaceRailItem } from '@/buzz/room-view-presentation';
 import {
-  recordWorkspacePage,
   recordWorkspaceRemoval,
   useWorkspaceRecords,
   workspaceRecordScope,
-  workspaceRows,
-  workspacePage,
 } from '@/buzz/workspace-records';
-import { watchWorkspace } from '@/buzz/workspace-watch';
-import { currentSurfaceStamp } from '@/buzz/surface-clock';
 import {
   effortConfigAxis,
   fastModeConfigAxis,
@@ -266,9 +259,12 @@ export default function BuzzMembers({
     ? {family:'agent-profile',workspaceId,agentId:profileAgentId} : undefined, focused&&!!profileAgentId);
   const cachedAgent = useSurfaceSnapshot(profileAgentId?null:agentAddress, isAgentDetailView);
   const profileMode=profileAgentId?routedAgent.mode:'legacy';
-  const selectedAgent = profileAgentId ? routedAgent.value : cachedAgent;
+  const [agentFeedback,setAgentFeedback]=useState<{base:AgentDetailView|null;value:AgentDetailView}|null>(null);
+  const selectedAgent = profileAgentId
+    ? agentFeedback?.base===routedAgent.value?agentFeedback.value:routedAgent.value
+    : cachedAgent;
   const setSelectedAgent = (value: AgentDetailView | null) => {
-    if(profileAgentId)return;
+    if(profileAgentId){setAgentFeedback(value?{base:routedAgent.value,value}:null);return;}
     if (!value) {
       setLocalAgentId(null);
       return;
@@ -428,6 +424,15 @@ export default function BuzzMembers({
     };
   }, [profileMode,focused, identity, relayUrl, selectedAgent?.agent.identity.pubkey]);
 
+  // A committed catalog push completes the existing chooser action.
+  useEffect(()=>{
+    if(profileMode!=='router'||!waitingForEffortCatalogRef.current||!selectedAgent)return;
+    if(effortConfigAxis(selectedAgent.catalog.filter(candidate=>
+      isAllowedAgentModelConfigCategory(candidate.category,candidate.id)&&candidate.options.length>0))){
+      waitingForEffortCatalogRef.current=false;setWorking(null);setOpenModelAxis('effort');
+    }
+  },[profileMode,selectedAgent]);
+
   const writeClient = async () => {
     if (!identity || !relayUrl) throw new Error('Workspace connection unavailable');
     const client = await new BuzzRigTransport(identity).ensureClient();
@@ -537,7 +542,7 @@ export default function BuzzMembers({
   };
 
   useEffect(() => {
-    if (!focused || !surface || requestedActionHandledRef.current) return;
+    if (!focused || !surface || !identity || !relayUrl || requestedActionHandledRef.current) return;
     if (requestedAction === 'invite') {
       if (!surface.viewer.permissions.manage) return;
       requestedActionHandledRef.current = true;
@@ -550,7 +555,7 @@ export default function BuzzMembers({
     // current authenticated surface at that moment rather than reopening on
     // every indexed refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focused, requestedAction, surface]);
+  }, [focused, requestedAction, surface, identity, relayUrl]);
 
   const loadMoreMembers = async (kind: 'human' | 'agent') => {
     if (!surface || rosterLoading || roster.mode !== 'router') return;

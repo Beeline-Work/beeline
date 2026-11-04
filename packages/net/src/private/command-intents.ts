@@ -14,7 +14,7 @@ export interface CommandIntent extends CommandPartition {
 }
 export interface CommandIntentStorage {
   /** Atomic replacement. Rejection must leave the previous snapshot intact. */
-  save(records: readonly CommandIntent[]): Promise<void>;
+  save(records: readonly CommandIntent[], transition: CommandIntent): Promise<void>;
 }
 export type CommandAttempt = Readonly<{ generation: number; commandDedupV1: boolean }> & (
   | { readonly kind: 'initial' }
@@ -249,7 +249,7 @@ export class CommandIntents {
     const complete = [...next.entries()].filter(([,item]) => terminal(item.state));
     // Terminal local display records may compact; uncertain intents never do.
     for (const [old] of complete.slice(0, Math.max(0, complete.length - 100))) next.delete(old);
-    await this.storage.save([...next.values()].map(item => ({ ...item })));
+    await this.storage.save([...next.values()].map(item => ({ ...item })), { ...record });
     // Mirror compaction only after the atomic save has succeeded.
     for (const old of this.records.keys()) if (!next.has(old)) this.records.delete(old);
   }

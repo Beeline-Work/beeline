@@ -3,7 +3,7 @@ import type {WorkflowRunSummaryView} from '@beeline/api-contract/phone';
 import {displayShapes,displayResults} from './generated-display-shapes.js';
 import {wireShapes,operationShapes} from './generated-wire-shapes.js';
 import type {WireShape} from './wire-codec.js';
-import {validateWorkflowProjection} from './display-projections.js';
+import {validateWorkflowProjection,validateScheduledWorkProjection} from './display-projections.js';
 
 describe('screen result codec projection',()=>{
   it('preserves the complete authoritative result graph outside the owner entry',()=>{
@@ -25,11 +25,14 @@ describe('screen result codec projection',()=>{
       'phone.readScheduledWork':project(operationShapes['phone.readScheduledWork'].output)});
     expect(displayShapes).toEqual(expected);
   });
-  it('retains exact schema and row limits',()=>{
+  it('retains exact schema without display byte or row limits',()=>{
     const row={runId:'run',workflowSlug:'review',description:'Review changes',roomId:'room',
       roomName:'Room',state:'review',status:'live',viewerHolds:false,startedAt:1,updatedAt:1} satisfies WorkflowRunSummaryView;
     expect(validateWorkflowProjection({workflows:[row]})).toBe(true);
     expect(validateWorkflowProjection({workflows:[{...row,status:'invented'}]})).toBe(false);
-    expect(validateWorkflowProjection({workflows:Array(31).fill(row)})).toBe(false);
+    expect(validateWorkflowProjection({workflows:Array(31).fill(row)})).toBe(true);
+    expect(validateWorkflowProjection({workflows:[{...row,description:'x'.repeat(128*1024)}]})).toBe(true);
+    expect(validateScheduledWorkProjection({schedules:[],subscriptions:[],roomName:'x'.repeat(128*1024),agentNames:[]})).toBe(true);
+    expect(validateScheduledWorkProjection({schedules:[],subscriptions:[],roomName:42,agentNames:[]})).toBe(false);
   });
 });

@@ -6,6 +6,8 @@ const fixture = vi.hoisted(() => {
     disk,
     random: 1,
     quota: false,
+    delayNextSave: undefined as Promise<void> | undefined,
+    delayedSave: undefined as (() => void) | undefined,
     storage: {
       get length() {
         return disk.size;
@@ -57,15 +59,17 @@ beforeEach(() => {
   fixture.disk.clear();
   fixture.random = 1;
   fixture.quota = false;
+  fixture.delayNextSave = undefined;
+  fixture.delayedSave = undefined;
   const locks = new Map<string, Promise<unknown>>();
   const held = new Set<string>();
   vi.stubGlobal('navigator', {
     locks: {
-      request: (
+      request: function request(
         name: string,
         options: { ifAvailable?: boolean },
         work: (lock: object | null) => unknown,
-      ) => {
+      ): Promise<unknown> {
         if (options.ifAvailable) {
           if (held.has(name)) return Promise.resolve(work(null));
           held.add(name);
@@ -74,6 +78,12 @@ beforeEach(() => {
             .finally(() => {
               held.delete(name);
             });
+        }
+        if (fixture.delayNextSave) {
+          const delay = fixture.delayNextSave;
+          fixture.delayNextSave = undefined;
+          fixture.delayedSave?.();
+          return delay.then(() => request(name, options, work));
         }
         const next = (locks.get(name) ?? Promise.resolve()).then(() => work({ name }));
         locks.set(
@@ -110,6 +120,101 @@ describe('browser command persistence across tabs', () => {
     expect(saved().filter((record) => record.state === 'committed')).toHaveLength(2);
     const next = await first.prepare(admitted('workspace-b'));
     expect(next.id).not.toBe(b.id);
+  });
+
+  it('persists only the local transition when an adopted prepared command starts sending in another tab', async () => {
+    let started!: () => void, complete!: (receipt: RouterCommandReceipt) => void;
+    const sending = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const receipt = new Promise<RouterCommandReceipt>((resolve) => {
+      complete = resolve;
+    });
+    const send = vi.fn(async () => {
+      started();
+      return receipt;
+    });
+    const first = owner(send),
+      second = owner();
+    const a = await first.prepare(admitted('workspace-a'));
+    let releaseSave!: () => void;
+    fixture.delayNextSave = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const paused = new Promise<void>((resolve) => {
+      fixture.delayedSave = resolve;
+    });
+    const preparing = second.prepare(admitted('workspace-b'));
+    await paused;
+    const delivered = first.deliver(a.id);
+    await sending;
+    expect(saved().find((record) => record.id === a.id)).toMatchObject({
+      state: 'sending',
+      sent: true,
+    });
+    releaseSave();
+    const b = await preparing;
+    expect(saved().find((record) => record.id === a.id)).toMatchObject({
+      state: 'sending',
+      sent: true,
+    });
+    expect(saved().find((record) => record.id === b.id)).toMatchObject({
+      state: 'prepared',
+      sent: false,
+    });
+    const joined = await second.prepare(admitted('workspace-a'));
+    expect(joined).toMatchObject({ id: a.id, sent: true });
+    await expect(second.cancel(joined.id)).rejects.toThrow('already admitted');
+    expect(saved().find((record) => record.id === a.id)).toMatchObject({
+      state: 'sending',
+      sent: true,
+    });
+    complete(committed(a.operation, JSON.parse(a.bytes), a));
+    await delivered;
+    expect(saved().find((record) => record.id === a.id)).toMatchObject({
+      state: 'committed',
+      sent: true,
+    });
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects a stale Undo that acquires the shared lock after dispatch starts', async () => {
+    let started!: () => void, complete!: (receipt: RouterCommandReceipt) => void;
+    const sending = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const receipt = new Promise<RouterCommandReceipt>((resolve) => {
+      complete = resolve;
+    });
+    const send = vi.fn(async () => {
+      started();
+      return receipt;
+    });
+    const first = owner(send),
+      a = await first.prepare(admitted('workspace-a')),
+      second = owner();
+    const notified = vi.fn();
+    second.subscribe(notified);
+    let releaseUndo!: () => void;
+    fixture.delayNextSave = new Promise<void>((resolve) => {
+      releaseUndo = resolve;
+    });
+    const paused = new Promise<void>((resolve) => {
+      fixture.delayedSave = resolve;
+    });
+    const undo = second.cancel(a.id);
+    const refused = expect(undo).rejects.toThrow('already admitted');
+    await paused;
+    const delivered = first.deliver(a.id);
+    await sending;
+    releaseUndo();
+    await refused;
+    expect(notified).not.toHaveBeenCalled();
+    expect(saved()[0]).toMatchObject({ id: a.id, state: 'sending', sent: true });
+    complete(committed(a.operation, JSON.parse(a.bytes), a));
+    await delivered;
+    expect(saved()[0]).toMatchObject({ id: a.id, state: 'committed', sent: true });
+    expect(send).toHaveBeenCalledTimes(1);
   });
 
   it('cannot overwrite another tabs committed outcome with a late lost receipt', async () => {
@@ -171,6 +276,37 @@ describe('browser command persistence across tabs', () => {
     expect(saved()[0]).toMatchObject({ id: record.id, bytes: record.bytes, state: 'committed' });
     await replacement.negotiated();
     expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('recovers a later abandoned command while preserving another live tabs Undo', async () => {
+    const send = vi.fn(async (...args: Parameters<typeof committed>) => committed(...args));
+    const replacement = owner(send);
+    const first = owner();
+    const abandoned = await first.prepare(admitted('workspace-a'));
+    const live = owner();
+    const cancellable = await live.prepare(admitted('workspace-b'));
+    await replacement.negotiated();
+    expect(send).not.toHaveBeenCalled();
+    first.suspend();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    await replacement.negotiated();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(abandoned.operation, JSON.parse(abandoned.bytes), {
+      v: 1,
+      id: abandoned.id,
+    });
+    expect(saved().find((record) => record.id === abandoned.id)).toMatchObject({
+      state: 'committed',
+      sent: true,
+    });
+    expect(saved().find((record) => record.id === cancellable.id)).toMatchObject({
+      state: 'prepared',
+      sent: false,
+    });
+    await live.cancel(cancellable.id);
+    await replacement.negotiated();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(saved().find((record) => record.id === cancellable.id)?.state).toBe('cancelled');
   });
 
   it('preserves a live tabs delayed dispatch when a replacement negotiates', async () => {

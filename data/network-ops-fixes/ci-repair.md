@@ -103,3 +103,20 @@ gates, all8 workspace builds, full root typecheck, the20-rule base-aware
 architecture guard, phone/router inventories and138 workflow-path references
 pass. No deadlines, byte budgets or scanners changed. Remote CI on the pushed
 merge remains required; router activation and whole-finding closure are unchanged.
+
+Main advanced to `98c2a49a4f3df909e8fd3fc32ae39129f6f8367b` during the
+preceding validation, so its mobile auth recovery is also integrated before CI.
+Root navigation retains both router residency ownership and revoked-session
+sign-in recovery. Authorization expiry fences late capability discovery;
+handshake rejection invalidates stale access within the connection owner's
+existing single replacement allowance. Once spent, another attempt requires a
+new recovery event. The transport proof verifies no idle authorization or socket
+attempt and successful explicit recovery; it does not grant main's additional
+automatic handshake replacement. Negotiated-executor tests await socket creation
+instead of assuming a fixed number of promise turns.
+
+[Mobile merge validation](main-mobile-integration-validation.json) records
+**239 passing cases across10 serial suites**, full root typecheck and the
+unchanged phone/router/base-aware architecture guards. The previous server and
+bundle validation remains applicable: this additional delta changes neither.
+Capability remains off, and native/cohort closure is unchanged.

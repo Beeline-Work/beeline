@@ -294,6 +294,7 @@ vi.mock('@/sync/transport/room-view-client', async () => ({
 
 import BuzzChannels from './channels';
 import { router } from 'expo-router';
+import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
@@ -468,6 +469,26 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     } finally {
       if (renderer) await act(async () => renderer.unmount());
       http.mockRestore();
+    }
+  });
+
+  it('bounds local identity restoration and retries through the approved uncached recovery', async () => {
+    vi.useFakeTimers();
+    deck.selectedWorkspace = null;
+    deck.connectionState = 'disconnected';
+    vi.mocked(loadBuzzIdentity).mockImplementationOnce(() => new Promise(() => {}));
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(React.createElement(BuzzChannels)); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(35_000); });
+      expect(renderer.root.findAllByProps({ testID: 'room-deck-unavailable' }).length).toBeGreaterThan(0);
+      expect(renderer.root.findAllByProps({ testID: 'connection-status-disconnected' })).toHaveLength(0);
+      await act(async () => renderer.root.findByProps({ testID: 'room-deck-reconnect' }).props.onPress());
+      await act(async () => { await vi.advanceTimersByTimeAsync(10); });
+      expect(deck.workspaceReads).toBeGreaterThan(0);
+    } finally {
+      if (renderer) await act(async () => renderer.unmount());
+      vi.useRealTimers();
     }
   });
 

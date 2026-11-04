@@ -164,3 +164,15 @@ it('bounds optional work after an existing Room frame and a fresh data frame whe
   await waiting;
   expect(sent).toHaveBeenCalledOnce();
 });
+
+it('releases an interrupted Room visit even when no response or native frame ever arrives', async () => {
+  vi.useFakeTimers();
+  beginRoomDraw('interrupted');
+  requireOpeningRoomResponse();
+  const sent = vi.fn();
+  const waiting = waitForRoomDraw()!.then(sent);
+  await vi.advanceTimersByTimeAsync(15_000);
+  await waiting;
+  expect(sent).toHaveBeenCalledOnce();
+  expect(waitForRoomDraw()).toBeUndefined();
+});

@@ -18,6 +18,12 @@ describe('Room view socket reads', () => {
     request.mockResolvedValueOnce({ invalid: true });
     await expect(client().workspaces()).rejects.toMatchObject({ status: 502, code: 'invalid_surface_response' });
   });
+  it('dispatches the required Room list even when a previous Room has not drawn', async () => {
+    request.mockRejectedValue(new Error('stop after dispatch'));
+    await client().chats('w').catch(() => {});
+    expect(request).toHaveBeenCalledExactlyOnceWith('readChats', { workspaceId: 'w' },
+      { timeoutMs: 15_000, signal: undefined, afterRoomDraw: false });
+  });
   it('shares identical in-flight reads until a newer live frame arrives', async () => {
     let resolve!: (value: unknown) => void;
     request.mockImplementation(() => new Promise(r => { resolve = r; }));

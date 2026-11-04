@@ -107,9 +107,9 @@ test('excluding the fingerprint regression from the mobile suite always has isol
   assert.equal(mobile.steps[0].uses, 'actions/checkout@v4');
   assert.match(JSON.stringify(mobile.steps), /timeout 20m bash scripts\/ci-workspace-tasks.sh mobile-suite/);
   assert.match(isolated['runs-on'], /needs.changes.outputs.runner_native/);
-  assert.equal(isolated['timeout-minutes'], 20);
+  assert.equal(isolated['timeout-minutes'], 11);
   assert.match(JSON.stringify(isolated.steps), /timeout 15m bash scripts\/ci-workspace-tasks.sh native-fingerprint/);
-  assert.equal(mobile['timeout-minutes'], 25);
+  assert.equal(mobile['timeout-minutes'], 22);
   assert.ok(tasks.includes(`npx vitest run ${file} --maxWorkers=1 --minWorkers=1`));
   assert.ok(isolated.needs.includes('prepare-workspace'));
   assert.equal(isolated.steps[0].uses, 'actions/checkout@v4');
@@ -537,13 +537,18 @@ test('independent companion checks own their checkout without changing execution
   assert.equal(jobs.typecheck.env.RUN_MOBILE_EXPORT, 'false');
 });
 
-test('known-full and quiet PRs skip coverage-map lookup while the full shard fallback remains available', () => {
+test('PR coverage selection runs independently of Body/mobile full fallback and workspace preparation', () => {
   const selection = jobs['server-test-selection'];
+  assert.equal(selection.needs, 'changes');
   const evaluate = new Function('github', 'needs', `return (${selection.if.replace(/needs\.([a-z][a-z0-9-]*)/g, "needs['$1']")});`);
-  for (const mode of ['full', 'subset']) for (const server of ['true', 'false']) {
-    const needs = { changes: { outputs: { serverSuite: server } }, 'prepare-workspace': { outputs: { mode, server } } };
-    assert.equal(evaluate({ event_name: 'pull_request' }, needs), mode === 'subset' && server === 'true');
+  for (const mode of ['full', 'subset']) for (const code of ['true', 'false']) {
+    const needs = { changes: { outputs: { code } }, 'prepare-workspace': { outputs: { mode } } };
+    assert.equal(evaluate({ event_name: 'pull_request' }, needs), code === 'true');
+    assert.equal(evaluate({ event_name: 'push' }, needs), false);
   }
+  const select = selection.steps.find(step => step.id === 'select');
+  assert.match(select.run, /test-selection.mjs select/);
+  assert.doesNotMatch(select.run, /WORKSPACE_MODE/);
   assert.match(jobs['server-suite-shard'].if, /!cancelled\(\)/);
   assert.equal(jobs['server-suite-shard'].steps.find(step => step.name === "Use this PR's server test selection").if,
     "needs.server-test-selection.outputs.selection != ''");

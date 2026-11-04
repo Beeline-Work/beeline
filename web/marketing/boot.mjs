@@ -1,3 +1,4 @@
+import './context-art.mjs';
 import {selectPlatform} from '../desktop-download.mjs';
 import {initializeGraph} from './graph.mjs';
 const names={ios:'iOS',android:'Android',macos:'Mac',windows:'Windows',linux:'Linux'};

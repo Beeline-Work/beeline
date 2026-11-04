@@ -11,6 +11,7 @@ test('the real homepage has readable shared UI before the lazy controller loads'
  assert.match(html,/tell me all user feedback/);assert.match(html,/aria-label="Message"/);assert.match(html,/aria-labelledby="stage-caption"/);
  assert.doesNotMatch(html,/gpt-5\.4|Join Beeline Community|room\.bundle\.js|fonts\.googleapis/);
  assert.match(read('web/marketing/boot.mjs'),/import\('\.\/demo\.js/);
+ assert.match(read('web/marketing/boot.mjs'),/import '\.\/context-art\.mjs'/);
 });
 test('production demo bundles only its local script and pre-rendered shared UI, within its transfer budget',async()=>{
  const result=await build({entryPoints:['web/marketing/demo-source.mjs'],bundle:true,minify:true,format:'esm',target:'es2022',write:false,metafile:true});

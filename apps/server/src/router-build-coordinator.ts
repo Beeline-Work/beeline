@@ -83,7 +83,7 @@ export class RouterBuildCoordinator{
           value,cut:ticket.cut,authority:ticket.authority,atomicGroup:routerAtomicGroup(ticket.input,ticket.reader),
           ...(ticket.trayClockVersion?{clockVersion:ticket.trayClockVersion}:{})};
         const encoded=JSON.stringify(snapshot),bytes=Buffer.byteLength(encoded)+Buffer.byteLength(key);
-        if(bytes<=this.limits.bytes&&generation===this.generation&&this.flights.get(key)?.cacheable)this.remember(key,{encoded,bytes,authority:ticket.authority});
+        if(generation===this.generation&&this.flights.get(key)?.cacheable)this.remember(key,{encoded,bytes,authority:ticket.authority});
         return encoded;
       });
       flight={promise,waiters:1,generation,authority:ticket.authority,cacheable:true};this.flights.set(key,flight);
@@ -113,6 +113,7 @@ export class RouterBuildCoordinator{
   stats(){return {builds:this.builds,joins:this.joins,hits:this.hits,evictions:this.evictions,
     entries:this.settled.size,bytes:this.retainedBytes,flights:this.flights.size};}
   private remember(key:string,value:Settled):void{
+    if(value.bytes>this.limits.bytes)return; // Deliver oversized results without retaining them in the LRU.
     while(this.settled.size>=this.limits.entries||this.retainedBytes+value.bytes>this.limits.bytes){
       const oldest=this.settled.entries().next().value;if(!oldest)break;
       this.settled.delete(oldest[0]);this.retainedBytes-=oldest[1].bytes;this.evictions++;

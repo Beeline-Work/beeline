@@ -35,7 +35,7 @@ export function pickRoomWorkflowRun(
  * handoff inside a corner reaches the parent only as a change to that
  * corner's row in the Room's corner record, so that change reads too. */
 function observeWorkflowRuns(roomId: string) {
-  return async (invalidate: () => void, reconnect: () => void,
+  return async (invalidate: () => void, refresh: () => void,
     replace: (runs: readonly WorkflowRunSummaryView[]) => void, recover: () => void) => {
     let subscribed = false;
     const stopLive = await sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
@@ -43,7 +43,7 @@ function observeWorkflowRuns(roomId: string) {
       const live = event.monolithLive;
       if (!('roomId' in live) || live.roomId !== roomId) return;
       if (live.type === 'subscribed') {
-        if (subscribed && !live.resumed) reconnect();
+        if (subscribed && !live.resumed) refresh();
         else recover();
         subscribed = true;
       } else if (live.type === 'message-delta' && live.workflowRuns) {

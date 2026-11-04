@@ -17,10 +17,10 @@ const id = '11111111-1111-4111-8111-111111111111';
 const attachment = { url: `/v1/media/${id}`, name: 'photo.png', mimeType: 'image/png', size: 3, kind: 'artifact' as const };
 const bytes = new Uint8Array([1, 2, 3]);
 const drain = async () => { for (let i = 0; i < 30; i++) await Promise.resolve(); };
-function install(capable = true, size = 3) {
+function install(capable = true, size = 3, mimeType = 'image/png', content = bytes) {
   const scopes = [{ authorityScope: `object:${id}`, epoch: '1' }];
   installMediaCacheConnection({ origin: mocks.origin, principal: mocks.principal, generation: 1, mediaMetadataV1: capable, executeMetadata: async () => ({
-    objectId: id, sha256: bytesToHex(sha256(bytes)), size, mimeType: 'image/png', expiresAt: Date.now() + 60_000,
+    objectId: id, sha256: bytesToHex(sha256(content)), size, mimeType, expiresAt: Date.now() + 60_000,
     authority: { scopes, digest: bytesToHex(sha256(utf8ToBytes(JSON.stringify(scopes)))) },
   }) });
 }
@@ -32,6 +32,17 @@ describe('the shared artifact byte owner', () => {
     const requests = [readArtifactObject(attachment, read, { preview: true }), readArtifactObject(attachment, read), readArtifactObject(attachment, read)];
     await drain(); expect(read).toHaveBeenCalledTimes(1); resolve(bytes); await Promise.all(requests);
     expect((await readArtifactObject(attachment, read)).bytes).toEqual(bytes); expect(read).toHaveBeenCalledTimes(1);
+  });
+  it.each([true, false])('shares a 497 KiB image without a thumbnail across card, viewer and save (metadata=%s)', async capable => {
+    const content = new Uint8Array(497 * 1024).fill(137);
+    install(capable, content.byteLength, 'image/png', content);
+    const image = { ...attachment, size: content.byteLength };
+    const read = vi.fn(async () => content);
+    const values = await Promise.all([readArtifactObject(image, read, { preview: true }),
+      readArtifactObject(image, read), readArtifactObject(image, read)]);
+    for (const value of values) expect(Buffer.from(value.bytes).equals(Buffer.from(content))).toBe(true);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(read).toHaveBeenCalledWith(id, expect.any(AbortSignal), 25 * 1024 * 1024);
   });
   it('legacy servers coalesce live requests but never reuse completed private bytes', async () => {
     install(false); const read = vi.fn(async () => bytes);
@@ -46,15 +57,15 @@ describe('the shared artifact byte owner', () => {
     installMediaCacheConnection({ generation: 2, mediaMetadataV1: false });
     await readArtifactObject(attachment, read); expect(read).toHaveBeenCalledTimes(2);
   });
-  it('refuses eager whole-document or unbounded legacy previews', async () => {
+  it('preserves document preview behavior and explicit thumbnail requests', async () => {
     install(false); const read = vi.fn(async () => bytes);
-    await expect(readArtifactObject({ ...attachment, size: 32 * 1024 }, read, { preview: true })).rejects.toThrow('bounded preview');
+    await expect(readArtifactObject({ ...attachment, mimeType: 'application/pdf', size: 32 * 1024 }, read, { preview: true })).rejects.toThrow('bounded preview');
     await expect(readArtifactObject(attachment, read, { preview: true, thumbnail: true })).rejects.toThrow('bounded preview');
     expect(read).not.toHaveBeenCalled();
   });
-  it('a known large object cannot use a small legacy attachment size to start an eager preview', async () => {
-    install(true, 32 * 1024); const read = vi.fn(async () => bytes);
-    await expect(readArtifactObject(attachment, read, { preview: true })).rejects.toThrow('bounded preview');
+  it('a known large document cannot use a small legacy attachment size to start an eager preview', async () => {
+    install(true, 32 * 1024, 'application/pdf'); const read = vi.fn(async () => bytes);
+    await expect(readArtifactObject({ ...attachment, mimeType: 'application/pdf' }, read, { preview: true })).rejects.toThrow('bounded preview');
     expect(read).not.toHaveBeenCalled();
   });
   it('committed object removal clears the existing source and fences bytes without a replacement read', async () => {

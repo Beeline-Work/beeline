@@ -1,4 +1,4 @@
-import { ROUTER_MAX_AUTHORITY_FENCE_BYTES, type RouterAuthorityFence } from '@beeline/api-contract/router-protocol';
+import type { RouterAuthorityFence } from '@beeline/api-contract/router-protocol';
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { authorizedMediaMetadata } from './phone-media.js';
@@ -56,7 +56,6 @@ export async function currentAuthorityFence(db:SqlDatabase,viewer:string,scope:s
   if(!row)throw new RouterProjectionUnavailable('authority');
   const frame:RouterAuthorityFence={kind:'authority-fence',scope,authorityScope:domain,mode,
     authority:routerAuthority([{authorityScope:domain,epoch:row.epoch}])};
-  if(Buffer.byteLength(JSON.stringify(frame))>ROUTER_MAX_AUTHORITY_FENCE_BYTES)throw new RouterProjectionUnavailable('budget');
   return frame;
 }
 
@@ -81,7 +80,7 @@ export async function subscribeAuthorityFences(database:SqlDatabase,live:LiveHub
           const current=await head(db);if(!current)return undefined;
           if(position&&current.epoch!==position.epoch)throw new RouterProjectionUnavailable('retention');
           const from=Number(position?.sequence??0),through=Number(current.sequence);
-          if(!Number.isSafeInteger(through)||through<from||through-from>1024)throw new RouterProjectionUnavailable('retention');
+          if(!Number.isSafeInteger(through)||through<from)throw new RouterProjectionUnavailable('retention');
           if(through===from)return current;
           const rows=await db.query<{sequence:string;event:{kind?:string;scope?:string;authorityScope?:string}}>(
             `SELECT sequence::text,event FROM live_journal WHERE stream_id=$1 AND sequence>$2 AND sequence<=$3 ORDER BY live_journal.sequence`,[stream,from,through]);
@@ -91,7 +90,6 @@ export async function subscribeAuthorityFences(database:SqlDatabase,live:LiveHub
             if(event.kind!=='authority-change'||typeof event.scope!=='string'||typeof event.authorityScope!=='string')throw new RouterProjectionUnavailable('dependency');
             domains.set(event.authorityScope,event.scope);
           }
-          if(domains.size>256)throw new RouterProjectionUnavailable('budget');
           for(const [domain,scope]of domains){
             if(!acceptDomain(domain))continue;
             const frame=await currentAuthorityFence(db,viewer,scope,domain);

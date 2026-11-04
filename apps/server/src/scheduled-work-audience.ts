@@ -2,7 +2,6 @@ import type {SqlDatabase} from './database.js';
 import type {routerSourcePlan} from './router-source-plan.js';
 import {RouterProjectionUnavailable} from './router-projections.js';
 import {scheduledWorkAuthorities} from './scheduled-work-authority.js';
-import {ROUTER_ROOM_AUDIENCE_LIMIT} from './router-room-audience.js';
 
 /** Current managers plus source-proven former recipients. All IDs come from
  * stored permissions/old relationships; no phone subscription/cache report. */
@@ -19,7 +18,7 @@ export async function scheduledWorkAudience(db:SqlDatabase,workspace:string,view
         AND removed_at IS NULL AND role IN('owner','admin')) allowed
     ), causes AS(SELECT * FROM jsonb_to_recordset($3::jsonb) AS source("roomId" uuid,readers jsonb)), candidates AS(
       ${currentAudience}SELECT causes."roomId" AS id FROM causes CROSS JOIN manager WHERE causes.readers IS NULL AND manager.allowed OR causes.readers ? $2
-    ) SELECT id::text FROM candidates ORDER BY id LIMIT $4`,[workspace,viewer,JSON.stringify(plan.scheduledWorkCauses),ROUTER_ROOM_AUDIENCE_LIMIT+1])).rows;
+    ) SELECT id::text FROM candidates ORDER BY id`,[workspace,viewer,JSON.stringify(plan.scheduledWorkCauses)])).rows;
   // The same authority statement covers existing and removed Room IDs. A
   // removed Room uses only the current principal certificate, never a second
   // audience-side authority query or a stored client inventory.

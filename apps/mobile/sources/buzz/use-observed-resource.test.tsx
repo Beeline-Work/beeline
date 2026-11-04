@@ -44,6 +44,19 @@ it('shares a read, coalesces pushes during a flight, and detaches after the last
   expect(load).toHaveBeenCalledTimes(3);
 });
 
+it('a slow resource keeps waiting for its live socket request instead of adding a second timeout', async () => {
+  vi.useFakeTimers();
+  let resolve!: (value: string) => void;
+  const load = vi.fn(() => new Promise<string>(done => { resolve = done; }));
+  let current: any;
+  function Reader() { current = useObservedResource<string>('slow', { load }); return <span>{current.data}</span>; }
+  await act(async () => { mount(<Reader />); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+  expect(current.loading).toBe(true); expect(current.error).toBeNull(); expect(load).toHaveBeenCalledOnce();
+  await act(async () => resolve('answer'));
+  expect(current.data).toBe('answer'); expect(current.loading).toBe(false);
+});
+
 it('a failed read stays visible, stops automatic reads, and retry recovers', async () => {
   vi.useFakeTimers();
   const load = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('recovered');

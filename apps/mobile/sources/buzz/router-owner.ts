@@ -1,6 +1,6 @@
 import {ROUTER_TRAY_CLOCK_STREAM} from '@beeline/api-contract/router-protocol';
 import {validateWorkflowProjection,validateScheduledWorkProjection} from '@beeline/net';
-import { validateNeedsRoomsPayload } from '@beeline/net/owner';
+import { validateNeedsRoomsPayload, validateNeedsProjection } from '@beeline/net/owner';
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import { installUsageCellConnection, suspendUsageCellConnection, receiveUsageCell, setUsageCellProfile } from './agent-usage-cell';
 import { AdmissionOwner, ReadLanes, RouterBatchAssembly, ScheduledWorkAuthority, NavigationOwner, MediaDemandOwner, UsageDemandOwner,validateTrayProjection,validateSavedWindow,
@@ -82,8 +82,7 @@ function validValue(request: LaneRequest, value: unknown): boolean {
   if (request.family === 'room-head') return readRoomView(value) !== null;
   if (!value || typeof value !== 'object') return false;
   const count = (value as { count?: unknown }).count;
-  return request.family === 'needs-you-count' && Number.isSafeInteger(count) && Number(count) >= 0 &&
-    utf8ToBytes(JSON.stringify(value)).length <= 1024;
+  return request.family === 'needs-you-count' && Number.isSafeInteger(count) && Number(count) >= 0;
 }
 function validCertificate(snapshot: LaneSnapshot): boolean {
   const scopes = snapshot.authority.scopes;
@@ -341,7 +340,7 @@ function fact(value: unknown): boolean {
   if (typeof payload.scope !== 'string' || payload.scope.length > 256) return false;
   if(payload.kind==='tray-classification')return payload.version===1&&typeof payload.clockVersion==='string'&&
     /^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion)&&Object.keys(payload).length===4;
-  if(payload.kind==='tray-needs-replace')return record(payload.value)&&Array.isArray(payload.value.items)&&payload.value.items.length<=30;
+  if(payload.kind==='tray-needs-replace')return validateNeedsProjection(payload.value);
   if(payload.kind==='saved-row-replace')return record(payload.row);
   if(payload.kind==='saved-row-remove')return typeof payload.bookmarkId==='string'&&typeof payload.messageId==='string';
   if (payload.kind === 'group-unavailable') return payload.reason === 'authority' || payload.reason === 'dependency';

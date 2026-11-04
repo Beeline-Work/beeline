@@ -141,6 +141,46 @@ describe('real mobile router owner', () => {
     open();await settle();expect(head.current()).toMatchObject({state:'PARKED',value:null});expect(execute.mock.calls).toHaveLength(count);
     head.release();rooms.release();routerOwnerListPanel(false);
   });
+  it('accepts a validated 31-item live Tray update without parking unrelated held families',async()=>{
+    const workspace='11111111-1111-4111-8111-111111111111';
+    const tray={family:'needs-you-tray' as const,workspaceId:workspace},list={family:'room-list' as const,workspaceId:workspace};
+    const badge={family:'needs-you-count' as const,workspaceId:workspace};
+    const certScopes=[{authorityScope:`reader:ada:workspace:${workspace}`,epoch:'1'},
+      {authorityScope:`reader:ada:workspace:${workspace}:visibility`,epoch:'1'}];
+    const authority={scopes:certScopes,digest:hash(certScopes)},atomicGroup=`needs-you:${workspace}:ada`;
+    const clockVersion=`tray-clock-v1:${'a'.repeat(32)}:0`;
+    const items=Array.from({length:31},(_,index)=>({messageId:`question-${index}`,workspaceId:workspace,roomId:'room',roomName:'Room',
+      roomKind:'room' as const,text:`Question ${index}`,createdAt:1}));
+    const saved={windowId:`saved1:${'b'.repeat(64)}`,rows:[]};
+    const listValue={workspace:{id:workspace,name:'Synthetic',role:'member' as const,updatedAt:1},chats:[],
+      viewer:{pubkey:'a'.repeat(64),kind:'human' as const,name:'Reader'},truncated:false,watchFilters:[]};
+    const from={...snapshot().cut,stream:`workspace:${workspace}`},to={...from,through:2};
+    const execute=vi.fn(async(input:RouterSnapshotInput):Promise<RouterSnapshot>=>({kind:'snapshot',family:input.family,scope:workspace,
+      cut:from,authority,atomicGroup:input.family==='room-list'?`room-list:${workspace}:ada`:atomicGroup,
+      clockVersion,value:input.family==='room-list'?listValue:input.family==='needs-you-count'?{count:30}:{needs:{items:items.slice(0,30)},saved}} as RouterSnapshot));
+    routerOwnerNavigation({routes:[{key:'tray',name:'beeline/tray',params:{communityId:workspace}}]});routerOwnerListPanel(true);
+    const head=acquireRouterLane(tray,()=>true,()=>{}),rooms=acquireRouterLane(list,()=>true,()=>{}),count=acquireRouterLane(badge,()=>true,()=>{});
+    try{
+      await routerOwnerNegotiated({generation:1,families:['room-list','needs-you-tray','needs-you-count','needs-you-saved-page'],authorityFencesV1:true,execute});await settle();
+      expect(head.current()).toMatchObject({state:'LIVE',value:{needs:{items:items.slice(0,30)},saved}});
+      expect(rooms.current()).toMatchObject({state:'LIVE',value:listValue});expect(count.current().value).toEqual({count:30});
+      const facts=[{atomicGroup,authority,payload:{kind:'tray-classification',scope:workspace,version:1,clockVersion:`tray-clock-v1:${'a'.repeat(32)}:1`}},
+        {atomicGroup,authority,payload:{kind:'tray-needs-replace',scope:workspace,value:{items}}},
+        {atomicGroup,authority,payload:{kind:'scope-replace',family:'needs-you-count',scope:workspace,value:{count:31}}}];
+      const frame={batchId:'tray-31',from,to,partCount:1,contentDigest:hash(facts)};
+      routerOwnerReceive({...frame,kind:'push-part',partIndex:0,facts});await settle();
+      expect(head.current()).toMatchObject({state:'LIVE',cut:from,value:{needs:{items:items.slice(0,30)}}});
+      routerOwnerReceive({...frame,kind:'push-commit'});await settle();
+      expect(head.current()).toMatchObject({state:'LIVE',cut:to,value:{needs:{items},saved}});
+      expect(count.current()).toMatchObject({state:'LIVE',cut:to,value:{count:31}});
+      expect(rooms.current()).toMatchObject({state:'LIVE',value:listValue});expect(execute).toHaveBeenCalledTimes(3);
+      const invalid=[{atomicGroup,authority,payload:{kind:'tray-needs-replace',scope:workspace,value:{items:[{...items[0],createdAt:'invalid'}]}}}];
+      const malformed={batchId:'invalid-needs',from:to,to:{...to,through:3},partCount:1,contentDigest:hash(invalid)};
+      routerOwnerReceive({...malformed,kind:'push-part',partIndex:0,facts:invalid});routerOwnerReceive({...malformed,kind:'push-commit'});await settle();
+      expect(head.current()).toMatchObject({state:'PARKED',value:null});expect(execute).toHaveBeenCalledTimes(3);
+    }finally{head.release();rooms.release();count.release();routerOwnerListPanel(false);}
+  });
+
   it('opens a Saved continuation only from its held cursor and never from an attached page observer',async()=>{
     const before='saved1.Y3Vyc29y',tray={family:'needs-you-tray',workspaceId:'w'} as const;
     const page={family:'needs-you-saved-page',workspaceId:'w',before} as const;

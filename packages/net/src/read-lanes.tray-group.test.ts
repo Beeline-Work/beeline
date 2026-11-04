@@ -70,10 +70,10 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
     expect(reads()).toBe(3);
   });
 
-  it.each(['missing','query','oversize','row'] as const)('parks a malformed %s head interval atomically',async kind=>{
+  it.each(['missing','query','shape','row'] as const)('parks a malformed %s head interval atomically',async kind=>{
     const{lanes,reads}=await setup();lanes.demand(page,{},permit);await settle();
     const saved=kind==='missing'?undefined:kind==='query'?{...window([row(1)]),windowId:`saved1:${'f'.repeat(64)}`}:
-      kind==='oversize'?window(Array.from({length:31},(_,i)=>row(i+1))):window([row(1)]);
+      kind==='shape'?window([{...row(1),value:{...row(1).value,messageCreatedAt:'invalid'}} as never]):window([row(1)]);
     const facts=[fact({kind:'scope-replace',family:'needs-you-saved-page',scope:ws,value:saved})];
     if(kind==='row')facts.push(fact({kind:'saved-row-replace',scope:ws,row:{...row(99),value:{...row(99).value,workspaceId:room}}}));
     await lanes.accept(batch(1,2,facts));

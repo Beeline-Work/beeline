@@ -86,8 +86,9 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
   };
   const hotAddress = hotViewer ? surfaceAddress(config.monolithUrl, hotViewer, `/room/${roomId}`) : null;
   const hotCache = hotAddress ? restoreStoredSurface(hotAddress, isRoomView) : null;
-  // A warm authorized cache can decide whether to fetch on the tap's stack,
-  // before navigation renders. Cold storage retains its asynchronous path.
+  // A known viewer can restore an authorized stored response on the tap's
+  // stack, before navigation renders. A cache miss or unresolved viewer
+  // retains the asynchronous path.
   const view = hotViewer && hotCache
     ? openCached(hotViewer, hotCache)
     : viewer.then(async (pubkey) => {

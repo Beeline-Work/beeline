@@ -1,11 +1,11 @@
 # Phone Room first paint
 
-Room opening meets the 450 ms load budget in the alternating native Android A/B. Values are milliseconds, `p50 / p95`, with ten samples per case per arm. Nearest-rank p95 is the maximum; no warmup or slow sample is discarded.
+Previously opened Rooms with a stored scoped DTO meet the 450 ms load budget in the alternating native Android A/B, including after a process restart. Values are milliseconds, `p50 / p95`, with ten samples per case per arm. Nearest-rank p95 is the maximum; no warmup or slow sample is discarded.
 
-| Room open | Original task HEAD | This change | After p95 ≤450 |
-| --- | ---: | ---: | :---: |
-| Cold process, first Room open | 598.916 / 916.270 | 321.935 / 413.065 | yes |
-| Warm reopen | 329.932 / 415.801 | 249.283 / 331.384 | yes |
+| Room open                        | Original task HEAD |       This change | After p95 ≤450 |
+| -------------------------------- | -----------------: | ----------------: | :------------: |
+| Cold process, stored Room reopen |  598.916 / 916.270 | 321.935 / 413.065 |      yes       |
+| Warm reopen                      |  329.932 / 415.801 | 249.283 / 331.384 |      yes       |
 
 These are native frame-completion proxies, not optical scanout measurements. The same complete, bounded 30-message response goes to the real inverted transcript, alongside the header and composer. Its first native render remains ten rows. No last-message overlay, extra UI control, client snapshot, new phone network site, or polling was introduced.
 
@@ -19,15 +19,15 @@ These are native frame-completion proxies, not optical scanout measurements. The
 
 The following are p95 values from the alternating Room A/B. Quantiles cannot be added. React Profiler measures render work, not commit duration. Layout callback timing includes native layout and JS delivery; the draw-to-completion interval is native HWUI evidence.
 
-| Cold-open measurement | Before | After |
-| --- | ---: | ---: |
-| Tap → cached response available | 162.479 | 33.775 |
-| Root render work through transcript commit | 475.245 | 157.124 |
-| Tap → transcript commit marker | 646.254 | 261.979 |
-| Tap → native content-size callback | 681.241 | 363.004 |
-| Transcript commit → native DrawStart | 80.698 | 128.905 |
-| Native DrawStart → FrameCompleted | 323.190 | 40.348 |
-| Tap → completed native frame | 916.270 | 413.065 |
+| Cold-open measurement                       |  Before |   After |
+| ------------------------------------------- | ------: | ------: |
+| Tap → cached response available             | 162.479 |  33.775 |
+| Root render work through transcript commit  | 475.245 | 157.124 |
+| Tap → transcript commit marker              | 646.254 | 261.979 |
+| Tap → native content-size callback          | 681.241 | 363.004 |
+| Transcript commit → native DrawStart        |  80.698 | 128.905 |
+| Native DrawStart → FrameCompleted           | 323.190 |  40.348 |
+| Tap → completed native frame                | 916.270 | 413.065 |
 | Existing Room request → JS headers callback | 776.482 | 823.654 |
 
 The fresh Room request remains necessary but is outside the first cached paint. This is a rendering/storage-path improvement, not a network-speed claim. A cache-miss first-ever Room read is not certified under 450 ms: it still needs the production response before rendering. The earlier exploratory uncached sample spent about 377 ms waiting for that response alone.
@@ -38,9 +38,9 @@ The diagnostic bundle that bypassed swipes isolated expensive row mounting. It i
 
 A separate pass of the measured Room code on the same emulator measured:
 
-| Surface | Native proxy p50 / p95 | Result |
-| --- | ---: | --- |
-| Room → Room list return | 165.614 / 250.815 | **open: exceeds 150 ms** |
+| Surface                 | Native proxy p50 / p95 | Result                   |
+| ----------------------- | ---------------------: | ------------------------ |
+| Room → Room list return |      165.614 / 250.815 | **open: exceeds 150 ms** |
 
 **Keep Room-list-return latency as an open item in the PR body.** In its slowest retained sample, the content commit was at 156.380 ms, including 89.849 ms of Root render work (82.113 ms in its largest render). It then took 84.538 ms to reach native DrawStart and 9.896 ms to complete that frame. Returning still requires Room-list rendering and native Room teardown/layout. This change does not establish the universal interaction budget.
 

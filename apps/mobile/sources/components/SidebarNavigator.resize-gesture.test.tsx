@@ -1,3 +1,4 @@
+vi.mock('@/buzz/router-owner', () => ({ routerOwnerListPanel: () => {} }));
 vi.mock('@/components/buzz/IndexRow', async () => { const R = await import('react'); const { View } = await import('react-native'); return { InlineRow: (props: any) => R.createElement(View, props, props.children) }; });
 vi.mock('@/components/buzz/DesktopArtifactPane', () => ({ DesktopArtifactPane: 'DesktopArtifactPane' }));
 // @vitest-environment jsdom

@@ -1,3 +1,9 @@
+import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
+import { BackgroundWork } from './background-work.js';
+import { SENTRY_TRIAGE_ROOM, sentryEligibilityKey } from './sentry-wake-source.js';
+import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
+import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
+import { COMMAND_COMPLETION_CHANNEL, subscribeCommandCompletion } from './command-completion.js';
 import { EventEmitter } from 'node:events';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
@@ -13,6 +19,7 @@ import {
   notifyAgentConfigChange,
   notifyConnectorAssignment,
   POSTGRES_LIVE_CHANNEL,
+  postgresLiveSchema,
   PostgresLiveListener,
   type LivePgClient,
 } from './postgres-live.js';
@@ -35,7 +42,7 @@ const DATABASE_SNAPSHOT = await (async () => {
 })();
 
 class PgliteListenClient extends EventEmitter implements LivePgClient {
-  private release?: () => Promise<void>;
+  private releases: Array<() => Promise<void>> = [];
   readonly payloads: string[] = [];
 
   constructor(private readonly database: PgliteDatabase) {
@@ -45,17 +52,16 @@ class PgliteListenClient extends EventEmitter implements LivePgClient {
   async connect(): Promise<void> {}
 
   async query(sql: string): Promise<void> {
-    if (sql !== `LISTEN ${POSTGRES_LIVE_CHANNEL}`) throw new Error(`unexpected query: ${sql}`);
-    this.release = await this.database.client.listen(POSTGRES_LIVE_CHANNEL, (payload) => {
-      this.payloads.push(payload);
-      this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload });
-    });
+    const channel = sql.slice(7);
+    if (![POSTGRES_LIVE_CHANNEL, COMMAND_COMPLETION_CHANNEL].includes(channel)) throw new Error(`unexpected query: ${sql}`);
+    this.releases.push(await this.database.client.listen(channel, (payload) => {
+      if (channel === POSTGRES_LIVE_CHANNEL) this.payloads.push(payload);
+      this.emit('notification', { channel, payload });
+    }));
   }
 
   async end(): Promise<void> {
-    const release = this.release;
-    this.release = undefined;
-    await release?.();
+    for (const release of this.releases.splice(0)) await release();
   }
 
   async drop(): Promise<void> {
@@ -97,6 +103,7 @@ class SkewedClockDatabase implements SqlDatabase {
 describe('Postgres live fanout', () => {
   let database: PgliteDatabase;
   const listeners: PostgresLiveListener[] = [];
+  const completionReleases: Array<() => void> = [];
 
   beforeEach(async () => {
     vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -112,9 +119,181 @@ describe('Postgres live fanout', () => {
   });
 
   afterEach(async () => {
+    for (const release of completionReleases.splice(0)) release();
     await Promise.all(listeners.map((listener) => listener.stop()));
     await database.close();
     vi.restoreAllMocks();
+  });
+
+  it('DISPLAY-DEADLINE: committed deadline changes admit work; ordinary messages and rollback do not', async () => {
+    const live = new LiveHub(), events: LiveEvent[] = [];
+    live.subscribeAll(event => events.push(event));
+    const client = new PgliteListenClient(database), listener = new PostgresLiveListener(database, live, () => client);
+    const wake = vi.fn();
+    completionReleases.push(subscribeCommandCompletion(DISPLAY_DEADLINE_KEY, wake));listeners.push(listener);
+    void listener.run();await eventually(() => wake.mock.calls.length === 1);wake.mockClear();
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('deadline-source',$1,$2,'ordinary')`,[ROOM,AUTHOR]);
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await database.query("UPDATE messages SET text='Please help' WHERE id='deadline-source'");
+    await eventually(() => wake.mock.calls.length === 1);wake.mockClear();
+    await database.query("UPDATE messages SET text='Please review' WHERE id='deadline-source'");
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await expect(database.transaction(async db => {
+      await db.query("UPDATE messages SET text='ordinary' WHERE id='deadline-source'");
+      throw new Error('rollback');
+    })).rejects.toThrow('rollback');
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await database.query(`INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,first_seen_at) VALUES($1,'deadline-source',$2,now())`,[AUTHOR,WORKSPACE]);
+    await eventually(() => wake.mock.calls.length === 1);wake.mockClear();
+    await database.query("UPDATE messages SET text='ordinary' WHERE id='deadline-source'");
+    await eventually(() => wake.mock.calls.length === 1);wake.mockClear();
+    // A pre-existing metadata timestamp only becomes a deadline when its card type does.
+    await database.query(`UPDATE messages SET card=jsonb_build_object('expiresAt',1234567890000) WHERE id='deadline-source'`);
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await database.query("UPDATE messages SET card_type='squire-approval' WHERE id='deadline-source'");
+    await eventually(() => wake.mock.calls.length === 1);
+  });
+
+  it('DISPLAY-IDLE: empty and failed deadline owners do no work over an idle day', async () => {
+    let now = 0;
+    const query = vi.fn(database.query.bind(database));
+    const expiry = new DeadlineExpiry({query});
+    const work = new BackgroundWork(() => now, () => {});
+    work.addDeadline('display', async fresh => (await expiry.runOnce(fresh)) ?? undefined);
+    expect(await work.run(true)).toBe(Infinity);
+    const initial = query.mock.calls.length;
+    now += 86_400_000;expect(await work.run(false)).toBe(Infinity);expect(query).toHaveBeenCalledTimes(initial);
+    query.mockRejectedValueOnce(new Error('unavailable'));
+    work.wake('display');await expect(work.run(false)).rejects.toThrow('unavailable');
+    now += 86_400_000;expect(await work.run(false)).toBe(Infinity);expect(query).toHaveBeenCalledTimes(initial + 1);
+    work.wake('display','actual-recovery');expect(await work.run(false)).toBe(Infinity);
+    expect(query.mock.calls.length).toBeGreaterThan(initial + 1);
+  });
+
+  it('SENTRY-ELIGIBILITY: only committed recipient or triage authority changes wake a pending digest', async () => {
+    const agent='b'.repeat(64);
+    await database.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Recipient')",[agent]);
+    await database.query("INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Triage')",[SENTRY_TRIAGE_ROOM,WORKSPACE,ROOM]);
+    await database.query(`INSERT INTO sentry_wake_issues(issue_id,event_type,title,level,culprit,permalink,
+      first_seen,last_seen,event_count,delivery_hash) VALUES('1','issue.created','Synthetic','error','','',now(),now(),1,'hash')`);
+    const live=new LiveHub(),events:LiveEvent[]=[];live.subscribeAll(event=>events.push(event));
+    const client=new PgliteListenClient(database),listener=new PostgresLiveListener(database,live,()=>client),wake=vi.fn();
+    completionReleases.push(subscribeCommandCompletion(sentryEligibilityKey(agent),wake));
+    completionReleases.push(subscribeCommandCompletion(sentryEligibilityKey('sentry'),wake));listeners.push(listener);
+    void listener.run();
+    // Each exact subscription receives one recovery hint after both LISTENs.
+    await eventually(()=>wake.mock.calls.length===2);wake.mockClear();
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WORKSPACE,ROOM,agent]);
+    await eventually(()=>wake.mock.calls.length===1);wake.mockClear();
+    await database.query("UPDATE identities SET name='Renamed' WHERE id=$1",[agent]);
+    await database.query("UPDATE rooms SET name='Renamed' WHERE id=$1",[SENTRY_TRIAGE_ROOM]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,[WORKSPACE,ROOM,AUTHOR]);
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await expect(database.transaction(async db=>{
+      await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2',[ROOM,agent]);
+      throw new Error('rollback');
+    })).rejects.toThrow('rollback');
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+    await database.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2',[ROOM,agent]);
+    await eventually(()=>wake.mock.calls.length===1);wake.mockClear();
+    await database.query('UPDATE rooms SET archived_at=now() WHERE id=$1',[SENTRY_TRIAGE_ROOM]);
+    await eventually(()=>wake.mock.calls.length===1);wake.mockClear();
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('sentry-wait',$1,$2,'fixture')`,[SENTRY_TRIAGE_ROOM,AUTHOR]);
+    await database.query(`INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,answerable,blocking)
+      VALUES($1,$2,'sentry-wait',now(),true,true)`,[SENTRY_TRIAGE_ROOM,AUTHOR]);
+    await eventually(()=>wake.mock.calls.length===1);wake.mockClear();
+    await database.query("DELETE FROM corner_owed WHERE message_id='sentry-wait'");
+    await eventually(()=>wake.mock.calls.length===1);wake.mockClear();
+    await database.query('UPDATE sentry_wake_issues SET pending=false');
+    await database.query('UPDATE rooms SET archived_at=NULL WHERE id=$1',[SENTRY_TRIAGE_ROOM]);
+    await settle(events);expect(wake).not.toHaveBeenCalled();
+  });
+
+  it('ATTACHMENT-DUE-SOURCE: committed queue and eligibility changes wake privately; progress and rollback do not', async () => {
+    const agent = 'b'.repeat(64);
+    await database.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Agent')", [agent]);
+    const live = new LiveHub(), events: LiveEvent[] = [];
+    live.subscribeAll(event => events.push(event));
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client);
+    const wake = vi.fn(); completionReleases.push(subscribeCommandCompletion(PENDING_ATTACHMENT_DUE_KEY, wake)); listeners.push(listener);
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(`INSERT INTO agent_pending_attachments(room_id,agent_id,url,name,mime_type,size,request_id)
+      VALUES($1,$2,'/v1/media/test','test','text/plain',1,'request')`, [ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+      VALUES($1,'request',$2,'working','generation')`, [ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query("UPDATE rooms SET name='Renamed' WHERE id=$1", [ROOM]);
+    await database.query("UPDATE agent_pending_attachments SET name='renamed' WHERE room_id=$1", [ROOM]);
+    await database.query("UPDATE agent_turns SET generation_id='replacement' WHERE room_id=$1", [ROOM]);
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await expect(database.transaction(async db => {
+      await db.query("UPDATE agent_turns SET status='complete' WHERE room_id=$1", [ROOM]);
+      throw new Error('rollback');
+    })).rejects.toThrow('rollback');
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await database.query("UPDATE agent_turns SET status='complete' WHERE room_id=$1", [ROOM]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('attachment-source',$1,$2,'work')`, [ROOM,agent]);
+    await database.query(`INSERT INTO agent_commands
+      (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth)
+      VALUES('attachment-command',$1,$2,'attachment-source','request','input','test','attachment-command','attachment-source',0)`, [ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query("UPDATE agent_commands SET reason='progress' WHERE id='attachment-command'");
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await database.query("UPDATE agent_commands SET state='cancelled' WHERE id='attachment-command'");
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query("UPDATE rooms SET archived_at=now() WHERE id=$1", [ROOM]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query("DELETE FROM agent_pending_attachments WHERE room_id=$1", [ROOM]);
+    await eventually(() => wake.mock.calls.length === 1);
+    expect(client.payloads.some(payload => payload.includes('attachment_due'))).toBe(false);
+  });
+
+  it('SCHEDULE-DUE-SOURCE: only committed calendar and eligibility changes wake its private owner', async () => {
+    const agent = 'b'.repeat(64), schedule = '33333333-3333-4333-8333-333333333333';
+    await database.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Scheduler')", [agent]);
+    const live = new LiveHub(), events: LiveEvent[] = [];
+    live.subscribeAll(event => events.push(event));
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client);
+    const wake = vi.fn(); completionReleases.push(subscribeCommandCompletion(AGENT_SCHEDULE_DUE_KEY, wake)); listeners.push(listener);
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+      VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":5}','Synthetic',now()+interval '1 hour')`,
+      [schedule,WORKSPACE,ROOM,agent,AUTHOR]);
+    await eventually(() => wake.mock.calls.length === 1);
+    await settle(events); wake.mockClear();
+    await database.query("UPDATE rooms SET name='Renamed' WHERE id=$1", [ROOM]);
+    await database.query("UPDATE identities SET name='Renamed' WHERE id=$1", [agent]);
+    await database.query('UPDATE agent_schedules SET failed_due_at=next_run_at,failed_revision=updated_at WHERE id=$1', [schedule]);
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE,ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [ROOM]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await database.query('UPDATE rooms SET archived_at=NULL WHERE id=$1', [ROOM]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    const child = '44444444-4444-4444-8444-444444444444';
+    await database.query("INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Child')", [child,WORKSPACE,ROOM]);
+    await database.query('UPDATE agent_schedules SET room_id=$2 WHERE id=$1', [schedule,child]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    // Child schedule access is inherited from this parent membership.
+    await database.query('UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2', [ROOM,agent]);
+    await eventually(() => wake.mock.calls.length === 1); wake.mockClear();
+    await expect(database.transaction(async db => {
+      await db.query("UPDATE agent_schedules SET next_run_at=next_run_at+interval '1 hour' WHERE id=$1", [schedule]);
+      throw new Error('rollback');
+    })).rejects.toThrow('rollback');
+    await settle(events); expect(wake).not.toHaveBeenCalled();
+    await database.query("UPDATE agent_schedules SET updated_at=updated_at+interval '1 second' WHERE id=$1", [schedule]);
+    await eventually(() => wake.mock.calls.length === 1);
+    expect(events.some(event => event.type === 'invalidate' && event.reason === 'postgres:agent_schedule_due')).toBe(false);
   });
 
   it('BRANCH-DERIVED: room archival and fact updates publish closeRequested without the retired flag', async () => {
@@ -125,7 +304,7 @@ describe('Postgres live fanout', () => {
     const received: LiveEvent[] = [];
     live.subscribe(corner, event => received.push(event));
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     void listener.run();
     await eventually(() => client.listenerCount('notification') === 1);
@@ -142,7 +321,7 @@ describe('Postgres live fanout', () => {
     const received: LiveEvent[] = [];
     live.subscribeAll(event => received.push(event));
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const wake = vi.fn();
     listener.setOwedWake(wake);
@@ -175,7 +354,7 @@ describe('Postgres live fanout', () => {
   it('publishes owner-scoped install, vault and agent commits without an idle read', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -204,7 +383,7 @@ describe('Postgres live fanout', () => {
   it('MCP-DISCOVERY-1: committed public discovery invalidates only the requesting owner Workbench', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll(event => received.push(event));
@@ -224,7 +403,7 @@ describe('Postgres live fanout', () => {
   it('wallet-2593: committed wallet revocation invalidates only the owner Workbench', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll(event => received.push(event));
@@ -238,10 +417,52 @@ describe('Postgres live fanout', () => {
     expect(received).toContainEqual({ type: 'resource-change', roomId: '', ownerId: AUTHOR, resource: 'workbench' });
   });
 
+  it('labels only isolated usage writes so negotiated clients can suppress broad agent reads',async()=>{
+    const live=new LiveHub(),client=new PgliteListenClient(database);
+    const listener=new PostgresLiveListener(database,live,()=>client);listeners.push(listener);
+    const received:LiveEvent[]=[];live.subscribeAll(event=>received.push(event));void listener.run();
+    await eventually(()=>listener.projectionHealth().connected);
+    const agent='b'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')`,[agent]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`,[agent,AUTHOR]);await settle(received);
+    await database.query(`UPDATE agents SET usage_snapshot=$2::jsonb,updated_at=now() WHERE agent_id=$1`,[agent,JSON.stringify({updatedAt:1,windows:[]})]);
+    await eventually(()=>received.some(event=>event.type==='resource-change'&&event.resourceId===agent));
+    expect(received).toContainEqual(expect.objectContaining({type:'resource-change',resource:'agent',resourceId:agent,usageOnly:true}));
+    await settle(received);
+    await database.query(`UPDATE agents SET selected_model='different-model',usage_snapshot=$2::jsonb,updated_at=now() WHERE agent_id=$1`,[agent,JSON.stringify({updatedAt:2,windows:[]})]);
+    await eventually(()=>received.some(event=>event.type==='resource-change'&&event.resourceId===agent));
+    expect(received.find(event=>event.type==='resource-change'&&event.resourceId===agent)).not.toHaveProperty('usageOnly');
+  });
+
+  it('publishes account usage only to matching owner-bound agents and ignores metadata-only writes',async()=>{
+    const live=new LiveHub(),client=new PgliteListenClient(database);
+    const listener=new PostgresLiveListener(database,live,()=>client);listeners.push(listener);
+    const received:LiveEvent[]=[];live.subscribeAll(event=>received.push(event));void listener.run();
+    await eventually(()=>listener.projectionHealth().connected);
+    const first='b'.repeat(64),second='c'.repeat(64),foreign='d'.repeat(64),otherOwner='e'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','First'),($2,'agent','Second'),($3,'agent','Foreign'),($4,'human','Other')`,[first,second,foreign,otherOwner]);
+    const account=(await database.query<{id:string}>(`INSERT INTO usage_accounts(owner_id,provider,account_key,usage)
+      VALUES($1,'openai','synthetic-account','{"updatedAt":1,"windows":[]}'::jsonb) RETURNING id::text`,[AUTHOR])).rows[0]!.id;
+    await database.query(`INSERT INTO agents(agent_id,owner_id,usage_account_id) VALUES($1,$4,$5::bigint),($2,$4,$5::bigint),($3,$6,$5::bigint)`,[first,second,foreign,AUTHOR,account,otherOwner]);
+    await settle(received);
+    const before=client.payloads.filter(raw=>JSON.parse(raw).table==='usage_accounts').length;
+    await database.query(`UPDATE usage_accounts SET updated_at=now() WHERE id=$1::bigint`,[account]);await settle(received);
+    expect(client.payloads.filter(raw=>JSON.parse(raw).table==='usage_accounts')).toHaveLength(before);
+    await database.query(`UPDATE usage_accounts SET usage='{"updatedAt":2,"windows":[]}'::jsonb,updated_at=now() WHERE id=$1::bigint`,[account]);
+    await eventually(()=>received.filter(event=>event.type==='resource-change'&&event.usageOnly).length===2);
+    const changes=received.filter(event=>event.type==='resource-change');
+    expect(changes).toEqual([
+      {type:'resource-change',roomId:'',ownerId:AUTHOR,resource:'agent',resourceId:first,usageOnly:true},
+      {type:'resource-change',roomId:'',ownerId:AUTHOR,resource:'agent',resourceId:second,usageOnly:true},
+    ]);
+    const payload=client.payloads.map(raw=>JSON.parse(raw)).reverse().find(item=>item.table==='usage_accounts');
+    expect(payload).toMatchObject({ownerId:AUTHOR,accountId:account});expect(payload).not.toHaveProperty('usage');
+  });
+
   it('publishes machine broker reports and sign-in progress to the owner surfaces', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -265,7 +486,7 @@ describe('Postgres live fanout', () => {
   it('names a Workspace header or identity change by id, and only to who shares it', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const events: LiveEvent[] = [];
     live.subscribeAll((event) => events.push(event));
@@ -322,7 +543,7 @@ describe('Postgres live fanout', () => {
   it('wakes push only after message and device writes commit', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const wake = vi.fn();
     listener.setPushWake(wake);
@@ -346,7 +567,7 @@ describe('Postgres live fanout', () => {
   it('wakes AI-client webhook delivery only when a tag commits', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const wake = vi.fn();
     listener.setMcpWebhookWake(wake);
@@ -363,7 +584,7 @@ describe('Postgres live fanout', () => {
   it('fans out one committed helper release without a follow-up read', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const events: LiveEvent[] = [];
     live.subscribeAll((event) => events.push(event));
@@ -383,7 +604,7 @@ describe('Postgres live fanout', () => {
   it('delivers read-mark changes to the listener with the reader identity', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const events: LiveEvent[] = [];
     const release = live.subscribe(ROOM, (event) => events.push(event));
@@ -406,7 +627,7 @@ describe('Postgres live fanout', () => {
   it('routes a bookmark change to its owner without broadcasting its content', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const events: LiveEvent[] = [];
     live.subscribeAll((event) => events.push(event));
@@ -432,7 +653,7 @@ describe('Postgres live fanout', () => {
   it('coalesces a section clear into one Needs-you wake per Room', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const events: LiveEvent[] = [];
     live.subscribeAll((event) => events.push(event));
@@ -478,7 +699,7 @@ describe('Postgres live fanout', () => {
     client.end = async () => { client.emit('end'); };
     const live = new LiveHub();
     const listener = new PostgresLiveListener(
-      { query, transaction: vi.fn() }, live, () => client, 1,
+      { query, transaction: vi.fn() }, live, () => client,
     );
     listeners.push(listener);
     const running = listener.run();
@@ -531,7 +752,7 @@ describe('Postgres live fanout', () => {
     const resync = vi.fn();
     live.subscribeResync(resync);
     const listener = new PostgresLiveListener(
-      { query, transaction: vi.fn() }, live, () => client, 1,
+      { query, transaction: vi.fn() }, live, () => client,
     );
     listeners.push(listener);
     const running = listener.run();
@@ -566,7 +787,6 @@ describe('Postgres live fanout', () => {
         clientsA.push(client);
         return client;
       },
-      1,
     );
     const listenerB = new PostgresLiveListener(
       database,
@@ -576,7 +796,6 @@ describe('Postgres live fanout', () => {
         clientsB.push(client);
         return client;
       },
-      1,
     );
     listeners.push(listenerA, listenerB);
     void listenerA.run();
@@ -641,7 +860,6 @@ describe('Postgres live fanout', () => {
       { query, transaction: database.transaction.bind(database) },
       live,
       () => client,
-      1,
     );
     listeners.push(listener);
     const received: LiveEvent[] = [];
@@ -681,7 +899,7 @@ describe('Postgres live fanout', () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -702,7 +920,7 @@ describe('Postgres live fanout', () => {
   it('delivers a membership change as an agent-directed invalidation', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -731,6 +949,28 @@ describe('Postgres live fanout', () => {
     );
   });
 
+  it('carries exact Workspace and identity on committed membership insert, revoke and deletion', async () => {
+    // Install this trigger revision explicitly; the root owns production markers.
+    await database.query((await postgresLiveSchema()));
+    const live = new LiveHub(), client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client);
+    listeners.push(listener); const received: LiveEvent[] = [];
+    live.subscribeAll(event => received.push(event)); void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    const changes = () => received.filter(event => event.type === 'invalidate' && event.reason === 'postgres:memberships' &&
+      event.roomId === '' && event.workspaceId === WORKSPACE && event.readerId === AUTHOR && event.targetAgentId === AUTHOR);
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, AUTHOR]);
+    await eventually(() => changes().length === 1);
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`, [WORKSPACE, AUTHOR]);
+    await eventually(() => changes().length === 2);
+    await database.query(`DELETE FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`, [WORKSPACE, AUTHOR]);
+    await eventually(() => changes().length === 3);
+    expect(client.payloads.map(value => JSON.parse(value)).filter(value => value.table === 'memberships'))
+      .toEqual(expect.arrayContaining(['INSERT','UPDATE','DELETE'].map(operation => expect.objectContaining({
+        operation, workspaceId: WORKSPACE, identityId: AUTHOR, roomId: '',
+      }))));
+  });
+
   it('pushes an expired Registry OAuth attempt when its server clock ends', async () => {
     const helper = 'b'.repeat(64);
     const connector = '55555555-5555-4555-8555-555555555555';
@@ -747,7 +987,7 @@ describe('Postgres live fanout', () => {
     );
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -765,7 +1005,7 @@ describe('Postgres live fanout', () => {
   it('names the parent Room and corner opener on a sparse corner preference invalidate', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -835,7 +1075,7 @@ describe('Postgres live fanout', () => {
   it('names the parent Room and opener on a queued command for a corner this helper never watched', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -881,7 +1121,7 @@ describe('Postgres live fanout', () => {
   it('marks a command released only when it leaves claimed', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -925,7 +1165,7 @@ describe('Postgres live fanout', () => {
   it('nudges the parent Room only when a corner status input changes', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const parent: LiveEvent[] = [];
     live.subscribe(ROOM, (event) => parent.push(event));
@@ -1003,7 +1243,7 @@ describe('Postgres live fanout', () => {
     await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
       VALUES($1,$2,$3,$4,'Goal')`,[corner,WORKSPACE,ROOM,AUTHOR]);
     const live = new LiveHub(), client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database,live,()=>client,1);
+    const listener = new PostgresLiveListener(database,live,()=>client);
     listeners.push(listener);
     const parent: LiveEvent[] = [];
     live.subscribe(ROOM,event=>parent.push(event));
@@ -1040,7 +1280,7 @@ describe('Postgres live fanout', () => {
   it('nudges the parent Room for every projected corner-row change', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const parent: LiveEvent[] = [];
     live.subscribe(ROOM, (event) => parent.push(event));
@@ -1151,7 +1391,7 @@ describe('Postgres live fanout', () => {
     const parents: LiveEvent[][] = [[], []];
     for (const [index, live] of machines.entries()) {
       const client = new PgliteListenClient(database);
-      const listener = new PostgresLiveListener(database, live, () => client, 1);
+      const listener = new PostgresLiveListener(database, live, () => client);
       listeners.push(listener);
       live.subscribe(ROOM, (event) => parents[index]!.push(event));
       void listener.run();
@@ -1174,7 +1414,7 @@ describe('Postgres live fanout', () => {
   it('delivers one parent nudge for an owed refresh that rewrites many rows', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     void listener.run();
     await eventually(() => client.listenerCount('notification') === 1);
@@ -1209,7 +1449,7 @@ describe('Postgres live fanout', () => {
     const wakes = [0, 0];
     for (const [index, live] of machines.entries()) {
       const client = new PgliteListenClient(database);
-      const listener = new PostgresLiveListener(database, live, () => client, 1);
+      const listener = new PostgresLiveListener(database, live, () => client);
       listener.setOwedWake(() => { wakes[index]! += 1; });
       listeners.push(listener);
       live.subscribe(ROOM, (event) => parents[index]!.push(event));
@@ -1242,7 +1482,7 @@ describe('Postgres live fanout', () => {
   it('decides an owed expiry by the database clock when the app clock runs ahead', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const parent: LiveEvent[] = [];
     live.subscribe(ROOM, (event) => parent.push(event));
@@ -1282,7 +1522,7 @@ describe('Postgres live fanout', () => {
   it('leaves a top-level Room membership without a corner opener', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -1308,7 +1548,7 @@ describe('Postgres live fanout', () => {
   it('delivers a connector-assignment wake without a catalog', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -1339,7 +1579,7 @@ describe('Postgres live fanout', () => {
     );
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -1364,7 +1604,7 @@ describe('Postgres live fanout', () => {
   it('delivers a phone-side model/effort change as an agent-config invalidation', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    const listener = new PostgresLiveListener(database, live, () => client);
     listeners.push(listener);
     const received: LiveEvent[] = [];
     live.subscribeAll((event) => received.push(event));
@@ -1407,7 +1647,7 @@ describe('Postgres live fanout', () => {
     );
     const liveB = new LiveHub();
     const client = new PgliteListenClient(database);
-    const listener = new PostgresLiveListener(database, liveB, () => client, 1);
+    const listener = new PostgresLiveListener(database, liveB, () => client);
     listeners.push(listener);
     void listener.run();
     await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1476,13 +1716,11 @@ describe('Postgres live fanout', () => {
       { query: queryA, transaction: database.transaction.bind(database) },
       liveA,
       () => clientA,
-      1,
     );
     const listenerB = new PostgresLiveListener(
       { query: queryB, transaction: database.transaction.bind(database) },
       liveB,
       () => clientB,
-      1,
     );
     listeners.push(listenerA, listenerB);
     void listenerA.run();
@@ -1548,7 +1786,7 @@ describe('Postgres live fanout', () => {
         ['2'.repeat(64), ROOM, AUTHOR],
       );
       const client = new PgliteListenClient(database);
-      const listener = new PostgresLiveListener(database, live, () => client, 1);
+      const listener = new PostgresLiveListener(database, live, () => client);
       listeners.push(listener);
       void listener.run();
       await eventually(async () => {
@@ -1566,19 +1804,21 @@ describe('Postgres live fanout', () => {
   it('broadcasts resync after its listener connection is restored', async () => {
     const live = new LiveHub();
     const clients: PgliteListenClient[] = [];
+    let reconnect!: () => void;
+    const reconnectReady = new Promise<void>(resolve => { reconnect = resolve; });
     const listener = new PostgresLiveListener(
       database,
       live,
       () => {
         const client = new PgliteListenClient(database);
+        if (clients.length) client.connect = () => reconnectReady;
         clients.push(client);
         return client;
       },
-      50,
     );
     listeners.push(listener);
     void listener.run();
-    await eventually(() => clients.length === 1);
+    await eventually(() => listener.projectionHealth().connected);
 
     const received: LiveEvent[] = [];
     const recovered: string[] = [];
@@ -1596,6 +1836,7 @@ describe('Postgres live fanout', () => {
       `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'while down')`,
       [missedId, ROOM, AUTHOR],
     );
+    reconnect();
     await eventually(() => clients.length === 2);
     await eventually(() => received.some((event) => event.type === 'invalidate'));
     await eventually(() => recovered.includes(missedId));

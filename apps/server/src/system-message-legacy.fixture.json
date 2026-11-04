@@ -6434,5 +6434,35 @@
         "output": "Your account has reached its free-agent limit"
       }
     ]
+  },
+  "wallet-notices.could-not-confirm": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "\"could not confirm\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "could not confirm"
+      }
+    ]
+  },
+  "wallet-notices.submission-outcome-unknown": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "\"submission outcome unknown\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "submission outcome unknown"
+      }
+    ]
+  },
+  "wallet-notices.approval-confirmed-requires-new-action": {
+    "source": "apps/server/src/wallet-notices.ts",
+    "before": "\"Approval confirmed. The dependent transaction was not submitted; a new explicit action is required.\"",
+    "cases": [
+      {
+        "values": [],
+        "output": "Approval confirmed. The dependent transaction was not submitted; a new explicit action is required."
+      }
+    ]
   }
 }

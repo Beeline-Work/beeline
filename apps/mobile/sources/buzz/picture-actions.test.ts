@@ -1,9 +1,11 @@
+vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: vi.fn() }));
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   platformOS: { value: 'android' as string },
   setImageAsync: vi.fn(),
   artifactBase64: vi.fn(),
+  artifactLocalUri: vi.fn(),
   fetchArtifactBytes: vi.fn(),
   openArtifactInBrowserOrExplain: vi.fn(),
   writeAsStringAsync: vi.fn(),
@@ -32,6 +34,7 @@ vi.mock('expo-sharing', () => ({
 }));
 vi.mock('@/buzz/artifact-link', () => ({
   artifactBase64: mocks.artifactBase64,
+  artifactLocalUri: mocks.artifactLocalUri,
   fetchArtifactBytes: mocks.fetchArtifactBytes,
   openArtifactInBrowserOrExplain: mocks.openArtifactInBrowserOrExplain,
 }));
@@ -54,6 +57,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.platformOS.value = 'android';
   mocks.artifactBase64.mockResolvedValue('aW1hZ2U=');
+  mocks.artifactLocalUri.mockResolvedValue('file:///cache/immutable-photo.png');
   mocks.isAvailableAsync.mockResolvedValue(true);
 });
 
@@ -64,16 +68,12 @@ describe('picture actions', () => {
     expect(mocks.setImageAsync).toHaveBeenCalledWith('aW1hZ2U=');
   });
 
-  it('writes a safe temporary image and opens the native share sheet', async () => {
+  it('shares the owned immutable file with the native share sheet', async () => {
     await sharePicture(picture);
-    expect(mocks.writeAsStringAsync).toHaveBeenCalledWith(
-      'file:///cache/shared-team-photo.png',
-      'aW1hZ2U=',
-      { encoding: 'base64' },
-    );
-    expect(mocks.shareAsync).toHaveBeenCalledWith('file:///cache/shared-team-photo.png', {
-      dialogTitle: 'Share Team photo',
-      mimeType: 'image/png',
+    expect(mocks.artifactLocalUri).toHaveBeenCalledWith(picture);
+    expect(mocks.writeAsStringAsync).not.toHaveBeenCalled();
+    expect(mocks.shareAsync).toHaveBeenCalledWith('file:///cache/immutable-photo.png', {
+      dialogTitle: 'Share Team photo', mimeType: 'image/png',
     });
   });
 

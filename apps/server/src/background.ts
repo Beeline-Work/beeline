@@ -2,7 +2,7 @@ import { ROOM_VIEW_TOOL_ROW_LIMIT } from '@beeline/api-contract/phone';
 import { retryOwedMentions } from './owed-mentions.js';
 import { cleanupUnfinishedAppSignIns } from './unfinished-app-sign-ins.js';
 import { captureServerError } from './sentry.js';
-import { deliverMcpMemberWebhooks, retryMcpMemberRoutes } from './rooms-mcp-members.js';
+import { retryMcpMemberRoutes } from './rooms-mcp-members.js';
 import { DatabaseTransactionStartError, type SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
@@ -26,7 +26,6 @@ import { addressedToPersonSql } from './corner-owed.js';
 import { pushDirectAttentionSql } from './push-attention.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 
-const BACKGROUND_LOCK_KEY = 0x0bee11;
 const PUSH_MAX_ATTEMPTS = 3;
 /** Bound concurrent device sends after serial claim/suppress. APNS can take
  * up to APNS_REQUEST_TIMEOUT_MS per token; serializing 100 candidates on the
@@ -204,6 +203,22 @@ export class PushDeliveryLoop {
     const due = await this.database.query<{ not_before: Date }>(
       `SELECT not_before FROM push_outbox ORDER BY not_before,message_id,device_token LIMIT 1`);
     return due.rows[0]?.not_before ?? null;
+  }
+
+  async nextDelayMs(admittedAt?:string): Promise<number | undefined> {
+    if(this.#repeatBatch)return 0;
+    const platforms = [this.iosSender?.clearRead ? 'ios' : '', this.sender?.clearRead ? 'android' : ''];
+    const row = (await this.database.query<{delay_ms:number|null}>(`SELECT ceil(extract(epoch FROM (min(due_at)-clock_timestamp()))*1000)::float8 delay_ms FROM (
+      SELECT not_before due_at FROM push_outbox
+      UNION ALL SELECT clear.sent_at+interval '${READ_CLEAR_INTERVAL_SECONDS} seconds'
+      FROM push_read_clears clear JOIN push_devices device ON device.token=clear.device_token
+      WHERE device.platform=ANY($1::text[]) AND EXISTS(
+        SELECT 1 FROM push_delivery_claims claim JOIN messages message ON message.id=claim.message_id
+        JOIN room_read_marks mark ON mark.identity_id=device.identity_id AND mark.room_id=message.room_id
+        WHERE claim.device_token=device.token AND claim.status='delivered' AND claim.read_cleared_at IS NULL
+          AND (message.created_at,message.id)<=(mark.message_created_at,mark.message_id))
+    ) due WHERE due_at>COALESCE($2::timestamptz,clock_timestamp())`, [platforms,admittedAt??null])).rows[0];
+    return row?.delay_ms == null ? undefined : Math.max(0,Number(row.delay_ms));
   }
 
   async runOnce(): Promise<number> {
@@ -892,6 +907,17 @@ export class MediaExpiryLoop {
     return this.sweepObjects();
   }
 
+  /** Exact deadline owner bypasses the former hourly observation throttle. */
+  async runDeadline(): Promise<void> { await this.sweepObjects(); }
+
+  async nextDelayMs(admittedAt?:string): Promise<number | undefined> {
+    if (!this.objects) return;
+    return (await import('./background-deadline-clock.js')).backgroundNextDelay(this.database,
+      `SELECT LEAST(expires_at,CASE WHEN state='pending' THEN created_at+interval '1 hour' END) due_at FROM objects
+       WHERE NOT EXISTS(SELECT 1 FROM corner_brief_revisions brief JOIN rooms corner ON corner.id=brief.corner_id AND corner.archived_at IS NULL
+         CROSS JOIN LATERAL jsonb_array_elements(brief.attachments) file WHERE file->>'objectId'=objects.id::text)`,admittedAt);
+  }
+
   /**
    * The object half of the sweep. Storage is deleted first, then the row and
    * the tombstone land together, so a crashed sweep at worst leaves a row
@@ -993,9 +1019,8 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
   await pruneArchivedToolActivity(database);
   await cleanupUnfinishedAppSignIns(database, true);
   await retryOwedMentions(database);
-  // Outgoing MCP member webhooks leave the wake transaction here.
+  // Legacy routing repair remains separate from committed delivery ownership.
   try { await retryMcpMemberRoutes(database); } catch (error) { captureServerError(error); }
-  try { await deliverMcpMemberWebhooks(database); } catch (error) { captureServerError(error); }
   // Each autocommitted batch fits the jobs pool budget; later cycles finish backlogs.
   const expired = [
     ['agent_turn_traces', "created_at<now()-interval '30 days'"],
@@ -1026,100 +1051,6 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
   for (const [table, predicate] of expired) {
     await database.query(`DELETE FROM ${table} WHERE ctid IN (
       SELECT ctid FROM ${table} WHERE ${predicate} LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
-  }
-}
-
-/**
- * Exactly one process owns background work. PostgreSQL releases the advisory
- * lock automatically when this dedicated connection dies, allowing its peer
- * to acquire it without a queue, worker process, or lease clock.
- */
-export class BackgroundLeader {
-  #stopped = false;
-  #running: Promise<void> | undefined;
-  #client: LeaderConnection | undefined;
-  #wake: (() => void) | undefined;
-  #wakePending = false;
-
-  constructor(
-    private readonly database: { connectDedicated(): Promise<LeaderConnection> },
-    private readonly cycle: (newLeader: boolean) => Promise<number | void>,
-    private readonly reconciliationMs = 60_000,
-  ) {}
-
-  run(): Promise<void> {
-    return this.#running ??= this.runLoop();
-  }
-
-  private async runLoop(): Promise<void> {
-    while (!this.#stopped) {
-      try {
-        const client = await this.database.connectDedicated();
-        this.#client = client;
-        const lock = await client.query<{ locked: boolean }>(
-          `SELECT pg_try_advisory_lock($1) locked`,
-          [BACKGROUND_LOCK_KEY],
-        );
-        if (!lock.rows[0]?.locked) {
-          client.release();
-          this.#client = undefined;
-          await this.wait();
-          continue;
-        }
-        let newLeader = true;
-        while (!this.#stopped) {
-          // Detect a dead lock-owning connection before any work can fire.
-          await client.query('SELECT 1');
-          if (this.#stopped) break;
-          const nextDelay = await this.cycle(newLeader);
-          newLeader = false;
-          await this.wait(
-            typeof nextDelay === 'number'
-              ? Math.max(0, Math.min(nextDelay, this.reconciliationMs))
-              : this.reconciliationMs,
-          );
-        }
-      } catch (error) {
-        captureServerError(error);
-        console.error('[background] leader cycle failed', error);
-        await this.wait();
-      } finally {
-        this.#client?.release(true);
-        this.#client = undefined;
-      }
-    }
-  }
-
-  async stop(): Promise<void> {
-    this.#stopped = true;
-    this.#wake?.();
-    await this.#running;
-  }
-
-  /** Recompute background work after a committed database notification. */
-  wake(): void {
-    if (this.#wake) this.#wake();
-    else this.#wakePending = true;
-  }
-
-  private wait(milliseconds = this.reconciliationMs): Promise<void> {
-    if (this.#stopped) return Promise.resolve();
-    if (this.#wakePending) {
-      this.#wakePending = false;
-      return Promise.resolve();
-    }
-    return new Promise((resolve) => {
-      const timer = setTimeout(done, milliseconds);
-      timer.unref?.();
-      const self = this;
-      function done() {
-        clearTimeout(timer);
-        if (self.#wake === done) self.#wake = undefined;
-        self.#wakePending = false;
-        resolve();
-      }
-      this.#wake = done;
-    });
   }
 }
 
@@ -1161,10 +1092,11 @@ export class BackgroundJobRunner {
       health.lastErrorAt = this.now();
       health.consecutiveFailures++;
       // Operator deliveries stay pending when BEGIN/checkout fails. The next
-      // leader loop retries them; keep a continuing outage at error level.
+      // committed delivery or real recovery may resume them; keep a
+      // continuing outage at error level without creating a retry timer.
       if (name === 'operator-system-dms' && error instanceof DatabaseTransactionStartError &&
           health.consecutiveFailures === 1) {
-        console.warn(`[background] ${name} deferred until next loop`, error);
+        console.warn(`[background] ${name} deferred until committed delivery or recovery`, error);
         return { ok: false };
       }
       captureServerError(error, { background_job: name });
@@ -1174,9 +1106,4 @@ export class BackgroundJobRunner {
       health.lastDurationMs = Math.max(0, this.now() - startedAt);
     }
   }
-}
-
-export interface LeaderConnection {
-  query<Row = Record<string, unknown>>(sql: string, values?: unknown[]): Promise<{ rows: Row[] }>;
-  release(destroy?: boolean): void;
 }

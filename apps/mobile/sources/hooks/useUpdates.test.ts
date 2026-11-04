@@ -8,7 +8,13 @@ const desktopShell = vi.hoisted(() => ({ enabled: false }));
 const appState = vi.hoisted(() => ({
   listeners: new Set<(state: string) => void>(),
 }));
+const connections = vi.hoisted(() => ({ epoch: 1, listeners: new Set<() => void>() }));
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
+  commandState: () => ({ generation: connections.epoch }),
+  subscribeConnected: (listener: () => void) => { connections.listeners.add(listener); return () => { connections.listeners.delete(listener); }; },
+}) }));
 const updates = vi.hoisted(() => ({
+  runtimeVersion: '55',
   checkForUpdateAsync: vi.fn(),
   fetchUpdateAsync: vi.fn(),
   reloadAsync: vi.fn(),
@@ -22,6 +28,7 @@ const desktopProcess = vi.hoisted(() => ({ relaunch: vi.fn() }));
 
 vi.mock('expo-router', () => ({ usePathname: () => route.pathname }));
 vi.mock('expo-updates', () => ({
+  get runtimeVersion() { return updates.runtimeVersion; },
   checkForUpdateAsync: updates.checkForUpdateAsync,
   fetchUpdateAsync: updates.fetchUpdateAsync,
   reloadAsync: updates.reloadAsync,
@@ -83,7 +90,8 @@ vi.mock('react-native', async () => {
   };
 });
 
-import { UpdateProvider } from './useUpdates';
+import { UpdateProvider } from './update-provider';
+import { checkNativeUpdate } from './useUpdates';
 import { UpdateReadyPrompt } from '@/components/UpdateReadyPrompt';
 
 const originalConsoleError = console.error;
@@ -112,9 +120,9 @@ afterAll(() => {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  appState.listeners.clear();
+  appState.listeners.clear(); connections.listeners.clear(); connections.epoch = 1;
   route.pathname = '/beeline/onboarding';
-  desktopShell.enabled = false;
+  desktopShell.enabled = false; updates.runtimeVersion = '55';
   updates.checkForUpdateAsync.mockResolvedValue({
     isAvailable: false,
     reason: 'noUpdateAvailableOnServer',
@@ -239,15 +247,23 @@ describe('root OTA update coordinator', () => {
     await unmount(renderer);
   });
 
-  it('checks again whenever the app becomes active', async () => {
+  it('foreground causes no update read; one real connection epoch admits one check', async () => {
     const renderer = await renderUpdateRoot();
     expect(updates.checkForUpdateAsync).toHaveBeenCalledTimes(1);
 
     await act(async () => {
-      for (const listener of appState.listeners) listener('active');
+      for (let n = 0; n < 100; n++)
+        for (const listener of appState.listeners) listener('active');
     });
 
+    expect(updates.checkForUpdateAsync).toHaveBeenCalledTimes(1);
+    await act(async () => { for (const listener of connections.listeners) listener(); });
     expect(updates.checkForUpdateAsync).toHaveBeenCalledTimes(2);
+    await act(async () => { for (const listener of connections.listeners) listener(); });
+    expect(updates.checkForUpdateAsync).toHaveBeenCalledTimes(2);
+    connections.epoch += 1;
+    await act(async () => { for (const listener of connections.listeners) listener(); });
+    expect(updates.checkForUpdateAsync).toHaveBeenCalledTimes(3);
     await unmount(renderer);
   });
 
@@ -316,4 +332,26 @@ describe('root OTA update coordinator', () => {
     expect(downloadAndInstall).toHaveBeenCalledTimes(2);
     await unmount(renderer);
   });
+});
+
+// Settings and the provider join the exact same SDK request/download.
+it('coalesces manual and automatic native work into one manifest/download flight', async () => {
+  updates.runtimeVersion = '40';
+  let release!: (value: { isAvailable: boolean }) => void;
+  updates.checkForUpdateAsync.mockImplementationOnce(() => new Promise(resolve => { release = resolve; }));
+  updates.fetchUpdateAsync.mockResolvedValueOnce({ isNew: true, manifest: { id: 'same-update', runtimeVersion: '40' } });
+  const automatic = checkNativeUpdate(), stage = vi.fn(), manual = checkNativeUpdate(stage);
+  expect(updates.checkForUpdateAsync).toHaveBeenCalledTimes(1);
+  release({ isAvailable: true });
+  await expect(automatic).resolves.toEqual(await manual);
+  expect(updates.fetchUpdateAsync).toHaveBeenCalledTimes(1);
+  expect(stage.mock.calls.map(([value]) => value)).toEqual(['available', 'downloaded']);
+});
+
+it('rejects an incompatible native manifest without requesting a reload', async () => {
+  updates.runtimeVersion='40';
+  updates.checkForUpdateAsync.mockResolvedValueOnce({isAvailable:true});
+  updates.fetchUpdateAsync.mockResolvedValueOnce({isNew:true,manifest:{id:'wrong-runtime',runtimeVersion:'55'}});
+  await expect(checkNativeUpdate()).rejects.toThrow('runtime is incompatible');
+  expect(updates.reloadAsync).not.toHaveBeenCalled();
 });

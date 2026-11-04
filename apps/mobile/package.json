@@ -23,8 +23,8 @@
     "release:build:apk": "npm run version:check && eas build --profile production-apk --platform android --no-wait --non-interactive",
     "prebuild": "rm -rf android ios && expo prebuild",
     "typecheck": "node scripts/generate-typed-routes.cjs && tsc --noEmit",
-    "postinstall": "patch-package --error-on-fail && node scripts/patch-livekit-abort.cjs && ((command -v setup-skia-web >/dev/null && setup-skia-web public) || true)",
-    "eas-build-post-install": "tsc -p scripts/tsconfig.eas-nostr.json && tsc -p scripts/tsconfig.eas-api-contract.json && tsc -p scripts/tsconfig.eas-buzz-client.json",
+    "postinstall": "patch-package --error-on-fail && node scripts/patch-livekit-abort.cjs && node scripts/patch-livekit-owned.cjs && ((command -v setup-skia-web >/dev/null && setup-skia-web public) || true)",
+    "eas-build-post-install": "tsc -p scripts/tsconfig.eas-nostr.json && tsc -p scripts/tsconfig.eas-api-contract.json && tsc -p scripts/tsconfig.eas-buzz-client.json && tsc -p scripts/tsconfig.eas-net.json",
     "identity-mark:proof": "node scripts/render-identity-axis-proof.mjs",
     "turn-band:proof": "node scripts/turn-band-hold-proof.mjs",
     "corner-grouping:proof": "node scripts/corner-grouping-status-proof.mjs",
@@ -203,7 +203,8 @@
     "uuid": "^11.1.0",
     "vitest": "^3.2.4",
     "zod": "^4.0.0",
-    "zustand": "^5.0.6"
+    "zustand": "^5.0.6",
+    "@beeline/net": "file:../../packages/net"
   },
   "devDependencies": {
     "@babel/core": "^7.25.2",

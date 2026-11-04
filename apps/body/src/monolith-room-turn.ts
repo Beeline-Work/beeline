@@ -1,3 +1,6 @@
+import { CommandActivationContext } from './helper-activation-context.js';
+import { OwnedModelOutcomeUnknown, ownedModelPrompt, ownedModelEndReceipt } from './owned-model-turn.js';
+import { helperUsageBinding, postChangedAgentUsage } from './helper-usage-binding.js';
 import { agentBehavior } from './agent-command.js';
 import { FreeAgentContinuation } from './free-agent-continuation.js';
 import { subscriptionActionPrompt } from '@beeline/api-contract/daemon';
@@ -576,6 +579,7 @@ export interface MonolithRoomTurnOptions {
  */
 export class MonolithRoomTurnLoop {
   private readonly commandContext: CommandExecutionContext;
+  private readonly activationContext: CommandActivationContext;
   private readonly squireRelay: SquireTaskRelay;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
@@ -713,6 +717,11 @@ export class MonolithRoomTurnLoop {
       },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
+    this.activationContext=new CommandActivationContext({
+      scope:()=>options.api.channel?.activationScope?.(),
+      selected:()=>options.api.channel?.activationContextSelected===true,
+      read:input=>options.api.readCommandActivation(input),
+    });
     options.grantRunner?.register(options.roomId, {
       workspaceId: options.workspaceId,
       cwd: options.cwd,
@@ -846,8 +855,25 @@ export class MonolithRoomTurnLoop {
     await this.options.scheduler.forceSuspend(this.options.roomId);
   }
 
+  private commandActivation(){
+    if(!this.options.api.channel?.activationContextSelected&&!this.options.api.channel?.activationScope?.())return Promise.resolve(undefined);
+    const command=this.commandContext?.current;
+    if(!command){
+      if(this.options.api.channel?.activationContextSelected)return Promise.reject(new Error('Activation requires a claimed command'));
+      return Promise.resolve(undefined);
+    }
+    return this.activationContext.read({agentId:this.agent.publicKey,workspaceId:this.options.workspaceId,
+      roomId:this.options.roomId,commandId:command.id,generationId:this.commandContext.generationId});
+  }
+
+  private async configuration(){
+    const activation=await this.commandActivation();
+    return activation?activation.configuration:this.options.api.execute('getAgentConfiguration',{agentId:this.agent.publicKey,roomId:this.options.roomId});
+  }
+
   private async roster(): Promise<WorkspaceRoster> {
-    const roster = await this.options.api.execute('getWorkspaceRoster', {
+    const activation=await this.commandActivation();
+    const roster = activation?activation.roster:await this.options.api.execute('getWorkspaceRoster', {
       agentId: this.agent.publicKey,
       workspaceId: this.options.workspaceId,
     });
@@ -882,8 +908,9 @@ export class MonolithRoomTurnLoop {
     return delivered;
   }
 
-  private repositoryState(): Promise<RoomRepositoryState> {
-    return this.options.api.execute('getRoomRepositoryState', { roomId: this.options.roomId });
+  private async repositoryState(): Promise<RoomRepositoryState> {
+    const activation=await this.commandActivation();
+    return activation?activation.repository:this.options.api.execute('getRoomRepositoryState', { roomId: this.options.roomId });
   }
 
   /**
@@ -919,7 +946,7 @@ export class MonolithRoomTurnLoop {
         ...(refused ? { refused } : {}),
       }))
       .then((usage) => usage
-        ? this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+        ? postChangedAgentUsage(this.options.api,this.agent.publicKey,usage)
         : undefined)
       .catch((error) => console.error('[agent-usage] OpenRouter key read failed', error));
   }
@@ -927,9 +954,10 @@ export class MonolithRoomTurnLoop {
   /** After a turn, refresh the owner's view of this agent's plan quota. */
   private publishHarnessQuota(): void {
     this.harnessQuota ??= new HarnessQuotaReader({
+      accountPublisher:helperUsageBinding(this.options.api),
       agentId: this.agent.publicKey,
       post: (usage) =>
-        this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage }),
+        postChangedAgentUsage(this.options.api,this.agent.publicKey,usage),
     });
     void this.harnessQuota.publish(
       quotaAxiProvider(this.options.config.agentKind, Boolean(this.openRouterKey)),
@@ -1017,10 +1045,7 @@ export class MonolithRoomTurnLoop {
 
   private async currentSessionFingerprint(): Promise<string> {
     const [configuration, roster, grants] = await Promise.all([
-      this.options.api.execute('getAgentConfiguration', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.roomId,
-      }),
+      this.configuration(),
       this.roster(),
       this.grantedResources(),
     ]);
@@ -1055,7 +1080,8 @@ export class MonolithRoomTurnLoop {
 
   private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[]; isolatedCategories: SharedAssetCategory[] }> {
     try {
-      const grants = await this.options.api.execute('listAgentGrants', {
+      const activation=await this.commandActivation();
+      const grants = activation?activation.grants:await this.options.api.execute('listAgentGrants', {
         agentId: this.agent.publicKey,
         roomId: this.options.roomId,
       });
@@ -1128,10 +1154,7 @@ export class MonolithRoomTurnLoop {
     this.sectionBaseline.reset();
     const [configuration, roster, repositoryState, grants] =
       await Promise.all([
-        this.options.api.execute('getAgentConfiguration', {
-          agentId: this.agent.publicKey,
-          roomId: this.options.roomId,
-        }),
+        this.configuration(),
         this.roster(),
         this.repositoryState(),
         this.grantedResources(),
@@ -1475,7 +1498,7 @@ export class MonolithRoomTurnLoop {
           sandboxHome: homeOverlay.HOME,
         }),
       onUsage: (usage) => {
-        void this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+        void postChangedAgentUsage(this.options.api,this.agent.publicKey,usage)
           .catch(error => console.error('[agent-usage] publish failed', error));
       },
       onCommands: agentCommandCatalogPublisher({
@@ -1985,6 +2008,8 @@ export class MonolithRoomTurnLoop {
               // durable reply that dissolves it all live in `turn-stream.ts`.
               const stream = new AgentTurnStream({
                 api,
+                commandId:this.commandContext.current?.id,
+                turnGeneration:this.commandContext.generationId,
                 agentId: this.agent.publicKey,
                 roomId: this.options.roomId,
                 requestId: item.id,
@@ -2008,7 +2033,7 @@ export class MonolithRoomTurnLoop {
                     trace.promptSent();
                     result = await this.turnUsage.measure(
                       { agentEnv: this.agentEnv, sessionId: this.sessionId! },
-                      () =>
+                      () => ownedModelPrompt(this.commandContext, () =>
                         this.client!.sessionPrompt(
                           this.sessionId!,
                           nextPrompt,
@@ -2022,12 +2047,13 @@ export class MonolithRoomTurnLoop {
                             trace.toolCalls(calls);
                             if (openedACorner(openCornerToolCall(calls))) liveCornerOpened = true;
                           },
-                        ),
+                        )),
                     );
                     this.harnessTokens = addTurnTokenFigure(this.harnessTokens, result?.tokenUsage);
                   } catch (error) {
                     promptError = error;
                   }
+                  if (promptError instanceof OwnedModelOutcomeUnknown) throw promptError;
                   this.turnMetrics = await this.captureTurnMetrics();
                   await this.writeBackClaudeLogin();
                   if (result && ['no-reply', 'repeated-tool-call'].includes(result.stopReason)) break;
@@ -2320,6 +2346,12 @@ export class MonolithRoomTurnLoop {
         );
         void finishTrace('cancelled').catch(() => undefined);
         return;
+      }
+      if (error instanceof OwnedModelOutcomeUnknown) {
+        liveStream?.close(); await this.discardSession();
+        await api.execute('postAgentTurnReceipt', ownedModelEndReceipt(error, { agentId: this.agent.publicKey,
+          roomId: this.options.roomId, requestId: item.id, generationId: this.commandContext.generationId }));
+        throw error;
       }
       if (error instanceof AcpTurnBackstopError) await this.discardSession();
       // A backstop after opening a corner settles the Room reply through

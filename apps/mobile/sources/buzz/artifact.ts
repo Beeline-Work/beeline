@@ -74,7 +74,7 @@ export function mediaIdFromUrl(url: string): string | null {
 }
 
 /** Defence in depth behind the script-off WebView: no network, no frames, inline styles and data images only. */
-export const ARTIFACT_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:";
+export const ARTIFACT_CSP = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; base-uri 'none'; form-action 'none'; frame-src 'none'";
 
 export const ARTIFACT_MAX_PREVIEW_HEIGHT = 220;
 
@@ -109,30 +109,33 @@ export function wrapArtifactMarkup(documentText: string, format: 'html' | 'svg')
 }
 
 /**
- * Inject the CSP meta as the FIRST head element so it precedes any other meta
- * or style the document already carries. A document without a head still gets
- * one; a document that already declares a CSP meta is left alone (ours wins by
- * being first — browsers honour the first policy).
+ * A trusted head precedes every authored byte. Searching for an authored head
+ * allows malformed/headless documents or early resources to precede policy.
+ * The original markup remains in order; the HTML parser reconciles its root,
+ * head and body tags after our already-active policy. Later CSPs can only add
+ * restrictions, never relax ours.
  */
 export function injectCspMeta(html: string): string {
   const meta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
-  if (/<meta[^>]+http-equiv=["']?content-security-policy/i.test(html)) {
-    // Prepend ours ahead of the existing one anyway: first policy wins.
-    return html.replace(/<head([^>]*)>/i, (head) => `${head}${meta}`);
-  }
-  if (/<head[^>]*>/i.test(html)) {
-    return html.replace(/<head([^>]*)>/i, (head) => `${head}${meta}`);
-  }
-  if (/<html[^>]*>/i.test(html)) {
-    return html.replace(/<html([^>]*)>/i, (head) => `${head}<head>${meta}</head>`);
-  }
-  return `${meta}${html}`;
+  return `<!doctype html><html><head>${meta}${html}</head><body></body></html>`;
+}
+
+/**
+ * A native WebView's JS navigation callback can time out. An empty browser
+ * sandbox also stops automatic refresh in the engine, independent of JS.
+ * Attribute escaping keeps all authored tags inside the inert child; srcdoc
+ * inherits the trusted parent's policy, including denial of remote frames.
+ */
+export function wrapArtifactSandbox(html: string): string {
+  const escaped = html.replaceAll('&', '&amp;').replaceAll('"', '&quot;')
+    .replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+  return `<!doctype html><html><head><meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}"><style>html,body{margin:0;height:100%}iframe{display:block;width:100%;height:100%;border:0}</style></head><body><iframe sandbox="" srcdoc="${escaped}"></iframe></body></html>`;
 }
 
 /**
  * Place the default-canvas sheet right after the CSP meta (which the CSP step
  * guarantees exists as the first head element), so it precedes every authored
- * style: first policy wins for the meta, last rule wins for the canvas.
+ * style. Authored CSS can still override the default canvas.
  */
 export function injectDefaultCanvas(html: string): string {
   const meta = `<meta http-equiv="Content-Security-Policy" content="${ARTIFACT_CSP}">`;
@@ -142,15 +145,14 @@ export function injectDefaultCanvas(html: string): string {
 /**
  * The viewer's navigation guard: allow exactly the initial string load, deny
  * every later request. Android fires `onShouldStartLoadWithRequest` for the
- * initial `about:blank` too, so the guard is a one-shot gate over requests,
- * not a URL matcher — the first request through the gate is allowed whatever
- * its URL, and every request after it is denied.
+ * initial `about:blank` too. Only the exact trusted initial source can pass;
+ * an authored redirect must not become allowed just by arriving first.
  */
-export function createInitialLoadGuard(): { allow(requestUrl: string): boolean } {
+export function createInitialLoadGuard(initialUrl = 'about:blank'): { allow(requestUrl: string): boolean } {
   let consumed = false;
   return {
-    allow(_requestUrl: string): boolean {
-      if (consumed) return false;
+    allow(requestUrl: string): boolean {
+      if (consumed || requestUrl !== initialUrl) return false;
       consumed = true;
       return true;
     },

@@ -1,0 +1,61 @@
+{
+  "baseHead": "73a6c477dae238c4f1f8101abdd5d826bcd389f0",
+  "scope": "Integrated group draft source snapshot; no runtime capture, empty-sweep or whole-finding closure claim.",
+  "router": {
+    "keys": 158,
+    "occurrences": 218,
+    "errors": [],
+    "manifestSha256": "d25de363433aeb71aef1aecb3667c8fd324a442f651da40b77bc31e5fb6be9ef"
+  },
+  "phone": {
+    "keys": 72,
+    "occurrences": 89,
+    "errors": [],
+    "manifestSha256": "221d766b6bbd0e1e35430718c1e3610ad1c827dc2237c733780af0a2ada720f3"
+  },
+  "bundles": [
+    {
+      "name": "phone-owner",
+      "entry": "packages/net/src/private/phone-owner.ts",
+      "rawBytes": 83222,
+      "gzipBytes": 23714,
+      "rawLimit": 90112,
+      "gzipLimit": 24576,
+      "sources": {
+        "packages/net/src/private/compact-wire-shapes.ts": "ad612a2011935dd2775d8b5c83d93d5b0bae4e4ad75a26d2fbeaf0daf828021d",
+        "packages/net/src/private/generated-owner-input-shapes.ts": "a5759c3d0efcac70ee98c22920a9671df87dae4fbd278da27f0174c63ccbf890",
+        "packages/net/src/wire-codec.ts": "e6ca4a450576a3c16468b7121a7b96062fa5bd711f5ea38f674e3beb75af2ee3",
+        "packages/net/src/private/projection-codecs.ts": "e13c3034841289cf90aed5a2bce969b3e2cdde9c6b2c553e9987e7f49efeb7c8",
+        "packages/net/src/private/saved-windows.ts": "9f635b5c670bfbdb08e06eb7fcdbcaa0669ba961f490460cbf3b36e12f335c2d",
+        "packages/net/src/private/owner-inputs.ts": "46766fbd3d1a7bf076baeafe40b2803e125702d7ae8497a27fd42642f938fbcf",
+        "packages/net/src/private/canonical.ts": "3e20bb7095a1528485d0ad3c90176c254fa0c7de8ff4bd4d7ce81e64e499502a",
+        "packages/net/src/private/admission.ts": "69a8193342f77cca242023688e083ea2d17e9a15fe9065a222d90ae8ca8a0929",
+        "packages/net/src/private/staging-bounds.ts": "68bd5182d4231677e06707b29e31d871a6eecaf66b60933297124b5b9bbe96e5",
+        "packages/net/src/private/lane-staging.ts": "25ac016c0fca7fbbd475e8350e97432159a268aaaa21ceee8d53741473234a21",
+        "packages/net/src/private/tray-group.ts": "c9b4adb06adfaefd14d4df6078d69c26216c150933ffc32713eb61d5ee555792",
+        "packages/net/src/private/projection-groups.ts": "31db0580fe51d6778a6244a2a362b2d1fde43df563ca1f31d949b0387cfc6654",
+        "packages/net/src/private/read-lanes.ts": "f1b74ee73e21a25439552c42852293b528d2b5ef0a3bc6ac4d79c0b3f436dced",
+        "packages/net/src/private/batch-assembly.ts": "da70899d35b58762f83453382de3b7a33321dfba3ae5ff34e2ffa4e411acbdb0",
+        "packages/net/src/private/navigation-owner.ts": "9dc0a4c61f428c647f24fcb712d5d42d2694ed1e4969f6f2b187f91009789b8b",
+        "packages/net/src/private/command-intents.ts": "2a0849f527760ca30dca4cbf13cbbf0089e67363ee7b482bd86b9acc37925d5e",
+        "packages/net/src/private/media-demand-owner.ts": "25723a2a2a4431226a8889d94e50a13383cf3d9acc8406a4fb2e3e3c608f1a90",
+        "packages/net/src/private/usage-demand-owner.ts": "468d42a956e965c6372b5934da30c455ab8e76e7f34a97fd3a516f220caf1e45",
+        "packages/net/src/private/scheduled-work-authority.ts": "5e00f53a33c1393582075d19825e1dfdc5589f592b1b1d7338f14983ec3c22a9",
+        "packages/net/src/private/phone-owner.ts": "8678c163bf313c3c0cf4b3e329b33c3c20c80640f67e484885297fff3e4932dd"
+      }
+    },
+    {
+      "name": "phone-shadow",
+      "entry": "packages/net/src/phone-inputs.ts",
+      "rawBytes": 27388,
+      "gzipBytes": 5872,
+      "rawLimit": 32768,
+      "gzipLimit": 8192,
+      "sources": {
+        "packages/net/src/generated-phone-input-shapes.ts": "12dff83ef1c1b5851cc455dd871bf779c9a8093d88e5aa60c65fd42f929e5e61",
+        "packages/net/src/wire-codec.ts": "e6ca4a450576a3c16468b7121a7b96062fa5bd711f5ea38f674e3beb75af2ee3",
+        "packages/net/src/phone-inputs.ts": "ad64d6cafe773fccb46df2c6dc174a278ea5a676bcd49696f055af19076bf396"
+      }
+    }
+  ]
+}

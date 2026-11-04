@@ -82,7 +82,7 @@ This inventory covers every current `apps/server/src/**/*.test.ts` file after th
 | `mcp-registry.test.ts` | McpRegistryClient | retained |
 | `media-object-routes.test.ts` | media object routes | retained |
 | `message-mentions.test.ts` | typedMentionHandles; isChannelMentionToken; hasChannelMention | retained |
-| `migration-retry.test.ts` | retryOnDeadlock; retryMigrationStep | retained |
+| `migration-steps.test.ts` | one-attempt runMigrationStep; lock diagnostics | retained |
 | `migrations/corner-names.test.ts` | hyphenates spaced corner names once, with deterministic suffixes per Room | retained |
 | `model-catalog-notice.test.ts` | postAgentModelCatalog: automatic fallback notice | retained |
 | `monolith-auth.test.ts` | mounted monolith auth | retained |

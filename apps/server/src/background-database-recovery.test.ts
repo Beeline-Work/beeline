@@ -15,9 +15,9 @@ function fixture() {
   });
   const connect = vi.fn().mockResolvedValue(client);
   const pool = { connect, on: vi.fn(), end: vi.fn() } as unknown as Pool;
-  const database = new PostgresDatabase('', 1, { pool, pause: async () => {} });
+  const database = new PostgresDatabase('', 1, { pool });
   const failCheckout = () => {
-    for (let i = 0; i < 4; i++) connect.mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'));
+    connect.mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'));
   };
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -25,7 +25,7 @@ function fixture() {
   return { database, client, failCheckout, runner: new BackgroundJobRunner() };
 }
 
-it('R-SENTRY-CONNECT: defers one failed operator checkout and recovers on the next leader loop', async () => {
+it('R-SENTRY-CONNECT: defers one failed operator checkout and recovers on the next admitted delivery', async () => {
   const { database, client, failCheckout, runner } = fixture();
   const run = () => runner.run('operator-system-dms', () => flushOperatorSystemDms(database));
   failCheckout();

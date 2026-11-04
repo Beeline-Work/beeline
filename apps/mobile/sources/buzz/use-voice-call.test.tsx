@@ -294,7 +294,7 @@ it('obtains a fresh authorized token after terminal RTC loss without ending the 
       call: voice.call, url: 'ws://proof', token: 'renewed-token', agents: [],
     })));
     await act(async () => fixture.room.emit('left'));
-    expect(fixture.room.connect).toHaveBeenLastCalledWith('ws://proof', 'renewed-token');
+    expect(fixture.room.connect).toHaveBeenLastCalledWith('ws://proof', 'renewed-token', { maxRetries: 0 });
     const [pinSignal] = fixture.room.localParticipant.publishData.mock.calls.at(-1)!;
     expect(JSON.parse(new TextDecoder().decode(pinSignal))).toEqual({type:'unpin'});
     expect(voice.call?.id).toBe(fixture.callId);
@@ -358,7 +358,7 @@ it('call-feedback-1: follows the mic when a stale speaker signal outlives bridge
   } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
 });
 
-it.each(['Network request failed', 'fetch failed'] as const)('retries join transport failure: %s', async message => {
+it.each(['Network request failed', 'fetch failed'] as const)('returns join transport failure until another explicit action: %s', async message => {
   vi.useFakeTimers();
   fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
     remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
@@ -369,11 +369,15 @@ it.each(['Network request failed', 'fetch failed'] as const)('retries join trans
   function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
   await act(async () => { renderer = create(<Probe />); });
   try {
-    let joining!: Promise<void>;
-    await act(async () => { joining = voice.join(); });
-    expect(voice.error).toBeNull();
-    expect(voice.connecting).toBe(true);
-    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); await joining; });
+    fixture.fetch.mockClear();
+    await act(async () => voice.join());
+    expect(voice.error).not.toBeNull();
+    expect(voice.connecting).toBe(false);
+    expect(fixture.fetch).toHaveBeenCalledOnce();
+    await act(async () => vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000));
+    expect(fixture.fetch).toHaveBeenCalledOnce();
+    await act(async () => voice.join());
+    expect(fixture.fetch).toHaveBeenCalledTimes(2);
     expect(voice.call?.id).toBe(fixture.callId);
     expect(voice.error).toBeNull();
   } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
@@ -545,4 +549,26 @@ it('Reproduction R3: join unpinned, pin, move, unpin, and ignore remote routing 
     const signals = publishData.mock.calls.map(args => JSON.parse(new TextDecoder().decode((args as unknown[])[0] as Uint8Array)));
     expect(signals).toEqual([{type:'target',agentId:'ruby',tap:true}, {type:'target',agentId:'sol',tap:true}, {type:'unpin'}]);
   } finally { await act(async () => renderer.unmount()); }
+});
+
+
+it('does not renew call replacement admission after a brief RTC recovery', async () => {
+  vi.useFakeTimers(); fixture.fetch.mockClear();
+  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  const joins = () => fixture.fetch.mock.calls.filter(([url]) => String(url).endsWith('/join')).length;
+  try {
+    await act(async () => voice.join());
+    await act(async () => fixture.room.emit('left'));
+    expect(joins()).toBe(2);
+    expect(fixture.room.connect).toHaveBeenCalledTimes(2);
+    await act(async () => { fixture.room.emit('left'); fixture.room.emit('left'); });
+    expect(voice.call).toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000));
+    expect(joins()).toBe(2);
+    expect(fixture.room.connect).toHaveBeenCalledTimes(2);
+  } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
 });

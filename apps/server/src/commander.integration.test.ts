@@ -2071,7 +2071,7 @@ it('Reproduction SELF-2: own brief revision and background shell completion can 
 
 it.each([
   ['recover', '40P01', 1, 2],
-  ['exhaust', '40P01', 10, 3],
+  ['exhaust', '40P01', 10, 1],
   ['other error', '23505', 1, 1],
   ['authority revoked', '40P01', 1, 1],
   ['revision changed', '40P01', 1, 2],
@@ -2115,7 +2115,12 @@ it.each([
   const watched = new DaemonService(wrapped, hub);
   const input = { ...authority(order), cornerId: opened.cornerId, expectedRevision: 1,
     brief: { spec: 'Build the clarified widget', change: 'Clarify scope' } };
+  await expect(watched.execute('reviseCornerBrief', input, RUBY)).rejects.toBe(failure);
+  expect(attempts).toBe(1);
+  expect(events).toHaveLength(0);
+  if (scenario !== 'revision changed') expect(await snapshot()).toEqual(before);
   if (scenario === 'recover') {
+    // Only a separate explicit action may acquire fresh authority and try again.
     expect((await watched.execute('reviseCornerBrief', input, RUBY)).revision).toBe(2);
     const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, RUBY);
     expect(restored.brief?.spec).toBe(input.brief.spec);
@@ -2123,14 +2128,11 @@ it.each([
     expect(after.briefs).toHaveLength(2);
     expect(after.journal.length).toBeGreaterThan(before.journal.length);
     expect(after.notes.length).toBe(before.notes.length + 1);
-    const pending = after.commands.filter(row => row.state === 'pending' && row.room_id === opened.cornerId);
-    expect(pending).toHaveLength(1);
-  } else {
+    expect(after.commands.filter(row => row.state === 'pending' && row.room_id === opened.cornerId)).toHaveLength(1);
+  } else if (scenario === 'authority revoked' || scenario === 'revision changed') {
     await expect(watched.execute('reviseCornerBrief', input, RUBY)).rejects.toThrow(
-      scenario === 'authority revoked' ? /access|member|authority/i :
-      scenario === 'revision changed' ? /revision changed/ : failure.message);
+      scenario === 'authority revoked' ? /access|member|authority/i : /revision changed/);
     expect(events).toHaveLength(0);
-    if (scenario !== 'revision changed') expect(await snapshot()).toEqual(before);
   }
   expect(attempts).toBe(expectedAttempts);
 });

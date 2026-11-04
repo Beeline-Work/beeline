@@ -19,7 +19,7 @@ vi.mock('react-native', async () => {
   };
 });
 
-import { ServiceMark, serviceFaviconUrl } from './ServiceMark';
+import { ServiceMark } from './ServiceMark';
 import { AppMark } from './AppMark';
 
 const originalConsoleError = console.error;
@@ -53,33 +53,18 @@ describe('ServiceMark', () => {
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
   });
 
-  it('fetches Google favicon service at the server-derived domain through the shared app tile', () => {
+  it('uses the existing local website glyph without a fallback network request', () => {
     const renderer = render(<ServiceMark company="resend" domain="resend.com" testID="mark" />);
-    const image = renderer.root.findByType('Image');
-    expect(image.props.source).toEqual({ uri: serviceFaviconUrl('resend.com') });
-    expect(image.props.source.uri).toBe(
-      'https://www.google.com/s2/favicons?domain=resend.com&sz=64',
-    );
-    expect(renderer.root.findAllByType('Text')).toHaveLength(0);
-  });
-
-  it('uses a website glyph after a domain icon fails', () => {
-    const renderer = render(<ServiceMark company="sentry" domain="sentry.io" testID="mark" />);
-    act(() => {
-      renderer.root.findByType('Image').props.onError();
-    });
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
-    expect(renderer.root.findAllByType('Text')).toHaveLength(0);
     expect(renderer.root.findAllByType('Svg')).toHaveLength(1);
   });
+
 });
 
 describe('AppMark', () => {
-  it('falls back from a failed provider logo to the app favicon', () => {
+  it('falls back from a failed provider logo to the existing local glyph', () => {
     const renderer = render(<AppMark name="Example App" domain="example.com" logo="https://cdn.composio.dev/example.png" size={34} />);
     expect(renderer.root.findByType('Image').props.source).toEqual({ uri: 'https://cdn.composio.dev/example.png' });
-    act(() => renderer.root.findByType('Image').props.onError());
-    expect(renderer.root.findByType('Image').props.source).toEqual({ uri: serviceFaviconUrl('example.com') });
     act(() => renderer.root.findByType('Image').props.onError());
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
     expect(renderer.root.findAllByType('Text')).toHaveLength(0);

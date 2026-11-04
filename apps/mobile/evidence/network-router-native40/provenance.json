@@ -1,0 +1,80 @@
+{
+  "nativeApkSha256": "00eb69f56cce366a72e6b2631a473626e60050a69f12e7e2f5e2f35f927644be",
+  "historicalNativeSource": "62a2695724540f2a300bb2f06fd9994fd72ab713",
+  "nativeBinaryKind": "historical-source locally built APK; not exact Play-distributed binary",
+  "runtimeVersion": "40",
+  "repositoryHeadAtExport": "dc3ad2c32289166f6c6755b834d8e21d3fb9d9c8",
+  "sourceFiles": {
+    "apps/mobile/sources/buzz/artifact.ts": {
+      "gitBlob": "3465f9ecafb25b08a32d3a7a1c192a40f588b5e7",
+      "sha256": "ab2ae21d09bc56b6511dfb6b45ecc6c84379d68a4d765591a5b82ce6638cf777"
+    },
+    "apps/mobile/sources/buzz/artifact-pdf.ts": {
+      "gitBlob": "66e6596bb9924e40f163e11ece31486a5cfa2370",
+      "sha256": "0a7c8f5c1a674e782f6455e57864ecba83ee27cc58386476fcc10bf9ca39e600"
+    },
+    "apps/mobile/sources/components/buzz/artifact-webview.ts": {
+      "gitBlob": "2fc55177c0cb451f8b878afed53a295533b938ad",
+      "sha256": "1761636f5c17fe82b8a59fb46f49e40d0d64e74f655f016adbf4a1756b57fe76"
+    },
+    "apps/mobile/sources/buzz/artifact-byte-store.ts": {
+      "gitBlob": "5f0bbb221c830fc40b1d17e43b6b56fb04f23165",
+      "sha256": "3fde9e34bc76fd0a879e7e224724d492718dd36f2f99985c583375d99744e46f"
+    },
+    "apps/mobile/sources/buzz/immutable-byte-cache.ts": {
+      "gitBlob": "071cd7c06d8c7dbb3b038405f9b6f9038341b023",
+      "sha256": "1f9ac20b3450ccc46a521947ae2b3711faf88ebab7612b591a93d6c9cd406450"
+    },
+    "apps/mobile/sources/buzz/byte-base64.ts": {
+      "gitBlob": "ac78259a3e2e9ce628bdbf310cef2562e1496868",
+      "sha256": "756dee8aadb6fc06d01be3706e2330ee24cc550f5c32e92291177b647b5444b1"
+    },
+    "apps/mobile/sources/components/buzz/ComputerSession.tsx": {
+      "gitBlob": "80e29f3715b1f2e9c0b4b50fad9d13b388e27fa8",
+      "sha256": "ef97eafacead179a576b33d705c686e9be4ec036fa6cc4fdc23fcae888552ed3"
+    },
+    "apps/mobile/sources/buzz/warm-computer-session.ts": {
+      "gitBlob": "80c0082633cf8097990586a742ea172e56b441e2",
+      "sha256": "4e33174834f2d257f062b25c2bb21c94a8f656dcc516930883c9779923a36fd7"
+    },
+    "apps/mobile/sources/buzz/artifact-viewport.ts": {
+      "gitBlob": "30438fcff786065c65e89e9abefa6b81392a0c52",
+      "sha256": "d33fd0186e50a61acbafdeeab4539f539410dee445daa33e20e81f3c79e46604"
+    }
+  },
+  "candidateBundleSha256": "79eaa4638783da037c23b000a75203840d138e1406b990eea2a1dbd78518102a",
+  "fixtureUpdateId": "5eeda9a4-b37e-4dfb-8db4-cf5f18d95f37",
+  "nativeApkRepacked": false,
+  "accountCreated": false,
+  "otaDeliveryProven": false,
+  "nativeVersionCode": "27",
+  "nativeVersionName": "0.2.22",
+  "systemImage": "Android35 google_apis x86_64 rev9",
+  "webViewProvider": "com.google.android.webview124.0.6367.219",
+  "emulatorCores": 2,
+  "emulatorMemoryMiB": 2048,
+  "graphics": "swiftshader_indirect",
+  "containmentCommit": "93e34e6dc",
+  "indexGuardCommit": "dc3ad2c32",
+  "finalUpdateSuccessfulLaunches": 2,
+  "finalUpdateFailedLaunches": 0,
+  "phaseBundles": {
+    "sandboxAndControl": {
+      "sha256": "aeecc1d44900925b6275ea1d37f7c46b7fcec0af86507103828034f91cbbb7c6",
+      "stamp": "network-ops-native40-878cfa8a",
+      "stampIsExactCandidateCommit": false,
+      "usedProductionFiles": [
+        "artifact.ts",
+        "artifact-pdf.ts",
+        "artifact-webview.ts"
+      ]
+    },
+    "pdfCacheAndInitialDisk": {
+      "sha256": "7303c1a4d9366e67ab6c9a5259a88aa13fab6bbe0ad24879e2fac7580e667304"
+    },
+    "computerAndFramePacing": {
+      "sha256": "79eaa4638783da037c23b000a75203840d138e1406b990eea2a1dbd78518102a",
+      "fixtureUpdateId": "5eeda9a4-b37e-4dfb-8db4-cf5f18d95f37"
+    }
+  }
+}

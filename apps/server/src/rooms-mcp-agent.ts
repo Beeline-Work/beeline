@@ -1,3 +1,4 @@
+import { commandOwnerExpiredSql } from './turn-ownership.js';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { clearOwedMention } from './owed-mentions.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -303,13 +304,14 @@ export class RoomsMcpAgentTools {
         if (!waiting.some(item => item.room_id === target) && waiting.length > 1)
           throw new McpToolError(`ambiguous report; pass commandId from the order: ${waiting.map(item => `${item.id} at ${item.room_id}`).join(', ')}`);
         const bound = (await tx.query<{ id: string; turn_request_id: string; room_id: string }>(
-          `UPDATE agent_commands SET state='claimed',generation_id=$3,lease_expires_at=now()+interval '90 seconds',claimed_at=now()
+          `UPDATE agent_commands SET state='claimed',generation_id=$3,lease_expires_at=now()+interval '90 seconds',claimed_at=now(),
+             turn_owner_connection_id=NULL,turn_owner_epoch=NULL
            WHERE id=(SELECT ordered.id FROM agent_commands ordered
              JOIN rooms room ON room.id=ordered.room_id AND room.archived_at IS NULL
              JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$2 AND member.removed_at IS NULL
              WHERE ordered.agent_id=$2 AND ordered.action IN ('input','resume')
                AND ordered.private_payload->>'kind'='order'
-               AND (ordered.state='pending' OR (ordered.state='claimed' AND ordered.lease_expires_at<=now()))
+               AND (ordered.state='pending' OR (ordered.state='claimed' AND ${commandOwnerExpiredSql('ordered')}))
              ORDER BY (ordered.room_id=$1) DESC,ordered.created_at,ordered.id LIMIT 1 FOR UPDATE OF ordered SKIP LOCKED)
            RETURNING id,turn_request_id,room_id`, [target, member, generationId])).rows[0];
         if (bound) {
@@ -739,15 +741,16 @@ function briefDraft(value: unknown): Args | undefined {
  * scheduled wakes addressed to this member that it has not handled yet.
  */
 export async function pendingMcpWakes(db: SqlDatabase, member: string) {
-  return (await db.query<{ id: string; room_id: string; reason: string; kind: string | null; text: string | null; created_at: Date }>(
+  return (await db.query<{ id: string; room_id: string; reason: string; kind: string | null; text: string | null; created_at: Date; hiccup_attempts: number }>(
     `SELECT command.id,command.room_id,command.reason,command.private_payload->>'kind' kind,
-       left(COALESCE(command.private_payload->>'text',source.text),16000) text,command.created_at
+       left(COALESCE(command.private_payload->>'text',source.text),16000) text,command.created_at,command.hiccup_attempts
      FROM agent_commands command LEFT JOIN messages source ON source.id=command.source_message_id
      WHERE command.agent_id=$1 AND command.action IN ('input','resume') AND command.reason<>'mcp_call'
-       AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
+       AND EXISTS(SELECT 1 FROM rooms active WHERE active.id=command.room_id AND active.archived_at IS NULL)
+       AND (command.state='pending' OR (command.state='claimed' AND ${commandOwnerExpiredSql('command')}))
        AND EXISTS(SELECT 1 FROM room_access member WHERE member.room_id=command.room_id
          AND member.identity_id=$1 AND member.removed_at IS NULL)
      ORDER BY command.created_at,command.id LIMIT 30`, [member])).rows
-    .map(row => ({ id: row.id, address: row.room_id, reason: row.reason, ...(row.kind ? { kind: row.kind } : {}),
+    .map(row => ({ id: row.id, deliveryVersion: row.hiccup_attempts, address: row.room_id, reason: row.reason, ...(row.kind ? { kind: row.kind } : {}),
       ...(row.text ? { text: row.text } : {}), createdAt: row.created_at, next: mcpWakeNext(row.kind, row.reason) }));
 }

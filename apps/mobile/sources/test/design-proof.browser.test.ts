@@ -59,7 +59,7 @@ function shims(mobile: string, theme: 'obsidian' | 'bone'): Record<string, strin
     export const useRouter = () => ({ push() {}, back() {}, replace() {} });
     export const router = { push() {}, back() {}, replace() {} };
     export const usePathname = () => '/';`,
-    '@/hooks/useUpdates': `export const useUpdates = () => ({ promptVisible: true, reloadApp: async () => {}, dismissPrompt: () => {} });`,
+    '@/hooks/update-provider': `export const useUpdates = () => ({ promptVisible: true, reloadApp: async () => {}, dismissPrompt: () => {} });`,
     '@/sync/persistence': `export const loadLocalSettings = () => ({}); export const saveLocalSettings = () => {};
     export const loadSettings = () => ({ settings: {}, version: null });
     export const retrieveTempText = () => 'Select any part of this message to copy it.\\n\\nThe page header is the shared PageHeader.';`,

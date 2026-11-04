@@ -1,5 +1,6 @@
+import { commandOwnerExpiredSql, commandOwnerLiveSql } from './turn-ownership.js';
+import { ServerLeaseDeadlines } from './server-lease-deadlines.js';
 import { startConnectionWork } from './background-work.js';
-import { notifyAgentConnection } from './postgres-live.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { recoverAdapterReviewsOnHelperChange } from './helper-review-recovery.js';
 import { CommanderWakeDeadlines } from './commander-wakes.js';
@@ -8,12 +9,14 @@ import { isServerEventKind } from '@beeline/api-contract/phone';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
-import type { CommittedTurnLiveRow, LiveHub } from './live.js';
+import { LiveHub, type CommittedTurnLiveRow, type LiveEvent } from './live.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
-import { noteFirstSilence } from './turn-silence-notice.js';
+import { noteFirstSilence, turnSilenceLockKey } from './turn-silence-notice.js';
+import { lockCornerLifecycle } from './corner-lifecycle.js';
 import { lockAgentMachine } from './machine-offline.js';
 import { freeAgentReachableSql } from './free-agents.js';
 import { systemLine } from './system-line.js';
+import { notifyAgentConnection } from './postgres-live.js';
 import { renudgeStrandedPendingCommands } from './agent-command.js';
 
 export const DELIVERY_PICKUP_WINDOW_MS = 90_000;
@@ -58,6 +61,15 @@ interface EvidenceRefresh {
   timer?: ReturnType<typeof setTimeout>;
   resume?: () => void;
 }
+type OwnedTurn = CommittedTurnLiveRow & { turn_owner_connection_id?: string | null; owner_active?: boolean | null };
+const turnOwnershipRead = `SELECT turn.room_id,turn.request_id,turn.agent_id,turn.status,turn.started_at,
+  turn.created_at,turn.generation_id,NULL::text requested_by,ownership.turn_owner_connection_id,ownership.owner_active
+  FROM agent_turns turn LEFT JOIN LATERAL (
+    SELECT command.turn_owner_connection_id,${commandOwnerLiveSql('command')} owner_active
+    FROM agent_commands command WHERE command.room_id=turn.room_id AND command.agent_id=turn.agent_id
+      AND command.turn_request_id=turn.request_id AND command.generation_id IS NOT DISTINCT FROM turn.generation_id
+      AND command.state='claimed' ORDER BY command.created_at DESC,command.id DESC LIMIT 1
+  ) ownership ON true`;
 
 /** Retain only evidence that can still affect a delivery deadline. */
 export class RecentIdentityTimes {
@@ -95,6 +107,14 @@ export class ConnectionPresence {
   readonly #release: () => void;
   readonly #releaseResync: () => void;
   #leaseTimer: (() => void) | undefined;
+  readonly #ownedConnections = new Map<string,string>();
+  readonly #turnReads = new Map<string, symbol>();
+  readonly #ownerChecks = new Map<string, Promise<void>>();
+  readonly #ownerDirty = new Set<string>();
+  #phoneConnections=0;
+  #leaseWrite?:Promise<void>;
+  #lastLeaseAt=Number.NEGATIVE_INFINITY;
+  readonly #serverLeaseDeadlines: ServerLeaseDeadlines;
   #attention: CornerAttentionDeadlines;
   #commanderWakes: CommanderWakeDeadlines;
   #stopped = false;
@@ -111,7 +131,8 @@ export class ConnectionPresence {
       PRESENCE_EVIDENCE_MIN_INTERVAL_MS,
       Math.floor(pickupWindowMs / 3),
     ),
-    lease: { instanceId?: string; renewMs?: number; expiryMs?: number } = {},
+    private readonly lease: { instanceId?: string; renewMs?: number; expiryMs?: number;
+      connectionWork?: typeof startConnectionWork } = {},
   ) {
     this.#attention = new CornerAttentionDeadlines(database,live,this.report);
     this.#commanderWakes = new CommanderWakeDeadlines(database,live,this.report);
@@ -120,11 +141,20 @@ export class ConnectionPresence {
     this.instanceId = lease.instanceId ?? randomUUID();
     this.#leaseRenewMs = lease.renewMs ?? SERVER_LEASE_RENEW_MS;
     this.#leaseExpiryMs = lease.expiryMs ?? SERVER_LEASE_EXPIRY_MS;
+    this.#serverLeaseDeadlines = new ServerLeaseDeadlines(database,this.#leaseExpiryMs,async()=>{
+      const released=await releaseStaleServerConnections(this.database,this.#leaseExpiryMs);
+      for(const agentId of released){
+        await broadcastAgentPresence(this.database,this.live,agentId);
+        this.checkOwnedAgent(agentId);
+      }
+    },this.report);
     this.#releaseResync = live.subscribeResync(() => {
+      void this.recoverServerLeases().catch(this.report);
       void this.recoverWorkingStalls().catch(this.report);
       this.scheduleObserve();
     });
     this.#release = live.subscribeAll((event) => {
+      if (event.type === 'agent-connection') this.checkOwnedAgent(event.agentId);
       if (
         event.type === 'invalidate' &&
         ['phone-write', 'message', 'postgres:messages'].includes(event.reason)
@@ -154,6 +184,7 @@ export class ConnectionPresence {
    * not a poll or a separately written delivery ledger. */
   async start(): Promise<void> {
     this.startLease();
+    await this.recoverServerLeases();
     await this.#commanderWakes.start();
     await this.#attention.start();
     await this.recoverWorkingStalls();
@@ -161,30 +192,51 @@ export class ConnectionPresence {
   }
 
   /**
-   * Renew this instance's lease and release connections whose server stopped
-   * renewing (crashed or scaled away). One statement pair per server instance
-   * per interval, whatever the number of agents; heartbeat pings never touch
-   * the database.
+   * Renew one aggregate owner row while this instance holds connections.
+   * Expired owners transition through their known one-shot deadlines; a
+   * renewal never discovers other connections or publishes phone state.
    */
   startLease(): void {
-    if (this.#leaseTimer || this.#stopped) return;
+    if (this.#leaseTimer || this.#stopped || (!this.#ownedConnections.size && !this.#phoneConnections)) return;
     const tick = () => void this.renewLease().catch(this.report);
-    tick();
-    this.#leaseTimer = startConnectionWork(tick, this.#leaseRenewMs);
+    this.#leaseTimer = (this.lease.connectionWork ?? startConnectionWork)(tick, this.#leaseRenewMs);
+  }
+
+  /** A healthy authenticated phone also owns viewing/push suppression rows.
+   * Share the same aggregate lease with helpers, with an idempotent release. */
+  holdServerConnection():()=>void {
+    if(this.#stopped)return ()=>{};
+    this.#phoneConnections++;
+    void this.renewLease().catch(this.report);
+    this.startLease();
+    let released=false;
+    return ()=>{
+      if(released)return;released=true;
+      this.#phoneConnections=Math.max(0,this.#phoneConnections-1);
+      if(!this.#ownedConnections.size && !this.#phoneConnections){this.#leaseTimer?.();this.#leaseTimer=undefined;}
+    };
   }
 
   async renewLease(): Promise<void> {
     if (this.#stopped) return;
-    await this.database.query(
-      `INSERT INTO live_server_instances(instance_id,renewed_at) VALUES($1,clock_timestamp())
-       ON CONFLICT(instance_id) DO UPDATE SET renewed_at=EXCLUDED.renewed_at`,
-      [this.instanceId],
-    );
-    const released = await releaseStaleServerConnections(
-      this.database,
-      this.#leaseExpiryMs,
-    );
-    for (const agentId of released) await broadcastAgentPresence(this.database, this.live, agentId);
+    if(this.#leaseWrite)return this.#leaseWrite;
+    if(Date.now()-this.#lastLeaseAt<this.#leaseRenewMs)return;
+    const pending=(async()=>{
+      await this.database.query(
+        `INSERT INTO live_server_instances(instance_id,renewed_at) VALUES($1,clock_timestamp())
+         ON CONFLICT(instance_id) DO UPDATE SET renewed_at=EXCLUDED.renewed_at`,
+        [this.instanceId],
+      );
+      this.#lastLeaseAt=Date.now();
+      this.#serverLeaseDeadlines.observe(this.instanceId,this.#lastLeaseAt);
+    })();
+    this.#leaseWrite=pending;
+    try{await pending;}finally{if(this.#leaseWrite===pending)this.#leaseWrite=undefined;}
+  }
+
+  recoverServerLeases(): Promise<void> { return this.#serverLeaseDeadlines.recover(); }
+  observeServerLease(instanceId:string,renewedAt:number,removed=false):void {
+    this.#serverLeaseDeadlines.observe(instanceId,renewedAt,removed);
   }
 
   /**
@@ -198,16 +250,24 @@ export class ConnectionPresence {
     if (this.#stopped) throw new Error('connection presence stopped');
     this.#authenticatedAt.set(agentId, Date.now());
     const { connectionId, ...presence } = metadata;
-    return claimAgentConnection(this.database, this.live, agentId, presence, {
+    // A real reconnect can prove recovery after a failed renewal. The local
+    // minimum interval coalesces concurrent registrations into one write.
+    await this.renewLease();
+    const epoch=await claimAgentConnection(this.database, this.live, agentId, presence, {
       connectionId,
       instanceId: this.instanceId,
     });
+    if(!this.#stopped){this.#ownedConnections.set(agentId,connectionId);this.startLease();}
+    return epoch;
   }
 
   /** The connection ended. Only the agent's current connection goes offline. */
   async releaseConnection(agentId: string, connectionId: string, forUpdate = false): Promise<void> {
     if (this.#stopped) return;
-    await releaseAgentConnection(this.database, this.live, agentId, connectionId, forUpdate);
+    if(this.#ownedConnections.get(agentId)===connectionId)this.#ownedConnections.delete(agentId);
+    if(!this.#ownedConnections.size && !this.#phoneConnections){this.#leaseTimer?.();this.#leaseTimer=undefined;}
+    if (await releaseAgentConnection(this.database, this.live, agentId, connectionId, forUpdate))
+      this.checkOwnedAgent(agentId);
   }
 
   async announce(roomId: string, agentId: string, metadata: PresenceMetadata = {}): Promise<void> {
@@ -285,11 +345,17 @@ export class ConnectionPresence {
     this.#attention.stop();
     this.#commanderWakes.stop();
     this.#leaseTimer = undefined;
+    this.#ownedConnections.clear();
+    this.#phoneConnections=0;
+    await this.#leaseWrite?.catch(this.report);
+    await this.#serverLeaseDeadlines.stop();
+    await Promise.all(this.#ownerChecks.values());
     this.#release();
     this.#releaseResync();
     for (const timer of this.#timers.values()) clearTimeout(timer);
     for (const timer of this.#observeDebounces.values()) clearTimeout(timer);
     this.#timers.clear();
+    this.#turnReads.clear(); this.#ownerDirty.clear();
     this.#observeDebounces.clear();
     this.#observePending.clear();
     this.#authenticatedAt.clear();
@@ -509,9 +575,9 @@ export class ConnectionPresence {
 
   private async recoverWorkingStalls(): Promise<void> {
     if (this.#stopped) return;
-    const turns = await this.database.query<CommittedTurnLiveRow>(
-      `SELECT room_id,request_id,agent_id,status,started_at,created_at,generation_id,NULL::text requested_by
-       FROM agent_turns WHERE status='working' AND created_at>now()-interval '24 hours'`,
+    const turns = await this.database.query<OwnedTurn>(
+      `${turnOwnershipRead} WHERE turn.status='working' AND
+        (turn.created_at>now()-interval '24 hours' OR ownership.turn_owner_connection_id IS NOT NULL)`,
     );
     for (const turn of turns.rows) this.watchTurn(turn);
   }
@@ -522,25 +588,40 @@ export class ConnectionPresence {
     agentId: string,
   ): Promise<void> {
     if (this.#stopped) return;
+    const key = this.turnTimerKey(roomId, requestId, agentId), version = Symbol();
+    this.#turnReads.set(key, version);
     const turn = (
-      await this.database.query<CommittedTurnLiveRow>(
-        `SELECT room_id,request_id,agent_id,status,started_at,created_at,generation_id,NULL::text requested_by
-         FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3`,
+      await this.database.query<OwnedTurn>(
+        `${turnOwnershipRead} WHERE turn.room_id=$1 AND turn.request_id=$2 AND turn.agent_id=$3`,
         [roomId, requestId, agentId],
       )
     ).rows[0];
-    if (turn) this.watchTurn(turn);
+    if (this.#turnReads.get(key) !== version || this.#stopped) return;
+    this.#turnReads.delete(key);
+    if (turn) this.watchTurn({ ...turn, turn_owner_connection_id: turn.turn_owner_connection_id ?? null });
     else this.clearTurnTimer(roomId, requestId, agentId);
   }
 
-  private watchTurn(turn: CommittedTurnLiveRow): void {
+  private watchTurn(turn: OwnedTurn): void {
     const createdAt = new Date(turn.created_at);
     const key = this.turnTimerKey(turn.room_id, turn.request_id, turn.agent_id);
     const previous = this.#timers.get(key);
     if (previous) clearTimeout(previous);
     if (this.#stopped || turn.status !== 'working') {
       this.#timers.delete(key);
+      this.#turnReads.delete(key);
       return;
+    }
+    if (!turn.generation_id?.startsWith('pending:')) {
+      if (!Object.hasOwn(turn, 'turn_owner_connection_id')) {
+        void this.watchTurnFromStore(turn.room_id, turn.request_id, turn.agent_id).catch(this.report);
+        return;
+      }
+      if (turn.turn_owner_connection_id) {
+        this.#timers.delete(key);
+        if (turn.owner_active === false) this.checkOwnedAgent(turn.agent_id);
+        return;
+      }
     }
     const remaining = createdAt.getTime() + this.pickupWindowMs - Date.now();
     const timer = setTimeout(
@@ -560,6 +641,22 @@ export class ConnectionPresence {
     const timer = this.#timers.get(key);
     if (timer) clearTimeout(timer);
     this.#timers.delete(key);
+    this.#turnReads.delete(key);
+  }
+
+  /** Actual registration/release/aggregate expiry is the only wake. A failed
+   * transition parks until a new source or feed recovery, never a retry tick. */
+  private checkOwnedAgent(agentId: string): void {
+    if (this.#stopped) return;
+    this.#ownerDirty.add(agentId);
+    if (this.#ownerChecks.has(agentId)) return;
+    const work = (async () => {
+      while (!this.#stopped && this.#ownerDirty.delete(agentId)) {
+        try { await expireOwnedAgentTurns(this.database, this.live, agentId); }
+        catch (error) { this.report(error); }
+      }
+    })().finally(() => this.#ownerChecks.delete(agentId));
+    this.#ownerChecks.set(agentId, work);
   }
 
   private async failStalledTurn(turn: CommittedTurnLiveRow): Promise<void> {
@@ -606,7 +703,7 @@ export class ConnectionPresence {
             AND active.agent_id=command.agent_id AND active.request_id=command.turn_request_id
             AND active.generation_id=command.generation_id AND active.status='working'
           WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id<>$3
-            AND command.state='claimed' AND command.lease_expires_at>now()
+            AND command.state='claimed' AND ${commandOwnerLiveSql('command')}
             AND command.action IN ('input','resume')
             AND active.generation_id NOT LIKE 'pending:%' LIMIT 1`,
         [turn.room_id, turn.agent_id, turn.request_id]);
@@ -685,7 +782,7 @@ export async function claimAgentConnection(
       );
     return Number(claimed.rows[0]?.epoch ?? 0);
   });
-  await notifyAgentConnection(database, agentId, epoch);
+  await notifyAgentConnection(database,agentId,epoch);
   live.publish({ type: 'agent-connection', roomId: '', agentId, epoch });
   await renudgeStrandedPendingCommands(database,agentId);
   await broadcastAgentPresence(database, live, agentId);
@@ -703,12 +800,12 @@ export async function releaseAgentConnection(
   const released = await database.transaction(async (db) => {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
     await lockAgentMachine(db, agentId);
-    const current = await db.query(
+    const current = await db.query<{ epoch: string | number }>(
       `UPDATE agent_connections SET released_at=clock_timestamp()
-       WHERE agent_id=$1 AND connection_id=$2 AND released_at IS NULL RETURNING 1`,
+       WHERE agent_id=$1 AND connection_id=$2 AND released_at IS NULL RETURNING epoch`,
       [agentId, connectionId],
     );
-    if (!current.rowCount) return false;
+    if (!current.rowCount) return undefined;
     await db.query(
       `UPDATE live_outputs SET body=body || ${releasedPresenceSql('$1')} || jsonb_build_object(
          'observedAt',GREATEST($3::bigint,COALESCE((body->>'observedAt')::bigint,0)+1)),
@@ -716,10 +813,52 @@ export async function releaseAgentConnection(
        WHERE agent_id=$1 AND kind='presence' AND body->>'connectionId'=$2`,
       [agentId, connectionId, Math.floor(Date.now() / 1000)],
     );
-    return true;
+    return Number(current.rows[0]!.epoch);
   });
-  if (released) await broadcastAgentPresence(database, live, agentId);
-  return released;
+  if (released !== undefined) {
+    await notifyAgentConnection(database,agentId,released);
+    live.publish({ type: 'agent-connection', roomId: '', agentId, epoch: released });
+    await broadcastAgentPresence(database, live, agentId);
+  }
+  return released !== undefined;
+}
+
+/** Source-scoped owner loss, using the existing terminal/requeue policy. The
+ * generation and owner predicate are locked before role or turn consequences. */
+export async function expireOwnedAgentTurns(database: SqlDatabase, live: LiveHub, agentId: string): Promise<number> {
+  let after = '', changed = 0;
+  for (;;) {
+    const due = await database.query<{ id: string; room_id: string; turn_request_id: string; generation_id: string }>(
+      `SELECT id,room_id,turn_request_id,generation_id FROM agent_commands
+       WHERE agent_id=$1 AND id>$2 AND state='claimed' AND action IN ('input','resume')
+         AND turn_owner_connection_id IS NOT NULL AND ${commandOwnerExpiredSql()}
+       ORDER BY id LIMIT 100`, [agentId, after]);
+    for (const command of due.rows) {
+      after = command.id;
+      const events: LiveEvent[] = [], buffered = new LiveHub();
+      buffered.publish = event => { events.push(event); };
+      const transitioned = await database.transaction(async db => {
+        const corner = await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL`, [command.room_id]);
+        if (corner.rowCount) await lockCornerLifecycle(db, command.room_id);
+        await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
+          turnSilenceLockKey(command.room_id, command.turn_request_id, agentId),
+        ]);
+        const current = await db.query(`SELECT id FROM agent_commands
+          WHERE id=$1 AND agent_id=$2 AND state='claimed' AND generation_id=$3
+            AND turn_owner_connection_id IS NOT NULL AND ${commandOwnerExpiredSql()}
+          FOR UPDATE`, [command.id, agentId, command.generation_id]);
+        if (!current.rowCount) return false;
+        await noteFirstSilence(db, buffered, {
+          roomId: command.room_id, requestId: command.turn_request_id, agentId,
+          generationId: command.generation_id, reason: 'the execution owner disconnected or its server lease expired',
+          reasonKind: 'offline', stalled: true,
+        });
+        return true;
+      });
+      if (transitioned) { changed += 1; for (const event of events) live.publish(event); }
+    }
+    if (due.rows.length < 100) return changed;
+  }
 }
 
 /**

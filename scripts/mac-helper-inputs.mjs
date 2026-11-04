@@ -15,7 +15,7 @@ export const MAC_HELPER_INPUTS = [
   '.github/workflows/unified-release.yml',
   'apps/body/',
   'packages/nostr/',
-  'packages/api-contract/',
+  'packages/api-contract/', 'packages/net/',
   'packages/buzz-client/',
   'package.json',
   'package-lock.json',

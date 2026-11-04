@@ -1,3 +1,19 @@
+import { ROOM_ROUTER_CTES,ROOM_ROUTER_HEAD_JOIN,roomRouterColumnsSql,roomMessageTagsSql } from './room-router-read.js';
+import { projectRoomToolSummaries,type RoomToolSummaryRow } from './room-tool-projection.js';
+import { buildTrayProjection, readMessageBookmarks } from './tray-projection.js';
+import { readTraySavedWindow } from './tray-saved-window.js';
+import { buildTraySavedFacts, type TraySavedTarget } from './tray-saved-projection.js';
+import { workingTurnFreshSql } from './turn-ownership.js';
+import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
+import { buildRouterSnapshot,RouterProjectionUnavailable,routerAuthority,routerAtomicGroup } from './router-projections.js';
+import { profileDomain } from './router-profile-source.js';
+import {ownerFamily,buildOwnerSnapshot} from './router-owner-projections.js';
+import {readWalletProjection} from './wallet.js';
+import {projectWorkbenchDisplay} from '@beeline/api-contract/workbench';
+import { CommandScopedDatabase } from './command-scoped-database.js';
+import type { TrayDecisionOperation } from './tray-decision-command.js';
+import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
+import type { RouterSnapshotInput, RouterValues, RouterFamily,RouterSnapshot,RouterAuthorityCertificate } from '@beeline/api-contract/router-protocol';
 import { createWorkspace } from './workspace-creation.js';
 import { withdrawMergeApprovalsBy } from './corner-merge-approval.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
@@ -35,6 +51,7 @@ import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
 import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
 import { webhookDetails, webhookToken, requireWebhookAdmin, requireScheduledWorkManager } from './subscription-webhooks.js';
+import {buildRoomSchedulesProjection} from './room-schedules-projection.js';
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
 import {
   beginAgentSignInCards,
@@ -157,7 +174,7 @@ import {
 } from './message-mentions.js';
 import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { clearNeedsYouQuestions, countNeedsYouItems, needsYouItems, markNeedsYouSeen } from './needs-you.js';
+import { clearNeedsYouQuestions, countNeedsYouItems, countNeedsYouProjection, readNeedsYouCountSnapshot, readNeedsYouOrder, needsYouItems, markNeedsYouSeen } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyAgentConfigRoom,
@@ -278,7 +295,7 @@ import {
 } from './wallet.js';
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
-import { closeCornerPullRequestBestEffort, closeCornerState, markOwnedCornersAbandoned } from './corner-close.js';
+import { closeCornerPullRequestBestEffort, closeCornerState, lockCornerArchivalAuthority, markOwnedCornersAbandoned } from './corner-close.js';
 import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -302,7 +319,6 @@ const SLOW_ROOM_READ_MS = 500;
 /** Archived corners come ten at a time, newest closure first. */
 const ARCHIVED_CORNER_PAGE = 10;
 const OPEN_CORNER_PAGE = 30;
-const BOOKMARK_PAGE = 30;
 /** A profile paints a recent ledger window; older entries stay in the store. */
 const PROFILE_GRANT_LIMIT = 100;
 type MemberGrantRow = {
@@ -529,7 +545,19 @@ function deckCornerSummary(roomId: string, deck: DeckCornerFacts): ChatCornerSum
     cornerCount: 0, waitingCornerCount: 0, mineCornerCount: 0, openCorners: [],
   };
 }
+interface RoomReadEnrichment {
+  presence: Array<{ id: string; presence_body: MemberRow['presence_body']; presence_updated_at: Date | null }>;
+  tags: Array<{ id: string; tagged_ids: string[] }>;
+  bookmarks: Array<{ message_id: string }>;
+  reports: Array<{ trigger_message_id: string }>;
+  expired: Array<{ id: string }>;
+  objects: Array<{ id: string; title: string; mime: string; size: string; author: string }>;
+  allow_auto_merge: boolean | null;
+}
 interface RoomReadRow {
+  router_metadata?:{epoch:string|null;sequence:string|null;scopes:RouterAuthorityCertificate['scopes']};
+  router_tools?:RoomToolSummaryRow[];
+  router_enrichment?:RoomReadEnrichment;
   starter_onboarding_pending: boolean;
   room: RoomRow & {
     viewer_push_muted: boolean;
@@ -1049,6 +1077,9 @@ export class PhoneService {
   /** Only with a live hub: the cache is unsound without its message invalidations. */
   private readonly outlineCache?: HistoryOutlineCache;
 
+  private pureProjection = false;
+  private routerRoomRows?:RoomReadRow;
+  private expectedRouterWorkspace?:string;
   private starterOnboarding?: StarterOnboardingService;
   setStarterOnboarding(service: StarterOnboardingService): void { this.starterOnboarding = service; }
 
@@ -1077,7 +1108,7 @@ export class PhoneService {
   ) {
     this.starterOnboarding = new StarterOnboardingService(database);
     this.connectorDiscovery = new ConnectorDiscoveryCache(database, mcpRegistry);
-    this.database = new CornerAccessDatabase(database);
+    this.database = new CommandScopedDatabase(new CornerAccessDatabase(database));
     this.enrichmentDatabase = new CornerAccessDatabase(enrichmentDatabase);
     if (live) this.outlineCache = new HistoryOutlineCache(live);
   }
@@ -1085,6 +1116,7 @@ export class PhoneService {
   private readonly connectorDiscovery: ConnectorDiscoveryCache;
 
   private async optionalEnrichment<T>(name: string, work: Promise<T>): Promise<T | undefined> {
+    if (this.pureProjection) return work;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     try {
       return await Promise.race([
@@ -1113,6 +1145,179 @@ export class PhoneService {
     } finally {
       if (deadline) clearTimeout(deadline);
     }
+  }
+
+  withCommandTransaction<T>(database: SqlDatabase, work: () => Promise<T>): Promise<T> {
+    return (this.database as CommandScopedDatabase).run(new CornerAccessDatabase(database), work);
+  }
+
+  /** Only the closed durable decision adapter installs this transaction and
+   * owns the postcommit notification queue. Legacy callers keep their result
+   * and immediate-after-own-transaction notification behavior. */
+  async applyTrayDecisionCommand(operation: TrayDecisionOperation,
+    input: PhoneOperationMap[TrayDecisionOperation]['input'], viewerId: string,
+    defer: (notification: () => void) => void): Promise<void> {
+    if (!(this.database as CommandScopedDatabase).active) throw new Error('Tray decision requires its durable command transaction');
+    if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(operation)) throw new Error(REVIEW_IDENTITY_MESSAGE);
+    if (operation === 'decideAgentGrant') await this.decideAgentGrant(input as Input<'decideAgentGrant'>, viewerId, defer);
+    else if (operation === 'decideWritePermission') await this.execute(operation, input as Input<'decideWritePermission'>, viewerId);
+    else if (operation === 'skipChoice') await this.execute(operation, input as Input<'skipChoice'>, viewerId);
+    else throw new Error('Unsupported Tray decision command');
+  }
+
+  /** New durable stop intents are idempotent desired state. Legacy operations
+   * keep their exact not-found response. Provider cleanup never holds the DB
+   * connection or authority fence and cannot be automatically replayed. */
+  async stopScheduledWorkCommand(operation:'deleteRoomSchedule'|'deleteRoomSubscription',
+    input:{roomId:string;scheduleId?:string;subscriptionId?:string},viewer:string):Promise<void>{
+    const authorize=async(db:SqlDatabase)=>{
+      await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
+      await requireScheduledWorkManager(db,input.roomId,viewer);
+      if((await db.query(`SELECT 1 FROM memberships member WHERE member.identity_id=$1 AND member.room_id IS NULL
+        AND member.removed_at IS NULL AND member.role='spectator' AND member.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)`,[viewer,input.roomId])).rowCount)
+        throw new Error('spectator access is read-only (access denied)');
+    };
+    if(operation==='deleteRoomSchedule'){
+      if(!(this.database as CommandScopedDatabase).active)throw new Error('Scheduled stop requires its durable command transaction');
+      await authorize(this.database);
+      await this.database.query(`DELETE FROM agent_schedules schedule USING rooms surface WHERE schedule.id=$1
+        AND surface.id=schedule.room_id AND(surface.id=$2 OR surface.parent_id=$2) AND schedule.workflow_run IS NULL`,[input.scheduleId,input.roomId]);
+      return;
+    }
+    const trigger=await this.database.transaction(async db=>{
+      await authorize(db);
+      const row=(await db.query<{trigger_id:string|null}>(`SELECT subscription.trigger_id FROM agent_subscriptions subscription JOIN rooms surface ON surface.id=subscription.room_id
+        WHERE subscription.id::text=$1 AND(surface.id=$2 OR surface.parent_id=$2)`,[input.subscriptionId,input.roomId])).rows[0];
+      try{await deleteRoomSubscription(db,input.roomId,input.subscriptionId!,undefined);}
+      catch(error){if(!(error instanceof Error)||error.message!=='subscription not found')throw error;}
+      if(!row?.trigger_id||/^[0-9a-f-]{36}$/.test(row.trigger_id))return;
+      if((await db.query(`SELECT 1 FROM agent_subscriptions WHERE trigger_id=$1 LIMIT 1`,[row.trigger_id])).rowCount)return;
+      return row.trigger_id;
+    });
+    if(trigger&&this.composio)await this.composio.deleteWebhookTrigger(trigger);
+  }
+
+  readRouterSnapshot(input: RouterSnapshotInput, viewerId: string,options?:{readonly trayClock?:true}) {
+    if(ownerFamily(input.family))return this.database.transaction(async db=>{
+      await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      return buildOwnerSnapshot(db,this,input,viewerId);
+    });
+    if(input.family==='room-head')return this.readRoomRouterSnapshot({...input,family:'room-head'},viewerId);
+    if (input.family === 'needs-you-count') return readNeedsYouCountSnapshot(this.database,input.workspaceId,viewerId,options?.trayClock?'committed':'wall');
+    return buildRouterSnapshot(this.database, input, viewerId, (db, args, viewer) => this.buildRouterValue(db, args, viewer,options),options);
+  }
+
+  /** Pure router builders bind both core and enrichment to the caller's
+   * repeatable-read handle. No providers, live cache, onboarding or seen marks. */
+  async buildRouterValue(database: SqlDatabase, input: RouterSnapshotInput,
+    viewerId: string,options?:{readonly trayClock?:true}): Promise<RouterValues[RouterFamily] | null> {
+    const reader = new PhoneService(database, this.publicOrigin);
+    reader.pureProjection = true;
+    if(input.family==='owner-workbench')return projectWorkbenchDisplay(await reader.readWorkbench({workspaceId:''},viewerId),viewerId);
+    if(input.family==='owner-wallet')return readWalletProjection(database,viewerId);
+    if(input.family==='agent-profile'){
+      const value=await reader.readAgent(input.workspaceId,input.agentId,viewerId);
+      if(!value)return null;
+      const {usage:_usage,configVersion:_version,...stable}=value;
+      const revision=(await database.query<{epoch:string}>('SELECT epoch::text FROM router_authority WHERE scope=$1',
+        [profileDomain(input.workspaceId,input.agentId)])).rows[0]?.epoch;
+      if(!revision)throw new RouterProjectionUnavailable('authority');
+      const metadata=(await database.query<{role:string;chosen_voices:unknown}>(`SELECT member.role,agent.chosen_voices
+        FROM memberships member LEFT JOIN agents agent ON agent.agent_id=$3
+        WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.identity_id=$2 AND member.removed_at IS NULL`,
+        [input.workspaceId,viewerId,input.agentId])).rows[0];
+      const canRemove=value.access?.owner?.id===viewerId||metadata?.role==='owner'||metadata?.role==='admin';
+      const voiceRevision=hash(JSON.stringify({voices:metadata?.chosen_voices??{},soul:value.soul?.instructions??'',
+        name:value.agent.identity.name,handle:value.agent.identity.handle,owner:value.access?.owner?.id,role:metadata?.role}));
+      const result={...stable,configVersion:revision,canRemove,voiceRevision};
+      if(Buffer.byteLength(JSON.stringify(result))>32*1024)throw new RouterProjectionUnavailable('budget');
+      return result;
+    }
+    if (input.family === 'room-workflows') {
+      const value=await reader.listRoomWorkflowRuns(input.roomId, viewerId);
+      if(value.workflows.length>30||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
+      return value;
+    }
+    if (input.family === 'workspace-roster') {
+      const value = await reader.readWorkspace(input.workspaceId, viewerId);
+      if (value && (value.members.length + value.agents.length > 100 ||
+          Buffer.byteLength(JSON.stringify(value)) > 64 * 1024)) throw new RouterProjectionUnavailable('budget');
+      return value;
+    }
+    if (input.family === 'room-list') return reader.readChats(input.workspaceId, viewerId);
+    if (input.family === 'room-head') {
+      if (!input.roomId) throw new Error('roomId is required for room-head');
+      reader.expectedRouterWorkspace=input.workspaceId;
+      return reader.readRoom(input.roomId,viewerId);
+    }
+    if(input.family==='room-scheduled-work')return buildRoomSchedulesProjection(reader.database,input.roomId,viewerId,this.publicOrigin);
+    if(input.family==='needs-you-tray')return buildTrayProjection(reader.database,input.workspaceId,viewerId,row=>identity(row,reader.publicOrigin),options?.trayClock?'committed':'wall');
+    if(input.family==='needs-you-saved-page')return readTraySavedWindow(reader.database,input,viewerId,row=>identity(row,reader.publicOrigin));
+    if(input.family==='needs-you-count')return {count:await countNeedsYouProjection(reader.database,input.workspaceId,viewerId,options?.trayClock?'committed':'wall')};
+    if(input.family!=='needs-you')throw new Error('Unsupported router projection family');
+    await reader.requireWorkspaceMember(input.workspaceId, viewerId);
+    const { items } = await needsYouItems(reader.database, input.workspaceId, viewerId,
+      (row) => identity(row, reader.publicOrigin), false,options?.trayClock?'committed':'wall');
+    return { count: items.length, items };
+  }
+
+  /** Room data, certificate, canonical head and enrichment are one SELECT
+   * after the read-only isolation statement. No authority read is removed:
+   * the existing final READ COMMITTED enqueue fence still runs separately. */
+  private readRoomRouterSnapshot(
+    input: { family: 'room-head'; roomId: string; workspaceId?: string },
+    viewer: string,
+  ): Promise<RouterSnapshot> {
+    return this.database.transaction(async db => {
+      await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const reader = new PhoneService(db, this.publicOrigin);
+      reader.pureProjection = true;
+      reader.expectedRouterWorkspace = input.workspaceId;
+      const value = await reader.readRoom(input.roomId, viewer);
+      const rows = reader.routerRoomRows, meta = rows?.router_metadata;
+      if (!value || !rows || !meta || (input.workspaceId && input.workspaceId !== rows.room.workspace_id))
+        throw new RouterProjectionUnavailable('authority');
+      const domains = [
+        `reader:${viewer}:workspace:${rows.room.workspace_id}`, `room:${input.roomId}`,
+        ...(rows.room.parent_id ? [`room:${rows.room.parent_id}`] : []),
+      ];
+      if (meta.scopes.length !== domains.length || domains.some(domain => !meta.scopes.some(
+        scope => scope.authorityScope === domain && /^[1-9][0-9]*$/.test(scope.epoch ?? ''),
+      )))
+        throw new RouterProjectionUnavailable('authority');
+      const through = Number(meta.sequence);
+      if (!meta.epoch || meta.sequence === null || !Number.isSafeInteger(through) || through < 0)
+        throw new RouterProjectionUnavailable('dependency');
+      const result: RouterSnapshot = {
+        kind: 'snapshot', family: 'room-head', scope: input.roomId, value,
+        cut: { stream: `workspace:${rows.room.workspace_id}`, epoch: meta.epoch, through, protocol: 1 },
+        authority: routerAuthority(meta.scopes.map(scope => ({ authorityScope: scope.authorityScope, epoch: scope.epoch }))),
+        atomicGroup: routerAtomicGroup(input, viewer),
+      };
+      if (Buffer.byteLength(JSON.stringify(result)) > 64 * 1024) throw new RouterProjectionUnavailable('budget');
+      return result;
+    });
+  }
+
+  /** Source-key row facts, never a window/top-N reread or a cache inventory. */
+  buildRouterSavedFacts(database:SqlDatabase,workspaceId:string,viewerId:string,targets:readonly TraySavedTarget[]){
+    return buildTraySavedFacts(database,workspaceId,viewerId,targets,row=>identity(row,this.publicOrigin));
+  }
+
+  async buildRouterNeedsHead(database:SqlDatabase,workspaceId:string,viewerId:string){
+    const value=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,'committed');
+    if(value.items.length>30||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
+    return value;
+  }
+
+  async buildRouterNeedsRooms(database:SqlDatabase,workspaceId:string,viewerId:string,rooms:readonly string[]){
+    if(rooms.length>128)throw new RouterProjectionUnavailable('budget');
+    const order=await readNeedsYouOrder(database,workspaceId,viewerId);
+    const {items}=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,'wall',rooms);
+    const value={kind:'needs-you-rooms-replace' as const,scope:workspaceId,...order,
+      rooms:rooms.map(roomId=>({roomId,items:items.filter(item=>item.roomId===roomId)}))};
+    if(items.length>30||order.order.length>500||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
+    return value;
   }
 
   canReadRoom(roomId: string, identityId: string): Promise<boolean> {
@@ -1468,7 +1673,9 @@ export class PhoneService {
   async liveNeedsYou(roomId: string, viewerId: string): Promise<{
     workspaceId: string; count: number; items: readonly NeedsYouItemView[];
   } | null> {
-    const scope = (await this.database.query<{ workspace_id: string }>(
+    return this.database.transaction(async database=>{
+    await database.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const scope = (await database.query<{ workspace_id: string }>(
       `SELECT room.workspace_id FROM rooms room
        JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -1478,10 +1685,16 @@ export class PhoneService {
        WHERE room.id=$1`, [roomId, viewerId],
     )).rows[0];
     if (!scope) return null;
-    const { items } = await needsYouItems(this.database, scope.workspace_id, viewerId,
-      (row) => identity(row, this.publicOrigin), false);
-    return { workspaceId: scope.workspace_id, count: items.length,
-      items: items.filter((item) => item.roomId === roomId) };
+    const order=await readNeedsYouOrder(database,scope.workspace_id,viewerId,'wall',false);
+    // This snapshot proves there are no cells to project. Legacy replay still
+    // sends the empty delta, without repeating the expensive cell query.
+    if(order.count===0)return {workspaceId:scope.workspace_id,count:0,items:[]};
+    const { items } = await needsYouItems(database, scope.workspace_id, viewerId,
+      (row) => identity(row, this.publicOrigin), false,'wall',[roomId]);
+    const selected=new Map(items.map(item=>[item.messageId,item]));
+    return { workspaceId: scope.workspace_id, count: order.count,
+      items: order.order.flatMap(id=>selected.has(id)?[selected.get(id)!]:[]) };
+    });
   }
 
   /**
@@ -1505,18 +1718,21 @@ export class PhoneService {
     const rows = await this.database.query<{
       agent_id: string;
       turn_id: string;
-      body: { text?: unknown; latestChunk?: unknown } | null;
+      body: { text?: unknown; latestChunk?: unknown; overlayV1?:unknown } | null;
     }>(
       `SELECT o.agent_id, o.turn_id, o.body FROM live_outputs o
        JOIN rooms r ON r.id=o.room_id AND r.parent_id IS NOT NULL
        JOIN agent_turns t ON t.room_id=o.room_id AND t.request_id=o.turn_id AND t.agent_id=o.agent_id
        WHERE o.room_id=$1 AND o.kind='draft'
-         AND t.status='working' AND t.created_at>now()-interval '90 seconds'
+         AND t.status='working' AND ${workingTurnFreshSql('t')}
        ORDER BY o.updated_at`,
       [roomId],
     );
     return rows.rows.flatMap((row) => {
       const text = typeof row.body?.text === 'string' ? row.body.text : '';
+      const overlayV1=readHelperOverlayFrame(row.body?.overlayV1);
+      if(row.body?.overlayV1!==undefined && (!overlayV1 || overlayV1.roomId!==roomId ||
+          overlayV1.agentId!==row.agent_id || overlayV1.turnId!==row.turn_id || overlayV1.kind!=='draft'))return [];
       return text
         ? [
             {
@@ -1525,6 +1741,7 @@ export class PhoneService {
               agentId: row.agent_id,
               turnId: row.turn_id,
               text,
+              ...(overlayV1?{overlayV1}:{}),
               ...(typeof row.body?.latestChunk === 'string'
                 ? { latestChunk: row.body.latestChunk }
                 : {}),
@@ -2160,7 +2377,7 @@ export class PhoneService {
     };
     const rows = await measured('data', this.roomRows(roomId, viewerId));
     if (!rows) return null;
-    if (rows.starter_onboarding_pending) this.starterOnboarding?.open(roomId, viewerId);
+    if (!this.pureProjection && rows.starter_onboarding_pending) this.starterOnboarding?.open(roomId, viewerId);
     const room = rows.room;
     const corner = rows.corner;
     const parent = corner?.parent ?? undefined;
@@ -2186,7 +2403,7 @@ export class PhoneService {
       Boolean(corner),
       viewerId,
     );
-    const enrichment = corner
+    const enrichment = rows.router_enrichment?this.projectRoomEnrichment(rows.router_enrichment):corner
       ? await measured(
           'enrichment',
           this.cornerRoomEnrichment(room, rows, initialMessageResult, viewerId),
@@ -2220,7 +2437,7 @@ export class PhoneService {
           rows.activity,
           corner?.tools ?? [],
           latestAgentTurns,
-          true,
+          Boolean(corner),
           viewerId,
         )
       : initialMessageResult;
@@ -2234,7 +2451,7 @@ export class PhoneService {
       briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
     ));
     const [attachmentFacts, appMessages] = await Promise.all([
-      corner
+      corner||this.pureProjection
         ? Promise.resolve(
             enrichment?.attachmentFacts ?? { expired: new Set<string>(), artifacts: new Map() },
           )
@@ -2354,6 +2571,7 @@ export class PhoneService {
         }),
       );
     }
+    if(this.pureProjection)return {...view,toolRows:undefined,messages:[...view.messages,...projectRoomToolSummaries(rows.router_tools??[],roomId)].sort(messageOrder).slice(-30)};
     return view;
   }
 
@@ -2810,7 +3028,10 @@ export class PhoneService {
     return { view, deck: loaded.deck };
   }
 
+  /** Bound each authorized message window before identity/reaction decoration.
+   * The author foreign key preserves the original inner-join membership. */
   private async roomRows(roomId: string, viewerId: string): Promise<RoomReadRow | undefined> {
+    if(this.pureProjection)this.routerRoomRows=undefined;
     const row = (
       await this.database.query<RoomReadRow>(
         `WITH authorized_room AS (
@@ -2829,14 +3050,14 @@ export class PhoneService {
                WHERE other_room.room_id=COALESCE(room.parent_id,room.id) AND other_room.removed_at IS NULL
                  AND other_room.identity_id<>$2
              )) leave_deletes_room,
-             NULL::jsonb read_cursor
+             ${this.pureProjection?`CASE WHEN room.parent_id IS NULL THEN ${viewerReadCursorSql()} END`:'NULL::jsonb'} read_cursor
            FROM rooms room
            JOIN memberships membership ON membership.room_id=COALESCE(room.parent_id,room.id)
              AND membership.identity_id=$2 AND membership.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
              AND workspace_member.removed_at IS NULL
-           WHERE room.id=$1
+           WHERE room.id=$1 ${this.pureProjection?'AND ($3::uuid IS NULL OR room.workspace_id=$3)':''}
          ), member_rows AS (
            SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,
              COALESCE(roster_workspace.role,roster_member.role) role,NULL::jsonb presence_body,
@@ -2887,11 +3108,13 @@ export class PhoneService {
                WHERE report.source_kind='human' AND report.trigger_message_id=m.id)) feedback_reported,
              '{}'::text[] tagged_ids
            FROM authorized_room room
-           JOIN messages m ON m.room_id=room.id
+           JOIN LATERAL (
+             SELECT m.* FROM messages m WHERE m.room_id=room.id
+               AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
+               AND ${visibleMessageSql('m')}
+             ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
+           ) m ON true
            JOIN identities i ON i.id=m.author_id
-           WHERE (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
-             AND ${visibleMessageSql('m')}
-           ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
          ), activity_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
@@ -2902,36 +3125,43 @@ export class PhoneService {
                WHERE report.source_kind='human' AND report.trigger_message_id=m.id)) feedback_reported,
              '{}'::text[] tagged_ids
            FROM authorized_room room
-           JOIN messages m ON m.room_id=room.id
+           JOIN LATERAL (
+             SELECT m.* FROM messages m JOIN active_turn_rows turn ON turn.agent_id=m.author_id
+               AND m.created_at>=date_trunc('second',turn.created_at)
+             WHERE m.room_id=room.id AND m.presentation='activity' AND m.durable_fact IS NULL
+               ${this.pureProjection ? `AND NOT EXISTS(SELECT 1 FROM jsonb_array_elements(m.activity) item WHERE item->>'kind'='tool')` : ''}
+             ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
+           ) m ON true
            JOIN identities i ON i.id=m.author_id
-           JOIN active_turn_rows turn ON turn.agent_id=m.author_id
-             AND date_trunc('second',m.created_at)>=date_trunc('second',turn.created_at)
-           WHERE m.presentation='activity' AND m.durable_fact IS NULL
-           ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_MESSAGE_LIMIT}
          ), corner_tool_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
              ${reactionIdentitiesSql('m')} reaction_identities,
              false bookmarked,false feedback_reported,'{}'::text[] tagged_ids
            FROM authorized_room room
-           JOIN messages m ON m.room_id=room.id
+           JOIN LATERAL (
+             SELECT m.* FROM messages m WHERE m.room_id=room.id
+               AND room.parent_id IS NOT NULL ${this.pureProjection ? 'AND false' : ''} AND m.presentation='activity'
+               AND m.durable_fact IS NULL AND EXISTS(
+                 SELECT 1 FROM jsonb_array_elements(m.activity) item
+                 WHERE item->>'kind' IN ('tool','output'))
+             ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_TOOL_ROW_LIMIT}
+           ) m ON true
            JOIN identities i ON i.id=m.author_id
-           WHERE room.parent_id IS NOT NULL AND m.presentation='activity'
-             AND m.durable_fact IS NULL AND EXISTS(
-               SELECT 1 FROM jsonb_array_elements(m.activity) item
-               WHERE item->>'kind' IN ('tool','output'))
-           ORDER BY m.created_at DESC,m.id DESC LIMIT ${ROOM_VIEW_TOOL_ROW_LIMIT}
          ), corner_briefing_rows AS (
            SELECT m.*,i.kind author_kind,i.name author_name,i.handle author_handle,
              i.avatar author_avatar,i.face_id author_face,
              ${reactionIdentitiesSql('m')} reaction_identities,
              false bookmarked,false feedback_reported,'{}'::text[] tagged_ids
            FROM authorized_room room
-           JOIN messages m ON m.room_id=room.parent_id
+           JOIN LATERAL (
+             SELECT m.* FROM messages m WHERE m.room_id=room.parent_id
+               AND room.parent_id IS NOT NULL AND m.created_at<=room.created_at
+             ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}
+           ) m ON true
            JOIN identities i ON i.id=m.author_id
-           WHERE room.parent_id IS NOT NULL AND m.created_at<=room.created_at
-           ORDER BY m.created_at DESC,m.id ASC LIMIT ${ROOM_VIEW_BRIEFING_LIMIT}
          )
+         ${this.pureProjection?ROOM_ROUTER_CTES:''}
          SELECT
            EXISTS(SELECT 1 FROM starter_onboarding_runs onboarding
              WHERE onboarding.room_id=authorized_room.id AND onboarding.user_id=$2
@@ -2970,14 +3200,16 @@ export class PhoneService {
                ORDER BY corner_tool_rows.created_at DESC,corner_tool_rows.id DESC)
                FROM corner_tool_rows),'[]'::jsonb)
            ) END corner
-         FROM authorized_room`,
-        [roomId, viewerId],
+           ${this.pureProjection?roomRouterColumnsSql():''}
+         FROM authorized_room ${this.pureProjection?ROOM_ROUTER_HEAD_JOIN:''}`,
+        this.pureProjection?[roomId,viewerId,this.expectedRouterWorkspace??null]:[roomId, viewerId],
       )
     ).rows[0];
     if (!row) return undefined;
-    if (row.corner) {
+    if(this.pureProjection)this.routerRoomRows=row;
+    if (row.corner||this.pureProjection) {
       reviveDates(row.room, ['archived_at', 'repository_updated_at', 'created_at', 'updated_at']);
-      if (row.corner.parent)
+      if (row.corner?.parent)
         reviveDates(row.corner.parent, [
           'archived_at',
           'repository_updated_at',
@@ -2988,8 +3220,8 @@ export class PhoneService {
       for (const message of [
         ...row.transcript,
         ...row.activity,
-        ...row.corner.briefing,
-        ...row.corner.tools,
+        ...(row.corner?.briefing??[]),
+        ...(row.corner?.tools??[]),
       ])
         reviveDates(message, ['created_at']);
       return row;
@@ -3027,7 +3259,7 @@ export class PhoneService {
       this.optionalEnrichment(
         'message-tags',
         this.enrichmentDatabase.query<{ id: string; tagged_ids: string[] }>(
-          `SELECT m.id,${taggedIdentityIdsSql('m')} tagged_ids
+          `SELECT m.id,${roomMessageTagsSql('m')} tagged_ids
            FROM messages m WHERE m.id=ANY($1::text[])`,
           [row.transcript.map((message) => message.id)],
         ),
@@ -3130,7 +3362,7 @@ export class PhoneService {
                AND member.removed_at IS NULL
                AND member.identity_id=ANY($3::text[])),'[]'::jsonb) presence,
            COALESCE((SELECT jsonb_agg(jsonb_build_object('id',m.id,
-             'tagged_ids',${taggedIdentityIdsSql('m')}))
+             'tagged_ids',${roomMessageTagsSql('m')}))
              FROM messages m WHERE m.id=ANY($4::text[])),'[]'::jsonb) tags,
            COALESCE((SELECT jsonb_agg(jsonb_build_object('message_id',message_id))
              FROM message_bookmarks WHERE identity_id=$2
@@ -3159,6 +3391,10 @@ export class PhoneService {
     );
     const value = result?.rows[0];
     if (!value) return undefined;
+    return this.projectRoomEnrichment(value);
+  }
+
+  private projectRoomEnrichment(value:RoomReadEnrichment){
     for (const member of value.presence) reviveDates(member, ['presence_updated_at']);
     return {
       ...value,
@@ -3396,7 +3632,7 @@ export class PhoneService {
     );
     const config = core.rows[0];
     if (!config) return null;
-    const presence = await this.optionalEnrichment('member-presence',
+    const presence = this.pureProjection?undefined:await this.optionalEnrichment('member-presence',
       this.enrichmentDatabase.query<{
         presence_body: MemberRow['presence_body']; presence_updated_at: Date | null;
       }>(`SELECT live.body presence_body,live.updated_at presence_updated_at
@@ -4749,6 +4985,11 @@ export class PhoneService {
           viewerId,
           await this.viewerWorkbenchWorkspace(viewerId),
         )) as Output<Name>;
+      case 'refreshWallet':{
+        const binding=(await this.database.query<{workspace_id:string}>('SELECT workspace_id FROM wallet_bindings WHERE identity_id=$1',[viewerId])).rows[0];
+        if(!binding)throw new Error('wallet not created');
+        return await readWallet(this.database,viewerId,binding.workspace_id) as Output<Name>;
+      }
       case 'sendFromWallet':
         await this.requireWorkspaceMember(
           (input as Input<'sendFromWallet'>).workspaceId,
@@ -5266,7 +5507,7 @@ export class PhoneService {
   }
 
   async liveStarPrompt(viewerId: string) {
-    return readStarPrompt(this.database, viewerId, this.github);
+    return readStarPrompt(this.database, viewerId, (this.database as CommandScopedDatabase).active ? undefined : this.github);
   }
 
   private async reactToMessage(input: Input<'reactToMessage'>, viewerId: string): Promise<Output<'reactToMessage'>> {
@@ -5512,96 +5753,7 @@ export class PhoneService {
     input: Input<'listMessageBookmarks'>,
     viewerId: string,
   ): Promise<Output<'listMessageBookmarks'>> {
-    const cursor = input.before?.match(/^(\d{1,19}),([a-zA-Z0-9_-]{1,128})$/);
-    if (input.before !== undefined && !cursor) throw new Error('invalid_cursor');
-    const result = await this.database.query<{ bookmarks: Array<{
-      message_id: string;
-      workspace_id: string;
-      room_id: string;
-      room_name: string;
-      room_kind: 'room' | 'corner';
-      message_created_at: Date;
-      bookmarked_at: Date;
-      bookmarked_us: string;
-      available: boolean;
-      text: string | null;
-      author_id: string | null;
-      author_kind: 'human' | 'agent' | null;
-      author_name: string | null;
-      author_handle: string | null;
-      author_avatar: string | null;
-      author_face: string | null;
-    }> }>(
-      `WITH authorized AS (
-         SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
-           AND identity_id=$2 AND removed_at IS NULL
-       ), bookmarks AS (
-       SELECT bookmark.message_id,bookmark.workspace_id,bookmark.room_id,
-         COALESCE(room.name,bookmark.source_room_name) room_name,
-         bookmark.source_room_kind room_kind,
-         bookmark.message_created_at,bookmark.created_at bookmarked_at,
-         (extract(epoch FROM bookmark.created_at)*1000000)::bigint::text bookmarked_us,
-         (message.id IS NOT NULL AND message.deleted_at IS NULL AND room.id IS NOT NULL AND room_member.identity_id IS NOT NULL) available,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN message.text END text,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.id END author_id,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.kind END author_kind,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.name END author_name,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.handle END author_handle,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.avatar END author_avatar,
-         CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.face_id END author_face
-       FROM message_bookmarks bookmark
-       LEFT JOIN rooms room ON room.id=bookmark.room_id AND room.workspace_id=bookmark.workspace_id
-       LEFT JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
-         AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
-       LEFT JOIN messages message ON message.id=bookmark.message_id AND message.room_id=room.id
-       LEFT JOIN identities author ON author.id=message.author_id
-       WHERE bookmark.workspace_id=$1 AND bookmark.identity_id=$2
-         ${cursor ? `AND ((extract(epoch FROM bookmark.created_at)*1000000)::bigint < $3::bigint
-           OR ((extract(epoch FROM bookmark.created_at)*1000000)::bigint = $3::bigint
-             AND bookmark.message_id > $4))` : ''}
-       ORDER BY bookmark.created_at DESC,bookmark.message_id
-       LIMIT ${BOOKMARK_PAGE + 1}
-       )
-       SELECT COALESCE((SELECT jsonb_agg(to_jsonb(bookmarks) ORDER BY bookmarked_at DESC,message_id)
-         FROM bookmarks),'[]'::jsonb) bookmarks FROM authorized`,
-      cursor ? [input.workspaceId, viewerId, cursor[1], cursor[2]] : [input.workspaceId, viewerId],
-    );
-    if (!result.rows[0]) throw new Error('workspace membership required');
-    const page = result.rows[0].bookmarks.slice(0, BOOKMARK_PAGE);
-    const last = page.at(-1);
-    return {
-      ...(result.rows[0].bookmarks.length > BOOKMARK_PAGE && last
-        ? { next: `${last.bookmarked_us},${last.message_id}` } : {}),
-      bookmarks: page.map((raw) => {
-        const row = reviveDates(raw, ['message_created_at','bookmarked_at']);
-        return ({
-        messageId: row.message_id,
-        workspaceId: row.workspace_id,
-        roomId: row.room_id,
-        roomName: row.room_name,
-        roomKind: row.room_kind,
-        messageCreatedAt: unix(row.message_created_at),
-        bookmarkedAt: unix(row.bookmarked_at),
-        available: row.available,
-        ...(row.available && row.text !== null ? { text: row.text } : {}),
-        ...(row.available && row.author_id && row.author_kind && row.author_name
-          ? {
-              author: identity(
-                {
-                  id: row.author_id,
-                  kind: row.author_kind,
-                  name: row.author_name,
-                  handle: row.author_handle,
-                  avatar: row.author_avatar,
-                  face_id: row.author_face,
-                },
-                this.publicOrigin,
-              ),
-            }
-          : {}),
-        });
-      }),
-    };
+    return readMessageBookmarks(this.database, input, viewerId, row => identity(row, this.publicOrigin));
   }
 
   /**
@@ -6206,6 +6358,7 @@ export class PhoneService {
   private async requestCornerClose(roomId: string, viewerId: string, locked?: boolean) {
     const authorize = async (database: SqlDatabase) => {
       await lockCornerLifecycle(database, roomId);
+      if (locked === undefined) await lockCornerArchivalAuthority(database);
       const access = await database.query<{ workspace_role: string }>(
         `SELECT workspace_member.role workspace_role FROM memberships room_member
          JOIN rooms room ON room_member.room_id=COALESCE(room.parent_id,room.id)
@@ -7406,7 +7559,8 @@ export class PhoneService {
    * decision settles the card in place and posts one system line mentioning
    * the agent so its daemon wakes and resumes the paused turn.
    */
-  private async decideAgentGrant(input: Input<'decideAgentGrant'>, viewerId: string) {
+  private async decideAgentGrant(input: Input<'decideAgentGrant'>, viewerId: string,
+    defer?: (notification: () => void) => void) {
     const decision: AgentGrantDecision | undefined =
       input.decision === 'always' || input.decision === 'once' || input.decision === 'deny'
         ? input.decision
@@ -7478,9 +7632,11 @@ export class PhoneService {
         card: { grantId: input.grantId, status },
       });
     });
-    for (const roomId of new Set(cardRoomIds))
-      if (roomId !== grant.room_id)
-        this.live?.publish({ type: 'invalidate', roomId, reason: 'grant' });
+    for (const roomId of new Set(cardRoomIds)) {
+      if (roomId === grant.room_id) continue;
+      const notify = () => this.live?.publish({ type: 'invalidate', roomId, reason: 'grant' });
+      if (defer) defer(notify); else notify();
+    }
     return { grantId: input.grantId, status, roomId: grant.room_id };
   }
   /** Revoke is one tap on the profile; a command rule stops matching at once. */
@@ -8191,9 +8347,6 @@ export class PhoneService {
     );
     if (machinesLeft.rowCount) throw new Error('Agent machines are still stopping; try again shortly');
     await this.database.transaction(async (database) => {
-      await database.query(`SELECT 1 FROM identities WHERE id=$1 FOR UPDATE`, [viewerId]);
-      if (!(await database.query(`SELECT 1 FROM identities WHERE id=$1`, [viewerId])).rowCount)
-        return;
       const owned = await database.query<{ agent_id: string }>(
         `SELECT agent_id FROM agents WHERE owner_id=$1
          UNION SELECT agent_id FROM free_agents WHERE owner_id=$1`,
@@ -8201,6 +8354,28 @@ export class PhoneService {
       );
       // Everything erased by this deletion: the person and each agent it owned.
       const gone = [viewerId, ...owned.rows.map((row) => row.agent_id)];
+      const plannedCorners = await database.query<{id:string}>(
+        `SELECT c.id FROM rooms c WHERE c.parent_id IS NOT NULL AND c.archived_at IS NULL
+           AND ${cornerOwnerSql('c.id')}=ANY($1) ORDER BY c.id`, [gone]);
+      for (const corner of plannedCorners.rows) await lockCornerLifecycle(database, corner.id);
+      await lockCornerArchivalAuthority(database);
+      // Discovery takes no row locks. A newly acquired agent/corner changes
+      // the deletion scope and requires a new explicit attempt, rather than
+      // taking another lifecycle lock while holding authority in reverse order.
+      const currentOwned = await database.query<{agent_id:string}>(
+        `SELECT agent_id FROM agents WHERE owner_id=$1
+         UNION SELECT agent_id FROM free_agents WHERE owner_id=$1`, [viewerId]);
+      const plannedAgents = new Set(owned.rows.map(row => row.agent_id));
+      if (currentOwned.rows.length !== plannedAgents.size || currentOwned.rows.some(row => !plannedAgents.has(row.agent_id)))
+        throw new Error('Account changed while deletion was being prepared; try again');
+      const closingCorners = await database.query<{ id: string }>(
+        `SELECT c.id FROM rooms c WHERE c.parent_id IS NOT NULL AND c.archived_at IS NULL
+           AND ${cornerOwnerSql('c.id')}=ANY($1) ORDER BY c.id FOR KEY SHARE OF c`, [gone]);
+      const plannedIds = new Set(plannedCorners.rows.map(row => row.id));
+      if (closingCorners.rows.some(row => !plannedIds.has(row.id)))
+        throw new Error('Account changed while deletion was being prepared; try again');
+      await database.query(`SELECT 1 FROM identities WHERE id=$1 FOR UPDATE`, [viewerId]);
+      if (!(await database.query(`SELECT 1 FROM identities WHERE id=$1`, [viewerId])).rowCount) return;
 
       // The agents are removed, not re-owned: tokens, schedules and grants die
       // with them, and their corners archive as removeAgent archives them.
@@ -8214,14 +8389,8 @@ export class PhoneService {
       await database.query(`UPDATE agent_grants SET decided_by=NULL WHERE decided_by=ANY($1)`, [
         gone,
       ]);
-      const closingCorners = await database.query<{ id: string }>(
-        `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
-           AND id IN (SELECT corner_id FROM corner_facts WHERE ${cornerOwnerSql('corner_facts.corner_id')}=ANY($1))
-         ORDER BY id FOR KEY SHARE`,
-        [gone],
-      );
-      // Each corner closes exactly as a human close does: its workflow run,
-      // wake sources and corner state end with the archival.
+      // Lifecycle scope and authority were locked before any erasure above.
+      // Preserve the common close path, including workflow and wake cleanup.
       for (const corner of closingCorners.rows) await closeCornerState(database, corner.id);
       await markOwnedCornersAbandoned(database, gone, `${account.name} deleted their account`);
       await database.query(
@@ -9178,8 +9347,10 @@ export class PhoneService {
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {
-    const linkAccount = await this.linkWallet?.status(viewerId);
-    if (input.refreshVault) {
+    const linkAccount = this.pureProjection?(await this.database.query<{connected:boolean;pending:boolean;ineligible:boolean}>(
+      `SELECT sealed_grant IS NOT NULL connected,(state IS NOT NULL AND attempt_expires_at>now()) pending,ineligible
+       FROM link_oauth_accounts WHERE owner_identity_id=$1`,[viewerId])).rows[0]:await this.linkWallet?.status(viewerId);
+    if (input.refreshVault&&!this.pureProjection) {
       const machines = (await this.database.query<{ machine_id: string }>(
         `SELECT DISTINCT COALESCE(machine_id,agent_id) machine_id FROM agents WHERE owner_id=$1`, [viewerId],
       )).rows;
@@ -9310,7 +9481,7 @@ export class PhoneService {
 
     // Squire API rows point at vault credentials. They remain installed for
     // agent use, but the person's Connectors page presents them under Keys.
-    const apps = (await readOwnerApps(this.database, viewerId, this.composio))
+    const apps = (await readOwnerApps(this.database, viewerId, this.composio,{pure:this.pureProjection}))
       .filter((app) => app.transport !== 'squire-api' && app.hasConnected);
     const catalogKeys = new Set([
       'gmail',
@@ -9329,7 +9500,7 @@ export class PhoneService {
         .filter((app) => app.transport === 'composio')
         .map((app) => composioToolkitForApp(app.appKey)),
     ]);
-    const appCatalog = await this.readAppCatalog(catalogKeys);
+    const appCatalog = this.pureProjection?[]:await this.readAppCatalog(catalogKeys);
     const appMetadata = new Map(appCatalog.map((item) => [item.appKey, item]));
     const uniqueConnections = uniqueVaultConnections(connections);
     const walletRow = (
@@ -9338,7 +9509,10 @@ export class PhoneService {
         delegation_expires_at: Date | null;
         delegation_standing: boolean;
       }>(
-        `SELECT created_at,delegation_expires_at,delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
+        this.pureProjection?`SELECT to_timestamp((value->>'createdAt')::double precision) created_at,
+          to_timestamp((value->>'expiresAt')::double precision) delegation_expires_at,(value->>'standing')::boolean delegation_standing
+          FROM owner_projection_cells WHERE owner_id=$1 AND cell='wallet-summary'`:
+          `SELECT created_at,delegation_expires_at,delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
         [viewerId],
       )
     ).rows[0];
@@ -9451,24 +9625,24 @@ export class PhoneService {
     const ownedCompanies = new Set([...view.connections.map(key => resolveCompany(key).id),
       ...(view.apps ?? []).filter(app => app.transport === 'squire-api').map(app => resolveCompany(app).id)]);
     const oauthApps = new Set<string>();
-    if (this.composio) await Promise.all(COMPANY_APPS.filter(app => ownedCompanies.has(resolveCompany({ domain: app.domain }).id))
+    if (!this.pureProjection&&this.composio) await Promise.all(COMPANY_APPS.filter(app => ownedCompanies.has(resolveCompany({ domain: app.domain }).id))
       .map(async app => {
         try {
           if (await this.composio!.supportsOAuth(composioToolkitForApp(app.appKey))) oauthApps.add(app.appKey);
         } catch { /* Keep existing routes available when provider discovery is unavailable. */ }
       }));
-    const companies = projectWorkbenchCompanies(view, this.publicOrigin, await companyPopularity(this.database), undefined, oauthApps);
+    const companies = projectWorkbenchCompanies(view, this.publicOrigin, this.pureProjection?new Map<string,number>():await companyPopularity(this.database), undefined, oauthApps);
     const keys = companies.rows.flatMap(company => {
       const known = companyForMcp(company.domain ?? company.id);
       return known ? [`company:${known.id}`, `search:${known.id}`] : [];
     });
-    const cached = await this.connectorDiscovery.read(keys);
+    const cached = await this.connectorDiscovery.read(this.pureProjection?[]:keys);
     const rows = companies.rows.map(company => {
       if (company.kind !== 'company' || company.items.some(item => item.kind === 'connection')) return company;
       const known = companyForMcp(company.domain ?? company.id);
       if (!known) return company;
       const cacheKey = `company:${known.id}`;
-      this.connectorDiscovery.warm(cacheKey, viewerId, cached.get(cacheKey));
+      if(!this.pureProjection)this.connectorDiscovery.warm(cacheKey, viewerId, cached.get(cacheKey));
       const manifest = [...cached.get(cacheKey)?.manifests ?? [], ...cached.get(`search:${known.id}`)?.manifests ?? []]
         .find(manifest => registryServerAppKey(manifest.name) === appIdentity(known.domain!)?.key
           && known.hosts.includes(registryServerDomain(manifest.name) ?? '') && !manifest.secretInputNames.length
@@ -9637,7 +9811,7 @@ export class PhoneService {
           [row.id, viewerId],
         )).rows[0];
         return current && (current.sign_in?.url || current.status === 'connected' || current.status === 'error') ? current : undefined;
-      }, 15_000);
+      }, 15_000, { principal: 'connector', operation: 'status', commandId: row.id });
       if (ready?.status === 'error') throw new Error('The MCP connection could not start. Reconnect to retry.');
       return {
         appId: installed.id,
@@ -10749,6 +10923,7 @@ export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
 ]);
 
 export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
+  'readRoomTools',
   ...PHONE_ROUTE_OPERATION_NAMES,
   'disconnectAiClient',
   'openComputerSession',
@@ -10879,6 +11054,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'revokeConnectionGrants',
   'createWallet',
   'readWallet',
+  'refreshWallet',
   'sendFromWallet',
   'grantWalletDelegation',
   'revokeWalletDelegation',

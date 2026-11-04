@@ -1,10 +1,9 @@
-/** Helper work is announced only after commit; keep its transaction out of this wait. */
-export async function waitForConnection<T>(read: () => Promise<T | undefined>, timeoutMs = 85_000): Promise<T | undefined> {
-  const until = Date.now() + timeoutMs;
-  do {
-    const value = await read();
-    if (value !== undefined) return value;
-    await new Promise(resolve => setTimeout(resolve, 250));
-  } while (Date.now() < until);
-  return undefined;
+import { subscribeCommandCompletion, waitForCommittedChange, type CommandCompletionKey } from './command-completion.js';
+
+/** Install committed-event interest before inspecting state once. The timeout
+ * ends this admitted wait; it never causes another status read or retry. */
+export async function waitForConnection<T>(read: () => Promise<T | undefined>, timeoutMs = 85_000,
+  completion?: CommandCompletionKey, signal?: AbortSignal): Promise<T | undefined> {
+  if (!completion) throw new Error('connection completion identity required');
+  return waitForCommittedChange(listener => subscribeCommandCompletion(completion, listener), read, timeoutMs, signal);
 }

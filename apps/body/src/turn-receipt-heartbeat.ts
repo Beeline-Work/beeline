@@ -33,12 +33,14 @@ export function isTurnAuthorityLostError(error: unknown): boolean {
  * keeps running, which otherwise never frees the lane this turn occupies.
  */
 export async function withTurnReceiptHeartbeat<T>(
-  api: Pick<DaemonApiClient, 'execute'>,
+  api: Pick<DaemonApiClient, 'execute'> & Partial<Pick<DaemonApiClient, 'runWithTurnOwnership'>>,
   receipt: WorkingReceipt,
   task: () => Promise<T>,
   onHeartbeatError: (error: unknown) => void,
   onAuthorityLost?: () => void,
 ): Promise<T> {
+  const owned = api.runWithTurnOwnership?.(receipt, task, onAuthorityLost);
+  if (owned !== undefined) return owned;
   let tail = Promise.resolve();
   let refused = false;
   const timer = setInterval(() => {

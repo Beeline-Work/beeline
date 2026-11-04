@@ -1329,6 +1329,12 @@ export const SYSTEM_MESSAGE_CATALOG = {
     parts: ['; '],
     variables: [],
   },
+  'wallet-notices.approval-confirmed-requires-new-action': {
+    parts: ['Approval confirmed. The dependent transaction was not submitted; a new explicit action is required.'],
+    variables: [],
+  },
+  'wallet-notices.could-not-confirm': { parts: ['could not confirm'], variables: [] },
+  'wallet-notices.submission-outcome-unknown': { parts: ['submission outcome unknown'], variables: [] },
   'wallet-notices.could-not-complete': {
     parts: ['could not complete'],
     variables: [],

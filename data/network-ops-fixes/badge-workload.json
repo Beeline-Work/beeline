@@ -1,0 +1,57 @@
+{
+  "cohort": "local PGlite; synthetic16Rooms/256asks",
+  "cold": {
+    "legacy": {
+      "statements": 1,
+      "resultRows": 1,
+      "queryResultBytes": 35,
+      "wireBytes": 13,
+      "p95Ms": 38.01305000000002
+    },
+    "candidate": {
+      "statements": 1,
+      "resultRows": 1,
+      "queryResultBytes": 437,
+      "wireBytes": 796,
+      "p95Ms": 36.4886190000002
+    }
+  },
+  "hundredFocuses": {
+    "legacyReads": 100,
+    "candidateReads": 1
+  },
+  "writes": 0,
+  "journalAdvance": 0,
+  "limits": "No real PostgreSQL WAL/CPU/enqueue or native parse/render claim; other families and actual committed changes not covered.",
+  "previousCold": {
+    "legacy": {
+      "statements": 1,
+      "resultRows": 1,
+      "queryResultBytes": 35,
+      "wireBytes": 13,
+      "p95Ms": 32.79493199999979
+    },
+    "candidate": {
+      "statements": 5,
+      "resultRows": 5,
+      "queryResultBytes": 431,
+      "wireBytes": 796,
+      "p95Ms": 35.375864999999976
+    }
+  },
+  "acceptance": {
+    "wholeRouter": "OPEN",
+    "coldStatementNonRegression": true,
+    "focusReadReuse": true,
+    "badgeUnder1024Bytes": true,
+    "timing": "10 local samples; not production CPU or enqueue proof"
+  },
+  "source": {
+    "baseCommit": "624910b79b933dd5a668a82f63e549c9fa037a7c",
+    "blobs": {
+      "apps/server/src/router-badge-workload.integration.test.ts": "3b86389f40108c0a55e4ec32b6d9f713eddaab44",
+      "apps/server/src/needs-you.ts": "56554eb0d3d240d787e477be1801c71df90c301a",
+      "apps/server/src/phone-service.ts": "44a8a0c12ce3d8492e7a83d89f2e3bbc42c2341e"
+    }
+  }
+}

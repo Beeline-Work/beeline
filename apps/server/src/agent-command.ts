@@ -2,6 +2,8 @@ import { cornerLifecycleSql } from './corner-github-cache.js';
 import { subscribeConfiguredReviewers } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
+import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, registerOwnedEffectFence } from './turn-ownership.js';
+import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
 import { cornerKindSql } from './corner-opening.js';
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { currentIdleReportSql } from './corner-idle.js';
@@ -172,7 +174,7 @@ BEGIN
           AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'
         WHERE running.room_id=NEW.room_id AND running.agent_id=NEW.agent_id
           AND running.turn_request_id<>NEW.turn_request_id
-          AND running.state='claimed' AND running.lease_expires_at>now()
+          AND running.state='claimed' AND ${commandOwnerLiveSql('running')}
           AND running.action IN ('input','resume')) THEN
       INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
         VALUES(NEW.room_id,NEW.turn_request_id,NEW.agent_id,'working','pending:' || NEW.id)
@@ -224,6 +226,8 @@ export type CommandRow = {
   state: 'pending' | 'claimed' | 'complete' | 'cancelled';
   generation_id: string | null;
   lease_expires_at: Date | null;
+  turn_owner_connection_id?: string | null;
+  turn_owner_epoch?: string | number | null;
   result_message_id: string | null;
   hiccup_attempts: number;
   lifecycle_before: string | null;
@@ -248,11 +252,12 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     SELECT command.* FROM agent_commands command
     ${claimFence ? 'CROSS JOIN claim_fence' : ''}
     WHERE command.room_id=${roomSql} AND command.agent_id=${agentSql}
+      AND beeline_command_claim_open(command.id)
       AND ${scopeSql}
       AND ${digestSnapshot ? '(command.wake_after IS NULL OR command.id=ANY($3::text[]))' : 'command.wake_after IS NULL'}
       AND command.action IN ('input','resume') AND NOT command.avatar_job
       AND (command.state='pending' ${checkOnly ? "OR command.state='cancelled'" : ''} OR (command.state='claimed' AND
-        (command.lease_expires_at<=now() OR command.id=${claimSql})))
+        (${commandOwnerExpiredSql('command')} OR command.id=${claimSql})))
     ORDER BY command.created_at,command.id FOR UPDATE OF command
   ), recovery_workflows AS MATERIALIZED (
     SELECT command.id,COALESCE(source.card->>'runId',choice_source.card->>'runId',parent_source.card->>'runId') run_id,
@@ -280,7 +285,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     WHERE source.card_type IS DISTINCT FROM '${CORNER_LIFECYCLE_CARD_TYPE}'
   ), answered_reports AS MATERIALIZED (
     SELECT command.id FROM recovery_scope command WHERE command.reason='report'
-      AND (command.state<>'claimed' OR command.lease_expires_at<=now())
+      AND (command.state<>'claimed' OR ${commandOwnerExpiredSql('command')})
       AND (command.private_payload->>'waitingAnswered'='true' OR (
         command.private_payload->>'text' ~ '^(blocked|needs-decision):'
         AND EXISTS (SELECT 1 FROM agent_commands answer
@@ -369,7 +374,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
       AND NOT EXISTS(SELECT 1 FROM voice_orders voice
         WHERE voice.source_message_id=command.source_message_id AND voice.agent_id=command.agent_id)
       AND command.wake_after IS NULL
-      AND command.reason<>'computer_activity' AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
+      AND command.reason<>'computer_activity' AND (command.state='pending' OR (command.state='claimed' AND ${commandOwnerExpiredSql('command')}))
   ), return_head AS MATERIALIZED (
     SELECT newest.id FROM return_queue newest WHERE newest.position=1
       AND EXISTS(SELECT 1 FROM return_queue old WHERE old.created_offline IS TRUE
@@ -380,13 +385,13 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
               AND served.completed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')))
       AND NOT EXISTS(SELECT 1 FROM agent_commands busy
         WHERE busy.room_id=${roomSql} AND busy.agent_id=${agentSql}
-          AND busy.state='claimed' AND ((busy.lease_expires_at>now()
-            AND NOT EXISTS(SELECT 1 FROM return_queue offline WHERE offline.created_offline IS TRUE)) OR EXISTS(
+            AND busy.state='claimed' AND ((${commandOwnerLiveSql('busy')}
+            AND NOT EXISTS(SELECT 1 FROM return_queue offline WHERE offline.created_offline IS TRUE)) OR (busy.turn_owner_connection_id IS NULL AND EXISTS(
             SELECT 1 FROM agent_connections connection JOIN live_server_instances server
               ON server.instance_id=connection.instance_id
             WHERE connection.agent_id=busy.agent_id AND connection.released_at IS NULL
               AND connection.connected_at<=busy.claimed_at
-              AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')))
+              AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds'))))
   ), cancelled_wakes AS (
     UPDATE agent_commands command SET state='cancelled',completed_at=now(),
       cancellation_reason=CASE WHEN EXISTS(SELECT 1 FROM answered_reports answered WHERE answered.id=scoped.id) THEN 'answered_report'
@@ -523,7 +528,7 @@ export async function refuseVerdictedReviewerWake(
      LEFT JOIN messages source ON source.id=command.source_message_id
      WHERE command.room_id=$1 AND command.action='input'
        AND (command.state='pending'
-         OR (command.state='claimed' AND command.lease_expires_at>now()))
+         OR (command.state='claimed' AND ${commandOwnerLiveSql('command')}))
        AND NOT EXISTS (
          SELECT 1 FROM agent_turns turn
          WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
@@ -578,7 +583,7 @@ function reviewerQuietSql(command: string): string {
       )
     ) AND EXISTS (
       SELECT 1 FROM agent_commands busy WHERE busy.room_id=${command}.room_id AND busy.agent_id<>${command}.agent_id
-        AND busy.state='claimed' AND busy.lease_expires_at>now()
+        AND busy.state='claimed' AND ${commandOwnerLiveSql('busy')}
     ))`;
 }
 
@@ -843,7 +848,7 @@ export async function createAgentCommand(
         AND EXISTS(SELECT 1 FROM rooms_mcp_members app WHERE app.member_id=$2)
         AND EXISTS(SELECT 1 FROM rooms origin WHERE origin.id::text=$5 AND origin.parent_id IS NOT NULL)
         AND earlier.reason='report' AND earlier.private_payload->>'kind'='report'
-        AND (earlier.state='pending' OR (earlier.state='claimed' AND earlier.lease_expires_at<=now()))
+        AND (earlier.state='pending' OR (earlier.state='claimed' AND ${commandOwnerExpiredSql('earlier')}))
         AND earlier.private_payload->>'authorId'=$4
         AND COALESCE(earlier.private_payload->>'originCornerId',earlier.private_payload->>'fromRoomId')=$5
         AND substring(earlier.private_payload->>'text' from '^(done|blocked|needs-decision|failed):')=$6
@@ -1050,7 +1055,7 @@ async function routeTaggedLifecycleCommand(
          AND command.action IN ('input','resume')
        JOIN messages root ON root.id=command.root_source_message_id
        WHERE turn.room_id=$1 AND turn.agent_id=$2 AND turn.status='working'
-         AND command.state='claimed' AND command.lease_expires_at>now()
+         AND command.state='claimed' AND ${commandOwnerLiveSql('command')}
          AND command.generation_id=turn.generation_id
          AND turn.generation_id NOT LIKE 'pending:%'
        ORDER BY turn.created_at DESC,command.created_at DESC LIMIT 1`,
@@ -1416,11 +1421,11 @@ export { CORNER_CHECKS_BLOCKED_AFTER } from './corner-state.js';
  */
 export const CORNER_CHECK_STUCK_AFTER = systemMessage("agent-command.1-hour");
 
-/** Push a connected helper's stranded orders and tags again.
- * A room the helper is already claiming waits for that turn to finish.
- * Work in any other room is pushed anyway. Passing an agent retries at once
- * (a reconnect). The unscoped sweep waits 30 seconds, then retries every 90. */
-export async function renudgeStrandedPendingCommands(db: SqlDatabase, agentId?: string): Promise<number> {
+/** Push one helper's eligible orders after an actual connection or pickup event.
+ * Busy Rooms wait for the committed command release; other Rooms remain eligible.
+ * Bootstrap also enumerates every pending Room, independently of this bounded hint.
+ * There is no unscoped discovery or elapsed-time retry admission. */
+export async function renudgeStrandedPendingCommands(db: SqlDatabase, agentId: string): Promise<number> {
   const result = await db.query<{ count: number }>(
     `WITH due AS MATERIALIZED (
        SELECT command.id
@@ -1433,25 +1438,20 @@ export async function renudgeStrandedPendingCommands(db: SqlDatabase, agentId?: 
          AND command.reason IN ('human_tag','direct_message','order')
          AND (command.wake_after IS NULL OR command.wake_after<=clock_timestamp())
          AND (command.startup_wake_after IS NULL OR command.startup_wake_after<=clock_timestamp())
-         AND ($1::text IS NOT NULL OR command.renudged_at IS NULL
-           OR command.renudged_at<=clock_timestamp()-interval '90 seconds')
-         AND ($1::text IS NULL OR command.agent_id=$1)
-         AND ($1::text IS NOT NULL OR command.created_at<=clock_timestamp()-interval '30 seconds')
+         AND command.agent_id=$1
          AND NOT EXISTS (
            SELECT 1 FROM agent_commands busy
            WHERE busy.agent_id=command.agent_id AND busy.room_id=command.room_id
-             AND busy.state='claimed' AND busy.lease_expires_at>clock_timestamp()
+             AND busy.state='claimed' AND ${commandOwnerLiveSql('busy', 'clock_timestamp()')}
          )
        ORDER BY command.created_at,command.id LIMIT 100
        FOR UPDATE OF command SKIP LOCKED
      ), renudged AS (
        UPDATE agent_commands command SET renudged_at=clock_timestamp()
        FROM due WHERE command.id=due.id AND command.state='pending'
-         AND ($1::text IS NOT NULL OR command.renudged_at IS NULL
-           OR command.renudged_at<=clock_timestamp()-interval '90 seconds')
        RETURNING command.id
      ) SELECT count(*)::int count FROM renudged`,
-    [agentId ?? null],
+    [agentId],
   );
   return Number(result.rows[0]?.count ?? 0);
 }
@@ -1504,8 +1504,27 @@ export async function claimAgentCommand(
   agentId: string,
   commandId: string,
   generation: string,
+  owner?: HelperTurnOwnershipSource,
 ): Promise<CommandRow> {
   if (!generation || generation.length > 200) throw new Error('command generation is required');
+  if (owner) {
+    await assertCurrentTurnOwner(db, agentId, owner);
+    const existing = (await db.query<CommandRow & { turn_cancelled: boolean }>(
+      `SELECT command.*,EXISTS(SELECT 1 FROM agent_turns turn
+         WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+           AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled
+       FROM agent_commands command WHERE command.id=$1 AND command.room_id=$2 AND command.agent_id=$3
+         AND command.state='claimed' AND command.generation_id=$4
+         AND beeline_command_claim_open(command.id)
+         AND command.turn_owner_connection_id=$5 AND command.turn_owner_epoch=$6
+       FOR UPDATE OF command`,
+      [commandId, roomId, agentId, generation, owner.connectionId, owner.epoch],
+    )).rows[0];
+    if (existing) {
+      if (existing.turn_cancelled) throw new Error('command turn cancelled');
+      return existing; // A resolved replay is a read, never a fake working/progress write.
+    }
+  }
   for (const digestRefreshed of [false, true]) {
     const row = (
       await db.query<CommandRow & WakeDropLog & { turn_claimed: boolean; needs_digest_refresh: boolean }>(
@@ -1518,7 +1537,10 @@ export async function claimAgentCommand(
            ), ${commandRecoveryCtes('$2', '$3', '$1', true, 'true', false, false, false)}, eligible AS MATERIALIZED (
              SELECT agent_commands.* FROM agent_commands CROSS JOIN claim_fence
              WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND wake_after IS NULL AND
-               (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))
+               beeline_command_claim_open(id) AND
+               (state='pending' OR (state='claimed' AND ${commandOwnerExpiredSql(undefined)}) OR (state='claimed' AND generation_id=$4))
+               AND (generation_id IS DISTINCT FROM $4 OR
+                 (turn_owner_connection_id IS NOT DISTINCT FROM $6::text AND turn_owner_epoch IS NOT DISTINCT FROM $7::bigint))
                AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=agent_commands.id)
                AND NOT EXISTS(SELECT 1 FROM digest_refresh)
                AND NOT (action='input' AND reason IN ('human_tag','direct_message') AND private_payload IS NULL
@@ -1538,7 +1560,7 @@ export async function claimAgentCommand(
                  SELECT 1 FROM agent_commands human WHERE human.room_id=$2 AND human.agent_id=$3
                    AND human.reason<>'computer_activity' AND human.action IN ('input','resume')
                    AND human.wake_after IS NULL
-                   AND (human.state='pending' OR (human.state='claimed' AND human.lease_expires_at>now()))
+                   AND (human.state='pending' OR (human.state='claimed' AND ${commandOwnerLiveSql('human')}))
                ))
              FOR UPDATE OF agent_commands
            ), human_followups AS MATERIALIZED (
@@ -1586,7 +1608,8 @@ export async function claimAgentCommand(
              RETURNING 1
            ), claimed AS (
              UPDATE agent_commands command SET state='claimed',generation_id=$4,
-               lease_expires_at=now()+interval '90 seconds',claimed_at=now(),
+               lease_expires_at=CASE WHEN $6::text IS NULL THEN now()+interval '90 seconds' END,claimed_at=now(),
+               turn_owner_connection_id=$6::text,turn_owner_epoch=$7::bigint,
                recovery_context=COALESCE((SELECT context.recovery_context FROM return_context context WHERE context.id=command.id),command.recovery_context),
                coalesced_context=COALESCE((SELECT context FROM human_context),command.coalesced_context),
                coalesced_attachments=CASE WHEN EXISTS(SELECT 1 FROM human_followups)
@@ -1624,7 +1647,7 @@ export async function claimAgentCommand(
            UNION ALL
            SELECT digest_refresh.*,false turn_claimed,true needs_digest_refresh FROM digest_refresh
            ) SELECT claim_result.*,wake_drop_log.drops FROM wake_drop_log LEFT JOIN claim_result ON true`,
-        [commandId, roomId, agentId, generation, digestRefreshed],
+        [commandId, roomId, agentId, generation, digestRefreshed, owner?.connectionId ?? null, owner?.epoch ?? null],
       )
     ).rows[0];
     if (!row?.id) {
@@ -1639,6 +1662,7 @@ export async function claimAgentCommand(
       continue;
     }
     if (!row.turn_claimed) throw new Error('command turn cancelled');
+    if (owner) await registerOwnedEffectFence(db, row);
     return row;
   }
   throw new Error('command claim conflict');
@@ -1651,18 +1675,21 @@ export async function authorizeCommandOutput(
   requestId: unknown,
   generation: unknown,
   allowCompleted = false,
+  registerEffect = true,
 ): Promise<CommandRow> {
   const row =
     typeof requestId === 'string' && typeof generation === 'string'
       ? (
           await db.query<CommandRow & { turn_cancelled: boolean }>(
-            `SELECT command.*,
+            `WITH ${commandOwnerFenceCteSql('owned_command.room_id=$1 AND owned_command.agent_id=$2 AND owned_command.turn_request_id=$3 AND owned_command.generation_id=$4')}
+             SELECT command.*,
                EXISTS(SELECT 1 FROM agent_turns turn
                  WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
                    AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled
              FROM agent_commands command
              WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3
                AND command.action IN ('input','resume') AND command.generation_id=$4
+               AND ${commandOwnerFenceMatchesSql('command')}
              ORDER BY command.created_at DESC,command.id DESC LIMIT 1 FOR UPDATE OF command`,
             [roomId, agentId, requestId, generation],
           )
@@ -1690,6 +1717,12 @@ export async function authorizeCommandOutput(
     throw new Error('command output authority rejected');
   }
   if (row.turn_cancelled) throw new Error('command turn cancelled');
+  if (row.turn_owner_connection_id) {
+    await assertCurrentTurnOwner(db, agentId, {
+      connectionId: row.turn_owner_connection_id, epoch: Number(row.turn_owner_epoch),
+    });
+    if (registerEffect) await registerOwnedEffectFence(db, row);
+  }
   return row;
 }
 
@@ -1880,7 +1913,7 @@ export async function readAgentCommands(
    AND workflow_version.version=(workflow_latest.card->>'workflowVersion')::int
  WHERE c.room_id=$1 AND c.agent_id=$2
    AND (CASE WHEN $3::text[] IS NULL THEN c.wake_after IS NULL ELSE c.id=ANY($3::text[]) END)
-   AND (c.state='pending' OR (c.state='claimed' AND (c.lease_expires_at<=now() OR $3::text[] IS NOT NULL)))
+   AND (c.state='pending' OR (c.state='claimed' AND (${commandOwnerExpiredSql('c')} OR $3::text[] IS NOT NULL)))
    AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=c.id)
    AND ($3::text[] IS NOT NULL OR (
    (${ordinaryWakeSql('c')} OR NOT EXISTS (
@@ -1888,7 +1921,7 @@ export async function readAgentCommands(
        AND requested.agent_id=c.agent_id AND requested.reason<>'computer_activity'
        AND requested.action IN ('input','resume')
        AND requested.wake_after IS NULL
-       AND (requested.state='pending' OR (requested.state='claimed' AND requested.lease_expires_at>now()))
+       AND (requested.state='pending' OR (requested.state='claimed' AND ${commandOwnerLiveSql('requested')}))
    ))
    AND workflow_latest.card->'cancellation' IS NULL
    AND ${reviewerQuietSql('c')} AND ${waitingReportSql('c')} AND ${startupWakeAllowedSql('c')}
@@ -2057,7 +2090,7 @@ export async function routeSystemCommand(
         continue;
       await db.query(
         `UPDATE agent_commands SET state=$4,completed_at=now() WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
-           AND (state='pending' OR (state='claimed' AND (NOT $5::boolean OR lease_expires_at<=now())))`,
+           AND (state='pending' OR (state='claimed' AND (NOT $5::boolean OR ${commandOwnerExpiredSql(undefined)})))`,
         [
           input.roomId,
           agentId,
@@ -2163,7 +2196,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
          'unreachable:'||command.room_id::text||':'||command.agent_id||':'||COALESCE(ran.id,'never-run')||':'||COALESCE(ran.generation_id,''),
          'UTF8')),'hex'))
        AND NOT EXISTS (SELECT 1 FROM agent_commands busy WHERE busy.room_id=command.room_id
-         AND busy.agent_id=command.agent_id AND busy.state='claimed' AND busy.lease_expires_at>now())
+         AND busy.agent_id=command.agent_id AND busy.state='claimed' AND ${commandOwnerLiveSql('busy')})
      ORDER BY command.created_at LIMIT 100`,
   );
   for (const command of undelivered.rows) {
@@ -2174,7 +2207,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
         WHERE command.room_id=$1 AND command.agent_id=$2 AND command.id=$3
           AND command.state='pending' AND command.action='input'
           AND NOT EXISTS (SELECT 1 FROM agent_commands busy WHERE busy.room_id=command.room_id
-            AND busy.agent_id=command.agent_id AND busy.state='claimed' AND busy.lease_expires_at>now())
+            AND busy.agent_id=command.agent_id AND busy.state='claimed' AND ${commandOwnerLiveSql('busy')})
         FOR UPDATE OF command`, [command.room_id, command.agent_id, command.id]);
       if (pending.rowCount)
         await noteCornerAgentUnreachable(db, command.room_id, command.agent_id, command.id, command);
@@ -2447,7 +2480,6 @@ export async function reconcileCornerMergeBlockers(
 export async function reconcileConfiguredCornerReviewers(
   db: SqlDatabase,
   parentRoomId?: string,
-  refreshHead?: (cornerId: string) => Promise<void>,
 ): Promise<{ subscriptions: number; commands: number }> {
     db = new CornerAccessDatabase(db);
   const subscriptions = await subscribeConfiguredReviewers(db, [parentRoomId ?? null]);
@@ -2570,7 +2602,6 @@ export async function reconcileConfiguredCornerReviewers(
     [parentRoomId ?? null],
   );
   for (const candidate of candidates.rows) {
-    if (refreshHead) await refreshHead(candidate.corner_id);
     // Re-report the green head. A review state repairs a missing wake; an
     // implement state waits for its current worker before taking rereview.
     const outcome = await advanceCorner(db, candidate.corner_id, {

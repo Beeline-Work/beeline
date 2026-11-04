@@ -14,8 +14,8 @@ import { createBeelineServer } from '../../server/src/server.js';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 
-it.each(['registration', 'subscription', 'commands', 'inbox'] as const)(
-  'recovers stalled %s with transport pings still flowing, then claims queued work without polling', async stage => {
+it.each(['registration', 'subscription', 'commands'] as const)(
+  'parks stalled %s despite transport pings, then claims queued work on an explicit recovery boundary', async stage => {
     const agentId = 'a'.repeat(64);
     const roomId = 'room';
     const live = new LiveHub();
@@ -34,8 +34,8 @@ it.each(['registration', 'subscription', 'commands', 'inbox'] as const)(
         await maybeStall('commands');
         return { commandProtocol: 1, commands };
       }
-      await maybeStall('inbox');
-      return { items: [] };
+      if (name === 'getRoomInbox') return { items: [] };
+      throw new Error(`unexpected socket operation ${name}`);
     });
     const query = vi.fn();
     const claimConnection = vi.fn(async () => 1);
@@ -86,23 +86,31 @@ it.each(['registration', 'subscription', 'commands', 'inbox'] as const)(
       expect(requests).toEqual(['getAgentCommands']);
       expect(execute).toHaveBeenCalledTimes(reads);
       expect(query).not.toHaveBeenCalled();
+      // Transcript traffic does not admit inbox reads for command-only intake.
+      live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages', targetAgentId: agentId });
+      await new Promise(resolve => setTimeout(resolve, 100));
+      expect(execute).toHaveBeenCalledTimes(reads);
       stall = true;
       if (stage === 'registration' || stage === 'subscription') client.machine.reconnectNow();
       else live.publish({ type: 'invalidate', roomId,
-        reason: stage === 'commands' ? 'postgres:agent_commands' : 'postgres:messages', targetAgentId: agentId });
+        reason: 'postgres:agent_commands', targetAgentId: agentId });
       await vi.waitFor(() => expect(reached).toHaveBeenCalled());
       const attempts = sockets.length;
       const pingsBefore = pings;
-      const stalledAt = Date.now();
       commands = [{
         id: 'queued', roomId, agentId, sourceMessageId: 'queued', turnRequestId: 'queued',
         rootCommandId: 'queued', rootSourceMessageId: 'queued', agentDepth: 0,
         action: 'input', reason: 'human_tag',
         source: { id: 'queued', authorId: 'human', body: 'Hello', createdAt: 1, type: 'message', attachments: [] },
       }];
-      // Leave the old await blocked. Only a new application session can serve.
-      await vi.waitFor(() => expect(sockets.length).toBeGreaterThan(attempts), { timeout: 1_500 });
-      expect(Date.now() - stalledAt).toBeLessThan(1_000);
+      // A failed application acknowledgment parks even while control pings flow.
+      await new Promise(resolve => setTimeout(resolve, 600));
+      expect(sockets).toHaveLength(attempts);
+      expect(run).not.toHaveBeenCalled();
+      // The test supplies an independent operator/reachability boundary.
+      // Leave the obsolete await blocked to verify that the replacement owns work.
+      client.machine.reconnectNow();
+      await vi.waitFor(() => expect(sockets.length).toBe(attempts + 1), { timeout: 1_500 });
       expect(pings).toBeGreaterThan(pingsBefore + 2);
       expect(warn).toHaveBeenCalled();
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce(), { timeout: 1_500 });

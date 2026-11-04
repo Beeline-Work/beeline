@@ -124,13 +124,13 @@ describe('historical attachment tool delivery', () => {
     expect(downloads).toBe(0);
   });
 
-  it('reports a media failure after three attempts without dropping message text or references', async () => {
+  it('reports the first media failure without dropping message text or references', async () => {
     mediaStatus = 503;
     const result = JSON.parse(await callAgentTool('read', { facet: "message", ...{ messageId } }, 'failed'));
     expect(result.attachments[0].reason).toBe('download failed: HTTP 503');
     expect(result.attachments[0].url).toBe(`${base}/v1/media/plan`);
     expect(result.body).toBe('Plan attached to an earlier authorized message');
-    expect(downloads).toBe(3);
+    expect(downloads).toBe(1);
   });
 
   it('returns a stated reason when the session has no scratch directory', async () => {

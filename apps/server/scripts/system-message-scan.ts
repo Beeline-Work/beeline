@@ -1251,6 +1251,18 @@ export function scanSystemMessageWording(files: Map<string, string>): ts.Node[] 
         return;
       }
       if (ts.isPropertyAccessExpression(part) || ts.isElementAccessExpression(part)) {
+        const selectedName = ts.isPropertyAccessExpression(part)
+          ? part.name.text
+          : ts.isStringLiteralLike(part.argumentExpression) ? part.argumentExpression.text : undefined;
+        // TypeScript can merge a union property's symbol declarations with a
+        // structurally identical property from an unrelated return type. When
+        // the actual base expression proves its selected origins, follow those
+        // values instead of importing another object's control enum as prose.
+        // Unresolved/computed origins retain the conservative symbol fallback.
+        if (selectedName && selected(part.expression, selectedName).length) {
+          collectField(part.expression, selectedName);
+          return;
+        }
         const decls = declarations(part);
         for (const declaration of decls) {
           if (ts.isPropertyAssignment(declaration)) collect(declaration.initializer);

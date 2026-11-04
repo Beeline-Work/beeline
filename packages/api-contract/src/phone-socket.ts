@@ -1,3 +1,4 @@
+import type { RouterCommandIdentity } from './router-command.js';
 import type { PhoneOperationMap } from './phone-operations.js';
 
 /** Requests share the phone's authenticated live socket with subscription frames. */
@@ -6,6 +7,7 @@ export type PhoneRequestFrame<Name extends keyof PhoneOperationMap = keyof Phone
   readonly id: string;
   readonly op: Op;
   readonly args: PhoneOperationMap[Op]['input'];
+  readonly command?: RouterCommandIdentity;
 } }[Name];
 
 export type PhoneResponseFrame<Result = unknown> =

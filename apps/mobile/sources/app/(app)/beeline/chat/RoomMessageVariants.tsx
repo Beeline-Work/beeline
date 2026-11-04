@@ -1,3 +1,4 @@
+import { useArtifactRowVisible } from '@/buzz/artifact-viewport';
 import { Ionicons } from '@expo/vector-icons';
 import type { MessageSendState } from '@/buzz/message-outbox';
 import { ChoiceVideoPreview } from '@/components/buzz/ChoiceVideoPreview';
@@ -54,7 +55,9 @@ import { ledgerStamp } from '@/buzz/relative-time';
 import { isLedgerDayOpener } from '@/buzz/message-dates';
 import { useTranscriptStamp } from '@/buzz/use-transcript-stamp';
 import { attachmentOpenUrl, formatAttachmentSize } from '@/buzz/chat-attachment';
-import { artifactFormat } from '@/buzz/artifact';
+import { artifactFormat, mediaIdFromUrl } from '@/buzz/artifact';
+import { routerOwnerArtifactAction } from '@/buzz/router-owner';
+import { ArtifactImage } from '@/components/buzz/ArtifactMedia';
 import { TranscriptReference } from '@/components/buzz/TranscriptReference';
 import { openComputerSessionViewer } from '@/components/buzz/ComputerSession';
 import { ArtifactCard, openArtifactViewer } from '@/components/buzz/ArtifactCard';
@@ -66,7 +69,6 @@ import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { ContentTarget } from '@/components/buzz/IndexRow';
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
-import { monolithSession } from '@/auth/monolith-session';
 import { squireApprovalAction } from '@beeline/api-contract/phone';
 import { AgentApprovalCard, approvalAudience, approvalDecisionNote } from '@/components/buzz/AgentApprovalCard';
 import { openExternalUrl } from '@/utils/open-external-url';
@@ -711,30 +713,20 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
 function AttachmentCard({
   attachment,
   isDesktop,
+  visible,
 }: {
   attachment: AttachmentReference;
   isDesktop: boolean;
+  visible: boolean;
 }) {
   const image =
-    !attachment.expired && attachment.mimeType.startsWith('image/') && attachment.thumbnailUrl;
-  const [mediaAuthorization, setMediaAuthorization] = useState<string>();
-  useEffect(() => {
-    if (!image) return;
-    let live = true;
-    void monolithSession
-      .authorization()
-      .then((token) => {
-        if (live) setMediaAuthorization(`Bearer ${token}`);
-      })
-      .catch(() => undefined);
-    return () => {
-      live = false;
-    };
-  }, [image]);
+    visible && !attachment.expired && attachment.mimeType.startsWith('image/') && mediaIdFromUrl(attachment.url);
   const open = () => {
     // A picture opens the same centered full-screen viewer on every surface,
     // desktop included; the work pane keeps only its documents.
     if (attachment.mimeType.startsWith('image/')) {
+      const objectId = mediaIdFromUrl(attachment.url);
+      if (objectId) routerOwnerArtifactAction('OpenArtifact', objectId);
       Modal.show({
         component: ArtifactViewerScreen,
         props: { attachment },
@@ -795,14 +787,11 @@ function AttachmentCard({
         : {})}
     >
       {image ? (
-        <Image
-          accessibilityIgnoresInvertColors
-          resizeMode="cover"
-          source={{
-            uri: attachment.thumbnailUrl,
-            ...(mediaAuthorization ? { headers: { authorization: mediaAuthorization } } : {}),
-          }}
+        <ArtifactImage
+          attachment={attachment}
+          fit="cover"
           style={styles.attachmentThumbnail}
+          testID={`chat-attachment-thumbnail-${attachment.name}`}
         />
       ) : (
         <View style={styles.attachmentFileGlyph}>
@@ -1260,6 +1249,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   announcementFeed = false,
   desktopLayout = false,
 }: OrdinaryLedgerMessageProps) {
+  const artifactVisible = useArtifactRowVisible(message.id, Boolean(message.attachments?.some(attachment => !attachment.expired)));
   const replyAvailable = canBeginReply(message, codeRoomId ?? message.reference?.channelId ?? '');
   const isOwn = message.isUser;
   const indexedAuthor = message.authorIdentity;
@@ -1545,6 +1535,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       }
       return (
         <ArtifactCard
+          visible={artifactVisible}
           attachment={attachment}
           authorHandle={
             attachment.author ??
@@ -1560,6 +1551,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     }
     return (
       <AttachmentCard
+        visible={artifactVisible}
         attachment={attachment}
         isDesktop={desktopLayout}
         key={`${message.id}-${attachment.url}`}

@@ -1,3 +1,7 @@
+vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => { throw new Error('Legacy Scheduled Work must not use router command authority'); } }));
+// This suite exercises an installed old-server path, with explicit legacy negotiation.
+vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
@@ -18,7 +22,7 @@ vi.mock('expo-router', () => ({ router, useLocalSearchParams: () => params.value
 vi.mock('react-native', async () => {
   const { createElement } = await import('react');
   const host = (name: string) => (props: any) => createElement(name, props, props.children);
-  return { Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style }, Pressable: host('Pressable'), TouchableOpacity: host('TouchableOpacity'), Text: host('Text'), ScrollView: host('ScrollView'), View: host('View') };
+  return { AppState: { currentState: 'active', addEventListener: () => ({ remove() {} }) }, Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style }, Pressable: host('Pressable'), TouchableOpacity: host('TouchableOpacity'), Text: host('Text'), ScrollView: host('ScrollView'), View: host('View') };
 });
 vi.mock('react-native-unistyles', () => ({ StyleSheet: { create: (fn: any) => fn({ buzz: { type: { sectionHead: {}, sectionLabel: { fontSize: 13, lineHeight: 19, letterSpacing: 2 }, sectionCount: { fontSize: 15, lineHeight: 22 } }, space: {}, roomList: { edge: 20 } } }), hairlineWidth: 1 } }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));

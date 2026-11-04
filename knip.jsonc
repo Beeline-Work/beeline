@@ -67,6 +67,10 @@
         "scripts/prove-vault-save.mjs",
         // Usage truth live proof: two agents on one real login, run by path.
         "scripts/prove-usage-accounts.mjs",
+        // T7's documented isolated historical-source/image proofs run by path.
+        // Their imported proof adapters stay reachable through these two CLIs.
+        "scripts/prove-router-expansion-source.mjs",
+        "scripts/prove-router-image-expansion.mjs",
         // The background latency runbook invokes these isolated database proofs by path.
         "scripts/prove-background-waste.mjs",
         "scripts/prove-webhook-burst.mjs",
@@ -362,6 +366,8 @@
         "scripts/wallet-dm-proof.tsx",
         "scripts/connector-switch-proof.tsx",
         "scripts/scheduled-work-proof.tsx",
+        // The inert Room deck frame builder passes this entry to esbuild by path.
+        "scripts/room-deck-unavailable-proof.tsx",
         "scripts/workflow-run-proof.tsx",
         "scripts/member-picker-nav-inset-proof.tsx",
         "scripts/new-room-nav-gap-proof.tsx",
@@ -400,6 +406,9 @@
         "scripts/{copy-postgres-data,verify-fly-cutover}.mjs",
         // Vitest loads this setup file only while a coverage map is recorded.
         "scripts/coverage-map-setup.mjs",
+        // Explicit manual whole-finding gates use a separate, intentionally red suite.
+        "vitest.router-group-a.config.ts",
+        "proofs/router-group-a-open-gates.ts",
       ],
     },
     "packages/net": {

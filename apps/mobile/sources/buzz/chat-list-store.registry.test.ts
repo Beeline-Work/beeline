@@ -1,6 +1,18 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isChatListView, type ChatListItem, type ChatListView } from '@beeline/buzz-client';
 
+// These fixtures exercise the negotiated legacy compatibility path. The actual
+// router owner/negotiation path has independent integration coverage.
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+vi.mock('@/buzz/router-owner', () => ({
+  routerFamilyMode: () => 'legacy',
+  acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
+    subscribe: () => () => {}, refreshVisibility: () => {} }),
+  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
+  retryRouterLane: () => {}, routerOwnerListPanel: () => {},
+}));
+
 const server = vi.hoisted(() => ({
   chats: (async () => { throw new Error('no read served'); }) as () => Promise<unknown>,
 }));

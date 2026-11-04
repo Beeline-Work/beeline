@@ -1,6 +1,7 @@
 import { cornerLifecycleSql } from './corner-github-cache.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql } from './corner-objective.js';
+import { commandOwnerLiveSql } from './turn-ownership.js';
 import { NotificationWork } from './notification-work.js';
 import { cornerOwnerSql } from './corner-worker.js';
 import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
@@ -18,8 +19,6 @@ import {
   GitHubCredentialRejectedError,
   githubMergeability,
   transientGitHubError,
-  githubRetryDelay,
-  retryGitHubRead,
 } from '@beeline/auth/github';
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { CornerPullRequestResult } from '@beeline/api-contract/daemon';
@@ -28,9 +27,8 @@ import { GITHUB_SUBJECT, systemLine, type SystemPhrase } from './system-line.js'
 import { recordPersonMergeYes, withdrawPullRequestMergeApprovals } from './corner-merge-approval.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { currentCornerBrief, assertCornerBriefAllowsMerge } from './corner-brief.js';
-import { cancelCornerAgentCommands } from './corner-close.js';
+import { cancelCornerAgentCommands, lockCornerArchivalAuthority } from './corner-close.js';
 import { captureServerError } from './sentry.js';
-import { retryMigrationStep, retryOnDeadlock } from './migration-retry.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import {
@@ -1121,6 +1119,11 @@ export class GitHubOperations {
       `SELECT extract(epoch FROM clock_timestamp())::double precision started_at`,
     )).rows[0]!.started_at;
     const pr = await this.app.readPullRequest(target.token, target.repository, number);
+    // Explicit reconciliation also observes an unmerged close even when the
+    // check verdict is unchanged. No clock scans for missed close webhooks.
+    if (!corner.archived && pr.state === 'closed' && !pr.merged && corner.lifecycle.pr?.number === number) {
+      await this.recordClosedCornerPullRequest(input.cornerId, number);
+    }
     // A delayed landing wake may be the first observer of a missed merge webhook.
     // Reconcile the recorded PR through the same idempotent archival path.
     if (!corner.archived && pr.merged && pr.headRef && corner.author_id &&
@@ -1200,7 +1203,7 @@ export class GitHubOperations {
     if (reviewerWake.status === 'dispatched' && !gate.approved) {
       const delivery = (await this.database.query<{ ended: boolean; live: boolean }>(
         `SELECT bool_or(command.state='complete') ended,
-           bool_or(command.state='pending' OR (command.state='claimed' AND command.lease_expires_at>now())) live
+           bool_or(command.state='pending' OR (command.state='claimed' AND ${commandOwnerLiveSql('command')})) live
          FROM agent_commands command WHERE command.room_id=$1
            AND command.review_context->>'headSha'=$2 AND command.review_context->'pullRequest'=$3::jsonb
            AND command.review_context->>'purpose' IS NULL`,
@@ -1895,79 +1898,6 @@ export class GitHubOperations {
     }, this.database, number);
   }
 
-  /** Recover merged or unmerged closed PRs when GitHub's close webhook was missed. */
-  async reconcileMergedCorners(): Promise<void> {
-    const candidates = await this.database.query<
-      CornerWebhookTarget & {
-        repository: string;
-        branch: string;
-        number: number;
-        title: string;
-        target_branch: string;
-      }
-    >(
-      `SELECT corner.id corner_id,parent.id parent_id,corner.name corner_name,
-              COALESCE(${cornerOwnerSql('corner.id')},corner.created_by,parent.created_by) author_id,
-              ${cornerObjectiveSql('corner')} summary,github.repository_id,github.installation_id,
-              github.full_name repository,${cornerFeatureBranchSql('corner')} branch,
-              (fact.lifecycle->'pr'->>'number')::integer number,
-              fact.lifecycle->'pr'->>'title' title,
-              fact.lifecycle->'pr'->>'targetBranch' target_branch
-       FROM rooms corner
-       JOIN rooms parent ON parent.id=corner.parent_id
-       JOIN corner_github_cache fact ON fact.corner_id=corner.id
-       JOIN github_repositories github ON github.installation_id=parent.github_installation_id
-         AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
-           COALESCE(parent.repository_remote,parent.repository_key,''),
-           '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-       WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-         AND COALESCE(${cornerOwnerSql('corner.id')},corner.created_by,parent.created_by) IS NOT NULL
-         AND fact.lifecycle->'pr'->>'mergedAt' IS NULL
-         AND fact.lifecycle->'pr'->>'number' ~ '^[1-9][0-9]*$'`,
-    );
-    for (const candidate of candidates.rows) {
-      try {
-        const token = await this.app.installationToken(Number(candidate.installation_id), {
-          repositoryIds: [Number(candidate.repository_id)],
-        });
-        const pr = await this.app.readPullRequest(
-          token.token,
-          candidate.repository,
-          candidate.number,
-        );
-        if (pr.headRef !== candidate.branch) continue;
-        if (!pr.merged) {
-          if (pr.state === 'closed') await this.recordClosedCornerPullRequest(candidate.corner_id, candidate.number);
-          continue;
-        }
-        await this.mergeCorner(
-          candidate,
-          {
-            repository: candidate.repository,
-            branch: candidate.branch,
-            title: pr.title ?? candidate.title ?? `Pull request #${candidate.number}`,
-            url: pr.url,
-            number: candidate.number,
-            targetBranch: pr.baseRef ?? candidate.target_branch,
-            headSha: pr.headSha,
-            ...(pr.mergedAt ? { mergedAt: pr.mergedAt } : {}),
-            ...(pr.mergeCommitSha ? { mergeCommitSha: pr.mergeCommitSha } : {}),
-            ...(pr.mergedBy ? { mergedBy: pr.mergedBy } : {}),
-            commits: 0,
-            files: 0,
-          },
-          this.database,
-          candidate.number,
-        );
-      } catch (error) {
-        console.error(
-          `[server] merged corner reconciliation failed for ${candidate.corner_id}:`,
-          error,
-        );
-      }
-    }
-  }
-
   private async processBaseBranchPush(body: GitHubRecord, installationId: number): Promise<void> {
     const repository = repositoryName(body);
     const branch = branchForEvent('push', body);
@@ -2379,105 +2309,6 @@ export class GitHubOperations {
     }
   }
 
-  /** Drain persisted failed refreshes without needing another GitHub webhook. */
-  async refreshQueuedChecks(): Promise<void> {
-    const rows = await this.database.query<CornerWebhookTarget & {
-      repository: string; pr_number: string; head_sha: string;
-    }>(`SELECT fact.corner_id,corner.parent_id,corner.name corner_name,
-        ${cornerOwnerSql('corner.id')} author_id,github.full_name repository,
-        github.repository_id,github.installation_id,
-        fact.lifecycle->'pr'->>'number' pr_number,
-        fact.lifecycle->'checkRefreshRetry'->>'headSha' head_sha
-      FROM corner_github_cache fact JOIN rooms corner ON corner.id=fact.corner_id
-      JOIN rooms parent ON parent.id=corner.parent_id
-      JOIN github_repositories github ON github.installation_id=parent.github_installation_id
-        AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
-          COALESCE(parent.repository_remote,parent.repository_key,''),
-          '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-      WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-        AND fact.lifecycle->'checkRefreshRetry'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
-        AND (fact.lifecycle->'checkRefreshRetry'->>'after')::double precision
-          <= extract(epoch FROM clock_timestamp())
-      -- The longest-due retry goes first.
-      ORDER BY (fact.lifecycle->'checkRefreshRetry'->>'after')::double precision,fact.corner_id LIMIT 20`);
-    for (const target of rows.rows) {
-      // Lease the item in one committed statement; no lock spans a provider read.
-      const claimed = await this.database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(
-          lifecycle,'{checkRefreshRetry,after}',to_jsonb(extract(epoch FROM clock_timestamp())+300))
-        WHERE corner_id=$1 AND lifecycle->'checkRefreshRetry'->>'headSha'=$2
-          AND lifecycle->'pr'->>'headSha'=$2
-          AND (lifecycle->'checkRefreshRetry'->>'after')::double precision
-            <= extract(epoch FROM clock_timestamp()) RETURNING corner_id`,
-        [target.corner_id, target.head_sha]);
-      if (!claimed.rowCount) continue;
-      try {
-        await this.refreshCheckRollup({ ...target, has_pr: true }, target.repository,
-          { name: 'Pull request checks', status: 'pending', headSha: target.head_sha }, this.database);
-      } catch (error) {
-        if (!transientGitHubError(error)) {
-          await this.database.query(`UPDATE corner_github_cache SET lifecycle=lifecycle-'checkRefreshRetry'
-            WHERE corner_id=$1 AND lifecycle->'checkRefreshRetry'->>'headSha'=$2`,
-            [target.corner_id, target.head_sha]);
-        }
-        if (error instanceof GitHubHttpError && error.rateLimited) continue;
-        captureServerError(error, { background_job: 'github-check-refresh' });
-        console.error('[github] queued check refresh failed:', error);
-      }
-    }
-  }
-
-  /**
-   * Re-read open corners still stored as pending. A deploy uses this so a head
-   * whose only unfinished suites are empty app placeholders moves on without
-   * waiting for another check event. The reconciliation cadence also repairs
-   * missed final events after startup. Recently fetched heads wait a minute;
-   * a rate limit stops this bounded pass.
-   */
-  async refreshOpenPendingChecks(): Promise<void> {
-    const rows = await this.database.query<CornerWebhookTarget & {
-      repository: string; pr_number: string; head_sha: string;
-    }>(`SELECT fact.corner_id,corner.parent_id,corner.name corner_name,
-        '' AS summary,${cornerOwnerSql('corner.id')} author_id,github.full_name repository,
-        github.repository_id,github.installation_id,
-        fact.lifecycle->'pr'->>'number' pr_number,
-        fact.lifecycle->'pr'->>'headSha' head_sha
-      FROM corner_github_cache fact JOIN rooms corner ON corner.id=fact.corner_id
-      JOIN rooms parent ON parent.id=corner.parent_id
-      JOIN github_repositories github ON github.installation_id=parent.github_installation_id
-        AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
-          COALESCE(parent.repository_remote,parent.repository_key,''),
-          '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-      WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
-        AND fact.lifecycle->>'checks'='pending'
-        AND fact.lifecycle->'checkRefreshRetry'->>'headSha'
-          IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha'
-        AND COALESCE((fact.lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0)
-          < extract(epoch FROM clock_timestamp())-60
-        AND ${cornerOwnerSql('corner.id')} IS NOT NULL
-        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-        AND fact.lifecycle->'pr'->>'number' ~ '^[0-9]+$'
-      -- The least recently fetched head goes first, so a bounded pass reaches every corner.
-      ORDER BY COALESCE((fact.lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0),fact.corner_id LIMIT 100`);
-    for (const target of rows.rows) {
-      try {
-        await this.refreshCheckRollup(
-          { ...target, has_pr: true, pr_number: target.pr_number },
-          target.repository,
-          { name: 'Pull request checks', status: 'pending', headSha: target.head_sha },
-          this.database,
-          { quiet: true },
-        );
-      } catch (error) {
-        if (error instanceof GitHubHttpError && error.rateLimited) {
-          console.error('[github] pending check re-read stopped on a rate limit');
-          return;
-        }
-        captureServerError(error, { background_job: 'github-pending-checks' });
-        console.error('[github] pending check re-read failed:', error);
-      }
-    }
-  }
-
   private async refreshCheckRollup(
     target: CornerWebhookTarget & { has_pr?: boolean; pr_number?: string | null }, repository: string,
     check: NonNullable<ReturnType<typeof checkFact>>, database: SqlDatabase,
@@ -2489,6 +2320,10 @@ export class GitHubOperations {
     } },
   ) {
     const checkHeadSha = check.headSha!;
+    // An obsolete event cannot admit provider work for a head already replaced
+    // in committed state. Later checks still fence a push during this read.
+    const admitted = await this.lifecycle(target.corner_id, database);
+    if (admitted.pr?.headSha && admitted.pr.headSha !== checkHeadSha) return;
     let fetchStartedAt = 0;
     let confirmedPr: Awaited<ReturnType<GitHubAppClient['readPullRequest']>> | undefined;
     try {
@@ -2497,9 +2332,9 @@ export class GitHubOperations {
         fetchStartedAt = options?.snapshot?.fetchStartedAt ?? (await database.query<{ started_at: number }>(
           `SELECT extract(epoch FROM clock_timestamp())::double precision started_at`,
         )).rows[0]!.started_at;
-        const token = options?.snapshot ?? await retryGitHubRead(() => this.app.installationToken(Number(target.installation_id), {
+        const token = options?.snapshot ?? await this.app.installationToken(Number(target.installation_id), {
           repositoryIds: [Number(target.repository_id)],
-        }));
+        });
         const rollup = options?.snapshot?.rollup ?? await this.app.readCommitCheckRollup(token.token, repository, checkHeadSha);
         // A push can move GitHub's PR head before either its push or synchronize
         // webhook reaches us. The stored head alone cannot authorize a verdict.
@@ -2521,7 +2356,7 @@ export class GitHubOperations {
         );
         const interruptedOnly = failedChecks.length === 0 && interruptedNames.size > 0;
         const livePr = options?.snapshot?.pr ?? (target.pr_number && (rollup.state === 'passed' || rollup.state === 'failed' || failedChecks.length > 0)
-          ? await retryGitHubRead(() => this.app.readPullRequest(token.token, repository, Number(target.pr_number)))
+          ? await this.app.readPullRequest(token.token, repository, Number(target.pr_number))
           : undefined);
         confirmedPr = livePr;
         if (livePr?.state === 'closed' && !livePr.merged) {
@@ -2754,25 +2589,20 @@ export class GitHubOperations {
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
         });
-        // A supplied transaction belongs to its caller: only the owner can
-        // roll back and replay the complete unit after lock contention.
-        if (database !== this.database) await refresh();
-        else await retryMigrationStep('GitHub check refresh', async () => { await refresh(); }, {
-          attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50),
-        });
+        // The admitted webhook/command owns one transaction. Contention
+        // returns to that owner; it does not replay reads or writes here.
+        await refresh();
         if (noteInserted) this.onRoomChanged?.(target.corner_id);
     } catch (error) {
       if (transientGitHubError(error)) {
         await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(
-            jsonb_set(jsonb_set(lifecycle,'{checks}','"pending"'::jsonb),
+            jsonb_set(lifecycle-'checkRefreshRetry','{checks}','"pending"'::jsonb),
               '{checksSummary}',jsonb_build_object('total',0,'failing','[]'::jsonb,
                 'checks','[]'::jsonb,'updatedAt',floor(extract(epoch FROM clock_timestamp()))) ||
-                COALESCE(lifecycle->'checksSummary','{}'::jsonb) || '{"status":"pending"}'::jsonb),'{checkRefreshRetry}',
-            jsonb_build_object('headSha',$2::text,'failedAt',extract(epoch FROM clock_timestamp()),
-              'after',extract(epoch FROM clock_timestamp())+$3::double precision))
+                COALESCE(lifecycle->'checksSummary','{}'::jsonb) || '{"status":"pending"}'::jsonb)
           WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2
-            AND COALESCE((lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0)<=$4`,
-          [target.corner_id, checkHeadSha, githubRetryDelay(error, 60_000) / 1000, fetchStartedAt]);
+            AND COALESCE((lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0)<=$3`,
+          [target.corner_id, checkHeadSha, fetchStartedAt]);
       }
       throw error;
     }
@@ -2860,10 +2690,11 @@ export class GitHubOperations {
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
     let updated = false;
     let archived = false;
-    await retryOnDeadlock(() => database.transaction(async (database) => {
+    await database.transaction(async (database) => {
       updated = false;
       archived = false;
       await lockCornerLifecycle(database, target.corner_id);
+      await lockCornerArchivalAuthority(database);
       const current = (
         await database.query<{ lifecycle: CornerLifecycleView; locked: boolean }>(
           `SELECT gh.lifecycle,fact.locked FROM corner_facts fact
@@ -2969,7 +2800,7 @@ export class GitHubOperations {
         pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
           head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },
       }, Number(target.installation_id), database);
-    }), { attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50) });
+    });
     if (!updated) return;
     this.onRoomChanged?.(target.corner_id);
     this.onRoomChanged?.(target.parent_id);
@@ -2987,16 +2818,10 @@ export class GitHubOperations {
     transaction?: SqlDatabase,
   ) {
     const database = transaction ?? this.database;
-    // Only autocommit writes can replay independently. A supplied transaction
-    // must propagate the deadlock so its owner can roll back the entire unit.
-    const write = async (run: () => Promise<unknown>) => {
-      if (transaction) { await run(); return; }
-      await retryOnDeadlock(async () => { await run(); }, {
-        attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50),
-      });
-    };
+    // Every statement belongs to this one installation event. A contended
+    // statement fails the event; only another admitted event can run it again.
     const account = await this.app.installationAccount(installationId);
-    await write(() => database.query(
+    await database.query(
       `INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,account_avatar_url,repository_selection,status) VALUES($1,$2,$3,$4,$5,$6,$7,'active') ON CONFLICT(installation_id) DO UPDATE SET owner_id=EXCLUDED.owner_id,account_id=EXCLUDED.account_id,account_login=EXCLUDED.account_login,account_type=EXCLUDED.account_type,account_avatar_url=EXCLUDED.account_avatar_url,repository_selection=EXCLUDED.repository_selection,status='active',updated_at=now()
        WHERE (github_installations.owner_id,github_installations.account_id,github_installations.account_login,github_installations.account_type,github_installations.account_avatar_url,github_installations.repository_selection,github_installations.status)
          IS DISTINCT FROM (EXCLUDED.owner_id,EXCLUDED.account_id,EXCLUDED.account_login,EXCLUDED.account_type,EXCLUDED.account_avatar_url,EXCLUDED.repository_selection,EXCLUDED.status)`,
@@ -3009,14 +2834,14 @@ export class GitHubOperations {
         account.avatarUrl ?? null,
         account.repositorySelection,
       ],
-    ));
+    );
     const repositories = await this.app.listRepositories(installationId);
-    for (const repository of repositories) await write(() => this.storeRepository(repository, database));
-    await write(() => database.query(
+    for (const repository of repositories) await this.storeRepository(repository, database);
+    await database.query(
       `UPDATE github_repositories SET active=false,updated_at=now()
        WHERE installation_id=$1 AND NOT (repository_id=ANY($2::bigint[])) AND active`,
       [installationId, repositories.map((repository) => repository.id)],
-    ));
+    );
   }
   /**
    * GET /user/installations is keyed to the OAuth lookup token's visibility:

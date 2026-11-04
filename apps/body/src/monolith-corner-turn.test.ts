@@ -117,11 +117,11 @@ describe('corner merge instructions', () => {
       worktreePath: '/unused',
     };
     await expect(loop.syncBranch()).rejects.toThrow('repository access denied');
-    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledTimes(1);
     expect(execute).toHaveBeenCalledWith('getRoomGitHubToken', { roomId: 'exact-room' });
   });
 
-  it('waits out a GitHub outage for a bounded time before the turn fails', async () => {
+  it('parks a GitHub outage after one lookup without timer retries', async () => {
     vi.useFakeTimers();
     try {
       const outage = new DaemonApiError(
@@ -146,7 +146,7 @@ describe('corner merge instructions', () => {
       await vi.advanceTimersByTimeAsync(1_000);
       expect(execute).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(60_000);
-      expect(execute.mock.calls.length).toBeGreaterThan(3);
+      expect(execute).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(120_000);
       await failed;
       const calls = execute.mock.calls.length;
@@ -157,7 +157,7 @@ describe('corner merge instructions', () => {
     }
   });
 
-  it('keeps three quick tries for a token refusal that is not a GitHub outage', async () => {
+  it('attempts a token refusal once', async () => {
     const refusal = new DaemonApiError(
       'monolith daemon request failed (404: not found)',
       404,
@@ -176,7 +176,7 @@ describe('corner merge instructions', () => {
       worktreePath: '/unused',
     };
     await expect(loop.syncBranch()).rejects.toBe(refusal);
-    expect(execute).toHaveBeenCalledTimes(3);
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
   it('routes missing review capability up and reviewer PASS back to the implementer', () => {

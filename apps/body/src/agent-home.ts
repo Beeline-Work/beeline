@@ -1,3 +1,4 @@
+import { piNoRetrySettings } from './pi-retry-settings.js';
 /**
  * Per-room-instance harness state directories.
  *
@@ -844,12 +845,12 @@ async function provisionAgentSkillsAndMcp(
     squireScope,
   );
   await provisionPiCustomModelConfig(root, operatorHome, failClosed, openRouterRouting);
-  // Pi 0.84.3 owns byte-level HTTP idleness and retries dropped streams.
-  // Generate only our liveness settings, preserving isolation from operator defaults.
+  // Keep the transport deadline, but never replay failed provider work.
+  // Generate isolated settings rather than inheriting operator retry defaults.
   if (appliesToHarness(agentKind, 'pi')) {
     const settings = {
       httpIdleTimeoutMs: 300_000,
-      retry: { enabled: true, maxRetries: 3, baseDelayMs: 2_000 },
+      ...piNoRetrySettings(),
     };
     await writeIsolatedHarnessFile(
       resolve(root, 'pi', 'settings.json'),

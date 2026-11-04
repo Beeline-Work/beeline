@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import type { AddressInfo } from 'node:net';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import { createAgentCommand } from './agent-command.js';
 import { TokenAuth } from './auth.js';
@@ -9,6 +9,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
+import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
 import { createBeelineServer } from './server.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 
@@ -18,19 +19,20 @@ const CORNER = '33333333-3333-4333-8333-333333333333';
 const HUMAN = '1'.repeat(64), WORKER = 'b'.repeat(64), REVIEWER = 'c'.repeat(64);
 
 class PgliteListenClient extends EventEmitter implements LivePgClient {
-  private release?: () => Promise<void>;
-  constructor(private readonly database: PgliteDatabase) {
-    super();
-  }
+  private readonly releases = new Map<string, () => Promise<void>>();
+  constructor(private readonly database: PgliteDatabase) { super(); }
   async connect(): Promise<void> {}
   async query(sql: string): Promise<void> {
-    if (sql !== `LISTEN ${POSTGRES_LIVE_CHANNEL}`) throw new Error(`unexpected query: ${sql}`);
-    this.release = await this.database.client.listen(POSTGRES_LIVE_CHANNEL, (payload) =>
-      this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload }));
+    const channel = [POSTGRES_LIVE_CHANNEL, COMMAND_COMPLETION_CHANNEL]
+      .find(value => sql === `LISTEN ${value}`);
+    if (!channel) throw new Error(`unexpected query: ${sql}`);
+    if (this.releases.has(channel)) return;
+    this.releases.set(channel, await this.database.client.listen(channel, payload =>
+      this.emit('notification', { channel, payload })));
   }
   async end(): Promise<void> {
-    await this.release?.();
-    this.release = undefined;
+    await Promise.all([...this.releases.values()].map(release => release()));
+    this.releases.clear();
   }
 }
 
@@ -51,8 +53,9 @@ beforeAll(async () => {
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, room, who]);
   const auth = new TokenAuth(db, async () => ({ subject: 'proof', login: 'proof' }));
   const live = new LiveHub();
-  listener = new PostgresLiveListener(db, live, () => new PgliteListenClient(db), 1);
+  listener = new PostgresLiveListener(db, live, () => new PgliteListenClient(db));
   void listener.run();
+  await vi.waitFor(() => expect(listener.projectionHealth().connected).toBe(true));
   server = createBeelineServer({ database: db, auth, live, phone: new PhoneService(db, 'http://placeholder'), daemon: new DaemonService(db, live) });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   origin = `127.0.0.1:${(server.address() as AddressInfo).port}`;

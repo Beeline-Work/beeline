@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import ts from 'typescript';
 
 export type WordingCatalog = Record<
@@ -59,6 +60,25 @@ export function readWordingCatalog(source: string): WordingCatalog {
     }
   }
   throw new Error('System-message catalog data is missing');
+}
+
+/** Hash only exact rendered fragments. Variable descriptions and writer code are not wording. */
+export function wordingHashes(catalog: WordingCatalog): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(catalog)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, entry]) => {
+        if (
+          !Array.isArray(entry.parts) ||
+          !entry.parts.every((part) => typeof part === 'string') ||
+          !Array.isArray(entry.variables) ||
+          !entry.variables.every((variable) => typeof variable === 'string') ||
+          entry.parts.length !== entry.variables.length + 1
+        )
+          throw new Error(`Invalid System-message template: ${key}`);
+        return [key, createHash('sha256').update(JSON.stringify(entry.parts)).digest('hex')];
+      }),
+  );
 }
 
 /** Validate template shape without freezing wording or keys. */

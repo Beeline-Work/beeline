@@ -1,4 +1,5 @@
 import { systemLine } from './system-line.js';
+import * as needsYou from './needs-you.js';
 import { shortenAsk } from '@beeline/api-contract/phone';
 import { readWorkspaceListView } from '@beeline/api-contract/phone';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -270,6 +271,21 @@ describe('PhoneService Needs-you tray', () => {
     expect(items.map((item) => item.messageId)).toEqual([decision, blocked]);
     expect(items[0]).toMatchObject({ text: 'Approve the reviewer-link fetch?', author: { name: 'Hoots' } });
     expect(await count()).toBe(2);
+  });
+
+  it('F04: an empty live snapshot skips cell projection and a later ask is still delivered', async () => {
+    const cells = vi.spyOn(needsYou, 'needsYouItems');
+    try {
+      await post(ROOM, VIEWER, 'An ordinary message');
+      expect(await phone.liveNeedsYou(ROOM, VIEWER)).toEqual({workspaceId: WORKSPACE, count: 0, items: []});
+      expect(cells).not.toHaveBeenCalled();
+      const question = await post(ROOM, PEER, '@ada can you confirm?');
+      const value = await phone.liveNeedsYou(ROOM, VIEWER);
+      expect(value?.count).toBe(1);
+      expect(value?.items.map(item => item.messageId)).toEqual([question]);
+      expect(cells).toHaveBeenCalledTimes(1);
+      expect((await database.query('SELECT * FROM needs_you_marks')).rows).toEqual([]);
+    } finally { cells.mockRestore(); }
   });
 
   it('F04: live projections never start unseen clocks; only painted IDs are marked', async () => {

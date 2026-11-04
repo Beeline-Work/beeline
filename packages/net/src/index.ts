@@ -3,3 +3,5 @@
 export { routes } from './routes.js';
 export type { RouteId, RouteInput, RouteOutput } from './routes.js';
 export type { Pass } from './private/admission.js';
+// Pure display validation carries no transport or admission authority.
+export { validateWorkflowProjection } from './display-projections.js';

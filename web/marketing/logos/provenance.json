@@ -1,0 +1,105 @@
+{
+  "assets": [
+    {
+      "file": "codex.png",
+      "source": "https://openai.gallery.vsassets.io/_apis/public/gallery/publisher/openai/extension/chatgpt/latest/assetbyname/Microsoft.VisualStudio.Services.Icons.Default",
+      "sha256": "2ce1c57dd3b312417106a487815ab1235bddce17e1fa9b32a2f048bd71ee25d3",
+      "retrieved": "2026-11-03"
+    },
+    {
+      "file": "claude.png",
+      "source": "https://claude.ai/favicon.ico (PNG frame extracted without redrawing the mark)",
+      "sha256": "3ec0f93ea36e4a43e2f311822fb5ceab1a7cbd2b965aa7f33267de30ea8877ae",
+      "retrieved": "2026-11-03"
+    },
+    {
+      "file": "grok-bot.svg",
+      "source": "https://x.ai/news/introducing-grok-bot (official inline svg.grok-bot-mark; original paths and transform preserved; embedded dark-head/light-eye CSS fills)",
+      "sha256": "9951742502d3a37ba9ed5b6c32df8b912ff688440986bd19ec10cfd0c0af6037",
+      "retrieved": "2026-11-03"
+    },
+    {
+      "file": "grok.svg",
+      "source": "https://grok.com/images/favicon.svg",
+      "sha256": "c3db0dfaf760b702b8490c6cbefe07fd8bfe00db43cae6a0acccf768f44d6179",
+      "retrieved": "2026-11-03"
+    },
+    {
+      "file": "hermes.svg",
+      "source": "https://raw.githubusercontent.com/NousResearch/hermes-agent/main/assets/icon-master-dark.svg",
+      "sha256": "e1517a2d5b81108f74e938997c442eaa0562af73b7b6beecb3363f3062b8ef36",
+      "retrieved": "2026-11-03"
+    },
+    {
+      "file": "cursor.svg",
+      "source": "https://cursor.com/marketing-static/favicon-light.svg",
+      "sha256": "78f169abca311d70e18ada789ccf1a55b4ca0306822f21a9ab0c2658ed88dbe0",
+      "retrieved": "2026-11-03"
+    },
+    {
+      "file": "goose.png",
+      "source": "https://raw.githubusercontent.com/block/goose/main/documentation/static/img/logo_dark.png (official Goose by Block standalone mark)",
+      "sha256": "2c65dc076e4de0726755ebe9f69b7f5a87e6e724a3580663f1b6b1d7ded66cfc",
+      "retrieved": "2026-11-03"
+    },
+    {
+      "file": "pi.svg",
+      "source": "https://pi.dev/favicon.svg",
+      "sha256": "d266b2c1d2c7bf169ca30d438963b176fba16fea6263b9ac30c8302f34ad7ce7",
+      "retrieved": "2026-11-03"
+    },
+    {
+      "file": "opencode.svg",
+      "source": "https://opencode.ai/favicon.svg",
+      "sha256": "e29bbe33380ad1c1ada9134b52f229d30e9776d60481512c9d81f2bb6f37def9",
+      "retrieved": "2026-11-03"
+    },
+    {
+      "file": "muse.svg",
+      "source": "https://agent.meta.ai/images/favicon/app-squiggle.svg",
+      "sha256": "6373d89d274258a38432f3c3729cd716498b8ded849b174a7998683dcf4aaba5",
+      "retrieved": "2026-11-03"
+    },
+    {
+      "file": "gemini.png",
+      "source": "Existing bundled company mark: apps/mobile/sources/assets/images/agent-logos/gemini.png",
+      "sha256": "69ddb188bf3705889bd16c26f945efc878556cb5ae926a645fd33b3ec8e053ab",
+      "retrieved": "2026-11-03"
+    },
+    {
+      "file": "zcode.png",
+      "source": "Existing bundled company mark: apps/mobile/sources/assets/images/agent-logos/zcode.png",
+      "sha256": "365c3576400ff5b48fe205aa8ee22cc3494d6895d6bd63df13e11e0a4318af37",
+      "retrieved": "2026-11-03"
+    }
+  ],
+  "people": [
+    {
+      "file": "alan.svg",
+      "face": "cat",
+      "source": "apps/mobile/sources/buzz/faces/face-tile.tsx::personFaceLayers",
+      "sha256": "180badaf5b9fe07d83dc9bf622b5e7d58aa2216871e7501beeb2b8b2a49ca578"
+    },
+    {
+      "file": "jimmy.svg",
+      "face": "fox",
+      "source": "apps/mobile/sources/buzz/faces/face-tile.tsx::personFaceLayers",
+      "sha256": "a791fa430da7acb64841292e5397078fb7467f8f45ebaee2708027eee010e491"
+    },
+    {
+      "file": "maya.svg",
+      "face": "owl",
+      "source": "apps/mobile/sources/buzz/faces/face-tile.tsx::personFaceLayers",
+      "sha256": "8ed404d32570a3faab55d14a63cc25df2ec28a48c73d08fecb49c10f337c44bd"
+    },
+    {
+      "file": "you.svg",
+      "face": "hare",
+      "source": "apps/mobile/sources/buzz/faces/face-tile.tsx::personFaceLayers",
+      "sha256": "5441a5a73aafd63dd584b4057041f4f28f50a8e5e2a367d8934748e75965bd80"
+    }
+  ],
+  "humanAvatars": "App-native personFaceLayers: Alan cat, Jimmy fox, Maya owl, visitor hare; source apps/mobile/sources/buzz/faces/face-tile.tsx and animals.tsx.",
+  "dots": "The official OpenAI corporate mark identifies ChatGPT dots. The older approved yellow stand-in is not used.",
+  "coverage": "Seven native harnesses from AUTO_DETECT_AGENT_KINDS, plus Hermes, Muse, ChatGPT dots and the Gemini/ZCode existing-client entries."
+}

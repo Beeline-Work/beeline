@@ -1,7 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import type { AddressInfo } from 'node:net';
+import type { QueryResultRow } from 'pg';
 import { performance } from 'node:perf_hooks';
+import { setImmediate as yieldIo } from 'node:timers/promises';
 import type { TokenAuth } from './auth.js';
 import type { DaemonService } from './daemon-service.js';
 import { migrate } from './database.js';
@@ -32,6 +34,14 @@ describe('R-DURABLE-REPLAY: database writes → reconnect → phone socket', () 
   beforeEach(async () => {
     connectionNumber = 0;
     database = PgliteDatabase.fromSnapshot(snapshot);
+    // Model PostgreSQL's I/O boundary: PGlite resolves queries in microtasks,
+    // otherwise a replay can starve this same process's WebSocket receiver.
+    const query = database.query.bind(database);
+    database.query = async <Row extends QueryResultRow = QueryResultRow>(sql: string, values: unknown[] = []) => {
+      const result = await query<Row>(sql, values);
+      await yieldIo();
+      return result;
+    };
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Reader')`, [VIEWER]);
     await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
     await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$2,$3,'Room')`,
@@ -181,8 +191,13 @@ describe('R-DURABLE-REPLAY: database writes → reconnect → phone socket', () 
     resumed.send({ type: 'sync', workspaceCursors: {
       [WORKSPACE]: { epoch: ack.epoch, base: ack.sequence, seen: [] } } });
     await resumed.wait(frames => frames.some(f => f.type === 'sync-ok'));
-    expect(resumed.frames.filter(f => f.type === 'invalidate' && f.reason === 'workspace-replay'))
-      .toHaveLength(5);
+    const committed = (await database.query<{sequence: string; event: Frame}>(
+      `SELECT sequence::text,event FROM live_journal WHERE stream_id=$1 AND sequence>$2 ORDER BY sequence::bigint`,
+      [`workspace:${WORKSPACE}`, ack.sequence])).rows;
+    // Five legacy mutations still replay, alongside committed projection causes.
+    expect(committed.filter(row => row.event.reason === 'workspace-replay')).toHaveLength(5);
+    expect(resumed.frames.filter(f => f.type === 'invalidate' && f.reason === 'workspace-replay')
+      .map(frame => frame.sequence)).toEqual(committed.map(row => Number(row.sequence)));
     expect(resumed.frames.find(f => f.type === 'workspace-cursor')).toMatchObject({ reload: false });
   });
 

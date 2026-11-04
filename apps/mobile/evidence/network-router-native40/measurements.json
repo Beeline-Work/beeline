@@ -1,0 +1,231 @@
+{
+  "recordedAt": "2026-11-02T10:27:58.626596+00:00",
+  "sandbox": {
+    "scriptStallMs": 1500,
+    "fixedEgressRequests": 0,
+    "controlRefreshRequests": 1,
+    "fixedContentVisuallyVerified": true
+  },
+  "pdf": {
+    "renderCompletionSignals": 1,
+    "canvasTextVisuallyVerified": true
+  },
+  "cache": {
+    "sharedBodyDownloads": 1,
+    "maximumActiveHTTPDownloads": 4,
+    "events": [
+      {
+        "kind": "shared-cache",
+        "loads": 1,
+        "sizes": [
+          177,
+          177,
+          177
+        ],
+        "localFile": true,
+        "diagnostics": {
+          "active": 0,
+          "queued": 0,
+          "memoryBytes": 177
+        },
+        "observedAt": 1793613776295
+      },
+      {
+        "kind": "cold-restore",
+        "bytes": 177,
+        "loads": 1,
+        "observedAt": 1793613776574
+      },
+      {
+        "kind": "native-image-load",
+        "localFile": true,
+        "observedAt": 1793613776580
+      },
+      {
+        "kind": "parallel-done",
+        "diagnostics": {
+          "active": 0,
+          "queued": 0,
+          "memoryBytes": 524465
+        },
+        "observedAt": 1793613777192
+      },
+      {
+        "kind": "purged",
+        "uri": null,
+        "observedAt": 1793613777199
+      }
+    ]
+  },
+  "computer": {
+    "overscanObservedMs": 74783,
+    "overscanMetadataOrBrowserRequests": 0,
+    "sessionMetadataReads": 2,
+    "maximumActiveBrowserStreams": 1,
+    "backgroundClosedAt": 1793614732305,
+    "resumedHTTPAt": 1793614753822,
+    "resumeAdditionalMetadataReads": 0,
+    "postScrollHiddenObservedMs": 57257,
+    "postScrollHiddenMetadataOrBrowserRequests": 0,
+    "streamEvents": [
+      {
+        "at": 1793614643005,
+        "kind": "browser-http",
+        "path": "/browser",
+        "warm": false,
+        "preview": true
+      },
+      {
+        "at": 1793614643522,
+        "kind": "browser-open",
+        "active": 1,
+        "warm": false
+      },
+      {
+        "at": 1793614664470,
+        "kind": "browser-http",
+        "path": "/browser",
+        "warm": true,
+        "preview": false
+      },
+      {
+        "at": 1793614664500,
+        "kind": "browser-close",
+        "active": 0
+      },
+      {
+        "at": 1793614664567,
+        "kind": "browser-open",
+        "active": 1,
+        "warm": true
+      },
+      {
+        "at": 1793614732305,
+        "kind": "browser-close",
+        "active": 0
+      },
+      {
+        "at": 1793614753822,
+        "kind": "browser-http",
+        "path": "/browser",
+        "warm": true,
+        "preview": false
+      },
+      {
+        "at": 1793614754339,
+        "kind": "browser-open",
+        "active": 1,
+        "warm": true
+      },
+      {
+        "at": 1793614791896,
+        "kind": "browser-close",
+        "active": 0
+      },
+      {
+        "at": 1793614791897,
+        "kind": "browser-http",
+        "path": "/browser",
+        "warm": false,
+        "preview": true
+      },
+      {
+        "at": 1793614791952,
+        "kind": "browser-open",
+        "active": 1,
+        "warm": false
+      },
+      {
+        "at": 1793614792268,
+        "kind": "browser-close",
+        "active": 0
+      }
+    ]
+  },
+  "diskAndPerformance": {
+    "performanceGate": "OPEN: multi-second synchronous JS and frame stall on this emulator",
+    "events": [
+      {
+        "kind": "sync-base64",
+        "bytes": 26214400,
+        "encodedLength": 34952536,
+        "elapsedMs": 2841.5815660001244,
+        "observedAt": 1793614853448
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-0",
+        "elapsedMs": 2969,
+        "residentBytes": 26214516,
+        "observedAt": 1793614856421
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-1",
+        "elapsedMs": 3030,
+        "residentBytes": 52429031,
+        "observedAt": 1793614859449
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-2",
+        "elapsedMs": 2808,
+        "residentBytes": 78643546,
+        "observedAt": 1793614862259
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-3",
+        "elapsedMs": 2776,
+        "residentBytes": 104858061,
+        "observedAt": 1793614865038
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-4",
+        "elapsedMs": 2842,
+        "residentBytes": 131072576,
+        "observedAt": 1793614867878
+      },
+      {
+        "kind": "disk-write",
+        "label": "replacement",
+        "elapsedMs": 2804,
+        "residentBytes": 131072576,
+        "observedAt": 1793614870685
+      },
+      {
+        "kind": "disk-write",
+        "label": "small",
+        "elapsedMs": 461,
+        "residentBytes": 109052479,
+        "observedAt": 1793614871140
+      },
+      {
+        "kind": "frame-pacing",
+        "maxRafGapMs": 2959.7846470000222,
+        "frames": 42,
+        "observedAt": 1793614871144
+      },
+      {
+        "kind": "disk-cleared",
+        "observedAt": 1793614871155
+      },
+      {
+        "kind": "disk-complete",
+        "maxResidentBytes": 131072576,
+        "limitBytes": 134217728,
+        "oversizeRejected": true,
+        "evictedOldest": true,
+        "observedAt": 1793614871157
+      }
+    ]
+  },
+  "limitations": [
+    "Synthetic metadata and authorization stand-ins; no real account, membership removal, main phone socket or production server.",
+    "Native cache leaf tests authorize reuse explicitly; this does not prove the private admission/metadata delivery path.",
+    "Resident disk sampled after completed writes; atomic temporary peak is covered separately by source regression tests.",
+    "Historical-source local native40 APK, not exact Play binary. Candidate JS injected into disposable Expo cache; no OTA delivery proof.",
+    "Android API35 x86_64 emulator with WebView124.0.6367.219; no physical-phone/iOS/Tauri proof."
+  ]
+}

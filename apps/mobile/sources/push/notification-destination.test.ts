@@ -1,6 +1,7 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 
-const state = vi.hoisted(() => ({ workspace: 'workspace-a', save: vi.fn(), room: vi.fn() }));
+const state = vi.hoisted(() => ({ workspace: 'workspace-a', mode: 'legacy' as 'legacy' | 'router' | 'pending', save: vi.fn(), room: vi.fn() }));
+vi.mock('@/buzz/router-owner', () => ({ routerFamilyMode: () => state.mode }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: async () => ({ publicKey: 'viewer' }),
   getEffectiveRelayUrl: async () => 'https://relay.test',
@@ -17,7 +18,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 import { resolveBuzzNotificationDestination } from './notification-destination';
 const target = { type: 'room-message', target: 'message' as const,
   roomId: 'room-a', channelId: 'room-a', workspaceId: 'workspace-a' };
-beforeEach(() => { state.workspace = 'workspace-a'; vi.clearAllMocks(); });
+beforeEach(() => { state.workspace = 'workspace-a'; state.mode = 'legacy'; vi.clearAllMocks(); });
 
 it('keeps an already selected pushed Workspace without notifying its subscribers or reading the Room', async () => {
   expect(await resolveBuzzNotificationDestination(target)).toEqual(target);
@@ -30,4 +31,14 @@ it('persists a different pushed Workspace while preserving the exact destination
   expect(await resolveBuzzNotificationDestination(target)).toEqual(target);
   expect(state.save).toHaveBeenCalledWith('viewer', 'workspace-a');
   expect(state.room).not.toHaveBeenCalled();
+});
+
+
+it('leaves a negotiated or pending corner target to one destination-focus snapshot', async () => {
+  const corner = { ...target, channelId: 'corner-a', cornerId: 'corner-a' };
+  for (const mode of ['router', 'pending'] as const) {
+    state.mode = mode;
+    expect(await resolveBuzzNotificationDestination(corner)).toEqual(corner);
+    expect(state.room).not.toHaveBeenCalled();
+  }
 });

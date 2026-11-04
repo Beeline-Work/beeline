@@ -1,3 +1,4 @@
+import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -10,7 +11,7 @@ import {
   loadPdfViewerDocument,
   type ArtifactPdfMode,
 } from '@/buzz/artifact-pdf';
-import { artifactBase64 } from '@/buzz/artifact-link';
+import { artifactBase64, subscribeArtifactBytesPurge } from '@/buzz/artifact-link';
 import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
 import { useSandboxWebView, useSandboxWebViewStatus } from '@/components/buzz/sandbox-webview';
 
@@ -35,26 +36,32 @@ export function ArtifactPdfView({
   onLoadEnd?: () => void;
   testID?: string;
 }) {
+  const recovery = useArtifactRecoveryGeneration();
   const [documentHtml, setDocumentHtml] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
-  const guardRef = useRef(createInitialLoadGuard());
+  const guardRef = useRef(createInitialLoadGuard(ARTIFACT_PDF_BASE_URL));
   useEffect(() => {
     let live = true;
+    const controller = new AbortController();
+    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); setDocumentHtml(null); setFailed(true); });
     setDocumentHtml(null);
     setFailed(false);
     void (async () => {
       try {
-        const pdfBase64 = await artifactBase64(attachment);
+        const pdfBase64 = await artifactBase64(attachment, { signal: controller.signal, preview: mode === 'preview' });
         const html = await loadPdfViewerDocument({ pdfBase64, mode });
-        if (live) setDocumentHtml(html);
+        if (live && !controller.signal.aborted) {
+          guardRef.current = createInitialLoadGuard(ARTIFACT_PDF_BASE_URL);
+          setDocumentHtml(html);
+        }
       } catch {
         if (live) setFailed(true);
       }
     })();
     return () => {
-      live = false;
+      live = false; controller.abort(); stopPurge();
     };
-  }, [attachment, mode]);
+  }, [attachment, mode, recovery]);
   if (failed) {
     return (
       <View style={styles.placeholder} testID="artifact-pdf-failed">

@@ -3,9 +3,12 @@ import * as React from 'react';
 import { readRoomViewMessage } from '@beeline/api-contract/phone';
 import { displayRoomMessages, foldSettledActivityRuns } from '@/buzz/room-view-presentation';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
-import { act, create } from 'react-test-renderer';
-import { afterEach, expect, it, vi } from 'vitest';
+import { act, create as createRenderer } from 'react-test-renderer';
+import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 
+const foreground = vi.hoisted(() => ({ state: 'active', listeners: new Set<() => void>() }));
+const mounted: ReturnType<typeof createRenderer>[] = [];
+function create(element: React.ReactElement) { const tree = createRenderer(element); mounted.push(tree); return tree; }
 const phoneOperation = vi.hoisted(() => vi.fn(async () => ({ access: 'fresh-token' })));
 const openExternalUrl = vi.hoisted(() => vi.fn(async () => undefined));
 const injectJavaScript = vi.hoisted(() => vi.fn());
@@ -14,7 +17,7 @@ const clipboard = vi.hoisted(() => ({ getStringAsync: vi.fn(async () => 'from my
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
-  return { BackHandler: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) }, Platform: { OS: 'android' }, Image: host('Image'), Pressable: host('Pressable'), Text: host('Text'), View: host('View') };
+  return { AppState: { get currentState() { return foreground.state; }, addEventListener: (_: string, listener: () => void) => { foreground.listeners.add(listener); return { remove: () => foreground.listeners.delete(listener) }; } }, BackHandler: { addEventListener: vi.fn(() => ({ remove: vi.fn() })) }, Platform: { OS: 'android' }, Image: host('Image'), Pressable: host('Pressable'), Text: host('Text'), View: host('View') };
 });
 vi.mock('expo-clipboard', () => clipboard);
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 24 }) }));
@@ -45,6 +48,8 @@ vi.mock('@/components/buzz/ViewerConversationDock', () => ({ ViewerConversationD
 
 import { Modal } from '@/modal';
 import { Platform } from 'react-native';
+import { publishViewerConversation, removeViewerConversation } from '@/buzz/viewer-conversation';
+import { observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
 import { ComputerSessionCard, ComputerSessionViewer, WarmComputerSessionHost, openComputerSessionViewer, type ComputerSessionView } from './ComputerSession';
 
 const session = {
@@ -52,7 +57,10 @@ const session = {
   status: 'live' as const, access: 'old-token',
 } as ComputerSessionView;
 
-afterEach(() => {
+beforeEach(() => { publishViewerConversation({ roomId: 'computer-test', messages: [], send: async () => true }); foreground.state = 'active'; observeArtifactRows('computer-test', ['message-1']); setArtifactViewportActive('computer-test', true); });
+afterEach(async () => {
+  await act(async () => mounted.splice(0).forEach(tree => tree.unmount()));
+  setArtifactViewportActive('computer-test', false); removeViewerConversation('computer-test');
   phoneOperation.mockReset().mockResolvedValue({ access: 'fresh-token' });
   openExternalUrl.mockClear(); injectJavaScript.mockClear(); vi.mocked(Modal.show).mockClear(); vi.mocked(Modal.alert).mockClear();
 });
@@ -60,7 +68,7 @@ afterEach(() => {
 for (const isDesktop of [false, true]) {
   it(`shows a live card and open button to a viewer who can steer on ${isDesktop ? 'desktop' : 'phone'}`, async () => {
     let tree: ReturnType<typeof create>;
-    await act(async () => { tree = create(<ComputerSessionCard session={{ ...session, access: undefined }} isDesktop={isDesktop} />); });
+    await act(async () => { tree = create(<ComputerSessionCard messageId="message-1" roomId="computer-test" session={{ ...session, access: undefined }} isDesktop={isDesktop} />); });
     expect(tree!.root.findAllByProps({ testID: 'computer-session-card-live' }).length).toBeGreaterThan(0);
     expect(tree!.root.findAllByProps({ testID: 'computer-session-open' }).length).toBeGreaterThan(0);
     await act(async () => tree!.unmount());
@@ -69,7 +77,7 @@ for (const isDesktop of [false, true]) {
   it(`shows the card without an open button when the viewer cannot steer on ${isDesktop ? 'desktop' : 'phone'}`, async () => {
     phoneOperation.mockRejectedValueOnce(new Error('access denied'));
     let tree: ReturnType<typeof create>;
-    await act(async () => { tree = create(<ComputerSessionCard session={{ ...session, access: undefined }} isDesktop={isDesktop} />); });
+    await act(async () => { tree = create(<ComputerSessionCard messageId="message-1" roomId="computer-test" session={{ ...session, access: undefined }} isDesktop={isDesktop} />); });
     expect(tree!.root.findAllByProps({ testID: 'computer-session-card-live' }).length).toBeGreaterThan(0);
     expect(tree!.root.findAllByProps({ testID: 'computer-session-open' })).toHaveLength(0);
     expect(tree!.root.findAllByProps({ testID: 'computer-session-card-open-browser' })).toHaveLength(0);
@@ -79,7 +87,7 @@ for (const isDesktop of [false, true]) {
 
 it('shows an ended card without an open button', async () => {
   let tree: ReturnType<typeof create>;
-  await act(async () => { tree = create(<ComputerSessionCard session={{ ...session, status: 'ended' }} />); });
+  await act(async () => { tree = create(<ComputerSessionCard messageId="message-1" roomId="computer-test" session={{ ...session, status: 'ended' }} />); });
   expect(tree!.root.findAllByProps({ testID: 'computer-session-card-ended' }).length).toBeGreaterThan(0);
   expect(tree!.root.findAllByProps({ testID: 'computer-session-open' })).toHaveLength(0);
     expect(tree!.root.findAllByProps({ testID: 'computer-session-card-open-browser' })).toHaveLength(0);
@@ -137,13 +145,17 @@ it('opens with the preview access immediately while a fresh authorization RPC is
   let resolveAccess!: (value: { access: string }) => void;
   phoneOperation.mockImplementationOnce(() => new Promise(resolve => { resolveAccess = resolve; }));
   let tree: ReturnType<typeof create>;
-  await act(async () => { tree = create(<ComputerSessionCard session={session} />); });
+  await act(async () => { tree = create(<ComputerSessionCard messageId="message-1" roomId="computer-test" session={session} />); });
   const preview = () => tree!.root.findAll((node: { type: unknown; props: Record<string, any> }) => typeof node.type === 'function' && node.props.preview === true)[0]!;
   expect(preview().props.session.access).toBe('old-token');
+  const previewMessage = tree!.root.findByType('WebView').props.onMessage;
   const open = tree!.root.findAllByType('Pressable').find((node: { props: Record<string, any> }) => node.props.testID === 'computer-session-open')!;
   await act(async () => { await open.props.onPress(); });
   expect(Modal.show).toHaveBeenCalledWith(expect.objectContaining({props: expect.objectContaining({session: expect.objectContaining({access: 'old-token'})})}));
   expect(preview().props.session.access).toBe('old-token');
+  await act(async () => previewMessage({ nativeEvent: { data: JSON.stringify({
+    type: 'computer-snapshot', id: session.id, requestId: 1, image: 'initial-frame',
+  }) } }));
   const shown = vi.mocked(Modal.show).mock.calls[0]![0] as any;
   let viewer: ReturnType<typeof create>;
   await act(async () => { viewer = create(<ComputerSessionViewer {...shown.props} onClose={() => {}} />); });
@@ -151,12 +163,14 @@ it('opens with the preview access immediately while a fresh authorization RPC is
   const source = () => viewer!.root.findByType('WebView').props.source.uri;
   expect(source()).toContain('access=old-token');
   expect(injectJavaScript).toHaveBeenCalledWith(expect.stringContaining('viewer-snapshot-request'));
+  expect(tree!.root.findAllByType('WebView')).toHaveLength(0);
+  expect(viewer!.root.findByType('Image').props.source.uri).toBe('data:image/jpeg;base64,initial-frame');
   await act(async () => {
-    tree!.root.findByType('WebView').props.onMessage({ nativeEvent: { data: JSON.stringify({
+    previewMessage({ nativeEvent: { data: JSON.stringify({
       type: 'computer-snapshot', id: session.id, requestId: 1, image: 'latest-frame',
     }) } });
   });
-  expect(viewer!.root.findByType('Image').props.source.uri).toBe('data:image/jpeg;base64,latest-frame');
+  expect(viewer!.root.findByType('Image').props.source.uri).toBe('data:image/jpeg;base64,initial-frame');
   await act(async () => { resolveAccess({ access: 'fresh-token' }); });
   expect(source()).toContain('access=old-token');
   await act(async () => {
@@ -277,39 +291,106 @@ it('clears the opening frame when the session ends before the viewer document lo
 });
 
 
-it('reveals and closes the preloaded native WebView without a mount or URL change', async () => {
-  let tree: ReturnType<typeof create>;
-  await act(async () => { tree = create(<><ComputerSessionCard session={session} /><WarmComputerSessionHost /></>); });
-  const host = () => tree!.root.findByProps({ testID: 'computer-session-warm-host' });
-  const stream = () => host().findByType('WebView');
-  const initial = stream();
-  const uri = initial.props.source.uri;
-  expect(host().props.pointerEvents).toBe('none');
-  expect(host().props.importantForAccessibility).toBe('no-hide-descendants');
+it('mounts only the opened full viewer, yields its card stream, and destroys it on Close', async () => {
+  let tree!: ReturnType<typeof create>;
+  await act(async () => { tree = create(<><ComputerSessionCard messageId="message-1" roomId="computer-test" session={session} /><WarmComputerSessionHost /></>); });
+  expect(tree.root.findAllByProps({ testID: 'computer-session-warm-host' })).toHaveLength(0);
+  expect(tree.root.findAllByType('WebView')).toHaveLength(1);
+  expect(phoneOperation).not.toHaveBeenCalled();
   await act(async () => { await openComputerSessionViewer(session); });
   expect(Modal.show).not.toHaveBeenCalled();
+  const host = () => tree.root.findByProps({ testID: 'computer-session-warm-host' });
+  const initial = host().findByType('WebView');
+  const uri = initial.props.source.uri;
   expect(host().props.pointerEvents).toBe('auto');
-  expect(stream()).toBe(initial);
-  expect(stream().props.source.uri).toBe(uri);
+  expect(tree.root.findAllByType('WebView')).toHaveLength(1);
+  expect(phoneOperation).toHaveBeenCalledOnce();
   await act(async () => host().findByProps({ testID: 'computer-session-close' }).props.onPress());
-  expect(host().props.pointerEvents).toBe('none');
-  expect(stream()).toBe(initial);
+  expect(tree.root.findAllByProps({ testID: 'computer-session-warm-host' })).toHaveLength(0);
+  expect(tree.root.findAllByType('WebView')).toHaveLength(1);
+  expect(tree.root.findByType('WebView').props.source.uri).toContain('preview=1');
+  expect(phoneOperation).toHaveBeenCalledOnce();
   await act(async () => { await openComputerSessionViewer(session); });
-  expect(stream()).toBe(initial);
-  expect(stream().props.source.uri).toBe(uri);
-  await act(async () => tree!.unmount());
+  expect(host().findByType('WebView')).not.toBe(initial);
+  expect(host().findByType('WebView').props.source.uri).toBe(uri);
+  expect(phoneOperation).toHaveBeenCalledTimes(2);
 });
 
-it('keeps only one preloaded full viewer and releases it when its last card unmounts', async () => {
-  let tree: ReturnType<typeof create>;
+it('retains session selections without preloading any hidden full viewer', async () => {
   const newer = { ...session, id: 'session-2', url: 'https://server.usebeeline.app/s/session-2/' };
-  await act(async () => { tree = create(<><ComputerSessionCard session={session} /><ComputerSessionCard session={newer} /><WarmComputerSessionHost /></>); });
-  const host = () => tree!.root.findByProps({ testID: 'computer-session-warm-host' });
-  expect(host().findAllByType('WebView')).toHaveLength(1);
-  expect(host().findByType('WebView').props.source.uri).toContain('/session-2/');
-  await act(async () => { tree!.update(<WarmComputerSessionHost />); });
-  expect(tree!.root.findAllByType('WebView')).toHaveLength(0);
-  await act(async () => tree!.unmount());
+  let tree!: ReturnType<typeof create>;
+  await act(async () => { tree = create(<><ComputerSessionCard messageId="message-1" roomId="computer-test" session={session} /><ComputerSessionCard messageId="message-1" roomId="computer-test" session={newer} /><WarmComputerSessionHost /></>); });
+  expect(tree.root.findAllByProps({ testID: 'computer-session-warm-host' })).toHaveLength(0);
+  expect(tree.root.findAllByType('WebView')).toHaveLength(2);
+  expect(phoneOperation).not.toHaveBeenCalled();
+  await act(async () => { tree.update(<WarmComputerSessionHost />); });
+  expect(tree.root.findAllByType('WebView')).toHaveLength(0);
+});
+
+it('overscan and hidden rows start neither stream nor authorization; actual visibility reads once', async () => {
+  setArtifactViewportActive('computer-test', false);
+  let tree!: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionCard messageId="message-1" roomId="computer-test" session={{ ...session, access: undefined }} />); });
+  expect(phoneOperation).not.toHaveBeenCalled();
+  expect(tree.root.findAllByType('WebView')).toHaveLength(0);
+  await act(async () => setArtifactViewportActive('computer-test', true));
+  expect(phoneOperation).toHaveBeenCalledOnce();
+  expect(tree.root.findAllByType('WebView')).toHaveLength(1);
+  await act(async () => observeArtifactRows('computer-test', []));
+  expect(tree.root.findAllByType('WebView')).toHaveLength(0);
+  await act(async () => observeArtifactRows('computer-test', ['message-1']));
+  expect(tree.root.findAllByType('WebView')).toHaveLength(1);
+  expect(phoneOperation).toHaveBeenCalledOnce();
+});
+
+it('background and retained inactive viewers release streams without authorization reads on resume', async () => {
+  let tree!: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionViewer session={session} active={false} onClose={() => {}} />); });
+  expect(tree.root.findAllByType('WebView')).toHaveLength(0);
+  expect(phoneOperation).not.toHaveBeenCalled();
+  await act(async () => tree.update(<ComputerSessionViewer session={session} onClose={() => {}} />));
+  expect(tree.root.findAllByType('WebView')).toHaveLength(1);
+  expect(phoneOperation).toHaveBeenCalledOnce();
+  await act(async () => { foreground.state = 'background'; for (const listener of foreground.listeners) listener(); });
+  expect(tree.root.findAllByType('WebView')).toHaveLength(0);
+  await act(async () => { foreground.state = 'active'; for (const listener of foreground.listeners) listener(); });
+  expect(tree.root.findAllByType('WebView')).toHaveLength(1);
+  expect(phoneOperation).toHaveBeenCalledOnce();
+});
+
+it('an opened native host follows its committed Room focus without hidden reads or losing the open-session budget', async () => {
+  let tree!: ReturnType<typeof create>;
+  await act(async () => { tree = create(<><ComputerSessionCard messageId="message-1" roomId="computer-test" session={session} /><WarmComputerSessionHost /></>); });
+  await act(async () => { await openComputerSessionViewer(session); });
+  expect(tree.root.findAllByType('WebView')).toHaveLength(1);
+  expect(phoneOperation).toHaveBeenCalledOnce();
+  await act(async () => {
+    setArtifactViewportActive('computer-test', false);
+    removeViewerConversation('computer-test');
+  });
+  const host = tree.root.findByProps({ testID: 'computer-session-warm-host' });
+  expect(host.props.pointerEvents).toBe('none');
+  expect(tree.root.findAllByType('WebView')).toHaveLength(0);
+  await act(async () => {
+    publishViewerConversation({ roomId: 'computer-test', messages: [], send: async () => true });
+    setArtifactViewportActive('computer-test', true);
+  });
+  expect(tree.root.findAllByType('WebView')).toHaveLength(1);
+  expect(phoneOperation).toHaveBeenCalledOnce();
+});
+
+it('a pending admitted authorization settles locally while backgrounded without another resume read', async () => {
+  let resolveAccess!: (value: { access: string }) => void;
+  phoneOperation.mockImplementationOnce(() => new Promise(resolve => { resolveAccess = resolve; }));
+  let tree!: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionViewer session={session} onClose={() => {}} />); });
+  await act(async () => { foreground.state = 'background'; for (const listener of foreground.listeners) listener(); });
+  await act(async () => resolveAccess({ access: 'settled-token' }));
+  expect(tree.root.findAllByType('WebView')).toHaveLength(0);
+  await act(async () => { foreground.state = 'active'; for (const listener of foreground.listeners) listener(); });
+  await act(async () => tree.root.findByType('WebView').props.onHttpError({ nativeEvent: { statusCode: 403 } }));
+  expect(tree.root.findByType('WebView').props.source.uri).toContain('access=settled-token');
+  expect(phoneOperation).toHaveBeenCalledOnce();
 });
 
 it('Reproduction SHARE-CARD-DM-1: renders a parsed live DM card independently of the agent turn', async () => {
@@ -324,7 +405,7 @@ it('Reproduction SHARE-CARD-DM-1: renders a parsed live DM card independently of
   const [message] = foldSettledActivityRuns(displayRoomMessages([wire!], 'a'.repeat(64)));
   expect(message?.computerSession).toBeDefined();
   let tree: ReturnType<typeof create>;
-  await act(async () => { tree = create(<ComputerSessionCard session={message!.computerSession!} />); });
+  await act(async () => { tree = create(<ComputerSessionCard messageId="message-1" roomId="computer-test" session={message!.computerSession!} />); });
   expect(tree!.root.findAllByProps({ testID: 'computer-session-card-live' }).length).toBeGreaterThan(0);
   expect(tree!.root.findAllByProps({ testID: 'computer-session-open' }).length).toBeGreaterThan(0);
   await act(async () => tree!.unmount());
@@ -340,7 +421,7 @@ it.each([false, true])('assigns keyboard avoidance to the correct computer viewe
 
 it('matches artifact footer destinations and refreshes access for external opening', async () => {
   let tree: ReturnType<typeof create>;
-  await act(async () => { tree = create(<ComputerSessionCard session={session} />); });
+  await act(async () => { tree = create(<ComputerSessionCard messageId="message-1" roomId="computer-test" session={session} />); });
   const external = tree!.root.findByProps({ testID: 'computer-session-card-open-browser' });
   const internal = tree!.root.findByProps({ testID: 'computer-session-open' });
   expect(external.props.label).toBe('Open in browser');
@@ -356,7 +437,7 @@ it('matches artifact footer destinations and refreshes access for external openi
 
 it('does not open an external browser when fresh card access is refused', async () => {
   let tree: ReturnType<typeof create>;
-  await act(async () => { tree = create(<ComputerSessionCard session={session} />); });
+  await act(async () => { tree = create(<ComputerSessionCard messageId="message-1" roomId="computer-test" session={session} />); });
   phoneOperation.mockRejectedValueOnce(new Error('access denied'));
   await act(async () => { tree!.root.findByProps({ testID: 'computer-session-card-open-browser' }).props.onPress(); });
   expect(openExternalUrl).not.toHaveBeenCalled();

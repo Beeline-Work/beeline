@@ -101,27 +101,14 @@ export async function fetchFreeAgentGrant(
   serverUrl: string,
   token: string,
   fetchImpl: typeof fetch = fetch,
-  sleep: (ms: number) => Promise<void> = (ms) => new Promise((done) => setTimeout(done, ms)),
+  _legacySleep?: (ms: number) => Promise<void>,
 ): Promise<FreeAgentGrant> {
-  let delay = 1_000;
-  for (let attempt = 1; ; attempt++) {
-    try {
-      const response = await fetchImpl(new URL('/v1/free-agents/bootstrap', serverUrl), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ token }),
-        signal: AbortSignal.timeout(30_000),
-      });
-      if (response.status === 401) throw new Error('free agent bootstrap token was refused');
-      if (!response.ok) throw new Error(`free agent bootstrap failed: HTTP ${response.status}`);
-      return (await response.json()) as FreeAgentGrant;
-    } catch (error) {
-      if (attempt >= 8 || (error instanceof Error && error.message.includes('refused'))) throw error;
-      console.warn(`[free-agent] bootstrap attempt ${attempt} failed; retrying:`, error);
-      await sleep(delay);
-      delay = Math.min(delay * 2, 30_000);
-    }
-  }
+  const response=await fetchImpl(new URL('/v1/free-agents/bootstrap',serverUrl),{
+    method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({token}),signal:AbortSignal.timeout(30_000),
+  });
+  if(response.status===401)throw new Error('free agent bootstrap token was refused');
+  if(!response.ok)throw new Error(`free agent bootstrap failed: HTTP ${response.status}`);
+  return await response.json() as FreeAgentGrant;
 }
 
 async function writePrivate(path: string, contents: string): Promise<void> {

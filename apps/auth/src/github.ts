@@ -75,18 +75,6 @@ export function githubRetryDelay(error: unknown, fallback: number): number {
   return Number.isFinite(delay) ? Math.max(fallback, delay) : fallback;
 }
 
-export async function retryGitHubRead<T>(read: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try { return await read(); } catch (error) {
-      if (!transientGitHubError(error) || attempt === 3) throw error;
-      const delay = githubRetryDelay(error, 1000 * 2 ** attempt);
-      // Long rate limits belong to the durable queue, not a sleeping webhook.
-      if (delay > 30_000) throw error;
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-}
-
 /** A listed workflow whose file or runs are gone is not dispatchable; auth/permission failures are not this. */
 function isMissingGitHubResource(error: unknown): boolean {
   return error instanceof GitHubHttpError && error.status === 404;
@@ -975,13 +963,9 @@ export class GitHubAppClient {
     });
   }
 
-  /** Retry transient provider failures once for every caller of the shared check read. */
-  async readCommitCheckRollup(accessToken: string, fullName: string, headSha: string): Promise<GitHubCheckRollup> {
-    return retryGitHubRead(() => this.readCommitCheckRollupOnce(accessToken, fullName, headSha));
-  }
-
-  /** GitHub's own combined verdict for every check run and commit-status context on a head. */
-  private async readCommitCheckRollupOnce(
+  /** One admitted read of GitHub's combined verdict and registration pages.
+   * Provider failure returns to the caller; no timer repeats the read. */
+  async readCommitCheckRollup(
     accessToken: string,
     fullName: string,
     headSha: string,
@@ -1174,8 +1158,8 @@ export class GitHubAppClient {
     if (typeof workflows.total_count !== 'number' || workflows.total_count < 0)
       throw new Error('GitHub workflow count is invalid');
     if (workflows.total_count === 0) return true;
-    // Workflows may not have created suites when the worker finishes its turn.
-    await new Promise<void>((resolve) => setTimeout(resolve, 10_000));
+    // Inspect registration within this explicit read. Time alone cannot
+    // authorize another provider observation or establish future absence.
     const [suites, runs] = await Promise.all([
       this.readRepositoryJson(accessToken, fullName, `commits/${headSha}/check-suites?per_page=1`),
       this.readRepositoryJson(accessToken, fullName, `actions/runs?head_sha=${headSha}&per_page=1`),

@@ -24,7 +24,7 @@ export function attachWarmComputerHost() {
   return () => { if (--hosts === 0) { cards.clear(); publish(null); } };
 }
 
-/** At most one full viewer is preloaded, alongside the latest mounted card. */
+/** Retain one selected session; hidden selections do not mount a full viewer. */
 export function warmComputerSession(session: ComputerSessionView, roomId?: string, agentHandle?: string) {
   const entry = { session, roomId, agentHandle, visible: false };
   cards.delete(session.id);
@@ -38,7 +38,7 @@ export function warmComputerSession(session: ComputerSessionView, roomId?: strin
   };
 }
 
-/** Reveal the same native WebView; its source and React parent never change. */
+/** Reveal the retained session through the existing full viewer host. */
 export function openWarmComputerSession(session: ComputerSessionView, roomId?: string, agentHandle?: string) {
   if (!hosts || current?.session.id !== session.id || current.session.access !== session.access) return false;
   publish({ ...current, roomId, agentHandle, visible: true });

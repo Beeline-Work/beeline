@@ -3,7 +3,12 @@ import React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+vi.mock('@/buzz/use-surface-focus', () => ({ useSurfaceFocus: () => state.focused }));
+
 const state = vi.hoisted(() => ({
+  focused: true,
+  reads: vi.fn(),
+  release: vi.fn(),
   operation: vi.fn(),
   navigate: vi.fn(),
   beforeRemove: undefined as undefined | ((event: any) => void),
@@ -39,6 +44,7 @@ vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: 
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspaceMembers() {
+      state.reads();
       return Promise.resolve({
         viewer: { identity: { pubkey: 'viewer' }, role: 'member', permissions: { manage: false } },
         grants: [],
@@ -58,7 +64,7 @@ vi.mock('@/buzz/workspace-records', () => ({
   recordWorkspaceRole: vi.fn(),
 }));
 vi.mock('@/buzz/workspace-watch', () => ({
-  watchWorkspace: () => ({ release: vi.fn(), ready: Promise.resolve(), rooms: vi.fn() }),
+  watchWorkspace: () => ({ release: state.release, ready: Promise.resolve(), rooms: vi.fn() }),
 }));
 vi.mock('@/buzz/surface-storage', () => ({
   surfaceAddress: () => ({}),
@@ -127,4 +133,25 @@ describe('Reproduction R1: Profile back while Message waits', () => {
       expect(loading).toBe(true);
     },
   );
+});
+
+// A retained screen starts hidden, enters focus, then releases its reader on blur.
+it('reads on actual focus and releases the profile watch on blur', async () => {
+  state.focused = false; state.reads.mockClear(); state.release.mockClear();
+  const props = { workspaceId: 'w', memberId: 'person', onClose: vi.fn() };
+  let tree: any;
+  try {
+    await act(async () => { tree = create(<HumanProfile {...props} />); });
+    expect(state.reads).not.toHaveBeenCalled();
+    state.focused = true;
+    await act(async () => { tree.update(<HumanProfile {...props} />); });
+    expect(state.reads).toHaveBeenCalledTimes(1);
+    state.focused = false;
+    await act(async () => { tree.update(<HumanProfile {...props} />); });
+    expect(state.release).toHaveBeenCalledTimes(1);
+    expect(state.reads).toHaveBeenCalledTimes(1);
+  } finally {
+    if (tree) await act(async () => tree.unmount());
+    state.focused = true;
+  }
 });

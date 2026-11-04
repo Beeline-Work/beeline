@@ -63,7 +63,7 @@ phone.setFreeAgents(free);
 const daemon = new DaemonService(db, live);
 const server = createBeelineServer({ database: db, auth, live, phone, daemon, mediaMaximumBytes: 1024 });
 const client = new ListenClient();
-const listener = new PostgresLiveListener(db, live, () => client, 1);
+const listener = new PostgresLiveListener(db, live, () => client);
 let listenerRun;
 let off;
 try {

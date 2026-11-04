@@ -1,5 +1,7 @@
+import { committedCommandNotificationSchema } from './postgres-live.js';
 /** OAuth credentials are independent of phone and helper credentials. */
 export const ROOMS_MCP_SCHEMA = `
+${committedCommandNotificationSchema()}
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS source_client jsonb;
 CREATE TABLE IF NOT EXISTS rooms_mcp_clients (
   id text PRIMARY KEY, name text NOT NULL, redirects jsonb NOT NULL,
@@ -142,6 +144,15 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_handoffs (
   expires_at timestamptz NOT NULL
 );
 CREATE INDEX IF NOT EXISTS rooms_mcp_handoffs_expiry ON rooms_mcp_handoffs(expires_at);
+CREATE OR REPLACE FUNCTION beeline_mcp_handoff_completion() RETURNS trigger AS $$
+BEGIN
+ IF TG_OP='UPDATE' AND ROW(NEW.code,NEW.error,NEW.expires_at) IS NOT DISTINCT FROM ROW(OLD.code,OLD.error,OLD.expires_at) THEN RETURN NULL;END IF;
+ PERFORM beeline_notify_committed_command(json_build_object('principal','oauth','operation','mcp-handoff','commandId',NEW.state_hash)::text);
+ RETURN NULL;
+END; $$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS beeline_mcp_handoff_completion ON rooms_mcp_handoffs;
+CREATE TRIGGER beeline_mcp_handoff_completion AFTER INSERT OR UPDATE ON rooms_mcp_handoffs
+ FOR EACH ROW EXECUTE FUNCTION beeline_mcp_handoff_completion();
 CREATE TABLE IF NOT EXISTS rooms_mcp_tokens (
   hash text PRIMARY KEY, client_id text NOT NULL REFERENCES rooms_mcp_clients(id) ON DELETE CASCADE,
   identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -194,6 +205,10 @@ CREATE TABLE IF NOT EXISTS rooms_mcp_event_deliveries (
   PRIMARY KEY(subscription_id,message_id)
 );
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_done ON rooms_mcp_event_deliveries(delivered_at) WHERE delivered_at IS NOT NULL;
+-- UTC keeps the claim-duration expression immutable and independent of session timezone.
+CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_due ON rooms_mcp_event_deliveries
+ ((GREATEST(next_attempt_at AT TIME ZONE 'UTC',(claimed_at AT TIME ZONE 'UTC')+interval '1 minute')))
+ WHERE delivered_at IS NULL AND attempts<5;
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_room ON rooms_mcp_event_deliveries(room_id);
 CREATE INDEX IF NOT EXISTS rooms_mcp_event_deliveries_pending ON rooms_mcp_event_deliveries(next_attempt_at)
   WHERE delivered_at IS NULL;

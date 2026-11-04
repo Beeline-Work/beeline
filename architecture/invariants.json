@@ -338,7 +338,9 @@
           "coalesced_context": "existing before the registry; weekly audit reviews",
           "coalesced_attachments": "existing before the registry; weekly audit reviews",
           "inbox_sequence": "existing before the registry; weekly audit reviews",
-          "created_offline": "existing before the registry; weekly audit reviews"
+          "created_offline": "existing before the registry; weekly audit reviews",
+          "turn_owner_connection_id": "Pins an owned command generation to its actual helper registration; NULL retains the installed-helper adapter.",
+          "turn_owner_epoch": "Fences an owned command against takeover of that helper registration even if other identifiers remain the same."
         }
       },
       "agent_connections": {
@@ -472,7 +474,9 @@
           "last_reported_blocking_run_id": "existing before the registry; weekly audit reviews",
           "updated_by": "existing before the registry; weekly audit reviews",
           "workflow_run": "existing before the registry; weekly audit reviews",
-          "owner_id": "existing before the registry; weekly audit reviews"
+          "owner_id": "existing before the registry; weekly audit reviews",
+          "failed_due_at": "Records the exact failed scheduled occurrence so the same due work cannot retry on a timer.",
+          "failed_revision": "Records the exact failed schedule revision; a committed edit or advance permits new work without altering the authorized due time."
         }
       },
       "agent_startup_backoff": {
@@ -578,7 +582,8 @@
             "reason": "existing before the registry; weekly audit reviews",
             "drop": "scripts/audit-decisions-drop-columns.sql after serving and rollback images drain"
           },
-          "chosen_voices": "existing before the registry; weekly audit reviews"
+          "chosen_voices": "existing before the registry; weekly audit reviews",
+          "usage_owner_id": "Records the owner provenance of a stored actor usage snapshot, so ownership changes cannot relabel private usage."
         }
       },
       "avatars": {
@@ -1404,7 +1409,8 @@
         "columns": {
           "stream_id": "existing before the registry; weekly audit reviews",
           "sequence": "existing before the registry; weekly audit reviews",
-          "event": "existing before the registry; weekly audit reviews"
+          "event": "existing before the registry; weekly audit reviews",
+          "byte_start": "Stores the append byte offset required to select the precise expired interval for byte-cap retention."
         }
       },
       "live_outputs": {
@@ -1433,7 +1439,8 @@
         "columns": {
           "id": "existing before the registry; weekly audit reviews",
           "epoch": "existing before the registry; weekly audit reviews",
-          "sequence": "existing before the registry; weekly audit reviews"
+          "sequence": "existing before the registry; weekly audit reviews",
+          "byte_total": "A monotonic byte high-watermark bounds retained journal bytes without rescanning the full stream on each write."
         }
       },
       "memberships": {
@@ -2345,7 +2352,10 @@
           "provider": "existing before the registry; weekly audit reviews",
           "account_key": "existing before the registry; weekly audit reviews",
           "usage": "existing before the registry; weekly audit reviews",
-          "updated_at": "existing before the registry; weekly audit reviews"
+          "updated_at": "existing before the registry; weekly audit reviews",
+          "source_revision": "Records the provider-source publication head needed to reject duplicate or stale canonical account updates.",
+          "revision": "A committed canonical account revision lets affected agent cells observe the exact account replacement.",
+          "source_at": "Stores when the source actually measured usage; rereads cannot invent a newer measurement time."
         }
       },
       "voice_calls": {
@@ -2817,6 +2827,119 @@
           "bound_by": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration.",
           "bound_at": "Retired (SENTRY-22): older images still join it during rolling deploy and rollback; drop in a contract migration."
         }
+      },
+      "agent_usage_cells": {
+        "module": "Helper usage cells (apps/server/src/helper-usage.ts)",
+        "reason": "Committed full-cell generations/revisions order canonical usage across source switches and server restarts.",
+        "columns": {
+          "agent_id": "Identifies the exact agent whose canonical usage cell changed, independently of client possession.",
+          "owner_id": "Pins the authorized owner for targeted committed source delivery and final enqueue fencing.",
+          "generation": "A durable generation prevents an older account/actor source from overwriting a newly selected source.",
+          "revision": "A committed monotonic cell revision orders all full replacements within that generation."
+        }
+      },
+      "agent_usage_source_heads": {
+        "module": "Helper usage cells (apps/server/src/helper-usage.ts)",
+        "reason": "Per-registration source heads fence replayed account/actor publications before altering the canonical usage cell.",
+        "columns": {
+          "agent_id": "Binds a publication head to the actual registered agent rather than a client cache key.",
+          "connection_id": "Pins source revisions to the current helper registration and rejects another registration replay.",
+          "epoch": "Distinguishes successive registrations even when a machine reconnects with the same agent identity.",
+          "revision": "Records the highest accepted source publication so duplicates cannot repeat or reorder updates.",
+          "digest": "Rejects conflicting content that attempts to reuse an already accepted source revision."
+        }
+      },
+      "helper_activation_authority": {
+        "module": "Helper activation context (apps/server/src/helper-activation-schema.ts)",
+        "reason": "Durable Workspace generation/revision tokens distinguish activation authority changes across listener recovery and helper reuse.",
+        "columns": {
+          "workspace_id": "Identifies the Workspace whose machine activation authority projection changed.",
+          "generation": "A durable projection generation prevents authority tokens from being reused across incompatible source histories.",
+          "revision": "The committed monotonic revision orders activation inputs without periodic whole-context reads."
+        }
+      },
+      "helper_overlay_demand": {
+        "module": "Helper overlays (apps/server/src/helper-overlay.ts)",
+        "reason": "A durable aggregate viewing revision gates fresh helper baselines across application sockets and server processes.",
+        "columns": {
+          "room_id": "Identifies the Room whose aggregate authorized viewing demand controls an ephemeral helper baseline.",
+          "revision": "A committed viewing revision prevents appends from crossing an off/on viewer activation boundary."
+        }
+      },
+      "router_authority": {
+        "module": "Router authority fencing (apps/server/src/router-projection-schema.ts)",
+        "reason": "Monotonic authority epochs survive response eviction and make revoke/regrant distinguishable at final enqueue and cold restore.",
+        "columns": {
+          "scope": "Identifies the exact permission domain whose readers must fence older private certificates.",
+          "epoch": "A durable monotonic generation invalidates pre-revocation certificates even after an access regrant."
+        }
+      },
+      "router_commands": {
+        "module": "Durable phone command ledger (apps/server/src/router-command-ledger.ts)",
+        "reason": "Effect identities/digests must survive socket loss, server replacement and result compaction to prevent redispatch.",
+        "columns": {
+          "principal": "Partitions an admitted effect identity by its authenticated principal.",
+          "operation": "Separates the same command identifier across distinct effect contracts.",
+          "command_id": "Preserves the immutable admitted intent identity across retries and socket generations.",
+          "digest": "Detects conflicting canonical arguments attempting to reuse an admitted command identity.",
+          "state": "Preserves durable pending, committed or unknown outcome when a reply or provider result is lost.",
+          "result": "Retains the original committed outcome for bounded replay without executing its effect again.",
+          "coverage": "Binds optional original convenience data to its actual committed cut and authority for later replay fencing.",
+          "created_at": "Records durable claim admission time for audit and pending outcome diagnosis.",
+          "completed_at": "Records the committed completion boundary independently of when a caller receives its reply.",
+          "result_expires_at": "Bounds full result retention while preserving permanent used identity/digest tombstones."
+        }
+      },
+      "agent_command_generation_owners": {
+        "module": "Turn ownership (apps/server/src/turn-ownership.ts)",
+        "reason": "Immutable per-command generation bindings prevent a delayed registration from adopting or replaying another execution generation.",
+        "columns": {
+          "command_id": "Identifies the command whose execution generation has an immutable owner binding.",
+          "generation_id": "Preserves each admitted execution generation after the current command advances or is requeued.",
+          "connection_id": "Records the registration that owned that execution, including explicit NULL markers for historical installed helpers.",
+          "connection_epoch": "Pins the immutable generation binding to a specific registration takeover epoch."
+        }
+      },
+      "turn_owned_effect_fences": {
+        "module": "Turn ownership (apps/server/src/turn-ownership.ts)",
+        "reason": "Transaction-local evidence drives a deferred COMMIT-time ownership check and deletes itself after success; no heartbeat or retained effect history.",
+        "columns": {
+          "transaction_id": "Identifies the exact database transaction whose actual owned effects must be checked at COMMIT.",
+          "agent_id": "Identifies the effect actor whose current registration must still be authoritative at COMMIT.",
+          "connection_id": "Pins the transaction evidence to the helper registration admitted for that effect.",
+          "connection_epoch": "Rejects transaction completion if a takeover replaced the admitted registration.",
+          "command_id": "Identifies the actual command authorizing the effect and prevents mixing commands in one registration transaction.",
+          "generation_id": "Pins the effect to its immutable execution generation even if that command is requeued before COMMIT."
+        }
+      },
+      "owner_projection_cells": {
+        "module": "Owner display projections (apps/server/src/router-owner-source.ts)",
+        "reason": "Committed owner summary cells separate pure Workbench display from wallet/provider observation and share one owner authority stream.",
+        "columns": {
+          "owner_id": "Partitions committed display cells by authenticated owner, independent of Workspace selection.",
+          "cell": "Names the bounded server-authored summary within an owner projection.",
+          "value": "Captures the transactional summary used by pure display snapshots without invoking the wallet/provider reader."
+        }
+      },
+      "owner_wallet_projections": {
+        "module": "Wallet observations (apps/server/src/wallet.ts)",
+        "reason": "A retained actual provider observation lets pure snapshots report measured balances and their age without observing the provider again.",
+        "columns": {
+          "owner_id": "Partitions the retained observation by the wallet owner.",
+          "value": "Preserves the last actual provider result, never a fabricated fresh balance.",
+          "observed_at": "Records when the retained provider observation changed, independently of display reads."
+        }
+      },
+      "agent_command_owner_ends": {
+        "module": "Owned model parking (apps/server/src/owned-model-parking.ts)",
+        "reason": "Immutable causal evidence fences a generation after its owner ends without inventing a provider outcome or allowing a second claim.",
+        "columns": {
+          "command_id": "Identifies the durable command whose generation can no longer claim or perform effects.",
+          "generation_id": "Scopes the immutable end to the exact issued command generation.",
+          "model_request_id": "Records the actual model attempt when known; NULL preserves missing-journal uncertainty.",
+          "ended_at": "Preserves the database time of the causal owner end for durable evidence.",
+          "transaction_id": "Binds owner-end evidence to the transaction that committed its authority change."
+        }
       }
     },
     "jsonb": {
@@ -2919,7 +3042,8 @@
         "observedAt": "existing before the registry; weekly audit reviews",
         "connectionId": "existing before the registry; weekly audit reviews",
         "never-seen": "existing before the registry; weekly audit reviews",
-        "POST": "existing before the registry; weekly audit reviews"
+        "POST": "existing before the registry; weekly audit reviews",
+        "overlayV1": "Original overlay command/generation/source and revision are required to reject stale publication and clean up only its ending owner; current command state cannot reconstruct them."
       },
       "reactions": {},
       "activity": {
@@ -3026,7 +3150,21 @@
       "definition": {
         "command": "Retired corner app's command; only the unique index reads it, for older images."
       },
-      "manifest": {}
+      "manifest": {},
+      "coverage": {
+        "cut": "Stores the original committed canonical data cut; replay cannot relabel an older convenience DTO at a newer cut.",
+        "authority": "Stores the original certificate for current-permission validation before replaying private convenience data.",
+        "workspaceId": "Binds the original command convenience projection to its canonical Workspace scope.",
+        "roomId": "Binds optional Room convenience data to the exact scope whose authority must still match."
+      },
+      "value": {
+        "createdAt": "Committed binding creation time in the owner Workbench summary.",
+        "expiresAt": "Committed delegation expiry in the owner Workbench summary.",
+        "standing": "Committed standing-delegation flag in the owner Workbench summary.",
+        "workspace": "Existing source-capture JSON alias retains the changed Workspace identifier for committed scheduling causes.",
+        "room": "Existing source-capture JSON alias retains the changed Room identifier for committed scheduling causes.",
+        "roomId": "Existing scheduled-row source JSON alias preserves the Room scope across old/new capture."
+      }
     }
   }
 }

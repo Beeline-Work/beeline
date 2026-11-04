@@ -1,6 +1,7 @@
 import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { useDesktopLayout } from '@/buzz/desktop-layout-state';
+import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
 import { resolveComposerMentions } from '@/buzz/room-participants';
 import { Button } from '@/components/buzz/Button';
@@ -136,6 +137,7 @@ export function DesktopRoomInspector({
   onClose,
   focusMessageId,
 }: Props) {
+  const focused = useSurfaceFocus();
   const selectedCornerId = content.kind === 'corner' ? content.cornerId : null;
   const [messageRecordScope, setMessageRecordScope] = React.useState<string | null>(null);
   React.useEffect(() => {
@@ -241,7 +243,7 @@ export function DesktopRoomInspector({
           onClose={onClose}
         />
       ) : content.kind === 'computer' ? (
-        <ComputerSessionViewer session={content.session} onClose={onClose} roomId={room.room.id}
+        <ComputerSessionViewer session={content.session} active={focused} onClose={onClose} roomId={room.room.id}
           agentHandle={content.session.agentHandle} />
       ) : (
         <>

@@ -14,8 +14,23 @@ import { loadBuzzIdentity, loadBuzzViewerPubkey } from '@/auth/buzz-identity-sto
 
 type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 
+// These fixtures exercise the negotiated legacy compatibility path. The actual
+// router owner/negotiation path has independent integration coverage.
+vi.mock('@/sync/transport/live-connection', () => ({ reconnectNow: () => { controls.explicitReconnects += 1; } }));
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => controls.routerMode, holdRouterConnection: () => () => {} }));
+vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+vi.mock('@/buzz/router-owner', () => ({
+  routerFamilyMode: () => 'legacy',
+  acquireRouterLane: () => ({ current: () => ({ state: controls.routerValue ? 'LIVE' : 'ABSENT', value: controls.routerValue, cut: null, error: null }), release: () => {},
+    subscribe: () => () => {}, refreshVisibility: () => {} }),
+  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
+  retryRouterLane: () => {}, routerOwnerListPanel: () => {},
+}));
+
 const controls = vi.hoisted(() => ({
   focused: true,
+  routerMode: 'legacy' as 'legacy' | 'pending' | 'router',
+  routerValue: null as RoomView | null,
   navigationListeners: new Map<string, Set<() => void>>(),
   interactionTasks: new Set<() => void>(),
   focusListeners: new Set<() => void>(),
@@ -45,6 +60,7 @@ const controls = vi.hoisted(() => ({
   readMarks: [] as string[],
   transportCount: 0,
   reconnects: 0,
+  explicitReconnects: 0,
   appState: 'active' as string,
   appStateListeners: new Set<(state: string) => void>(),
   reopenChat: vi.fn(async (_roomId: string) => undefined),
@@ -429,6 +445,8 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 beforeEach(() => {
+  controls.routerMode = 'legacy';
+  controls.routerValue = null;
   vi.useRealTimers();
   vi.unstubAllGlobals();
   abandonRoomDraw(roomDrawGeneration());
@@ -446,6 +464,7 @@ beforeEach(() => {
   controls.subscriptions.length = 0;
   controls.transportCount = 0;
   controls.reconnects = 0;
+  controls.explicitReconnects = 0;
   controls.appState = 'active';
   controls.reopenChat.mockClear();
   controls.replayEvents.length = 0;
@@ -462,6 +481,44 @@ beforeEach(() => {
   controls.outboxFail.mockClear();
   controls.outboxGet.mockClear();
   vi.clearAllMocks();
+});
+
+it('uses the existing pending Room Retry for one transport attempt without manufacturing a read or focus', async () => {
+  controls.routerMode = 'pending';
+  let current!: UseRoomSurfaceSessionResult;
+  let renderer!: ReactTestRenderer;
+  await act(async () => { renderer = create(React.createElement(Harness, {
+    channelId: 'room-a', capture: (value: UseRoomSurfaceSessionResult) => { current = value; },
+  })); });
+  await act(async () => current.retryHydration());
+  expect(controls.explicitReconnects).toBe(1);
+  expect(controls.roomReads).toBe(0);
+  expect(controls.schedulers).toHaveLength(0);
+  await act(async () => renderer.unmount());
+});
+
+it('hides retained negotiated Room data synchronously when connection capability returns to pending', async () => {
+  const roomId = '11111111-1111-4111-8111-111111111111';
+  controls.routerMode = 'router';
+  controls.routerValue = roomView(roomId);
+  let current!: UseRoomSurfaceSessionResult;
+  const paints: Array<RoomView | null> = [];
+  let renderer: ReactTestRenderer | undefined;
+  const props = { channelId: roomId, capture: (value: UseRoomSurfaceSessionResult) => { current = value; paints.push(value.roomSurface); } };
+  try {
+    await act(async () => { renderer = create(React.createElement(Harness, props)); });
+    await flushEffects();
+    expect(current.roomSurface?.room.id).toBe(roomId);
+    paints.length = 0;
+    controls.routerMode = 'pending';
+    await act(async () => renderer!.update(React.createElement(Harness, props)));
+    expect(paints.length).toBeGreaterThan(0);
+    expect(paints.every(value => value === null)).toBe(true);
+    expect(current.liveOverlays).toEqual([]);
+    expect(current.heartbeatPresences).toEqual({});
+  } finally {
+    if (renderer) await act(async () => renderer!.unmount());
+  }
 });
 
 describe('reopening a dismissed Room', () => {

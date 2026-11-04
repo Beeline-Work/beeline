@@ -1,3 +1,11 @@
+vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: () => {} }));
+// This fixture owns approval colors/actions, not authenticated image bytes.
+// RoomMessageVariants also exports image rows; keep that unrelated renderer
+// outside the theme proof's native credential boundary.
+vi.mock('@/components/buzz/ArtifactMedia', async () => {
+  const ReactModule = await import('react');
+  return { ArtifactImage: (props: any) => ReactModule.createElement('ArtifactImage', props) };
+});
 vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 const proofTheme = vi.hoisted(() => ({ value: 'obsidian' as 'bone' | 'obsidian' }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });

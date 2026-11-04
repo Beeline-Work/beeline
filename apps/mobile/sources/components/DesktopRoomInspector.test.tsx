@@ -1,3 +1,5 @@
+const computerFocus = vi.hoisted(() => ({ active: true }));
+vi.mock('@/buzz/use-surface-focus', () => ({ useSurfaceFocus: () => computerFocus.active }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
@@ -316,6 +318,7 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
+  computerFocus.active = true;
   resetRoomCornerStore();
   phoneOperation.mockReset();
   publishMessage.mockReset().mockResolvedValue({});
@@ -345,6 +348,14 @@ function nodeText(node: { findAllByType(type: unknown): any[] }): string {
 }
 
 describe('DesktopRoomInspector work pane', () => {
+  it('gives the browser viewer the committed retained Room focus', async () => {
+    const options = props({ content: { kind: 'computer', session: { id: 'session', status: 'live', url: 'https://example.invalid/' } } });
+    const tree = await render(options);
+    expect(tree.root.findByType('ComputerSessionViewer' as any).props.active).toBe(true);
+    computerFocus.active = false;
+    await act(async () => tree.update(<DesktopRoomInspector {...options} />));
+    expect(tree.root.findByType('ComputerSessionViewer' as any).props.active).toBe(false);
+  });
   it('hides standalone corner-close notices in the inspector transcript', async () => {
     const detail = { ...room(), room: corners[0].corner, parent: room().room,
       messages: [{ id: 'closed-fact', text: 'Corner closed', createdAt: 5, author: agent,

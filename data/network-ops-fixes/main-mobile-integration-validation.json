@@ -1,0 +1,85 @@
+{
+  "sourceParents": [
+    "5886bf40d947435ae2fafabe8bb4272eaee4fe22",
+    "98c2a49a4f3df909e8fd3fc32ae39129f6f8367b"
+  ],
+  "scope": "Mobile auth main integration; single incident replacement budget retained; no production or installed-native claim",
+  "runner": {
+    "nodeOptions": "--max-old-space-size=4096",
+    "vitestArgs": [
+      "--maxWorkers=2",
+      "--minWorkers=1"
+    ],
+    "execution": "one suite at a time"
+  },
+  "passed": 239,
+  "suiteSelections": 10,
+  "vitest": [
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/sync/transport/live-connection.test.ts",
+      "passed": 91,
+      "logSha256": "1ab7563f70984cc5e79b13b952b664be9f5b686c361f6ef1f1f277f995af4d1e"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/app-layout.status-bar.test.tsx",
+      "passed": 5,
+      "logSha256": "54f858ba78d1a9ea5e26ff0e5e9110c1d7b85d9ec3d98bdf1b52ab4f7f02ef08"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/auth/monolith-session.test.ts",
+      "passed": 45,
+      "logSha256": "b38a8c667e3bc20627b0ba247410d13aa0bc604cf8b642b55e7971bb2993c4b9"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/auth/session-required.test.ts",
+      "passed": 6,
+      "logSha256": "5bad602642c06e3766721b04dff15064279d96ff3ea3260e5bba072796997e01"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/channels.bootstrap.test.ts",
+      "passed": 10,
+      "logSha256": "ff70501f55e2cfe7887284eefc7566030472616b5674d2d6c82c125f3f894ee1"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/app/(app)/beeline/channels.live.test.tsx",
+      "passed": 39,
+      "logSha256": "0fb69a84e4b91914721d3fec7d41785dd5a38de48848a4a875210fe7d93c8c12"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/buzz/room-draw-barrier.test.ts",
+      "passed": 9,
+      "logSha256": "523c9d34b34dcbd19b6a556a91aa83cc32fc562f2bb092750490d8df74a96f61"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/sync/transport/monolith-rig-transport.test.ts",
+      "passed": 25,
+      "logSha256": "fbd447990fa6371eaf69eecb3df00e71a169c1b5c57320933064e67ad6cf7479"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/sync/transport/room-view-client.test.ts",
+      "passed": 6,
+      "logSha256": "d81aafda58000116471e417fdbc62b050f036b87c55ba0846f13eeca7db01f5c"
+    },
+    {
+      "workspace": "apps/mobile",
+      "file": "sources/buzz/use-active-community.test.tsx",
+      "passed": 3,
+      "logSha256": "f4392bf2d2474212f7a4a9dc72bb0fe9694edbc2cacc05831dd034f97d7f996b"
+    }
+  ],
+  "checks": [
+    "full root typecheck",
+    "phone network inventory: 72 sites / 72 entries",
+    "router boundaries: 158 inventoried, no production opt-in",
+    "base-aware architecture: 20 rules"
+  ]
+}

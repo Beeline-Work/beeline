@@ -86,7 +86,7 @@ describe('soul avatar generation', () => {
     ).toContain('save refused');
   });
 
-  it('replaces the display after successful refresh and keeps guidance after reopening', async () => {
+  it('finishes from the parent detail without a second portrait read and keeps guidance after reopening', async () => {
     const generated = {
       ...original,
       avatarGenerationId: 'saved-id',
@@ -98,15 +98,15 @@ describe('soul avatar generation', () => {
         },
       },
     };
-    const refresh = vi.fn().mockImplementation(async () => {
-      renderer.update(React.createElement(SoulPortraitControls, { ...props, detail: generated }));
-      return generated;
-    });
+    const refresh = vi.fn();
     const props = mount(original, vi.fn().mockResolvedValue(undefined), refresh);
     await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
     expect(countHint()).toBe(0);
     expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(true);
     await agentChanged();
+    expect(refresh).not.toHaveBeenCalled();
+    expect(liveListeners.size).toBe(0);
+    await act(async () => renderer.update(React.createElement(SoulPortraitControls, { ...props, detail: generated })));
     expect(countHint()).toBe(1);
     expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(false);
     act(() => renderer.unmount());
@@ -124,7 +124,8 @@ describe('soul avatar generation', () => {
     expect(renderer.root.findByType('SettingsRow').props.disabled).toBe(true);
     expect(countHint()).toBe(0);
     await agentChanged();
-    expect(props.refresh).toHaveBeenCalledTimes(1);
+    expect(props.refresh).not.toHaveBeenCalled();
+    expect(liveListeners.size).toBe(0);
   });
 
   it('lets a server answer end the client bridge without waiting for a live signal', async () => {

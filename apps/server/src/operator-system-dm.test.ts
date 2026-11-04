@@ -46,7 +46,7 @@ async function send(recipients: string | string[], text = 'Your issue has been f
 async function drain() { while (await flushOperatorSystemDms(db)) { /* Drain bounded batches in this isolated fixture. */ } }
 
 describe('owner-command operator System DMs', () => {
-  it('R-SENTRY-CONNECT: a deferred checkout preserves the notice and delivers it once on the next loop', async () => {
+  it('R-SENTRY-CONNECT: a deferred checkout preserves the notice and delivers it once on the next admitted delivery', async () => {
     const text = 'Your notice is ready.';
     const sent = await send('@recipient', text);
     const client = Object.assign(new EventEmitter(), {
@@ -54,9 +54,9 @@ describe('owner-command operator System DMs', () => {
       release: vi.fn(),
     });
     const connect = vi.fn().mockResolvedValue(client);
-    for (let i = 0; i < 4; i++) connect.mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'));
+    connect.mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'));
     const database = new PostgresDatabase('', 1, {
-      pool: { connect, on: vi.fn(), end: vi.fn() } as unknown as Pool, pause: async () => {},
+      pool: { connect, on: vi.fn(), end: vi.fn() } as unknown as Pool,
     });
     const capture = vi.spyOn(sentry, 'captureServerError').mockImplementation(() => {});
     const warning = vi.spyOn(console, 'warn').mockImplementation(() => {});

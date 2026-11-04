@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cornerRunStateSql } from './corner-run.js';
 import { generateKeyPair, exportPKCS8 } from 'jose';
-import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient, retryGitHubRead } from '@beeline/auth/github';
+import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient } from '@beeline/auth/github';
 import { type QueryResult, type SqlDatabase } from './database.js';
 import type { QueryResultRow } from 'pg';
 import { seedCornerOpening, PgliteDatabase, migratedDatabase, insertCornerFacts, setCornerOwner } from './test-support.js';
@@ -20,11 +20,6 @@ import { runInNewContext } from 'node:vm';
 import { transformSync } from 'esbuild';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-
-// The fixture mocks provider responses; apply the same retry boundary as the shared client.
-function retryingCheckClient(app: { readCommitCheckRollup: (...args: unknown[]) => Promise<unknown> }): GitHubAppClient {
-  return { ...app, readCommitCheckRollup: (...args: unknown[]) => retryGitHubRead(() => app.readCommitCheckRollup(...args)) } as unknown as GitHubAppClient;
-}
 
 function checkStatusLine(lifecycle: unknown): string | undefined {
   const formatter = transformSync(readFileSync(new URL('../../mobile/sources/buzz/corner-status-line.ts', import.meta.url), 'utf8'), {
@@ -152,7 +147,7 @@ describe('GitHub phone operations', () => {
 
   it.each(['40P01', '55P03'].flatMap(code =>
     ['before writes', 'after writes'].map(boundary => ({ code, boundary }))))(
-    'CHECK-LOCK-1: rolls back and retries $code $boundary without refetching or duplicate wakes', async ({ code, boundary }) => {
+    'CHECK-LOCK-1: rolls back $code $boundary and waits for a new event without duplicate wakes', async ({ code, boundary }) => {
       const { corners, app, payload } = await checksFixture();
       const corner = corners[0]!;
       app.readCommitCheckRollup.mockResolvedValue({ state: 'failed', total: 1,
@@ -175,12 +170,16 @@ describe('GitHub phone operations', () => {
         if (attempt === 1) throw Object.assign(new Error('lock conflict'), { code });
         return result;
       }));
+      await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ code });
+      expect(attempts).toBe(1);
+      expect(changed).not.toHaveBeenCalled();
+      expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(1);
       await operations.processWebhook('check_run', payload);
-      // Two refresh attempts, then the separate mergeability transaction.
+      // A separate event owns the next refresh and mergeability transaction.
       expect(attempts).toBe(3);
       expect(changed).toHaveBeenCalledTimes(1);
-      expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(1);
-      expect(app.readPullRequest).toHaveBeenCalledTimes(1);
+      expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(2);
+      expect(app.readPullRequest).toHaveBeenCalledTimes(2);
       expect((await database.query(`SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.checks).toBe('failing');
       await operations.processWebhook('check_run', payload);
       expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason='corner_check'`, [corner])).rows).toHaveLength(1);
@@ -188,7 +187,7 @@ describe('GitHub phone operations', () => {
     });
 
   it.each(['40P01', '55P03', '23514'])(
-    'CHECK-LOCK-1: propagates exhausted or nonretryable %s failures with no partial writes', async code => {
+    'CHECK-LOCK-1: propagates %s failure immediately with no partial writes', async code => {
       const { corners, app, payload } = await checksFixture();
       const corner = corners[0]!;
       const changed = vi.fn();
@@ -201,7 +200,7 @@ describe('GitHub phone operations', () => {
         throw failure;
       }));
       await expect(operations.processWebhook('check_run', payload)).rejects.toBe(failure);
-      expect(spy).toHaveBeenCalledTimes(code === '23514' ? 1 : 3);
+      expect(spy).toHaveBeenCalledOnce();
       expect(changed).not.toHaveBeenCalled();
       expect((await database.query(`SELECT lifecycle->'checksSummary' summary FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]?.summary).toBeNull();
       expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND reason<>'corner_objective'`, [corner])).rows).toHaveLength(0);
@@ -234,7 +233,7 @@ describe('GitHub phone operations', () => {
 
   it.each(['40P01', '55P03'].flatMap(code =>
     ['head', 'fetch'].map(guard => ({ code, guard }))))(
-    'CHECK-LOCK-1: revalidates a changed $guard after $code rollback', async ({ code, guard }) => {
+    'CHECK-LOCK-1: preserves a changed $guard after $code rollback without replay', async ({ code, guard }) => {
       const { corners, app, payload } = await checksFixture();
       const corner = corners[0]!;
       const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
@@ -256,9 +255,8 @@ describe('GitHub phone operations', () => {
           throw error;
         }
       });
-      await operations.processWebhook('check_run', payload);
-      // Two refresh attempts, then the separate mergeability transaction.
-      expect(attempts).toBe(3);
+      await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ code });
+      expect(attempts).toBe(1);
       const lifecycle = (await database.query<{ lifecycle: { pr: { headSha: string }; checksSummary?: { total: number } } }>(
         `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner])).rows[0]!.lifecycle;
       if (guard === 'head') expect(lifecycle.pr.headSha).toBe('new-head');
@@ -563,33 +561,19 @@ describe('GitHub phone operations', () => {
     });
   });
 
-  it('R-GH-403-WEBHOOK: rate-limited live PR confirmation is deferred, then retried after reset', async () => {
-    const { corners, headSha, app, payload } = await checksFixture();
-    const reset = Math.floor(Date.now() / 1000) + 600;
-    const client = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
-    vi.stubGlobal('fetch', vi.fn(async () => new Response('{}', { status: 403,
-      headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) } })));
-    app.readPullRequest.mockImplementation((token, repo, number) => client.readPullRequest(token, repo, number));
+  it('R-GH-403-WEBHOOK: rate-limited confirmation waits for a new event', async () => {
+    const { corners, app, payload } = await checksFixture();
+    app.readPullRequest.mockRejectedValueOnce(new GitHubHttpError('PR', 429, '120'));
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
-    await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 403, rateLimited: true });
-    const queued = (await database.query<{ lifecycle: { checks: string; checkRefreshRetry: { after: number; headSha: string } } }>(
+    await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 429 });
+    const stored = (await database.query<{ lifecycle: Record<string, unknown> }>(
       `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]],
     )).rows[0]!.lifecycle;
-    expect(queued).toMatchObject({ checks: 'pending', checkRefreshRetry: { headSha } });
-    expect(queued.checkRefreshRetry.after).toBeGreaterThanOrEqual(reset - 0.01);
-    expect(queued.checkRefreshRetry.after).toBeLessThan(reset + 0.1);
-    await operations.refreshQueuedChecks();
-    expect(app.readPullRequest).toHaveBeenCalledTimes(1);
-    app.readPullRequest.mockResolvedValue({ number: 1, headSha, url: 'https://github.com/owner/widgets/pull/1', mergeability: 'clean' });
-    // Advance only this fixture's durable deadline, without a second webhook.
-    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
-    await operations.refreshQueuedChecks();
+    expect(stored.checks).toBe('pending');
+    expect(stored.checkRefreshRetry).toBeUndefined();
+    expect(app.readPullRequest).toHaveBeenCalledOnce();
+    await operations.processWebhook('check_run', payload);
     expect(app.readPullRequest).toHaveBeenCalledTimes(2);
-    const recovered = (await database.query<{ lifecycle: Record<string, unknown> }>(
-      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]],
-    )).rows[0]!.lifecycle;
-    expect(recovered.checks).toBe('passing');
-    expect(recovered.checkRefreshRetry).toBeUndefined();
     expect(app.mergePullRequest).not.toHaveBeenCalled();
   });
 
@@ -611,7 +595,7 @@ describe('GitHub phone operations', () => {
     expect(app.mergePullRequest).not.toHaveBeenCalled();
   });
 
-  it.each(['primary', 'secondary'])('R-GH-403: %s rate limit queues, keeps the gate closed and recovers', async kind => {
+  it.each(['primary', 'secondary'])('R-GH-403: %s rate limit keeps the gate closed until an explicit read', async kind => {
     const { corners, headSha, app, payload } = await checksFixture();
     const reset = Math.floor(Date.now() / 1000) + 600;
     const headers = kind === 'primary'
@@ -622,24 +606,17 @@ describe('GitHub phone operations', () => {
     // Exercise the actual provider read, not an invented error shape.
     const error = await client.readPullRequest('fake', 'owner/widgets', 1).catch(error => error);
     app.readCommitCheckRollup.mockRejectedValue(error);
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     await expect(operations.processWebhook('check_run', payload)).rejects.toBe(error);
     const stored = (await database.query<{ lifecycle: { checks: string; checkRefreshRetry: { headSha: string; after: number } } }>(
       `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]],
     )).rows[0]!.lifecycle;
-    expect(stored).toMatchObject({ checks: 'pending', checkRefreshRetry: { headSha } });
-    expect(stored.checkRefreshRetry.after).toBeGreaterThanOrEqual(kind === 'primary' ? reset : Date.now() / 1000 + 119);
+    expect(stored.checks).toBe('pending');
+    expect(stored.checkRefreshRetry).toBeUndefined();
     await expect(operations.prChecksStatus({ cornerId: corners[0]! })).rejects.toThrow('GitHub rate limit; checks readable again at');
     expect(app.mergePullRequest).not.toHaveBeenCalled();
-    vi.mocked(captureServerError).mockClear();
-    await operations.refreshQueuedChecks();
-    expect(captureServerError).not.toHaveBeenCalled();
-    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
-    await operations.refreshQueuedChecks();
-    expect(captureServerError).not.toHaveBeenCalled();
     app.readCommitCheckRollup.mockResolvedValue({ state: 'passed', total: 1, failing: [], checks: [] });
-    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
-    await operations.refreshQueuedChecks();
+    await operations.prChecksStatus({ cornerId: corners[0]! });
     const recovered = (await database.query<{ lifecycle: Record<string, unknown> }>(
       `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]],
     )).rows[0]!.lifecycle;
@@ -647,10 +624,12 @@ describe('GitHub phone operations', () => {
     expect(recovered.checkRefreshRetry).toBeUndefined();
   });
 
-  it('R-GH-RETRY: a webhook with 502 then 200 updates the visible checks', async () => {
+  it('R-GH-RETRY: a failed webhook returns 502 and a new event updates the visible checks', async () => {
     const { corners, app, payload } = await checksFixture();
     app.readCommitCheckRollup.mockRejectedValueOnce(new GitHubHttpError('Checks', 502));
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 502 });
+    expect(app.readCommitCheckRollup).toHaveBeenCalledOnce();
     await operations.processWebhook('check_run', payload);
     expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(2);
     const { lifecycle } = (await database.query<{ lifecycle: { checks: string; checksSummary: { total: number } } }>(
@@ -660,26 +639,26 @@ describe('GitHub phone operations', () => {
     expect(checkStatusLine(lifecycle)).toBe('PR #1 · all 1 test passed');
   });
 
-  it('R-GH-RETRY: exhausted 5xx persists recovery, blocks stale checks and recovers after restart', async () => {
+  it('R-GH-RETRY: one failed 5xx read blocks stale checks and restart waits for a new event', async () => {
     const { corners, headSha, app, payload } = await checksFixture();
     const error = new GitHubHttpError('Checks', 503);
     app.readCommitCheckRollup.mockRejectedValue(error);
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     await expect(operations.processWebhook('check_run', payload)).rejects.toBe(error);
-    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(4);
+    expect(app.readCommitCheckRollup).toHaveBeenCalledOnce();
     const stored = (await database.query<{ lifecycle: Record<string, unknown> }>(
       `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]],
     )).rows[0]!.lifecycle;
-    expect(stored).toMatchObject({ checks: 'pending', checksSummary: { status: 'pending' }, checkRefreshRetry: { headSha } });
+    expect(stored).toMatchObject({ checks: 'pending', checksSummary: { status: 'pending' } });
+    expect(stored.checkRefreshRetry).toBeUndefined();
     expect(checkStatusLine(stored)).toBe('PR #1 · tests running');
     await expect(operations.prChecksStatus({ cornerId: corners[0]! })).rejects.toBe(error);
     expect(app.mergePullRequest).not.toHaveBeenCalled();
     app.readCommitCheckRollup.mockResolvedValue({ state: 'passed', total: 1, failing: [], checks: [] });
-    const restarted = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
-    await restarted.refreshQueuedChecks();
-    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(8);
-    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
-    await restarted.refreshQueuedChecks();
+    const restarted = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(2);
+    await restarted.processWebhook('check_run', payload);
+    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(3);
     const recovered = (await database.query<{ lifecycle: Record<string, unknown> }>(
       `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corners[0]],
     )).rows[0]!.lifecycle;
@@ -688,64 +667,47 @@ describe('GitHub phone operations', () => {
   }, 30_000);
 
   it.each([new TypeError('fetch failed'), Object.assign(new Error('socket reset'), { code: 'ECONNRESET' }), new GitHubHttpError('Checks', 504)])(
-    'R-GH-RETRY: retries transient transport failure %s', async error => {
+    'R-GH-RETRY: returns transient transport failure %s', async error => {
       const { app, payload } = await checksFixture();
       app.readCommitCheckRollup.mockRejectedValueOnce(error);
-      const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
+      const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+      await expect(operations.processWebhook('check_run', payload)).rejects.toBe(error);
+      expect(app.readCommitCheckRollup).toHaveBeenCalledOnce();
       await operations.processWebhook('check_run', payload);
       expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(2);
     },
   );
 
-  it('R-GH-RETRY: a queued refresh reports only the final failure and stops on permanent 4xx', async () => {
+  it('R-GH-RETRY: long Retry-After creates no durable retry obligation', async () => {
     const { corners, app, payload } = await checksFixture();
     app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 429, '120'));
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
-    await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 429 });
-    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
-    vi.mocked(captureServerError).mockClear();
-    app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 502));
-    await operations.refreshQueuedChecks();
-    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(5);
-    expect(captureServerError).toHaveBeenCalledTimes(1);
-    await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
-    app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 403));
-    await operations.refreshQueuedChecks();
-    await operations.refreshQueuedChecks();
-    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(6);
-    expect(captureServerError).toHaveBeenCalledTimes(2);
-  }, 30_000);
-
-  it('R-GH-RETRY: long Retry-After queues without sleeping or retrying early', async () => {
-    const { corners, app, payload } = await checksFixture();
-    app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 429, '120'));
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
-    const started = Date.now() / 1000;
-    await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 429 });
-    await operations.refreshQueuedChecks();
-    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(1);
-    const retry = (await database.query<{ retry: { after: number } }>(
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 429, retryAfter: '120' });
+    const retry = (await database.query<{ retry: unknown }>(
       `SELECT lifecycle->'checkRefreshRetry' retry FROM corner_facts WHERE corner_id=$1`, [corners[0]],
     )).rows[0]!.retry;
-    expect(retry.after).toBeGreaterThanOrEqual(started + 120);
+    expect(retry).toBeNull();
+    vi.useFakeTimers();
+    try { await vi.advanceTimersByTimeAsync(24 * 60 * 60_000); }
+    finally { vi.useRealTimers(); }
+    expect(app.readCommitCheckRollup).toHaveBeenCalledOnce();
   });
 
-  it('R-GH-RETRY: a queued old head is ignored after a push', async () => {
+  it('R-GH-RETRY: a late failed-head event cannot read or restore its old check result', async () => {
     const { corners, app, payload } = await checksFixture();
-    app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 429, '120'));
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
+    app.readCommitCheckRollup.mockRejectedValueOnce(new GitHubHttpError('Checks', 429, '120'));
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 429 });
     await database.query(`UPDATE corner_github_cache SET lifecycle=jsonb_set(
-      jsonb_set(lifecycle,'{checkRefreshRetry,after}','0'),'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
-      [corners[0], '2'.repeat(40)]);
-    await operations.refreshQueuedChecks();
-    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(1);
+      lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`, [corners[0], '2'.repeat(40)]);
+    await operations.processWebhook('check_run', payload);
+    expect(app.readCommitCheckRollup).toHaveBeenCalledOnce();
   });
 
   it.each([401, 403, 404, 422])('R-GH-RETRY: HTTP %s fails once without queueing', async status => {
     const { corners, app, payload } = await checksFixture();
     app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', status));
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status });
     expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(1);
     const row = (await database.query<{ retry: unknown }>(
@@ -1768,7 +1730,7 @@ describe('GitHub phone operations', () => {
     // Checks on an associated PR need no branch-to-PR discovery.
     expect(app.openPullRequestsForBranch).not.toHaveBeenCalled();
   });
-  it('recovers a missed merge webhook and ignores branch deletion pushes', async () => {
+  it('an explicit check command recovers a missed merge webhook and ignores branch deletion pushes', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';
     const corner = '33333333-3333-4333-8333-333333333333';
@@ -1827,6 +1789,7 @@ describe('GitHub phone operations', () => {
         merged: false,
         mergeability: 'clean',
       })),
+      readCommitCheckRollup: vi.fn(async () => ({ state: 'failed', total: 1, failing: ['lint'], checks: [{ name: 'lint', status: 'failed' }] })),
       branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', aheadBy: 0, protected: false })),
       openPullRequestsForBranch: vi.fn(async () => []),
       deleteBranch: vi.fn(async () => undefined),
@@ -1863,7 +1826,7 @@ describe('GitHub phone operations', () => {
       (await database.query(`SELECT 1 FROM messages WHERE room_id=$1`, [corner])).rowCount,
     ).toBe(0);
 
-    await operations.reconcileMergedCorners();
+    await operations.prChecksStatus({ cornerId: corner, pullRequest: 42 });
     expect(
       (await database.query(`SELECT archived_at FROM rooms WHERE id=$1`, [corner])).rows[0],
     ).toMatchObject({ archived_at: null });
@@ -1880,8 +1843,8 @@ describe('GitHub phone operations', () => {
       mergedBy: 'owner',
       mergeability: 'unknown',
     });
-    await operations.reconcileMergedCorners();
-    await operations.reconcileMergedCorners();
+    await operations.prChecksStatus({ cornerId: corner, pullRequest: 42 });
+    await operations.prChecksStatus({ cornerId: corner, pullRequest: 42 });
     expect(
       (
         await database.query<{ lifecycle: { outcome: string; pr: { mergeCommitSha: string } } }>(
@@ -2182,7 +2145,7 @@ describe('GitHub phone operations', () => {
     }
   });
 
-  it.each(['installation', 'repository', 'removal'])('INSTALL-SYNC-1: recovers a deadlock at %s and completes repository access sync', async boundary => {
+  it.each(['installation', 'repository', 'removal'])('INSTALL-SYNC-1: returns a deadlock at %s and completes sync only on a new event', async boundary => {
     await database.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
       VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN]);
     await database.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
@@ -2201,14 +2164,16 @@ describe('GitHub phone operations', () => {
       if (target && ++attempts === 1) throw Object.assign(new Error('deadlock detected'), { code: '40P01' });
       return query(sql, values);
     });
+    await expect(operations.processWebhook('installation', { action: 'created', installation: { id: 77 } })).rejects.toMatchObject({ code: '40P01' });
+    expect(attempts).toBe(1);
     await operations.processWebhook('installation', { action: 'created', installation: { id: 77 } });
     expect(attempts).toBe(2);
-    expect(app.listRepositories).toHaveBeenCalledTimes(1);
+    expect(app.listRepositories).toHaveBeenCalledTimes(boundary === 'installation' ? 1 : 2);
     expect((await query(`SELECT repository_id,active FROM github_repositories ORDER BY repository_id`)).rows)
       .toEqual([{ repository_id: 101, active: true }, { repository_id: 102, active: false }]);
   });
 
-  it.each([['40P01', 3], ['23505', 1]] as const)('INSTALL-SYNC-1: surfaces %s after bounded attempts', async (code, expected) => {
+  it.each([['40P01', 1], ['23505', 1]] as const)('INSTALL-SYNC-1: surfaces %s after one attempt', async (code, expected) => {
     await database.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
       VALUES(77,$1,'42','owner','User','selected','active')`, [HUMAN]);
     const app = { installationAccount: async () => ({ id: '42', login: 'owner', type: 'User', repositorySelection: 'selected' }), listRepositories: vi.fn() };
@@ -3352,7 +3317,7 @@ describe('GitHub phone operations', () => {
     console.info(`Reproduction C2-1: failing wake body="${command?.body ?? ''}"`);
     expect(command?.body).toContain('typecheck');
   });
-  it('CHECK-DEADLOCK-1: wakes on first failure and settled followup once despite rollback and replay', async () => {
+  it('CHECK-DEADLOCK-1: wakes on first failure and settled followup once across rollback and a new explicit event', async () => {
     const { corners, headSha, app, payload } = await checksFixture();
     const corner = corners[0]!;
     const checks = [
@@ -3390,6 +3355,8 @@ describe('GitHub phone operations', () => {
       }
       return result;
     }));
+    await expect(operations.processWebhook('check_run', failure('TYPECHECK'))).rejects.toMatchObject({ code: '40P01' });
+    expect(await wakes()).toHaveLength(0);
     await operations.processWebhook('check_run', failure('TYPECHECK'));
     expect((await wakes())).toHaveLength(1);
     expect((await wakes())[0]?.body).toContain('TYPECHECK');
@@ -3407,6 +3374,8 @@ describe('GitHub phone operations', () => {
     expect((await wakes())).toHaveLength(1);
     checks[2] = { name: 'lint', status: 'passed' };
     replay = true;
+    await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ code: '40P01' });
+    expect(await wakes()).toHaveLength(1);
     await operations.processWebhook('check_run', payload);
     expect((await wakes())).toHaveLength(2);
     expect((await wakes())[1]?.body).toContain('desktop');
@@ -3414,7 +3383,7 @@ describe('GitHub phone operations', () => {
     expect(followupInbox.commands.some(command => command.source.body.includes('https://github.com/owner/widgets/actions/runs/10/job/102'))).toBe(true);
     await operations.processWebhook('check_run', payload);
     expect((await wakes())).toHaveLength(2);
-    expect(readJobLog).toHaveBeenCalledTimes(2);
+    expect(readJobLog).toHaveBeenCalledTimes(4);
   });
   it('completes a one-use PKCE account bind and stores only an encrypted user token', async () => {
     const fetchMock = vi.fn(async (input: string | URL | Request) => {

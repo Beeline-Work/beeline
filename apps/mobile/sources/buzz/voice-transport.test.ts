@@ -26,7 +26,7 @@ vi.mock('expo-modules-core', () => ({
   requireNativeModule: () => native.background,
   requireOptionalNativeModule: () => native.background,
 }));
-vi.mock('livekit-client', () => ({ Room: class { constructor(options: unknown) { native.roomOptions = options; if (native.roomFailure) throw native.roomFailure; } } }));
+vi.mock('livekit-client', () => ({ Room: class { constructor(options: unknown) { native.roomOptions = options; if (native.roomFailure) throw native.roomFailure; } async startAudio() {} } }));
 import { createVoiceRoom, subscribeVoiceResume, routeVoiceResumeNotification } from './voice-transport.native';
 
 it('starts native audio only when voice mode opens and exposes cleanup for leave/unmount', async () => {
@@ -39,7 +39,7 @@ it('starts native audio only when voice mode opens and exposes cleanup for leave
   expect(native.AudioSession.stopAudioSession).toHaveBeenCalledOnce();
   expect(native.background.stop).toHaveBeenCalledOnce();
   expect(native.background.start.mock.invocationCallOrder[0]).toBeLessThan(native.AudioSession.startAudioSession.mock.invocationCallOrder[0]);
-  expect(native.roomOptions.reconnectPolicy.nextRetryDelayInMs({ retryCount: 1000 })).toBe(5000);
+  expect(native.roomOptions.reconnectPolicy.nextRetryDelayInMs({ retryCount: 0 })).toBeNull();
 });
 
 it('releases native audio if creating the Room fails before the join request', async () => {
@@ -105,4 +105,12 @@ it('configures native Stop for the current session and drops late configuration 
   await transport.closeAudio();
   await transport.configureStop('successor', 'stale-capability');
   expect(native.background.configureStop).toHaveBeenCalledOnce();
+});
+
+
+it('disables timed SDK reconnects in the browser adapter too', async () => {
+  const { createVoiceRoom: createBrowserVoiceRoom } = await import('./voice-transport');
+  await createBrowserVoiceRoom();
+  for (const retryCount of [0, 1, 1000])
+    expect(native.roomOptions.reconnectPolicy.nextRetryDelayInMs({ retryCount })).toBeNull();
 });

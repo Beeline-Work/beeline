@@ -1,0 +1,29 @@
+{
+  "before": {
+    "finding": "F07",
+    "proof": "P8/P11 200 large tools absent initial DTO",
+    "tools": 200,
+    "toolOutputBytes": 32768,
+    "initialToolRows": 200,
+    "initialValueBytes": 6616398,
+    "status": "FAIL",
+    "error": {
+      "name": "Error",
+      "message": "Router projection unavailable: budget",
+      "reason": "budget"
+    }
+  },
+  "after": {
+    "finding": "F07",
+    "proof": "P8/P11 200 large tools absent initial DTO",
+    "tools": 200,
+    "toolOutputBytes": 32768,
+    "initialToolRows": 0,
+    "initialValueBytes": 1970,
+    "expandedToolRows": 200,
+    "fullOutputBytes": 32768,
+    "revokeEnqueues": 0,
+    "status": "PASS"
+  },
+  "fixtureNote": "The final proof also validates source IDs and summary preservation through the actual client DTO guard; its assertions retain the original 64 KiB and zero-full-tool-row bounds."
+}

@@ -253,21 +253,21 @@ describe('fresh Room discovery through the live membership wake', () => {
   let deniedRoomId: string | undefined;
 
   class PgliteListenClient extends EventEmitter implements LivePgClient {
-    private release?: () => Promise<void>;
+    private releases: (() => Promise<void>)[] = [];
     constructor(private readonly database2: PgliteDatabase) {
       super();
     }
     async connect(): Promise<void> {}
     async query(sql: string): Promise<void> {
-      if (sql !== `LISTEN beeline_live_v1`) throw new Error(`unexpected query: ${sql}`);
-      this.release = await this.database2.client.listen('beeline_live_v1', (payload: string) => {
-        this.emit('notification', { channel: 'beeline_live_v1', payload });
-      });
+      const channel=sql.slice('LISTEN '.length);
+      if(!['beeline_live_v1','beeline_command_completion'].includes(channel)||sql!==`LISTEN ${channel}`)
+        throw new Error(`unexpected query: ${sql}`);
+      this.releases.push(await this.database2.client.listen(channel, (payload: string) => {
+        this.emit('notification', { channel, payload });
+      }));
     }
     async end(): Promise<void> {
-      const release = this.release;
-      this.release = undefined;
-      await release?.();
+      await Promise.all(this.releases.splice(0).map(release=>release()));
     }
     async drop(): Promise<void> {
       await this.end();
@@ -737,9 +737,9 @@ describe('fresh Room discovery through the live membership wake', () => {
   });
 
   it('pushes rooms-changed to a connected daemon socket on membership change', { timeout: 60_000 }, async () => {
-    const exchange = await auth.createDaemonExchange(AGENT);
-    const daemonToken = (await auth.exchangeDaemonToken(exchange.exchangeToken))!.daemonToken;
-    const watcher = new DaemonApiClient(origin, daemonToken, AGENT);
+    // Observe the fixture's current owner. A second lifecycle for the same
+    // agent competes with the running core and is correctly fenced.
+    const watcher = daemonApi;
     const changed = vi.fn();
     watcher.setRoomsChangedListener(changed);
     let subscribed = false;
@@ -752,7 +752,6 @@ describe('fresh Room discovery through the live membership wake', () => {
       await vi.waitFor(() => expect(changed).toHaveBeenCalled(), { timeout: 10_000 });
     } finally {
       unsubscribe();
-      watcher.closeLive();
     }
   });
 

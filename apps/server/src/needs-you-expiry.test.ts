@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
+import { COMMAND_COMPLETION_CHANNEL } from './command-completion.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { BackgroundLeader } from './background.js';
+import { BackgroundLeader } from './background-leader.js';
 import { LiveHub, type LiveEvent } from './live.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
 import { PhoneService } from './phone-service.js';
@@ -24,7 +25,7 @@ const DATABASE_SNAPSHOT = await (async () => {
 })();
 
 class PgliteListenClient extends EventEmitter implements LivePgClient {
-  private release?: () => Promise<void>;
+  private releases: (() => Promise<void>)[] = [];
   readonly payloads: string[] = [];
 
   constructor(private readonly database: PgliteDatabase) {
@@ -34,17 +35,17 @@ class PgliteListenClient extends EventEmitter implements LivePgClient {
   async connect(): Promise<void> {}
 
   async query(sql: string): Promise<void> {
-    if (sql !== `LISTEN ${POSTGRES_LIVE_CHANNEL}`) throw new Error(`unexpected query: ${sql}`);
-    this.release = await this.database.client.listen(POSTGRES_LIVE_CHANNEL, (payload) => {
-      this.payloads.push(payload);
-      this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload });
-    });
+    const channel = sql.slice('LISTEN '.length);
+    if (![POSTGRES_LIVE_CHANNEL, COMMAND_COMPLETION_CHANNEL].includes(channel) || sql !== `LISTEN ${channel}`)
+      throw new Error(`unexpected query: ${sql}`);
+    this.releases.push(await this.database.client.listen(channel, (payload) => {
+      if (channel === POSTGRES_LIVE_CHANNEL) this.payloads.push(payload);
+      this.emit('notification', { channel, payload });
+    }));
   }
 
   async end(): Promise<void> {
-    const release = this.release;
-    this.release = undefined;
-    await release?.();
+    await Promise.all(this.releases.splice(0).map(release => release()));
   }
 }
 
@@ -121,7 +122,7 @@ describe('Needs-you expiry sweep', () => {
     events = [];
     live.subscribeAll((event) => events.push(event));
     client = new PgliteListenClient(database);
-    listener = new PostgresLiveListener(database, live, () => client, 1);
+    listener = new PostgresLiveListener(database, live, () => client);
     void listener.run();
     await eventually(() => listener.projectionHealth().connected);
   });
@@ -290,17 +291,27 @@ describe('Needs-you expiry sweep', () => {
   it('sweeps only on the process that holds the background lock', async () => {
     const runOnce = vi.spyOn(DeadlineExpiry.prototype, 'runOnce');
     const loop = new DeadlineExpiry(database);
-    let released = false;
+    let waiting!: () => void;
+    const entered = new Promise<void>(resolve => { waiting = resolve; });
+    let cancel!: () => void;
+    const released = vi.fn(() => cancel?.());
     const leader = new BackgroundLeader({
       connectDedicated: async () => ({
-        query: async <Row>() => ({ rows: [{ locked: false }] as Row[] }),
-        release: () => { released = true; },
+        query: async <Row>(sql: string) => {
+          if (sql.includes('pg_advisory_lock')) {
+            waiting();
+            await new Promise<void>((_resolve, reject) => { cancel = () => reject(new Error('closed')); });
+          }
+          return { rows: [] as Row[] };
+        },
+        release: released,
       }),
-    }, async () => { await loop.runOnce(); }, 10);
+    }, async () => { await loop.runOnce(); });
     const running = leader.run();
-    await eventually(() => released);
-    leader.stop();
+    await entered;
+    await leader.stop();
     await running;
+    expect(released).toHaveBeenCalledOnce();
     expect(runOnce).not.toHaveBeenCalled();
   });
 });

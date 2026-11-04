@@ -1,24 +1,24 @@
 import * as Clipboard from 'expo-clipboard';
-import { cacheDirectory, EncodingType, writeAsStringAsync } from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { Platform } from 'react-native';
 import type { AttachmentReference } from '@beeline/buzz-client';
 
 import {
   artifactBase64,
+  artifactLocalUri,
   fetchArtifactBytes,
   openArtifactInBrowserOrExplain,
 } from '@/buzz/artifact-link';
 import { Modal } from '@/modal';
+import { mediaIdFromUrl } from './artifact';
+import { routerOwnerArtifactAction } from './router-owner';
 
-function safePictureName(name: string): string {
-  const safe = name.replace(/[^0-9a-zA-Z._-]/g, '-').replace(/^-+/, '');
-  return safe || 'picture';
-}
 
 /** Copies the picture; true once it is on the clipboard. The caller reports the outcome. */
 export async function copyPicture(attachment: AttachmentReference): Promise<boolean> {
   try {
+    const objectId = mediaIdFromUrl(attachment.url);
+    if (objectId) routerOwnerArtifactAction('CopyArtifact', objectId);
     await Clipboard.setImageAsync(await artifactBase64(attachment));
     return true;
   } catch {
@@ -28,6 +28,8 @@ export async function copyPicture(attachment: AttachmentReference): Promise<bool
 
 export async function sharePicture(attachment: AttachmentReference): Promise<void> {
   try {
+    const objectId = mediaIdFromUrl(attachment.url);
+    if (objectId) routerOwnerArtifactAction('SaveArtifact', objectId);
     if (Platform.OS === 'web') {
       const file = new File([await fetchArtifactBytes(attachment) as unknown as BlobPart], attachment.name, {
         type: attachment.mimeType,
@@ -43,11 +45,7 @@ export async function sharePicture(attachment: AttachmentReference): Promise<voi
       Modal.alert('Sharing unavailable', 'This device cannot share image files.');
       return;
     }
-    if (!cacheDirectory) throw new Error('cache unavailable');
-    const path = `${cacheDirectory}shared-${safePictureName(attachment.name)}`;
-    await writeAsStringAsync(path, await artifactBase64(attachment), {
-      encoding: EncodingType.Base64,
-    });
+    const path = await artifactLocalUri(attachment);
     await Sharing.shareAsync(path, {
       dialogTitle: `Share ${attachment.title ?? attachment.name}`,
       mimeType: attachment.mimeType,

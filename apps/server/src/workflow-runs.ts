@@ -1,4 +1,5 @@
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
+import { commandOwnerExpiredSql } from './turn-ownership.js';
 import { WELCOME_VIDEO_SLUG } from './welcome-video-workflow.js';
 import { reserveServiceReviewWorkspaces, completeServiceReview } from './service-review.js';
 import { CommandRefusalError, ExpectedRefusalError } from './command-refusal.js';
@@ -626,7 +627,7 @@ async function cancelRunWakes(db: SqlDatabase, roomId: string, runId: string): P
        SELECT command.id FROM agent_commands command
        JOIN messages message ON message.id=command.source_message_id
        WHERE command.room_id=$1 AND message.card->>'runId'=$2
-         AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
+         AND (command.state='pending' OR (command.state='claimed' AND ${commandOwnerExpiredSql('command')}))
        FOR UPDATE OF command SKIP LOCKED
      ), cancelled AS (
        UPDATE agent_commands command SET state='cancelled',completed_at=now(),cancellation_reason='workflow_attempt_advanced'
@@ -1683,16 +1684,22 @@ async function expireGate(db: SqlDatabase, scope: RunScope, state: WorkflowGateS
  */
 export async function fireWorkflowTimer(
   database: SqlDatabase,
-  row: { id: string; room_id: string; workflow_run: WorkflowTimer },
+  row: { id: string; room_id: string; workflow_run: WorkflowTimer; next_run_at: Date; due_revision: string; updated_at: string },
 ): Promise<boolean> {
   const timer = row.workflow_run;
+  const claim = (db: SqlDatabase) => db.query(`DELETE FROM agent_schedules schedule
+    WHERE schedule.id=$1 AND schedule.room_id=$2 AND schedule.next_run_at=$3
+      AND schedule.updated_at=$4::timestamptz AND schedule.workflow_run=$5::jsonb
+      AND (schedule.failed_due_at IS DISTINCT FROM schedule.next_run_at
+        OR schedule.failed_revision IS DISTINCT FROM schedule.updated_at)
+    RETURNING schedule.id`, [row.id,row.room_id,row.due_revision,row.updated_at,JSON.stringify(timer)]);
   if (!timer?.runId) {
-    await database.query(`DELETE FROM agent_schedules WHERE id=$1`, [row.id]);
+    await claim(database);
     return false;
   }
   return database.transaction(async (db) => {
     await lockWorkflowRun(db, timer.runId);
-    const claimed = await db.query(`DELETE FROM agent_schedules WHERE id=$1 RETURNING id`, [row.id]);
+    const claimed = await claim(db);
     if (!claimed.rowCount) return false;
     const scope = await openRun(db, row.room_id, timer.runId).catch(() => undefined);
     if (!scope || scope.ended || !scope.state) return false;

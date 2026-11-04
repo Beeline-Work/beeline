@@ -6,7 +6,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { VOICE_DATA_TOPIC, type VoiceBudget, type VoiceJoin, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { createVoiceRoom, subscribeVoiceMicrophone, subscribeVoiceResume, voiceFetch } from './voice-transport';
-import { errorDiagnostic, reportClientError } from './client-error-report';
+import { reportClientError } from './client-error-report';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { voiceWaveformLevel } from './waveform-level';
 
@@ -78,11 +78,8 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const liveCleanup = React.useRef<(() => void) | null>(null);
   const joiningCleanup = React.useRef<(() => Promise<void>) | null>(null);
 
-  const retryWaiters = React.useRef(new Set<() => void>());
-
   const end = React.useCallback(async () => {
     revision.current++;
-    for (const cancel of retryWaiters.current) cancel();
     mode.current = 'ended';
     setBudgetWarning(null);
     liveCleanup.current?.(); liveCleanup.current = null;
@@ -126,22 +123,8 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     const release = () => closing ??= closeVoiceTransport(transport);
     const current = () => version === revision.current;
     const request = async <T,>(id: string, action: Parameters<typeof voiceRequest>[1], sessionId?: string, expectedCallId?: string): Promise<T> => {
-      // Android can resume before DNS is ready. Retry only transport failures,
-      // within this call's lifetime, for at most fifteen seconds of backoff.
-      for (let attempt = 0; ; attempt++) {
-        if (!current()) throw new Error('Conversation mode ended');
-        try { return await voiceRequest<T>(id, action, sessionId, expectedCallId); }
-        catch (cause) {
-          if (!current()) throw cause;
-          if (!/UnknownHostException|fetch failed|Network request failed|Failed to fetch/i.test(errorDiagnostic(cause).message)) throw cause;
-          if (attempt === 4) throw new Error('Lost connection to Beeline. Check your network.');
-          await new Promise<void>(resolve => {
-            const finish = () => { clearTimeout(timer); retryWaiters.current.delete(finish); resolve(); };
-            const timer = setTimeout(finish, 1_000 * 2 ** attempt);
-            retryWaiters.current.add(finish);
-          });
-        }
-      }
+      if (!current()) throw new Error('Conversation mode ended');
+      return voiceRequest<T>(id, action, sessionId, expectedCallId);
     };
     try {
       transport = await createVoiceRoom(() => { void end(); }, roomId);
@@ -221,9 +204,12 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         });
         room.on(RoomEvent.TrackUnsubscribed, track => track.detach().forEach(el => el.remove()));
       }
-      let recovering = false;
+      let recovering = false, replacementUsed = false;
       room.on(RoomEvent.Disconnected, () => {
         if (version !== revision.current || mode.current !== 'active' || session.current?.room !== room || recovering) return;
+        // One replacement for this call; a brief connection never renews admission.
+        if (replacementUsed) { void end(); return; }
+        replacementUsed = true;
         recovering = true; microphonePublished = false; updateReadiness();
         void (async () => {
           // A full reconnect after token expiry needs a freshly authorized token.
@@ -236,7 +222,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           if (version !== revision.current) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           if (session.current?.room === room) { session.current.callId = fresh.call.id; session.current.sessionId = fresh.sessionId; }
           setCall(fresh.call);
-          await room.connect(fresh.url, fresh.token);
+          await room.connect(fresh.url, fresh.token, { maxRetries: 0 });
           if (version !== revision.current) { await release(); await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           const agentId = targetRef.current;
           await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(agentId
@@ -254,7 +240,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           setError(appErrorCopy(cause, 'Conversation mode could not start'));
         }).finally(() => { recovering = false; });
       });
-      await room.connect(joined.url, joined.token);
+      await room.connect(joined.url, joined.token, { maxRetries: 0 });
       if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
       const playbackReady = room.startAudio();
       const defaultTarget = joined.agents.find(a => a.pubkey === targetRef.current)?.pubkey;

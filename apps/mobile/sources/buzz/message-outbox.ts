@@ -23,6 +23,8 @@ export class MessageOutbox {
     load(): Promise<readonly MessageOutboxRecord[]>;
     save(records: readonly MessageOutboxRecord[]): Promise<void>;
     send(event: NostrEvent): Promise<AgentMessageWriteResult>;
+    sendWithCause?(event: NostrEvent, cause: 'send' | 'reconnect'): Promise<AgentMessageWriteResult>;
+    reconcile?(ids: ReadonlySet<string>): Promise<void>;
     rejection(error: unknown): string | undefined;
     now?: () => number;
   }) {}
@@ -63,6 +65,7 @@ export class MessageOutbox {
   }
   async remove(id: string) { this.records = this.records.filter(record => record.event.id !== id); await this.save(); }
   async reconcile(ids: ReadonlySet<string>) {
+    await this.deps.reconcile?.(ids);
     if (!this.records.some(record => ids.has(record.event.id))) return;
     this.records = this.records.filter(record => !ids.has(record.event.id)); await this.save();
   }
@@ -97,23 +100,24 @@ export class MessageOutbox {
   async flush(): Promise<void> {
     await this.restore();
     if (!this.connected || this.disposed) return;
-    await Promise.all(this.records.filter(record => record.status === 'pending').map(record => this.send(record.event.id)));
+    await Promise.all(this.records.filter(record => record.status === 'pending').map(record => this.send(record.event.id, 'reconnect')));
   }
-  send(id: string): Promise<AgentMessageWriteResult | undefined> {
+  send(id: string, cause: 'send' | 'reconnect' = 'send'): Promise<AgentMessageWriteResult | undefined> {
     const held = this.flights.get(id);
     if (held) return held;
-    const work = this.deliver(id).finally(() => this.flights.delete(id));
+    const work = this.deliver(id, cause).finally(() => this.flights.delete(id));
     this.flights.set(id, work);
     return work;
   }
-  private async deliver(id: string): Promise<AgentMessageWriteResult | undefined> {
+  private async deliver(id: string, cause: 'send' | 'reconnect'): Promise<AgentMessageWriteResult | undefined> {
     await this.restore();
     if (!this.connected || this.disposed) return;
     const record = this.get(id);
     if (!record || record.status !== 'pending') return;
     const epoch = this.epoch;
     try {
-      const result = await this.deps.send(record.event);
+      const result = await (this.deps.sendWithCause
+        ? this.deps.sendWithCause(record.event, cause) : this.deps.send(record.event));
       if (this.disposed) return;
       await this.remove(id);
       return result;
@@ -122,7 +126,7 @@ export class MessageOutbox {
       const reason = this.deps.rejection(error);
       if (reason) await this.fail(id, reason);
       // A reconnect may have arrived while the old request was settling.
-      else if (this.connected && epoch !== this.epoch) return this.deliver(id);
+      else if (this.connected && epoch !== this.epoch) return this.deliver(id, 'reconnect');
       return;
     }
   }

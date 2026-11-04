@@ -251,7 +251,7 @@ describe('approved Usage gallery and refresh', () => {
       act(() => renderer.unmount());
     }
   });
-  it('reads once on open when the numbers are over 2 minutes old', async () => {
+  it('opening or rerendering old numbers never requests a provider read', async () => {
     const onRefresh = vi.fn(async () => ({ status: 'fresh' }));
     let renderer: any;
     await act(async () => { renderer = create(<AgentUsageSection usage={{ updatedAt: now - 30, windows: [win('weekly', .1)] }} onRefresh={onRefresh} />); });
@@ -259,7 +259,7 @@ describe('approved Usage gallery and refresh', () => {
     act(() => renderer.unmount());
     await act(async () => { renderer = create(<AgentUsageSection usage={{ updatedAt: now - 121, windows: [win('weekly', .1)] }} onRefresh={onRefresh} />); });
     await act(async () => renderer.update(<AgentUsageSection usage={{ updatedAt: now - 125, windows: [win('weekly', .2)] }} onRefresh={onRefresh} />));
-    expect(onRefresh).toHaveBeenCalledTimes(1);
+    expect(onRefresh).not.toHaveBeenCalled();
     act(() => renderer.unmount());
   });
   it('omits refresh for live free allowance and absent usage', () => {

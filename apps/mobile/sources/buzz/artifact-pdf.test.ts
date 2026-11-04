@@ -38,6 +38,9 @@ describe('the generated PDF render document', () => {
   it('denies every source but the blob module it builds for itself', () => {
     expect(document()).toContain(`content="${ARTIFACT_PDF_CSP}"`);
     expect(ARTIFACT_PDF_CSP).toContain("default-src 'none'");
+    expect(ARTIFACT_PDF_CSP).toContain("base-uri 'none'");
+    expect(ARTIFACT_PDF_CSP).toContain("form-action 'none'");
+    expect(ARTIFACT_PDF_CSP).toContain("frame-src 'none'");
     // No network: the document never reaches an http origin for anything.
     expect(ARTIFACT_PDF_CSP).not.toContain('https:');
   });

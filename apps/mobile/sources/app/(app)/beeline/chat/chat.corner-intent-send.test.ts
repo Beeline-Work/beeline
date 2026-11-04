@@ -33,6 +33,7 @@ function sendContext(overrides: Record<string, unknown> = {}) {
   const prompt = vi.fn();
   const noop = () => undefined;
   const context = {
+    prepareRouterMessageGesture: () => undefined,
     composerDraft: draft, inputTextRef: { current: text }, replyTarget: null,
     pendingAttachmentsRef: { current: [] }, sendInFlightRef: { current: false },
     isArchived: false, isCorner: false, isDirectMessage: false,

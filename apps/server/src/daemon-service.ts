@@ -1,3 +1,11 @@
+import {parkOwnedModelTerminal,OwnedModelOwnerEndRefusal} from './owned-model-parking.js';
+import { assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerFenceCteSql, commandOwnerFenceMatchesSql, commandOwnerLiveSql, ownedTurnOperationSupported, registerOwnedEffectFence } from './turn-ownership.js';
+import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-turn-ownership';
+import { OwnedModelCredentials, OwnedModelRefusal, OwnedModelUnknownGeneration, isOwnedModelUnknownGenerationError } from './owned-model-credential.js';
+import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
+import { attachUsageAccount, helperUsageEnabled, publishUsageAccount } from './helper-usage.js';
+import type { CommandActivationInput } from '@beeline/api-contract/helper-activation';
+import { captureCommandActivation, helperActivationEnabled } from './helper-activation.js';
 import { restoreRoomMembership, ensureRoomMembership } from './membership-join.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
 import { cornerObjectiveSql, readCornerObjective, writeCornerObjective } from './corner-objective.js';
@@ -136,7 +144,7 @@ import {
 import { surfaceForRoom } from '@beeline/api-contract/surface-capabilities';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { closeCornerPullRequestBestEffort, closeCornerState } from './corner-close.js';
+import { closeCornerPullRequestBestEffort, closeCornerState, lockCornerArchivalAuthority } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
 import { advanceCorner, createCornerFacts, lockCornerLifecycle } from './corner-lifecycle.js';
 import type { GitHubOperations, LandCornerOutcome } from './github-operations.js';
@@ -418,9 +426,104 @@ class AccessDeniedError extends Error {
   }
 }
 
+declare const ownedModelClaimBrand: unique symbol;
+/** Process-local negotiated registration capability. Never a request argument
+ * on the wire, bearer, activation snapshot or client held-state record. */
+export type OwnedModelClaimCapability = Readonly<{ readonly [ownedModelClaimBrand]: true }>;
+type OwnedModelConfiguration = Readonly<{ credentials: OwnedModelCredentials; ready(): boolean }>;
+export type OwnedModelNegotiation = Readonly<{ freeAgent: boolean; capability?: OwnedModelClaimCapability }>;
+
 export class DaemonService {
+  private ownedModel?: OwnedModelConfiguration;
+  private readonly modelClaims = new WeakMap<object, { agentId: string; source: HelperTurnOwnershipSource; configuration: OwnedModelConfiguration }>();
+  /** Root installs this only after schema/signer/helper rollout proof. Absent
+   * configuration keeps free-agent claims on their existing legacy path. */
+  setOwnedModel(configuration: OwnedModelConfiguration | undefined): void { this.ownedModel = configuration; }
+  ownedModelReady(): boolean { return this.ownedModel?.ready() === true; }
+
+  async negotiateOwnedModel(agentId: string, source: HelperTurnOwnershipSource, installed: boolean): Promise<OwnedModelNegotiation> {
+    const free = (await this.database.query<{ eligible: boolean }>(`SELECT removed_at IS NULL AND state='running'
+      AND model_token_hash IS NOT NULL eligible FROM free_agents WHERE agent_id=$1`, [agentId])).rows[0];
+    if (!free) return { freeAgent: false };
+    const configuration = this.ownedModel;
+    if (!installed || !free.eligible || !configuration?.ready()) return { freeAgent: true };
+    await assertCurrentTurnOwner(this.database, agentId, source);
+    const capability = Object.freeze({}) as OwnedModelClaimCapability;
+    this.modelClaims.set(capability, { agentId, source: Object.freeze({ ...source }), configuration });
+    return { freeAgent: true, capability };
+  }
+
+  private modelClaimCredentials(capability: OwnedModelClaimCapability | undefined, agentId: string,
+    source: HelperTurnOwnershipSource): OwnedModelCredentials {
+    const claim = capability && this.modelClaims.get(capability), configuration = this.ownedModel;
+    if (!claim || !configuration || claim.configuration !== configuration || !configuration.ready() || claim.agentId !== agentId ||
+        claim.source.connectionId !== source.connectionId || claim.source.epoch !== source.epoch) throw new OwnedModelRefusal();
+    return configuration.credentials;
+  }
   private starterOnboarding?: StarterOnboardingService;
   setStarterOnboarding(service: StarterOnboardingService): void { this.starterOnboarding = service; }
+
+  /** Actual owned database effects share the existing authority writer fence
+   * before acquiring source/command rows. No provider runs under this lock. */
+  private async lockOwnedTurnAccess(database: SqlDatabase, roomId: string, agentId: string): Promise<void> {
+    await database.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [ROUTER_AUTHORITY_LOCK]);
+    const access = await database.query(`SELECT 1 FROM room_access member JOIN rooms room ON room.id=member.room_id
+      JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
+        AND workspace_member.room_id IS NULL AND workspace_member.identity_id=member.identity_id
+        AND workspace_member.removed_at IS NULL
+      WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL AND room.archived_at IS NULL`,
+      [roomId, agentId]);
+    if (!access.rowCount) throw new AccessDeniedError();
+  }
+
+  /** Enqueue only the bounded control response under current access/source. */
+  async fenceOwnedTurnReply(
+    agentId: string, source: HelperTurnOwnershipSource,
+    input: { roomId: string; generationId?: string; commandId?: string; requestId?: string },
+    enqueue: () => void,
+    requireClaimed = false,
+  ): Promise<void> {
+    await this.database.transaction(async db => {
+      await this.lockOwnedTurnAccess(db, input.roomId, agentId);
+      await assertCurrentTurnOwner(db, agentId, source);
+      const scoped = new DaemonService(db, this.live);
+      await scoped.access(input.roomId, agentId, input.requestId);
+      const command = await db.query(`SELECT command.id FROM agent_commands command
+        WHERE command.room_id=$1 AND command.agent_id=$2
+          AND (($6::text IS NOT NULL AND command.id=$6) OR ($7::text IS NOT NULL AND command.turn_request_id=$7))
+          AND ((command.generation_id=$3 AND command.turn_owner_connection_id=$4 AND command.turn_owner_epoch=$5
+            AND command.state IN ('claimed','complete','cancelled') AND (NOT $8::boolean OR command.state='claimed'))
+          OR (NOT $8::boolean AND $7::text IS NOT NULL AND command.action IN ('input','resume')
+            AND command.state='pending' AND command.generation_id IS NULL AND command.lease_expires_at IS NULL
+            AND command.turn_owner_connection_id IS NULL AND command.turn_owner_epoch IS NULL
+            AND EXISTS(SELECT 1 FROM agent_command_generation_owners binding
+              WHERE binding.command_id=command.id AND binding.generation_id=$3
+                AND binding.connection_id=$4 AND binding.connection_epoch=$5)
+            AND EXISTS(SELECT 1 FROM agent_turns terminal WHERE terminal.room_id=command.room_id
+              AND terminal.agent_id=command.agent_id AND terminal.request_id=command.turn_request_id
+              AND terminal.generation_id=$3 AND terminal.status='failed'))) FOR SHARE OF command`,
+        [input.roomId, agentId, input.generationId ?? null, source.connectionId, source.epoch,
+          input.commandId ?? null, input.requestId ?? null, requireClaimed]);
+      if (!command.rowCount) throw new Error('Turn ownership changed before enqueue');
+      await assertCurrentTurnOwner(db, agentId, source);
+      enqueue();
+    });
+  }
+
+  /** Narrow DB-only setup path. Every effect still uses execute's current
+   * command/grant authorization; this value only replaces duplicate reads. */
+  async readCommandActivation(input:CommandActivationInput,authenticatedAgentId:string){
+    if(!helperActivationEnabled()||input.agentId!==authenticatedAgentId)throw new Error('Activation capability unavailable');
+    return captureCommandActivation(this.database,input,async(db,command,isCorner)=>{
+      const scoped=new DaemonService(db,this.live,undefined,this.mediaMaximumBytes,true,command);
+      const configuration=await scoped.configuration(authenticatedAgentId,input.roomId);
+      const roster=await scoped.workspaceRoster({agentId:authenticatedAgentId,workspaceId:input.workspaceId},authenticatedAgentId);
+      const grants=await scoped.listAgentGrants(authenticatedAgentId,input.roomId);
+      const requester=await scoped.repositoryOnboardingRequester(authenticatedAgentId,input.roomId);
+      const repository={...await scoped.repository(input.roomId,authenticatedAgentId),...(requester?{repositoryOnboarding:true}: {})};
+      return {configuration,roster,grants,repository,...(isCorner?{corner:await scoped.cornerRestore(input.roomId,authenticatedAgentId)}:{})};
+    });
+  }
 
   constructor(
     private readonly database: SqlDatabase,
@@ -478,10 +581,12 @@ export class DaemonService {
     name: Name,
     input: Input<Name>,
     authenticatedAgentId: string,
+    turnOwner?: HelperTurnOwnershipSource,
+    modelClaim?: OwnedModelClaimCapability,
   ): Promise<Output<Name>> {
-    for (let attempt = 0; ; attempt++) {
-      let committed = false;
-      try {
+    if (turnOwner && name !== 'claimAgentCommand' && name !== 'postAgentTurnReceipt' && name !== 'acknowledgeAgentCommand' && name !== 'getAgentCommands')
+      throw new Error('Turn ownership operation unavailable');
+    if(name==='readCommandActivation')throw new Error('Activation context requires the negotiated machine socket');
     input = { ...input };
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.agentId === 'string' && candidate.agentId !== authenticatedAgentId)
@@ -538,9 +643,20 @@ export class DaemonService {
           throw error;
         },
       ));
+    let ownedIntent = Boolean(turnOwner || this.authorizedCommand?.turn_owner_connection_id);
+    if (!this.commandTransaction && scopedRoom && typeof candidate.generationId === 'string' &&
+        typeof (candidate.requestId ?? candidate.turnId) === 'string') {
+      ownedIntent ||= Boolean((await this.database.query(`SELECT 1 FROM agent_commands command
+        JOIN agent_command_generation_owners binding ON binding.command_id=command.id
+          AND binding.generation_id=$4 AND binding.connection_id IS NOT NULL
+        WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3 LIMIT 1`,
+        [scopedRoom, authenticatedAgentId, candidate.requestId ?? candidate.turnId, candidate.generationId])).rowCount);
+    }
+    if (ownedIntent && !ownedTurnOperationSupported(String(name)))
+      throw new ExpectedRefusalError('Owned command adapter is not enabled for this operation');
     // Provider reads happen before the command transaction. Reports may be
     // delivered in the commander's Room, so refresh their origin corners too.
-    if (!this.commandTransaction && scopedRoom && this.github) {
+    if (!ownedIntent && !this.commandTransaction && scopedRoom && this.github) {
       if (['getAgentCommands', 'claimAgentCommand'].includes(name)) {
         const origins = await this.database.query<{ corner_id: string }>(
           `SELECT DISTINCT COALESCE(review_context->>'cornerId',room_id::text) corner_id
@@ -637,6 +753,7 @@ export class DaemonService {
     ]);
     if (
       !this.commandTransaction &&
+      !ownedIntent &&
       scopedRoom &&
       name === 'postRoomMessage' &&
       candidate.relay === undefined &&
@@ -699,16 +816,29 @@ export class DaemonService {
       const committedTasks: Parameters<AfterCommit>[0][] = [];
       let appToolExecution: DaemonService['deferredAppTool'];
       const output = await queueDatabaseWork(this.database, `turn:${scopedRoom}:${authenticatedAgentId}`, () => this.database.transaction(async (db) => {
+        const needsLifecycle = name === 'createCorner' || name === 'reviseCornerBrief' ||
+          (isCorner && name === 'postAgentTurnReceipt' && candidate.status === 'failed');
+        // Closing/account-removal and owner-loss writers already take lifecycle
+        // before authority/command rows. Only owned paths that actually need
+        // lifecycle take it first; ordinary activity retains independent lanes.
+        if (ownedIntent && needsLifecycle) await lockCornerLifecycle(db, scopedRoom);
+        if (ownedIntent) await this.lockOwnedTurnAccess(db, scopedRoom, authenticatedAgentId);
+        if (turnOwner) await assertCurrentTurnOwner(db, authenticatedAgentId, turnOwner);
         // Failed receipts may reassign the reviewer. Take the lifecycle lock
         // before the silence lock and turn writes, matching lifecycle dispatch.
-        if (name === 'createCorner' || name === 'reviseCornerBrief' ||
-            (isCorner && name === 'postAgentTurnReceipt' && candidate.status === 'failed'))
+        if (!ownedIntent && needsLifecycle)
           await lockCornerLifecycle(db, scopedRoom);
         const requestId = candidate.requestId ?? candidate.turnId;
+        if (name === 'postAgentTurnReceipt' && candidate.modelOwnerEnd !== undefined &&
+            (candidate.status !== 'failed' || candidate.heartbeat !== undefined)) throw new OwnedModelOwnerEndRefusal();
         if (name === 'postAgentTurnReceipt' && ['failed', 'complete'].includes(String(candidate.status))) {
           await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
             turnSilenceLockKey(scopedRoom, String(requestId), authenticatedAgentId),
           ]);
+          // A causal model-owner end retains its durable uncertain command.
+          // Commit this transaction before any generic failed/requeue effects.
+          if (await parkOwnedModelTerminal(db, input as Input<'postAgentTurnReceipt'>, authenticatedAgentId, turnOwner))
+            return this.writeResult() as Output<Name>;
           if (candidate.reasonKind === 'update-interrupted') {
             // The helper keeps this receipt durably until it hears 200. If the
             // first 200 was lost, accept its replay after the command was
@@ -750,6 +880,7 @@ export class DaemonService {
               authenticatedAgentId,
               pending.id,
               String(candidate.generationId ?? ''),
+              turnOwner,
             );
         }
         // A stopped generation may upload diagnostics only. It cannot publish,
@@ -792,7 +923,14 @@ export class DaemonService {
                 requestId,
                 candidate.generationId,
                 allowCompleted,
+                !['getRoomConversation', 'getRoomMessage', 'getRoomAuthority'].includes(name),
               );
+        if (name === 'postAgentTurnReceipt' && command.turn_owner_connection_id) {
+          if (!turnOwner || turnOwner.connectionId !== command.turn_owner_connection_id ||
+              turnOwner.epoch !== Number(command.turn_owner_epoch))
+            throw new Error('Turn receipt requires its negotiated machine owner');
+          if (candidate.heartbeat) throw new Error('Owned turns do not accept freshness receipts');
+        }
         if (['postRoomMessage', 'postCornerMessage', 'order', 'report'].includes(name) && command.review_context?.purpose !== 'repair' && await supersededReview(db, command)) {
           await db.query("UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1", [command.id]);
           await db.query(`UPDATE agent_turns SET status='failed',
@@ -932,7 +1070,7 @@ export class DaemonService {
         scoped.afterCommit = (task) => {
           committedTasks.push(task);
         };
-        let result: Output<Name> = await scoped.execute(name, input, authenticatedAgentId);
+        let result: Output<Name> = await scoped.execute(name, input, authenticatedAgentId, turnOwner);
         appToolExecution = scoped.deferredAppTool;
         if (name === 'requestAgentGrant') {
           await db.query(
@@ -984,7 +1122,7 @@ export class DaemonService {
           const message = result as unknown as { id: string };
           await routeAgentResult(db, command, message.id);
         } else if (name === 'postAgentTurnReceipt') {
-          if (candidate.status === 'working')
+          if (candidate.status === 'working' && !command.turn_owner_connection_id)
             await db.query(
               `UPDATE agent_commands SET lease_expires_at=now()+interval '90 seconds' WHERE id=$1`,
               [command.id],
@@ -1018,7 +1156,6 @@ export class DaemonService {
         }
         return result;
       }));
-      committed = true;
       for (const task of committedTasks) {
         try {
           await task(this.database);
@@ -1250,21 +1387,30 @@ export class DaemonService {
         ))) as Output<Name>;
       case 'claimAgentCommand': {
         const claimed = await queueDatabaseWork(this.database, `turn:${scopedRoom}:${authenticatedAgentId}`, () => this.database.transaction(async (db) => {
+          if (ownedIntent) await this.lockOwnedTurnAccess(db, scopedRoom!, authenticatedAgentId);
           const row = await claimAgentCommand(db, scopedRoom!, authenticatedAgentId,
-            String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '')
+            String(candidate.commandId), typeof candidate.generationId === 'string' ? candidate.generationId : '', turnOwner)
             .catch((error: unknown) => {
+              if (isOwnedModelUnknownGenerationError(error)) throw new OwnedModelUnknownGeneration();
               // Commit stale cancellations before refusing a cached helper claim.
               if (error instanceof StaleWakeClaimRefused) return error;
               throw error;
             });
           if (row instanceof StaleWakeClaimRefused) return row;
+          let modelCredential: Awaited<ReturnType<OwnedModelCredentials['issueInTransaction']>> | undefined;
+          if (turnOwner && (row.action === 'input' || row.action === 'resume') &&
+              (await db.query('SELECT 1 FROM free_agents WHERE agent_id=$1', [authenticatedAgentId])).rowCount) {
+            const credentials = this.modelClaimCredentials(modelClaim, authenticatedAgentId, turnOwner);
+            modelCredential = await credentials.issueInTransaction(db, { agentId: authenticatedAgentId, commandId: row.id,
+              generationId: row.generation_id!, source: turnOwner });
+          }
           const activity = row.reason === 'computer_activity' ? (await db.query<{
             text: string; system_event: NonNullable<import('@beeline/api-contract/daemon').AgentCommand['source']['systemEvent']>;
           }>(`SELECT text,system_event FROM messages WHERE id=$1`, [row.source_message_id])).rows[0] : undefined;
           const source = row.coalesced_context !== null && row.coalesced_context !== undefined
             ? (await readAgentCommands(db, scopedRoom!, authenticatedAgentId, [row.id])).commands[0]?.source
             : undefined;
-          return { row, activity, source };
+          return { row, activity, source, modelCredential };
         }));
         if (claimed instanceof StaleWakeClaimRefused) {
           claimed.log();
@@ -1272,6 +1418,7 @@ export class DaemonService {
         }
         this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
         return { ...this.writeResult(),
+          ...(claimed.modelCredential ? { modelCredential: claimed.modelCredential } : {}),
           ...(claimed.row.recovery_context ? { recoveryContext: claimed.row.recovery_context } : {}),
           ...(claimed.row.coalesced_context !== null && claimed.row.coalesced_context !== undefined
             ? { coalescedContext: claimed.row.coalesced_context } : {}),
@@ -1280,12 +1427,26 @@ export class DaemonService {
         } as Output<Name>;
       }
       case 'acknowledgeAgentCommand': {
-        const acknowledged = await this.database.query(
+        const acknowledged = await this.database.transaction(async db => {
+          if (ownedIntent) await this.lockOwnedTurnAccess(db, scopedRoom!, authenticatedAgentId);
+          if (turnOwner) await assertCurrentTurnOwner(db, authenticatedAgentId, turnOwner);
+          if (turnOwner) {
+            const previous = await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1 AND room_id=$2
+              AND agent_id=$3 AND generation_id=$4 AND action='stop' AND state='complete'
+              AND turn_owner_connection_id=$5 AND turn_owner_epoch=$6 FOR UPDATE`,
+              [candidate.commandId, scopedRoom, authenticatedAgentId, candidate.generationId, turnOwner.connectionId, turnOwner.epoch]);
+            if (previous.rowCount) return previous;
+          }
+          const written = await db.query<CommandRow>(
           `UPDATE agent_commands SET state='complete',completed_at=now()
-          WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND generation_id=$4 AND (state='complete' OR (state='claimed' AND lease_expires_at>now()))
-          AND action='stop'`,
-          [candidate.commandId, scopedRoom, authenticatedAgentId, candidate.generationId],
-        );
+          WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND generation_id=$4 AND (state='complete' OR (state='claimed' AND ${commandOwnerLiveSql(undefined)}))
+          AND action='stop' AND ((turn_owner_connection_id IS NULL AND $5::text IS NULL) OR
+            (turn_owner_connection_id=$5::text AND turn_owner_epoch=$6::bigint)) RETURNING *`,
+          [candidate.commandId, scopedRoom, authenticatedAgentId, candidate.generationId,
+            turnOwner?.connectionId ?? null, turnOwner?.epoch ?? null]);
+          if (written.rows[0]) await registerOwnedEffectFence(db, written.rows[0]);
+          return written;
+        });
         if (!acknowledged.rowCount) throw new Error('command acknowledgement conflict');
         return this.writeResult() as Output<Name>;
       }
@@ -1673,12 +1834,13 @@ export class DaemonService {
           throw new Error('invalid background tool completion');
         await this.access(completion.roomId, authenticatedAgentId);
         return await this.database.transaction(async (db) => {
+          if (ownedIntent) await this.lockOwnedTurnAccess(db, completion.roomId, authenticatedAgentId);
           const origin = await authorizeCommandOutput(db, completion.roomId, authenticatedAgentId,
             completion.requestId, completion.generationId, true);
           // Older helpers may detach the terminal MCP call before its result
           // arrives. Its result cannot add work to a turn already ended silently.
           // Preserve every other background job and every later generation.
-          if (/^(?:(?:mcp__)?beeline[-_]agent__)?no_reply_needed$/.test(completion.title) &&
+          if (/^(?:(?:mcp__)?beeline[-_]agent__|mcp\.beeline-agent\.)?no_reply_needed$/.test(completion.title) &&
               (await db.query(`SELECT 1 FROM agent_turns
                 WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4
                   AND completion_kind='no-reply'`,
@@ -1793,9 +1955,20 @@ export class DaemonService {
         )) as Output<Name>;
       case 'getAgentUsage':
         return ((await agentUsage(this.database, authenticatedAgentId)) ?? null) as Output<Name>;
+      case 'publishAgentUsageAccount': {
+        if(!helperUsageEnabled())throw new Error('usage_account_unavailable');
+        const published=await publishUsageAccount(this.database,authenticatedAgentId,input as Input<'publishAgentUsageAccount'>);
+        return {...this.writeResult(),...published} as Output<Name>;
+      }
+      case 'attachAgentUsageAccount': {
+        if(!helperUsageEnabled())throw new Error('usage_account_unavailable');
+        await attachUsageAccount(this.database,authenticatedAgentId,input as Input<'attachAgentUsageAccount'>);
+        return this.writeResult() as Output<Name>;
+      }
       case 'postAgentUsage': {
-        const { usage } = input as Input<'postAgentUsage'>;
-        await saveAgentUsage(this.database, authenticatedAgentId, usage);
+        const { usage,usageSource } = input as Input<'postAgentUsage'>;
+        const accepted=await saveAgentUsage(this.database, authenticatedAgentId, usage,usageSource);
+        if(!accepted)return this.writeResult() as Output<Name>;
         const outcome = postedRefreshOutcome(usage);
         if (outcome) await notifyUsageRefreshResult(this.database, authenticatedAgentId, outcome);
         return this.writeResult() as Output<Name>;
@@ -2280,19 +2453,6 @@ export class DaemonService {
         )) as Output<Name>;
       default:
         throw new CommandRefusalError(`unsupported daemon operation: ${String(name)}; use order and report`, 410);
-    }
-      } catch (error) {
-        // These operations have transactional writes and buffered live events.
-        // Retry the owning transaction, including authorization, after rollback;
-        // a nested transaction cannot recover an aborted PostgreSQL transaction.
-        const retryableWrite = name === 'postAgentActivity' ||
-          (name === 'reviseCornerBrief' && !committed) ||
-          (name === 'postAgentTurnReceipt' && (input as Input<'postAgentTurnReceipt'>).status === 'failed');
-        if (!retryableWrite || this.commandTransaction || attempt >= 2 ||
-          !error || typeof error !== 'object' || !('code' in error) || error.code !== '40P01')
-          throw error;
-        await new Promise((resolve) => setTimeout(resolve, 25 * (attempt + 1) + Math.floor(Math.random() * 25)));
-      }
     }
   }
 
@@ -3164,7 +3324,7 @@ export class DaemonService {
        JOIN memberships m ON m.room_id=r.id AND m.identity_id=command.agent_id AND m.removed_at IS NULL
        LEFT JOIN corner_facts f ON f.corner_id=r.id
        WHERE command.agent_id=$1 AND (command.state='pending'
-         OR (command.state='claimed' AND command.lease_expires_at<=now()))`,
+         OR (command.state='claimed' AND ${commandOwnerExpiredSql('command')}))`,
       [agentId],
     );
     return {
@@ -4573,7 +4733,7 @@ export class DaemonService {
       // statement before query() resolves, so the live row remains authoritative.
       messageWriteStartedAt = Date.now();
       const query = await this.database.query<AtomicReplyResult>(
-        `WITH candidate AS MATERIALIZED (
+        `WITH ${commandOwnerFenceCteSql('owned_command.room_id=$2 AND owned_command.agent_id=$3 AND owned_command.turn_request_id=$6 AND owned_command.generation_id=$10')}, candidate AS MATERIALIZED (
              SELECT command.*,
                EXISTS(SELECT 1 FROM agent_turns turn
                  WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
@@ -4584,10 +4744,12 @@ export class DaemonService {
              FROM agent_commands command
              WHERE command.room_id=$2 AND command.agent_id=$3 AND command.turn_request_id=$6
                AND command.action IN ('input','resume') AND command.generation_id=$10
+               AND ${commandOwnerFenceMatchesSql('command')}
              ORDER BY command.created_at DESC,command.id DESC LIMIT 1 FOR UPDATE OF command
            ), writable AS (
              SELECT * FROM candidate
-             WHERE state='claimed' AND lease_expires_at>clock_timestamp() AND NOT turn_cancelled AND NOT no_reply
+             WHERE state='claimed' AND ${commandOwnerLiveSql(undefined, 'clock_timestamp()')} AND NOT turn_cancelled AND NOT no_reply
+               AND (turn_owner_connection_id IS NULL OR beeline_register_owned_effect(id,agent_id,generation_id,turn_owner_connection_id,turn_owner_epoch))
            ), pending AS (
              DELETE FROM agent_pending_attachments attachment USING writable
              WHERE attachment.room_id=$2 AND attachment.agent_id=$3
@@ -7154,7 +7316,7 @@ export class DaemonService {
 
   private async repositoryOnboardingRequester(agentId: string, roomId?: string, context?: Record<string, unknown>) {
     const command = this.authorizedCommand ?? (roomId && typeof context?.requestId === 'string'
-      ? await authorizeCommandOutput(this.database, roomId, agentId, context.requestId, context.generationId)
+      ? await authorizeCommandOutput(this.database, roomId, agentId, context.requestId, context.generationId, false, false)
       : undefined);
     if (command) {
       const requester = await this.grantRequester(command);
@@ -7167,7 +7329,7 @@ export class DaemonService {
   /** Root command provenance is the authority even after delegation and resumes. */
   private async grantRequester(command = this.authorizedCommand) {
     if (!command) throw new Error('resource access requires an active command');
-    const requester = (
+    let requester = (
       await this.database.query<{
         id: string;
         kind: 'human' | 'agent';
@@ -7181,7 +7343,31 @@ export class DaemonService {
         [command.root_source_message_id],
       )
     ).rows[0];
-    if (!requester) throw new Error('resource requester not found');
+    if (!requester) {
+      // Automatic replay orders and idle reports have no source message. Only
+      // their stored System-authored, source-less self-root can supply provenance;
+      // a delegate's payload or the executing agent's owner cannot supply it.
+      requester = (await this.database.query<{
+        id: string;
+        kind: 'human' | 'agent';
+        name: string;
+        handle: string | null;
+        avatar: string | null;
+      }>(
+        `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar
+         FROM agent_commands root JOIN identities identity ON identity.id=root.private_payload->>'authorId'
+         WHERE root.id=$1 AND root.id=$2 AND root.root_command_id=root.id
+           AND root.root_source_message_id=root.id
+           AND root.source_message_id IS NULL AND root.parent_command_id IS NULL
+           AND identity.id=$3
+           AND ((root.reason='order' AND root.private_payload->>'kind'='order')
+             OR (root.reason='report' AND root.private_payload->>'kind'='report'
+               AND root.private_payload->>'automatic'='true'
+               AND NULLIF(root.private_payload->>'idleSince','') IS NOT NULL))`,
+        [command.root_command_id, command.root_source_message_id, SYSTEM_IDENTITY_ID],
+      )).rows[0];
+    }
+    if (!requester) throw new Error('resource requester not found: missing message or unverified command-only root');
     // A saved workflow run's turns answer to the run's person, not the wake
     // card's author: a handoff card is written by the agent handing off, and a
     // lease failover card by the system. `workflowRunRequester` returns the
@@ -7715,7 +7901,9 @@ export class DaemonService {
           if (value.status === 'connected' || value.status === 'error' || signIn?.url)
             return { status: value.status, signIn };
           return undefined;
-        });
+        }, 85_000, kind === 'trusty-squire'
+          ? { principal: 'connector', operation: 'machine', commandId: `${context.owner.pubkey}:${context.machine.machineId}` }
+          : { principal: 'connector', operation: 'status', commandId: connectorId });
         if (!status) return;
         if (status.status === 'connected') { Object.assign(result, { status: 'ready', next: `${name} is ready.` }); return; }
         if (!status.signIn?.url) { Object.assign(result, { status: 'error', next: `${name} could not connect. Reconnect to retry.` }); return; }
@@ -7777,7 +7965,7 @@ export class DaemonService {
           const row = (await database.query<{ status: string; sign_in: ConnectorStatus['signIn'] }>(
             'SELECT status,sign_in FROM workspace_connectors WHERE id=$1', [outcome.connectorId])).rows[0];
           return row && (row.status === 'connected' || row.status === 'error' || row.sign_in?.url) ? row : undefined;
-        });
+        }, 85_000, { principal: 'connector', operation: 'status', commandId: outcome.connectorId! });
         if (!connector) return;
         if (connector.status === 'connected') { Object.assign(result, { status: 'ready', next: `${outcome.app} is ready.` }); return; }
         if (!connector.sign_in?.url) { Object.assign(result, { status: 'error', next: 'The Registry tool could not connect. Reconnect to retry.' }); return; }
@@ -8884,6 +9072,7 @@ export class DaemonService {
     await this.reach(cornerId, agentId);
     const authorize = async (database: SqlDatabase) => {
       await lockCornerLifecycle(database, cornerId);
+      await lockCornerArchivalAuthority(database);
       if (input.requestId) {
         const command = await authorizeCommandOutput(database, input.roomId ?? cornerId,
           agentId, input.requestId, input.generationId);
@@ -9407,6 +9596,9 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getAgentAvatar: true,
   postAgentAvatar: true,
   postAgentUsage: true,
+  publishAgentUsageAccount:true,
+  readCommandActivation:true,
+  attachAgentUsageAccount:true,
   getAgentUsage: true,
   answerUsageRefresh: true,
   postAgentCommands: true,

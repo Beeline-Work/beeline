@@ -1,23 +1,38 @@
+import { X_SIGNUP_DELIVERY_TABLE, SERVER_LEASE_EVIDENCE_TABLE, AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification, USAGE_REFRESH_TABLE, USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult, MCP_WEBHOOK_TABLE } from './postgres-live-notifications.js';
+import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
+import { notifyCommandCompletion, recoverCommandCompletions } from './command-completion.js';
+import { COMMAND_COMPLETION_CHANNEL, POSTGRES_LIVE_CHANNEL } from './postgres-live-notifications.js';
 import { Client } from 'pg';
-import { cornerOwnerSql } from './corner-worker.js';
 import type { UsageRefreshOutcome } from '@beeline/api-contract/daemon';
 import type { AgentSignInStep } from './agent-sign-in.js';
-import { AGENT_SIGN_IN_TABLE, decodeAgentSignInNotification } from './agent-sign-in.js';
-import { USAGE_REFRESH_TABLE, USAGE_REFRESH_RESULT_TABLE, decodeUsageRefreshResult } from './agent-usage.js';
 import type { SqlDatabase } from './database.js';
 import type { LiveEvent, LiveHub } from './live.js';
-import { askSql } from './needs-you.js';
-import { MCP_WEBHOOK_TABLE } from './rooms-mcp-members.js';
-import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
-import {
-  CORNER_ROW_CACHE_COLUMNS,
-  CORNER_ROW_FACT_COLUMNS,
-  CORNER_ROW_MESSAGE_COLUMNS,
-  CORNER_ROW_ROOM_COLUMNS,
-  rowChangedSql,
-} from './corner-row-projection.js';
 
-export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
+export { POSTGRES_LIVE_CHANNEL } from './postgres-live-notifications.js';
+
+export function committedCommandNotificationSchema(): string {
+  return `CREATE OR REPLACE FUNCTION beeline_notify_committed_command(payload text) RETURNS void
+    LANGUAGE sql AS $$ SELECT pg_notify('beeline_command_completion',payload) $$;`;
+}
+export function liveControlNotificationSchema(): string {
+  return `CREATE OR REPLACE FUNCTION beeline_notify_live_control(payload text) RETURNS void
+    LANGUAGE sql AS $$ SELECT pg_notify('beeline_live_v1',payload) $$;`;
+}
+
+/** A command's SQL transaction owns completion; local callbacks are only hints. */
+export async function notifyCommittedCommand(database: Pick<SqlDatabase, 'query'>,
+  key: { principal: string; operation: string; commandId: string }): Promise<void> {
+  await database.query('SELECT pg_notify($1,$2)', [COMMAND_COMPLETION_CHANNEL, JSON.stringify(key)]);
+}
+
+/** Registration/takeover evidence carries no user-state projection or command
+ * authority. The existing listener decodes this named agent_connection hint. */
+export async function notifyAgentConnection(database: Pick<SqlDatabase, 'query'>,
+  agentId: string, epoch: number): Promise<void> {
+  await database.query('SELECT pg_notify($1,$2)', [POSTGRES_LIVE_CHANNEL,
+    JSON.stringify({ table: 'agent_connection', operation: 'UPDATE', roomId: '', agentId, epoch })]);
+}
+
 const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
   'corner_owed', 'corner_follows', 'corner_merge_holds',
 ]);
@@ -57,9 +72,6 @@ export function publishUsageRefreshResult(database: Pick<SqlDatabase, 'query'>, 
 }
 export function notifyUsageRefreshRequest(database: Pick<SqlDatabase, 'query'>, agentId: string, requestId: string) {
   return notifyLive(database, { table: USAGE_REFRESH_TABLE, operation: 'UPDATE', roomId: '', agentId, requestId });
-}
-export function notifyAgentConnection(database: Pick<SqlDatabase, 'query'>, agentId: string, epoch: number) {
-  return notifyLive(database, { table: 'agent_connection', operation: 'UPDATE', roomId: '', agentId, epoch });
 }
 export function notifyAgentConfigRoom(database: Pick<SqlDatabase, 'query'>, roomId: string, agentId: string) {
   return notifyLive(database, { table: 'agent_config', operation: 'UPDATE', roomId, agentId });
@@ -141,12 +153,23 @@ export async function notifyAgentConfigChange(
   }
 }
 
-export const POSTGRES_LIVE_SCHEMA = `
+/** Build after module initialization; notifier callers must not initialize dependent schemas. */
+export async function postgresLiveSchema(): Promise<string> {
+  const [{ cornerOwnerSql }, { askSql }, { DURABLE_LIVE_SCHEMA }, { SCHEDULED_WORK_ROW_SOURCE_SCHEMA },
+    { CORNER_ROW_CACHE_COLUMNS, CORNER_ROW_FACT_COLUMNS, CORNER_ROW_MESSAGE_COLUMNS, CORNER_ROW_ROOM_COLUMNS, rowChangedSql }] = await Promise.all([
+      import('./corner-worker.js'), import('./needs-you.js'), import('./durable-live.js'),
+      import('./scheduled-work-row-source.js'), import('./corner-row-projection.js'),
+    ]);
+  return `
 ${DURABLE_LIVE_SCHEMA}
+${SCHEDULED_WORK_ROW_SOURCE_SCHEMA}
 CREATE OR REPLACE FUNCTION beeline_notify_live() RETURNS trigger AS $$
 DECLARE
   payload jsonb;
   workspace text;
+  workspace_target text;
+  workspace_scopes text[];
+  previous_room text;
   source_room text;
   parent_room text;
   body jsonb;
@@ -158,6 +181,7 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id),
         'messageId', COALESCE(NEW.id, OLD.id),
+        'workflowRunsChanged', COALESCE(NEW.card_type='workflow-handoff',false) OR COALESCE(OLD.card_type='workflow-handoff',false),
         'agentId', COALESCE(NEW.author_id, OLD.author_id),
         'needsYouCandidate', COALESCE(NEW.presentation,OLD.presentation) IN ('card','system')
           OR (COALESCE(NEW.presentation,OLD.presentation)='message' AND
@@ -274,10 +298,21 @@ BEGIN
     WHEN 'free_agent_usage' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', '', 'ownerId', COALESCE(NEW.owner_id,OLD.owner_id));
+    WHEN 'usage_accounts' THEN
+      IF TG_OP='UPDATE' AND NEW.usage IS NOT DISTINCT FROM OLD.usage
+        AND to_jsonb(NEW)->'revision' IS NOT DISTINCT FROM to_jsonb(OLD)->'revision' THEN RETURN NULL;END IF;
+      payload=jsonb_build_object('table',TG_TABLE_NAME,'operation',TG_OP,'roomId','',
+        'ownerId',COALESCE(NEW.owner_id,OLD.owner_id),'accountId',COALESCE(NEW.id,OLD.id)::text);
     WHEN 'agents' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', '', 'ownerId', COALESCE(NEW.owner_id,OLD.owner_id),
         'resourceId', COALESCE(NEW.agent_id,OLD.agent_id),
+        'usageOnly',CASE WHEN TG_OP='UPDATE' THEN
+          (to_jsonb(NEW)-ARRAY['usage_snapshot','usage_account_id','usage_owner_id','updated_at']) IS NOT DISTINCT FROM
+          (to_jsonb(OLD)-ARRAY['usage_snapshot','usage_account_id','usage_owner_id','updated_at'])
+          AND (to_jsonb(NEW)->'usage_snapshot' IS DISTINCT FROM to_jsonb(OLD)->'usage_snapshot'
+            OR to_jsonb(NEW)->'usage_account_id' IS DISTINCT FROM to_jsonb(OLD)->'usage_account_id'
+            OR to_jsonb(NEW)->'usage_owner_id' IS DISTINCT FROM to_jsonb(OLD)->'usage_owner_id') ELSE false END,
         'squireReportChanged', CASE WHEN TG_OP='UPDATE' THEN
           NEW.squire_report IS DISTINCT FROM OLD.squire_report ELSE false END,
         'squireWorkChanged', CASE WHEN TG_OP='UPDATE' THEN
@@ -320,6 +355,7 @@ BEGIN
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id::text, OLD.room_id::text, ''),
         'identityId', COALESCE(NEW.identity_id, OLD.identity_id),
+        'workspaceId', COALESCE(NEW.workspace_id, OLD.workspace_id),
         'removed', CASE
           WHEN TG_OP = 'DELETE' THEN true
           ELSE COALESCE(NEW.removed_at IS NOT NULL, false)
@@ -457,11 +493,36 @@ BEGIN
     -- Draft text/presence is an overlay, restored by the existing snapshot.
     -- Durable Room state, including reactions and deletes, is ID-only here.
     IF TG_TABLE_NAME <> 'live_outputs' AND (source_room IS NOT NULL OR workspace IS NOT NULL) THEN
-      IF workspace IS NOT NULL THEN
-        PERFORM beeline_journal('workspace:' || workspace,jsonb_build_object(
-          'type','invalidate','roomId','','reason','workspace-replay','sourceRoomId',source_room));
-        streams := array_append(streams,'workspace:' || workspace);
+      -- Capture both sides of moves before taking any legacy Room lock.
+      -- OLD retains the Workspace even after a Room has moved or been deleted.
+      previous_room := COALESCE(to_jsonb(OLD)->>'room_id',
+        CASE WHEN TG_TABLE_NAME='rooms' THEN to_jsonb(OLD)->>'id' END,
+        to_jsonb(OLD)->>'corner_id');
+      workspace_scopes := ARRAY[workspace,to_jsonb(NEW)->>'workspace_id',to_jsonb(OLD)->>'workspace_id'];
+      IF previous_room IS NOT NULL AND TG_TABLE_NAME<>'rooms' THEN
+        workspace_scopes := workspace_scopes || ARRAY(SELECT workspace_id::text FROM rooms WHERE id=previous_room::uuid);
       END IF;
+      FOR workspace_target IN SELECT DISTINCT value FROM unnest(workspace_scopes) value
+        WHERE value IS NOT NULL ORDER BY value LOOP
+        -- The early canonical row source owns these two Workspace appends,
+        -- before any legacy Room lock. Keep this notification's original
+        -- Workspace hints and every Room/parent journal body below unchanged.
+        IF TG_TABLE_NAME NOT IN('agent_schedules','agent_subscriptions') THEN
+        PERFORM beeline_journal('workspace:' || workspace_target,jsonb_build_object(
+          'type','invalidate','roomId','','reason','workspace-replay','sourceRoomId',source_room,
+          'sourceTable',TG_TABLE_NAME,'operation',TG_OP,
+          'messageId',payload->>'messageId','identityId',payload->>'identityId',
+          'agentId',payload->>'agentId','parentRoomId',parent_room,
+          'oldRoomId',previous_room,'newRoomId',source_room,
+          'oldParentRoomId',CASE WHEN TG_TABLE_NAME='rooms' THEN to_jsonb(OLD)->>'parent_id' END,
+          'newParentRoomId',CASE WHEN TG_TABLE_NAME='rooms' THEN to_jsonb(NEW)->>'parent_id' END,
+          'sourceRemoved',TG_TABLE_NAME='rooms' AND TG_OP='UPDATE'
+            AND to_jsonb(OLD)->>'workspace_id'=workspace_target
+            AND to_jsonb(NEW)->>'workspace_id' IS DISTINCT FROM to_jsonb(OLD)->>'workspace_id',
+          'needsYouCandidate',payload->'needsYouCandidate','workflowRunsChanged',payload->'workflowRunsChanged','removed',payload->'removed'));
+        END IF;
+        streams := array_append(streams,'workspace:' || workspace_target);
+      END LOOP;
       IF source_room IS NOT NULL THEN
         body := jsonb_strip_nulls(jsonb_build_object(
           'type','invalidate','roomId',source_room,'reason','postgres:' || TG_TABLE_NAME,
@@ -472,6 +533,12 @@ BEGIN
           'readerId',CASE WHEN TG_TABLE_NAME='room_read_marks' THEN payload->>'identityId' END));
         PERFORM beeline_journal('room:' || source_room,body);
         streams := array_append(streams,'room:' || source_room);
+      END IF;
+      IF previous_room IS NOT NULL AND previous_room IS DISTINCT FROM source_room THEN
+        PERFORM beeline_journal('room:' || previous_room,jsonb_build_object(
+          'type','invalidate','roomId',previous_room,'reason','postgres:'||TG_TABLE_NAME,
+          'messageId',payload->>'messageId','operation',TG_OP));
+        streams := array_append(streams,'room:'||previous_room);
       END IF;
       IF parent_room IS NOT NULL AND parent_room IS DISTINCT FROM source_room THEN
         PERFORM beeline_journal('room:' || parent_room,jsonb_build_object(
@@ -513,7 +580,7 @@ BEGIN
     'needs_you_marks',
     'agent_grants', 'agent_schedules', 'agent_subscriptions', 'agent_commands',
     'github_installations', 'github_repositories',
-    'workspace_connectors', 'workspace_connections', 'wallet_bindings', 'agents', 'agent_avatars', 'free_agent_usage',
+    'workspace_connectors', 'workspace_connections', 'wallet_bindings', 'agents', 'usage_accounts', 'agent_avatars', 'free_agent_usage',
     'registry_mcp_oauth_attempts', 'push_devices',
     'workspace_join_notifications',
     'helper_release_notifications', 'workspaces', 'identities'
@@ -533,6 +600,7 @@ BEGIN
 END;
 $$;
 `;
+}
 
 interface PgNotification {
   channel: string;
@@ -552,11 +620,15 @@ type LivePgClientFactory = () => LivePgClient;
 
 interface LiveNotificationPayload {
   journalStreams?: string[];
+  instanceId?:string;
+  renewedAt?:number;
   table: string;
   operation: string;
   roomId: string;
   ownerId?: string;
   resourceId?: string;
+  accountId?:string;
+  usageOnly?:true;
   version?: string;
   squireReportChanged?: boolean;
   squireWorkChanged?: boolean;
@@ -617,11 +689,15 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
     return {
       ...(Array.isArray(parsed.journalStreams)
         ? { journalStreams: parsed.journalStreams.filter((s): s is string => typeof s === 'string') } : {}),
+      ...(typeof parsed.instanceId==='string' ? {instanceId:parsed.instanceId} : {}),
+      ...(Number.isSafeInteger(parsed.renewedAt) ? {renewedAt:parsed.renewedAt as number} : {}),
       table: parsed.table,
       operation: parsed.operation,
       roomId: parsed.roomId,
       ...(typeof parsed.ownerId === 'string' ? { ownerId: parsed.ownerId } : {}),
       ...(typeof parsed.resourceId === 'string' ? { resourceId: parsed.resourceId } : {}),
+      ...(typeof parsed.accountId==='string'&&/^[0-9]{1,20}$/.test(parsed.accountId)?{accountId:parsed.accountId}:{}),
+      ...(parsed.usageOnly===true?{usageOnly:true as const}:{}),
       ...(parsed.squireReportChanged === true ? { squireReportChanged: true } : {}),
       ...(parsed.squireWorkChanged === true ? { squireWorkChanged: true } : {}),
       ...(typeof parsed.squireAddress === 'string' ? { squireAddress: parsed.squireAddress } : {}),
@@ -674,15 +750,13 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
   }
 }
 
-const wait = (milliseconds: number) =>
-  new Promise<void>((resolve) => {
-    const timer = setTimeout(resolve, milliseconds);
-    timer.unref?.();
-  });
-
 /** One session-persistent LISTEN connection for one server machine. */
 export class PostgresLiveListener {
   private pushWake?: () => void;
+  private xSignupDeliveryWake?:()=>void;
+  setXSignupDeliveryWake(wake:()=>void):void {this.xSignupDeliveryWake=wake;}
+  private serverLeaseEvidence?: (instance:string,renewedAt:number,removed:boolean)=>void;
+  setServerLeaseEvidence(observe:(instance:string,renewedAt:number,removed:boolean)=>void):void { this.serverLeaseEvidence=observe; }
 
   setPushWake(wake: () => void): void { this.pushWake = wake; }
   private owedWake?: (source: 'sentry' | 'owed') => void;
@@ -691,6 +765,12 @@ export class PostgresLiveListener {
   /** A committed AI-client tag; the wake sends its webhook POST at once. */
   setMcpWebhookWake(wake: () => void): void { this.mcpWebhookWake = wake; }
   private stopped = false;
+  private running?: Promise<void>;
+  private reconnectPending = false;
+  private replacementAllowed = true;
+  private resumeConnection?: () => void;
+  private disconnectActive?: () => void;
+  private stopRecovery?: () => void;
   private active?: LivePgClient;
   private connected = false;
   private readonly projectionQueue: Array<{ raw: string; queuedAt: number; key?: string }> = [];
@@ -746,7 +826,6 @@ export class PostgresLiveListener {
     private readonly database: SqlDatabase,
     private readonly live: LiveHub,
     private readonly clientFactory: LivePgClientFactory,
-    private readonly retryDelayMs = 1_000,
   ) {}
 
   projectionHealth() {
@@ -778,7 +857,16 @@ export class PostgresLiveListener {
     this.lastNotificationAt = Date.now();
     const payload = decodePayload(raw);
     if (!payload) return;
+    // A committed cause proves traffic on this incarnation; an opened socket
+    // alone never replenishes the one replacement allowance.
+    this.replacementAllowed = true;
     if (payload.journalStreams?.length) this.live.journalChanged(payload.journalStreams);
+    if (payload.table === 'router_source' || payload.table === 'router_authority') return;
+    if(payload.table===X_SIGNUP_DELIVERY_TABLE){this.xSignupDeliveryWake?.();return;}
+    if(payload.table===SERVER_LEASE_EVIDENCE_TABLE){
+      if(payload.instanceId && payload.renewedAt!==undefined)this.serverLeaseEvidence?.(payload.instanceId,payload.renewedAt,payload.removed===true);
+      return;
+    }
     if (payload.table === 'sentry_wake_state') {
       this.owedWake?.('sentry');
       return;
@@ -825,6 +913,8 @@ export class PostgresLiveListener {
     const key = (payload.table === 'agent_config' || payload.table === 'connector_assignment') &&
         payload.agentId
       ? `${payload.table}:${payload.agentId}`
+      : payload.table==='usage_accounts'&&payload.ownerId&&payload.accountId
+        ? `usage-account:${payload.ownerId}:${payload.accountId}`
       : PARENT_ONLY_TABLES.has(payload.table) && payload.cornerParentId
         ? `corner-status:${payload.cornerParentId}`
       : (payload.table === 'github_installations' && payload.installationId) ||
@@ -886,15 +976,50 @@ export class PostgresLiveListener {
     );
   }
 
-  async run(): Promise<void> {
-    while (!this.stopped) {
-      let disconnect!: () => void;
-      const disconnected = new Promise<void>((resolve) => {
-        disconnect = resolve;
+  run(): Promise<void> {
+    if (this.stopped) return this.running ?? Promise.resolve();
+    if (!this.running) {
+      this.stopRecovery = this.database.onRecovery?.(() => {
+        if (this.stopped) return;
+        this.replacementAllowed = true;
+        if (!this.connected) this.requestConnection();
       });
+      this.running = this.runConnections();
+    }
+    return this.running;
+  }
+
+  private requestConnection(): void {
+    this.reconnectPending = true;
+    this.resumeConnection?.();
+  }
+
+  private async runConnections(): Promise<void> {
+    while (!this.stopped) {
+      this.reconnectPending = false;
+      let disconnect!: () => void;
+      let released = false;
+      const disconnected = new Promise<void>((resolve) => {
+        disconnect = () => {
+          if(released)return;released=true;
+          if (this.connected && this.replacementAllowed && !this.stopped) {
+            this.replacementAllowed = false;
+            this.requestConnection();
+          }
+          this.connected=false;
+          this.live.projectionUnavailable();
+          resolve();
+        };
+      });
+      this.disconnectActive = disconnect;
       const client = this.clientFactory();
       this.active = client;
       client.on('notification', (message) => {
+        if (this.stopped || this.active !== client || released) return;
+        if (message.channel === COMMAND_COMPLETION_CHANNEL) {
+          if (message.payload) notifyCommandCompletion(message.payload);
+          return;
+        }
         if (message.channel !== POSTGRES_LIVE_CHANNEL) return;
         this.enqueueProjection(message.payload);
       });
@@ -905,15 +1030,28 @@ export class PostgresLiveListener {
       client.on('end', disconnect);
       try {
         await client.connect();
+        if (this.stopped || this.active !== client) return;
+        if (released) throw new Error('LISTEN connection ended during acquisition');
         await client.query(`LISTEN ${POSTGRES_LIVE_CHANNEL}`);
+        if (this.stopped) return;
+        if (released) throw new Error('LISTEN connection ended during acquisition');
+        await client.query(`LISTEN ${COMMAND_COMPLETION_CHANNEL}`);
+        if (this.stopped) return;
+        if (released) throw new Error('LISTEN connection ended during acquisition');
+        recoverCommandCompletions();
+        this.xSignupDeliveryWake?.();
         this.connected = true;
         console.log('[live-listener] connected');
         // A reconnect may have missed committed writes while LISTEN was down.
         this.pushWake?.();
         await this.restoreRegistryDue();
+        if (this.stopped) return;
+        if (released) throw new Error('LISTEN connection ended during acquisition');
         this.live.resync();
         await disconnected;
       } catch (error) {
+        this.connected = false;
+        disconnect();
         console.error(
           '[live-listener] connect failed',
           error instanceof Error ? error.message : String(error),
@@ -921,22 +1059,38 @@ export class PostgresLiveListener {
       } finally {
         this.connected = false;
         if (this.active === client) this.active = undefined;
+        this.disconnectActive = undefined;
         await client.end().catch(() => undefined);
       }
-      if (!this.stopped) await wait(this.retryDelayMs);
+      if (!this.stopped && !this.reconnectPending) {
+        await new Promise<void>(resolve => { this.resumeConnection = resolve; });
+        this.resumeConnection = undefined;
+      }
     }
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.stopRecovery?.();
+    this.disconnectActive?.();
+    this.resumeConnection?.();
     this.projectionQueue.length = 0;
     if (this.registryDueTimer) clearTimeout(this.registryDueTimer);
     await this.active?.end().catch(() => undefined);
+    await this.running;
   }
 
   private async rebroadcast(raw: string | undefined): Promise<void> {
     const payload = decodePayload(raw);
     if (!payload) return;
+    if(payload.table==='usage_accounts'){
+      if(!payload.ownerId||!payload.accountId)return;
+      const affected=await this.database.query<{agent_id:string}>(`SELECT agent_id FROM agents
+        WHERE owner_id=$1 AND usage_account_id=$2::bigint ORDER BY agent_id`,[payload.ownerId,payload.accountId]);
+      for(const agent of affected.rows)this.live.publish({type:'resource-change',roomId:'',ownerId:payload.ownerId,
+        resource:'agent',resourceId:agent.agent_id,usageOnly:true});
+      return;
+    }
     if (payload.ownerId && (payload.table === 'workspace_connectors' ||
       payload.table === 'workspace_connections' || payload.table === 'connector_discovery_cache' || payload.table === 'wallet_bindings' || payload.table === 'agents' ||
       payload.table === 'agent_avatars' || payload.table === 'avatar_job' || payload.table === 'free_agent_usage')) {
@@ -944,6 +1098,7 @@ export class PostgresLiveListener {
         resource: payload.table === 'workspace_connectors' ? 'install'
           : payload.table === 'workspace_connections' || payload.table === 'connector_discovery_cache' || payload.table === 'wallet_bindings' ? 'workbench' : 'agent',
         ...(payload.resourceId ? { resourceId: payload.resourceId } : {}),
+        ...(payload.usageOnly?{usageOnly:true as const}:{}),
         ...(payload.version ? { version: payload.version } : {}) });
       if (payload.squireReportChanged)
         this.live.publish({ type: 'resource-change', roomId: '', ownerId: payload.ownerId,
@@ -1009,12 +1164,20 @@ export class PostgresLiveListener {
       if (!row) return;
       if (payload.kind === 'draft' || payload.kind === 'thought') {
         if (typeof row.body.text !== 'string') return;
+        const overlayV1=readHelperOverlayFrame(row.body.overlayV1);
+        if(row.body.overlayV1!==undefined && (!overlayV1 || overlayV1.agentId!==payload.agentId ||
+            overlayV1.roomId!==payload.roomId || overlayV1.turnId!==payload.turnId || overlayV1.kind!==payload.kind))return;
+        if(overlayV1 && (overlayV1.type==='end'||overlayV1.type==='retract')){
+          this.live.publish({type:'retract',roomId:payload.roomId,agentId:payload.agentId,turnId:payload.turnId,kind:payload.kind,overlayV1});
+          return;
+        }
         this.live.publish({
           type: payload.kind,
           roomId: payload.roomId,
           agentId: payload.agentId,
           turnId: payload.turnId,
           text: row.body.text,
+          ...(overlayV1?{overlayV1}:{}),
           ...(typeof row.body.latestChunk === 'string'
             ? { latestChunk: row.body.latestChunk } : {}),
         });
@@ -1122,6 +1285,7 @@ export class PostgresLiveListener {
       ...(payload.table === 'memberships' && !payload.roomId && payload.identityId
         ? { readerId: payload.identityId }
         : {}),
+      ...(payload.table === 'memberships' && payload.workspaceId ? { workspaceId: payload.workspaceId } : {}),
       ...(payload.messageId ? { messageId: payload.messageId } : {}),
       ...(payload.requestId ? { requestId: payload.requestId } : {}),
       ...(payload.turnStatus === 'working' || payload.turnStatus === 'complete' ||

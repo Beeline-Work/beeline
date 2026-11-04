@@ -1,3 +1,4 @@
+vi.mock('@/buzz/use-surface-focus', () => ({ useSurfaceFocus: () => true }));
 vi.mock('@/buzz/use-text-draft', () => ({ useTextDraft: () => ['', () => {}, { clear: () => {} }] }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));

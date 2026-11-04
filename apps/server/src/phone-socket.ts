@@ -1,3 +1,4 @@
+import { parseRouterCommandIdentity } from '@beeline/api-contract/router-command';
 import type { WebSocket } from 'ws';
 import {
   PHONE_SOCKET_MAX_IN_FLIGHT, PHONE_SOCKET_MAX_REQUEST_ID_LENGTH,
@@ -15,6 +16,10 @@ export function phoneSocketRequests(
   errorStatus: (error: unknown) => number,
   /** Sign-in family of this socket, when the access token named one. */
   familyId?: string,
+  /** The hook owns synchronous success enqueue while a current authority fence
+   * is held. It must call enqueue at most once and never retain it. */
+  fenceReply?: (operation: string, args: Record<string, unknown>, result: unknown,
+    enqueue: (safeResult?: unknown) => undefined) => Promise<void>,
 ): (message: unknown) => boolean {
   const active = new Map<string, AbortController>();
   const abandon = () => {
@@ -46,12 +51,20 @@ export function phoneSocketRequests(
       fail(id, 'busy', 'Too many phone requests in flight', true);
       return true;
     }
+    let command;
+    try { command = request.command === undefined ? undefined : parseRouterCommandIdentity(request.command); }
+    catch { fail(id, 'invalid_command_identity', 'Invalid durable command identity'); return true; }
     const controller = new AbortController();
     active.set(id, controller);
-    void dispatch(request.op, request.args as Record<string, unknown>, viewerId, controller.signal, undefined, familyId)
-      .then(result => {
-        if (!controller.signal.aborted) reply({ t: 'res', id, ok: true, result: result ?? null });
-      }, error => {
+    void dispatch(request.op, request.args as Record<string, unknown>, viewerId, controller.signal, undefined, familyId, command)
+      .then(async result => {
+        const enqueue = (safeResult: unknown = result) => {
+          if (!controller.signal.aborted) reply({ t: 'res', id, ok: true, result: safeResult ?? null });
+          return undefined;
+        };
+        if (fenceReply) await fenceReply(request.op!, request.args as Record<string, unknown>, result, enqueue);
+        else enqueue();
+      }).catch(error => {
         if (controller.signal.aborted) return;
         const status = error instanceof PhoneOperationError ? error.status : errorStatus(error);
         if (status >= 500) captureServerError(error);

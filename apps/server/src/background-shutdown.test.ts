@@ -1,6 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
-import { BackgroundJobRunner, BackgroundLeader, type LeaderConnection } from './background.js';
+import { BackgroundWork } from './background-work.js';
+import { BackgroundJobRunner } from './background.js';
+import { BackgroundLeader, type LeaderConnection } from './background-leader.js';
 import { captureServerError } from './sentry.js';
 
 vi.mock('./sentry.js', () => ({ captureServerError: vi.fn() }));
@@ -19,6 +21,39 @@ function connection() {
 }
 
 describe('background shutdown', () => {
+  it('drains the detached check-in receipt after leader admissions stop and before pool close', async () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const registration = source.slice(source.indexOf('let nextDayCheckinRunning:'),
+      source.indexOf("if (push) work.addDeadline('push'"));
+    expect(registration).toContain("nextDayCheckinRunning = backgroundJobs.run('next-day-checkin'");
+    expect(registration).not.toContain("void backgroundJobs.run");
+    const shutdown = source.slice(source.indexOf('const stop = async () =>'));
+    const drain = shutdown.indexOf('await nextDayCheckinRunning');
+    expect(drain).toBeGreaterThan(shutdown.indexOf('await leader.stop()'));
+    expect(drain).toBeLessThan(shutdown.indexOf('jobsDatabase.close()'));
+
+    const email = deferred();
+    const runner = new BackgroundJobRunner();
+    const order: string[] = [];
+    let poolsClosed = false;
+    const receipt = runner.run('next-day-checkin', async () => {
+      await email.promise;
+      expect(poolsClosed).toBe(false);
+      order.push('email-receipt');
+    });
+    const stop = (async () => {
+      order.push('leader-stopped');
+      await receipt;
+      poolsClosed = true;
+      order.push('pools-closed');
+    })();
+    await Promise.resolve();
+    expect(poolsClosed).toBe(false);
+    email.resolve();
+    await stop;
+    expect(order).toEqual(['leader-stopped', 'email-receipt', 'pools-closed']);
+  });
+
   it('AC-3: drains every job before closing pools without waiting for another cycle', async () => {
     const entered = deferred();
     const resume = deferred();
@@ -67,12 +102,12 @@ describe('background shutdown', () => {
     expect(client.release).toHaveBeenCalledOnce();
   }, 1000);
 
-  it('does not start a cycle when stopped during the connection health check', async () => {
+  it('does not start a cycle when stopped during lock acquisition', async () => {
     const checking = deferred();
     const resume = deferred();
     const client = connection();
     client.query = async <Row>(sql?: string) => {
-      if (sql === 'SELECT 1') {
+      if (sql?.includes('pg_advisory_lock')) {
         checking.resolve();
         await resume.promise;
       }
@@ -124,18 +159,81 @@ describe('background shutdown', () => {
     expect(shutdown.indexOf('await leader.stop();')).toBeLessThan(shutdown.indexOf('database.close()'));
   });
 
-  it('Reproduction MA-1: merge recovery repeats after startup on the reconciliation interval', () => {
+  it('spends startup repair once per leader epoch even when the provider fails', async () => {
     const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
-    const repairStart = source.indexOf("work.add('repair', reconciliationMs, async (newLeader) => {");
+    const registration = source.slice(source.indexOf("if (githubJobs) work.addDeadline('repository.startupRepair'"),
+      source.indexOf("work.add('repair', reconciliationMs"));
+    expect(registration).toContain("await backgroundJobs.run('github-mergeability'");
+    expect(source).not.toContain('reconciledMergeability');
+    let now = 0;
+    const work = new BackgroundWork(() => now, () => {});
+    const runner = new BackgroundJobRunner();
+    const refresh = vi.fn(async () => { throw new Error('provider unavailable'); });
+    work.addDeadline('repository.startupRepair', async () => {
+      await runner.run('github-mergeability', refresh);
+    });
+    const unrelated = vi.fn(async () => {});
+    work.add('repair', 60_000, unrelated);
+    await work.run(true);
+    for (now = 60_000; now <= 24 * 60 * 60_000; now += 60_000) await work.run(false);
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(unrelated.mock.calls.length).toBeGreaterThan(1000);
+    await work.run(true);
+    expect(refresh).toHaveBeenCalledTimes(2);
+  });
+
+  it('owns MCP delivery through deadline work and committed/recovery wakes, never maintenance', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const maintenance = readFileSync(new URL('./background.ts', import.meta.url), 'utf8');
+    expect(source).toContain("mcpWork.addDeadline('mcp-webhooks'");
+    expect(source).toContain('runMcpWebhookDelivery(jobsDatabase, undefined, 50, mcpStop.signal)');
+    expect(source).toContain('setMcpWebhookWake(wake)');
+    expect(source).toContain('startBackgroundWork(mcpWork, run =>');
+    expect(source).toContain('onRecovery(wake)');
+    expect(source).toContain('subscribeResync(wake)');
+    expect(maintenance).not.toContain('deliverMcpMemberWebhooks');
+    const shutdown = source.slice(source.indexOf('const stop = async () =>'));
+    expect(shutdown.indexOf('await mcpStopped')).toBeLessThan(shutdown.indexOf('database.close()'));
+    expect(shutdown.indexOf('await mcpStopped')).toBeGreaterThan(-1);
+    expect(shutdown.indexOf('mcpStop.abort()')).toBeLessThan(shutdown.indexOf('await leader.stop()'));
+    expect(shutdown.indexOf('stopMcpWebhooks()')).toBeLessThan(shutdown.indexOf('await leader.stop()'));
+  });
+
+  it('does not admit GitHub pending-check or failed-read discovery on the repair clock', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    const operations = readFileSync(new URL('./github-operations.ts', import.meta.url), 'utf8');
+    for (const retired of ['refreshQueuedChecks', 'refreshOpenPendingChecks']) {
+      expect(source).not.toContain(retired);
+      expect(operations).not.toContain(retired);
+    }
+    expect(operations).not.toContain("'{checkRefreshRetry}',");
+  });
+
+  it('Reproduction MA-1: missed merge recovery is never admitted by the repair clock', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    expect(source).not.toContain("work.add('repair'");
+    const repairStart = source.indexOf('registerBackgroundDeadlineFamilies(work');
     expect(repairStart).toBeGreaterThan(-1);
     const recurring = source.slice(repairStart);
     const cycle = recurring.slice(0, recurring.indexOf('const leader = new BackgroundLeader'));
     expect(cycle).not.toContain('recoverUnfinishedMergeClaims');
-    expect(cycle).toContain('githubJobs.reconcileMergedCorners()');
+    expect(cycle).not.toContain('githubJobs.reconcileMergedCorners()');
+    expect(readFileSync(new URL('./github-operations.ts', import.meta.url), 'utf8')).not.toContain('async reconcileMergedCorners(');
     expect(source).not.toContain('retryBranchDeletions');
     expect(source).not.toContain('retryCornerBranchDeletions');
     expect(source).not.toContain('repairPromotedCornerBranches');
     expect(source).not.toContain('recoveredCornerMerges');
     expect(source).not.toContain('reconciledMergedCorners');
   });
+  it('owns schedule deadlines and exact committed/recovery wakes without a minute scan', () => {
+    const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
+    expect(source).toContain("work.addDeadline('schedules'");
+    expect(source).not.toContain("work.add('schedules'");
+    expect(source).toContain('if (!fired.ok) return;');
+    expect(source).toContain('subscribeCommandCompletion(AGENT_SCHEDULE_DUE_KEY, wakeSchedules)');
+    expect(source).toContain('jobsDatabase.onRecovery(wakeSchedules)');
+    expect(source).toContain('live.subscribeResync(wakeSchedules)');
+    expect(source).toContain('stopScheduleRecovery();stopScheduleResync();');
+  });
+
 });

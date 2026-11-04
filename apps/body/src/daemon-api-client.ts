@@ -1,3 +1,5 @@
+import { HELPER_USAGE_OPERATIONS, type HelperUsageOperation } from './helper-usage-channel.js';
+import { invalidateUsageAccountAttachment } from './helper-usage-publisher.js';
 import {
   isAgentCommand,
   type AgentCommand,
@@ -174,7 +176,7 @@ export class DaemonApiClient {
         onItems?: (items: readonly InboxItem[], cursor?: string) => void;
         onState?: (
           connected: boolean,
-          capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+          capabilities?: { pushIntake: boolean; connectionPresence: boolean; connectionGeneration?: number },
         ) => void;
         onCommands?: (commands: readonly AgentCommand[]) => void;
         presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean };
@@ -228,6 +230,7 @@ export class DaemonApiClient {
       },
       onMessage: (event) => this.liveMessage(event),
       onClose: () => {
+        this.liveSubscriptions.clear();
         this.channelStateListener?.(false);
         for (const room of this.liveRooms.values())
           for (const registration of room.registrations) registration.onState?.(false);
@@ -299,7 +302,7 @@ export class DaemonApiClient {
     onItems?: (items: readonly InboxItem[], cursor?: string) => void,
     onState?: (
       connected: boolean,
-      capabilities?: { pushIntake: boolean; connectionPresence: boolean },
+      capabilities?: { pushIntake: boolean; connectionPresence: boolean; connectionGeneration?: number },
     ) => void,
     presence?: { releaseVersion?: string; sourceSha?: string; available?: boolean },
     onCommands?: (commands: readonly AgentCommand[]) => void,
@@ -310,14 +313,23 @@ export class DaemonApiClient {
       this.liveRooms.set(roomId, room);
     }
     room.cursor = cursor ?? room.cursor;
+    const previous = this.liveSubscriptions.get(roomId);
     const registration = { onItems, onState, presence, onCommands };
     room.registrations.add(registration);
     this.ensureLiveSocket();
     this.sendLiveSubscription(roomId);
+    if (previous?.ready && this.liveSubscriptions.get(roomId) === previous)
+      registration.onState?.(true, previous.capabilities);
     return () => {
-      if (!room.registrations.delete(registration) || room.registrations.size) return;
+      if (!room.registrations.delete(registration)) return;
+      if (room.registrations.size) {
+        this.sendLiveSubscription(roomId);
+        return;
+      }
       this.liveRooms.delete(roomId);
+      this.liveSubscriptions.delete(roomId);
       this.channel.send({ type: 'unsubscribe', roomId });
+      this.completeLiveRecovery();
       if (!this.liveRooms.size && !this.roomsChangedListener) this.channel.stop();
     };
   }
@@ -387,13 +399,59 @@ export class DaemonApiClient {
     this.channel.stop();
   }
 
+  /** One negotiated command setup read, carried only by the existing machine
+   * channel. This method bypasses generic HTTP and context argument injection. */
+  async readCommandActivation(input:import('@beeline/api-contract/helper-activation').CommandActivationInput){
+    const identity=input&&typeof input==='object'?Object.getOwnPropertyDescriptor(input,'agentId'):undefined;
+    if(!identity||!('value' in identity)||identity.value!==this.agentId)throw new Error('Activation runtime identity mismatch');
+    this.requestCount++;this.inFlight++;
+    try{return await this.channel.activation.request(input);}finally{this.inFlight--;}
+  }
+
+  turnOwnershipScope(): import('@beeline/api-contract/helper-turn-ownership').HelperTurnOwnershipSource | undefined {
+    return this.channel.turn.scope();
+  }
+  noteOwnedTurnClaim(
+    turn: { roomId: string; requestId: string; generationId?: string },
+    source: import('@beeline/api-contract/helper-turn-ownership').HelperTurnOwnershipSource,
+    onLost: () => void,
+  ): void { this.channel.turn.claimed(turn, source, onLost); }
+  releaseOwnedTurn(turn: { roomId: string; requestId: string; generationId?: string }): void { this.channel.turn.release(turn); }
+  noteLegacyTurnClaim(turn: { roomId: string; requestId: string; generationId?: string }): void { this.channel.turn.claimedLegacy(turn); }
+  runWithTurnOwnership<T>(
+    turn: { roomId: string; requestId: string; generationId?: string }, task: () => Promise<T>, onLost?: () => void,
+  ): Promise<T> | undefined { return this.channel.turn.runOwned(turn, task, onLost); }
+
   async execute<Name extends keyof DaemonOperationMap>(
     name: Name,
     input: Input<Name>,
   ): Promise<Output<Name>> {
+    if(name==='readCommandActivation')throw new Error('Activation context requires the command-owned machine adapter');
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.agentId === 'string' && candidate.agentId !== this.agentId) {
       throw new Error('daemon operation agentId does not match the runtime identity');
+    }
+    if (((name === 'claimAgentCommand' || name === 'acknowledgeAgentCommand') && this.channel.turn.selected) ||
+        (name === 'postAgentTurnReceipt' && this.channel.turn.selected && !this.channel.turn.isLegacy(input as Input<'postAgentTurnReceipt'>))) {
+      this.requestCount++; this.inFlight++;
+      try {
+        return await this.channel.turn.request(name as import('@beeline/api-contract/helper-turn-ownership').HelperTurnOperation,
+          input as Input<'claimAgentCommand'> | Input<'postAgentTurnReceipt'>) as Output<Name>;
+      } catch {
+        throw new DaemonApiError('Turn operation outcome is UNKNOWN; keep the same command and generation.',
+          503, true, 'turn ownership outcome unknown');
+      } finally { this.inFlight--; }
+    }
+    if((HELPER_USAGE_OPERATIONS as readonly string[]).includes(String(name)) &&
+      (name!=='postAgentUsage'||candidate.usageSource!==undefined||this.channel.usageAccountSelected)){
+      if(name==='postAgentUsage'&&candidate.usageSource===undefined)throw new Error('Negotiated usage source required');
+      this.requestCount++;this.inFlight++;
+      try{
+        const result=await this.channel.usage.request(name as HelperUsageOperation,input as never);
+        if(name==='postAgentUsage'&&(input as {usage?:{spend?:unknown}}).usage?.spend){const scope=this.channel.usageAccountScope();
+          if(scope)invalidateUsageAccountAttachment(scope.origin,scope.ownerId,this.agentId);}
+        return result as Output<Name>;
+      }finally{this.inFlight--;}
     }
     const controller = new AbortController();
     const deadline = setTimeout(() => controller.abort(), REQUEST_DEADLINE_MS);
@@ -460,6 +518,10 @@ export class DaemonApiClient {
       if (admitted) this.inFlight -= 1;
       await release?.();
     }
+    if(name==='postAgentUsage'&&(input as {usage?:{spend?:unknown}}).usage?.spend){
+      const scope=this.channel.usageAccountScope();
+      if(scope)invalidateUsageAccountAttachment(scope.origin,scope.ownerId,this.agentId);
+    }
     return output;
   }
 
@@ -467,7 +529,42 @@ export class DaemonApiClient {
     if (this.liveRooms.size || this.roomsChangedListener) this.channel.start();
   }
 
+  /** Ephemeral request correlation, never persisted or used as turn authority. */
+  private readonly liveSubscriptions = new Map<string, {
+    requestId: string;
+    inboxRequested: boolean;
+    commandsSeen: boolean;
+    inboxSeen: boolean;
+    inboxRequired: boolean;
+    ready: boolean;
+    capabilities?: {pushIntake:boolean; connectionPresence:boolean; connectionGeneration:number};
+  }>();
+
+  private completeLiveRecovery(): void {
+    if (![...this.liveSubscriptions.values()].some(subscription => !subscription.ready)) this.channel.recovered();
+  }
+
+  private completeLiveSubscription(roomId: string): void {
+    const current = this.liveSubscriptions.get(roomId);
+    if (!current || current.ready || !current.capabilities || !current.commandsSeen ||
+        (current.inboxRequired && !current.inboxSeen)) return;
+    current.ready = true;
+    for (const registration of this.liveRooms.get(roomId)?.registrations ?? [])
+      registration.onState?.(true, current.capabilities);
+    this.completeLiveRecovery();
+  }
+
+  private currentLiveSubscription(event: Record<string, unknown>) {
+    if (typeof event.roomId !== 'string') return undefined;
+    const current = this.liveSubscriptions.get(event.roomId);
+    if (!current || (this.channel.initialSnapshotsV1
+      ? event.requestId !== current.requestId
+      : event.requestId !== undefined && event.requestId !== current.requestId)) return undefined;
+    return current;
+  }
+
   private liveOpened(): void {
+    this.liveSubscriptions.clear();
     for (const roomId of this.liveRooms.keys()) this.sendLiveSubscription(roomId);
     // Every wake on this socket is fire-and-forget: a membership written, or
     // a Connect tapped, while this socket was connecting (or between
@@ -475,6 +572,7 @@ export class DaemonApiClient {
     // so the reconciliation and the drain still reach them.
     this.roomsChangedListener?.();
     this.connectorAssignmentListener?.();
+    this.completeLiveRecovery();
   }
 
   private liveMessage(event: Record<string, unknown>): void {
@@ -527,12 +625,19 @@ export class DaemonApiClient {
       return;
     }
     if (event.type === 'subscribed' && typeof event.roomId === 'string') {
+      const current = this.currentLiveSubscription(event);
+      if (!current || current.ready) return;
       const capabilities = event.capabilities as Record<string, unknown> | undefined;
-      for (const registration of this.liveRooms.get(event.roomId)?.registrations ?? [])
-        registration.onState?.(true, {
-          pushIntake: capabilities?.pushIntake === true,
-          connectionPresence: capabilities?.connectionPresence === true,
-        });
+      // Old servers ignore inbox:false. Only the explicit current-server echo
+      // retires that lane; an old empty inbox is still a real initial snapshot.
+      current.inboxRequired = current.inboxRequested || capabilities?.inboxSnapshot !== false ||
+        !this.channel.initialSnapshotsV1 || capabilities?.initialSnapshotsV1 !== true;
+      current.capabilities = {
+        pushIntake: capabilities?.pushIntake === true,
+        connectionGeneration: this.channel.reconnects,
+        connectionPresence: capabilities?.connectionPresence === true,
+      };
+      this.completeLiveSubscription(event.roomId);
       return;
     }
     if (
@@ -542,7 +647,8 @@ export class DaemonApiClient {
       Array.isArray(event.commands)
     ) {
       const room = this.liveRooms.get(event.roomId);
-      if (!room) return;
+      const current = this.currentLiveSubscription(event);
+      if (!room || !current) return;
       const commands = event.commands.filter(
         (command): command is AgentCommand =>
           isAgentCommand(command) &&
@@ -550,6 +656,8 @@ export class DaemonApiClient {
           command.agentId === this.agentId,
       );
       for (const registration of room.registrations) registration.onCommands?.(commands);
+      if (commands.length === event.commands.length) current.commandsSeen = true;
+      this.completeLiveSubscription(event.roomId);
       return;
     }
     if (event.type !== 'inbox' || typeof event.roomId !== 'string' || !Array.isArray(event.items)) {
@@ -557,7 +665,8 @@ export class DaemonApiClient {
       return;
     }
     const room = this.liveRooms.get(event.roomId);
-    if (!room) return;
+    const current = this.currentLiveSubscription(event);
+    if (!room || !current) return;
     const items: InboxItem[] = [];
     for (const candidate of event.items) {
       if (!candidate || typeof candidate !== 'object') continue;
@@ -572,19 +681,32 @@ export class DaemonApiClient {
     if (items.length)
       for (const registration of room.registrations)
         registration.onItems?.(items, typeof event.cursor === 'string' ? event.cursor : undefined);
+    if (event.items.every(candidate => candidate && typeof candidate === 'object' && typeof candidate.id === 'string'))
+      current.inboxSeen = true;
+    this.completeLiveSubscription(event.roomId);
   }
 
   private sendLiveSubscription(roomId: string): void {
     const room = this.liveRooms.get(roomId);
     if (!room || !this.channel.isOpen()) return;
+    const inboxRequested = [...room.registrations].some(registration => registration.onItems !== undefined);
+    const previous = this.liveSubscriptions.get(roomId);
+    if (previous?.inboxRequested === inboxRequested) return;
+    if (previous) this.channel.send({ type: 'unsubscribe', roomId });
+    const current = { requestId: randomUUID(), inboxRequested, commandsSeen: false, inboxSeen: false,
+      inboxRequired: true, ready: false };
+    this.liveSubscriptions.set(roomId, current);
+    this.channel.awaitInitialRecovery();
     this.subscriptionCount += 1;
-    this.channel.send({
+    if (!this.channel.send({
       type: 'subscribe',
       roomId,
+      requestId: current.requestId,
+      inbox: inboxRequested,
       lifecycleId: this.presenceLifecycleId,
       ...(room.cursor ? { cursor: room.cursor } : {}),
       ...[...room.registrations].reverse().find((registration) => registration.presence)?.presence,
-    });
+    }) && this.liveSubscriptions.get(roomId) === current) this.liveSubscriptions.delete(roomId);
   }
 }
 

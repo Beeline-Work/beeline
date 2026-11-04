@@ -422,8 +422,9 @@ describe('computer session handoff', () => {
       }, testSquire);
       const access = await computerViewToken(database, share.id, HUMAN);
       const loading = await (await fetch(`${origin}/s/${share.id}/?access=${access}`)).text();
-      expect(loading).toContain('Connecting to browser');
+      expect(loading).toContain('Try again');
       expect(loading).toContain('location.replace(next.href)');
+      expect(loading).toContain('event.isTrusted');expect(loading).not.toContain('setTimeout');
       const html = await (await fetch(`${origin}/s/${share.id}/?access=${access}`)).text();
       expect(html).not.toContain(upstreamUrl);
       expect(html).not.toContain(token);
@@ -647,12 +648,11 @@ describe('computer session handoff', () => {
     await new Promise<void>(resolve => gone.close(() => resolve()));
   });
 
-  it('keeps a stale lease live until Squire confirms the source was reaped, then closes viewers', async () => {
+  it('ends a view at its committed lease expiry without probing Squire and closes viewers', async () => {
     const token = 'e'.repeat(43);
-    let upstreamEnded = false;
-    let upstreamUnavailable = false;
+    let upstreamReads=0;
     const squire = createServer((_request, response) => {
-      response.writeHead(upstreamEnded ? 410 : upstreamUnavailable ? 503 : 200).end('<!doctype html>');
+      upstreamReads++;response.writeHead(200).end('<!doctype html>');
     });
     const upstreamSockets = new WebSocketServer({ noServer: true });
     squire.on('upgrade', (request, socket, head) =>
@@ -672,29 +672,17 @@ describe('computer session handoff', () => {
       const viewerClosed = new Promise<void>((resolve) => viewer.once('close', () => resolve()));
       await new Promise((resolve) => setTimeout(resolve, 1_600));
 
-      // Upstream leases roll independently of a delayed helper renewal.
       expect((await getComputerSession(database, share.id))?.status).toBe('live');
-      await expireComputerSessions(database, live);
-      expect((await getComputerSession(database, share.id))?.status).toBe('live');
-      upstreamUnavailable = true;
-      await expireComputerSessions(database, live);
-      expect((await getComputerSession(database, share.id))?.status).toBe('live');
-      upstreamUnavailable = false;
-      const another = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
-      await opened(another);
-      another.close();
-      await new Promise<void>(resolve => another.once('close', resolve));
-
-      upstreamEnded = true;
-      expect((await fetch(`${origin}/s/${share.id}/?access=${access}`)).status).toBe(410);
-
-      // A restarted server reconciles the source's actual end, not its old deadline.
-      await migrate(database);
+      const readsBeforeExpiry=upstreamReads;
+      // Acquisition reconciles the stored due row even when its upstream URL
+      // would still return200. There is no status request to that provider.
       const stop = startComputerExpirySweep(database, live, 60_000);
       try {
         await until(async () => (await database.query<{ status: string }>(
           'SELECT status FROM computer_sessions WHERE id=$1', [share.id])).rows[0]?.status === 'ended' ? true : undefined);
       } finally { stop(); }
+      expect(upstreamReads).toBe(readsBeforeExpiry);
+      expect((await fetch(`${origin}/s/${share.id}/?access=${access}`)).status).toBe(410);
       await viewerClosed;
       const refused = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
       await expect(opened(refused)).rejects.toThrow();

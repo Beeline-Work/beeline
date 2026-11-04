@@ -71,7 +71,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "37",
+            runtimeVersion: runtimeVersionOverride || "38",
             // Keep the launcher identity stable across system appearance modes.
             // iOS masks this full-size source; only Android adaptive layers need
             // the separately inset safe-zone treatment.
@@ -106,7 +106,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "45",
+            runtimeVersion: runtimeVersionOverride || "47",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -258,6 +258,7 @@ export default {
             typedRoutes: true
         },
         updates: {
+            checkAutomatically: "NEVER",
             url: "https://u.expo.dev/58f1e94e-5ce5-475e-9dde-3eaa9e36699c",
             requestHeaders: {
                 "expo-channel-name": updatesChannel

@@ -165,6 +165,8 @@ export function beelineWakesSkillMarkdown(releaseId: string): string {
 
 Every wait below ends the turn. Something already wakes you; no reminder loops.
 
+If a background job's process id is missing after a wake, check the job's output before restarting. If its output is still updating, the job is alive; do not restart it.
+
 | Waiting for | What wakes you |
 | --- | --- |
 | An agent you ordered | Its report |
@@ -261,7 +263,8 @@ You keep memory yourself. No background reviewer exists: what you do not keep cu
 | Workflows | Roles and steps for a run across agents | app_tool(app:beeline:workflow, tool:save); run with app_tool(app:beeline:workflow, tool:start) |
 | History | Every message in the Workspace | Nothing; read with search(scope:history) |
 
-- **Look up.** Before you say \"can't\" or \"not saved\", run search(scope:memory, query) and connect(mode:status); inspect vault metadata only when Squire is mounted and relevant.
+- **Look up.** Before you say \"can't\", \"impossible\" or \"not saved\", run search(scope:memory, query) and connect(mode:status); inspect vault metadata only when Squire is mounted and relevant.
+- **Correct.** When a human corrects your claim, save the corrected fact with remember(kind:fact, action:save) in that same turn. Private harness notes do not count; other agents read only Beeline memory.
 - **Use.** Call remember(kind:fact, action:used) for what your answer used. When a saved item fails, fix it in the same turn.
 - **Save.** Put each fact in one store only. Never save "X is impossible". Save the specific failure and the machine: "On Niglet's host, the highroll Fly token returns 403."
 - **Prune.** Rewrite \`workspace-core\` whole and keep it at most 2,200 characters. An agent-saved Workspace fact that nobody uses expires in the weekly pass. Replace a procedure or workflow by saving its slug again; remove it with remember(kind:procedure, action:delete).

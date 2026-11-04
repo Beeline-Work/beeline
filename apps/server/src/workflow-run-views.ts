@@ -1,3 +1,4 @@
+import { workingTurnFreshSql } from './turn-ownership.js';
 import type {
   WorkflowActorView,
   WorkflowReadContract,
@@ -524,10 +525,10 @@ SELECT message.id,(message.card->>'seq')::int seq,output.output_turns,output.liv
        LEFT JOIN LATERAL (
          SELECT array_agg(command.agent_id||':'||command.turn_request_id)
            FILTER (WHERE command.state='claimed' AND turn.status='working'
-             AND turn.created_at>now()-interval '90 seconds') output_turns,
+             AND ${workingTurnFreshSql('turn')}) output_turns,
            (array_agg(live.body->>'latestChunk' ORDER BY live.updated_at DESC)
              FILTER (WHERE command.state='claimed' AND turn.status='working'
-               AND turn.created_at>now()-interval '90 seconds' AND live.body->>'latestChunk' IS NOT NULL))[1] live_output,
+               AND ${workingTurnFreshSql('turn')} AND live.body->>'latestChunk' IS NOT NULL))[1] live_output,
            (array_agg(jsonb_build_object('messageId',reply.id,'text',reply.text)
              ORDER BY reply.created_at DESC,reply.id DESC)
              FILTER (WHERE command.state='complete' AND reply.id IS NOT NULL))[1] final_reply

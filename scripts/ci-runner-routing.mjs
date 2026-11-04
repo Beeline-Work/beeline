@@ -71,9 +71,9 @@ export async function loadRunners({ request, repository }) {
   throw Error('Runner inventory exceeds bounded pagination');
 }
 
-// Account for older jobs already queued, and older workflows still preparing
-// their job graph. This avoids competing snapshots booking the same free role
-// before the previous workflow's dependent jobs have appeared in the API.
+// Account only for actual queued Squire requests from older runs. A preparing
+// workflow has no claim: its jobs may be hosted, skipped or not materialize for
+// minutes. Speculative reservations strand idle capacity behind hosted queues.
 export async function loadPressure({ request, repository, runId }) {
   assert.match(String(runId), /^\d+$/);
   const pages = await Promise.all(['queued', 'in_progress', 'pending'].map(status =>
@@ -85,7 +85,6 @@ export async function loadPressure({ request, repository, runId }) {
   }
   assert.ok(listed.has(Number(runId)), 'Active workflow inventory is not current yet');
   const reservations = { heavy: 0, control: 0, workspace: 0 };
-  const heavyName = name => /^(?:TYPECHECK|SHARED PACKAGE TESTS|DEAD CODE|NATIVE FINGERPRINT|MOBILE-EXPORT REACHABILITY|SERVER SUITE SHARD )/.test(name);
   for (const run of listed.values()) {
     if (run.id >= Number(runId) || run.status === 'completed') continue;
     const result = await request(`/repos/${repository}/actions/runs/${run.id}/jobs?per_page=100`);
@@ -94,9 +93,6 @@ export async function loadPressure({ request, repository, runId }) {
       if (job.status !== 'queued' || job.runner_name || job.runner_id > 0) continue;
       for (const role of roles) if (job.labels?.includes(`beeline-ci-${role}`)) reservations[role]++;
     }
-    if (!result.jobs.some(job => heavyName(job.name))) reservations.heavy += 8;
-    if (!result.jobs.some(job => job.name === 'Prepare workspace caches')) reservations.control++;
-    if (!result.jobs.some(job => job.name === 'MOBILE SUITE')) reservations.workspace++;
   }
   return reservations;
 }
@@ -128,6 +124,6 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   appendFileSync(process.env.GITHUB_OUTPUT, outputs.join('\n') + '\n');
   const rows = result.placements.map(row => `| ${row.job} | ${row.target.includes('self-hosted') ? 'squire' : 'ubuntu-latest'} | ${row.observedIdleRunner ?? 'hosted overflow'} |`);
   appendFileSync(process.env.GITHUB_STEP_SUMMARY,
-    `Runner inventory: ${JSON.stringify(result.idle)}; prior reservations: ${JSON.stringify(result.reserved)}${result.inventoryError ? `; ${result.inventoryError}` : ''}\n\n| Job | Placement | Observed slot |\n| --- | --- | --- |\n${rows.join('\n')}\n`);
+    `Runner inventory: ${JSON.stringify(result.idle)}; queued Squire requests: ${JSON.stringify(result.reserved)}${result.inventoryError ? `; ${result.inventoryError}` : ''}\n\n| Job | Placement | Observed slot |\n| --- | --- | --- |\n${rows.join('\n')}\n`);
   console.log(JSON.stringify(result));
 }

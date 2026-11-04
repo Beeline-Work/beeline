@@ -3,9 +3,11 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { afterEach, expect, it, vi } from 'vitest';
 const read = vi.hoisted(() => vi.fn(async () => ({ workflows: [] })));
-vi.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => { wire.focus = effect; React.useEffect(effect, [effect]); } }));
+// This suite exercises the explicitly negotiated legacy-server cohort.
+vi.mock('./router-resource', () => ({ useRoutedResource: () => ({ mode: 'legacy', value: null }) }));
+vi.mock('expo-router', () => ({ useFocusEffect: (effect: () => (() => void)) => { wire.focus = effect; React.useEffect(() => { const blur = effect(); wire.blur = blur; return blur; }, [effect]); } }));
 vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: read }));
-const wire = vi.hoisted(() => ({ listener: undefined as any, foreground: undefined as any, focus: undefined as any, fail: false }));
+const wire = vi.hoisted(() => ({ listener: undefined as any, foreground: undefined as any, focus: undefined as any, blur: undefined as any, fail: false }));
 vi.mock('react-native', () => ({ AppState: { currentState: 'active', addEventListener: (_: string, callback: unknown) => { wire.foreground = callback; return { remove: vi.fn() }; } } }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async (_: unknown, listener: unknown) => { if (wire.fail) throw new Error('socket refused'); wire.listener = listener; return () => undefined; } }) }));
 afterEach(() => { read.mockReset(); read.mockResolvedValue({ workflows: [] }); });
@@ -85,7 +87,7 @@ it('a corner and its run page share one workflow read, and prose never repeats i
   } finally { await act(async () => tree.unmount()); }
 });
 
-it('CR1: workflow failure recovers quietly on an event after bounded backoff', async () => {
+it('CR1: failed workflow reads wait for Retry; unrelated traffic and elapsed time cannot recover them', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -93,37 +95,24 @@ it('CR1: workflow failure recovers quietly on an event after bounded backoff', a
   let current: any;
   function Corner() { current = useRoomWorkflowRun('corner-errors'); return null; }
   let tree: any;
-  const push = () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'corner-errors' } });
   try {
     await act(async () => { tree = create(<Corner />); });
     expect(current.error).toBe('Couldn’t reach Beeline');
-    await act(async () => { for (let n = 0; n < 20; n++) push(); });
-    expect(read).toHaveBeenCalledTimes(1);
-    await act(async () => { vi.advanceTimersByTime(1000); push(); });
-    expect(read).toHaveBeenCalledTimes(2);
-    expect(warning).toHaveBeenCalledTimes(1);
-    read.mockResolvedValue({ workflows: [] });
-    await act(async () => { vi.advanceTimersByTime(2000); });
-    // Elapsed time alone never polls.
-    expect(read).toHaveBeenCalledTimes(2);
-    await act(async () => { wire.foreground('background'); wire.foreground('active'); });
-    expect(read).toHaveBeenCalledTimes(3);
-    expect(current.error).toBeNull();
-    // A later streak still logs only once for this corner in the session.
-    read.mockRejectedValue(new Error('offline again'));
-    await act(async () => push());
-    expect(warning).toHaveBeenCalledTimes(1);
-    read.mockResolvedValue({ workflows: [] });
     await act(async () => {
-      vi.advanceTimersByTime(1000);
-      wire.listener({ monolithLive: { type: 'message-delta', roomId: 'corner-errors', message: { presentation: 'message' } } });
+      vi.advanceTimersByTime(300000);
+      for (let n = 0; n < 1000; n++) {
+        wire.listener({ monolithLive: { type: 'message-delta', roomId: 'corner-errors', message: { presentation: 'message' } } });
+        wire.listener({ monolithLive: { type: 'invalidate', roomId: 'corner-errors' } });
+      }
     });
-    expect(read).toHaveBeenCalledTimes(5);
+    expect(read).toHaveBeenCalledTimes(1);
+    expect(warning).toHaveBeenCalledTimes(1);
+    read.mockResolvedValue({ workflows: [] });
+    await act(async () => { await current.retry(); });
+    expect(read).toHaveBeenCalledTimes(2);
     expect(current.error).toBeNull();
   } finally {
-    await act(async () => tree.unmount());
-    warning.mockRestore();
-    vi.useRealTimers();
+    await act(async () => tree.unmount()); warning.mockRestore(); vi.useRealTimers();
   }
 });
 
@@ -224,8 +213,7 @@ it('CR1: a failed refresh preserves the last workflow and reopening recovers', a
   }
 });
 
-it('CR1: returning to a corner still mounted in navigation recovers quietly', async () => {
-  vi.useFakeTimers();
+it('CR1: a retained hidden corner releases its watch and makes one read on actual return focus', async () => {
   const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
   read.mockRejectedValue(new Error('offline'));
   let current: any;
@@ -233,17 +221,20 @@ it('CR1: returning to a corner still mounted in navigation recovers quietly', as
   let tree: any;
   try {
     await act(async () => { tree = create(<Corner />); });
-    await act(async () => wire.focus());
     expect(read).toHaveBeenCalledTimes(1);
+    await act(async () => wire.blur());
+    const hiddenReads = read.mock.calls.length;
+    await act(async () => {
+      wire.listener({ monolithLive: { type: 'invalidate', roomId: 'focused-corner' } });
+    });
+    expect(read).toHaveBeenCalledTimes(hiddenReads);
     read.mockResolvedValue({ workflows: [] });
-    await act(async () => { vi.advanceTimersByTime(1000); wire.focus(); });
+    await act(async () => { wire.focus(); });
     expect(read).toHaveBeenCalledTimes(2);
     expect(current.error).toBeNull();
-    await act(async () => wire.focus());
+    await act(async () => { wire.focus(); });
     expect(read).toHaveBeenCalledTimes(2);
   } finally {
-    await act(async () => tree.unmount());
-    warning.mockRestore();
-    vi.useRealTimers();
+    await act(async () => tree.unmount()); warning.mockRestore();
   }
 });

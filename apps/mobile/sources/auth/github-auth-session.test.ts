@@ -95,52 +95,27 @@ const MONOLITH_RUNTIME = {
 describe('GitHub sign-in without a network', () => {
   beforeEach(() => storage.clear());
 
-  it('reports offline without opening a browser when the auth server is unreachable', async () => {
-    const fetchImpl = vi.fn(async () => {
-      throw new TypeError('Network request failed');
-    });
+  it('surfaces actual completion failure without an extra health probe', async () => {
+    const fetchImpl = vi.fn(async () => { throw new TypeError('Network request failed'); });
     const openAuthSession = vi.fn(async () => ({ type: 'dismiss' }));
-
-    await expect(
-      runResilientGitHubSignInSession({
-        state: STATE,
-        recoveryToken: RECOVERY_TOKEN,
-        runtime: MONOLITH_RUNTIME,
-        openAuthSession,
-        subscribeToUrls: () => ({ remove: () => undefined }),
-        fetchImpl: fetchImpl as unknown as typeof fetch,
-      }),
-    ).rejects.toMatchObject({ code: 'offline', status: undefined });
-    expect(openAuthSession).not.toHaveBeenCalled();
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
-    expect(fetchImpl.mock.calls[0]?.[0]).toBe('https://server.usebeeline.app/healthz');
-    expect(storage.has('buzzy.github-sign-in-session.v2')).toBe(false);
+    await expect(runResilientGitHubSignInSession({ state: STATE, recoveryToken: RECOVERY_TOKEN,
+      runtime: MONOLITH_RUNTIME, openAuthSession, subscribeToUrls: () => ({ remove() {} }),
+      fetchImpl: fetchImpl as unknown as typeof fetch, callbackGraceMs: 0,
+    })).rejects.toMatchObject({ code: 'offline', status: undefined });
+    expect(openAuthSession).toHaveBeenCalledTimes(1);
+    expect(fetchImpl.mock.calls.every(([url]) => String(url).endsWith('/auth/github/completion'))).toBe(true);
+    expect(fetchImpl).toHaveBeenCalledTimes(2); // Initial hold and actual browser-close boundary.
+    expect(storage.has('buzzy.github-sign-in-session.v2')).toBe(true);
   });
 
-  it('stops polling and reports offline once completion reads keep failing to reach the server', async () => {
-    const completion = vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input).endsWith('/completion')) throw new TypeError('Network request failed');
-      return new Response(null, { status: 204 });
-    });
-
-    await expect(
-      runResilientGitHubSignInSession({
-        state: STATE,
-        recoveryToken: RECOVERY_TOKEN,
-        runtime: MONOLITH_RUNTIME,
-        openAuthSession: async () => ({ type: 'dismiss' }),
-        subscribeToUrls: () => ({ remove: () => undefined }),
-        fetchImpl: reachable(completion),
-        callbackGraceMs: 0,
-        recoveryWaitMs: 120_000,
-        recoveryPollMs: 0,
-        offlineGiveUpMs: 0,
-      }),
-    ).rejects.toMatchObject({ code: 'offline', status: undefined });
-    expect(completion.mock.calls.map(([url]) => String(url))).toEqual([
-      'https://server.usebeeline.app/auth/github/completion',
-      'https://server.usebeeline.app/auth/github/completion/cancel',
-    ]);
+  it('one failed held observation parks until the terminal ceremony deadline', async () => {
+    const completion = vi.fn(async () => { throw new TypeError('Network request failed'); });
+    await expect(runResilientGitHubSignInSession({ state: STATE, recoveryToken: RECOVERY_TOKEN,
+      runtime: MONOLITH_RUNTIME, openAuthSession: async () => ({ type: 'opened' }),
+      subscribeToUrls: () => ({ remove() {} }), fetchImpl: completion as unknown as typeof fetch,
+      recoveryWaitMs: 10,
+    })).rejects.toMatchObject({ code: 'offline' });
+    expect(completion).toHaveBeenCalledTimes(1);
   });
 
   it('keeps a stale recovery token and reports offline when its revocation cannot reach the server', async () => {
@@ -170,7 +145,7 @@ describe('GitHub sign-in without a network', () => {
       await vi.advanceTimersByTimeAsync(11_000);
       await outcome;
       const requestsAtNotice = fetchImpl.mock.calls.length;
-      expect(requestsAtNotice).toBeGreaterThan(1);
+      expect(requestsAtNotice).toBe(1);
       await vi.advanceTimersByTimeAsync(60_000);
       expect(fetchImpl).toHaveBeenCalledTimes(requestsAtNotice);
     } finally {
@@ -179,7 +154,7 @@ describe('GitHub sign-in without a network', () => {
     }
   });
 
-  it('refuses a cold callback if another sign-in replaces its pending state while polling', async () => {
+  it('refuses a cold callback if another sign-in replaces its pending state during inspection', async () => {
     await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
     const fetchImpl = vi.fn(async () => {
       await persistGitHubSignInState(OTHER_STATE, 'signin', 'n'.repeat(43));
@@ -282,7 +257,7 @@ describe('GitHub auth session redirects', () => {
     });
 
     expect(challenge.ticket).toBe('t'.repeat(43));
-    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(fetchImpl).toHaveBeenCalledTimes(1); // One held completion joins the callback.
   });
 
   it('uses an immediate completion check when the current server deep link arrives', async () => {
@@ -307,54 +282,23 @@ describe('GitHub auth session redirects', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
-  it('retries after the first completion read crosses the three-second request limit', async () => {
+  it('holds one completion request across two minutes instead of scheduling recovery reads', async () => {
     vi.useFakeTimers();
     try {
-      const fetchImpl = vi
-        .fn()
-        .mockImplementationOnce(
-          (_input: RequestInfo | URL, init?: RequestInit) =>
-            new Promise<Response>((_resolve, reject) => {
-              init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), {
-                once: true,
-              });
-            }),
-        )
-        .mockResolvedValueOnce(recoveryResponse());
-
-      const pending = runResilientGitHubSignInSession({
-        state: STATE,
-        recoveryToken: RECOVERY_TOKEN,
-        runtime: {
-          relayUrl: 'https://usebeeline.app',
-          pushGatewayUrl: 'https://usebeeline.app/push',
-          monolithUrl: 'https://server.usebeeline.app',
-        },
-        openAuthSession: async () => ({
-          type: 'success',
-          url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
-        }),
-        subscribeToUrls: () => ({ remove: () => undefined }),
-        fetchImpl: reachable(fetchImpl),
-        recoveryWaitMs: 120_000,
-        recoveryPollMs: 200,
+      let finish!: (response: Response) => void;
+      const response = new Promise<Response>(resolve => { finish = resolve; });
+      const fetchImpl = vi.fn(async () => response);
+      const pending = runResilientGitHubSignInSession({ state: STATE, recoveryToken: RECOVERY_TOKEN,
+        runtime: MONOLITH_RUNTIME, openAuthSession: async () => ({ type: 'opened' }),
+        subscribeToUrls: () => ({ remove() {} }), fetchImpl: fetchImpl as unknown as typeof fetch,
       });
-
-      await vi.advanceTimersByTimeAsync(3_000);
-      await vi.advanceTimersByTimeAsync(200);
-
-      await expect(pending).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
-      expect(fetchImpl).toHaveBeenCalledTimes(2);
-      expect(fetchImpl.mock.calls.map(([url]) => url)).toEqual([
-        'https://server.usebeeline.app/auth/github/completion',
-        'https://server.usebeeline.app/auth/github/completion',
-      ]);
-    } finally {
-      vi.useRealTimers();
-    }
+      await vi.advanceTimersByTimeAsync(119_999); expect(fetchImpl).toHaveBeenCalledTimes(1);
+      finish(recoveryResponse()); await expect(pending).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
   });
 
-  it('retries a 503 completion read and accepts the next completed response', async () => {
+  it('uses an actual callback boundary after a failed held observation', async () => {
     const fetchImpl = vi
       .fn()
       .mockResolvedValueOnce(new Response(null, { status: 503 }))
@@ -370,7 +314,6 @@ describe('GitHub auth session redirects', () => {
         }),
         subscribeToUrls: () => ({ remove: () => undefined }),
         fetchImpl: reachable(fetchImpl),
-        recoveryPollMs: 0,
       }),
     ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -380,32 +323,14 @@ describe('GitHub auth session redirects', () => {
     ]);
   });
 
-  it('keeps polling through repeated pending responses', async () => {
-    const pendingResponse = () =>
-      new Response(JSON.stringify({ status: 'pending' }), {
-        status: 202,
-        headers: { 'content-type': 'application/json' },
-      });
-    const fetchImpl = vi
-      .fn()
-      .mockResolvedValueOnce(pendingResponse())
-      .mockResolvedValueOnce(pendingResponse())
-      .mockResolvedValueOnce(recoveryResponse());
-
-    await expect(
-      runResilientGitHubSignInSession({
-        state: STATE,
-        recoveryToken: RECOVERY_TOKEN,
-        openAuthSession: async () => ({
-          type: 'success',
-          url: `beeline://beeline/github-callback?state=${STATE}&completed=1`,
-        }),
-        subscribeToUrls: () => ({ remove: () => undefined }),
-        fetchImpl: reachable(fetchImpl),
-        recoveryPollMs: 0,
-      }),
-    ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
-    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  it('an old server immediate-pending reply never schedules another observation', async () => {
+    const fetchImpl = vi.fn(async (url: RequestInfo | URL) => new Response(null,
+      { status: String(url).endsWith('/cancel') ? 204 : 202 }));
+    await expect(runResilientGitHubSignInSession({ state: STATE, recoveryToken: RECOVERY_TOKEN,
+      runtime: MONOLITH_RUNTIME, openAuthSession: async () => ({ type: 'opened' }),
+      subscribeToUrls: () => ({ remove() {} }), fetchImpl: fetchImpl as typeof fetch, recoveryWaitMs: 10,
+    })).rejects.toMatchObject({ code: 'ticket_expired' });
+    expect(fetchImpl.mock.calls.filter(([url]) => String(url).endsWith('/completion'))).toHaveLength(1);
   });
 
   it.each(['cancel', 'dismiss'])('Reproduction signin-appswitch: Android %s on foreground keeps the link and recovery alive', async (type) => {
@@ -433,7 +358,7 @@ describe('GitHub auth session redirects', () => {
       link!(bindCallback());
       await vi.advanceTimersByTimeAsync(250);
       expect(await outcome).toMatchObject({ value: { ticket: 't'.repeat(43) } });
-      expect(removed).toHaveBeenCalledTimes(2);
+      expect(removed).toHaveBeenCalledOnce();
     } finally { vi.useRealTimers(); }
   });
 
@@ -451,8 +376,9 @@ describe('GitHub auth session redirects', () => {
       }
       return new Response('{}', { status: 202 });
     });
+    let callback!: (url: string) => void;
     const input = { runtime: MONOLITH_RUNTIME, platform: 'android', openAuthSession: async () => ({ type: 'dismiss' }),
-      subscribeToUrls: () => ({ remove() {} }), fetchImpl: reachable(fetcher) };
+      subscribeToUrls: (listener: (url: string) => void) => { callback = listener; return { remove() {} }; }, fetchImpl: reachable(fetcher) };
     try {
       const old = runResilientGitHubSignInSession({ ...input, state: STATE, recoveryToken: RECOVERY_TOKEN, signal: controller.signal }).catch(error => error);
       await vi.advanceTimersByTimeAsync(3_000);
@@ -467,6 +393,7 @@ describe('GitHub auth session redirects', () => {
       expect(revoked.length).toBeGreaterThan(0);
       expect(revoked.every(token => token === RECOVERY_TOKEN)).toBe(true);
       complete = true;
+      callback(`beeline://beeline/github-callback?state=${OTHER_STATE}&completed=1`);
       await vi.advanceTimersByTimeAsync(250);
       expect(await nextOutcome).toMatchObject({ value: { ticket: nextToken } });
     } finally { vi.useRealTimers(); }
@@ -517,7 +444,6 @@ describe('GitHub auth session redirects', () => {
         subscribeToUrls: () => ({ remove: () => undefined }),
         fetchImpl: reachable(fetchImpl),
         callbackGraceMs: 0,
-        recoveryPollMs: 0,
       }),
     ).resolves.toMatchObject({ ticket: RECOVERY_TOKEN });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
@@ -968,4 +894,21 @@ it('retains reconnect intent across callback recovery and clears it with the one
   expect(await isPendingGitHubReconnect()).toBe(false);
   await persistGitHubSignInState(STATE);
   expect(await isPendingGitHubReconnect()).toBe(false);
+});
+
+
+it('F11: duplicate cold callback adapters join one correlated GitHub recovery inspection', async () => {
+  storage.clear(); await persistGitHubSignInState(STATE, 'signin', RECOVERY_TOKEN);
+  let finish!: (value: Response) => void;
+  const fetcher = vi.fn(() => new Promise<Response>(resolve => { finish = resolve; }));
+  vi.stubGlobal('fetch', fetcher);
+  try {
+    const url = `beeline://beeline/github-callback?state=${STATE}&completed=1`;
+    const first = resumeInitialGitHubSignIn(async () => url);
+    const second = resumeInitialGitHubSignIn(async () => url);
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    finish(recoveryResponse());
+    expect(await first).toEqual(await second);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  } finally { vi.unstubAllGlobals(); }
 });

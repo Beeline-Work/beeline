@@ -526,7 +526,6 @@ export class RoomRuntimeCoordinator {
   private readonly standingRuntimeStartFaults = new Set<string>();
   private readonly cornerStartScope: string;
   private cornerStartRetryAt = 0;
-  private cornerStartRetryTimer?: ReturnType<typeof setTimeout>;
   /** Per corner, the requests whose start failure has already been said out loud. */
   private readonly reportedCornerStartFailures = new Map<string, Set<string>>();
   /** Standing workspace-configuration faults: the config that failed, and how. */
@@ -1289,18 +1288,14 @@ export class RoomRuntimeCoordinator {
   private deferCornerStarts(retryAt: number): void {
     this.cornerStartRetryAt = Math.max(this.cornerStartRetryAt, retryAt);
     cornerStarts.defer(this.cornerStartScope, this.cornerStartRetryAt);
-    clearTimeout(this.cornerStartRetryTimer);
-    this.cornerStartRetryTimer = setTimeout(() => {
-      this.cornerStartRetryTimer = undefined;
-      if (!this.stopped) this.wakeDiscovery();
-    }, Math.min(2_147_483_647, Math.max(0, this.cornerStartRetryAt - Date.now()) + 50 + Math.floor(Math.random() * 250)));
-    this.cornerStartRetryTimer.unref?.();
+    // Earliest eligible bound only. A committed/configuration/link event must
+    // independently wake discovery after it; time cannot authorize a read.
   }
 
   private cornerStartsDeferred(): boolean {
     const retryAt = Math.max(this.cornerStartRetryAt, cornerStarts.retryAt(this.cornerStartScope));
     if (retryAt <= Date.now()) return false;
-    if (retryAt !== this.cornerStartRetryAt || !this.cornerStartRetryTimer) this.deferCornerStarts(retryAt);
+    if (retryAt !== this.cornerStartRetryAt) this.deferCornerStarts(retryAt);
     return true;
   }
 
@@ -2099,7 +2094,6 @@ export class RoomRuntimeCoordinator {
   }
 
   beginShutdown(): void {
-    clearTimeout(this.cornerStartRetryTimer);
     if (this.stopped) return;
     this.stopped = true;
     this.stopStorageAvailable();

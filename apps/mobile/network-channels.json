@@ -49,13 +49,6 @@
       "why": "Native \"Leave call\" from the call notification; must work while JavaScript is suspended."
     },
     {
-      "file": "apps/mobile/sources/app/(app)/beeline/settings/identity.tsx",
-      "kind": "ota-update",
-      "count": 2,
-      "fate": "exception",
-      "why": "Manual OTA update check and download (Expo Updates)."
-    },
-    {
       "file": "apps/mobile/sources/app/_layout.tsx",
       "kind": "import:posthog-react-native",
       "count": 1,
@@ -72,7 +65,7 @@
     {
       "file": "apps/mobile/sources/auth/github-auth-session.ts",
       "kind": "fetch-impl",
-      "count": 3,
+      "count": 2,
       "fate": "exception",
       "why": "GitHub sign-in reachability check, completion and cancel; before an authenticated socket exists."
     },
@@ -114,9 +107,9 @@
     {
       "file": "apps/mobile/sources/buzz/artifact-link.ts",
       "kind": "session-fetch",
-      "count": 4,
+      "count": 3,
       "fate": "exception",
-      "why": "Attachment bytes and media links from /v1/media. File downloads stay on HTTP; the small /link and /play lookups can move later."
+      "why": "One authenticated immutable byte-download leaf; /link and /play HTTP remain only for servers without negotiated media metadata support."
     },
     {
       "file": "apps/mobile/sources/buzz/runtime-config.ts",
@@ -180,13 +173,6 @@
       "count": 1,
       "fate": "exception",
       "why": "Web build only: refetches its own page after a failed code-chunk load."
-    },
-    {
-      "file": "apps/mobile/sources/components/buzz/AppMark.tsx",
-      "kind": "origin:www.google.com",
-      "count": 1,
-      "fate": "exception",
-      "why": "Service icons load from Google's favicon service as images. Could be served by Beeline instead."
     },
     {
       "file": "apps/mobile/sources/components/buzz/VoicePreviewPlayer.native.tsx",

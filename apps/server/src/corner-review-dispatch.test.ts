@@ -1,3 +1,6 @@
+import { repairDeadlineFamilies, BackgroundRecordDeadlines } from './background-deadlines.js';
+import { BackgroundWork } from './background-work.js';
+import { INSTITUTIONAL_MEMORY_ON } from './institutional-memory-shadow.js';
 import { readFileSync } from 'node:fs';
 import { cornerRunStateSql } from './corner-run.js';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
@@ -12,7 +15,7 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { announceAgentLifecycle } from './connection-presence.js';
 import { LiveHub } from './live.js';
-import { PushDeliveryLoop } from './background.js';
+import { PushDeliveryLoop, MediaExpiryLoop } from './background.js';
 import { systemLine } from './system-line.js';
 import { createAgentCommand, noteBlockedCornerChecks, reconcileConfiguredCornerReviewers, REVIEWER_DISPATCH_REASONS, reviewerDispatchCarriesHead, routeSystemCommand } from './agent-command.js';
 import { advanceCorner } from './corner-lifecycle.js';
@@ -655,11 +658,14 @@ describe('corner message attribution', () => {
     // Keep the database stand-in tied to the actual background-cycle wiring.
     const index = readFileSync(new URL('./index.ts', import.meta.url), 'utf8');
     expect(index.includes('reconciledCornerReviewers')).toBe(false);
-    const repairStart = index.indexOf("work.add('repair', reconciliationMs, async (newLeader) => {");
-    expect(repairStart).toBeGreaterThan(-1);
-    const repair = index.slice(repairStart, index.indexOf('const leader = new BackgroundLeader', repairStart));
-    expect(repair.replace(/\s+/g, ' ')).toContain("githubJobs ? id => githubJobs.refreshCornerReviewHead(id) : undefined");
-    const cycle = () => reconcileConfiguredCornerReviewers(db);
+    expect(index).toContain('registerBackgroundDeadlineFamilies(work,repairDeadlineFamilies(jobsDatabase,');
+    const family = repairDeadlineFamilies(db, {live:new LiveHub(),phone,
+      mediaExpiry:new MediaExpiryLoop(db),institutionalMemory:INSTITUTIONAL_MEMORY_ON,
+      voiceDeadlines:new BackgroundRecordDeadlines('voice-call-recovery',new BackgroundWork(),()=>{})})
+      .find(family=>family.name==='corner-reviewers');
+    expect(family).toBeDefined();
+    expect(family!.next).toBeUndefined(); // Committed input, never a recurring repair timer.
+    const cycle = () => family!.run();
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
     await greenHead(61, '6'.repeat(40));
     await cycle();

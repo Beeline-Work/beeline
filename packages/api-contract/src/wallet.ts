@@ -129,6 +129,8 @@ export type GrantWalletDelegationResult = {
 };
 
 export type WalletSendInput = {
+  /** Opt in to bounded completion, with one receipt observation where needed. */
+  readonly completionV1?: true;
   readonly chain: WalletChainId;
   /** Asset symbol, e.g. "usdc". */
   readonly asset: string;
@@ -164,8 +166,15 @@ export type WalletFailed = {
   readonly reason: string;
 };
 
+/** No automatic redispatch. Without a transaction link, broadcast itself is UNKNOWN. */
+export type WalletPending = {
+  readonly outcome: 'pending';
+  readonly reason: string;
+  readonly txUrl?: string;
+};
+
 export type WalletSendOutcome =
-  WalletSendResult | WalletInsufficient | WalletDelegationExpired | WalletFailed;
+  WalletSendResult | WalletInsufficient | WalletDelegationExpired | WalletFailed | WalletPending;
 
 /** One ledger line: every transaction, in AND out, with what it left behind. */
 export type WalletLedgerEntry = {
@@ -242,6 +251,7 @@ export type WalletPayInput = WalletSendInput & { readonly agentId: string };
  * the contract.
  */
 export type WalletContractCall = {
+  readonly completionV1?: true;
   readonly chain: WalletChainId;
   readonly contract: string;
   readonly data: string;
@@ -251,6 +261,7 @@ export type WalletContractCall = {
 };
 export type WalletContractCallInput = WalletContractCall & { readonly agentId: string };
 export type WalletSwapInput = {
+  readonly completionV1?: true;
   readonly agentId: string;
   readonly fromAsset: string;
   readonly toAsset: string;
@@ -259,7 +270,7 @@ export type WalletSwapInput = {
 };
 
 export type WalletSwapResult =
-  | { readonly outcome: 'pending'; readonly txUrl: string; readonly reason: string }
+  | WalletPending
   | {
       readonly outcome: 'sent';
       readonly txUrl: string;

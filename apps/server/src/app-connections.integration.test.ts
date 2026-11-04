@@ -1,3 +1,4 @@
+import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -238,8 +239,10 @@ describe('connect_app', () => {
     return provider as typeof provider & ComposioApps;
   }
 
+  let releaseCompletions: () => Promise<void>;
   beforeEach(async () => {
     database = await migratedDatabase();
+    releaseCompletions = await database.client.listen(COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle)
        VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
@@ -275,7 +278,7 @@ describe('connect_app', () => {
     );
   });
 
-  afterEach(async () => database.close());
+  afterEach(async () => { await releaseCompletions(); await database.close(); });
 
   it.each(['registry-mcp', 'trusty-squire'])(
     'R-STALE-SIGN-IN: %s stale card returns reconnect guidance through HTTP', async connectKind => {

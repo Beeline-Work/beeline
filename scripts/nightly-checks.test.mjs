@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { parse } from 'yaml';
-import { classify, easternSlot, publishIssues, runNightly } from './nightly-checks.mjs';
+import { classify, easternSlot, runNightly, finishNightly, publishIssues } from './nightly-checks.mjs';
 
 const job = (name, conclusion, attempt) => ({ name, conclusion, id: attempt, html_url: `https://example/jobs/${attempt}`, started_at: `2026-01-01T08:0${attempt}:00Z`, completed_at: `2026-01-01T08:0${attempt + 1}:00Z` });
 test('nightly schedule selects 03 Eastern in winter and summer and dispatches all on main', () => {
@@ -10,7 +10,6 @@ test('nightly schedule selects 03 Eastern in winter and summer and dispatches al
   assert.deepEqual(workflow.on.schedule.map(s => s.cron), ['7 7 * * *', '7 8 * * *']);
   assert.equal(workflow.jobs.nightly.steps.find(step => step.run === 'node scripts/nightly-checks.mjs').env.SCHEDULE, '${{ github.event.schedule }}');
   assert.equal(workflow.permissions.actions, 'write');
-  assert.equal(workflow.permissions.checks, 'read');
   assert.equal(workflow.concurrency['cancel-in-progress'], false);
   for (const [yes, no] of [['2026-01-01T08:00Z', '2026-01-01T07:00Z'], ['2026-07-01T07:00Z', '2026-07-01T08:00Z']]) {
     assert.equal(easternSlot(new Date(yes)), true);
@@ -28,30 +27,50 @@ test('same SHA failures become flaky only when the retry succeeds, with both lin
   assert.equal(result.runnerMinutes, 4);
   assert.throws(() => classify([{ sha: 'a', jobs: [] }, { sha: 'b', jobs: [] }]), /SHA/);
 });
-for (const initial of ['failure', 'timeout', 'timeout-twice', 'person', 'concurrency']) test(`controller dispatch → ${initial} → bounded retry → artifact`, async () => {
-  const reruns = ['failure', 'timeout', 'timeout-twice'].includes(initial);
-  const conclusion = initial === 'failure' ? 'failure' : 'cancelled';
-  const calls = [], artifacts = [];
-  let dispatched = false, attempt = 1;
+test('dispatch returns immediately and completion events classify one bounded rerun', async () => {
+  const calls = [], artifacts = []; let attempt = 1, complete = true;
+  const run = { id:7,event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/checks.yml',
+    display_title:'Nightly Checks 42',status:'completed',run_attempt:1,head_sha:'abc',html_url:'https://example/runs/7' };
   const api = async (method, endpoint, body) => {
     calls.push([method, endpoint, body]);
     if (endpoint.includes('unified-release')) return { workflow_runs: [] };
     if (endpoint === 'commits/main') return { sha: 'abc' };
-    if (endpoint.endsWith('dispatches')) { assert.deepEqual(body, { ref: 'main', inputs: { suite: 'all' } }); dispatched = true; return; }
-    if (endpoint.includes('checks.yml/runs')) return { workflow_runs: dispatched ? [{ id: 7, html_url: 'https://example/runs/7' }] : [] };
-    if (endpoint.endsWith('rerun-failed-jobs')) { attempt++; return; }
-    if (endpoint.includes('/annotations?')) return initial.startsWith('timeout') ? [{ annotation_level: 'failure', message: 'The job has exceeded the maximum execution time of 30m0s' }] : [{ annotation_level: 'failure', message: initial === 'person' ? 'The operation was canceled.' : 'Canceling since a higher priority waiting request exists' }];
+    if (endpoint.endsWith('dispatches')) { assert.deepEqual(body, { ref:'main', inputs:{suite:'all',nightly_id:'42'} }); return; }
+    if (endpoint.endsWith('rerun-failed-jobs')) { attempt=2;complete=false;return; }
     if (endpoint.endsWith('/logs')) return 'not ok 1 - failing test';
-    if (endpoint.includes('/jobs?')) return { total_count: 1, jobs: [job('suite', attempt === 1 || initial === 'timeout-twice' ? conclusion : 'success', attempt)] };
-    return { run_attempt: attempt, status: 'completed', conclusion: attempt === 1 || initial === 'timeout-twice' ? conclusion : 'success', head_sha: 'abc' };
+    if (endpoint.includes('/jobs?')) {
+      const n=Number(endpoint.match(/attempts\/(\d+)/)[1]);
+      return { total_count:1,jobs:[job('suite',n===1?'failure':'success',n)] };
+    }
+    if (endpoint.endsWith('/attempts/1')) return {...run,conclusion:'failure'};
+    if (endpoint === 'actions/runs/7') return {...run,run_attempt:attempt,status:complete?'completed':'in_progress',conclusion:attempt===1?'failure':'success'};
+    assert.fail(`Unexpected observation ${endpoint}`);
   };
-  const result = await runNightly({ api, pause: () => assert.fail('unexpected wait'), schedule: '7 8 * * *', now: () => new Date('2026-11-02T08:17Z'), save: a => artifacts.push(a) });
-  assert.equal(result.failures.length, reruns && initial !== 'timeout-twice' ? 0 : 1);
-  assert.equal(result.flakyJobs.length, reruns && initial !== 'timeout-twice' ? 1 : 0);
-  assert.deepEqual((result.flakyJobs[0] ?? result.failures[0]).attempts[0].failingTests, ['not ok 1 - failing test']);
-  assert.equal(calls.filter(c => c[1].endsWith('rerun-failed-jobs')).length, reruns ? 1 : 0);
-  assert.equal(artifacts.at(-1).attempts.length, reruns ? 2 : 1);
-  if (reruns) assert.match(result.attempts[1].url, /attempts\/2$/);
+  const save=a=>artifacts.push(a);
+  const dispatched=await runNightly({api,save,manual:true,requestId:'42'});
+  assert.equal(dispatched.dispatched,true);assert.equal(calls.length,3);
+  const first=await finishNightly({api,run,save});
+  assert.equal(first.rerunRequested,true);assert.equal(first.failures.length,1);
+  const duplicate=await finishNightly({api,run,save});assert.equal(duplicate.skipped,true);
+  complete=true;
+  const result=await finishNightly({api,run:{...run,run_attempt:2},save});
+  assert.equal(result.failures.length,0);assert.equal(result.flakyJobs.length,1);
+  assert.deepEqual(result.flakyJobs[0].attempts[0].failingTests,['not ok 1 - failing test']);
+  assert.equal(calls.filter(c=>c[1].endsWith('rerun-failed-jobs')).length,1);
+  assert.equal(calls.filter(c=>c[1]==='actions/runs/7').length,3);
+  assert.equal(artifacts.at(-1).attempts.length,2);
+});
+test('unrelated or untrusted completions cannot read results or request reruns',async()=>{
+  const api=()=>assert.fail('No unrelated network observation');
+  for(const run of [undefined,{event:'pull_request'}, {event:'workflow_dispatch',head_branch:'feature'},
+    {event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/checks.yml',display_title:'Checks',status:'completed'}])
+    assert.equal(await finishNightly({api,run,save:()=>{}}),undefined);
+});
+test('status observation cannot loop while a completion is superseded',async()=>{
+  let calls=0;
+  const result=await finishNightly({save:()=>{},api:async()=>{calls++;return {run_attempt:2,status:'in_progress'};},
+    run:{id:7,event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/checks.yml',display_title:'Nightly Checks 42',status:'completed',run_attempt:1}});
+  assert.equal(result.skipped,true);assert.equal(calls,1);
 });
 test('active release publishes an explicit skip without dispatching checks', async () => {
   const calls = [];
@@ -95,6 +114,14 @@ test('nightly result opens, updates and closes one issue per job for the fix loo
   assert.deepEqual(await publishIssues({ api, result: { infrastructureError: 'boom' }, runUrl: 'x' }), [['comment', 'Nightly Checks: the nightly run did not finish']]);
 });
 
+
+test('dispatch and pending rerun do not publish premature failure issues', async () => {
+  const api = async () => { throw new Error('No issue observation before terminal classification'); };
+  assert.deepEqual(await publishIssues({api,result:{dispatched:true},runUrl:'https://example/run'}),[]);
+  assert.deepEqual(await publishIssues({api,result:{rerunRequested:true,failures:[{name:'body'}]},runUrl:'https://example/run'}),[]);
+  const workflow=parse(readFileSync(new URL('../.github/workflows/nightly-checks-result.yml',import.meta.url),'utf8'));
+  assert.equal(workflow.permissions.issues,'write');
+});
 test('scheduled starts reject missed slots and quietly ignore DST twins, including delayed twins', async () => {
   for (const [date, schedule, late] of [
     ['2026-01-01T07:07Z', '7 7 * * *', false],
@@ -124,5 +151,26 @@ test('correct scheduled trigger enters nightly controller in winter, summer and 
       return { workflow_runs: [{ status: 'in_progress' }] };
     } });
     assert.equal(calls, 1);
+  }
+});
+
+
+test('completed runner timeout reruns once; a human cancellation is terminal', async () => {
+  for (const timeout of [true, false]) {
+    const run = { id:7,event:'workflow_dispatch',head_branch:'main',path:'.github/workflows/checks.yml',
+      display_title:'Nightly Checks 42',status:'completed',run_attempt:1,head_sha:'abc',html_url:'https://example/runs/7',conclusion:'cancelled' };
+    const calls = [];
+    const result = await finishNightly({run,save:()=>{},api:async(method,endpoint)=>{
+      calls.push([method,endpoint]);
+      if(endpoint === 'actions/runs/7') return run;
+      if(endpoint.includes('/jobs?')) return {total_count:1,jobs:[job('suite','cancelled',1)]};
+      if(endpoint.endsWith('/logs')) return '';
+      if(endpoint.includes('/annotations?')) return timeout ? [{annotation_level:'failure',message:'The job has exceeded the maximum execution time of 1h30m0s'}] : [];
+      if(endpoint.endsWith('/rerun-failed-jobs')) return;
+      assert.fail(endpoint);
+    }});
+    assert.equal(result.rerunRequested === true,timeout);
+    assert.equal(calls.filter(([,endpoint])=>endpoint === 'actions/runs/7').length,1);
+    assert.equal(calls.filter(([method])=>method === 'POST').length,timeout ? 1 : 0);
   }
 });

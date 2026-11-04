@@ -12,11 +12,9 @@ import {
   embedOneWorkspaceSkillVersion,
   scheduleEmbedInstitutionalMemoryItem,
   scheduleEmbedWorkspaceSkillVersion,
-  hasPendingEmbedRetry,
   backfillInstitutionalMemoryEmbeddingsOnce,
   warnIfEmbeddingKeyMissing,
   resetEmbeddingFailureLogForTests,
-  EMBED_RETRY_BACKOFF_MS,
   OPENROUTER_EMBEDDINGS_URL,
   type EmbedBatchFn,
 } from './institutional-memory-embeddings.js';
@@ -356,7 +354,6 @@ describe('embed-on-save (event-driven, no scan)', () => {
     scheduleEmbedInstitutionalMemoryItem(database, itemId);
     await new Promise((resolve) => setImmediate(resolve));
     expect(querySpy).not.toHaveBeenCalled();
-    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(false);
   });
 
   it('a row already gone or inactive is treated as done, not a failure to retry', async () => {
@@ -373,87 +370,44 @@ describe('embed-on-save (event-driven, no scan)', () => {
   });
 });
 
-describe('per-row retry with in-process backoff (no database scan)', () => {
-  it('retries only the failing row, on backoff, until the embedder succeeds', async () => {
-    vi.useFakeTimers();
-    const database = new PgliteDatabase();
-    await seed(database);
-    const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff4';
-    await insertItem(database, itemId);
-    const embedBatch: EmbedBatchFn = vi
-      .fn()
-      .mockResolvedValueOnce(undefined) // attempt 1: fails
-      .mockResolvedValueOnce(undefined) // attempt 2: fails
-      .mockResolvedValueOnce([VECTOR]); // attempt 3: succeeds
-    scheduleEmbedInstitutionalMemoryItem(database, itemId, embedBatch);
-
-    await vi.advanceTimersByTimeAsync(0); // attempt 1 runs synchronously-ish
-    expect(embedBatch).toHaveBeenCalledTimes(1);
-    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(true);
-    let row = (
-      await database.query<{ embedding_model: string | null }>(
-        `SELECT embedding_model FROM institutional_memory_items WHERE id=$1`,
-        [itemId],
-      )
-    ).rows[0];
-    expect(row?.embedding_model).toBeNull();
-
-    await vi.advanceTimersByTimeAsync(EMBED_RETRY_BACKOFF_MS[0]); // attempt 2
-    expect(embedBatch).toHaveBeenCalledTimes(2);
-    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(true);
-
-    await vi.advanceTimersByTimeAsync(EMBED_RETRY_BACKOFF_MS[1]); // attempt 3: succeeds
-    expect(embedBatch).toHaveBeenCalledTimes(3);
-    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(false);
-    row = (
-      await database.query<{ embedding_model: string | null }>(
-        `SELECT embedding_model FROM institutional_memory_items WHERE id=$1`,
-        [itemId],
-      )
-    ).rows[0];
-    expect(row?.embedding_model).toBe('voyageai/voyage-4-lite');
-  });
-
-  it('gives up after exhausting the bounded backoff, with no further timer left pending', async () => {
+describe('one embedding attempt per actual save', () => {
+  it.each(['unavailable', 'throws'])('parks a %s provider result for an idle day', async mode => {
     vi.useFakeTimers();
     const database = new PgliteDatabase();
     await seed(database);
     const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff5';
     await insertItem(database, itemId);
-    const embedBatch = vi.fn().mockResolvedValue(undefined);
+    const embedBatch = mode === 'throws' ? vi.fn().mockRejectedValue(new Error('provider unavailable')) : vi.fn().mockResolvedValue(undefined);
     scheduleEmbedInstitutionalMemoryItem(database, itemId, embedBatch);
     await vi.advanceTimersByTimeAsync(0);
-    for (const backoff of EMBED_RETRY_BACKOFF_MS) {
-      await vi.advanceTimersByTimeAsync(backoff);
-    }
-    expect(embedBatch).toHaveBeenCalledTimes(EMBED_RETRY_BACKOFF_MS.length + 1);
-    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(false);
-    // Advancing far past every backoff triggers no further attempt: the
-    // retry is bounded and terminates, never becoming a recurring sweep.
+    expect(embedBatch).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
-    expect(embedBatch).toHaveBeenCalledTimes(EMBED_RETRY_BACKOFF_MS.length + 1);
+    expect(embedBatch).toHaveBeenCalledOnce();
+    expect((await database.query<{ embedding_model: string | null }>(
+      `SELECT embedding_model FROM institutional_memory_items WHERE id=$1`, [itemId],
+    )).rows[0]?.embedding_model).toBeNull();
   });
 
-  it('a second save for the same row supersedes its own pending retry rather than piling one up', async () => {
+  it('a later actual save admits a fresh attempt without reviving the failed one', async () => {
     vi.useFakeTimers();
     const database = new PgliteDatabase();
     await seed(database);
     const itemId = 'ffffffff-ffff-4fff-8fff-fffffffffff6';
     await insertItem(database, itemId);
-    const firstEmbedBatch = vi.fn().mockResolvedValue(undefined);
-    scheduleEmbedInstitutionalMemoryItem(database, itemId, firstEmbedBatch);
+    const failed = vi.fn().mockResolvedValue(undefined);
+    scheduleEmbedInstitutionalMemoryItem(database, itemId, failed);
     await vi.advanceTimersByTimeAsync(0);
-    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(true);
-
-    const secondEmbedBatch = vi.fn().mockResolvedValue([VECTOR]);
-    scheduleEmbedInstitutionalMemoryItem(database, itemId, secondEmbedBatch);
+    await database.query(`UPDATE institutional_memory_items SET body='Changed document',version=version+1 WHERE id=$1`, [itemId]);
+    const next = vi.fn().mockResolvedValue([VECTOR]);
+    scheduleEmbedInstitutionalMemoryItem(database, itemId, next);
     await vi.advanceTimersByTimeAsync(0);
-    expect(secondEmbedBatch).toHaveBeenCalledTimes(1);
-    expect(hasPendingEmbedRetry(`item:${itemId}`)).toBe(false);
-
-    // The superseded first attempt's own backoff timer must not fire later.
-    await vi.advanceTimersByTimeAsync(EMBED_RETRY_BACKOFF_MS[0]);
-    expect(firstEmbedBatch).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+    expect(failed).toHaveBeenCalledOnce();
+    expect(next).toHaveBeenCalledOnce();
+    expect(next.mock.calls[0]?.[0]?.[0]).toContain('Changed document');
+    expect((await database.query<{ embedding_model: string | null }>(
+      `SELECT embedding_model FROM institutional_memory_items WHERE id=$1`, [itemId],
+    )).rows[0]?.embedding_model).toBe('voyageai/voyage-4-lite');
   });
 });
 

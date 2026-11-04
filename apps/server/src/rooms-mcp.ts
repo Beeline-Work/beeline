@@ -1,3 +1,7 @@
+import { subscribeCommandCompletion, waitForCommittedChange } from './command-completion.js';
+import { memberStreamEnabled, serveMcpMemberStream, type McpStreamCursor } from './rooms-mcp-stream.js';
+import type { SqlDatabase } from './database.js';
+import { waitForConnection } from './connection-wait.js';
 import { mentionRouting, mentionReplyKey, mentionReplyId, owedMentions } from './owed-mentions.js';
 import { RoomsMcpEvents, McpEventError } from './rooms-mcp-events.js';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -87,14 +91,17 @@ export class RoomsMcp {
   private readonly agentTools?: RoomsMcpAgentTools;
   private readonly events: RoomsMcpEvents;
   constructor(readonly oauth: RoomsMcpOAuth, private readonly phone: PhoneService, private readonly live: LiveHub,
-    daemon?: DaemonService, objects?: ObjectService, events?: RoomsMcpEvents) {
+    daemon?: DaemonService, objects?: ObjectService, events?: RoomsMcpEvents,
+    private readonly memberStreamReady:()=>boolean=()=>false) {
     this.events = events ?? new RoomsMcpEvents(oauth.database);
     if (daemon) this.agentTools = new RoomsMcpAgentTools(oauth.database, daemon, objects);
   }
   async handle(request: IncomingMessage, response: ServerResponse): Promise<boolean> {
     const url = new URL(request.url ?? '/', this.oauth.origin);
     if (await this.oauth.handle(request, response, url)) return true;
-    const endpoint = mcpEndpoint(request, this.oauth.origin, this.oauth.joinHost);
+    const endpoint = url.pathname === '/mcp/member-stream'
+      ? new URL(this.oauth.resource)
+      : mcpEndpoint(request, this.oauth.origin, this.oauth.joinHost);
     if (!endpoint) return false;
     // A browser/agent can read the join page; every MCP-marked request keeps the
     // existing bearer-only boundary, including unauthenticated SSE discovery.
@@ -140,6 +147,23 @@ export class RoomsMcp {
       await this.oauth.audit(principal, 'http', 'rate_limited');
       response.setHeader('retry-after', '60'); mcpJson(response, 429, { error: 'rate_limited' }); return true;
     }
+    if (url.pathname === '/mcp/member-stream' && request.method === 'GET') {
+      if(!memberStreamEnabled()||!this.memberStreamReady()){mcpJson(response,409,{error:'member_stream_unavailable'});return true;}
+      let cursor: McpStreamCursor | undefined;
+      try {
+        const encoded=url.searchParams.get('cursor');
+        if (encoded) {
+          cursor=JSON.parse(encoded) as McpStreamCursor;
+          if (!cursor || typeof cursor.epoch!=='string' || !/^[a-f0-9]{32}$/.test(cursor.epoch) ||
+            !Number.isSafeInteger(cursor.through) || cursor.through<0) throw new Error();
+        }
+        const mentionCursor=url.searchParams.get('mentions') ?? '0';
+        if (!/^[0-9]{1,18}$/.test(mentionCursor)) throw new Error();
+        await serveMcpMemberStream(this.oauth.database,principal,response,{cursor,mentionCursor},
+          (db,after)=>this.mentionsPage(principal.member_id!,after,30,db));
+      } catch { if (!response.headersSent) mcpJson(response,400,{error:'invalid_stream_request'}); else response.end(); }
+      return true;
+    }
     if (request.method !== 'POST') {
       await this.oauth.audit(principal, 'http', 'method_not_allowed');
       response.setHeader('allow', 'POST, OPTIONS'); mcpJson(response, 405, { error: 'method_not_allowed' }); return true;
@@ -159,7 +183,7 @@ export class RoomsMcp {
       try {
         let result: object;
         if (input.method === 'server/discover') {
-          result = { resultType: 'complete', supportedVersions: ['2026-07-28'], capabilities: { tools: {}, events: {} },
+          result = { resultType: 'complete', supportedVersions: ['2026-07-28'], capabilities: { tools: {}, events: {}, memberStreamV1: memberStreamEnabled()&&this.memberStreamReady() },
             serverInfo: { name: 'beeline-rooms', version: '1.0.0' }, instructions: INSTRUCTIONS };
         } else if (mcp2 && input.method === 'tools/list') {
           result = { tools: this.agentTools ? TOOLS : ROOM_TOOLS };
@@ -224,21 +248,21 @@ export class RoomsMcp {
     this.live.publish({ type: 'invalidate', roomId, reason: 'phone-write', messageId });
     return result;
   }
-  private async mentionsPage(member: string, cursor: string, limit: number) {
-    const db = this.oauth.database;
+  private async mentionsPage(member: string, cursor: string, limit: number, db: SqlDatabase = this.oauth.database) {
     const rows = (await db.query<{ seq: string; id: string; room_id: string; room_name: string; author_id: string; author_handle: string | null; author_name: string | null; created_at: Date; text: string; truncated: boolean }>(
       `WITH readable AS (${READABLE})
        SELECT mention.seq::text seq,m.id,m.room_id,r.name room_name,m.author_id,i.handle author_handle,i.name author_name,
-         m.created_at,left(m.text,16000) text,length(m.text)>16000 truncated
+         m.created_at,mention.rewakes,left(m.text,16000) text,length(m.text)>16000 truncated
        FROM rooms_mcp_mentions mention
        JOIN readable r ON r.id=mention.room_id
        JOIN messages m ON m.id=mention.message_id AND m.deleted_at IS NULL
        LEFT JOIN identities i ON i.id=m.author_id
        WHERE mention.member_id=$1 AND mention.cleared_at IS NULL AND mention.seq>$2::bigint
+         AND EXISTS(SELECT 1 FROM rooms active WHERE active.id=mention.room_id AND active.archived_at IS NULL)
        ORDER BY mention.seq LIMIT $3`, [member, cursor, limit + 1])).rows;
     const page = rows.slice(0, limit);
     return {
-      mentions: page.map(({ seq: _seq, ...row }) => ({ ...mentionRouting(member, row.room_id, row.id), ...row })),
+      mentions: page.map(({ seq, ...row }) => ({ ...mentionRouting(member, row.room_id, row.id), ...row, deliveryCursor: seq })),
       nextCursor: page.at(-1)?.seq ?? cursor,
       more: rows.length > limit,
       wakes: await pendingMcpWakes(db, member),
@@ -274,14 +298,14 @@ export class RoomsMcp {
       const after = args.wakesAfter === undefined ? null : new Date(textArg(args.wakesAfter, 40));
       if (after && Number.isNaN(after.getTime())) throw new Error('Invalid wakesAfter');
       if (wait > 0) await db.query('UPDATE rooms_mcp_members SET last_bridge_poll_at=now() WHERE member_id=$1', [member]);
-      // A long poll checks its own index once a second; it never calls out to the client.
-      const deadline = Date.now() + wait * 1000;
-      for (;;) {
-        const page = await this.mentionsPage(member, cursor, limit);
-        if (page.mentions.length || Date.now() >= deadline ||
-            page.wakes.some(wake => !after || new Date(wake.createdAt).getTime() > after.getTime())) return page;
-        await new Promise(resolve => setTimeout(resolve, Math.min(1000, Math.max(0, deadline - Date.now()))));
-      }
+      if (!wait) return this.mentionsPage(member,cursor,limit);
+      let latest: Awaited<ReturnType<RoomsMcp['mentionsPage']>> | undefined;
+      const completed=await waitForCommittedChange(wake=>subscribeCommandCompletion({principal:'mcp',operation:'stream',commandId:member},wake),async()=>{
+        latest=await this.mentionsPage(member,cursor,limit);
+        return latest.mentions.length || latest.wakes.some(wake=>!after||new Date(wake.createdAt).getTime()>after.getTime()) ? latest : undefined;
+      },wait*1000);
+      return completed ?? latest;
+
     }
     const roomId = args.room === undefined ? undefined : roomArg(args.room);
     if (roomId && !(await db.query(`WITH readable AS (${READABLE}) SELECT 1 FROM readable WHERE id=$2`, [viewer, roomId])).rowCount) throw new Error('Access denied');
@@ -322,18 +346,16 @@ export class RoomsMcp {
         const claim = await db.query(`INSERT INTO rooms_mcp_idempotency(member_id,idempotency_key,message_id) VALUES($1,$2,'')
           ON CONFLICT(member_id,idempotency_key) DO NOTHING RETURNING member_id`, [member, key]);
         if (!claim.rowCount) {
-          // A retry while the first call is still in flight waits for its answer.
-          for (let attempt = 0; attempt < 100; attempt++) {
-            const existing = (await db.query<{ message_id: string; result: unknown; stale: boolean }>(
+          // Install interest first; the durable completion fact closes the
+          // claim/read race without repeated status queries.
+          const existing = await waitForConnection(async () => {
+            const row = (await db.query<{ message_id: string; result: unknown; stale: boolean }>(
               `SELECT message_id,result,claimed_at<now()-interval '60 seconds' stale FROM rooms_mcp_idempotency
                WHERE member_id=$1 AND idempotency_key=$2`, [member, key])).rows[0];
-            if (existing?.message_id) {
-              if (existing.result && (existing.result as { routing?: string }).routing !== 'retrying') return existing.result;
-              break;
-            }
-            if (!existing || existing.stale) break;
-            await new Promise(resolve => setTimeout(resolve, 100));
-          }
+            return !row || row.stale || row.message_id ? { row } : undefined;
+          }, 10_000, { principal: member, operation: 'rooms-mcp-send', commandId: key });
+          if (existing?.row?.message_id && existing.row.result &&
+              (existing.row.result as { routing?: string }).routing !== 'retrying') return existing.row.result;
           const posted = (await db.query<{ room_id: string }>(
             'SELECT room_id FROM messages WHERE id=$1 AND author_id=$2', [messageId, member])).rows[0];
           if (posted) return this.finishPost(member, posted.room_id, messageId!, key);

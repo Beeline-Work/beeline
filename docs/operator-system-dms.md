@@ -27,6 +27,18 @@ without cancelling others. Restarting resumes pending deliveries. Humans without
 an active Workspace are counted as failed. System and other hidden service
 identities, and agents, are excluded from `all`.
 
+Pending delivery commits wake that job through the server's existing PostgreSQL
+completion listener. A new background leader inspects the queue once; a completed
+batch continues immediately only when an indexed lookup proves another pending
+recipient exists. An empty queue has no periodic scan. A batch transaction failure
+keeps uncommitted rows pending and parks the job until another committed delivery, real
+listener recovery or observed database recovery. Failure never creates a retry
+deadline. This change removes only the System DM drain from minute repair;
+unrelated repair and leader-election loops remain separate migration work.
+The deadline worker waits on an older worker's row lock before deciding the
+queue is empty. An ordinary database statement or lock timeout parks that
+attempt. The legacy standalone flusher retains its previous skip-locked mode.
+
 Audit rows retain caller, owner, source command message, audience, recipient count,
 text hash and creation time. Delivery rows retain the resolved identities and
 outcomes. Message insertion uses the normal PostgreSQL live and push-outbox
@@ -38,7 +50,7 @@ This is a feature, not a defect report. Run:
 
 ```
 npm run prove:operator-system-dm
-npm run test -w @beeline/server -- src/operator-system-dm.test.ts src/feedback.test.ts src/system-line.contract.test.ts
+npm run test -w @beeline/server -- src/operator-system-dm.test.ts src/operator-system-dm-source.test.ts src/feedback.test.ts src/system-line.contract.test.ts --minWorkers=1 --maxWorkers=2
 npm run test -w @beeline/body -- src/minimal-tool-surface.test.ts
 npm run typecheck
 ```
@@ -48,6 +60,12 @@ command through `DaemonService`, processes the queue, and asserts the exact text
 and System author in the recipient's `PhoneService.readRoom` response. Unit and
 service integration fixtures cover single, list and all sends, authority refusals,
 audit records, partial failure and bounded batch continuation.
+The committed-source fixture covers idle-day zero queue reads, rollback without
+a wake, real committed capture and bounded recovery. The optional loopback
+`operator-system-dm-source.postgres.test.ts` observes an actual backend lock wait
+across two pools and checks both old-worker commit and rollback. It replaces only
+the message producer with a transactional effect marker; the full producer is
+covered by the service fixture above.
 
 The production browser proof remains outstanding. Trusty Squire opened
 `web.usebeeline.app` in the existing lunchboxfortwo session. Connectors and vault

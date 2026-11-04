@@ -1,3 +1,4 @@
+import { BackgroundWork, startBackgroundWork } from './background-work.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { createAgentCommand } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
@@ -283,7 +284,7 @@ describe('manager schedule phone operations', () => {
 });
 
 describe('agent schedule background posting', () => {
-  it('Reproduction SCHEDULE-ISOLATION: isolates a poisoned ordinary schedule and retries it without duplicate posts', async () => {
+  it('Reproduction SCHEDULE-ISOLATION: parks a poisoned occurrence until a real edit without duplicate posts', async () => {
     const database = await fixture();
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const failedId = '44444444-4444-4444-8444-444444444444';
@@ -314,23 +315,44 @@ describe('agent schedule background posting', () => {
       expect((await database.query(`SELECT schedule_id FROM agent_schedule_occurrences`)).rows)
         .toEqual([{ schedule_id: healthyId }]);
       expect((await database.query(`SELECT next_run_at,run_count FROM agent_schedules WHERE id=$1`, [failedId])).rows)
-        .toEqual([{ next_run_at: new Date(now.getTime() + 60_000), run_count: 0 }]);
+        .toEqual([{ next_run_at: new Date('2026-09-01T12:00:00Z'), run_count: 0 }]);
       expect((await database.query(`SELECT count(*)::int count FROM agent_commands`)).rows).toEqual([{ count: 1 }]);
       await expect(loop.runOnce(new Date(now.getTime() + 1_000))).resolves.toBe(0);
-      await database.query(`UPDATE agent_schedules SET cadence=$2::jsonb WHERE id=$1`,
+      // With the healthy calendar cancelled, the parked occurrence supplies no
+      // deadline even though its original due remains in the past.
+      await database.query('DELETE FROM agent_schedules WHERE id=$1', [healthyId]);
+      await expect(loop.nextDelayMs()).resolves.toBeUndefined();
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      let started!: () => void;
+      const settled = new Promise<void>(resolve => { started = resolve; });
+      const work = new BackgroundWork();
+      const run = vi.fn(async () => {
+        await loop.runOnce(now); const due = await loop.nextDelayMs(); started();
+        return due;
+      });
+      work.addDeadline('schedules', run);
+      const stop = startBackgroundWork(work);
+      try {
+        await settled;
+        await vi.advanceTimersByTimeAsync(86_400_000);
+        expect(run).toHaveBeenCalledOnce();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally { await stop(); vi.useRealTimers(); }
+
+      await database.query(`UPDATE agent_schedules SET cadence=$2::jsonb,updated_at=updated_at+interval '1 second' WHERE id=$1`,
         [failedId, JSON.stringify({ kind: 'interval', everyMinutes: 5 })]);
       await expect(loop.runOnce(new Date(now.getTime() + 60_000))).resolves.toBe(1);
       expect((await database.query(`SELECT text FROM messages ORDER BY text`)).rows)
         .toEqual([{ text: failedId }, { text: healthyId }]);
       expect((await database.query(`SELECT count(*)::int count FROM agent_commands`)).rows).toEqual([{ count: 2 }]);
-      console.log('Demonstrated SCHEDULE-ISOLATION: later prompt reached the agent inbox and command queue; failed occurrence rolled back, backed off 60 seconds, and retried once without duplicate posts');
+      console.log('Demonstrated SCHEDULE-ISOLATION: later prompt reached the agent inbox and command queue; failed occurrence parked with its original due; a separate edit admitted one occurrence');
     } finally {
       errors.mockRestore();
       await database.close();
     }
   });
 
-  it.each(['edit', 'delete', 'backoff failure'] as const)(
+  it.each(['edit', 'delete', 'parking failure'] as const)(
     'continues after a failure while preserving a concurrent %s', async (race) => {
       const database = await fixture();
       const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -349,8 +371,8 @@ describe('agent schedule background posting', () => {
         }
         const query = database.query.bind(database);
         querySpy = vi.spyOn(database, 'query').mockImplementation(async (sql, values) => {
-          if (sql.includes('UPDATE agent_schedules SET next_run_at=$2,updated_at=now()')) {
-            if (race === 'backoff failure') throw new Error('backoff unavailable');
+          if (sql.includes('UPDATE agent_schedules SET failed_due_at=next_run_at,failed_revision=updated_at')) {
+            if (race === 'parking failure') throw new Error('parking unavailable');
             if (race === 'delete') await query(`DELETE FROM agent_schedules WHERE id=$1`, [failedId]);
             else await query(
               `UPDATE agent_schedules SET message='edited',updated_at=updated_at + interval '1 second' WHERE id=$1`,
@@ -359,13 +381,13 @@ describe('agent schedule background posting', () => {
           }
           return query(sql, values);
         });
-        await expect(new AgentScheduleLoop(database).runOnce(now)).resolves.toBe(1);
+        const run = new AgentScheduleLoop(database).runOnce(now);
+        if (race === 'parking failure') await expect(run).rejects.toThrow('parking unavailable');
+        else await expect(run).resolves.toBe(1);
         expect((await query(`SELECT text FROM messages`)).rows).toEqual([{ text: healthyId }]);
         const failed = (await query(`SELECT message,next_run_at FROM agent_schedules WHERE id=$1`, [failedId])).rows;
         expect(failed).toEqual(race === 'delete' ? [] : [{ message: race === 'edit' ? 'edited' : failedId, next_run_at: now }]);
-        if (race === 'backoff failure') {
-          expect(errors).toHaveBeenCalledWith(`schedule ${failedId} retry backoff failed`, expect.any(Error));
-        }
+        if (race !== 'delete') expect((await query('SELECT failed_revision FROM agent_schedules WHERE id=$1', [failedId])).rows).toEqual([{ failed_revision: null }]);
       } finally {
         querySpy?.mockRestore();
         errors.mockRestore();
@@ -373,6 +395,47 @@ describe('agent schedule background posting', () => {
       }
     },
   );
+
+  it('parks a rolled-back workflow timer across owner replacement without rewriting its due', async () => {
+    const database = await fixture();
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const id = '44444444-4444-4444-8444-444444444444', due = new Date('2026-09-01T12:00:00Z');
+    try {
+      await database.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,workflow_run)
+        VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":5}','Synthetic',$6,
+          '{"runId":"synthetic-run","timer":"deadline"}')`, [id,WORKSPACE,ROOM,AGENT,OWNER,due]);
+      const transaction = vi.spyOn(database, 'transaction').mockRejectedValueOnce(new Error('timer transaction failed'));
+      await expect(new AgentScheduleLoop(database).runOnce(due)).resolves.toBe(0);
+      transaction.mockClear();
+      const replacement = new AgentScheduleLoop(database);
+      await expect(replacement.nextDelayMs()).resolves.toBeUndefined();
+      await expect(replacement.runOnce(new Date(due.getTime()+86_400_000))).resolves.toBe(0);
+      expect(transaction).not.toHaveBeenCalled();
+      expect((await database.query('SELECT next_run_at,failed_due_at FROM agent_schedules WHERE id=$1', [id])).rows)
+        .toEqual([{next_run_at:due,failed_due_at:due}]);
+      await database.query("UPDATE agent_schedules SET updated_at=updated_at+interval '1 second' WHERE id=$1", [id]);
+      await expect(replacement.nextDelayMs()).resolves.toBe(0);
+      transaction.mockRestore();
+    } finally { error.mockRestore(); await database.close(); }
+  });
+
+  it('does not arm a past deadline for an ineligible schedule and admits restored membership', async () => {
+    const database = await fixture();
+    const id = '44444444-4444-4444-8444-444444444444', due = new Date('2026-09-01T12:00:00Z');
+    try {
+      await database.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+        VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":5}','Synthetic',$6)`, [id,WORKSPACE,ROOM,AGENT,OWNER,due]);
+      const loop = new AgentScheduleLoop(database);
+      await database.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM,AGENT]);
+      await expect(loop.nextDelayMs()).resolves.toBeUndefined();
+      await expect(loop.runOnce(due)).resolves.toBe(0);
+      await database.query('UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2', [ROOM,AGENT]);
+      await expect(loop.nextDelayMs()).resolves.toBe(0);
+      await expect(loop.runOnce(due)).resolves.toBe(1);
+      await database.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [ROOM]);
+      await expect(loop.nextDelayMs()).resolves.toBeUndefined();
+    } finally { await database.close(); }
+  });
 
   it('atomically claims one occurrence across competing server loops', async () => {
     const database = await fixture();
@@ -428,7 +491,7 @@ describe('agent schedule background posting', () => {
         VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":60}','Retired schedule',2,2,now()-interval '1 hour')`,
         [id, WORKSPACE, ROOM, AGENT, OWNER]);
       const loop = new AgentScheduleLoop(database);
-      expect(await loop.nextDueAt()).toBeUndefined();
+      expect(await loop.nextDelayMs()).toBeUndefined();
       expect(await loop.runOnce()).toBe(0);
       expect((await database.query(`SELECT max_runs,run_count FROM agent_schedules WHERE id=$1`, [id])).rows)
         .toEqual([{ max_runs: 2, run_count: 2 }]);

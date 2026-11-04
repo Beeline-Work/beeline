@@ -1,9 +1,10 @@
 name: Live app-association drift
 
 on:
-  schedule:
-    # Four checks a day keep detection comfortably inside the 24-hour limit.
-    - cron: '17 */6 * * *'
+  workflow_run:
+    workflows: ['Unified production release']
+    types: [completed]
+    branches: [main]
   workflow_dispatch: {}
 
 permissions:
@@ -15,6 +16,7 @@ concurrency:
 
 jobs:
   compare:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     name: Compare live app associations
     runs-on: ubuntu-latest
     timeout-minutes: 5

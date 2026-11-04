@@ -34,36 +34,30 @@ describe('Fly start during suspend', () => {
     await expect(new FlyMachines('test', 'proof', request).start('m1', 'new')).rejects.toMatchObject({ operation: 'update image' });
     expect(request).toHaveBeenCalledTimes(2);
   });
-  it('retries a snapshot transition and starts the same Machine without waiting for the sweep', async () => {
+  it('returns a snapshot transition refusal without a timed reattempt', async () => {
     vi.useFakeTimers();
-    const request = vi
-      .fn<typeof fetch>()
+    const request = vi.fn<typeof fetch>()
       .mockResolvedValueOnce(new Response('{"error":"machine still active"}', { status: 412 }))
       .mockResolvedValueOnce(new Response('{}'));
     const machines = new FlyMachines('test', 'proof', request);
-    const started = machines.start('m1');
-    await vi.advanceTimersByTimeAsync(249);
-    expect(request).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1);
-    await started;
+    await expect(machines.start('m1')).rejects.toMatchObject({ status: 412, operation: 'start' });
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+    expect(request).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+    // A separate caller action can address the same Machine.
+    await machines.start('m1');
     expect(request).toHaveBeenCalledTimes(2);
-    expect(request.mock.calls.every(([url]) => String(url).endsWith('/machines/m1/start'))).toBe(
-      true,
-    );
+    expect(request.mock.calls.every(([url]) => String(url).endsWith('/machines/m1/start'))).toBe(true);
   });
 
-  it('bounds retries when the transition never finishes', async () => {
+  it('preserves an uncertain lost response without resubmitting the start', async () => {
     vi.useFakeTimers();
-    const request = vi
-      .fn<typeof fetch>()
-      .mockImplementation(
-        async () => new Response('{"error":"machine still active"}', { status: 412 }),
-      );
-    const started = new FlyMachines('test', 'proof', request).start('m1');
-    const rejected = expect(started).rejects.toMatchObject({ status: 412 });
-    await vi.advanceTimersByTimeAsync(5_750);
-    await rejected;
-    expect(request).toHaveBeenCalledTimes(6);
+    const error = new TypeError('response lost after acceptance');
+    const request = vi.fn<typeof fetch>().mockRejectedValue(error);
+    await expect(new FlyMachines('test', 'proof', request).start('m1')).rejects.toBe(error);
+    await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+    expect(request).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it.each([401, 403, 404, 429, 500])(

@@ -1,13 +1,18 @@
-import { failConnectingOffers } from './connector-offer-completion.js';
+import { requiredServerSetting as required } from './server-configuration.js';
+import { DISPLAY_DEADLINE_KEY } from './deadline-expiry-source.js';
+import { backgroundDatabaseCut } from './background-deadline-clock.js';
+import { BackgroundRecordDeadlines, backgroundSourceFamilies, repairDeadlineFamilies, registerBackgroundDeadlineFamilies, subscribeBackgroundFamilies } from './background-deadlines.js';
+import { sentryEligibilityKey } from './sentry-wake-source.js';
+import { PENDING_ATTACHMENT_DUE_KEY } from './pending-attachment-source.js';
+import { AGENT_SCHEDULE_DUE_KEY } from './agent-schedule-source.js';
+import { ConnectorOfferExpiryLoop, CONNECTOR_OFFER_DUE_KEY } from './connector-offer-expiry.js';
 import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { NextDayCheckin } from './next-day-checkin.js';
-import { syncXSiteVisits } from './x-site-visits.js';
 import { RoomsMcp } from './rooms-mcp.js';
 import { RoomsMcpOAuth } from './rooms-mcp-oauth.js';
-import { deliverMcpMemberWebhooks } from './rooms-mcp-members.js';
-import { syncXAdReports } from './x-ad-reports.js';
-import { deliverXSignups } from './x-ads.js';
-import { flushOperatorSystemDms } from './operator-system-dm.js';
+import { runMcpWebhookDelivery } from './rooms-mcp-members.js';
+import { deliverXSignups, nextXSignupDeliveryAt } from './x-ads.js';
+import { deliverOperatorSystemDmBatch,subscribeOperatorSystemDmDeliveries } from './operator-system-dm.js';
 import { captureServerError, flushServerErrors } from './sentry.js';
 
 // Expected voice failures are handled at their task boundary. Report any escape.
@@ -16,10 +21,10 @@ process.on('unhandledRejection', error => {
   console.error('[unhandled-rejection]', error instanceof Error ? error.name : 'Unknown rejection');
 });
 import { sentryTelegramFromEnv } from './sentry-telegram.js';
-import { flushSentryWakes, nextSentryWakeAt, sentryWakeAgentFromEnv } from './sentry-wake.js';
+import { runSentryWakeDeadline, sentryWakeAgentFromEnv } from './sentry-wake.js';
 import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
-import { retryMigrationStep } from './migration-retry.js';
+import { runMigrationStep } from './migration-steps.js';
 import { databaseConnectionBudget } from './database-budget.js';
 import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { TokenAuth, verifierFromEnvironment } from './auth.js';
@@ -27,23 +32,20 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import {
-  BackgroundLeader,
   BackgroundJobRunner,
   createPushTestSender,
   MediaExpiryLoop,
   PushDeliveryLoop,
-  runMaintenance,
 } from './background.js';
 import { mediaTtlHours, MEDIA_SWEEP_INTERVAL_MS } from './media-ttl.js';
 import { PendingAttachmentCleanupLoop } from './pending-attachment-cleanup.js';
-import { BackgroundWork } from './background-work.js';
+import { BackgroundLeader } from './background-leader.js';
+import { startBackgroundWork, BackgroundWork } from './background-work.js';
 import { OperationOutcomes, startOperationOutcomeFlush } from './operation-outcomes.js';
-import { dashboardFinances } from './operator-finances.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { ChoiceExpiryLoop } from './choice-expiry.js';
+import { subscribeCommandCompletion } from './command-completion.js';
 import { DeadlineExpiry } from './deadline-expiry.js';
-import { noteBlockedCornerChecks, reconcileConfiguredCornerReviewers, renudgeStrandedPendingCommands } from './agent-command.js';
-import { reclaimExpiredCommandLeases } from './turn-silence-notice.js';
 import { ConnectionPresence } from './connection-presence.js';
 import { clearStalePhoneViews } from './phone-viewing.js';
 import { createFirebasePushSender } from './firebase-push.js';
@@ -69,7 +71,6 @@ import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
 import { listenAfterBestEffortRecovery } from './startup.js';
 import { INSTITUTIONAL_MEMORY_ON } from './institutional-memory-shadow.js';
-import { runInstitutionalCuratorCycle } from './institutional-curator.js';
 import {
   backfillInstitutionalMemoryEmbeddingsOnce,
   warnIfEmbeddingKeyMissing,
@@ -81,17 +82,11 @@ import { FeedbackGitHub } from './feedback-github.js';
 import { startComputerExpirySweep } from './computer-session.js';
 import {
   addFreeAgentToWorkspace,
-  FREE_AGENT_SWEEP_MS,
   FreeAgentService,
   freeAgentConfigFromEnv,
 } from './free-agents.js';
 import { FlyMachines } from './fly-machines.js';
 
-function required(name: string) {
-  const value = process.env[name];
-  if (!value) throw new Error(`${name} is required`);
-  return value;
-}
 
 async function runReleaseMigration(): Promise<void> {
   const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {
@@ -99,7 +94,7 @@ async function runReleaseMigration(): Promise<void> {
   });
   try {
     await migrate(database, { deferData: true });
-    await retryMigrationStep('auth schema', async () => {
+    await runMigrationStep('auth schema', async () => {
       await new AuthStore(database as unknown as TransactionalDatabase).migrate();
     });
     await migrateData(database);
@@ -107,14 +102,14 @@ async function runReleaseMigration(): Promise<void> {
     // live on every supported client (docs/welcome-retirement.md).
     const greeterAgentId = process.env.BEELINE_RETIRE_WELCOME_GREETER_ID?.trim();
     if (greeterAgentId) {
-      await retryMigrationStep('welcome retirement', async () => {
+      await runMigrationStep('welcome retirement', async () => {
         const retirement = await retireWelcomeWorkspace(database, { greeterAgentId });
         console.log(`[migration] welcome retirement: ${JSON.stringify(retirement)}`);
       });
     }
     // This is deliberately last: boot may proceed only after both schema owners
     // and every data backfill completed successfully.
-    await retryMigrationStep('schema marker', () => markSchemaCurrent(database));
+    await runMigrationStep('schema marker', () => markSchemaCurrent(database));
     console.log('[migration] server and auth schemas are current');
   } finally {
     await database.close();
@@ -283,6 +278,7 @@ async function main() {
   const connectionPresence = new ConnectionPresence(database, live, undefined, undefined, {
     instanceId: `${process.env.FLY_MACHINE_ID ?? 'local'}:${randomUUID()}`,
   });
+  liveListener.setServerLeaseEvidence((instance,renewedAt,removed)=>connectionPresence.observeServerLease(instance,renewedAt,removed));
   const mediaExpiryMediaMaximumBytes = Number(
     process.env.MEDIA_MAX_BYTES ?? String(DEFAULT_MEDIA_MAXIMUM_BYTES),
   );
@@ -312,6 +308,7 @@ async function main() {
       })
     : new MediaExpiryLoop(jobsDatabase);
   const choiceExpiry = new ChoiceExpiryLoop(jobsDatabase);
+  const connectorOfferExpiry = new ConnectorOfferExpiryLoop(jobsDatabase);
   const pendingAttachmentCleanup = new PendingAttachmentCleanupLoop(jobsDatabase);
   const deadlineExpiry = new DeadlineExpiry(jobsDatabase);
   const sendPushTest = pushSender || webPushSender
@@ -412,7 +409,7 @@ async function main() {
   const server = createBeelineServer({
     operationOutcomes,
     replay: new DurableLiveReplay(database, live),
-    roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth), phone, live, daemon, objectService),
+    roomsMcp: new RoomsMcp(new RoomsMcpOAuth(database, publicOrigin, auth, undefined, () => liveListener.projectionHealth().connected), phone, live, daemon, objectService, undefined, () => liveListener.projectionHealth().connected),
     sentryWakeAgentId,
     database,
     sentryTelegram: sentryTelegramFromEnv(),
@@ -427,6 +424,7 @@ async function main() {
     healthDatabase,
     backgroundHealth: () => backgroundJobs.snapshot(),
     liveBridgeHealth: () => liveListener.projectionHealth(),
+    readiness: () => liveListener.projectionHealth().connected,
     auth,
     phone,
     daemon,
@@ -458,146 +456,143 @@ async function main() {
         : {}),
     },
   });
-  let reconciledMergeability = false;
-  const reconciliationMs = 60_000;
   const work = new BackgroundWork();
-  const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app', undefined, undefined, publicOrigin);
-  let nextDayCheckinRunning = false;
-  work.add('next-day-checkin', reconciliationMs, async () => {
-    if (nextDayCheckinRunning) return;
-    nextDayCheckinRunning = true;
-    void backgroundJobs.run('next-day-checkin', () => nextDayCheckin.runOnce())
-      .finally(() => { nextDayCheckinRunning = false; });
+  let checkinClock=new Date();
+  let checkinCut:string|undefined;
+  const nextDayCheckin = new NextDayCheckin(jobsDatabase, webAppOrigins[0] ?? 'https://web.usebeeline.app', undefined, ()=>checkinClock, publicOrigin);
+  let nextDayCheckinRunning: Promise<unknown> | undefined;
+  let nextDayCheckinPending = false;
+  work.addDeadline('next-day-checkin', async () => {
+    if (nextDayCheckinRunning) { nextDayCheckinPending = true; return; }
+    nextDayCheckinRunning = backgroundJobs.run('next-day-checkin', async () => {
+      checkinCut=await backgroundDatabaseCut(jobsDatabase);checkinClock=new Date(checkinCut);await nextDayCheckin.runOnce();
+    })
+      .then(async outcome => {
+        if (outcome.ok) work.schedule('next-day-checkin', await nextDayCheckin.nextDelayMs(checkinCut));
+      }).catch(error => captureServerError(error,{background_job:'next-day-checkin'}))
+      .finally(() => {
+        nextDayCheckinRunning = undefined;
+        if(nextDayCheckinPending){nextDayCheckinPending=false;work.wake('next-day-checkin','committed-during-flight');}
+        leader.wake();
+      });
   });
-  if (push) work.add('push', reconciliationMs, async () => {
-    await backgroundJobs.run('push', () => push.runOnce());
-    const due = await backgroundJobs.run('push-next-due', () => push.nextDueAt());
-    if (due.ok && due.value) return Math.max(1000, due.value.getTime() - Date.now());
+  if (push) work.addDeadline('push', async () => {
+    const dispatched=await backgroundJobs.run('push', async () => {
+      const cut=await backgroundDatabaseCut(jobsDatabase);await push.runOnce();return cut;
+    });
+    if(!dispatched.ok)return;
+    const due = await backgroundJobs.run('push-next-due', () => push.nextDelayMs(dispatched.value));
+    if (due.ok) return due.value;
   });
-  work.add('schedules', reconciliationMs, async () => {
-    await backgroundJobs.run('schedules', () => schedules.runOnce());
-    const due = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
-    if (due.ok && due.value) return Math.max(0, due.value.getTime() - Date.now());
+  work.addDeadline('pending-attachment-cleanup', async () => {
+    const swept = await backgroundJobs.run('pending-attachment-cleanup', () => pendingAttachmentCleanup.runOnce());
+    if (!swept.ok) return;
+    const due = await backgroundJobs.run('pending-attachment-next-due', () => pendingAttachmentCleanup.nextDelayMs());
+    if (due.ok) return due.value;
   });
-  work.add('sentry', reconciliationMs, async () => {
-    await backgroundJobs.run('sentry-wakes', () => flushSentryWakes(jobsDatabase, sentryWakeAgentId));
-    const due = await backgroundJobs.run('sentry-next-due', () => nextSentryWakeAt(jobsDatabase));
-    if (due.ok && due.value) return Math.max(1000, due.value.getTime() - Date.now());
+  work.addDeadline('schedules', async () => {
+    const fired = await backgroundJobs.run('schedules', () => schedules.runOnce());
+    if (!fired.ok) return;
+    const due = await backgroundJobs.run('schedule-next-due', () => schedules.nextDelayMs());
+    if (due.ok) return due.value;
   });
-  work.add('choices', reconciliationMs, async () => {
-    await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
-    const due = await backgroundJobs.run('choice-next-due', () => jobsDatabase.query<{ due: Date | null }>(
-      `SELECT min(closes_at) due FROM room_choices WHERE status='open' AND closes_at IS NOT NULL`));
-    if (due.ok && due.value.rows[0]?.due)
-      return Math.max(5000, due.value.rows[0].due.getTime() - Date.now());
+  work.addDeadline('sentry', async () => {
+    const due = await backgroundJobs.run('sentry-wakes', () => runSentryWakeDeadline(jobsDatabase, sentryWakeAgentId));
+    if (due.ok) return due.value;
   });
-  work.add('deadlines', reconciliationMs, async (newLeader) => {
+  work.addDeadline('connector-offer-expiry', async () => {
+    const due = await backgroundJobs.run('connector-offer-expiry', () => connectorOfferExpiry.runOnce());
+    if (due.ok) return due.value;
+  });
+  work.addDeadline('choices', async () => {
+    const due = await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
+    if (due.ok) return due.value;
+  });
+  work.addDeadline('deadlines', async (newLeader) => {
     const due = await backgroundJobs.run('deadline-expiry', () => deadlineExpiry.runOnce(newLeader));
     if (due.ok && due.value !== null) return Math.max(0, due.value);
   });
-  if (freeAgents) work.add('free-agents', FREE_AGENT_SWEEP_MS, async () => {
-    await backgroundJobs.run('free-agents', () => freeAgents.sweep());
+  if (freeAgents) work.addDeadline('free-agents', async () => {
+    const acted=await backgroundJobs.run('free-agents', async () => {
+      const cut=await backgroundDatabaseCut(jobsDatabase);await freeAgents.sweep();return cut;
+    });
+    if(!acted.ok)return;
+    const due=await backgroundJobs.run('free-agents-next-due',()=>freeAgents.nextDelayMs(acted.value));
+    if(due.ok)return due.value;
   });
-  // External X requests must not hold up push delivery or schedule dispatch.
-  // Database claims fence retries across leaders; one local run per job bounds concurrency.
-  let xConversionsRunning = false;
-  let xReportsRunning = false;
-  let xSiteVisitsRunning = false;
-  let financesRunning = false;
-  work.add('operator-finances', 60 * 60_000, async () => {
-    if (financesRunning) return;
-    financesRunning = true;
-    void backgroundJobs.run('operator-finances', () => dashboardFinances(jobsDatabase))
-      .finally(() => { financesRunning = false; });
+  // A committed signup row owns delivery. Vendor report/balance observations
+  // are explicit operator demand and never background calendar jobs.
+  work.addDeadline('x-conversions', async () => {
+    const delivered=await backgroundJobs.run('x-signup-conversions', () => deliverXSignups(jobsDatabase));
+    if(!delivered.ok)return;
+    const due=await backgroundJobs.run('x-signup-next-due',()=>nextXSignupDeliveryAt(jobsDatabase));
+    if(due.ok && due.value)return Math.max(0,due.value.getTime()-Date.now());
   });
-  work.add('x-conversions', reconciliationMs, async () => {
-    if (xConversionsRunning) return;
-    xConversionsRunning = true;
-    void backgroundJobs.run('x-signup-conversions', () => deliverXSignups(jobsDatabase))
-      .finally(() => { xConversionsRunning = false; });
+  work.addDeadline('operator-system-dms',async()=>{
+    const delivered=await backgroundJobs.run('operator-system-dms',()=>deliverOperatorSystemDmBatch(jobsDatabase));
+    if(delivered.ok)return delivered.value;
   });
-  work.add('x-site-visits', reconciliationMs, async () => {
-    if (xSiteVisitsRunning) return;
-    xSiteVisitsRunning = true;
-    void backgroundJobs.run('x-site-visits', () => syncXSiteVisits(jobsDatabase))
-      .finally(() => { xSiteVisitsRunning = false; });
+  // One startup observation per leader epoch, including when it fails.
+  // Later uncertainty needs an actual GitHub event or explicit review command.
+  if (githubJobs) work.addDeadline('repository.startupRepair', async () => {
+    await backgroundJobs.run('github-mergeability', () => githubJobs.refreshStaleMergeability());
   });
-  work.add('x-reports', reconciliationMs, async () => {
-    if (xReportsRunning) return;
-    xReportsRunning = true;
-    void backgroundJobs.run('x-ad-reports', () => syncXAdReports(jobsDatabase))
-      .finally(() => { xReportsRunning = false; });
-  });
-  work.add('repair', reconciliationMs, async (newLeader) => {
-    if (newLeader) {
-      reconciledMergeability = false;
-    }
-    if (voice) await backgroundJobs.run('voice-call-recovery', () => voice.recover());
-    await backgroundJobs.run('operator-system-dms', () => flushOperatorSystemDms(jobsDatabase));
-    // Repair lost reviewer wakes on the reconciliation cadence;
-    // existing head-scoped dispatch and report keys keep replays quiet.
-    await backgroundJobs.run('corner-reviewers', () =>
-      reconcileConfiguredCornerReviewers(jobsDatabase, undefined,
-        githubJobs ? id => githubJobs.refreshCornerReviewHead(id) : undefined));
-    if (githubJobs) {
-      await backgroundJobs.run('github-check-refresh', () => githubJobs.refreshQueuedChecks());
-    }
-    if (githubJobs && !reconciledMergeability) {
-      const result = await backgroundJobs.run('github-mergeability', () =>
-        githubJobs.refreshStaleMergeability());
-      reconciledMergeability = result.ok;
-    }
-    if (githubJobs) await backgroundJobs.run('github-pending-checks', () =>
-      githubJobs.refreshOpenPendingChecks());
-    const now = Date.now();
-    // Merges happen throughout a leader's tenure. Keep catching missed merge webhooks.
-    if (githubJobs) {
-      await backgroundJobs.run('github-merged-corners', () =>
-        githubJobs.reconcileMergedCorners());
-    }
-    await backgroundJobs.run('media-expiry', () => mediaExpiry.runOnce(now));
-    await backgroundJobs.run('pending-attachment-cleanup', () => pendingAttachmentCleanup.runOnce(now));
-    await backgroundJobs.run('connector-offer-expiry', () => jobsDatabase.transaction(db => failConnectingOffers(db, { expired: true })));
-    await backgroundJobs.run('maintenance', () => runMaintenance(jobsDatabase));
-    await backgroundJobs.run('corner-checks-blocked', () =>
-      noteBlockedCornerChecks(jobsDatabase));
-    await backgroundJobs.run('stranded-command-renudge', () =>
-      renudgeStrandedPendingCommands(jobsDatabase));
-    await backgroundJobs.run('expired-command-leases', () =>
-      reclaimExpiredCommandLeases(jobsDatabase, live));
-    await backgroundJobs.run('mention-notices', () => phone.flushPendingMentionNotices(now));
-    await backgroundJobs.run('institutional-curator', () =>
-      runInstitutionalCuratorCycle(jobsDatabase, institutionalMemory, new Date(now), {
-        ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
-      }));
-  });
-  const leader = new BackgroundLeader(jobsDatabase, (newLeader) => work.run(newLeader), reconciliationMs);
+  const voiceDeadlines=new BackgroundRecordDeadlines('voice-call-recovery',work,()=>leader.wake());
+  const stopVoiceDeadlines=voiceDeadlines.subscribe();
+  registerBackgroundDeadlineFamilies(work,repairDeadlineFamilies(jobsDatabase,{
+    live,phone,mediaExpiry,institutionalMemory,institutionalAnchors,voice,voiceDeadlines,
+  }),(name,run)=>backgroundJobs.run(name,run),jobsDatabase);
+  const leader = new BackgroundLeader(jobsDatabase, (newLeader, signal) => work.run(newLeader, signal));
   const wakeWork = (name: string, source = name) => { work.wake(name, source); leader.wake(); };
+  const stopBackgroundSources=subscribeBackgroundFamilies(jobsDatabase,live,backgroundSourceFamilies(),name=>wakeWork(name,'committed-family-source'));
+  const wakeSystemDms=()=>wakeWork('operator-system-dms','committed-system-dm');
+  const wakeConnectorOffers = () => wakeWork('connector-offer-expiry', 'connector-offer-source');
+  const stopConnectorOfferWake = subscribeCommandCompletion(CONNECTOR_OFFER_DUE_KEY, wakeConnectorOffers);
+  const stopConnectorOfferRecovery = jobsDatabase.onRecovery(wakeConnectorOffers);
+  const stopConnectorOfferResync = live.subscribeResync(wakeConnectorOffers);
+  const wakeDisplayDeadlines = () => wakeWork('deadlines', 'display-deadline');
+  const stopDisplayDeadline = subscribeCommandCompletion(DISPLAY_DEADLINE_KEY, wakeDisplayDeadlines);
+  const stopDisplayRecovery = jobsDatabase.onRecovery(wakeDisplayDeadlines);
+  const stopDisplayResync = live.subscribeResync(wakeDisplayDeadlines);
+  const wakeSentry = () => wakeWork('sentry', 'sentry-eligibility');
+  const stopSentryRecipient = subscribeCommandCompletion(sentryEligibilityKey(sentryWakeAgentId), wakeSentry);
+  const stopSentryRoom = subscribeCommandCompletion(sentryEligibilityKey('sentry'), wakeSentry);
+  const stopSentryRecovery = jobsDatabase.onRecovery(wakeSentry);
+  const stopSentryResync = live.subscribeResync(wakeSentry);
+  const wakeChoices = () => wakeWork('choices', 'choice-expiry');
+  const wakeAttachments = () => wakeWork('pending-attachment-cleanup', 'attachment-source');
+  const stopAttachmentWake = subscribeCommandCompletion(PENDING_ATTACHMENT_DUE_KEY, wakeAttachments);
+  const stopAttachmentRecovery = jobsDatabase.onRecovery(wakeAttachments);
+  const stopAttachmentResync = live.subscribeResync(wakeAttachments);
+  const wakeSchedules = () => wakeWork('schedules', 'schedule-source');
+  const stopScheduleWake = subscribeCommandCompletion(AGENT_SCHEDULE_DUE_KEY, wakeSchedules);
+  const stopScheduleRecovery = jobsDatabase.onRecovery(wakeSchedules);
+  const stopScheduleResync = live.subscribeResync(wakeSchedules);
+  const stopChoiceWake = subscribeCommandCompletion({ principal: 'choice', operation: 'expiry', commandId: 'pending' }, wakeChoices);
+  const stopChoiceRecovery = jobsDatabase.onRecovery(wakeChoices);
+  const stopSystemDmWake=subscribeOperatorSystemDmDeliveries(wakeSystemDms);
+  const stopSystemDmRecovery=jobsDatabase.onRecovery(wakeSystemDms);
   if (push) liveListener.setPushWake(() => wakeWork('push'));
-  liveListener.setOwedWake((source) => wakeWork(source === 'sentry' ? 'sentry' : 'deadlines', source));
-  // An AI client's tag is POSTed the moment it commits. Each delivery is
-  // claimed atomically, so every instance may drain; maintenance retries.
-  let mcpWebhooks: Promise<void> | undefined, mcpWebhooksAgain = false;
-  liveListener.setMcpWebhookWake(() => {
-    if (mcpWebhooks) { mcpWebhooksAgain = true; return; }
-    mcpWebhooks = (async () => {
-      do {
-        mcpWebhooksAgain = false;
-        try { await deliverMcpMemberWebhooks(jobsDatabase); } catch (error) { captureServerError(error); }
-      } while (mcpWebhooksAgain);
-    })().finally(() => { mcpWebhooks = undefined; });
+  liveListener.setXSignupDeliveryWake(()=>wakeWork('x-conversions','signup-delivery'));
+  liveListener.setOwedWake((source) => { if (source === 'sentry') wakeWork('sentry', source); });
+  // Receiver latency must not block unrelated leader jobs. Existing atomic
+  // per-delivery claims serialize overlapping instances and rolling versions.
+  const mcpWork = new BackgroundWork();
+  const mcpStop = new AbortController();
+  mcpWork.addDeadline('mcp-webhooks', async () => {
+    const result = await backgroundJobs.run('mcp-webhooks', () => runMcpWebhookDelivery(jobsDatabase, undefined, 50, mcpStop.signal));
+    if (result.ok) return result.value;
+  });
+  const stopMcpWebhooks = startBackgroundWork(mcpWork, run => {
+    const wake = () => { mcpWork.wake('mcp-webhooks'); run(); };
+    liveListener.setMcpWebhookWake(wake);
+    const recovery = jobsDatabase.onRecovery(wake);
+    const resync = live.subscribeResync(wake);
+    return () => { recovery(); resync(); liveListener.setMcpWebhookWake(() => {}); };
   });
   // A committed wake for a sleeping free agent starts its Machine at once;
   // the leader sweep retries anything this misses.
   const stopFreeAgentWake = freeAgents?.subscribeToWakes(live);
-  const stopBackgroundWake = live.subscribeAll((event) => {
-    if (event.type !== 'invalidate') return;
-    if (event.reason === 'postgres:messages') {
-      wakeWork('deadlines', 'messages');
-      wakeWork('choices', 'messages');
-    }
-    if (event.reason === 'postgres:agent_schedules') wakeWork('schedules');
-  });
   const port = Number(process.env.PORT ?? '8080');
   const host = process.env.HOST ?? '127.0.0.1';
   await listenAfterBestEffortRecovery(server, async () => {
@@ -606,13 +601,27 @@ async function main() {
     await connectionPresence.start();
   }, port, host);
   void leader.run();
-  const stopOperationOutcomes = startOperationOutcomeFlush(jobsDatabase, operationOutcomes, backgroundJobs);
+  const stopOperationOutcomes = startOperationOutcomeFlush(jobsDatabase, operationOutcomes, backgroundJobs, wake => jobsDatabase.onRecovery(wake));
   const stopComputerExpiry = startComputerExpirySweep(database, live);
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
+    mcpStop.abort();
+    const mcpStopped = stopMcpWebhooks();
+    stopSystemDmWake();stopSystemDmRecovery();
+    stopConnectorOfferWake();stopConnectorOfferRecovery();stopConnectorOfferResync();
+    stopSentryRecipient();stopSentryRoom();stopSentryRecovery();stopSentryResync();
+    stopChoiceWake();stopChoiceRecovery();
+    stopAttachmentRecovery();stopAttachmentResync();stopAttachmentWake();
+    stopScheduleRecovery();stopScheduleResync();stopScheduleWake();
     await leader.stop();
+    stopBackgroundSources();
+    stopVoiceDeadlines();
+    // The provider flight intentionally does not block unrelated leader jobs.
+    // Once leadership admissions stop, drain its final receipt before pools close.
+    await nextDayCheckinRunning;
+    await mcpStopped;
     stopComputerExpiry();
-    stopBackgroundWake();
+    stopDisplayDeadline();stopDisplayRecovery();stopDisplayResync();
     stopFreeAgentWake?.();
     await voice?.close();
     await connectionPresence.stop();

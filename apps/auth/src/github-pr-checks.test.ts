@@ -37,7 +37,7 @@ describe('zero-check registration evidence', () => {
   });
 
   it.each([[0, 0, true], [1, 0, false], [0, 1, false], [undefined, undefined, false]])(
-    'requires settled absence of suites (%s) and workflow runs (%s)', async (suites, runs, expected) => {
+    'reads suites (%s) and workflow runs (%s) once within explicit demand', async (suites, runs, expected) => {
       vi.useFakeTimers();
       const requests: string[] = [];
       vi.stubGlobal('fetch', async (url: string) => {
@@ -46,10 +46,11 @@ describe('zero-check registration evidence', () => {
         return Response.json({ total_count: url.includes('/actions/workflows?') ? 2 : url.includes('/check-suites?') ? suites : runs });
       });
       const verdict = app().confirmNoChecks('token', 'owner/widgets', sha);
-      await vi.advanceTimersByTimeAsync(9_999);
-      expect(requests).toHaveLength(2);
-      await vi.advanceTimersByTimeAsync(1);
       expect(await verdict).toBe(expected);
+      expect(requests).toHaveLength(4);
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60_000);
+      expect(requests).toHaveLength(4);
+      expect(vi.getTimerCount()).toBe(0);
       expect(requests).toContain(`https://api.github.test/repos/owner/widgets/commits/${sha}/check-suites?per_page=1`);
       expect(requests).toContain(`https://api.github.test/repos/owner/widgets/actions/runs?head_sha=${sha}&per_page=1`);
     },

@@ -1,3 +1,10 @@
+import { HelperOverlayViewer, helperOverlayEnabled, fenceHelperOverlayEnqueue } from './helper-overlay.js';
+import { syncXAdReports } from './x-ad-reports.js';
+import { syncXSiteVisits } from './x-site-visits.js';
+import { dashboardFinances } from './operator-finances.js';
+import { fenceCommandReceiptEnqueue } from './router-command-coverage.js';
+import { parseRouterCommandIdentity } from '@beeline/api-contract/router-command';
+import { routerSocketProtocol, type RouterProjectionPolicy } from './router-socket.js';
 import { startConnectionWork } from './background-work.js';
 import { owedMentions } from './owed-mentions.js';
 import { serveEmailImage } from './email-images.js';
@@ -141,6 +148,9 @@ export interface GitHubServerHooks {
 }
 
 export interface ServerOptions {
+  routerProjections?: RouterProjectionPolicy;
+  /** Enable only after the media authority schema/fence cohort is proved. */
+  mediaMetadataV1?:boolean;
   operationOutcomes?: import('./operation-outcomes.js').OperationOutcomes;
   replay?: DurableLiveReplay;
   roomsMcp?: RoomsMcp;
@@ -161,6 +171,8 @@ export interface ServerOptions {
   backgroundHealth?: () => Record<string, unknown>;
   /** PostgreSQL notification projection pressure for this server instance. */
   liveBridgeHealth?: () => Record<string, unknown>;
+  /** Process/known dependency verdict. Hosting probes must not observe SQL. */
+  readiness?: () => boolean;
   /** Per-instance pool telemetry; the existing `database.pool` app shape is
    * retained for older release probes. */
   databasePools?: Partial<Record<'app' | 'enrichment' | 'diagnostics' | 'jobs', SqlDatabase>>;
@@ -203,6 +215,8 @@ export interface ServerOptions {
   phoneReadLimits?: PhoneReadLimits;
   /** Protocol ping interval for helper sockets; tests shorten it. */
   liveHeartbeatMs?: number;
+  /** Existing connection control owner; injectable without changing Node/pg clocks. */
+  connectionWork?: typeof startConnectionWork;
 }
 
 const appSignInReturnCookie = 'beeline_app_sign_in_return';
@@ -806,19 +820,20 @@ export function createBeelineServer(options: ServerOptions): Server {
         familyId?: string;
       },
     ) => {
-      const sendLive = (payload: string) => {
-        if (client.readyState !== client.OPEN) return;
+      const sendLive = (payload: string):boolean => {
+        if (client.readyState !== client.OPEN) return false;
         if (client.bufferedAmount + Buffer.byteLength(payload) > MAX_LIVE_OUTBOUND_BUFFERED_BYTES) {
           liveErrors.overload++;
           client.close(1013, 'live backpressure');
-          return;
+          return false;
         }
         client.send(payload);
+        return true;
       };
       if (principal.kind !== 'phone') {
         watchConnectionEpochs();
         let answered = true;
-        const stopHeartbeat = startConnectionWork(() => {
+        const stopHeartbeat = (options.connectionWork ?? startConnectionWork)(() => {
           if (!answered) {
             liveCounters.heartbeatTerminations++;
             stopHeartbeat();
@@ -857,6 +872,9 @@ export function createBeelineServer(options: ServerOptions): Server {
         else serveAgentSocket(daemonLive, client, principal, sendLive, trackSubscriptions);
         return;
       }
+      const releaseServerConnection = options.connectionPresence?.holdServerConnection();
+      client.once('close', () => releaseServerConnection?.());
+      client.once('error', () => releaseServerConnection?.());
       options.live.humanConnected(principal.identityId);
       // Rooms this socket views hold pushes until it says otherwise or closes.
       const viewingSession = randomUUID();
@@ -871,7 +889,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       // Workspace and identity changes keep their commit order on this socket.
       let identityDelivery = Promise.resolve();
       const sendNeedsYouDelta = (event: LiveEvent, roomId: string) => {
-        if (!options.phone.liveNeedsYou) return;
+        if ((routerProtocol.supports('needs-you') && routerProtocol.supports('needs-you-count')) || !options.phone.liveNeedsYou) return;
         // A later projection must not overtake an earlier one and then be
         // overwritten by its stale count or slice on the same socket.
         needsYouDelivery = needsYouDelivery.then(() =>
@@ -879,21 +897,23 @@ export function createBeelineServer(options: ServerOptions): Server {
             if (!value) return;
             sendLive(JSON.stringify({ type: 'needs-you-delta', roomId: '',
               sourceRoomId: roomId, ...value }));
-          })).catch(() => sendLive(JSON.stringify({ type: 'invalidate', roomId: '',
-          reason: 'needs-you-gap' })));
+          })).catch(() => {sendLive(JSON.stringify({ type: 'invalidate', roomId: '',
+          reason: 'needs-you-gap' }));});
       };
       const releaseWorkspaces = options.live.subscribeAll((event) => {
         if (event.type === 'resource-change') {
+          if (event.usageOnly && routerProtocol.supportsUsage()) return;
           if (event.ownerId === principal.identityId)
             sendLive(JSON.stringify({ type: 'resource-change', roomId: '',
               resource: event.resource, ...(event.resourceId ? { resourceId: event.resourceId } : {}),
-              ...(event.version ? { version: event.version } : {}) }));
+              ...(event.version ? { version: event.version } : {}), ...(event.usageOnly ? { usageOnly: true } : {}) }));
           return;
         }
         if (event.type !== 'invalidate') return;
         if (event.roomId !== '') {
           if (releases.has(event.roomId)) return;
-          if (!event.messageId || !options.phone.liveNeedsYou) return;
+          if (!event.messageId || !options.phone.liveNeedsYou ||
+              (routerProtocol.supports('needs-you') && routerProtocol.supports('needs-you-count'))) return;
           const local = event.committedRow?.type === 'message' ? event.committedRow.row : null;
           const candidate = event.needsYouCandidate || event.reason === 'phone-write' ||
             event.agentId === principal.identityId ||
@@ -997,16 +1017,18 @@ export function createBeelineServer(options: ServerOptions): Server {
             (sent.order === undefined || !('sequence' in sent.order) || order.epoch !== sent.order.epoch));
       };
       const sendDraft = (event: Extract<LiveEvent, { type: 'draft' | 'thought' }>,
-        sequence?: number, epoch?: string) => {
+        sequence?: number, epoch?: string):boolean => {
         const key = `${event.roomId}:${event.agentId}:${event.turnId}:${event.type}`;
         const previous = draftWire.get(key);
-        if (previous?.text === event.text) return;
-        if (previous && event.text.startsWith(previous.text)) {
+        const overlay=event.overlayV1;
+        if (!overlay && previous?.text === event.text) return false;
+        if (previous && event.text.startsWith(previous.text) && (!overlay || overlay.type==='append')) {
           const revision = previous.revision + 1;
           const chunk = event.text.slice(previous.text.length);
           draftWire.set(key, { text: event.text, revision });
-          sendLive(JSON.stringify({
+          return sendLive(JSON.stringify({
             type: `${event.type}-append`, roomId: event.roomId,
+            ...(overlay?{overlayV1:overlay}:{}),
             agentId: event.agentId, turnId: event.turnId,
             revision, offset: previous.text.length,
             chunk,
@@ -1015,13 +1037,27 @@ export function createBeelineServer(options: ServerOptions): Server {
             ...(event.latestChunk !== undefined && event.latestChunk !== chunk
               ? { latestChunk: event.latestChunk } : {}),
           }));
-          return;
         }
         draftWire.set(key, { text: event.text, revision: 0 });
-        sendLive(JSON.stringify({ ...event, revision: 0,
+        return sendLive(JSON.stringify({ ...event, revision: 0,
           ...(sequence !== undefined ? { sequence } : {}),
           ...(epoch !== undefined ? { epoch } : {}) }));
       };
+      const enqueueHelperOverlay=(raw:LiveEvent):boolean=>{
+        if(client.readyState!==client.OPEN||!overlayViewer.canDeliver(raw))return false;
+        const event=overlayViewer.normalize(raw);
+        let sent=false;
+        if(event.type==='draft'||event.type==='thought')sent=sendDraft(event);
+        else if(event.type==='retract'){
+          draftWire.delete(`${event.roomId}:${event.agentId}:${event.turnId}:${event.kind}`);
+          sent=sendLive(JSON.stringify(event));
+        }
+        if(sent)overlayViewer.delivered(event);
+        return sent;
+      };
+      const overlayViewer=new HelperOverlayViewer(event=>{
+        void fenceHelperOverlayEnqueue(options.database,event,()=>enqueueHelperOverlay(event),principal.identityId);
+      });
       socketSubscriptions.set(client, () => releases.size);
       let socketTasks = 0;
       let socketQueuedBytes = 0;
@@ -1049,8 +1085,21 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (oldest) pendingPaintTraces.delete(oldest);
         }
       };
+      const routerProtocol = routerSocketProtocol(options.database, principal.identityId, sendLive, options.routerProjections,
+        { live: options.live, phone: options.phone, rooms: () => [...releases.keys()],mediaMetadataV1:options.mediaMetadataV1===true && Boolean(options.objectService) });
+      client.once('close', () => routerProtocol.close());
+      let routerNegotiating = false;
       const handlePhoneRequest = phoneSocketRequests(client, principal.identityId,
-        dispatchPhoneOperation, sendLive, requestErrorStatus, principal.familyId);
+        async (name, args, ...rest) => {
+          if (name === 'readRouterSnapshot') {
+            routerProtocol.requireSnapshot(args);
+            if (rest[4] === undefined) return routerProtocol.snapshot(args as unknown as Parameters<typeof routerProtocol.snapshot>[0]);
+          }
+          if(name==='readRoomTools')routerProtocol.requireSnapshot({family:'room-head',roomId:args.roomId});
+          if (name === 'readAgentUsageCell') routerProtocol.requireUsage();
+          return dispatchPhoneOperation(name, args, ...rest);
+        }, sendLive, requestErrorStatus, principal.familyId,
+        (name, args, result, enqueue) => routerProtocol.fenceReply(name, args, result, enqueue));
       client.on('message', (raw) => {
         const frameBytes = Array.isArray(raw)
           ? raw.reduce((total, part) => total + part.length, 0)
@@ -1061,12 +1110,14 @@ export function createBeelineServer(options: ServerOptions): Server {
           sendLive(LIVE_PONG_FRAME);
           return;
         }
-        if (frameBytes <= 32 && raw.toString() === '{"type":"sync"}') {
+        if (!routerNegotiating && frameBytes <= 32 && raw.toString() === '{"type":"sync"}') {
           sendLive('{"type":"sync-ok"}');
           return;
         }
         try {
-          if (handlePhoneRequest(JSON.parse(raw.toString()))) return;
+          const parsed = JSON.parse(raw.toString());
+          if (parsed?.type === 'router-negotiate') routerNegotiating = true;
+          if (handlePhoneRequest(parsed)) return;
         } catch {
           liveErrors.invalid++;
           return;
@@ -1092,6 +1143,7 @@ export function createBeelineServer(options: ServerOptions): Server {
           }
           if (!message || typeof message !== 'object') return;
           const item = message as Record<string, unknown>;
+          if (await routerProtocol.handle(item)) { routerNegotiating = false; return; }
           if (item.type === 'sync' && options.replay) {
             const workspaces = await options.database.query<{ workspace_id: string }>(
               `SELECT workspace_id FROM memberships WHERE identity_id=$1
@@ -1250,12 +1302,27 @@ export function createBeelineServer(options: ServerOptions): Server {
                   if (event.type === 'draft') streamed.add(event.agentId);
                   if (event.type !== 'invalidate') {
                     if (client.readyState !== client.OPEN) return;
+                    if(helperOverlayEnabled() && 'overlayV1' in event && event.overlayV1){
+                      if(!viewedRooms.has(roomId)||!overlayViewer.accept(event))return;
+                      return fenceHelperOverlayEnqueue(options.database,event,()=>enqueueHelperOverlay(event),principal.identityId);
+                    }
                     if (event.type === 'draft' || event.type === 'thought') sendDraft(event, sequence, epoch);
                     else {
                       if (event.type === 'retract')
                         draftWire.delete(`${event.roomId}:${event.agentId}:${event.turnId}:${event.kind}`);
                       sendFrame(event);
                     }
+                    return;
+                  }
+                  // Canonical facts own these durable families after negotiation.
+                  // Keep the separate ephemeral branch above and legacy corner
+                  // lists until their own family is migrated.
+                  if(event.reason!=='corner-status' && (routerProtocol.supports('room-head') ||
+                    (routerProtocol.supports('room-list') && previewRooms.has(roomId) && !viewedRooms.has(roomId)))){
+                    const row=event.committedRow?.type==='message'?event.committedRow.row:undefined;
+                    if(event.messageId && (event.needsYouCandidate || event.agentId===principal.identityId || event.reason==='phone-write' ||
+                        (row && (row.author_id===principal.identityId || row.presentation==='card' || row.presentation==='system' || isNeedsYouAsk(row.text)))))
+                      sendNeedsYouDelta(event,roomId);
                     return;
                   }
                   // committedRow is process-local authority input. Strip it
@@ -1455,7 +1522,10 @@ export function createBeelineServer(options: ServerOptions): Server {
               for (const event of snapshot) {
                 if (event.type === 'draft' && streamed.has(event.agentId)) continue;
                 if (client.readyState === client.OPEN &&
-                    (event.type === 'draft' || event.type === 'thought')) sendDraft(event);
+                    (event.type === 'draft' || event.type === 'thought')) {
+                  if(helperOverlayEnabled() && event.overlayV1)continue;
+                  sendDraft(event);
+                }
               }
               for (const event of options.live.presenceSnapshot(roomId)) {
                 if (client.readyState === client.OPEN) sendLive(JSON.stringify(event));
@@ -1468,13 +1538,31 @@ export function createBeelineServer(options: ServerOptions): Server {
             ROOM_ID_PATTERN.test(item.roomId) &&
             typeof item.viewing === 'boolean'
           ) {
+            if(helperOverlayEnabled()){
+              if(item.viewing && !viewedRooms.has(item.roomId))overlayViewer.enter(item.roomId);
+              else if(!item.viewing)overlayViewer.leave(item.roomId);
+            }
             if (item.viewing) viewedRooms.add(item.roomId);
             else viewedRooms.delete(item.roomId);
-            if (!phoneViewClosed)
-              await phoneViewing.view(viewingSession, principal.identityId, item.roomId, item.viewing);
+            if (!phoneViewClosed){
+              try {
+                const revision=await phoneViewing.view(viewingSession, principal.identityId, item.roomId, item.viewing);
+                if(helperOverlayEnabled() && item.viewing) {
+                  if(revision!==undefined)overlayViewer.commit(item.roomId,revision);
+                  else { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
+                }
+              } catch(error) {
+                if(helperOverlayEnabled() && item.viewing) { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
+                throw error;
+              }
+            }
             return;
           }
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
+            if(helperOverlayEnabled()){
+              overlayViewer.leave(item.roomId);
+              if(viewedRooms.delete(item.roomId) && !phoneViewClosed)await phoneViewing.view(viewingSession,principal.identityId,item.roomId,false);
+            }
             releases.get(item.roomId)?.();
             releases.delete(item.roomId);
             previewRooms.delete(item.roomId);
@@ -1517,6 +1605,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       const releasePhoneView = () => {
         if (phoneViewClosed) return;
         phoneViewClosed = true;
+        overlayViewer.clear();
         void phoneViewing.end(viewingSession).catch((error) =>
           console.error('[live] viewing release failed', error),
         );
@@ -1929,8 +2018,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
   if (method === 'GET' && url.pathname === '/readyz') {
-    await options.database.query('SELECT 1');
-    json(response, 200, { ok: true });
+    const ready = options.readiness?.() ?? true;
+    json(response, ready ? 200 : 503, { ok: ready });
     return;
   }
   if (method === 'GET' && url.pathname === '/version') {
@@ -1963,6 +2052,22 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       json(response, 429, { error: 'daily_cap_reached' }); return;
     }
     response.writeHead(204); response.end(); return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/admin/dashboard/refresh') {
+    if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {
+      json(response,403,{error:'access_denied'});return;
+    }
+    const input=await body(request);
+    if(Object.keys(input).some(key=>key!=='scope') || !['finances','x-reports','x-site-visits'].includes(String(input.scope))){
+      json(response,400,{error:'invalid_refresh_scope'});return;
+    }
+    if(input.scope==='finances')json(response,200,await dashboardFinances(options.database));
+    else{
+      if(input.scope==='x-reports')await syncXAdReports(options.database);
+      else await syncXSiteVisits(options.database);
+      json(response,200,{ok:true});
+    }
+    return;
   }
   if (method === 'POST' && url.pathname === '/v1/admin/dashboard/x-ads/screen') {
     if (!options.dashboardSecret || !bearerSecretMatches(options.dashboardSecret, request)) {
@@ -2527,13 +2632,18 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   }
 
   const operation = async (name: string, input: Record<string, unknown>, project?: (result: unknown) => unknown,
-    invokeLegacy?: () => Promise<unknown>) => {
+    invokeLegacy?: () => Promise<unknown>, command?: import('@beeline/api-contract/router-command').RouterCommandIdentity) => {
+    if (['readRoomTools','readAgentUsageCell','readRouterSnapshot','readMediaMetadata','readMediaLink','readMediaPlayback'].includes(name))
+      throw new PhoneOperationError(409, { error: 'router_socket_required' });
     const familyId = phoneFamilies.get(request);
-    const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy, familyId);
-    if (result === undefined) {
-      response.writeHead(204, { 'cache-control': 'private, no-store' });
-      response.end();
-    } else json(response, 200, project ? project(result) : result);
+    const result = await dispatchPhoneOperation(name, input, identityId!, undefined, invokeLegacy, familyId, command);
+    await fenceCommandReceiptEnqueue(options.database, identityId!, result, safeResult => {
+      if (safeResult === undefined) {
+        response.writeHead(204, { 'cache-control': 'private, no-store' });
+        response.end();
+      } else json(response, 200, project ? project(safeResult) : safeResult);
+      return undefined;
+    });
   };
 
   const profileVoiceMatch = url.pathname.match(
@@ -2698,9 +2808,13 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   match = url.pathname.match(/^\/v1\/phone\/operations\/([A-Za-z][A-Za-z0-9]+)$/);
   if (method === 'POST' && match) {
     const name = match[1]!;
-    const input = await body(request);
+    const rawInput = await body(request);
+    const { command: commandValue, ...input } = rawInput;
+    let command;
+    try { command = commandValue === undefined ? undefined : parseRouterCommandIdentity(commandValue); }
+    catch { throw new PhoneOperationError(400, { error: 'invalid_command_identity' }); }
     await operation(name, input, undefined,
-      () => options.phone.execute(name as never, input as never, identityId!, undefined, phoneFamilies.get(request)));
+      () => options.phone.execute(name as never, input as never, identityId!, undefined, phoneFamilies.get(request)), command);
     return;
   }
 
@@ -2819,6 +2933,10 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       return;
     }
     const name = match[1]!;
+    if (name === 'readCommandActivation') {
+      json(response, 409, { error: 'activation_context_socket_required' });
+      return;
+    }
     if (name === 'getCornerAsk') {
       json(response, 410, { error: 'getCornerAsk is retired; use order and report' });
       return;

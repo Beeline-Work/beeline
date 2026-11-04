@@ -1,3 +1,6 @@
+import { useAgentUsageCell } from '@/buzz/use-agent-usage-cell';
+import { isUsageCellOnlyChange } from '@/buzz/agent-usage-cell';
+import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { appErrorCopy, connectionErrorDescription } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
@@ -15,6 +18,7 @@ import { USAGE_REFRESH_CLIENT_TIMEOUT_MS } from '@/components/buzz/AgentUsageSec
 // so a screen beside its route is a second URL for the same screen.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AppState,
   Platform,
   Switch,
   Text,
@@ -50,6 +54,7 @@ import { agentPairingCommand } from '@/buzz/agent-pairing-command';
 import { defaultAgentPersona } from '@/buzz/agent-persona';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
+import { useRoutedResource } from '@/buzz/router-resource';
 import { MemberRosterRow } from '@/components/buzz/MemberRosterRow';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { navigateToRoom } from '@/buzz/corner-navigation';
@@ -224,6 +229,9 @@ export default function BuzzMembers({
   profileRoomId?: string;
   onClose?: () => void;
 } = {}) {
+  const focused = useSurfaceFocus();
+  const focusedRef = useRef(focused);
+  focusedRef.current = focused;
   useLatencyRouteFrame('/beeline/members');
   const desktop = useIsDesktop();
   const { theme } = useUnistyles();
@@ -247,6 +255,7 @@ export default function BuzzMembers({
     [identity?.publicKey, relayUrl, workspaceId],
   );
   const agentId = profileAgentId ?? localAgentId;
+  const usageCell = useAgentUsageCell(focused ? profileAgentId : null);
   const agentAddress = useMemo(
     () =>
       identity && relayUrl && workspaceId && agentId
@@ -258,8 +267,13 @@ export default function BuzzMembers({
     [identity?.publicKey, relayUrl, workspaceId, agentId],
   );
   const surface = useSurfaceSnapshot(workspaceAddress, isWorkspaceView);
-  const selectedAgent = useSurfaceSnapshot(agentAddress, isAgentDetailView);
+  const routedAgent = useRoutedResource('agent-profile', workspaceId && profileAgentId
+    ? {family:'agent-profile',workspaceId,agentId:profileAgentId} : undefined, focused&&!!profileAgentId);
+  const cachedAgent = useSurfaceSnapshot(profileAgentId&&routedAgent.mode!=='legacy'?null:agentAddress, isAgentDetailView);
+  const profileMode=profileAgentId?routedAgent.mode:'legacy';
+  const selectedAgent = profileAgentId&&routedAgent.mode!=='legacy' ? routedAgent.value : cachedAgent;
   const setSelectedAgent = (value: AgentDetailView | null) => {
+    if(profileAgentId&&routedAgent.mode!=='legacy')return;
     if (!value) {
       setLocalAgentId(null);
       return;
@@ -320,7 +334,8 @@ export default function BuzzMembers({
   const queuedConfigVersionRef = useRef<string | undefined>(undefined);
   latestConfigVersionRef.current = selectedAgent?.configVersion;
   const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
-  const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
+  const canRemoveSelectedAgent = profileMode==='router'?routedAgent.value?.canRemove===true:
+    ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
   const recordScope =
     identity && relayUrl && workspaceId
       ? workspaceRecordScope(relayUrl, identity.publicKey, workspaceId)
@@ -332,7 +347,7 @@ export default function BuzzMembers({
 
   const readAgent = async (agentPubkey: string): Promise<AgentDetailView> => {
     const generation = agentRequestGenerationRef.current;
-    if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
+    if (!focusedRef.current || AppState.currentState === 'background' || AppState.currentState === 'inactive' || !identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
     const value = await new RoomViewClient({ baseUrl: relayUrl, identity }).agent(
       workspaceId,
       agentPubkey,
@@ -351,7 +366,7 @@ export default function BuzzMembers({
     latestConfigVersionRef.current = value.configVersion;
     const queued = queuedConfigVersionRef.current;
     queuedConfigVersionRef.current = undefined;
-    if (queued && newerConfigVersion(queued, value.configVersion))
+    if (profileMode==='legacy'&&queued && newerConfigVersion(queued, value.configVersion))
       void readAgent(value.agent.identity.pubkey).catch(() => undefined);
     // The one write: the Workspace records hear it and update the roster row.
     setSelectedAgent(value);
@@ -361,19 +376,20 @@ export default function BuzzMembers({
     pendingConfigWriteRef.current = false;
     const queued = queuedConfigVersionRef.current;
     queuedConfigVersionRef.current = undefined;
-    if (queued && newerConfigVersion(queued, latestConfigVersionRef.current))
+    if (profileMode==='legacy'&&queued && newerConfigVersion(queued, latestConfigVersionRef.current))
       void readAgent(agentId).catch(() => undefined);
   };
 
   useEffect(() => {
-    if (!selectedAgent || !identity || !relayUrl) return;
+    if (profileMode!=='legacy'||!focused || !selectedAgent || !identity || !relayUrl) return;
     let cancelled = false;
     let stop: (() => void) | undefined;
     const agentId = selectedAgent.agent.identity.pubkey;
     void sharedLiveConnection()
       .register([], (event) => {
-        if (cancelled || !('monolithLive' in event)) return;
+        if (cancelled || AppState.currentState === 'background' || AppState.currentState === 'inactive' || !('monolithLive' in event)) return;
         const live = event.monolithLive;
+        if (isUsageCellOnlyChange(live)) return;
         if (!(
           (live.type === 'resource-change' &&
             live.resource === 'agent' &&
@@ -417,7 +433,7 @@ export default function BuzzMembers({
       cancelled = true;
       stop?.();
     };
-  }, [identity, relayUrl, selectedAgent?.agent.identity.pubkey]);
+  }, [profileMode,focused, identity, relayUrl, selectedAgent?.agent.identity.pubkey]);
 
   const writeClient = async () => {
     if (!identity || !relayUrl) throw new Error('Workspace connection unavailable');
@@ -458,7 +474,7 @@ export default function BuzzMembers({
   };
 
   useEffect(() => {
-    if (!workspaceId) return;
+    if (!focused || !workspaceId) return;
     let cancelled = false;
     let stopWatch: (() => void) | undefined;
     let scheduler: SurfaceRefreshScheduler<WorkspaceView | null> | undefined;
@@ -476,7 +492,7 @@ export default function BuzzMembers({
       });
       const cached = await mobileSurfaceCache.read(address, isWorkspaceView);
       if (cancelled) return;
-      if (profileAgentId && !cached) {
+      if (profileAgentId && !cached && routedAgent.mode==='legacy') {
         // A direct profile open needs both authority and detail, but one wire
         // response writes the two existing keyed entries for later visits.
         const profile = await monolithPhoneOperation('readAgentProfile', {
@@ -501,12 +517,13 @@ export default function BuzzMembers({
         current?.publicKey === nextIdentity.publicKey ? current : nextIdentity,
       );
       setRelayUrl(nextRelayUrl);
+      if(profileAgentId&&routedAgent.mode!=='legacy')return;
       // Every Members instance (the list under an agent profile included)
       // paints the one shared entry; rows and totals read the shared records,
       // which hear every write of this entry.
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
       scheduler = new SurfaceRefreshScheduler({
-        fetch: () =>
+        fetch: () => cancelled || !focusedRef.current ? Promise.resolve(null) :
           mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
         apply: (value) => {
           // Null: a newer write or an eviction overtook the read; the entry
@@ -527,7 +544,7 @@ export default function BuzzMembers({
       stopWatch = watch.release;
       await watch.ready;
       if (cancelled) return;
-      if (!profileAgentId) await scheduler.startAfter(Promise.resolve());
+      if (!profileAgentId||routedAgent.mode==='router') await scheduler.startAfter(Promise.resolve());
     })().catch((reason) => {
       if (!cancelled) setWorkspaceError(appErrorCopy(reason));
     });
@@ -539,7 +556,7 @@ export default function BuzzMembers({
       schedulerRef.current = null;
       setRosterQuery('');
     };
-  }, [retryGeneration, workspaceId, profileAgentId]);
+  }, [focused, retryGeneration, workspaceId, profileAgentId,routedAgent.mode]);
 
   const closeAgentSettings = () => {
     agentRequestGenerationRef.current += 1;
@@ -581,12 +598,12 @@ export default function BuzzMembers({
   };
 
   useEffect(() => {
-    if (!profileAgentId || !identity || !relayUrl || !workspaceId) return;
+    if (routedAgent.mode!=='legacy'||!focused || !profileAgentId || !identity || !relayUrl || !workspaceId) return;
     void openAgent(profileAgentId);
     return () => {
       agentRequestGenerationRef.current += 1;
     };
-  }, [profileAgentId, identity, relayUrl, workspaceId, profileRetryGeneration]);
+  }, [routedAgent.mode,focused, profileAgentId, identity, relayUrl, workspaceId, profileRetryGeneration]);
 
   const invitePerson = async () => {
     if (!surface?.viewer.permissions.manage || !workspaceId || !relayUrl) return;
@@ -634,7 +651,7 @@ export default function BuzzMembers({
   };
 
   useEffect(() => {
-    if (!surface || requestedActionHandledRef.current) return;
+    if (!focused || !surface || requestedActionHandledRef.current) return;
     if (requestedAction === 'invite') {
       if (!surface.viewer.permissions.manage) return;
       requestedActionHandledRef.current = true;
@@ -647,10 +664,10 @@ export default function BuzzMembers({
     // current authenticated surface at that moment rather than reopening on
     // every indexed refresh.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [requestedAction, surface]);
+  }, [focused, requestedAction, surface]);
 
   useEffect(() => {
-    if (!identity || !relayUrl || !workspaceId) return;
+    if (!focused || !identity || !relayUrl || !workspaceId) return;
     const q = memberQuery.trim();
     if (!q) {
       setRosterQuery('');
@@ -673,7 +690,7 @@ export default function BuzzMembers({
     };
     // Search is a dedicated server read; identity/relay are the auth it needs.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [memberQuery, identity, relayUrl, workspaceId]);
+  }, [focused, memberQuery, identity, relayUrl, workspaceId]);
 
   const loadMoreMembers = async (kind: 'human' | 'agent') => {
     if (!surface || rosterLoading) return;
@@ -1041,7 +1058,7 @@ export default function BuzzMembers({
     };
   }, [selectedAgent]);
 
-  const displayedError = error ?? workspaceError;
+  const displayedError = (profileAgentId&&routedAgent.mode!=='legacy'?routedAgent.error:null) ?? error ?? workspaceError;
   const busy = working !== null;
   if (profileAgentId) {
     return (
@@ -1050,6 +1067,7 @@ export default function BuzzMembers({
         loading={!selectedAgent && !displayedError}
         error={displayedError}
         onRetry={() => {
+          if(routedAgent.mode==='router'){routedAgent.retry();return;}
           setError(null);
           if (workspaceError) schedulerRef.current?.force();
           setWorkspaceError(null);
@@ -1062,13 +1080,12 @@ export default function BuzzMembers({
         canEdit={ownsSelectedAgent}
         avatarDisabled={busy}
         onGenerateAvatar={requestSoulAvatar}
-        refreshAgent={() => readAgent(profileAgentId)}
+        usageCell={usageCell}
         refreshUsage={async () => {
           const outcome = await monolithPhoneOperation('refreshAgentUsage', {
             workspaceId: selectedAgent!.workspaceId, agentId: profileAgentId,
           }, { timeoutMs: USAGE_REFRESH_CLIENT_TIMEOUT_MS });
-          // The read landed on the server; show its numbers now.
-          await readAgent(profileAgentId).catch(() => undefined);
+          // The canonical usage cell arrives on the existing source feed.
           return outcome;
         }}
         loadMoreWork={async (cursor) => {
@@ -1124,6 +1141,7 @@ export default function BuzzMembers({
               }
             : undefined
         }
+        voiceRevision={profileMode==='router'?routedAgent.value?.voiceRevision:undefined}
         modelManagement={
           selectedAgent ? (
             <>

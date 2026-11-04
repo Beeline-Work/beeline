@@ -584,7 +584,7 @@ describe('corner lock', () => {
       WHERE room_id=$1 AND card_type='github-corner-note' AND id=$2`, [cornerId, mergedNoteId]);
     expect((await mergedNote()).rows).toEqual([{ id: mergedNoteId, card: null, kind: 'merged' }]);
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
-    await github.reconcileMergedCorners();
+    await github.prChecksStatus({ cornerId, pullRequest: 7 });
     expect((await mergedNote()).rows).toEqual([{ id: mergedNoteId, card: null, kind: 'merged' }]);
     expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]?.archived_at).toBeNull();
     await new PhoneService(db, 'http://test', github).execute('requestCornerClose', { roomId: cornerId }, H);
@@ -2683,11 +2683,13 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
   });
 
-  it('recovers a missed unmerged close on the existing PR reconciliation pass', async () => {
+  it('recovers a missed unmerged close on an explicit check command', async () => {
     const cornerId = await inReview();
+    // Cache the same check verdict first: closure must not depend on a check change.
+    await github.prChecksStatus({ cornerId, pullRequest: 7 });
     githubApp.readPullRequest.mockResolvedValue({ number: 7, url: 'https://github.com/owner/widgets/pull/7',
       headSha: SHA, headRef: branchOf(cornerId), merged: false, state: 'closed', mergeability: 'unknown' });
-    await github.reconcileMergedCorners();
+    await github.prChecksStatus({ cornerId, pullRequest: 7 });
     expect(await currentState(cornerId)).toBe('implement');
     expect((await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
@@ -3034,7 +3036,7 @@ describe('MERGE-LIVE: merges read GitHub live; nothing records an attempt', () =
     });
     expect(await implementersMerge()).toBe(1);
     await landing(cornerId);
-    await github.reconcileMergedCorners();
+    await github.prChecksStatus({ cornerId, pullRequest: 7 });
     await landing(cornerId);
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
   });
@@ -4203,7 +4205,7 @@ describe('merge queue (Reproduction R1)', () => {
       } else {
         githubApp.readPullRequest.mockResolvedValue({ number: 7, headSha: SHA, headRef: branchOf(cornerId),
           merged: false, state: 'closed' });
-        await github.reconcileMergedCorners();
+        await github.prChecksStatus({ cornerId, pullRequest: 7 });
       }
       const visible = (await phone.readCorners(R, H))!.corners.find(row => row.corner.id === cornerId);
       expect(visible?.lifecycle.pr).toBeUndefined();

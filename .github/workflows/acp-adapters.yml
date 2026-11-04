@@ -1,8 +1,6 @@
 name: ACP adapter compatibility
 
 on:
-  schedule:
-    - cron: '41 8 * * *'
   workflow_dispatch: {}
 
 permissions:

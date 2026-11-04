@@ -23,8 +23,8 @@ export function multipartRecords<T,P extends Position>(batch:MultipartBatch<T,P>
 export class Multipart<T,P extends Position,E extends object={}> extends Map<string,MultipartBatch<T,P,E>>{
   constructor(private readonly ordered=false){super();}
   accept(frame:MultipartHeader<P>,part?:Readonly<{index:number;values:readonly T[]}>):MultipartBatch<T,P,E>|'protocol'|'continuity'|'digest'|'budget'{
-    if(!Number.isInteger(frame.partCount)||frame.partCount<1||frame.partCount>16||part&&
-      (!Number.isInteger(part.index)||part.index<0||part.index>=frame.partCount||bytes(part.values)>64*1024))return'protocol';
+    if(!Number.isInteger(frame.partCount)||frame.partCount<1||part&&
+      (!Number.isInteger(part.index)||part.index<0||part.index>=frame.partCount))return'protocol';
     const signature=multipartIdentity(frame);let batch=this.get(frame.batchId);
     if(!batch){
       if(this.size>=17)return'budget';
@@ -60,8 +60,7 @@ export class RouterBatchAssembly {
     const invalid = !frame.batchId || frame.batchId.length > 128 || !frame.contentDigest ||
       frame.contentDigest.length > 128 || frame.from.stream !== stream || frame.from.epoch !== frame.to.epoch ||
       frame.from.protocol !== 1 || frame.to.protocol !== 1 || !Number.isSafeInteger(frame.from.through) ||
-      !Number.isSafeInteger(frame.to.through) || frame.from.through < 0 || frame.to.through < frame.from.through ||
-      bytes(frame) > 256 * 1024;
+      !Number.isSafeInteger(frame.to.through) || frame.from.through < 0 || frame.to.through < frame.from.through;
     if (invalid) { this.fail(stream); return; }
     const signature = multipartIdentity(frame);
     const completed = this.completed.get(`${stream}\0${frame.batchId}`);
@@ -74,8 +73,6 @@ export class RouterBatchAssembly {
     const markers=records.filter((record):record is LaneClassification=>'kind' in record);
     if(markers.length>1){this.fail(stream);return;}
     const facts=records.filter((record):record is LaneFact=>!('kind' in record));
-    const authorities = new Set(facts.flatMap(fact => fact.authority.scopes.map(scope => `${scope.authorityScope}\0${scope.epoch}`)));
-    if (authorities.size > 256) { this.fail(stream); return; }
     if (this.digest(records) !== frame.contentDigest) { this.fail(stream); return; }
     batches.delete(frame.batchId);
     if (!batches.size) this.streams.delete(stream);

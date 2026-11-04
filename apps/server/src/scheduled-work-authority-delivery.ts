@@ -1,13 +1,13 @@
 import {createHash,randomUUID} from 'node:crypto';
 import {
-  ROUTER_MAX_AUTHORITY_FENCE_BYTES,ROUTER_MAX_BATCH_BYTES,ROUTER_MAX_PART_BYTES,ROUTER_MAX_PARTS,
+  ROUTER_MAX_AUTHORITY_FENCE_BYTES,ROUTER_MAX_PART_BYTES,ROUTER_MAX_PARTS,
   type RouterAuthorityFence,type RouterFact,type RouterSnapshot,type RouterSnapshotInput,
   type RouterUnavailable,type ScheduledWorkAuthorityFrame,type ScheduledWorkAuthorityPosition,
 } from '@beeline/api-contract/router-protocol';
 import type {SqlDatabase} from './database.js';
 import type {LiveHub} from './live.js';
 import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
-import {currentAuthorityFence} from './router-authority-fences.js';
+import {currentAuthorityFence,readAuthorityChanges} from './router-authority-fences.js';
 import {currentScheduledWorkFence} from './scheduled-work-authority.js';
 import {fenceRouterBatchInTransaction,readRouterAuthority,RouterProjectionUnavailable} from './router-projections.js';
 
@@ -20,7 +20,7 @@ type State='opening'|'live'|'lost'|'closed';
 export function encodeScheduledWorkAuthority(from:ScheduledWorkAuthorityPosition,to:ScheduledWorkAuthorityPosition,
   fences:readonly Fence[]):ScheduledWorkAuthorityFrame[]{
   if(from.stream!==to.stream||from.epoch!==to.epoch||from.segment!==to.segment||to.through<from.through||
-    !Number.isSafeInteger(from.through)||!Number.isSafeInteger(to.through)||from.through<0||fences.length>256||
+    !Number.isSafeInteger(from.through)||!Number.isSafeInteger(to.through)||from.through<0||
     new Set(fences.map(f=>f.authorityScope)).size!==fences.length)throw new RouterProjectionUnavailable('dependency');
   if(!from.stream.startsWith('authority:')||from.stream.length>256||!from.epoch||from.epoch.length>128||!from.segment||from.segment.length>128||
     fences.some(f=>f.kind!=='authority-fence'||!['deny','advance'].includes(f.mode)||!f.authorityScope.startsWith('scheduled-work-')||
@@ -37,11 +37,9 @@ export function encodeScheduledWorkAuthority(from:ScheduledWorkAuthorityPosition
     if(size([...parts.at(-1)!,fence])>ROUTER_MAX_PART_BYTES)parts.push([]);
     parts.at(-1)!.push(fence);
   }
-  if(parts.length>ROUTER_MAX_PARTS)throw new RouterProjectionUnavailable('budget');
   const frames:ScheduledWorkAuthorityFrame[]=parts.map((part,index)=>({kind:'scheduled-work-authority-part',batchId,from,to,
     partIndex:index,partCount:parts.length,contentDigest,fences:part}));
   frames.push({kind:'scheduled-work-authority-commit',batchId,from,to,partCount:parts.length,contentDigest});
-  if(frames.reduce((sum,frame)=>sum+Buffer.byteLength(JSON.stringify(frame)),0)>ROUTER_MAX_BATCH_BYTES)throw new RouterProjectionUnavailable('budget');
   return frames;
 }
 
@@ -136,13 +134,9 @@ export class ScheduledWorkAuthorityDelivery{
   private async flush(db:SqlDatabase,revision:number):Promise<ScheduledWorkAuthorityPosition>{
     this.assertLive(revision);const from=this.position!;
     const head=await this.head(db),to=this.makePosition(head,from.segment);
-    if(to.epoch!==from.epoch||to.through<from.through||to.through-from.through>1024)throw new RouterProjectionUnavailable('retention');
+    if(to.epoch!==from.epoch||to.through<from.through)throw new RouterProjectionUnavailable('retention');
     if(to.through===from.through){this.assertLive(revision);return from;}
-    const rows=(await db.query<{sequence:string;event:{kind?:unknown;scope?:unknown;authorityScope?:unknown}}>(
-      `SELECT sequence::text,event FROM live_journal WHERE stream_id=$1 AND sequence>$2 AND sequence<=$3 ORDER BY live_journal.sequence`,
-      [from.stream,from.through,to.through])).rows;
-    if(rows.length!==to.through-from.through||rows.some((row,index)=>Number(row.sequence)!==from.through+index+1))throw new RouterProjectionUnavailable('retention');
-    if(Buffer.byteLength(JSON.stringify(rows))>4*1024*1024)throw new RouterProjectionUnavailable('budget');
+    const rows=await readAuthorityChanges(db,this.viewer,to.epoch,from.through,to.through);
     const domains=new Map<string,string>();
     for(const {event}of rows){
       if(event.kind!=='authority-change'||typeof event.scope!=='string'||!event.scope||event.scope.length>256||
@@ -150,7 +144,6 @@ export class ScheduledWorkAuthorityDelivery{
       if(domains.has(event.authorityScope)&&domains.get(event.authorityScope)!==event.scope)throw new RouterProjectionUnavailable('dependency');
       domains.set(event.authorityScope,event.scope);
     }
-    if(domains.size>256)throw new RouterProjectionUnavailable('budget');
     const fences:Fence[]=[],other:RouterAuthorityFence[]=[];
     for(const [domain,scope]of domains){
       if(domain.startsWith('scheduled-work-')){
@@ -207,7 +200,6 @@ export class ScheduledWorkAuthorityDelivery{
       await this.fenced(async(db,barrier)=>{
         if((await readRouterAuthority(db,input,this.viewer)).digest!==snapshot.authority.digest)throw new RouterProjectionUnavailable('authority');
         const safe={...snapshot,authorityBarrier:barrier};
-        if(Buffer.byteLength(JSON.stringify(safe))>ROUTER_MAX_PART_BYTES)throw new RouterProjectionUnavailable('budget');
         enqueue(safe);
       });
     });

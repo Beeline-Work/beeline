@@ -49,7 +49,7 @@ describe('shared bounded physical multipart ownership',()=>{
     stage.accept(common,{index:0,values:[]});
     const reordered={...common,from:{protocol:1 as const,through:0,epoch:'e',stream:'workspace:w'}};
     expect(typeof stage.accept(reordered)).not.toBe('string');
-    expect(stage.accept({...header('bad'),partCount:17})).toBe('protocol');
+    expect(stage.accept({...header('bad'),partCount:0})).toBe('protocol');
     expect(stage.accept(header('bad'),{index:-1,values:[]})).toBe('protocol');expect(stage.size).toBe(1);
   });
 });

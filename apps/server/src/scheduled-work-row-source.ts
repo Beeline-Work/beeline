@@ -37,9 +37,6 @@ BEGIN
       workspace_scopes:=array_append(workspace_scopes,relation.workspace_id);
       IF relation.direct_participants IS NOT NULL THEN
         IF jsonb_typeof(relation.direct_participants)<>'array' THEN unavailable:='dependency';CONTINUE;END IF;
-        IF jsonb_array_length(relation.direct_participants)>100 THEN
-          unavailable:=COALESCE(unavailable,'budget');CONTINUE;
-        END IF;
         IF EXISTS(SELECT 1 FROM jsonb_array_elements(relation.direct_participants) reader
           WHERE jsonb_typeof(reader)<>'string' OR length(reader#>>'{}')>256) THEN unavailable:='dependency';CONTINUE;END IF;
       END IF;

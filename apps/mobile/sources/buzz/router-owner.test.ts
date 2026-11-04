@@ -31,7 +31,7 @@ const settle = async () => { for (let i = 0; i < 35; i++) await Promise.resolve(
 beforeEach(() => { fixture.authorityReady = true;fixture.commandsReady=true; fixture.state = 'active'; resetClientState(); vi.clearAllMocks(); });
 
 describe('real mobile router owner', () => {
-  it('F03 roster query observers cannot admit reads; Submit binds a held revision and source controls retire it without reading',async()=>{
+  it('F03 roster query observers cannot admit reads; active searches automatically rebase on roster changes',async()=>{
     const ws='11111111-1111-4111-8111-111111111111',head={family:'workspace-roster' as const,workspaceId:ws};
     const input={...head,query:{revision:'1',q:'Reader'}};
     const person={pubkey:'a'.repeat(64),kind:'human' as const,name:'Reader'};
@@ -46,12 +46,17 @@ describe('real mobile router owner', () => {
     const root=acquireRouterLane(head,()=>true,()=>{});
     await routerOwnerNegotiated({generation:1,families:['workspace-roster'],authorityFencesV1:true,execute});await settle();
     const observer=acquireRouterLane(input,()=>true,()=>{});await settle();expect(execute).toHaveBeenCalledTimes(1);
-    expect(()=>acquireRouterRosterQuery({...input,query:{revision:'2',q:'forged'}},()=>true,()=>{})).toThrow('no longer held');
     const page=acquireRouterRosterQuery(input,()=>true,()=>{});await settle();expect(execute).toHaveBeenCalledTimes(2);
     expect(page.current()).toMatchObject({state:'LIVE',value});
+    value.revision='2';certScopes[1]!.epoch='2';
     const nextScopes=[{authorityScope:`roster:${ws}`,epoch:'2'}];
     routerOwnerReceive({kind:'authority-fence',scope:ws,authorityScope:`roster:${ws}`,mode:'advance',authority:{scopes:nextScopes,digest:hash(nextScopes)}});
-    await settle();expect(page.current()).toMatchObject({state:'PARKED',value:null});expect(execute).toHaveBeenCalledTimes(2);
+    await settle();expect(page.current()).toMatchObject({state:'LIVE',value:{revision:'2'}});expect(execute).toHaveBeenCalledTimes(4);
+    const many=Array.from({length:17},(_,n)=>acquireRouterRosterQuery({...input,query:{revision:'2',q:`Reader ${n}`}},()=>true,()=>{}));
+    try{
+      for(let turn=0;turn<20&&many.some(handle=>handle.current().state!=='LIVE');turn++)await settle();
+      expect(many.map(handle=>handle.current().state)).toEqual(Array(17).fill('LIVE'));
+    }finally{for(const handle of many)handle.release();}
     page.release();observer.release();root.release();
   });
 
@@ -115,9 +120,14 @@ describe('real mobile router owner', () => {
     const scopeList=[...scopes,{authorityScope:'reader:ada:workspace:w:visibility',epoch:'1'}];
     const base={kind:'snapshot' as const,scope:'w',cut:snapshot().cut,atomicGroup:'needs-you:w:ada',
       authority:{scopes:scopeList,digest:hash(scopeList)},clockVersion:`tray-clock-v1:${'a'.repeat(32)}:0`};
-    const execute=vi.fn(async(input:RouterSnapshotInput):Promise<RouterSnapshot>=>input.family==='needs-you-tray'
-      ?{...base,family:'needs-you-tray',value:{needs:{items:[]},saved:{windowId:`saved1:${'b'.repeat(64)}`,rows:[],next:before}}}
-      :{...base,family:'needs-you-saved-page',value:{windowId:`saved1:${'c'.repeat(64)}`,before,rows:[]}});
+    const cursors=[before,...Array.from({length:16},(_,n)=>`saved1.page${n}`)];
+    const execute=vi.fn(async(input:RouterSnapshotInput):Promise<RouterSnapshot>=>{
+      if(input.family==='needs-you-tray')return {...base,family:'needs-you-tray',value:{needs:{items:[]},saved:{windowId:`saved1:${'b'.repeat(64)}`,rows:[],next:before}}};
+      if(input.family!=='needs-you-saved-page')throw new Error('Unexpected test family');
+      const index=cursors.indexOf(input.before!);
+      return {...base,family:'needs-you-saved-page',value:{windowId:`saved1:${hash(input.before)}`,before:input.before,rows:[],
+        ...(cursors[index+1]?{next:cursors[index+1]}:{})}};
+    });
     routerOwnerNavigation({routes:[{key:'tray',name:'beeline/tray',params:{communityId:'w'}}]});
     const head=acquireRouterLane(tray,()=>true,()=>{}),observer=acquireRouterLane(page,()=>true,()=>{});
     await routerOwnerNegotiated({generation:1,families:['needs-you-tray','needs-you-saved-page'],authorityFencesV1:true,execute});await settle();
@@ -126,6 +136,22 @@ describe('real mobile router owner', () => {
     const opened=acquireRouterSavedContinuation('w',before,()=>true,()=>{});await settle();
     expect(execute.mock.calls.map(call=>call[0].family)).toEqual(['needs-you-tray','needs-you-saved-page']);
     expect(opened.current().state).toBe('LIVE');expect(observer.current().cut).toEqual(head.current().cut);
+    const continued:ReturnType<typeof acquireRouterSavedContinuation>[]=[];
+    try{
+      for(const cursor of cursors.slice(1)){
+        const handle=acquireRouterSavedContinuation('w',cursor,()=>true,()=>{});continued.push(handle);
+        await settle();expect(handle.current().state).toBe('LIVE');
+      }
+      expect(continued).toHaveLength(16);
+    }finally{for(const handle of continued)handle.release();}
+
+    const items=Array.from({length:501},(_,n)=>({messageId:`ask-${n}`,workspaceId:'w',roomId:'11111111-1111-4111-8111-111111111111',
+      roomName:'Room',roomKind:'room',text:'Please review?',createdAt:1}));
+    const facts=[{atomicGroup:base.atomicGroup,authority:base.authority,payload:{kind:'tray-classification',scope:'w',version:1,clockVersion:base.clockVersion}},
+      {atomicGroup:base.atomicGroup,authority:base.authority,payload:{kind:'tray-needs-replace',scope:'w',value:{items}}}];
+    const header={batchId:'large-needs',from:base.cut,to:{...base.cut,through:base.cut.through+1},partCount:1,contentDigest:hash(facts)};
+    routerOwnerReceive({kind:'push-part',...header,partIndex:0,facts});routerOwnerReceive({kind:'push-commit',...header});
+    await settle();expect(head.current()).toMatchObject({state:'LIVE',value:{needs:{items}}});
     routerOwnerNavigation(navigation());await settle();
     expect(()=>acquireRouterSavedContinuation('w',before,()=>true,()=>{})).toThrow('not focused');
     opened.release();observer.release();head.release();

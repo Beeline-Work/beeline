@@ -188,7 +188,7 @@ describe('uninstalled stable Saved window identity and pure query',()=>{
     expect(value.text).toBe('x'.repeat(Math.min(length,256))+(length>256?'…':''));
     expect(value.textTruncated).toBe(length>256?true:undefined);
   });
-  it('still refuses oversized non-preview metadata instead of returning a partial window',async()=>{
-    await bookmark();await db.query(`UPDATE rooms SET name=$1`,['x'.repeat(64*1024)]);await expect(read()).rejects.toThrow('saved_window_budget');
+  it('preserves oversized non-preview metadata in a complete window',async()=>{
+    await bookmark();await db.query(`UPDATE rooms SET name=$1`,['x'.repeat(64*1024)]);expect((await read()).rows[0]!.value.roomName).toBe('x'.repeat(64*1024));
   });
 });

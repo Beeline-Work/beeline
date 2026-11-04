@@ -99,13 +99,11 @@ BEGIN
    ), ranked AS (
      SELECT *,row_number() OVER(PARTITION BY workspace_id,reader_id ORDER BY bookmark_id) position FROM candidates
    ) SELECT workspace_id,reader_id,jsonb_agg(jsonb_build_object('bookmarkId',bookmark_id,'messageId',message_id) ORDER BY bookmark_id) targets
-     FROM ranked WHERE position<=257 GROUP BY workspace_id,reader_id ORDER BY workspace_id,reader_id
+     FROM ranked GROUP BY workspace_id,reader_id ORDER BY workspace_id,reader_id
  LOOP
    body:=jsonb_build_object('sourceTable','tray-saved-source','trayReaderId',audience.reader_id,
      'trayWorkspaceId',audience.workspace_id,'table',TG_TABLE_NAME,'operation',TG_OP);
-   IF jsonb_array_length(audience.targets)>256 THEN
-     body:=body||jsonb_build_object('classification','unavailable','reason','budget');
-   ELSE body:=body||jsonb_build_object('classification','complete','targets',audience.targets);END IF;
+   body:=body||jsonb_build_object('classification','complete','targets',audience.targets);
    PERFORM beeline_journal('workspace:'||audience.workspace_id,body);
    IF notified IS DISTINCT FROM audience.workspace_id THEN
      PERFORM beeline_notify_live_control(jsonb_build_object('table','router_source','operation',TG_OP,'roomId','',

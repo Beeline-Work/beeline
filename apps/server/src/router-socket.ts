@@ -1,5 +1,4 @@
 import type {TrayClockAvailability} from './tray-clock-availability.js';
-import {ROUTER_TRAY_CLOCK_STREAM} from '@beeline/api-contract/router-protocol';
 import {readTrayClockBasis} from './tray-clock-basis.js';
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import { helperUsageEnabled, subscribeAgentUsageCells, fenceAgentUsageCellEnqueue } from './helper-usage.js';
@@ -73,20 +72,9 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
       scheduledCoverage=undefined;
       const currentGeneration=++generation;refreshAudience=undefined;subscribedWorkspaces=new Set();
       negotiated = sources && policy?.listenerReady() ? ROUTER_FAMILIES.filter(f => requested.includes(f) && policy.families.includes(f)&&
-        (f!=='room-scheduled-work'||message.authorityFencesV1===true&&policy.commandDedupV1===true)&&
-        (!['needs-you-tray','needs-you-saved-page'].includes(f)||policy.trayClockAvailability!==undefined)) : [];
+        (f!=='room-scheduled-work'||message.authorityFencesV1===true&&policy.commandDedupV1===true)) : [];
       let releaseReady!: () => void;
       const ready = new Promise<void>(resolve => { releaseReady = resolve; });
-      let protocolReady=false,trayLossPending=false;
-      const flushTrayLoss=()=>{
-        if(!protocolReady||!trayLossPending||stopped||generation!==currentGeneration)return;
-        trayLossPending=false;
-        send(JSON.stringify({kind:'router-unavailable',stream:ROUTER_TRAY_CLOCK_STREAM,
-          families:negotiated.filter(family=>family.startsWith('needs-you')),reason:'dependency'}));
-      };
-      if(sources&&negotiated.includes('needs-you-saved-page'))releases.push(sources.live.subscribeTrayClockUnavailable(()=>{
-        trayLossPending=true;flushTrayLoss();
-      }));
       let authorityFencesV1=message.authorityFencesV1===true&&Boolean(sources)&&policy?.listenerReady()===true
         && (negotiated.length>0||sources?.mediaMetadataV1===true);
       usageCellV1 = message.protocol === 1 && message.usageCellV1 === true && helperUsageEnabled() && !!sources && policy?.listenerReady() === true;
@@ -193,7 +181,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
             const scopedNeedsEnabled=message.needsYouRoomsV1===true&&policy?.needsYouRoomsV1===true&&!jointTray&&
               negotiated.includes('needs-you')&&plan.families.has('needs-you')&&!plan.allRooms&&plan.rooms.size>0;
             let scopedNeeds:Awaited<ReturnType<PhoneService['buildRouterNeedsRooms']>>|undefined;
-            const clock=jointTray&&policy?.trayClockAvailability?.ready()?await readTrayClockBasis(db,workspace):undefined;
+            const clock=jointTray?await readTrayClockBasis(db,workspace):undefined;
             if(jointTray){
               const input={family:'needs-you-tray',workspaceId:workspace} as const;
               const authority=await readRouterCertificate(db,input,viewer),atomicGroup=routerAtomicGroup(input,viewer);
@@ -392,7 +380,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
         ...(message.roomHeadContinuityV1===true&&policy?.roomHeadContinuityV1===true&&authorityFencesV1&&negotiated.includes('room-head')?{roomHeadContinuityV1:true}:{}),
         ...(usageCellV1 ? {usageCellV1:true} : {}), commandDedupV1: policy?.commandDedupV1 === true,mediaMetadataV1:sources?.mediaMetadataV1===true&&authorityFencesV1,authorityFencesV1 };
       send(JSON.stringify({ type: 'router-capabilities', ...capabilities }));
-      protocolReady=true;releaseReady();flushTrayLoss();
+      releaseReady();
       return true;
     },
     requireUsage(): void {
@@ -400,8 +388,6 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
     },
     requireSnapshot(args: Record<string, unknown>): void {
       if(args.family==='workspace-roster')readRosterQuery(args.query);
-      if(negotiated.includes('needs-you-saved-page')&&typeof args.family==='string'&&args.family.startsWith('needs-you')&&
-        policy?.trayClockAvailability?.ready()!==true)throw new PhoneOperationError(503,{error:'router_projection_unavailable'});
       if (!policy?.listenerReady() || !negotiated.includes(args.family as RouterFamily))
         throw new PhoneOperationError(409, { error: 'router_family_unavailable' });
     },

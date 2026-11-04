@@ -4,7 +4,7 @@ import type {RouterSnapshotInput} from '@beeline/api-contract/router-protocol';
 import type {QueryResult,SqlDatabase} from './database.js';
 import {readRouterBuildTicket,RouterBuildCoordinator,type RouterBuilderBasis} from './router-build-coordinator.js';
 import type {RouterValueBuilder} from './router-projections.js';
-const input={family:'needs-you-count' as const,workspaceId:'11111111-1111-4111-8111-111111111111'};
+const input={family:'room-list' as const,workspaceId:'11111111-1111-4111-8111-111111111111'};
 const basis:RouterBuilderBasis={schema:1,databaseScope:'primary-fixture',version:'phone-dto-v1',publicOrigin:'https://example.test',clockVersion:'committed-clock-1'};
 class ReadSnapshot implements SqlDatabase{
   constructor(readonly through=1,readonly authorityEpoch='1',readonly epoch='stream-1',readonly isolation='repeatable read'){}
@@ -87,10 +87,10 @@ describe('shared DB-derived canonical projection builds',()=>{
     await expect(coordinator.build(other,async()=>({count:0}))).rejects.toMatchObject({reason:'budget'});
     blocked.resolve({count:1});await Promise.all([first,joined]);expect(builds).toBe(1);
   });
-  it('rejects a noncoherent transaction and an oversized physical snapshot',async()=>{
+  it('rejects a noncoherent transaction and serves oversized snapshots without caching',async()=>{
     await expect(ticket(new ReadSnapshot(1,'1','epoch','read committed'))).rejects.toMatchObject({reason:'dependency'});
-    const coordinator=new RouterBuildCoordinator();
-    await expect(coordinator.build(await ticket(),async()=>({count:1,padding:'x'.repeat(1024)}))).rejects.toMatchObject({reason:'budget'});
+    const coordinator=new RouterBuildCoordinator({bytes:1024});
+    await expect(coordinator.build(await ticket(),async()=>({count:1,padding:'x'.repeat(1024)}))).resolves.toMatchObject({value:{count:1}});
     expect(coordinator.stats()).toMatchObject({entries:0,flights:0});
   });
   it('does not retain a stale in-flight result after a known authority invalidation',async()=>{

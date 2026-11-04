@@ -23,7 +23,7 @@ describe('shared private staging bounds', () => {
     expect(stagingWithinBudget([...entries, { bytes: 0, position: 17 }], size, position)).toBe(false);
     entries[1]!.bytes++;
     expect(stagingWithinBudget(entries, size, position)).toBe(false);
-    expect(stagingWithinBudget([{ bytes: 1024 * KiB + 1 }], size)).toBe(false);
+    expect(stagingWithinBudget([{ bytes: 1024 * KiB + 1 }], size)).toBe(true);
   });
 
   it('evicts insertion-old history even when its duplicate value was replaced', () => {

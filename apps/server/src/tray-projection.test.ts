@@ -62,9 +62,9 @@ describe('pure complete Tray projection',()=>{
     const next=await readTraySavedWindow(db,{workspaceId:workspace,before:value.saved!.next},viewer,toIdentity);
     expect(next.rows).toHaveLength(1);expect(new Set([...value.saved!.rows,...next.rows].map(row=>row.value.messageId)).size).toBe(31);
   });
-  it('parks on the legacy question cap instead of certifying truncated cells',async()=>{
+  it('reads every question beyond the former candidate cap',async()=>{
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) SELECT 'overflow-'||n,$1,$2,'@ada please review?' FROM generate_series(1,500)n`,[room,author]);
-    await expect(build()).rejects.toMatchObject({reason:'budget'});
+    expect((await build()).needs.items).toHaveLength(501);
     expect((await db.query('SELECT * FROM needs_you_marks')).rows).toEqual([]);
   });
   it('keeps only the unavailable saved reference after Room authority is revoked',async()=>{
@@ -73,16 +73,15 @@ describe('pure complete Tray projection',()=>{
     expect(value.saved?.rows).toHaveLength(1);expect(value.saved!.rows[0]!.value).toMatchObject({messageId:'ask',available:false});
     expect(value.saved!.rows[0]!.value).not.toHaveProperty('text');expect(value.saved!.rows[0]!.value).not.toHaveProperty('author');
   });
-  it('refuses Workspace revocation and oversized content instead of returning a partial snapshot',async()=>{
+  it('returns large metadata while preserving Workspace revocation',async()=>{
     await db.query(`UPDATE messages SET text=$2 WHERE id=$1`,['ask','x'.repeat(65*1024)]);
     const bounded=await build();
     expect(bounded.saved.rows[0]!.value.text).toBeDefined();
     expect(Buffer.byteLength(bounded.saved.rows[0]!.value.text!)).toBeLessThanOrEqual(1024);
     expect(Buffer.byteLength(JSON.stringify(bounded))).toBeLessThanOrEqual(64*1024);
-    // Saved message text is a bounded excerpt. Oversized unbounded metadata
-    // must still park the complete projection, never silently drop a row.
+    // Saved message text remains an excerpt; complete metadata is preserved.
     await db.query(`UPDATE rooms SET name=$2 WHERE id=$1`,[room,'x'.repeat(65*1024)]);
-    await expect(build()).rejects.toMatchObject({reason:'budget'});
+    expect((await build()).saved.rows[0]!.value.roomName).toBe('x'.repeat(65*1024));
     await db.query(`UPDATE memberships SET removed_at=clock_timestamp() WHERE room_id IS NULL AND workspace_id=$1 AND identity_id=$2`,[workspace,viewer]);
     await expect(build()).rejects.toThrow('workspace membership required');
   });

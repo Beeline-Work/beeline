@@ -112,11 +112,12 @@ describe('single canonical schedule/subscription Workspace source',()=>{
     // entries deliberately have no sourceTable and are not its input.
     expect(()=>routerSourcePlan(rows.filter(row=>row.stream_id===`workspace:${WS}`).map(row=>row.event),OWNER)).toThrow('dependency');
   });
-  it('refuses source-reader overflow explicitly instead of trimming candidates or fabricating complete-empty coverage',async()=>{
+  it('classifies all 101 source readers without trimming or refusing the interval',async()=>{
     await db.query(`UPDATE rooms SET direct_participants=$1::jsonb WHERE id=$2`,[JSON.stringify(Array.from({length:101},(_,n)=>String(n).padStart(64,'0'))),PARENT]);
     const rows=await events(()=>db.query(`UPDATE agent_schedules SET run_count=run_count+1 WHERE id=$1`,[SCHEDULE]));
-    expect(canonical(rows)[0]!.event.scheduledWorkSource).toEqual({version:1,classification:'unavailable',reason:'budget'});
-    expect(()=>routerSourcePlan(rows.filter(row=>row.stream_id===`workspace:${WS}`).map(row=>row.event),OWNER)).toThrow('budget');
+    expect(canonical(rows)[0]!.event.scheduledWorkSource).toMatchObject({version:1,classification:'complete'});
+    expect(canonical(rows)[0]!.event.scheduledWorkSource.targets[0].readers).toHaveLength(101);
+    expect(()=>routerSourcePlan(rows.filter(row=>row.stream_id===`workspace:${WS}`).map(row=>row.event),OWNER)).not.toThrow();
   });
   it('retains inconsistent stored Workspace keys while binding actual display targets to their real parent Workspace',async()=>{
     const rows=await events(()=>db.query(`UPDATE agent_schedules SET workspace_id=$1 WHERE id=$2`,[OTHER,SCHEDULE]));

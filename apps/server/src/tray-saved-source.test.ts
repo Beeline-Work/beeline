@@ -155,17 +155,18 @@ describe('uninstalled precise Saved source and sealed-row projection',()=>{
     expect((await plan()).savedTargets[0]!.bookmarkId).not.toBe((await plan(b)).savedTargets[0]!.bookmarkId);
   });
 
-  it('does not silently truncate >256 source targets and bounds an interval union before any row build',async()=>{
+  it('delivers every changed Saved target beyond 256, including an interval union',async()=>{
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) SELECT 'm-'||n,$1,$2,'Original' FROM generate_series(1,257)n`,[r1,author]);
     await db.query(`INSERT INTO message_bookmarks(identity_id,workspace_id,room_id,message_id,source_room_name,source_room_kind,message_created_at)
       SELECT $1,$2,$3,'m-'||n,'Remembered Room','room',now() FROM generate_series(1,257)n`,[a,w1,r1]);await reset();
-    await db.query(`UPDATE identities SET name='Changed' WHERE id=$1`,[author]);const [source]=await causes();expect(source).toMatchObject({classification:'unavailable',reason:'budget'});
-    expect(source).not.toHaveProperty('targets');expect(readTraySavedSourceCause(source!)).toBeTruthy();
-    expect(await plan()).toMatchObject({savedTargets:[],savedUnavailable:'budget'});
+    await db.query(`UPDATE identities SET name='Changed' WHERE id=$1`,[author]);const [source]=await causes();expect(source).toMatchObject({classification:'complete'});
+    expect((source!.targets as unknown[])).toHaveLength(257);expect(readTraySavedSourceCause(source!)).toBeTruthy();
+    expect((await plan()).savedTargets).toHaveLength(257);
     const pieces=Array.from({length:3},(_,batch)=>({sourceTable:'tray-saved-source',trayReaderId:a,trayWorkspaceId:w1,
       table:'messages',operation:'UPDATE',classification:'complete',targets:Array.from({length:100},(_,n)=>({
         bookmarkId:`00000000-0000-4000-8000-${String(batch*100+n).padStart(12,'0')}`,messageId:`m-${batch*100+n}`}))}));
-    expect(routerSourcePlan(pieces,a,w1)).toMatchObject({savedTargets:[],savedUnavailable:'budget'});
+    expect(routerSourcePlan(pieces,a,w1).savedTargets).toHaveLength(300);
+    expect(routerSourcePlan(pieces,a,w1).savedUnavailable).toBeUndefined();
   });
 
   it('keeps source evidence transactional and strictly parses only bounded exact targets',async()=>{

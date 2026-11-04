@@ -89,13 +89,13 @@ describe('pure count-only Needs-you projection at one database cut',()=>{
     ])await message(id!,text!);
     await differential(2);
   });
-  it('accepts the complete500-question bound and refuses501 instead of claiming the legacy capped count',async()=>{
+  it('counts every question beyond the former 500-question limit',async()=>{
     await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
       SELECT 'ask-'||n,$1,$2,'@reader please review',now()-interval '1 hour' FROM generate_series(1,500)n`,[ROOM,PEER]);
     await differential(500);await message('overflow','@reader please review');
-    await expect(countNeedsYouProjection(db,WORKSPACE,VIEWER)).rejects.toMatchObject({reason:'budget'});
-    await expect(readNeedsYouCountSnapshot(db,WORKSPACE,VIEWER)).rejects.toMatchObject({reason:'budget'});
-    expect(await countNeedsYouItems(db,WORKSPACE,VIEWER)).toBe(500);
+    await differential(501);
+    expect((await readNeedsYouCountSnapshot(db,WORKSPACE,VIEWER)).value).toEqual({count:501});
+    expect(await countNeedsYouItems(db,WORKSPACE,VIEWER)).toBe(501);
   });
   it('applies eligibility before the cap so expired asks and near misses cannot manufacture overflow',async()=>{
     await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)

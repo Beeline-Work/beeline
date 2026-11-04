@@ -59,7 +59,6 @@ export function routerSourcePlan(causes: readonly Record<string,unknown>[], view
     const old=savedKeys.get(target.bookmarkId);
     if(old&&old.messageId!==target.messageId){savedUnavailable='dependency';savedKeys.clear();return;}
     savedKeys.set(target.bookmarkId,target);
-    if(savedKeys.size>256){savedUnavailable='budget';savedKeys.clear();}
   };
   const addScheduled=(roomId:string,readers:readonly string[]|null)=>{
     const normalized=readers===null?null:[...new Set(readers)].sort();
@@ -128,7 +127,7 @@ export function routerSourcePlan(causes: readonly Record<string,unknown>[], view
         const target=value as Record<string,unknown>;
         if(Object.keys(target).length!==2||typeof target.roomId!=='string'||
           !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(target.roomId)||
-          !(target.readers===null||Array.isArray(target.readers)&&target.readers.length<=100&&
+          !(target.readers===null||Array.isArray(target.readers)&&
             target.readers.every(reader=>typeof reader==='string'&&reader.length<=256)))throw new RouterProjectionUnavailable('dependency');
         addScheduled(target.roomId,target.readers as readonly string[]|null);
       }

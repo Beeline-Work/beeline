@@ -60,6 +60,22 @@ export async function currentAuthorityFence(db:SqlDatabase,viewer:string,scope:s
   return frame;
 }
 
+/** Prefer the ordered journal; a retained coalesced index covers large bursts
+ * without retaining unbounded event history or trusting client inventories. */
+export async function readAuthorityChanges(db:SqlDatabase,viewer:string,epoch:string,from:number,through:number){
+  const rows=(await db.query<{sequence:string;event:{kind?:string;scope?:string;authorityScope?:string}}>(
+    `SELECT sequence::text,event FROM live_journal WHERE stream_id=$1 AND sequence>$2 AND sequence<=$3 ORDER BY sequence`,
+    [`authority:${viewer}`,from,through])).rows;
+  if(rows.length===through-from&&rows.every((row,index)=>Number(row.sequence)===from+index+1))return rows;
+  const covered=(await db.query(`SELECT 1 FROM router_authority_reader_coverage WHERE reader=$1 AND epoch=$2 AND after_sequence<=$3`,
+    [viewer,epoch,from])).rowCount;
+  if(!covered)throw new RouterProjectionUnavailable('retention');
+  return (await db.query<{sequence:string;event:{kind?:string;scope?:string;authorityScope?:string}}>(
+    `SELECT sequence::text,jsonb_build_object('kind','authority-change','scope',scope,'authorityScope',domain) event
+     FROM router_authority_reader_changes WHERE reader=$1 AND epoch=$2 AND sequence>$3 AND sequence<=$4 ORDER BY sequence`,
+    [viewer,epoch,from,through])).rows;
+}
+
 type Head={epoch:string;sequence:string};
 export async function subscribeAuthorityFences(database:SqlDatabase,live:LiveHub,viewer:string,
   enqueue:(frame:RouterAuthorityFence)=>undefined,unavailable:(reason:string)=>void,ready:Promise<void>=Promise.resolve(),
@@ -81,17 +97,14 @@ export async function subscribeAuthorityFences(database:SqlDatabase,live:LiveHub
           const current=await head(db);if(!current)return undefined;
           if(position&&current.epoch!==position.epoch)throw new RouterProjectionUnavailable('retention');
           const from=Number(position?.sequence??0),through=Number(current.sequence);
-          if(!Number.isSafeInteger(through)||through<from||through-from>1024)throw new RouterProjectionUnavailable('retention');
+          if(!Number.isSafeInteger(through)||through<from)throw new RouterProjectionUnavailable('retention');
           if(through===from)return current;
-          const rows=await db.query<{sequence:string;event:{kind?:string;scope?:string;authorityScope?:string}}>(
-            `SELECT sequence::text,event FROM live_journal WHERE stream_id=$1 AND sequence>$2 AND sequence<=$3 ORDER BY live_journal.sequence`,[stream,from,through]);
-          if(rows.rows.length!==through-from||rows.rows.some((row,index)=>Number(row.sequence)!==from+index+1))throw new RouterProjectionUnavailable('retention');
+          const rows=await readAuthorityChanges(db,viewer,current.epoch,from,through);
           const domains=new Map<string,string>();
-          for(const {event}of rows.rows){
+          for(const {event}of rows){
             if(event.kind!=='authority-change'||typeof event.scope!=='string'||typeof event.authorityScope!=='string')throw new RouterProjectionUnavailable('dependency');
             domains.set(event.authorityScope,event.scope);
           }
-          if(domains.size>256)throw new RouterProjectionUnavailable('budget');
           for(const [domain,scope]of domains){
             if(!acceptDomain(domain))continue;
             const frame=await currentAuthorityFence(db,viewer,scope,domain);

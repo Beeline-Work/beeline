@@ -1,4 +1,4 @@
-import { ROUTER_PROTOCOL, ROUTER_MAX_PART_BYTES as PART_BYTES, ROUTER_MAX_PARTS as MAX_PARTS, ROUTER_MAX_BATCH_BYTES as MAX_BYTES } from '@beeline/api-contract/router-protocol';
+import { ROUTER_PROTOCOL, ROUTER_MAX_PART_BYTES as PART_BYTES, ROUTER_MAX_PARTS as MAX_PARTS } from '@beeline/api-contract/router-protocol';
 import { createHash, randomUUID } from 'node:crypto';
 import type {
   RouterAuthorityCertificate, RouterCut, RouterFact, RouterBatchRecord, RouterFamily, RouterPushFrame,
@@ -112,8 +112,6 @@ export async function buildRouterSnapshot(database: SqlDatabase, input: RouterSn
     const snapshot = { kind: 'snapshot' as const, family: input.family, scope: input.agentId??input.roomId ?? input.workspaceId,
       value, cut: await readRouterCut(db, resolved.workspaceId), atomicGroup: routerAtomicGroup(input, viewer), authority,
       ...(clock?{clockVersion:clock.clockVersion}:{}) } as RouterSnapshot;
-    const limit = input.family==='agent-profile'?32*1024:input.family === 'needs-you-count' ? 1024 : ['room-head','room-scheduled-work','needs-you-tray','needs-you-saved-page','workspace-roster','room-workflows'].includes(input.family) ? PART_BYTES : MAX_BYTES;
-    if (Buffer.byteLength(JSON.stringify(snapshot)) > limit) throw new RouterProjectionUnavailable('budget');
     return snapshot;
   });
 }
@@ -147,8 +145,6 @@ export function encodeRouterBatch(from: RouterCut, to: RouterCut, facts: readonl
     marker.authorityBarrier.protocol!==1||!marker.authorityBarrier.stream.startsWith('authority:')||
     !marker.authorityBarrier.epoch||marker.authorityBarrier.epoch.length>128||!marker.authorityBarrier.segment||marker.authorityBarrier.segment.length>128||
     !Number.isSafeInteger(marker.authorityBarrier.through)||marker.authorityBarrier.through<0))throw new RouterProjectionUnavailable('dependency');
-  const domains = new Set(facts.flatMap(f => 'authority' in f?f.authority.scopes.map(s => s.authorityScope):[]));
-  if (domains.size > 256) throw new RouterProjectionUnavailable('budget');
   const batchId = randomUUID();
   const contentDigest = createHash('sha256').update(JSON.stringify(facts)).digest('hex');
   const parts: RouterBatchRecord[][] = [[]];
@@ -156,16 +152,12 @@ export function encodeRouterBatch(from: RouterCut, to: RouterCut, facts: readonl
   const bytes = (part: RouterBatchRecord[]) => Buffer.byteLength(JSON.stringify({kind:'push-part',batchId,from,to,
     partIndex:MAX_PARTS-1,partCount:MAX_PARTS,contentDigest,facts:part}));
   for (const fact of facts) {
-    if (bytes([fact]) > PART_BYTES) throw new RouterProjectionUnavailable('budget');
-    if (bytes([...parts.at(-1)!, fact]) > PART_BYTES) parts.push([]);
+    if (parts.at(-1)!.length && bytes([...parts.at(-1)!, fact]) > PART_BYTES) parts.push([]);
     parts.at(-1)!.push(fact);
   }
-  if (parts.length > MAX_PARTS) throw new RouterProjectionUnavailable('budget');
   const frames: RouterPushFrame[] = parts.map((part,index) => ({kind:'push-part',batchId,from,to,
     partIndex:index,partCount:parts.length,contentDigest,facts:part}));
   frames.push({kind:'push-commit',batchId,from,to,partCount:parts.length,contentDigest});
-  if (frames.reduce((size,f) => size + Buffer.byteLength(JSON.stringify(f)),0) > MAX_BYTES)
-    throw new RouterProjectionUnavailable('budget');
   return frames;
 }
 
@@ -313,7 +305,6 @@ export async function fenceRouterBatchInTransaction(db:SqlDatabase,workspace:str
     if(!groups.has(fact.atomicGroup))groups.set(fact.atomicGroup,[]);
     groups.get(fact.atomicGroup)!.push(fact);
   }
-  if(groups.size>256||facts.length>512)throw new RouterProjectionUnavailable('budget');
     const inputs=new Map([...groups.keys()].map(group=>[group,groupInput(group,workspace,viewer)]));
     const roomIds=[...new Set([...inputs.values()].flatMap(input=>input?.roomId?[input.roomId]:[]))];
     const profileIds=[...new Set([...inputs.values()].flatMap(input=>input?.agentId?[input.agentId]:[]))];
@@ -334,7 +325,6 @@ export async function fenceRouterBatchInTransaction(db:SqlDatabase,workspace:str
     if([...inputs.values()].some(input=>input?.family==='workspace-roster'))domains.add(`roster:${workspace}`);
     for(const id of roomIds){domains.add(`room:${id}`);const parent=rooms.get(id)?.parent_id;if(parent)domains.add(`room:${parent}`);}
     for(const id of profileIds)domains.add(profileDomain(workspace,id));
-    if(domains.size>512)throw new RouterProjectionUnavailable('budget');
     const rows=await db.query<{scope:string;epoch:string}>(`SELECT scope,epoch::text FROM router_authority WHERE scope=ANY($1::text[])`,[[...domains]]);
     const epochs=new Map(rows.rows.filter(row=>/^\d+$/.test(row.epoch)).map(row=>[row.scope,row.epoch]));
     const certificate=(scopes:readonly string[]):RouterAuthorityCertificate|undefined=>scopes.every(scope=>epochs.has(scope))

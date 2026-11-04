@@ -67,7 +67,7 @@ describe('uninstalled durable Tray clock source',()=>{
 
   it('does not change committed eligibility/basis with wall time, then journals one exact elapsed transition',async()=>{
     await question();const pending=await claim(),basis=await readTrayClockBasis(db,workspace);
-    expect(basis).toMatchObject({revision:'0',ready:false});expect(await readTrayClockDue(clock)).toEqual([]);
+    expect(basis).toMatchObject({revision:'0',ready:true});expect(await readTrayClockDue(clock)).toEqual([]);
     await advance('2000-01-14T00:00:00Z');
     expect(await readTrayClockBasis(db,workspace)).toEqual(basis);
     expect((await db.query(`SELECT state FROM tray_clock_deadlines`)).rows).toEqual([{state:'pending'}]);

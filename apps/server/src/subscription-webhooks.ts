@@ -4,6 +4,7 @@ import type { RoomSubscriptionView, WebhookCallView } from '@beeline/api-contrac
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import { sealSecrets, openSecrets } from './free-agents.js';
+import {scheduledWorkAuthority} from './scheduled-work-authority.js';
 import { ensureSystemIdentity, systemLine } from './system-line.js';
 
 export const SUBSCRIPTION_WEBHOOKS_SCHEMA = `
@@ -116,10 +117,11 @@ function callView(row: CallRow): WebhookCallView {
     ...(row.repeat_at ? { repeatAt: row.repeat_at.getTime() / 1000 } : {}) };
 }
 
-/** No secret enters a cached projection. Only authorized human managers receive link metadata. */
+/** Room members receive public link metadata; token reveal/rotation retain management authority. */
 export async function webhookDetails(db: SqlDatabase, roomId: string, id: string, viewerId: string,
   origin: string): Promise<Pick<RoomSubscriptionView, 'webhook' | 'recentCalls'>> {
-  await requireWebhookAdmin(db, roomId, viewerId);
+  const access=await scheduledWorkAuthority(db,roomId,viewerId);
+  if(!access.allowed||!access.complete)throw new Error('room membership required');
   const row = (await db.query<{ webhook_suffix: string; webhook_token_created_at: Date }>(
     `SELECT webhook_suffix,webhook_token_created_at FROM agent_subscriptions subscription
      JOIN rooms room ON room.id=subscription.room_id

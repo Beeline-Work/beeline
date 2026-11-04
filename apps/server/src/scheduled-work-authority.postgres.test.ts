@@ -14,7 +14,7 @@ const VIEWER='a'.repeat(64);
 function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {promise,resolve};}
 describe.skipIf(!postgresUrl)('Scheduled Work real PostgreSQL policy/enqueue linearization',()=>{
   it.each([
-    ['public manager role',false,`UPDATE memberships SET role='member' WHERE identity_id=$1 AND room_id IS NULL`,[VIEWER]],
+    ['public Workspace membership',false,`UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id IS NULL`,[VIEWER]],
     ['principal visibility',false,`UPDATE identities SET hidden_from_roster=true WHERE id=$1`,[VIEWER]],
     ['principal kind',false,`UPDATE identities SET kind='agent' WHERE id=$1`,[VIEWER]],
     ['own-DM participant',true,`UPDATE rooms SET direct_participants='[]'::jsonb WHERE id=$1`,[ROOM]],
@@ -36,6 +36,7 @@ describe.skipIf(!postgresUrl)('Scheduled Work real PostgreSQL policy/enqueue lin
       await db.query(`INSERT INTO rooms(id,workspace_id,direct_participants) VALUES($1,$3,$4::jsonb),($2,$3,NULL)`,[ROOM,PARENT,WS,direct?JSON.stringify([VIEWER]):null]);
       // The own-DM case deliberately has no Workspace membership.
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,$4)`,[WS,direct?ROOM:null,VIEWER,direct?'member':'owner']);
+      if(!direct)await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WS,ROOM,VIEWER]);
       const input={family:'room-scheduled-work' as const,roomId:ROOM,workspaceId:WS};
       const snapshot=await buildRouterSnapshot(db,input,VIEWER,async()=>({roomName:'Synthetic',isDirectMessage:direct,agentNames:[],schedules:[],subscriptions:[]}));
       const observed:SqlDatabase={query:(sql,values)=>db.query(sql,values),transaction:work=>db.transaction(tx=>work({

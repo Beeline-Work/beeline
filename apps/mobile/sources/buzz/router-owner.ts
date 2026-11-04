@@ -69,8 +69,7 @@ function validValue(request: LaneRequest, value: unknown): boolean {
   if(request.family==='workspace-roster'){
     const roster=readWorkspaceView(value);
     return !!roster&&roster.workspace.id===request.workspaceId&&
-      typeof (value as RouterValues['workspace-roster']).revision==='string'&&/^[1-9][0-9]{0,19}$/.test((value as RouterValues['workspace-roster']).revision)&&
-      (!request.query||request.query.revision===(value as RouterValues['workspace-roster']).revision);
+      typeof (value as RouterValues['workspace-roster']).revision==='string'&&/^[1-9][0-9]{0,19}$/.test((value as RouterValues['workspace-roster']).revision);
   }
   if(request.family==='room-workflows')return validateWorkflowProjection(value);
   if(request.family==='needs-you-saved-page')return validateSavedWindow(value,request.workspaceId);
@@ -342,7 +341,7 @@ function fact(value: unknown): boolean {
   if (typeof payload.scope !== 'string' || payload.scope.length > 256) return false;
   if(payload.kind==='tray-classification')return payload.version===1&&typeof payload.clockVersion==='string'&&
     /^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion)&&Object.keys(payload).length===4;
-  if(payload.kind==='tray-needs-replace')return record(payload.value)&&Array.isArray(payload.value.items)&&payload.value.items.length<=30;
+  if(payload.kind==='tray-needs-replace')return record(payload.value)&&Array.isArray(payload.value.items);
   if(payload.kind==='saved-row-replace')return record(payload.row);
   if(payload.kind==='saved-row-remove')return typeof payload.bookmarkId==='string'&&typeof payload.messageId==='string';
   if (payload.kind === 'group-unavailable') return payload.reason === 'authority' || payload.reason === 'dependency';
@@ -476,7 +475,6 @@ export function acquireRouterSavedContinuation(workspaceId:string,before:string,
     throw new Error('Saved continuation is not held.');
   const request={family:'needs-you-saved-page',workspaceId,before} as const;
   const key=JSON.stringify([request.family,workspaceId,before]);
-  if(!slotsByKey.has(key)&&held.length>=16)throw new Error('Saved window capacity reached.');
   const handle=acquireRouterLane(request,visible,listener),slot=slotsByKey.get(key)!;
   if(slot.release&&slot.generation===focused.generation)return handle;
   try{
@@ -520,9 +518,7 @@ export function acquireRouterRosterQuery(input:Extract<RouterSnapshotInput,{fami
     routerFamilyMode('workspace-roster')!=='router'||!input.query)throw new Error('Roster action is unavailable.');
   const head=slotsByKey.get(slotKey({family:'workspace-roster',workspaceId:input.workspaceId}));
   const value=head?.release&&head.generation===focused.generation?lanes.peek(head.request).value as RouterValues['workspace-roster']|null:null;
-  if(!value||value.revision!==input.query.revision)throw new Error('Roster version is no longer held.');
-  const windows=[...slots].filter(slot=>slot.request.family==='workspace-roster'&&slot.request.query&&slot.release);
-  if(!slotsByKey.has(slotKey(input))&&windows.length>=16)throw new Error('Roster window capacity reached.');
+  if(!value)throw new Error('Roster is unavailable.');
   const handle=acquireRouterLane(input,visible,listener),slot=slotsByKey.get(slotKey(input))!;
   if(slot.release&&slot.generation===focused.generation)return handle;
   try{

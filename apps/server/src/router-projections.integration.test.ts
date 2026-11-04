@@ -73,7 +73,7 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
     await fenceRouterBatch(database,WORKSPACE,VIEWER,facts,value=>{sent=value;return undefined;});
     expect(sent).toHaveLength(1);expect(sent[0]!.payload).toMatchObject({kind:'authority-fence',mode:'deny'});
   });
-  it.each(['owner', 'readiness', 'revision', 'receipt'] as const)('refuses cached Tray facts after %s changes while retaining the independent Room list', async loss => {
+  it.each(['owner', 'readiness', 'revision', 'receipt'] as const)('keeps Tray reads after %s health changes and fences a changed committed clock version', async loss => {
     const clockVersion=await readyClock(),authority=await readRouterCertificate(database,input,VIEWER);
     const atomicGroup=`needs-you:${WORKSPACE}:${VIEWER}`;
     const roomList:RouterFact={atomicGroup:`room-list:${WORKSPACE}:${VIEWER}`,authority,
@@ -89,7 +89,7 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
     if(loss==='revision')await database.query(`UPDATE tray_clock_state SET revision=revision+1`);
     if(loss==='receipt')await database.query(`DELETE FROM tray_clock_health`);
     await fenceRouterBatch(database,WORKSPACE,VIEWER,facts,value=>{sent=value;return undefined;});
-    expect(sent).toEqual([{atomicGroup,authority,payload:{kind:'group-unavailable',scope:WORKSPACE,reason:'dependency'}},roomList]);
+    expect(sent).toEqual(loss==='revision'?[{atomicGroup,authority,payload:{kind:'group-unavailable',scope:WORKSPACE,reason:'dependency'}},roomList]:facts);
   });
   it('rechecks the committed clock at the socket snapshot reply without a replacement read', async () => {
     await readyClock();
@@ -107,12 +107,11 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
         .rejects.toMatchObject({reason:'dependency'});
       const current=await new PhoneService(database,'https://example.test').readRouterSnapshot(args,VIEWER,{trayClock:true});
       await database.query(`UPDATE background_leader_owners SET released_at=clock_timestamp()`);
-      await expect(protocol.fenceReply('readRouterSnapshot',args,current,()=>{enqueued++;return undefined;}))
-        .rejects.toMatchObject({reason:'dependency'});
-      expect(enqueued).toBe(1);
+      await expect(protocol.fenceReply('readRouterSnapshot',args,current,()=>{enqueued++;return undefined;})).resolves.toBeUndefined();
+      expect(enqueued).toBe(2);
     } finally { protocol.close(); }
   });
-  it('forwards shared clock loss as one Tray-only control without a query or socket reset',async()=>{
+  it('keeps Tray reads available through shared clock health loss',async()=>{
     await readyClock();await database.query(TRAY_SAVED_WINDOW_SCHEMA);
     const live=clockLive,frames:Record<string,unknown>[]=[],phone=new PhoneService(database,'https://example.test');
     const families=['room-list','needs-you-tray','needs-you-count','needs-you-saved-page'] as const;
@@ -122,25 +121,23 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
       await protocol.handle({type:'router-negotiate',protocol:1,families});frames.length=0;
       const query=vi.spyOn(database,'query'),transaction=vi.spyOn(database,'transaction');
       live.trayClockUnavailable();
-      expect(frames).toEqual([{kind:'router-unavailable',stream:'control:tray-clock',
-        families:['needs-you-tray','needs-you-count','needs-you-saved-page'],reason:'dependency'}]);
+      expect(frames).toEqual([]);
       expect(query).not.toHaveBeenCalled();expect(transaction).not.toHaveBeenCalled();
       expect(protocol.supports('room-list')).toBe(true);expect(protocol.supports('needs-you-tray')).toBe(true);
       await database.query('UPDATE background_leader_owners SET released_at=clock_timestamp()');
       clockLive.journalChanged(['jobs:tray-clock-health']);await clockAvailability!.start();
       query.mockClear();transaction.mockClear();
-      await expect(protocol.snapshot({family:'needs-you-tray',workspaceId:WORKSPACE})).rejects.toThrow('router_projection_unavailable');
-      expect(query).not.toHaveBeenCalled();expect(transaction).not.toHaveBeenCalled();
+      await expect(protocol.snapshot({family:'needs-you-tray',workspaceId:WORKSPACE})).resolves.toMatchObject({family:'needs-you-tray'});
       query.mockRestore();transaction.mockRestore();
     }finally{protocol.close();}
   });
-  it('does not advertise the Tray cohort without its installed shared availability consumer',async()=>{
+  it('advertises Tray reads without a global clock health consumer',async()=>{
     const frames:Record<string,unknown>[]=[],families=['room-list','needs-you-tray','needs-you-count','needs-you-saved-page'] as const;
     const protocol=routerSocketProtocol(database,VIEWER,raw=>{frames.push(JSON.parse(raw));},{families,listenerReady:()=>true},
       {live:new LiveHub(),phone:new PhoneService(database,'https://example.test'),rooms:()=>[]});
     try{
       await protocol.handle({type:'router-negotiate',protocol:1,families});
-      expect(frames.find(frame=>frame.type==='router-capabilities')).toMatchObject({families:['room-list','needs-you-count']});
+      expect(frames.find(frame=>frame.type==='router-capabilities')).toMatchObject({families:['room-list','needs-you-tray','needs-you-count','needs-you-saved-page']});
     }finally{protocol.close();}
   });
   it('captures public identity dependencies without advancing unrelated Workspaces',async()=>{
@@ -281,7 +278,7 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
       expect(build.mock.calls.every(call=>!('before' in call[1]))).toBe(true);
     }finally{for(const protocol of protocols)protocol.close();}
   });
-  it('parks an unready Tray clock group while delivering the independent Room list',async()=>{
+  it('delivers an unready Tray clock group alongside the Room list',async()=>{
     await database.query(TRAY_CLOCK_SOURCE_SCHEMA);await database.query(TRAY_SAVED_WINDOW_SCHEMA);
     clockAvailability=new TrayClockAvailability(database,clockLive,{listenerReady:()=>true,unavailable:()=>{}});await clockAvailability.start();
     const live=clockLive,frames:Record<string,any>[]=[],phone=new PhoneService(database,'https://example.test');
@@ -296,9 +293,10 @@ describe('router projections: pure coherent cuts and bounded delivery',()=>{
       await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('unready',$1,$2,'@reader please approve?')`,[ROOM,OTHER]);
       live.journalChanged([`workspace:${WORKSPACE}`]);await complete;
       const facts=frames.filter(frame=>frame.kind==='push-part').flatMap(frame=>frame.facts);
-      expect(facts.some(fact=>fact.payload.kind==='group-unavailable'&&fact.atomicGroup===`needs-you:${WORKSPACE}:${VIEWER}`)).toBe(true);
+      expect(facts.some(fact=>fact.payload.kind==='group-unavailable'&&fact.atomicGroup===`needs-you:${WORKSPACE}:${VIEWER}`)).toBe(false);
+      expect(facts.some(fact=>fact.payload.kind==='tray-needs-replace')).toBe(true);
       expect(facts.some(fact=>fact.payload.kind==='scope-replace'&&fact.payload.family==='room-list')).toBe(true);
-      expect(build.mock.calls.map(call=>call[1].family)).toEqual(['room-list']);
+      expect(build.mock.calls.map(call=>call[1].family)).toContain('room-list');
     }finally{protocol.close();}
   });
   it('targets Workspace denial explicitly even when the Room authority epoch did not change',async()=>{

@@ -1,3 +1,4 @@
+import {requireScheduledWorkReader} from './scheduled-work-authority.js';
 import { ROOM_ROUTER_CTES,ROOM_ROUTER_HEAD_JOIN,roomRouterColumnsSql,roomMessageTagsSql } from './room-router-read.js';
 import { projectRoomToolSummaries,type RoomToolSummaryRow } from './room-tool-projection.js';
 import { buildTrayProjection, readMessageBookmarks } from './tray-projection.js';
@@ -1240,7 +1241,6 @@ export class PhoneService {
       const revision=(await database.query<{epoch:string}>('SELECT epoch::text FROM router_authority WHERE scope=$1',
         [`roster:${input.workspaceId}`])).rows[0]?.epoch;
       if(!revision)throw new RouterProjectionUnavailable('dependency');
-      if(input.query&&input.query.revision!==revision)throw new RouterProjectionUnavailable('dependency');
       const value = await reader.readWorkspace(input.workspaceId, viewerId,input.query);
       return value?{...value,revision}:null;
     }
@@ -4368,7 +4368,7 @@ export class PhoneService {
       }
       case 'listRoomSubscriptions': {
         const roomId = (input as Input<'listRoomSubscriptions'>).roomId;
-        await requireScheduledWorkManager(this.database, roomId, viewerId);
+        await requireScheduledWorkReader(this.database, roomId, viewerId);
         return await listRoomSubscriptions(this.database, roomId) as Output<Name>;
       }
       case 'readScheduledWork':
@@ -5354,7 +5354,7 @@ export class PhoneService {
     });
   }
   private async listRoomSchedules(roomId: string, viewerId: string) {
-    await requireScheduledWorkManager(this.database, roomId, viewerId);
+    await requireScheduledWorkReader(this.database, roomId, viewerId);
     const schedules = await this.database.query<RoomScheduleRow>(
       `SELECT schedule.id,schedule.workspace_id,schedule.room_id,schedule.agent_id,
               schedule.creator_id,schedule.cadence,schedule.message,schedule.next_run_at,
@@ -5370,7 +5370,7 @@ export class PhoneService {
     return { schedules: schedules.rows.map(roomSchedule) };
   }
   private async readScheduledWork(roomId: string, viewerId: string): Promise<Output<'readScheduledWork'>> {
-    await requireScheduledWorkManager(this.database, roomId, viewerId);
+    await requireScheduledWorkReader(this.database, roomId, viewerId);
     const [room, schedules, subscriptions] = await Promise.all([
       this.database.query<{ name: string | null; direct_participants: string[] | null; agent_id: string; agent_name: string }>(
         `SELECT room.name, room.direct_participants, agent.id agent_id, agent.name agent_name
@@ -5381,10 +5381,8 @@ export class PhoneService {
       this.listRoomSchedules(roomId, viewerId),
       listRoomSubscriptions(this.database, roomId),
     ]);
-    let webhookAdmin = false;
-    try { await requireWebhookAdmin(this.database, roomId, viewerId); webhookAdmin = true; } catch { /* No secret metadata for non-admins. */ }
     const projectedSubscriptions = await Promise.all(subscriptions.subscriptions.map(async (subscription) =>
-      subscription.source === 'webhook' && webhookAdmin
+      subscription.source === 'webhook'
         ? { ...subscription, ...await webhookDetails(this.database, roomId, subscription.id, viewerId, this.publicOrigin) }
         : subscription));
     return {

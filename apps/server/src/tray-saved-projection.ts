@@ -6,7 +6,7 @@ import { readRouterAuthority, routerAtomicGroup, RouterProjectionUnavailable } f
 export type TraySavedTarget=Readonly<{bookmarkId:string;messageId:string}>;
 const uuid=(value:unknown):value is string=>typeof value==='string'&&/^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/.test(value);
 export function readTraySavedTargets(value:unknown):readonly TraySavedTarget[]|undefined{
-  if(!Array.isArray(value)||value.length>256)return;
+  if(!Array.isArray(value))return;
   const keys=new Map<string,string>();
   for(const target of value){
     if(!target||typeof target!=='object'||Array.isArray(target)||Object.keys(target).length!==2||!uuid(target.bookmarkId)||
@@ -55,6 +55,5 @@ export async function buildTraySavedFacts(db:SqlDatabase,workspaceId:string,read
     const fact={atomicGroup:routerAtomicGroup(input,readerId),authority,payload};
     return fact;
   });
-  if(Buffer.byteLength(JSON.stringify(facts))>1024*1024)throw new RouterProjectionUnavailable('budget');
   return facts;
 }

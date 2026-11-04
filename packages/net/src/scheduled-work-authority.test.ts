@@ -150,7 +150,7 @@ describe('Scheduled Work bounded local authority/barrier actor',()=>{
     const {actor,stored,park}=rig();await deliver(actor,frames(0,1,parts));expect(actor.position()).toEqual(at(1));expect(stored).toHaveBeenCalledOnce();expect(park).not.toHaveBeenCalled();
     const future=rig();await future.actor.accept(1,frames(0,1,[[fence()]],'primary')[0]);
     await deliver(future.actor,frames(1,2,parts,'too-large-future'));expect(future.park).toHaveBeenCalledWith('budget');
-    const physical=rig();await physical.actor.accept(1,frames(0,1,[[...part,...part]])[0]);expect(physical.park).toHaveBeenCalledWith('protocol');
+    const physical=rig();await physical.actor.accept(1,frames(0,1,[[...part,...part]])[0]);expect(physical.park).not.toHaveBeenCalled();
   });
 
   it('bounds queued snapshots/batches once rather than per Room and rejects overflows without releasing data',()=>{
@@ -161,12 +161,12 @@ describe('Scheduled Work bounded local authority/barrier actor',()=>{
     expect(primary.discard).toHaveBeenCalledWith('budget');
   });
 
-  it('bounds authority stage count and unique domains before persistence',async()=>{
+  it('bounds concurrent authority stages while accepting all domains in one complete interval',async()=>{
     const {actor,park}=rig();for(let i=0;i<18;i++)await actor.accept(1,frames(i,i+1,[[]],`partial-${i}`)[0]);
     expect(park).toHaveBeenCalledWith('budget');
     const domains=rig(),fences=Array.from({length:257},(_,index)=>fence(`room-${index}`));
     const parts=[];for(let i=0;i<fences.length;i+=32)parts.push(fences.slice(i,i+32));
-    await deliver(domains.actor,frames(0,1,parts));expect(domains.park).toHaveBeenCalledWith('budget');expect(domains.stored).not.toHaveBeenCalled();
+    await deliver(domains.actor,frames(0,1,parts));expect(domains.park).not.toHaveBeenCalled();expect(domains.stored).toHaveBeenCalledTimes(257);
   });
 
   it('settles a duplicate pending callback without growing the queue, and callbacks cannot lose a reentrant receive wake',async()=>{

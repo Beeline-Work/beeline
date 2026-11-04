@@ -25,7 +25,7 @@ function walkJson(value: unknown, maxBytes: number, canonical = false): string |
     if (bytes > maxBytes) throw new Error('network codec: byte limit');
   }
   function visit(item: unknown, depth: number): string | undefined {
-    if (++nodes > (canonical ? 4096 : 32768) || depth > (canonical ? 32 : 64)) throw new Error('network codec: complexity limit');
+    if ((Number.isFinite(maxBytes) && ++nodes > (canonical ? 4096 : 32768)) || depth > (canonical ? 32 : 64)) throw new Error('network codec: complexity limit');
     if (item === undefined && !canonical) return;
     if (item === null || typeof item === 'boolean' || typeof item === 'number' && Number.isFinite(item)) {
       const text = JSON.stringify(item); add(text); return canonical ? text : undefined;
@@ -81,12 +81,12 @@ export function canonicalJson(value: unknown): string {
   return walkJson(value, 64 * 1024, true)!;
 }
 
-export function jsonCodec<T>(shapes: readonly WireShape[], root: number, maxBytes: number): Codec<T> {
+export function jsonCodec<T>(shapes: readonly WireShape[], root: number, maxBytes = Infinity): Codec<T> {
   return Object.freeze({ parse(value: unknown): T {
     assertJsonBudget(value, maxBytes);
     let work = 0;
     function matches(id: number, item: unknown): boolean {
-      if (++work > 131072) throw new Error('network codec: validation work limit');
+      if (Number.isFinite(maxBytes) && ++work > 131072) throw new Error('network codec: validation work limit');
       const shape = shapes[id];
       if (!shape) throw new Error('network codec: invalid schema reference');
       switch (shape.kind) {

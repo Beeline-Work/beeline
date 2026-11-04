@@ -9,7 +9,7 @@ import {readRouterBuildTicket,RouterBuildCoordinator} from './router-build-coord
 const postgresUrl=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if(postgresUrl&&!['127.0.0.1','localhost','[::1]'].includes(new URL(postgresUrl).hostname))throw new Error('coordinator proofs require isolated loopback PostgreSQL');
 const WORKSPACE='11111111-1111-4111-8111-111111111111',VIEWER='synthetic-reader';
-const input={family:'needs-you-count' as const,workspaceId:WORKSPACE};
+const input={family:'room-list' as const,workspaceId:WORKSPACE};
 const basis={schema:1 as const,databaseScope:'isolated-proof',version:'membership-count-v1',publicOrigin:'https://example.test',clockVersion:'no-clock-dependencies'};
 function deferred(){let resolve!:()=>void;const promise=new Promise<void>(done=>{resolve=done;});return {promise,resolve};}
 async function fixture(){

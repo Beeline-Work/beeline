@@ -58,21 +58,18 @@ BEGIN
         targets:=targets||COALESCE((SELECT jsonb_agg(jsonb_build_object('workspace',room.workspace_id,'room',room.id,'readers',jsonb_build_array(person)))
           FROM rooms room WHERE room.parent_id IS NULL AND(
             room.direct_participants IS NULL AND EXISTS(SELECT 1 FROM memberships manager WHERE manager.workspace_id=room.workspace_id
-              AND manager.room_id IS NULL AND manager.identity_id=person AND manager.role IN('owner','admin'))
+              AND manager.room_id IS NULL AND manager.identity_id=person )
             OR room.direct_participants ? person AND EXISTS(SELECT 1 FROM memberships member WHERE member.room_id=room.id AND member.identity_id=person))),'[]'::jsonb);
       END IF;
     ELSIF TG_TABLE_NAME='memberships' AND item->>'room_id' IS NULL THEN
-      IF item->>'role' IN('owner','admin') THEN
         targets:=targets||COALESCE((SELECT jsonb_agg(jsonb_build_object('workspace',room.workspace_id,'room',room.id,'readers',jsonb_build_array(item->>'identity_id')))
           FROM rooms room WHERE room.workspace_id::text=item->>'workspace_id' AND room.parent_id IS NULL AND room.direct_participants IS NULL),'[]'::jsonb);
-      END IF;
     ELSE
       source_room:=CASE WHEN TG_TABLE_NAME='rooms' THEN item->>'parent_id'
         WHEN TG_TABLE_NAME IN('corner_facts','corner_person_state') THEN item->>'corner_id' ELSE item->>'room_id' END;
       FOR relation IN
         SELECT parent.workspace_id,parent.id,parent.direct_participants FROM rooms surface JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
-          WHERE surface.id::text=source_room AND(TG_TABLE_NAME<>'memberships' OR parent.direct_participants IS NOT NULL
-            OR EXISTS(SELECT 1 FROM identities WHERE id=item->>'identity_id' AND kind='agent'))
+          WHERE surface.id::text=source_room
         UNION SELECT parent.workspace_id,parent.id,parent.direct_participants FROM agent_subscriptions subscription
           JOIN rooms surface ON surface.id=subscription.room_id JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
           WHERE (TG_TABLE_NAME='provider_webhooks' AND subscription.trigger_id=item->>'id')

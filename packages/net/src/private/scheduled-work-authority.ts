@@ -28,7 +28,6 @@ type State = {
   lost: boolean; failed: boolean; batches: Multipart<ScheduledAuthorityFence,ScheduledWorkAuthorityPosition,Proof>; completed: Map<string, Complete>;
   history: Map<string, string>; deferred: Map<string, Pending>; dirty: boolean; pumping: boolean; pump?: Promise<void>;
 };
-const LOGICAL = 1024 * 1024;
 const scalar = (value: unknown, max = 128): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const hash = (value: unknown): value is string => typeof value === 'string' && /^[a-f0-9]{64}$/.test(value);
 const epoch = (value: unknown): value is string => typeof value === 'string' && /^(0|[1-9][0-9]{0,19})$/.test(value);
@@ -106,7 +105,7 @@ export class ScheduledWorkAuthority {
     if (!state || generation !== state.generation) { this.discard(deferred, 'generation'); return; }
     if (state.lost || state.failed) { this.discard(deferred, 'source-loss'); return; }
     if (!scalar(deferred.id, 256) || !['snapshot', 'batch'].includes(deferred.kind) || !this.validPosition(deferred.barrier) ||
-      !Number.isSafeInteger(deferred.bytes) || deferred.bytes < 0 || deferred.bytes > LOGICAL ||
+      !Number.isSafeInteger(deferred.bytes) || deferred.bytes < 0 ||
       typeof deferred.apply !== 'function' || typeof deferred.discard !== 'function') {
       this.discard(deferred, 'protocol'); this.fail(state, 'protocol'); return;
     }
@@ -170,7 +169,7 @@ export class ScheduledWorkAuthority {
     const keys = ['kind', 'batchId', 'from', 'to', 'partCount', 'contentDigest'];
     if (value.kind === COMMIT_KIND) return exact(value, keys);
     return exact(value, [...keys, 'partIndex', 'fences']) && Array.isArray(value.fences) &&
-      value.fences.length <= 256 && value.fences.every(fence => this.validFence(fence));
+      value.fences.every(fence => this.validFence(fence));
   }
   private schedule(state: State): Promise<void> {
     if (state.pumping) return state.pump!;
@@ -204,7 +203,6 @@ export class ScheduledWorkAuthority {
         const domains = new Set<string>(), targets = new Map<string, string>();
         for(const fence of fences){
           for(const scope of fence.authority.scopes)domains.add(scope.authorityScope);
-          if(domains.size>256){this.fail(state,'budget');return;}
           const encoded=JSON.stringify(fence),prior=targets.get(fence.authorityScope);
           if(prior&&prior!==encoded){this.fail(state,'protocol');return;}
           targets.set(fence.authorityScope,encoded);

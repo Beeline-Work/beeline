@@ -25,11 +25,11 @@ describe('screen result codec projection',()=>{
       'phone.readScheduledWork':project(operationShapes['phone.readScheduledWork'].output)});
     expect(displayShapes).toEqual(expected);
   });
-  it('retains exact schema and row limits',()=>{
+  it('retains exact schema for complete results',()=>{
     const row={runId:'run',workflowSlug:'review',description:'Review changes',roomId:'room',
       roomName:'Room',state:'review',status:'live',viewerHolds:false,startedAt:1,updatedAt:1} satisfies WorkflowRunSummaryView;
     expect(validateWorkflowProjection({workflows:[row]})).toBe(true);
     expect(validateWorkflowProjection({workflows:[{...row,status:'invented'}]})).toBe(false);
-    expect(validateWorkflowProjection({workflows:Array(31).fill(row)})).toBe(false);
+    expect(validateWorkflowProjection({workflows:Array(31).fill(row)})).toBe(true);
   });
 });

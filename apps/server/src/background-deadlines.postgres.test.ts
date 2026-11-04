@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { BackgroundWork } from './background-work.js';
 import { BackgroundJobRunner, MediaExpiryLoop, PushDeliveryLoop } from './background.js';
-import { repairDeadlineFamilies, registerBackgroundDeadlineFamilies, subscribeBackgroundFamilies,
+import { repairDeadlineFamilies, retentionDeadlineFamilies, registerBackgroundDeadlineFamilies, subscribeBackgroundFamilies,
   BackgroundRecordDeadlines } from './background-deadlines.js';
 import { NextDayCheckin } from './next-day-checkin.js';
 import { FreeAgentService, freeAgentConfigFromEnv } from './free-agents.js';
@@ -61,6 +61,24 @@ describe.skipIf(!url)('P12 actual background deadline composition, real PostgreS
       expect(statements).toEqual([]);expect(runs).toEqual([]);
       await work.run(true);expect(runs).toEqual(families.map(family=>family.name));expect(provider).not.toHaveBeenCalled();
     }finally{stop();}
+  });
+
+  it('recovers actual retention lock contention and retries a deadline read without replaying the business callback',async()=>{
+    const db=fixture.database,holder=await db.connectDedicated();
+    const family=retentionDeadlineFamilies(db).find(value=>value.name==='retention:phone_access_tokens')!;
+    let deletes=0;const observed:SqlDatabase={transaction:work=>db.transaction(work),query:async(sql,values)=>{
+      try{return await db.transaction(async tx=>{await tx.query("SET LOCAL lock_timeout='30ms'");return tx.query(sql,values);});}catch(error){if(sql.startsWith('DELETE FROM phone_access_tokens')&&++deletes===1)await holder.query('COMMIT');throw error;}
+    }};
+    try{
+      await holder.query('BEGIN; LOCK TABLE phone_access_tokens IN ACCESS EXCLUSIVE MODE');
+      const retrying=retentionDeadlineFamilies(observed).find(value=>value.name===family.name)!;
+      await retrying.run();expect(deletes).toBe(1);
+      let effects=0,reads=0;const work=new BackgroundWork();
+      registerBackgroundDeadlineFamilies(work,[{name:'proof',run:async()=>{effects++;},next:async()=>{
+        reads++;return db.transaction(async tx=>{if(reads===1)await tx.query(`DO $$ BEGIN RAISE EXCEPTION 'known rollback' USING ERRCODE='40001'; END $$`);return undefined;});
+      }}],async(_name,run)=>({ok:true,value:await run()}),db);
+      await work.run(true);expect(reads).toBe(2);expect(effects).toBe(1);
+    }finally{await holder.query('ROLLBACK');holder.release();}
   });
 
   it('retains a deadline that becomes due between the business scan and minimum query, while parking an older failed record',async()=>{

@@ -928,6 +928,17 @@ process.exit(1);
     const remote = join(root, 'remote.git');
     const cli = join(root, 'cli.mjs');
     const calls = join(root, 'tokens');
+    const gitAudit = join(root, 'git-audit');
+    const unscoped = join(root, 'unscoped-git');
+    await writeFile(gitAudit, `#!/bin/sh
+case "$1" in
+  fetch|update-ref)
+    printf '%s\\n' "$*" >> "$BEELINE_TEST_UNSCOPED_GIT_LOG"
+    exit 91
+    ;;
+esac
+exec /usr/bin/git "$@"
+`, { mode: 0o700 });
     await writeFile(
       cli,
       `import { appendFileSync } from 'node:fs';
@@ -955,7 +966,7 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
       runtimeConfigPath: '/runtime.json',
       roomId: 'room',
       cliEntrypoint: cli,
-      gitBinary: '/usr/bin/git',
+      gitBinary: gitAudit,
       featureBranch,
       targetBranch,
       originUrl: 'https://github.com/beeline-test/repo.git',
@@ -965,10 +976,14 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
     // The guard once refused every one of these because the branch name did
     // not match the corner's feature branch, even though the remote is a
     // throwaway fixture the test suite owns.
-    await execFileAsync(launcher, ['-C', repo, 'push', 'fixture', 'HEAD:foreign']);
-    await execFileAsync(launcher, ['-C', repo, 'push', 'fixture', 'refs/tags/v1.0.0']);
+    const options = { env: { ...process.env, BEELINE_TEST_UNSCOPED_GIT_LOG: unscoped } };
+    await execFileAsync(launcher, ['-C', repo, 'push', 'fixture', 'HEAD:foreign'], options);
+    await execFileAsync(launcher, ['-C', repo, 'push', 'fixture', 'refs/tags/v1.0.0'], options);
     // A raw path with no rewrite is still a local fixture the suite owns.
-    await execFileAsync(launcher, ['-C', repo, 'push', remote, 'HEAD:raw-target']);
+    await execFileAsync(launcher, ['-C', repo, 'push', remote, 'HEAD:raw-target'], options);
+    // Follow-up fetch/update-ref must retain -C too. The audit refuses an
+    // unscoped command before it can contact or mutate the caller's checkout.
+    expect(await readFile(unscoped, 'utf8').catch(() => '')).toBe('');
     expect(
       (await execFileAsync('/usr/bin/git', ['--git-dir', remote, 'show-ref', 'foreign'])).stdout,
     ).toContain('refs/heads/foreign');

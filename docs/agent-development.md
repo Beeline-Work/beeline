@@ -13,6 +13,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 - **PR capacity uses both hosted and isolated CI-only runners.** Detection, selection and verdicts run hosted; preparation may use an idle one-CPU CI control listener. Keep privileged setup and the PostgreSQL claim-latency budget hosted. Heavy Linux PR jobs use available credential-free `beeline-ci` slots or standard hosted Ubuntu overflow; the service and slice limits in `infra/ci/` apply to self-hosted slots before enabling listeners; never substitute production/Android release labels. See [runner isolation and measurements](ci-runner-capacity.md). Checks and Desktop already cancel superseded PR heads; non-PR runs remain independent.
 
+- **Server fake clocks leave Node's I/O scheduler native.** `apps/server/vitest.config.ts` mocks application timers and Date, preserving `setImmediate`/`clearImmediate`. An in-flight network callback can create a fake handle that real cleanup later cancels, corrupting Node's immediate accounting and stranding hooks/RPCs. The cross-clock cleanup regression is in `scripts/ci-shards.test.mjs`.
+
 ## Dead code and lifecycle proofs
 
 - Write corner evidence under `.beeline-proof/` and publish evidence needed after close. The manifest labels provenance only: a confirmed archived corner deletes all per-corner data, including proof, dirty work and unpushed commits, after stopping attributable processes. Open/unknown corner lifecycle never authorizes archive deletion.

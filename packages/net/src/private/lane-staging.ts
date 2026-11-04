@@ -66,9 +66,6 @@ export class IntervalStage implements Iterable<[string, StagedInterval]> {
   clear(): void { for (const id of this.refs.keys()) this.delete(id); }
   take(): LaneBatch[] { const batches = [...this.values()].map(value => value.batch); this.clear(); return batches; }
   prune(keep: (fact: LaneFact) => boolean): void {
-    for (const [id, ref] of this.refs) {
-      ref.facts = ref.facts.filter(keep);
-      if (!ref.facts.length && !ref.record.header.scheduledWorkClassification) this.delete(id);
-    }
+    for (const ref of this.refs.values()) ref.facts = ref.facts.filter(keep);
   }
 }

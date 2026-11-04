@@ -1,0 +1,153 @@
+[
+  {
+    "event": "ready",
+    "at": 1793759848878
+  },
+  {
+    "event": "close-request",
+    "at": 1793759857933,
+    "id": 3,
+    "code": 1001
+  },
+  {
+    "event": "websocketClosed",
+    "at": 1793759858206
+  },
+  {
+    "event": "connect",
+    "at": 1793759858252,
+    "id": 4,
+    "live": true
+  },
+  {
+    "event": "injected-slow-handshake",
+    "at": 1793759858252,
+    "ms": 16000
+  },
+  {
+    "event": "touch",
+    "at": 1793759861937,
+    "x": 491,
+    "y": 1439
+  },
+  {
+    "event": "touch",
+    "at": 1793759865984,
+    "x": 981,
+    "y": 1439
+  },
+  {
+    "event": "connect",
+    "at": 1793759874262,
+    "id": 4,
+    "live": true
+  },
+  {
+    "event": "websocketOpen",
+    "at": 1793759876165
+  },
+  {
+    "event": "write",
+    "at": 1793759876195,
+    "id": 4,
+    "t": "req",
+    "request": "phone-21",
+    "op": "readNeedsYou"
+  },
+  {
+    "event": "write",
+    "at": 1793759876275,
+    "id": 4,
+    "t": "req",
+    "request": "phone-22",
+    "op": "sendRoomMessage",
+    "messageId": "938791d4427ef9928698a54cdb08af58a502ac5b8f513ebae51252106462f1b9"
+  },
+  {
+    "event": "read",
+    "at": 1793759877075,
+    "t": "res",
+    "request": "phone-21",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793759877376,
+    "t": "res",
+    "request": "phone-22",
+    "ok": true
+  },
+  {
+    "event": "websocketFailed",
+    "at": 1793759922676,
+    "reason": "Software caused connection abort"
+  },
+  {
+    "event": "connect",
+    "at": 1793759922720,
+    "id": 5,
+    "live": true
+  },
+  {
+    "event": "websocketFailed",
+    "at": 1793759922727,
+    "reason": "Unable to resolve host \"server.usebeeline.app\": No address associated with hostname"
+  },
+  {
+    "event": "refresh",
+    "at": 1793760056801
+  },
+  {
+    "event": "connect",
+    "at": 1793760059218,
+    "id": 6,
+    "live": true
+  },
+  {
+    "event": "touch",
+    "at": 1793760059847,
+    "x": 491,
+    "y": 1439
+  },
+  {
+    "event": "websocketOpen",
+    "at": 1793760060959
+  },
+  {
+    "event": "write",
+    "at": 1793760060966,
+    "id": 6,
+    "t": "req",
+    "request": "phone-23",
+    "op": "readNeedsYou"
+  },
+  {
+    "event": "read",
+    "at": 1793760061470,
+    "t": "res",
+    "request": "phone-23",
+    "ok": true
+  },
+  {
+    "event": "touch",
+    "at": 1793760063269,
+    "x": 981,
+    "y": 1439
+  },
+  {
+    "event": "write",
+    "at": 1793760063589,
+    "id": 6,
+    "t": "req",
+    "request": "phone-24",
+    "op": "sendRoomMessage",
+    "messageId": "58146ce7ca81f49c685aa104c9795b8408eab69fbda0d7bdc886eec203022a63"
+  },
+  {
+    "event": "read",
+    "at": 1793760063932,
+    "t": "res",
+    "request": "phone-24",
+    "ok": true
+  }
+]

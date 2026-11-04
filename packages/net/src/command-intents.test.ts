@@ -48,6 +48,14 @@ describe('P7 durable private command owner', () => {
     expect(resumed).toHaveBeenCalledTimes(1);
     expect(intents.view()[0]?.state).toBe('committed');
   });
+  it('does not exhaust a cumulative retry token allowance for the same deduplicated command', async () => {
+    const { intents } = owner(), record = await intents.prepare(admitted());
+    const send = vi.fn(async (_operation: string, _args: unknown, _command: { v: 1; id: string }) => receipt(record, 'pending'));
+    for (let index = 0; index < 1001; index++) await intents.dispatch(record, { kind: 'automatic', generation: 1, commandDedupV1: true }, send);
+    expect(send).toHaveBeenCalledTimes(1001);
+    expect(send.mock.calls.every(call => call[2].id === record.id)).toBe(true);
+    expect((await intents.dispatch(record, { kind: 'automatic', generation: 1, commandDedupV1: true }, async () => receipt(record))).state).toBe('committed');
+  });
   it('suspends old-principal intents on logout and resumes only the same principal', async () => {
     const { intents } = owner(), record = await intents.prepare(admitted());
     intents.setPartition({ ...PARTITION, principal: 'different' });
@@ -81,10 +89,10 @@ describe('P7 durable private command owner', () => {
     restored.restore([{ ...record, state: 'sending', sent: true }]);
     expect(restored.view()[0]).toMatchObject({ id: record.id, bytes: record.bytes, digest: record.digest, state: 'unknown' });
   });
-  it('capacity refuses the 101st command synchronously without evicting uncertainty', async () => {
+  it('queues 1,895 commands without evicting uncertainty or refusing the tail', async () => {
     const { intents } = owner();
-    for (let index = 0; index < 100; index++) await intents.prepare({ wire: { operation: 'markRead', input: canonical({ roomId: 'room', messageId: String(index) }) }, isCurrent: () => true });
-    expect(() => intents.prepare({ wire: { operation: 'markRead', input: canonical({ roomId: 'room', messageId: 'overflow' }) }, isCurrent: () => true })).toThrow('capacity');
-    expect(intents.view()).toHaveLength(100);
+    for (let index = 0; index < 1895; index++) await intents.prepare({ wire: { operation: 'markRead', input: canonical({ roomId: 'room', messageId: String(index) }) }, isCurrent: () => true });
+    const restored = owner().intents; restored.restore(intents.view());
+    expect(restored.view()).toHaveLength(1895);
   });
 });

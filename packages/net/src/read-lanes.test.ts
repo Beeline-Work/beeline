@@ -12,7 +12,7 @@ const batch = (from: number, to: number, value: unknown = { count: to }): LaneBa
     payload: { kind: 'scope-replace', family: request.family, scope: 'w', value } }],
 });
 const permit = { isCurrent: () => true };
-const drain = async () => { for (let i = 0; i < 20; i++) await Promise.resolve(); };
+const drain = async () => { for (let i = 0; i < 60; i++) await Promise.resolve(); };
 function setup(execute: () => Promise<LaneSnapshot> = async () => snapshot()) {
   const lanes = new ReadLanes(identity, (_request, value) => typeof (value as { count?: unknown })?.count === 'number');
   lanes.connected(1, [request.family], execute);
@@ -70,12 +70,12 @@ describe('local read lanes (P2)', () => {
     lanes.demand(room,{},permit);expect(lanes.peek(room).value).toBeNull();await drain();
     expect(lanes.peek(room)).toMatchObject({state:'LIVE',value:{revision:2}});expect(reads).toBe(2);
   });
-  it('healthy Room foreground observation reuses its token without a read and exposes the existing Retry',async()=>{
+  it('returning Room observation reuses its token and recovers the missing live baseline',async()=>{
     const room={family:'room-head',roomId:'room-a',workspaceId:'w'} as const,token={};let reads=0;
     const lanes=new ReadLanes(identity,()=>true);lanes.connected(1,['room-head'],async()=>({...snapshot(),value:{revision:++reads}}));
     const release=lanes.demand(room,token,permit);await drain();release();lanes.demand(room,token,permit);await drain();
-    expect(reads).toBe(1);expect(lanes.peek(room)).toMatchObject({state:'PARKED',value:null,error:expect.stringContaining('Retry')});
-    lanes.retry(room,permit);await drain();expect(reads).toBe(2);expect(lanes.peek(room)).toMatchObject({state:'LIVE',value:{revision:2}});
+    expect(reads).toBe(2);expect(lanes.peek(room)).toMatchObject({state:'LIVE',value:{revision:2}});
+    lanes.retry(room,permit);await drain();expect(reads).toBe(3);expect(lanes.peek(room)).toMatchObject({state:'LIVE',value:{revision:3}});
   });
   it('a real disconnected cache miss and a parked lane still require fresh owner admission',async()=>{
     let reads=0;const execute=async()=>{reads++;return snapshot(reads);};const lanes=setup(execute);
@@ -93,14 +93,14 @@ describe('local read lanes (P2)', () => {
     lanes.demand(request,{},permit);await drain();
     expect(reads).toBe(2);expect(lanes.peek(request).value).toBeNull();
   });
-  it('does not reuse a cache whose in-flight group commit was discarded on departure',async()=>{
+  it('retains live coherent coverage when an optional cache write stalls during departure',async()=>{
     let writes=0,reads=0,started!:()=>void,finish!:()=>void;
     const writing=new Promise<void>(done=>{started=done;}),released=new Promise<void>(done=>{finish=done;});
     const lanes=new ReadLanes(identity,()=>true,{write:async()=>{if(++writes===2){started();await released;}},fence:async()=>{},remove:async()=>{}});
     lanes.connected(1,[request.family],async()=>{reads++;return snapshot(reads);});
     const release=lanes.demand(request,{},permit);await drain();
     const applying=lanes.accept(batch(1,2));await writing;release();finish();await applying;
-    expect(lanes.peek(request).state).toBe('PARKED');lanes.demand(request,{},permit);await drain();expect(reads).toBe(2);
+    expect(lanes.peek(request).state).toBe('INACTIVE_CACHED');lanes.demand(request,{},permit);await drain();expect(reads).toBe(1);
   });
   it('coalesces roomId-only and Workspace-known heads, rejecting contradictory scope', async () => {
     let reads = 0;
@@ -200,14 +200,14 @@ describe('local read lanes (P2)', () => {
     expect(encoded.entries[0].snapshot.value).toEqual({ count: 1 });
     expect(lanes.peek(request).state).toBe('LIVE');
   });
-  it('storage failure keeps the old coherent value and cut, then parks without a read', async () => {
+  it('storage failure still publishes the complete new live value and cut', async () => {
     let fail = false;
     const lanes = new ReadLanes(identity, () => true, { write: async () => { if (fail) throw new Error('disk full'); },
       fence: async () => {}, remove: async () => {} });
     lanes.connected(1, [request.family], async () => snapshot());
     lanes.demand(request, {}, permit); await drain(); fail = true;
     await lanes.accept(batch(1, 2));
-    expect(lanes.peek(request)).toMatchObject({ state: 'PARKED', value: { count: 1 }, cut: { through: 1 } });
+    expect(lanes.peek(request)).toMatchObject({ state: 'LIVE', value: { count: 2 }, cut: { through: 2 } });
   });
   it('interprets server logical Room removals through their exact certificate domain', async () => {
     const readerDomain = { authorityScope: 'reader:ada:workspace:w', epoch: '1' };
@@ -339,7 +339,7 @@ describe('precise minimum authority epochs without read admission',()=>{
     const lanes=new ReadLanes(identity,()=>true,{write:async()=>{started();await released;},floor:async()=>{},fence:async()=>{},remove:async()=>{}});
     lanes.connected(1,[request.family],async()=>{reads++;return certified('1');});lanes.demand(request,{},permit);
     await writing;await lanes.advance(visibility,'2');finish();await drain();
-    expect(lanes.peek(request)).toMatchObject({state:'PARKED',value:null});expect(reads).toBe(1);
+    expect(lanes.peek(request).value).toBeNull();expect(lanes.peek(request).state).not.toBe('LIVE');expect(reads).toBe(1);
   });
 });
 

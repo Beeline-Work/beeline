@@ -10,6 +10,21 @@ function fixture() {
   return { owner, admission, changed, navigate: (next: typeof current) => { current = next; owner.navigationChanged(); } };
 }
 describe('committed usage profile demand', () => {
+  it('automatically retries a safe usage read and cancels the wait when the profile closes', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = fixture(); f.owner.connected(1); f.owner.profile(agentId);
+      const send = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('current');
+      const result = f.owner.dispatch(agentId, send);
+      await vi.advanceTimersByTimeAsync(500); expect(await result).toBe('current');
+      f.owner.profile(null); f.owner.profile(agentId);
+      const offline = vi.fn().mockRejectedValue(new Error('offline'));
+      const pending = f.owner.dispatch(agentId, offline).catch(error => error);
+      await vi.advanceTimersByTimeAsync(1); f.owner.profile(null);
+      expect(await pending).toBeInstanceOf(Error);
+      await vi.advanceTimersByTimeAsync(60_000); expect(offline).toHaveBeenCalledTimes(1);
+    } finally { vi.useRealTimers(); }
+  });
   it('the actual AgentProfile route is recognized and changing agent advances navigation generation', () => {
     const nav = new NavigationOwner();
     const route = (id: string) => ({ routes: [{ key: 'profile', name: 'beeline/agent-profile', params: { agentId: id, communityId: 'workspace' } }] });

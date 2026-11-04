@@ -44,7 +44,7 @@ const roomFamily=(family:LaneFamily):boolean=>family==='room-head'||family===SCH
 
 /** An executor is installed only by the negotiated connection owner. Demand
  * arrives only after admission has atomically consumed a real owner pass.
- * Failure, push, time and cache age cannot call the executor.
+ * Safe reads queue and recover on backoff while that owner remains current.
  */
 const AUTHORITY_FENCE_KIND='authority-fence';
 const UNAVAILABLE='Projection unavailable; Retry.', ACCESS_REMOVED='Access removed.';
@@ -53,6 +53,11 @@ export class ReadLanes {
   private readonly fences = new Map<string, string>();
   private readonly floors = new Map<string,string>();
   private readonly joined = new WeakMap<object, { key: string; entry: Entry }>();
+  private cacheFlight = false;
+  private activeReads = 0;
+  private readonly waitingReads: Array<() => void> = [];
+  private readonly retries = new Map<Entry, ReturnType<typeof setTimeout>>();
+  private readonly failures = new WeakMap<Entry, number>();
   private generation = -1;
   private session = 0;
   private executor?: (request: LaneRequest) => Promise<LaneSnapshot>;
@@ -101,6 +106,7 @@ export class ReadLanes {
   connected(generation: number, families: readonly LaneFamily[], execute: (request: LaneRequest) => Promise<LaneSnapshot>,
     options?:{readonly roomHeadContinuityV1?:boolean; readonly scheduledWorkCoverageV1?:boolean}): void {
     if (!Number.isSafeInteger(generation) || generation <= this.generation) throw new Error('stale lane connection');
+    this.clearRetries();
     this.generation = generation;
     for(const item of this.arrivals)item.done();this.arrivals=[];this.interrupted.clear();
     for(const entry of this.entries.values()){entry.revision++;entry.flight=undefined;this.clearQueued(entry);}
@@ -126,6 +132,7 @@ export class ReadLanes {
 
   /** Interruption hides private data until a newly authorized snapshot. */
   disconnected(): void {
+    this.clearRetries();
     for(const item of this.arrivals)item.done();this.arrivals=[];this.interrupted.clear();
     this.groups.clear();
     this.executor = undefined;
@@ -144,19 +151,20 @@ export class ReadLanes {
     const previous = this.joined.get(token);
     if (previous && previous.key !== key) throw new Error('lane owner key changed');
     this.constrain(request);
-    const entry = previous?.entry ?? this.entry(request);
-    if (!previous) this.joined.set(token, { key, entry });
+    const entry = this.entry(request);
+    if (previous?.entry !== entry) this.joined.set(token, { key, entry });
     const owner: Owner = { permit, active: true };
     entry.owners.set(token, owner);
     if(permit.isCurrent()&&this.continuouslyFed(request.family)&&entry.view.state==='INACTIVE_CACHED'&&entry.snapshot&&entry.covered&&
       entry.connection===this.generation&&!entry.flight&&!entry.committing&&!entry.queued.size&&
       this.supports(request.family)&&this.authorized(entry.snapshot.authority))
       this.publish(entry,{state:'LIVE',value:entry.snapshot.value,cut:entry.snapshot.cut,error:null});
-    if (permit.isCurrent() && !entry.flight && entry.view.state !== 'LIVE' && !previous && this.supports(request.family)) this.open(entry);
+    if (permit.isCurrent() && !entry.flight && entry.view.state !== 'LIVE' && !this.retries.has(entry) && this.supports(request.family)) this.open(entry);
     return () => {
       if (entry.owners.get(token) !== owner) return;
       owner.active = false; entry.owners.delete(token);
       if (!liveOwner(entry)) {
+        this.cancelRetry(entry);
         // LIVE+covered is published only after a successful coherent commit.
         // The opening promise may still be unwinding after that notification;
         // its tail cannot invalidate this coverage when no facts are queued.
@@ -188,7 +196,7 @@ export class ReadLanes {
   }
 
   /** Complete, digest-verified logical batches only. The assembly owner never
-   * sends partial facts here. Serialize persistence and publication in stream order.
+   * sends partial facts here. Serialize authority and publication in stream order.
    */
   accept(batch: LaneBatch): Promise<void> {return this.queueBatch(batch,false);}
   private queueBatch(batch:LaneBatch,replay:boolean):Promise<void>{
@@ -329,6 +337,7 @@ export class ReadLanes {
    * safe queued replacements are explicit. Callers set every affected view
    * before notification, and storage remains owned by the same serial actor. */
   private transition(entry:Entry,view:LaneView,retain:'clear'|'baseline'|'keep'='clear',future?:LaneBatch[],continuity=false):void{
+    this.cancelRetry(entry);
     entry.revision++;entry.flight=undefined;entry.covered=false;
     if(retain==='clear')entry.baseline=undefined;
     else if(retain==='baseline'&&entry.snapshot){const{value:_value,...baseline}=entry.snapshot;entry.baseline=baseline;}
@@ -403,7 +412,7 @@ export class ReadLanes {
       if (roomFamily(request.family) ? !request.roomId : !request.workspaceId&&!request.family.startsWith('owner-')) throw new Error('invalid lane scope');
       entry = { key, request: Object.freeze({ ...request }), view: absent(), owners: new Map(), revision: 0,
         connection: -1,covered:false,committing:0, queued: this.staging.stage(), listeners: new Set() };
-      this.entries.set(key, entry); this.evict();
+      this.entries.set(key, entry); this.evict(entry);
     }
     if (roomFamily(request.family) && request.workspaceId) {
       const installed=entry.snapshot??entry.baseline;
@@ -426,7 +435,7 @@ export class ReadLanes {
     const current = () => session === this.session && generation === this.generation && revision === entry.revision && liveOwner(entry);
     // Recheck immediately before dispatch, with no intervening await.
     if (!current()) return;
-    const flight = Promise.resolve().then(() => current() ? execute(entry.request) : undefined).then(async snapshot => {
+    const flight = Promise.resolve().then(() => current() ? this.executeRead(() => current() ? execute(entry.request) : Promise.resolve(undefined)) : undefined).then(async snapshot => {
       if (!snapshot || !current()) return;
       // Snapshot installation uses the same serial actor as committed facts.
       const install = this.serial.then(async () => {
@@ -451,7 +460,7 @@ export class ReadLanes {
         (!this.floors.has(scope.authorityScope)||BigInt(scope.epoch)>=BigInt(this.floors.get(scope.authorityScope)!))&&
         (!this.fences.has(scope.authorityScope) || BigInt(scope.epoch) > BigInt(this.fences.get(scope.authorityScope)!)));
   }
-  /** Every policy uses one version-fenced whole-group write and publication. */
+  /** Whole-group publication is version-fenced; persistence is optional. */
   private async installGroup(proposal:GroupProposal<Entry>,session:number,generation:number):Promise<void>{
     if(session!==this.session||generation!==this.generation)return;
     const {items,whole,id}=proposal;
@@ -459,19 +468,47 @@ export class ReadLanes {
     if(!this.groups.current(proposal)){
       if(!authorityCurrent())for(const{cell}of items)this.park(cell,'Authority changed; Retry.');return;
     }
-    const encoded=JSON.stringify({schema:1,identity:this.identity,group:id,
-      entries:whole.map(({cell,snapshot})=>({key:cell.key,request:cell.request,snapshot}))});
-    if(new TextEncoder().encode(encoded).length>1024*1024)throw new Error('Projection consistency group exceeds storage budget.');
-    for(const{cell}of items)cell.committing++;
-    try{await this.storage?.write(this.groupStorageKey(id),encoded);}
-    finally{for(const{cell}of items)cell.committing--;}
+    // A cache write can stall or fail indefinitely. Keep at most one optional
+    // write in flight; live publication and subsequent deltas never wait on it.
+    if (this.storage && !this.cacheFlight) {
+      const encoded=JSON.stringify({schema:1,identity:this.identity,group:id,
+        entries:whole.map(({cell,snapshot})=>({key:cell.key,request:cell.request,snapshot}))});
+      this.cacheFlight = true;
+      void Promise.resolve().then(() => this.storage!.write(this.groupStorageKey(id), encoded))
+        .catch(() => {}).finally(() => { this.cacheFlight = false; });
+    }
     if(session!==this.session||generation!==this.generation)return;
     if(!this.groups.committed(proposal)){
       if(!authorityCurrent())for(const{cell}of items)this.park(cell,'Authority changed; Retry.');return;
     }
+    for(const{cell}of items){this.cancelRetry(cell);this.failures.delete(cell);}
     for(const{cell,snapshot}of items)cell.view={state:liveOwner(cell)?'LIVE':'INACTIVE_CACHED',value:snapshot.value,cut:snapshot.cut,error:null};
     for(const{cell}of items)this.notify(cell);
     this.evict();
+  }
+  private async executeRead<T>(read: () => Promise<T>): Promise<T> {
+    if (this.activeReads >= 8) await new Promise<void>(resolve => this.waitingReads.push(resolve));
+    else this.activeReads++;
+    try { return await read(); }
+    finally { const next = this.waitingReads.shift(); if (next) next(); else this.activeReads--; }
+  }
+  private cancelRetry(entry: Entry): void {
+    const timer = this.retries.get(entry);
+    if (timer !== undefined) clearTimeout(timer);
+    this.retries.delete(entry);
+  }
+  private clearRetries(): void {
+    for (const entry of this.retries.keys()) this.cancelRetry(entry);
+  }
+  private scheduleRetry(entry: Entry): void {
+    if (!liveOwner(entry) || !this.executor || !this.supports(entry.request.family) || this.retries.has(entry)) return;
+    const failures = (this.failures.get(entry) ?? 0) + 1;
+    this.failures.set(entry, failures);
+    const session = this.session, generation = this.generation;
+    this.retries.set(entry, setTimeout(() => {
+      this.retries.delete(entry);
+      if (session === this.session && generation === this.generation && liveOwner(entry) && entry.view.state === 'PARKED') this.open(entry);
+    }, Math.min(30_000, 500 * 2 ** Math.min(failures - 1, 6))));
   }
   private clearQueued(entry:Entry):void{
     this.groups.cancel(entry);
@@ -488,7 +525,7 @@ export class ReadLanes {
     for(const entry of this.entries.values())if(this.joint(entry)&&this.groups.group(entry.request.workspaceId!)===group){
       this.transition(entry,{...absent(),state:'PARKED',error:UNAVAILABLE},'baseline');changed.push(entry);
     }
-    for(const entry of changed)this.notify(entry);
+    for(const entry of changed){this.notify(entry);this.scheduleRetry(entry);}
   }
   private parkTray(group:string):void{
     this.groups.fail(group);
@@ -503,21 +540,23 @@ export class ReadLanes {
   }
   private park(entry: Entry, error: string): void {
     if(this.joint(entry)){this.parkTray(this.groups.group(entry.request.workspaceId!));return;}
-    this.transition(entry,{...entry.view,state:'PARKED',error},'keep');this.notify(entry);
+    this.transition(entry,{...entry.view,state:'PARKED',error},'keep');this.notify(entry);this.scheduleRetry(entry);
   }
   private parkStream(stream: string, error: string): void {
     for (const entry of this.entries.values()) if ((entry.snapshot?.cut.stream ?? `workspace:${entry.request.workspaceId}`) === stream) this.park(entry, error);
   }
   private publish(entry: Entry, view: LaneView): void { entry.view = Object.freeze(view); this.notify(entry); }
   private notify(entry: Entry): void { if (liveOwner(entry)) for (const listener of entry.listeners) listener(); }
-  private evict(): void {
+  private evict(creating?: Entry): void {
+    const candidates=[...this.entries].filter(([,entry])=>entry!==creating&&!liveOwner(entry)&&!entry.listeners.size&&!entry.flight);
+    if(!candidates.length)return;
     let hotBytes = [...this.entries.values()].reduce((sum, entry) => sum + (entry.snapshot ? bytes(entry.snapshot) : 0), 0);
     let inactiveRooms = [...this.entries.values()].filter(entry => !liveOwner(entry) && entry.request.family === 'room-head').length;
-    for (const [key, entry] of this.entries) {
-      if (liveOwner(entry) || entry.listeners.size || entry.flight) continue;
+    for (const [key, entry] of candidates) {
       if (this.entries.size <= 128 && hotBytes <= 8 * 1024 * 1024 && (entry.request.family !== 'room-head' || inactiveRooms <= 3)) continue;
       hotBytes -= entry.snapshot ? bytes(entry.snapshot) : 0;
       if (entry.request.family === 'room-head') inactiveRooms -= 1;
+      entry.snapshot=undefined;entry.baseline=undefined;entry.view=absent();
       this.groups.drop(entry);
     }
     this.groups.retain();

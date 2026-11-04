@@ -61,9 +61,7 @@ export class AdmissionOwner {
   private session: object = {};
   private identity: Identity;
   private readonly residencies = new Map<string, Residency>();
-  private readonly lastResidencies = new Map<string, number>();
   private readonly retiredResidencies = new Map<string, Residency>();
-  private lastResidency = -1;
   private lastConnection = -1;
   private recoveryLifetime = { active: false };
   private foreground = true;
@@ -81,8 +79,6 @@ export class AdmissionOwner {
     this.recoveryLifetime.active = false;
     this.identity = Object.freeze({ ...identity });
     this.session = {};
-    this.lastResidency = -1;
-    this.lastResidencies.clear();
     this.retiredResidencies.clear();
     this.lastConnection = -1;
     this.mediaResidency = undefined;
@@ -153,11 +149,10 @@ export class AdmissionOwner {
     if (!this.foreground || !owner?.lifetime.active || owner.generation !== generation || owner.roomId !== roomId)
       return this.deny('inactive media viewport');
     const ids = new Set(objectIds);
-    if (ids.size > 128) return this.deny('media viewport quota');
+    for (const id of owner.seen) if (!ids.has(id)) owner.seen.delete(id);
     const requests = [...ids].map(objectId => ({ route: 'phone.readMediaMetadata' as const, input: { objectId } }));
     for (const request of requests) this.validateRequests([request]);
-    if (owner.seen.size + [...ids].filter(id => !owner.seen.has(id)).length > 512) return this.deny('media residency quota');
-    for (const [id, lifetime] of owner.visible) if (!ids.has(id)) { lifetime.active = false; owner.visible.delete(id); }
+    for (const [id, lifetime] of owner.visible) if (!ids.has(id)) { lifetime.active = false; owner.visible.delete(id); owner.seen.delete(id); }
     const passes: { objectId: string; pass: Pass<'phone.readMediaMetadata'> }[] = [];
     for (const request of requests) {
       if (owner.seen.has(request.input.objectId)) continue;
@@ -175,7 +170,7 @@ export class AdmissionOwner {
     this.validateGeneration(connection);
     const owner = this.mediaResidency;
     if (!this.foreground || !owner?.lifetime.active || owner.generation !== generation || owner.roomId !== roomId ||
-        connection <= this.lastMediaConnection || requests.length > 256) return this.deny('inactive media recovery');
+        connection <= this.lastMediaConnection) return this.deny('inactive media recovery');
     const keys = new Set<string>();
     for (const request of requests) {
       this.validateRequests([request]);
@@ -224,14 +219,11 @@ export class AdmissionOwner {
     if (!this.foreground) return this.deny('background');
     if (!owner || owner.length > 256) return this.deny('invalid owner');
     this.validateGeneration(generation);
-    const signature = canonical(requests);
+    const signature = JSON.stringify(requests.map(request => this.key(request)));
     const residency = this.residencies.get(owner);
-    if (residency?.generation === generation) {
-      if (residency.screen !== screen || residency.signature !== signature) return this.deny('residency changed');
+    if (residency?.generation === generation && residency.screen === screen && residency.signature === signature) {
       return residency.passes as readonly Pass<ScreenRoute<S>>[];
     }
-    if (generation < this.lastResidency || generation <= (this.lastResidencies.get(owner) ?? -1)) return this.deny('stale residency');
-    if (!residency && this.residencies.size >= 16) return this.deny('owner quota');
     this.validateRequests(requests);
     for (const supplied of requests) {
       const request = supplied as Requests<ReadId>;
@@ -246,8 +238,6 @@ export class AdmissionOwner {
       } else if (policy.screen !== screen) return this.deny('wrong screen');
     }
     if (residency) residency.lifetime.active = false;
-    this.lastResidency = Math.max(this.lastResidency, generation);
-    this.lastResidencies.set(owner, generation);
     const lifetime = { active: true };
     const passes = requests.map(request => this.mint<ScreenRoute<S>>(request, lifetime));
     this.residencies.set(owner, { generation, screen, signature, lifetime, passes, keys: requests.map(request => this.key(request)) });
@@ -266,7 +256,6 @@ export class AdmissionOwner {
   forgetOwner(owner: string): void {
     this.releaseOwner(owner);
     this.retiredResidencies.delete(owner);
-    this.lastResidencies.delete(owner);
   }
 
   /** Foreground can resume local observation of the same navigation owner.
@@ -305,17 +294,22 @@ export class AdmissionOwner {
     const residency=[...this.residencies.values()].find(value=>value.generation===generation&&value.screen==='Tray'&&
       value.lifetime.active&&value.keys.includes(this.key(read)));
     if(!residency)return this.deny('inactive paint owner');
-    if(messageIds.length>30)return this.deny('paint quota');
     const painted=residency.painted??=new Set<string>();
     const ids=[...new Set(messageIds)].filter(id=>!painted.has(id));
     if(!ids.length)return undefined;
     const request={route:'phone.markNeedsYouSeen' as const,input:{workspaceId,messageIds:ids}};
     this.validateRequests([request]);
-    const addedBytes=new TextEncoder().encode(JSON.stringify(ids)).length;
-    if((residency.paintedBytes??0)+addedBytes>64*1024)return this.deny('paint residency capacity');
+    const addedBytes=ids.reduce((sum,id)=>sum+new TextEncoder().encode(JSON.stringify([id])).length,0);
     const admitted=this.spend(request,this.mint(request,residency.lifetime));
     residency.paintedBytes=(residency.paintedBytes??0)+addedBytes;
     for(const id of ids)painted.add(id);
+    // Recent dedup is an optimization. Seen writes are idempotent on the server;
+    // scrolling beyond this history must not exhaust the residency.
+    while ((residency.paintedBytes ?? 0) > 64 * 1024 && painted.size) {
+      const oldest = painted.values().next().value!;
+      painted.delete(oldest);
+      residency.paintedBytes! -= new TextEncoder().encode(JSON.stringify([oldest])).length;
+    }
     return admitted;
   }
 
@@ -420,7 +414,6 @@ export class AdmissionOwner {
     return pass;
   }
   private validateRequests(requests: readonly Requests<PolicyId>[]): void {
-    if (requests.length > 16) return this.deny('owner key quota');
     const keys = new Set<string>();
     for (const request of requests) {
       if (!Object.hasOwn(policies, request.route)) return this.deny('unknown route');

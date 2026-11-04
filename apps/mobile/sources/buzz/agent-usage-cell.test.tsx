@@ -26,6 +26,32 @@ const installed = (executeRead: (id: string) => Promise<AgentUsageCell>, generat
 beforeEach(() => { resetClientState(); (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true; });
 afterEach(() => { resetClientState(); vi.restoreAllMocks(); });
 describe('independent canonical usage cells', () => {
+  it('keeps usage and revocation advancing after 1,895 distinct profiles', async () => {
+    installed(async id => ({ ...fact(1), agentId: id }));
+    for (let index = 0; index < 1895; index++) {
+      const id = index.toString(16).padStart(64, '0');
+      setUsageCellProfile(id); await drain();
+      expect(usageCellSnapshot(id).cell?.agentId).toBe(id);
+      receiveUsageCell({ ...fact(2), agentId: id, allowed: false, usage: undefined });
+      receiveUsageCell({ ...fact(1), agentId: id });
+      expect(usageCellSnapshot(id).cell?.allowed).toBe(false);
+    }
+  });
+  it('revisiting a profile waits for current authority before painting a delayed old grant', async () => {
+    let finish!: (cell: AgentUsageCell) => void; let reads = 0;
+    installed(async id => {
+      if (id !== agentId) return { ...fact(1), agentId: id };
+      if (++reads === 1) return fact(1);
+      return new Promise<AgentUsageCell>(resolve => { finish = resolve; });
+    });
+    setUsageCellProfile(agentId); await drain();
+    receiveUsageCell({ ...fact(2), allowed: false, usage: undefined });
+    setUsageCellProfile('c'.repeat(64)); await drain();
+    setUsageCellProfile(agentId); await drain(); receiveUsageCell(fact(1));
+    expect(usageCellSnapshot(agentId).cell).toBeNull();
+    finish({ ...fact(2), allowed: false, usage: undefined }); await drain();
+    expect(usageCellSnapshot(agentId).cell?.allowed).toBe(false);
+  });
   it('only committed profile selection reads; subscribe/remount and repeated selection cannot replenish it', async () => {
     const read = vi.fn(async () => fact(1)); installed(read);
     const stop = subscribeUsageCell(() => {}); stop(); subscribeUsageCell(() => {})();
@@ -34,12 +60,21 @@ describe('independent canonical usage cells', () => {
     expect(read).toHaveBeenCalledTimes(1); expect(usageCellSnapshot(agentId).cell).toEqual(fact(1));
     setUsageCellProfile(null); expect(usageCellSnapshot(agentId).cell).toBeNull();
   });
-  it('a canonical source cell arriving before initial dispatch consumes the joined read opportunity', async () => {
+  it('a source arriving before the baseline waits for a fresh read and then wins by revision', async () => {
     const executeRead = vi.fn(async () => fact(1)); const joinedRead = vi.fn();
     installUsageCellConnection({ generation: 1, usageCellV1: true, origin: 'https://synthetic.test', principal, executeRead, joinedRead });
     setUsageCellProfile(agentId); receiveUsageCell(fact(2)); await drain();
-    expect(executeRead).not.toHaveBeenCalled(); expect(joinedRead).toHaveBeenCalledWith(agentId);
+    expect(executeRead).toHaveBeenCalledTimes(1); expect(joinedRead).not.toHaveBeenCalled();
     expect(usageCellSnapshot(agentId).cell?.revision).toBe(2);
+  });
+  it('a denial received during the baseline read never briefly paints the older allowed value', async () => {
+    let finish!: (cell: AgentUsageCell) => void;
+    installed(() => new Promise(resolve => { finish = resolve; })); setUsageCellProfile(agentId); await drain();
+    receiveUsageCell({ ...fact(2), allowed: false, usage: undefined });
+    const allowed: boolean[] = [];
+    const stop = subscribeUsageCell(() => { allowed.push(usageCellSnapshot(agentId).cell?.allowed === true); });
+    finish(fact(1)); await drain(); stop();
+    expect(allowed).not.toContain(true); expect(usageCellSnapshot(agentId).cell?.allowed).toBe(false);
   });
   it('a newer source cell wins over an older pending initial snapshot without a profile read', async () => {
     let resolve!: (cell: AgentUsageCell) => void;

@@ -139,10 +139,10 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
     }
   });
 
-  it('does not publish a partial group or advance any stored cut when one whole-group write fails',async()=>{
+  it('publishes the complete live group and preserves the old cached cut when cache persistence fails',async()=>{
     let fail=false;const{lanes,writes,reads}=await setup(undefined,async()=>{if(fail)throw new Error('storage');});
     const old=JSON.parse(writes.at(-1)!);fail=true;await lanes.accept(batch(1,2,edits(),cv(1)));
-    expect(lanes.peek(head)).toMatchObject({state:'PARKED',value:null});expect(lanes.peek(count).value).toBeNull();
+    expect(lanes.peek(head)).toMatchObject({state:'LIVE',cut:{through:2}});expect(lanes.peek(count)).toMatchObject({state:'LIVE',cut:{through:2}});
     expect(old.entries.every((entry:{snapshot:LaneSnapshot})=>entry.snapshot.cut.through===1)).toBe(true);expect(reads()).toBe(2);
   });
 
@@ -201,7 +201,7 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
     expect(lanes.peek(count).value).toBeNull();expect(reads()).toBe(3);
   });
 
-  it('a Tray persistence failure hides that group and still commits the independent Room in the interval',async()=>{
+  it('a Tray cache failure still publishes the complete Tray and independent Room interval',async()=>{
     const roomRequest={family:'room-head',roomId:room,workspaceId:ws} as const;
     const roomAuthority={digest:'room-certificate',scopes:[{authorityScope:reader,epoch:'1'},{authorityScope:`room:${room}`,epoch:'1'}]},roomGroup=`room-head:${room}:ada`;
     let fail=false,reads=0;
@@ -215,7 +215,7 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
     for(const request of[count,head,roomRequest])lanes.demand(request,{},permit);await settle();fail=true;
     await lanes.accept(batch(1,2,[...edits(),{atomicGroup:roomGroup,authority:roomAuthority,
       payload:{kind:'scope-replace',family:'room-head',scope:room,value:'Room after'}}],cv(1)));
-    expect(lanes.peek(head)).toMatchObject({state:'PARKED',value:null});expect(lanes.peek(count).value).toBeNull();
+    expect(lanes.peek(head)).toMatchObject({state:'LIVE',cut:{through:2}});expect(lanes.peek(count)).toMatchObject({state:'LIVE',cut:{through:2}});
     expect(lanes.peek(roomRequest)).toMatchObject({state:'LIVE',value:'Room after',cut:{through:2}});expect(reads).toBe(3);
   });
 });

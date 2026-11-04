@@ -31,6 +31,32 @@ const settle = async () => { for (let i = 0; i < 35; i++) await Promise.resolve(
 beforeEach(() => { fixture.authorityReady = true;fixture.commandsReady=true; fixture.state = 'active'; resetClientState(); vi.clearAllMocks(); });
 
 describe('real mobile router owner', () => {
+  it('retains more than sixteen Saved pages without refusing the next continuation', async () => {
+    const cursor = (n: number) => `saved1.${Buffer.from(String(n)).toString('base64url')}`;
+    const tray = { family: 'needs-you-tray' as const, workspaceId: 'w' };
+    const scopeList = [...scopes, { authorityScope: 'reader:ada:workspace:w:visibility', epoch: '1' }];
+    const base = { kind: 'snapshot' as const, scope: 'w', cut: snapshot().cut, atomicGroup: 'needs-you:w:ada',
+      authority: { scopes: scopeList, digest: hash(scopeList) }, clockVersion: `tray-clock-v1:${'a'.repeat(32)}:0` };
+    const execute = vi.fn(async (input: RouterSnapshotInput): Promise<RouterSnapshot> => {
+      if (input.family === 'needs-you-tray') return { ...base, family: input.family,
+        value: { needs: { items: [] }, saved: { windowId: `saved1:${'b'.repeat(64)}`, rows: [], next: cursor(0) } } };
+      const before = (input as { before: string }).before;
+      const index = Number(Buffer.from(before.slice(7), 'base64url').toString());
+      return { ...base, family: 'needs-you-saved-page', value: { windowId: `saved1:${index.toString(16).padStart(64, '0')}`,
+        before, rows: [], next: cursor(index + 1) } };
+    });
+    routerOwnerNavigation({ routes: [{ key: 'tray', name: 'beeline/tray', params: { communityId: 'w' } }] });
+    const head = acquireRouterLane(tray, () => true, () => {});
+    await routerOwnerNegotiated({ generation: 1, families: ['needs-you-tray', 'needs-you-saved-page'], authorityFencesV1: true, execute }); await settle();
+    const pages: ReturnType<typeof acquireRouterSavedContinuation>[] = [];
+    for (let index = 0; index < 32; index++) {
+      const page = acquireRouterSavedContinuation('w', cursor(index), () => true, () => {}); pages.push(page); await settle();
+      expect(page.current().state).toBe('LIVE');
+    }
+    for (let index = 0; index < 1895; index++) expect(admitRouterTrayCommand('w', { operation: 'setMessageBookmark',
+      input: { roomId: 'room', messageId: String(index), bookmarked: true } }).wire.operation).toBe('setMessageBookmark');
+    pages.forEach(page => page.release()); head.release();
+  });
   it('F03 roster query observers cannot admit reads; Submit binds a held revision and source controls retire it without reading',async()=>{
     const ws='11111111-1111-4111-8111-111111111111',head={family:'workspace-roster' as const,workspaceId:ws};
     const input={...head,query:{revision:'1',q:'Reader'}};
@@ -42,16 +68,23 @@ describe('real mobile router owner', () => {
     const execute=vi.fn(async(request:RouterSnapshotInput):Promise<RouterSnapshot>=>({...snapshot(),family:'workspace-roster',scope:ws,
       value,atomicGroup:`workspace-roster:${ws}:ada${'query'in request?':query:sealed':''}`,
       authority:{scopes:certScopes,digest:hash(certScopes)},cut:{...snapshot().cut,stream:`workspace:${ws}`}}));
-    routerOwnerNavigation({routes:[{key:'members',name:'beeline/members',params:{communityId:ws}}]});
+    routerOwnerNavigation({routes:[{key:'members',name:'beeline/members',params:{}}]});
     const root=acquireRouterLane(head,()=>true,()=>{});
     await routerOwnerNegotiated({generation:1,families:['workspace-roster'],authorityFencesV1:true,execute});await settle();
     const observer=acquireRouterLane(input,()=>true,()=>{});await settle();expect(execute).toHaveBeenCalledTimes(1);
     expect(()=>acquireRouterRosterQuery({...input,query:{revision:'2',q:'forged'}},()=>true,()=>{})).toThrow('no longer held');
     const page=acquireRouterRosterQuery(input,()=>true,()=>{});await settle();expect(execute).toHaveBeenCalledTimes(2);
     expect(page.current()).toMatchObject({state:'LIVE',value});
+    const extraPages=[];
+    for(let index=0;index<32;index++){
+      const extra=acquireRouterRosterQuery({...input,query:{revision:'1',q:`Reader ${index}`}},()=>true,()=>{});
+      extraPages.push(extra);await settle();expect(extra.current().state).toBe('LIVE');
+    }
+    extraPages.forEach(extra=>extra.release());
+    const readCount=execute.mock.calls.length;
     const nextScopes=[{authorityScope:`roster:${ws}`,epoch:'2'}];
     routerOwnerReceive({kind:'authority-fence',scope:ws,authorityScope:`roster:${ws}`,mode:'advance',authority:{scopes:nextScopes,digest:hash(nextScopes)}});
-    await settle();expect(page.current()).toMatchObject({state:'PARKED',value:null});expect(execute).toHaveBeenCalledTimes(2);
+    await settle();expect(page.current()).toMatchObject({state:'PARKED',value:null});expect(execute).toHaveBeenCalledTimes(readCount);
     page.release();observer.release();root.release();
   });
 
@@ -352,7 +385,7 @@ it('retains committed profile selection before initialization and owns one cell 
   await settle(); expect(executeUsageCell).toHaveBeenCalledTimes(2);
 });
 
-it('a healthy Room foreground resumes observation without a new pass and exposes explicit Retry for its unverified head',async()=>{
+it('Room foreground automatically refreshes its unverified head with the current observation owner',async()=>{
   const room={family:'room-head' as const,roomId:'11111111-1111-4111-8111-111111111111',workspaceId:'w'};
   const roomScopes=[...scopes,{authorityScope:'room:11111111-1111-4111-8111-111111111111',epoch:'1'}];
   const current={...snapshot(),family:'room-head',scope:'11111111-1111-4111-8111-111111111111',value:{room:{id:'11111111-1111-4111-8111-111111111111'},messages:[]},
@@ -364,9 +397,9 @@ it('a healthy Room foreground resumes observation without a new pass and exposes
   expect(lane.current().state).toBe('LIVE');expect(execute).toHaveBeenCalledTimes(1);
   fixture.state='background';fixture.events.forEach(listener=>listener('background'));
   fixture.state='active';fixture.events.forEach(listener=>listener('active'));await settle();
-  expect(execute).toHaveBeenCalledTimes(1);
-  expect(lane.current()).toMatchObject({state:'PARKED',value:null,error:expect.stringContaining('Retry')});
-  retryRouterLane(room);await settle();expect(execute).toHaveBeenCalledTimes(2);expect(lane.current().state).toBe('LIVE');
+  expect(execute).toHaveBeenCalledTimes(2);
+  expect(lane.current().state).toBe('LIVE');
+  retryRouterLane(room);await settle();expect(execute).toHaveBeenCalledTimes(3);expect(lane.current().state).toBe('LIVE');
   lane.release();
 });
 
@@ -478,11 +511,17 @@ it('F07: actual focused owner coalesces tool demand and refuses a completion aft
     authority:{scopes:[{authorityScope:`reader:ada:workspace:${workspaceId}`,epoch:'1'},{authorityScope:`room:${roomId}`,epoch:'1'}],digest:hash([{authorityScope:`reader:ada:workspace:${workspaceId}`,epoch:'1'},{authorityScope:`room:${roomId}`,epoch:'1'}])},
   } as RouterSnapshot));
   let finish!:(value:unknown)=>void;
-  const executeTools=vi.fn(()=>new Promise<any>(resolve=>{finish=resolve;}));
+  const releases:Array<(value:unknown)=>void>=[];
+  const executeTools=vi.fn(()=>new Promise<any>(resolve=>{finish=resolve;releases.push(resolve);}));
   routerOwnerNavigation({routes:[{key:'room',name:'beeline/chat/[channelId]',params:{channelId:roomId,communityId:workspaceId}}]});
   const head=acquireRouterLane(request,()=>true,()=>{});
   await routerOwnerNegotiated({generation:1,families:['room-head'],execute,executeTools});await settle();
   expect(head.current().state).toBe('LIVE');
+  const burst=Array.from({length:32},(_,index)=>readRouterToolPage({roomId,anchor:index.toString(16).padStart(64,'0')}));
+  expect(executeTools).toHaveBeenCalledTimes(16);
+  releases.splice(0).forEach(resolve=>resolve({roomId,messages:[]}));await settle();
+  expect(executeTools).toHaveBeenCalledTimes(32);
+  releases.splice(0).forEach(resolve=>resolve({roomId,messages:[]}));await Promise.all(burst);executeTools.mockClear();
   const input={roomId,anchor:'a'.repeat(64)};
   const first=readRouterToolPage(input),second=readRouterToolPage(input);
   const results=Promise.allSettled([first,second]);expect(executeTools).toHaveBeenCalledTimes(1);

@@ -19,6 +19,7 @@ export interface CommandIntentStorage {
 export type CommandAttempt = Readonly<{ generation: number; commandDedupV1: boolean }> & (
   | { readonly kind: 'initial' }
   | { readonly kind: 'reconnect' }
+  | { readonly kind: 'automatic' }
   | { readonly kind: 'retry'; readonly actionId: string }
 );
 export interface AdmittedCommand {
@@ -29,23 +30,18 @@ const terminal = (state: IntentState) => state === 'committed' || state === 'ref
 const partitionKey = (partition: CommandPartition) => canonical([partition.origin, partition.principal]);
 const intentKey = (intent: Pick<CommandIntent, 'origin' | 'principal' | 'operation' | 'id'>) =>
   canonical([intent.origin, intent.principal, intent.operation, intent.id]);
-const byteLength = (value: string) => { let bytes = 0; for (const char of value) {
-  const code = char.codePointAt(0)!; bytes += code < 128 ? 1 : code < 2048 ? 2 : code < 65536 ? 3 : 4;
-} return bytes; };
 
 /** Trusted connection/action owner only. No transport, timers, global storage,
  * admission minting or feature-callable operation executor lives here.
  * PREPARED -> SENDING -> COMMITTED/PENDING; a lost outcome -> UNKNOWN.
- * UNKNOWN resumes with the SAME bytes/id only on real reconnect/explicit Retry.
+ * UNKNOWN resumes only with the SAME bytes/id against negotiated deduplication.
  * Stop waiting never cancels an admitted effect; logout suspends its partition.
  */
 export class CommandIntents {
   private readonly records = new Map<string, CommandIntent>();
   private readonly preparing = new Map<string, Promise<CommandIntent>>();
-  private readonly reservations = new Map<string, { bytes: number; operation: IntentOperation; input: string; partition: string }>();
+  private readonly reservations = new Map<string, { operation: IntentOperation; input: string; partition: string }>();
   private readonly flights = new Map<string, Promise<CommandIntent>>();
-  private readonly attempts = new Map<string, Set<string>>();
-  private readonly generations = new Map<string, number>();
   private serial: Promise<void> = Promise.resolve();
   private partition: CommandPartition | undefined;
   constructor(private readonly storage: CommandIntentStorage,
@@ -66,8 +62,6 @@ export class CommandIntents {
   restore(records: readonly CommandIntent[]): void {
     if (this.records.size || this.reservations.size || this.flights.size) throw new Error('command restore requires empty owner');
     const restored = new Map<string, CommandIntent>();
-    let pending = 0, bytes = 0;
-    if (records.length > 200) throw new Error('command storage capacity');
     for (const record of records) {
       if (!record || record.v !== 1 || record.schema !== 1 || !OPERATIONS.includes(record.operation) ||
           !/^[A-Za-z0-9][A-Za-z0-9:._-]{0,127}$/.test(record.id) || !/^[0-9a-f]{64}$/.test(record.digest) ||
@@ -80,13 +74,11 @@ export class CommandIntents {
       if (restored.has(key)) throw new Error('duplicate command storage identity');
       const saved = Object.freeze({ ...record, state: record.state === 'sending' ? 'unknown' as const : record.state });
       restored.set(key, saved);
-      if (!terminal(saved.state)) { pending++; bytes += byteLength(canonical(saved)) + 128; }
     }
-    if (pending > 100 || bytes > 2 * 1024 * 1024) throw new Error('command storage capacity');
     for (const [key, record] of restored) this.records.set(key, record);
   }
   /** Must be called in the synchronous action prefix after admission.spend.
-   * Capacity reserves synchronously; persistence/hash may outlive the tap.
+   * Identity reserves synchronously; persistence/hash may outlive the tap.
    * An identical active intent joins unless the action explicitly means another.
    */
   prepare(admitted: AdmittedCommand, newIntent = false): Promise<CommandIntent> {
@@ -109,16 +101,9 @@ export class CommandIntents {
         ((operation === 'sendRoomMessage' || operation === 'sendRoomReply') && !/^[0-9a-f]{64}$/.test(id))) throw new Error('command prepared identity required');
     const key = intentKey({ ...partition, operation, id });
     if (this.records.has(key) || this.reservations.has(key)) throw new Error('command identity already used');
-    const pending = [...this.records.values()].filter(record => !terminal(record.state));
     const preparedAt = this.now();
     if (!Number.isSafeInteger(preparedAt) || preparedAt < 0) throw new Error('command prepared time invalid');
-    const bytes = byteLength(canonical({ ...partition, v: 1, schema: 1, id, operation, bytes: input,
-      digest: '0'.repeat(64), preparedAt, state: 'prepared', sent: false })) + 128;
-    if (pending.length + this.reservations.size >= 100 ||
-      pending.reduce((sum, record) => sum + byteLength(canonical(record)) + 128, 0) +
-      [...this.reservations.values()].reduce((sum, item) => sum + item.bytes, 0) + bytes > 2 * 1024 * 1024)
-      throw new Error('command outbox capacity');
-    this.reservations.set(key, { bytes, operation, input, partition: owner });
+    this.reservations.set(key, { operation, input, partition: owner });
     const preparation = this.enqueue(async () => {
       const digest = await this.hash('beeline-command:canonical-v1\n' + canonical({ schema: 1, operation, args }));
       if (!/^[0-9a-f]{64}$/.test(digest)) throw new Error('command digest invalid');
@@ -152,16 +137,9 @@ export class CommandIntents {
     const current = this.require(key);
     if (terminal(current.state)) return Promise.resolve({ ...current });
     if (current.state === 'sending') throw new Error('command already sending');
-    if (attempt.kind === 'initial' && current.state !== 'prepared') throw new Error('uncertain command requires reconnect or Retry');
-    if (attempt.kind === 'retry' && !attempt.actionId) throw new Error('command Retry action required');
-    const cause = attempt.kind === 'retry' ? `retry:${attempt.actionId}` : `${attempt.kind}:${attempt.generation}`;
-    const spent = this.attempts.get(key) ?? new Set<string>();
-    if (spent.has(cause)) throw new Error('command attempt already spent');
-    if (attempt.kind === 'reconnect' && attempt.generation <= (this.generations.get(key) ?? -1))
-      throw new Error('command reconnect generation already spent');
-    if (spent.size >= 1000) throw new Error('command attempt capacity');
-    spent.add(cause); this.attempts.set(key, spent);
-    this.generations.set(key, Math.max(attempt.generation, this.generations.get(key) ?? -1));
+    // The negotiated server ledger binds immutable ID, operation and digest.
+    // Repeating that same command is safe even after a lost receipt, without a
+    // new gesture, connection generation or cumulative attempt entitlement.
     const flight = (async () => {
       await this.enqueue(async () => {
         if (!this.partition || partitionKey(current) !== partitionKey(this.partition)) throw new Error('command principal suspended');

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import type { RouterCommandReceipt } from '@beeline/api-contract/router-command';
 const fixture = vi.hoisted(() => ({
@@ -36,7 +36,28 @@ beforeEach(async () => {
   fixture.ready = true; fixture.capable = true; fixture.generation += 1;
   await focus();
 });
+afterEach(() => { suspendCommandOwner(); vi.useRealTimers(); });
 describe('actual mobile prepared-command owner and existing outbox', () => {
+  it('automatically retries a lost receipt with the exact ID and bytes on the same socket', async () => {
+    vi.useFakeTimers();
+    const send = vi.fn().mockRejectedValueOnce(new Error('receipt lost')).mockImplementation(committed);
+    const owner = activateCommandOwner(ORIGIN, PRINCIPAL, bridge(send));
+    const record = await prepareRouterMessageGesture(input)!.persisted;
+    await expect(owner.deliver(record.id)).rejects.toThrow('receipt lost');
+    await vi.advanceTimersByTimeAsync(499); expect(send).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1); expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls[1]).toEqual(send.mock.calls[0]);
+    expect(owner.find(record.id)?.state).toBe('committed');
+    await vi.advanceTimersByTimeAsync(60_000); expect(send).toHaveBeenCalledTimes(2);
+  });
+  it('suspension cancels automatic retries of an uncertain command', async () => {
+    vi.useFakeTimers(); const send = vi.fn().mockRejectedValue(new Error('offline'));
+    const owner = activateCommandOwner(ORIGIN, PRINCIPAL, bridge(send));
+    const record = await prepareRouterMessageGesture(input)!.persisted;
+    await expect(owner.deliver(record.id)).rejects.toThrow('offline');
+    owner.suspend(); await vi.advanceTimersByTimeAsync(60_000);
+    expect(send).toHaveBeenCalledTimes(1);
+  });
   async function scheduleFocus(){
     routerOwnerNavigation({routes:[{key:'scheduled',name:'beeline/settings/schedule',params:{roomId:ROOM}}]});
     await routerOwnerNegotiated({generation:++fixture.generation,families:['room-scheduled-work'],authorityFencesV1:true,

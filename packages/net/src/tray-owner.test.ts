@@ -37,7 +37,7 @@ describe('complete Tray ownership',()=>{
     const admitted=owner.paintTray(1,'workspace-a',['q','q']);
     expect(JSON.parse(admitted!.wire.input)).toEqual({workspaceId:'workspace-a',messageIds:['q']});
     expect(owner.paintTray(1,'workspace-a',['q'])).toBeUndefined();
-    expect(()=>owner.paintTray(1,'workspace-a',Array.from({length:31},(_,i)=>String(i)))).toThrow('paint quota');
+    expect(owner.paintTray(1,'workspace-a',Array.from({length:31},(_,i)=>String(i)))).toBeDefined();
     owner.releaseOwner('tray');
     expect(()=>owner.paintTray(1,'workspace-a',['r'])).toThrow('inactive paint owner');
     owner.resumeObservation('tray',1);
@@ -45,12 +45,12 @@ describe('complete Tray ownership',()=>{
     owner.focusOwner('tray',2,'Tray',[request]);
     expect(owner.paintTray(2,'workspace-a',['q'])).toBeDefined();
   });
-  it('bounds residency dedup memory without forgetting and resending earlier painted IDs',()=>{
+  it('evicts old paint dedup history while admitting later idempotent seen marks',()=>{
     const owner=new AdmissionOwner(identity);owner.focusOwner('tray',1,'Tray',[request]);
     const first=Array.from({length:30},(_,i)=>String(i)+'x'.repeat(1800));
     expect(owner.paintTray(1,'workspace-a',first)).toBeDefined();
-    expect(()=>owner.paintTray(1,'workspace-a',first.map(id=>'other'+id))).toThrow('paint residency capacity');
-    expect(owner.paintTray(1,'workspace-a',first)).toBeUndefined();
+    for(let i=1;i<64;i++)expect(owner.paintTray(1,'workspace-a',first.map(id=>String(i)+id))).toBeDefined();
+    expect(owner.paintTray(1,'workspace-a',first)).toBeDefined();
   });
   it('admits the declared command action and rejects mismatched or fabricated actions',()=>{
     const owner=new AdmissionOwner(identity);

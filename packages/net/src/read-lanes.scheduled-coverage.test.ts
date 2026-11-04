@@ -18,7 +18,7 @@ await lanes.accept(replacement(2,3));expect(lanes.peek(a)).toMatchObject({state:
 lanes.demand(a,{}, {isCurrent:()=>true});await settle();expect(counts().reads).toBe(2);
 });
 it('a marker cannot invent continuity when not negotiated',async()=>{
-const {lanes,counts}=await setup(false);await lanes.accept(marker(1,2));await lanes.accept(replacement(2,3));expect(lanes.peek(a)).toMatchObject({value:{name:'a'},cut:{through:1}});expect(counts().writes).toBe(2);
+const {lanes,counts}=await setup(false);const before=counts().writes;await lanes.accept(marker(1,2));await lanes.accept(replacement(2,3));expect(lanes.peek(a)).toMatchObject({value:{name:'a'},cut:{through:1}});expect(counts().writes).toBe(before);
 });
 it('a missing data interval stages later classification until the exact missing interval arrives',async()=>{
 const {lanes,counts}=await setup();await lanes.accept(marker(2,3));await lanes.accept(replacement(3,4));expect(lanes.peek(a).cut?.through).toBe(1);

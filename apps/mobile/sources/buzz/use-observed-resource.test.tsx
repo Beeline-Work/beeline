@@ -44,16 +44,17 @@ it('shares a read, coalesces pushes during a flight, and detaches after the last
   expect(load).toHaveBeenCalledTimes(3);
 });
 
-it('a failed read stays visible, stops automatic reads, and retry recovers', async () => {
+it('a failed read stays visible and recovers automatically without another gesture', async () => {
   vi.useFakeTimers();
   const load = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('recovered');
   let current: any;
   function Reader() { current = useObservedResource<string>('error', { load }); return <span>{current.error ?? current.data}</span>; }
   await act(async () => { mount(<Reader />); });
   expect(current.error).toBe('Couldn’t reach Beeline');
-  await act(async () => { await vi.advanceTimersByTimeAsync(10000); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(499); });
   expect(load).toHaveBeenCalledTimes(1);
-  await act(async () => current.retry());
+  await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+  expect(load).toHaveBeenCalledTimes(2);
   expect(current.error).toBeNull();
   expect(current.data).toBe('recovered');
 });
@@ -73,13 +74,16 @@ it('R9-OBS-01: reconnect recovers a failed room read', async () => {
   expect(current.data).toBe('current');
 });
 
-it('R9-OBS-02: a room invalidation recovers after an error', async () => {
+it('R9-OBS-02: changes during backoff coalesce with automatic recovery', async () => {
+  vi.useFakeTimers();
   const load = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('current');
   let current: any;
   function Reader() { current = useObservedResource<string>('live-error', { load, subscribe: observeRoomResource('room') }); return <span>{current.error ?? current.data}</span>; }
   await act(async () => { mount(<Reader />); });
   expect(current.error).toBe('Couldn’t reach Beeline');
   await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'room', reason: 'message' } }));
+  expect(load).toHaveBeenCalledTimes(1);
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
   expect(load).toHaveBeenCalledTimes(2);
   expect(current.error).toBeNull();
   expect(current.data).toBe('current');
@@ -178,7 +182,7 @@ it('an account switch drops the old data and the old read, then shows the new ac
   expect(current.data).toBe('second account');
 });
 
-it('CR1: event cooldown grows to a cap without polling and resets after success', async () => {
+it('automatic recovery backs off to a bounded delay, coalesces pushes and resets after success', async () => {
   vi.useFakeTimers();
   const load = vi.fn().mockRejectedValue(new Error('offline'));
   let current: any;
@@ -192,19 +196,18 @@ it('CR1: event cooldown grows to a cap without polling and resets after success'
   for (const delay of [1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
     await act(async () => { vi.advanceTimersByTime(delay - 1); push(); });
     expect(load).toHaveBeenCalledTimes(reads);
-    await act(async () => { vi.advanceTimersByTime(1); });
-    expect(load).toHaveBeenCalledTimes(reads);
-    await act(async () => push());
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(load).toHaveBeenCalledTimes(++reads);
   }
   load.mockResolvedValue('recovered');
-  await act(async () => { vi.advanceTimersByTime(30000); push(); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
   expect(current.data).toBe('recovered');
   await act(async () => push());
   expect(load).toHaveBeenCalledTimes(reads + 2);
 });
 
-it('parks an owner-only read even when a relevant change arrived during its failing flight', async () => {
+it('coalesces changes during a failure and automatically retries an owner read', async () => {
+  vi.useFakeTimers();
   let reject!: (reason: Error) => void;
   const load = vi.fn().mockImplementationOnce(() => new Promise((_resolve, fail) => { reject = fail; }))
     .mockResolvedValue('ready');
@@ -226,7 +229,8 @@ it('parks an owner-only read even when a relevant change arrived during its fail
     } });
   });
   expect(load).toHaveBeenCalledTimes(1);
-  await act(async () => { await current!.retry(); });
+  await act(async () => { await vi.advanceTimersByTimeAsync(500); });
+  expect(current!.data).toBe('ready');
   expect(load).toHaveBeenCalledTimes(2);
   await act(async () => tree.unmount());
 });

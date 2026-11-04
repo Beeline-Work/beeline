@@ -102,19 +102,40 @@ describe('durable authority floors distinct from denials', () => {
     reopened.subscribeFloors(floor)(); reopened.subscribeFences(denial)();
     expect(floor.mock.calls).toEqual([[room, '2']]); expect(denial.mock.calls).toEqual([[room, '1']]);
   }, 30_000);
-  it('requires exact browser critical-section support while leaving native MMKV available', async () => {
+  it('keeps live authority in memory without browser cache locks', async () => {
     const native = await load(); expect(native.routerAuthorityStorageReady()).toBe(true);
     vi.resetModules(); fixture.events.clear();
-    const web = await load(true, false); expect(web.routerAuthorityStorageReady()).toBe(false);
+    const web = await load(true, false); expect(web.routerAuthorityStorageReady()).toBe(true);
     const store = web.routerLaneStorage(origin, principal);
-    await expect(store.floor(room, '2')).rejects.toThrow('Cross-tab authority storage');
-    await expect(store.write('blocked', envelope(room, '2'))).rejects.toThrow('Cross-tab authority storage');
-    await expect(store.fence(room, '2')).rejects.toThrow('Cross-tab authority storage');
+    await store.floor(room, '2');
+    await store.write('current-live', envelope(room, '2'));
+    await expect(store.write('stale', envelope(room, '1'))).rejects.toThrow('durable fence');
+    await store.fence(room, '2');
+    await expect(store.write('revoked', envelope(room, '2'))).rejects.toThrow('durable fence');
     expect(fixture.disk.size).toBe(0);
     const address = web.surfaceAddress(origin, principal, '/legacy-check');
     const guard = (value: unknown): value is { marker: string } => !!value && typeof value === 'object' && 'marker' in value;
     await web.mobileSurfaceCache.write(address, { marker: 'legacy remains available' }, guard);
     await expect(web.mobileSurfaceCache.read(address, guard)).resolves.toEqual({ marker: 'legacy remains available' });
+  });
+  it('accepts a group over 1 MiB and evicts it when it exceeds the total cache budget', async () => {
+    const { routerLaneStorage } = await load(); const store = routerLaneStorage(origin, principal);
+    await store.write('large', envelope(room, '1', principal, origin, 'x'.repeat(2 * 1024 * 1024)));
+    expect(groups()).toHaveLength(1);
+    await store.write('larger-than-cache', envelope(room, '1', principal, origin, 'x'.repeat(33 * 1024 * 1024)));
+    expect(groups()).toHaveLength(0);
+  });
+  it('denied browser storage leaves monotone in-memory authority and live support available', async () => {
+    const { routerLaneStorage, routerAuthorityStorageReady } = await load(true);
+    const store = routerLaneStorage(origin, principal);
+    const write = vi.spyOn(fixture.storage, 'setItem').mockImplementation(() => { throw new Error('storage denied'); });
+    try {
+      await store.floor(room, '2'); await store.fence(room, '1');
+      await store.write('current', envelope(room, '2'));
+      await expect(store.write('stale', envelope(room, '1'))).rejects.toThrow('durable fence');
+      expect(routerAuthorityStorageReady()).toBe(true);
+      expect(webGroups()).toHaveLength(0);
+    } finally { write.mockRestore(); }
   });
   it('a queued old web write cannot cross a floor committed by another tab under the same Reader lock', async () => {
     const { routerLaneStorage, routerAuthorityStorageReady } = await load(true); expect(routerAuthorityStorageReady()).toBe(true);

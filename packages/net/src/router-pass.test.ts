@@ -36,15 +36,16 @@ describe('local admission shadow core (P1)', () => {
     expect(owner.spend(room, pass!).wire.operation).toBe('readRoom');
   });
 
-  it('joins StrictMode/render repetitions, but cannot remint a spent or blurred residency', () => {
+  it('joins identical observations and replaces changed local signatures without reviving old passes', () => {
     const owner = new AdmissionOwner(identity);
     const [pass] = owner.focus(1, 'Room', [room]);
     expect(owner.focus(1, 'Room', [room])[0]).toBe(pass);
     owner.spend(room, pass!);
     expect(() => owner.spend(room, owner.focus(1, 'Room', [room])[0]!)).toThrow('inactive pass');
-    expect(() => owner.focus(1, 'Room', [{ ...room, input: { roomId: 'changed' } }])).toThrow('residency changed');
+    expect(owner.focus(1, 'Room', [{ ...room, input: { roomId: 'changed' } }])).toHaveLength(1);
     owner.blur();
-    expect(() => owner.focus(1, 'Room', [room])).toThrow('stale residency');
+    expect(owner.focus(1, 'Room', [room])[0]).not.toBe(pass);
+    expect(() => owner.spend(room, pass!)).toThrow('inactive pass');
     expect(owner.focus(2, 'Room', [room])[0]).not.toBe(pass);
   });
 
@@ -103,11 +104,11 @@ describe('local admission shadow core (P1)', () => {
     expect(() => owner.connected(2, [room])).toThrow('stale connection');
   });
 
-  it('bounds owner keys and keeps a bounded local-only denial ring', () => {
+  it('allows growing key sets and keeps a bounded local-only denial ring', () => {
     const owner = new AdmissionOwner(identity);
     expect(() => owner.focus(1, 'Room', [room, room])).toThrow('duplicate key');
     const many = Array.from({ length: 17 }, (_, i) => ({ ...room, input: { roomId: String(i) } }));
-    expect(() => owner.focus(1, 'Room', many)).toThrow('quota');
+    expect(owner.focus(1, 'Room', many)).toHaveLength(17);
     for (let i = 0; i < 150; i++) expect(() => owner.focus(-1, 'Room', [])).toThrow('invalid generation');
     expect(owner.localDiagnostics()).toHaveLength(100);
     expect(JSON.stringify(owner.localDiagnostics()).length).toBeLessThan(16 * 1024);

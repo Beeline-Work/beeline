@@ -36,7 +36,9 @@ export class NavigationOwner {
     let state = this.state;
     let route: NavigationRoute | undefined;
     const path: string[] = [];
-    for (let depth = 0; depth < 16; depth++) {
+    const visited = new Set<NavigationState>();
+    while (!visited.has(state)) {
+      visited.add(state);
       route = state.routes[state.index ?? state.routes.length - 1];
       if (!route?.key) { this.focused = undefined; this.notify(); return; }
       path.push(route.key);

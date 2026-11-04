@@ -125,8 +125,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     return post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id: grant.clientId, code: grant.code, code_verifier: grant.verifier,
       redirect_uri: 'http://127.0.0.1:9876/callback', resource: origin + '/mcp', ...overrides });
   }
-  async function connected(scope?: string) {
-    const grant = await authorize(scope);
+  async function connected(scope?: string, workspaceIds: readonly string[] = [WORKSPACE]) {
+    const grant = await authorize(scope, 'allow', undefined, undefined, { workspace_ids: workspaceIds });
     const response = await exchange(grant);
     expect(response.status).toBe(200);
     const tokens = await response.json() as { access_token: string };
@@ -2242,9 +2242,14 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   });
   describe('in a Room of 20,000 messages', () => {
     const BIG = '66666666-6666-4666-8666-666666666666';
+    const bigWorkspace = randomUUID();
     beforeAll(async () => {
-      await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'big','public')`, [BIG, WORKSPACE]);
-      await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`, [WORKSPACE, BIG, USER, AGENT]);
+      // Keep bulk history outside ordinary clients' consented Workspace. Otherwise
+      // every later grant joins this public Room and repeats its history fanout.
+      await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Large MCP history')`, [bigWorkspace]);
+      await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner'),($1,$3,'member')`, [bigWorkspace, USER, AGENT]);
+      await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'big','public')`, [BIG, bigWorkspace]);
+      await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`, [bigWorkspace, BIG, USER, AGENT]);
       // Seed pre-cutover history without replay fanout. Fresh MCP sends below
       // retain all triggers and exercise the live write path against this history.
       await db.query('ALTER TABLE messages DISABLE TRIGGER beeline_notify_live_messages');
@@ -2262,7 +2267,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const commands = async (messageId: string) => (await db.query(
       'SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2', [messageId, AGENT])).rowCount;
     it('answers send_message in under 3 s and wakes the tagged agent once', async () => {
-      const { client } = await connected();
+      const { client } = await connected(undefined, [WORKSPACE, bigWorkspace]);
       const started = Date.now();
       const sent = data(await client.callTool({ name: 'send_message', arguments: { room: BIG, text: '@demo-agent please review the plan' } }));
       expect(Date.now() - started).toBeLessThan(3_000);
@@ -2272,7 +2277,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         WHERE stream_id=$1 AND event->>'messageId'=$2`, [`room:${BIG}`, sent.messageId])).rowCount).toBe(1);
     }, 60_000);
     it('returns one message to a retry sent while the first call is in flight, and wakes once', async () => {
-      const { client } = await connected();
+      const { client } = await connected(undefined, [WORKSPACE, bigWorkspace]);
       const args = { room: BIG, text: '@demo-agent retried handoff', idempotencyKey: 'in-flight' };
       const [a, b] = await Promise.all([client.callTool({ name: 'send_message', arguments: args }), client.callTool({ name: 'send_message', arguments: args })]);
       expect(data(a).messageId).toBe(data(b).messageId);
@@ -2282,7 +2287,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(await commands(data(a).messageId)).toBe(1);
     }, 60_000);
     it('still wakes the tagged agent when the provenance read fails', async () => {
-      const { client } = await connected();
+      const { client } = await connected(undefined, [WORKSPACE, bigWorkspace]);
       const transaction = db.transaction.bind(db);
       const fault = vi.spyOn(db, 'transaction').mockImplementation(work => transaction(async tx => {
         const query = tx.query.bind(tx);

@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {TRAY_CLOCK_HEALTH_SCHEMA,TRAY_CLOCK_HEALTH_PREDICATE_SQL,TRAY_CLOCK_HEALTH_OWNER_TRIGGER} from './tray-clock-health.js';
+import {TRAY_CLOCK_HEALTH_SCHEMA,TRAY_CLOCK_HEALTH_OWNER_TRIGGER} from './tray-clock-health.js';
 import type {SqlDatabase} from './database.js';
 
 export {readTrayClockBasisCause,type TrayClockBasisCause} from './tray-clock-protocol.js';
@@ -143,7 +143,7 @@ const fingerprint=async(db:SqlDatabase)=>(await db.query<{fingerprint:string}>(`
  * preliminary check or repair. Keep the actual catalog comparison until a
  * permitted-migrator/rollback floor can make persisted-only evidence sound.
  * No reader can supply SQL, a capture fingerprint, or readiness permission. */
-export const TRAY_CLOCK_READINESS_PREDICATE_SQL=`COALESCE(clock.ready AND EXISTS(
+const TRAY_CLOCK_READINESS_PREDICATE_SQL=`COALESCE(clock.ready AND EXISTS(
   SELECT 1 FROM tray_clock_readiness clock_progress
   JOIN tray_clock_readiness_floor clock_floor ON clock_floor.id=1
   CROSS JOIN(SELECT md5(value::text) fingerprint FROM(${DESCRIPTORS}) clock_descriptors) clock_observed
@@ -152,9 +152,6 @@ export const TRAY_CLOCK_READINESS_PREDICATE_SQL=`COALESCE(clock.ready AND EXISTS
     AND clock_progress.fingerprint=clock_floor.fingerprint
     AND clock_floor.fingerprint=clock_observed.fingerprint
 ),false)`;
-
-/** Read admission requires both complete capture and current drained owner. */
-export const TRAY_CLOCK_READ_PREDICATE_SQL=`(${TRAY_CLOCK_READINESS_PREDICATE_SQL}) AND (${TRAY_CLOCK_HEALTH_PREDICATE_SQL})`;
 
 /** Trusted lifecycle owner only. No route/read accessor invokes this class.
  * Each call processes <=100 existing keys under one real transaction; failure

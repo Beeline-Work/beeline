@@ -5228,17 +5228,19 @@ export class PhoneService {
 
   /** Analytics follows a committed send without holding its acknowledgement. */
   private async observeSentMessage(roomId: string, viewerId: string): Promise<void> {
-    const work = () => observeOnboardingMessage(this.database, roomId, viewerId)
-      .catch(error => console.error('[onboarding]', error));
+    const work = () =>
+      observeOnboardingMessage(this.database, roomId, viewerId).catch((error) =>
+        console.error('[onboarding]', error),
+      );
     const backgroundWork = CornerAccessDatabase.physical(this.database).backgroundWork;
-    if (backgroundWork) backgroundWork.run(async () => {
-      // Queue the response before analytics competes for a database connection.
-      await new Promise<void>(resolve => setImmediate(resolve));
-      await work();
-    });
+    if (backgroundWork)
+      backgroundWork.run(async () => {
+        // Queue the response before analytics competes for a database connection.
+        await new Promise<void>((resolve) => setImmediate(resolve));
+        await work();
+      });
     else await work();
   }
-
   private async sendMessage(
     input: Input<'sendRoomMessage'>,
     author: string,

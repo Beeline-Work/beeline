@@ -22,25 +22,22 @@ using the original Play runtime44/code144 binary on emulator-5626 against
 production142, with the review identity in Beeline Review only. No OTA was
 published, native binary replaced or server deployed. The pure-Hermes bundle's
 critical Room route, chat surface, preview, row renderer and outbox sources
-were matched to the current code by the operator. Bundle hashes and source
-checks are attached; `tested-code-trees.json` identifies unchanged mobile,
-server and package implementation trees if this documentation changes HEAD.
+were matched to the tested code head by the operator. Bundle hashes and source
+checks are attached; `tested-code-trees.json` identifies the tested mobile,
+server and package trees for comparison with subsequent housekeeping changes.
 
-| Native scenario | Result and evidence |
-| --- | --- |
-| Empty Room send and canonical handoff | PASS: one canonical message, at most one native transcript copy, dark readable first frame at 139 ms. `functional.json`, `functional-frames.json`, `empty-first.png` and `empty-previous.png`. |
-| Double-tap Send | PASS: exactly one canonical message, at most one native transcript copy, dark readable first frame at 133 ms. `functional.json`, `functional-frames.json` and `double-first.png`. These two functional timings are one-off samples, not the performance distribution. |
-| Navigate immediately after Send | PASS: source delivery completes exactly once; destination canonical read is empty. All three source tokens are absent in all five destination-header frames; manual review of `navigation-empty.png` confirms the empty destination. `target-all-source-tokens.json` and `functional.json`. |
+| Native scenario                            | Result and evidence                                                                                                                                                                                                                                                                                                                                                                 |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Empty Room send and canonical handoff      | PASS: one canonical message, at most one native transcript copy, dark readable first frame at 139 ms. `functional.json`, `functional-frames.json`, `empty-first.png` and `empty-previous.png`.                                                                                                                                                                                      |
+| Double-tap Send                            | PASS: exactly one canonical message, at most one native transcript copy, dark readable first frame at 133 ms. `functional.json`, `functional-frames.json` and `double-first.png`. These two functional timings are one-off samples, not the performance distribution.                                                                                                               |
+| Navigate immediately after Send            | PASS: source delivery completes exactly once; destination canonical read is empty. All three source tokens are absent in all five destination-header frames; manual review of `navigation-empty.png` confirms the empty destination. `target-all-source-tokens.json` and `functional.json`.                                                                                         |
 | Durable enqueue failure, retry and restart | PASS: separate controlled-fault bundle rejects the real `deps.save` once; failed event never reaches the server, draft remains, retry delivers once, and disarmed process restart still shows one canonical message. An unrelated queued record survives and delivers exactly once. `enqueue-recovery.json`, `failed-save-draft.png`, `retained-draft.png` and `after-restart.png`. |
 
 The controlled `fault-injection.patch` wraps the real durable save and holds
 only the unrelated record's transport. It bypasses no product enqueue or
-handler logic and is absent from the pure latency bundle. The atomic enqueue
-fix rolls back the failed record without losing unrelated queued records.
-The Room-scope fix keys the screen by Room/Workspace so route reuse remounts
-its transcript/window/preview state; late send completion uses its captured
-source outbox rather than the destination Room's outbox. Durable outbox and
-server DTO ownership remain unchanged; no phone connection or polling is added.
+handler logic and is absent from the pure latency bundle. The durable enqueue
+and Room-visit isolation contracts, including regression coverage, are owned by
+[the mobile guide](agent-mobile.md#mobile-client). No phone connection or polling is added.
 
 The fresh paired capture alternates four blocks of six sends per arm in one
 session, with fixed screenshot readiness, no UI dumps and frame extraction
@@ -48,10 +45,10 @@ only after capture. Baseline `283dd1cfd91e2a74b7f46f909e2684c77cfa649f` already
 contains the original sender-fade fix; current head includes the atomic enqueue
 and Room-scope fixes.
 
-| Tap → readable message | Samples | p50 | p95 | Maximum | Below 150 ms |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| Baseline | 24 | 136.595 ms | 202.783 ms | 432.883 ms | 16/24 |
-| Current head | 24 | 84.259 ms | 127.081 ms | 140.341 ms | 24/24 |
+| Tap → readable message | Samples |        p50 |        p95 |    Maximum | Below 150 ms |
+| ---------------------- | ------: | ---------: | ---------: | ---------: | -----------: |
+| Baseline               |      24 | 136.595 ms | 202.783 ms | 432.883 ms |        16/24 |
+| Current head           |      24 |  84.259 ms | 127.081 ms | 140.341 ms |        24/24 |
 
 Current after-input-command p50/p95 is 63.583/97.081 ms. `paired-results.json`
 retains every sample, monotonic tap bracket and recognition trace;
@@ -85,11 +82,11 @@ the independently subscribed first row. Neither bundle was published as OTA.
 These are historical pre-rebase local-bundle measurements, not measurements of
 the rebased source.
 
-| Measurement | Samples | p50 | p95 | Budget |
-| --- | ---: | ---: | ---: | --- |
-| Old local send, tap → readable message | 24 | 208 ms | 448 ms | <150 ms |
-| New local send, tap → readable message | 24 | 103 ms | 216 ms | FAIL, <150 ms |
-| Original production142, cold Room tap → first screen of messages | 25 | 1,323 ms | 2,251 ms | FAIL, <450 ms |
+| Measurement                                                      | Samples |      p50 |      p95 | Budget        |
+| ---------------------------------------------------------------- | ------: | -------: | -------: | ------------- |
+| Old local send, tap → readable message                           |      24 |   208 ms |   448 ms | <150 ms       |
+| New local send, tap → readable message                           |      24 |   103 ms |   216 ms | FAIL, <150 ms |
+| Original production142, cold Room tap → first screen of messages |      25 | 1,323 ms | 2,251 ms | FAIL, <450 ms |
 
 Both send percentiles improve by about half, but the new p95 still fails.
 The new maximum is 301 ms; even measured from after the input command it is
@@ -143,12 +140,12 @@ four process launches, and 20 mount samples for each representative local row
 fixture. These are real existing row renderers; fixtures never entered the
 production database and diagnostic instrumentation is absent from the diff.
 
-| Row | Mount p50 | Mount p95 | p95 / 16 ms frame |
-| --- | ---: | ---: | ---: |
-| Plain short text | 6.95 ms | 13.04 ms | 0.82 |
-| Rich Markdown, bullets and code | 21.63 ms | 36.63 ms | 2.29 |
-| Completed command/tool row | 8.95 ms | 11.45 ms | 0.72 |
-| Permission decision card | 14.90 ms | 22.87 ms | 1.43 |
+| Row                             | Mount p50 | Mount p95 | p95 / 16 ms frame |
+| ------------------------------- | --------: | --------: | ----------------: |
+| Plain short text                |   6.95 ms |  13.04 ms |              0.82 |
+| Rich Markdown, bullets and code |  21.63 ms |  36.63 ms |              2.29 |
+| Completed command/tool row      |   8.95 ms |  11.45 ms |              0.72 |
+| Permission decision card        |  14.90 ms |  22.87 ms |              1.43 |
 
 `actualDuration` measures React render work, excluding native layout/draw and
 scheduler waiting. These fixtures are not a production complexity distribution.
@@ -159,15 +156,15 @@ its behavior test asserts this separately from wall-clock capture.
 
 ## Server and acknowledgement
 
-| Measurement | Samples | p50 | p95 |
-| --- | ---: | ---: | ---: |
-| Production host live-socket send → receipt | 25 | 129 ms | 172 ms |
-| Same host/socket application ping → pong | 25 | 67 ms | 71 ms |
-| Receipt minus adjacent ping | 25 | 58 ms | 105 ms |
-| Production server-machine loopback send → receipt | 25 | 266 ms | 483 ms |
-| Same machine loopback ping → pong | 25 | 1 ms | 4 ms |
-| Isolated original `PhoneService.execute`, 25 ms per-query scenario | 25 | 189 ms | 227 ms |
-| Same isolated scenario, new server code | 25 | 85 ms | 109 ms |
+| Measurement                                                        | Samples |    p50 |    p95 |
+| ------------------------------------------------------------------ | ------: | -----: | -----: |
+| Production host live-socket send → receipt                         |      25 | 129 ms | 172 ms |
+| Same host/socket application ping → pong                           |      25 |  67 ms |  71 ms |
+| Receipt minus adjacent ping                                        |      25 |  58 ms | 105 ms |
+| Production server-machine loopback send → receipt                  |      25 | 266 ms | 483 ms |
+| Same machine loopback ping → pong                                  |      25 |   1 ms |   4 ms |
+| Isolated original `PhoneService.execute`, 25 ms per-query scenario |      25 | 189 ms | 227 ms |
+| Same isolated scenario, new server code                            |      25 |  85 ms | 109 ms |
 
 The exact isolated handling stopwatch removes about 104 ms at the median by
 moving onboarding work after receipt. Its artificial per-query delay is a

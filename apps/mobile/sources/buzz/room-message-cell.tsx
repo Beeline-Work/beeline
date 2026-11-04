@@ -352,7 +352,9 @@ export function useRoomMessageRenderItem({
   pendingContext,
 }: {
   render: RoomMessageRenderer;
-  pendingContext?: (item: ChatDisplayMessage) => Pick<RoomMessageRenderContext, 'continued' | 'immediatelyPrecedingMessage'>;
+  pendingContext?: (
+    item: ChatDisplayMessage,
+  ) => Pick<RoomMessageRenderContext, 'continued' | 'immediatelyPrecedingMessage'>;
   continuedIds: ReadonlySet<string>;
   precedingMessageById: ReadonlyMap<string, ChatDisplayMessage>;
   messageById: ReadonlyMap<string, ChatDisplayMessage>;
@@ -380,27 +382,30 @@ export function useRoomMessageRenderItem({
     ({ item }: { item: ChatDisplayMessage }) => {
       const pending = !messageById.has(item.id) ? pendingContext?.(item) : undefined;
       return (
-      <TranscriptCardMotionBoundary
-        arriving={arrivingCardIds.has(item.id)}
-        cardId={item.id}
-        store={resolvedCardMotionStore}
-      >
-        <RoomMessageCell
-          {...presentationForMessage?.(item)}
-          item={item}
-          render={stableRender}
-          startsNewMessages={messageContainsBoundary(item, firstNewMessageId)}
-          continued={!messageContainsBoundary(item, firstNewMessageId) && (continuedIds.has(item.id) ||
-            Boolean(pending?.continued))}
-          immediatelyPrecedingMessage={precedingMessageById.get(item.id) ??
-            pending?.immediatelyPrecedingMessage}
-          referencedMessage={item.replyToId ? messageById.get(item.replyToId) : undefined}
-          arrivalFlashing={messageContainsBoundary(item, arrivalFlashMessageId)}
-          sourceLandingFlashing={messageContainsBoundary(item, sourceLandingFlashMessageId)}
-
-        />
-      </TranscriptCardMotionBoundary>
-    ); },
+        <TranscriptCardMotionBoundary
+          arriving={arrivingCardIds.has(item.id)}
+          cardId={item.id}
+          store={resolvedCardMotionStore}
+        >
+          <RoomMessageCell
+            {...presentationForMessage?.(item)}
+            item={item}
+            render={stableRender}
+            startsNewMessages={messageContainsBoundary(item, firstNewMessageId)}
+            continued={
+              !messageContainsBoundary(item, firstNewMessageId) &&
+              (continuedIds.has(item.id) || Boolean(pending?.continued))
+            }
+            immediatelyPrecedingMessage={
+              precedingMessageById.get(item.id) ?? pending?.immediatelyPrecedingMessage
+            }
+            referencedMessage={item.replyToId ? messageById.get(item.replyToId) : undefined}
+            arrivalFlashing={messageContainsBoundary(item, arrivalFlashMessageId)}
+            sourceLandingFlashing={messageContainsBoundary(item, sourceLandingFlashMessageId)}
+          />
+        </TranscriptCardMotionBoundary>
+      );
+    },
     [
       arrivalFlashMessageId,
       arrivingCardIds,

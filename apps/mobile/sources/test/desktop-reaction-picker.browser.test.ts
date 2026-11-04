@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import { build } from 'esbuild';
 import ts from 'typescript';
 import { expect, it } from 'vitest';
-import { CHROME, webProofShims } from './browserProof';
+import { CHROME, webProofShims, withOneBrowser } from './browserProof';
 
 // Render the actual private row wrapper and its styles, as in onboarding-edge.
 // The surrounding rows retain RN Web's real stacking contexts and clipping.
@@ -77,7 +77,7 @@ function App(){
   await writeFile(path.join(directory, 'index.html'), '<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>html,body{margin:0}</style><div id="root"></div><script src="bundle.js"></script>');
 }
 
-it.skipIf(!existsSync(CHROME))('desktop pointer React → every emoji → 👍 click keeps the original target, including viewport edges', async () => {
+it.skipIf(!existsSync(CHROME))('desktop pointer React → every emoji → 👍 click keeps the original target, including viewport edges', () => withOneBrowser(async () => {
   const directory = await mkdtemp(path.join(tmpdir(), 'reaction-picker-'));
   let socket: WebSocket | undefined;
   let browser: ReturnType<typeof spawn> | undefined;
@@ -184,6 +184,7 @@ it.skipIf(!existsSync(CHROME))('desktop pointer React → every emoji → 👍 c
     socket?.close();
     browser?.kill('SIGTERM');
     if (browser && browser.exitCode === null) await new Promise(resolve => browser!.once('exit', resolve));
-    await rm(directory, { recursive: true, force: true });
+    // Chrome helpers can finish flushing their profile just after the parent exits.
+    await rm(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   }
-}, 120_000);
+}), 120_000);

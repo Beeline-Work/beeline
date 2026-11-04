@@ -58,7 +58,7 @@ function holderIsGone(): boolean {
   }
 }
 
-async function withOneBrowser<T>(run: () => T): Promise<T> {
+export async function withOneBrowser<T>(run: () => T | Promise<T>): Promise<T> {
   const deadline = Date.now() + 180_000;
   let held: number | undefined;
   while (held === undefined) {
@@ -72,7 +72,7 @@ async function withOneBrowser<T>(run: () => T): Promise<T> {
   }
   try {
     writeSync(held, String(process.pid));
-    return run();
+    return await run();
   } finally {
     closeSync(held);
     rmSync(CHROME_LOCK, { force: true });

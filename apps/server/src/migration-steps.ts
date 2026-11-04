@@ -226,12 +226,22 @@ const ALTER_TABLE = new RegExp(`^ALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:ONLY\
 const DROP_COLUMN = new RegExp(`^\\s*DROP\\s+COLUMN\\s+IF\\s+EXISTS\\s+${IDENT}\\s*$`, 'i');
 const DROP_CONSTRAINT = new RegExp(`^\\s*DROP\\s+CONSTRAINT\\s+IF\\s+EXISTS\\s+${IDENT}\\s*$`, 'i');
 const NOT_NULL = new RegExp(`^\\s*ALTER\\s+COLUMN\\s+${IDENT}\\s+(SET|DROP)\\s+NOT\\s+NULL\\s*$`, 'i');
+const SET_DEFAULT = new RegExp(`^\\s*ALTER\\s+COLUMN\\s+${IDENT}\\s+SET\\s+DEFAULT\\s+([\\s\\S]+?)\\s*$`, 'i');
+
+/** Compare a default the way pg_get_expr prints it: casts, quotes of
+ * literals, outer parentheses and whitespace removed. */
+export function normalizeDefault(expr: string): string {
+  let value = expr.trim().toLowerCase().replace(/::[a-z_ ]+(\[\])?/g, '').replace(/\s+/g, '');
+  while (value.startsWith('(') && value.endsWith(')')) value = value.slice(1, -1);
+  return value;
+}
 const DROP_RELATION = new RegExp(`^DROP\\s+(?:TABLE|INDEX)\\s+IF\\s+EXISTS\\s+${IDENT}(?:\\s+CASCADE)?$`, 'i');
 
 type AlterClause =
   | { kind: 'drop-column'; name: string }
   | { kind: 'drop-constraint'; name: string }
-  | { kind: 'not-null'; name: string; notNull: boolean };
+  | { kind: 'not-null'; name: string; notNull: boolean }
+  | { kind: 'default'; name: string; expr: string };
 
 /** The catalog state that makes an ALTER TABLE / DROP statement a no-op, or null. */
 export function noOpCheck(statement: string):
@@ -248,6 +258,8 @@ export function noOpCheck(statement: string):
     const column = part.match(DROP_COLUMN);
     const constraint = part.match(DROP_CONSTRAINT);
     const notNull = part.match(NOT_NULL);
+    const setDefault = notNull ? null : part.match(SET_DEFAULT);
+    if (setDefault) { clauses.push({ kind: 'default', name: setDefault[1]!.toLowerCase(), expr: setDefault[2]! }); continue; }
     if (column) clauses.push({ kind: 'drop-column', name: column[1]!.toLowerCase() });
     else if (constraint) clauses.push({ kind: 'drop-constraint', name: constraint[1]!.toLowerCase() });
     else if (notNull) clauses.push({ kind: 'not-null', name: notNull[1]!.toLowerCase(), notNull: notNull[2]!.toUpperCase() === 'SET' });
@@ -278,6 +290,16 @@ export async function alreadyNoOp(database: CatalogDatabase, statement: string):
       const { rows } = await database.query(
         `SELECT 1 FROM pg_constraint WHERE conrelid = to_regclass($1) AND conname = $2`, [check.relation, clause.name]);
       if (rows.length) return false;
+      continue;
+    }
+    if (clause.kind === 'default') {
+      const { rows } = await database.query(
+        `SELECT pg_get_expr(d.adbin, d.adrelid) AS expr FROM pg_attribute a JOIN pg_attrdef d
+           ON d.adrelid = a.attrelid AND d.adnum = a.attnum
+         WHERE a.attrelid = to_regclass($1) AND a.attname = $2 AND NOT a.attisdropped`,
+        [check.relation, clause.name]);
+      const installed = rows[0]?.expr;
+      if (typeof installed !== 'string' || normalizeDefault(installed) !== normalizeDefault(clause.expr)) return false;
       continue;
     }
     const { rows } = await database.query(

@@ -35,11 +35,13 @@ typecheck() {
     node "$runner/check-architecture.mjs" --root .
   fi
   # The root command also generates mobile routes and typechecks mobile.
+  node --test scripts/rollout-schema.test.mjs
+  node scripts/rollout-schema.mjs --previous "$CI_BASE_SHA"
   npm run typecheck
   # Check no workflow names a deleted test
   npm run lint:workflow-paths
   # Check path filters skip untouched suites
-  node --test --test-concurrency=1 scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/server-test-selection.test.mjs scripts/ci-baseline.test.mjs scripts/ci-workspace-lanes.test.mjs
+  node --test --test-concurrency=1 scripts/workflow-change-filter.test.mjs scripts/ci-shards.test.mjs scripts/ci-workflow.test.mjs scripts/ci-runner-routing.test.mjs scripts/server-test-selection.test.mjs scripts/ci-baseline.test.mjs scripts/ci-workspace-lanes.test.mjs
   node --test --test-concurrency=1 scripts/ci-build-provenance.test.mjs scripts/ci-task-cache.test.mjs scripts/workspace-test-selection.test.mjs scripts/run-workspace-tests.test.mjs scripts/report-main-checks.test.mjs
   # Test nightly Checks orchestration
   node --test --test-concurrency=1 scripts/nightly-checks.test.mjs

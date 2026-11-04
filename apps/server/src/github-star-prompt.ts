@@ -34,8 +34,9 @@ CREATE TABLE IF NOT EXISTS github_star_prompts (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 ALTER TABLE github_star_prompts ADD COLUMN IF NOT EXISTS checked_milestone integer NOT NULL DEFAULT 0;
--- Derived from replies (reachedMilestoneSql); dropped once no image reads it.
-ALTER TABLE github_star_prompts DROP COLUMN IF EXISTS reached_milestone;
+-- The preceding image still writes this column when posting a reply. Retain
+-- it through the serving and rollback overlap; current reads derive the value.
+ALTER TABLE github_star_prompts ADD COLUMN IF NOT EXISTS reached_milestone integer NOT NULL DEFAULT 0;
 `;
 
 /** Deduplicate rare due-milestone checks while their GitHub request is pending. */

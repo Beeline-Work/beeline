@@ -16,7 +16,7 @@ describe('Room deck bootstrap', () => {
   });
 
   it('restores the persisted Workspace before choosing server recency order', () => {
-    expect(source).toContain('const storedWorkspaceId = useActiveCommunityId();');
+    expect(source).toContain('const storedWorkspaceId = useActiveCommunityId(retryGeneration);');
     expect(source).toContain('const deckWorkspaceId = requestedWorkspaceId ?? storedWorkspaceId;');
     expect(source).toContain('if (deckWorkspaceId === undefined) return;');
     expect(source).toContain('mobileSurfaceCache.read(workspaceCacheAddress, isWorkspaceListView)');

@@ -107,13 +107,14 @@ jobs:
   changes:
     name: Detect changes
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    runs-on: ubuntu-latest
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
+      actions: read
     outputs:
       code: ${{ steps.decide.outputs.code }}
       body: ${{ steps.decide.outputs.body }}
@@ -130,9 +131,24 @@ jobs:
       appLinkAssociations: ${{ steps.decide.outputs.appLinkAssociations }}
       workflows: ${{ steps.decide.outputs.workflows }}
       authImage: ${{ steps.decide.outputs.authImage }}
+      runner_prepare: ${{ steps.route.outputs.runner_prepare }}
+      runner_typecheck: ${{ steps.route.outputs.runner_typecheck }}
+      runner_shared: ${{ steps.route.outputs.runner_shared }}
+      runner_deadCode: ${{ steps.route.outputs.runner_deadCode }}
+      runner_native: ${{ steps.route.outputs.runner_native }}
+      runner_mobileExport: ${{ steps.route.outputs.runner_mobileExport }}
+      runner_mobile: ${{ steps.route.outputs.runner_mobile }}
+      runner_serverSelection: ${{ steps.route.outputs.runner_serverSelection }}
+      runner_serverSuite: ${{ steps.route.outputs.runner_serverSuite }}
+      runner_serverIntegration: ${{ steps.route.outputs.runner_serverIntegration }}
+      runner_coverage: ${{ steps.route.outputs.runner_coverage }}
+      runner_frameBudget: ${{ steps.route.outputs.runner_frameBudget }}
+      runner_stateUpgrade: ${{ steps.route.outputs.runner_stateUpgrade }}
+      runner_readme: ${{ steps.route.outputs.runner_readme }}
+      runner_appLinks: ${{ steps.route.outputs.runner_appLinks }}
+      serverMatrix: ${{ steps.route.outputs.serverMatrix }}
     steps:
       - uses: actions/checkout@v4
-        if: github.event_name != 'pull_request'
         with:
           # Merge-group path filtering compares the base and head histories.
           fetch-depth: 0
@@ -385,6 +401,15 @@ jobs:
             echo "server=$SERVER_MODULE mobile=$MOBILE_MODULE"
           } >> "$GITHUB_STEP_SUMMARY"
 
+      - name: Choose available CI slots and hosted overflow
+        id: route
+        env:
+          GH_TOKEN: ${{ secrets.CI_RUNNER_INVENTORY_TOKEN || github.token }}
+          CI_ACTIONS_TOKEN: ${{ github.token }}
+          CI_ROUTE_FLAGS: ${{ toJSON(steps.decide.outputs) }}
+          CI_ROUTE_SUITE: ${{ inputs.suite }}
+        run: node scripts/ci-runner-routing.mjs
+
   prepare-workspace:
     name: Prepare workspace caches
     outputs:
@@ -397,7 +422,7 @@ jobs:
     needs: changes
     if: >-
       !cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') || contains(fromJSON('["all","typecheck","mobile-suite","dead-code","native-fingerprint","mobile-export-reachability","shared-package-tests"]'), inputs.suite))
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_prepare || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: "1"
     timeout-minutes: 20
@@ -433,7 +458,7 @@ jobs:
     needs:
       - changes
       - prepare-workspace
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_typecheck || '["ubuntu-latest"]') }}
     timeout-minutes: 30
     env:
       CI_TEST_WORKERS: "1"
@@ -468,7 +493,7 @@ jobs:
     name: SHARED PACKAGE TESTS
     needs: [changes, prepare-workspace]
     if: "!cancelled() && ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') || inputs.suite == 'all' || inputs.suite == 'shared-package-tests')"
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_shared || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 20
@@ -520,7 +545,7 @@ jobs:
       - changes
       - prepare-workspace
     if: ${{ !cancelled() && (((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && needs.changes.outputs.code == 'true') || inputs.suite == 'all' || inputs.suite == 'dead-code') }}
-    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-heavy]
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_deadCode || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: "1"
     timeout-minutes: 20
@@ -640,7 +665,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request' && needs.prepare-workspace.outputs.mode == 'subset' &&
       (needs.changes.outputs.serverSuite == 'true' || needs.prepare-workspace.outputs.server == 'true')
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_serverSelection || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 10
@@ -715,10 +740,26 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-heavy"]') || 'ubuntu-latest' }}
+        include: ${{ fromJSON(needs.changes.outputs.serverMatrix || '[]') }}
+    runs-on: ${{ matrix.target || fromJSON('["ubuntu-latest"]') }}
     timeout-minutes: 30
+    services:
+      postgres:
+        image: ${{ (matrix.hosted || (github.event_name != 'pull_request' && github.event_name != 'push')) && 'pgvector/pgvector:pg16' || '' }}
+        env:
+          POSTGRES_PASSWORD: isolated-proof
+        ports:
+          - 5432/tcp
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     steps:
       - uses: actions/checkout@v4
+      - name: Verify isolated hosted PostgreSQL
+        if: matrix.hosted || (github.event_name != 'pull_request' && github.event_name != 'push')
+        env:
+          PG_TEST_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
+        run: psql "$PG_TEST_URL" -v ON_ERROR_STOP=1 -c 'SELECT 1'
       - name: Record complete main coverage
         if: github.event_name == 'push'
         run: echo "SERVER_COVERAGE_MAP_DIR=$RUNNER_TEMP/coverage-records" >> "$GITHUB_ENV"
@@ -764,8 +805,8 @@ jobs:
   main-coverage-map:
     name: SERVER COVERAGE MAP
     if: github.event_name == 'push'
-    needs: [prepare-workspace, server-suite-shard, production-corpus-replay]
-    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-control]
+    needs: [changes, prepare-workspace, server-suite-shard, production-corpus-replay]
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_coverage || '["ubuntu-latest"]') }}
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -846,7 +887,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && (needs.changes.outputs.serverSuite == 'true' || needs.prepare-workspace.outputs.server == 'true')) ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_serverSuite || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
@@ -870,7 +911,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && (needs.changes.outputs.serverIntegration == 'true' || needs.prepare-workspace.outputs.server == 'true')) ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
       )
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_serverIntegration || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
@@ -893,7 +934,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && (needs.changes.outputs.mobileSuite == 'true' || needs.prepare-workspace.outputs.mobile == 'true')) ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-workspace"]') || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_mobile || '["ubuntu-latest"]') }}
     env:
       WORKSPACE_TEST_SELECTION: ${{ needs.prepare-workspace.outputs['mobile-selection'] }}
       CI_TEST_WORKERS: "2"
@@ -929,7 +970,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && needs.changes.outputs.mobileExportReachability == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability'))
       )
-    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-heavy]
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_mobileExport || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: "1"
     timeout-minutes: 30
@@ -1042,7 +1083,7 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') &&
       needs.changes.outputs.frameBudget == 'true'
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_frameBudget || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
@@ -1077,7 +1118,7 @@ jobs:
     if: >-
       !cancelled() && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') &&
       needs.changes.outputs.stateUpgrade == 'true'
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_stateUpgrade || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
@@ -1128,7 +1169,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && (needs.changes.outputs.nativeFingerprint == 'true' || needs.changes.outputs.mobileSuite == 'true')) ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: [self-hosted, Linux, X64, beeline-ci, beeline-ci-heavy]
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_native || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: "1"
       JAVA_TOOL_OPTIONS: -XX:ActiveProcessorCount=2
@@ -1163,7 +1204,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && needs.changes.outputs.readme == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'readme-parity'))
       )
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_readme || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 5
@@ -1187,7 +1228,7 @@ jobs:
         ((github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push') && needs.changes.outputs.appLinkAssociations == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'app-link-associations'))
       )
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'push') && fromJSON('["self-hosted","Linux","X64","beeline-ci","beeline-ci-control"]') || 'ubuntu-latest' }}
+    runs-on: ${{ fromJSON(needs.changes.outputs.runner_appLinks || '["ubuntu-latest"]') }}
     env:
       CI_TEST_WORKERS: '1'
     timeout-minutes: 10

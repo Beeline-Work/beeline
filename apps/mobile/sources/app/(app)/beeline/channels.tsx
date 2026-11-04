@@ -169,6 +169,7 @@ function workspaceMembers(view: WorkspaceView | null): WorkspaceMemberDisplayIte
 }
 
 export default function BuzzChannels() {
+  const [retryGeneration, setRetryGeneration] = useState(0);
   const insets = useSafeAreaInsets();
   const isDesktop = useIsDesktop();
   const params = useLocalSearchParams<{
@@ -178,7 +179,7 @@ export default function BuzzChannels() {
   }>();
   const requestedWorkspaceId = firstParam(params.communityId);
   // The route's Workspace wins; without one the deck follows the current Workspace.
-  const storedWorkspaceId = useActiveCommunityId();
+  const storedWorkspaceId = useActiveCommunityId(retryGeneration);
   const deckWorkspaceId = requestedWorkspaceId ?? storedWorkspaceId;
   const requestedNewRoom = firstParam(params.newRoom);
   const requestedNewDirectMessage = firstParam(params.newDirectMessage);
@@ -224,7 +225,6 @@ export default function BuzzChannels() {
   const [repoAccessLoading, setRepoAccessLoading] = useState(false);
   const [repoPickerError, setRepoPickerError] = useState<string | null>(null);
   const [repoPickerNotice, setRepoPickerNotice] = useState<string | null>(null);
-  const [retryGeneration, setRetryGeneration] = useState(0);
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatStore = useRef<ChatListHandle | null>(null);
   const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView | null> | null>(null);
@@ -558,6 +558,14 @@ export default function BuzzChannels() {
     };
   }, [deckVisible, deckWorkspaceId, retryGeneration]);
 
+  // Cover local identity/selection/cache reads as well as socket RPCs. Those
+  // native promises can stall before any individual request deadline starts.
+  useEffect(() => {
+    if (chatList || error) return;
+    const deadline = setTimeout(() => setError(connectionErrorTitle), 35_000);
+    return () => clearTimeout(deadline);
+  }, [chatList, error, retryGeneration]);
+
   useFocusEffect(
     useCallback(() => {
       deckFocusedRef.current = true;
@@ -869,13 +877,14 @@ export default function BuzzChannels() {
         style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
         onReconnect={() => {
           reconnectNow();
+          setError(null);
           setRetryGeneration((value) => value + 1);
         }}
       />;
     }
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
-        <IndexRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => setRetryGeneration((value) => value + 1)} />
+        <IndexRow title={error!} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); setRetryGeneration((value) => value + 1); }} />
       </View>
     );
   }

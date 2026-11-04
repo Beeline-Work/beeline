@@ -1,4 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Pool } from 'pg';
 import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
@@ -2772,3 +2773,66 @@ it('SILENT-END-1: late silent-tool results do not wake again; other completions 
   const next = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null, reason: 'system' });
   expect((await commands(A, C)).some(c => c.id === next!.id)).toBe(true);
 });
+
+// Redacted production metadata: exact ordering, parent links, outcomes and tool titles;
+// no person, agent, message identifiers or private task text are retained.
+it.each(['production', 'ordinary-background-job'])('Reproduction wake-storm-83 (%s): reminder/tool sequence stops and tells the original person once', async variant => {
+  await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,state) VALUES($1,$2,$3,'fixture','running') ON CONFLICT DO NOTHING`, [A,W,H]);
+  const replay = JSON.parse(readFileSync(new URL('./fixtures/wake-storm-83.json', import.meta.url), 'utf8')) as {
+    reason: string; parent: number; status: 'complete' | 'failed'; completionKind: 'no-reply' | null;
+    toolCalls: number | null; reply?: string; title?: string; toolCallId?: string; toolStatus?: 'completed' | 'failed';
+  }[];
+  expect(replay).toHaveLength(83);
+  expect(replay.filter(event => event.reason === 'corner_background_tool')).toHaveLength(80);
+  expect(replay.at(-1)!.status).toBe('failed');
+  const root = await send('Make the README useful');
+  const opening = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null,
+    reason: 'corner_objective', scheduledHumanCommandMessageId: root.messageId,
+    privatePayload: { kind: 'order', authorId: H, fromRoomId: R, text: 'Make the README useful' } });
+  await db.query("UPDATE agent_commands SET state='complete' WHERE id=$1", [opening!.id]);
+  const replayed = new Map<number, AgentCommand>();
+  let turns = 0;
+  for (const [index, event] of replay.entries()) {
+    if (event.reason === 'report') {
+      const queued = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null,
+        parent: opening!, retainDepth: true, reason: 'report',
+        privatePayload: { kind: 'report', authorId: B, fromRoomId: C, automatic: true,
+          text: 'blocked: Corner is idle. Resume it, set a hold, or close it.' } });
+      if (queued) replayed.set(index, (await commands(A, C)).find(c => c.id === queued.id)!);
+    }
+    const command = replayed.get(index);
+    if (!command || !(await commands(A, C)).some(c => c.id === command.id)) continue;
+    await claim(command, `replay-${index}`);
+    turns++;
+    const turn = { roomId: C, requestId: command.turnRequestId, generationId: `replay-${index}` };
+    if (event.completionKind && variant === 'production') await daemon.execute('markAgentTurnSilent', turn, A);
+    // The recorded tool result dispatched its child before the parent's terminal receipt.
+    for (const [childIndex, child] of replay.entries()) {
+      if (child.parent !== index) continue;
+      await daemon.execute('postBackgroundToolCompletion', { ...turn, toolCallId: child.toolCallId!,
+        title: variant === 'production' ? child.title! : 'Read status', status: child.toolStatus! }, A);
+      const queued = (await commands(A, C)).find(c => c.reason === 'corner_background_tool' && ![...replayed.values()].some(old => old.id === c.id));
+      if (queued) replayed.set(childIndex, queued);
+    }
+    if (event.completionKind && variant !== 'production') await daemon.execute('markAgentTurnSilent', turn, A);
+    if (event.reply) await daemon.execute('postCornerMessage', { ...turn, cornerId: C, text: event.reply }, A);
+    await daemon.execute('postAgentTurnReceipt', { ...turn, status: event.status,
+      ...(event.completionKind ? { completionKind: event.completionKind } : {}), toolCalls: event.toolCalls ?? undefined }, A);
+    await db.query("UPDATE agent_commands SET state='complete' WHERE id=$1 AND state='claimed'", [command.id]);
+  }
+  expect(turns).toBe(3);
+  expect((await db.query(`SELECT 1 FROM agent_turns turn JOIN agent_commands command
+    ON command.room_id=turn.room_id AND command.agent_id=turn.agent_id AND command.turn_request_id=turn.request_id
+    WHERE command.cancellation_reason='silent_wake_limit' AND turn.status='working'`)).rows).toEqual([]);
+  expect((await commands(A, C)).filter(c => ['report','corner_background_tool'].includes(c.reason))).toEqual([]);
+  const noticeIds = (await db.query<{id:string}>(`SELECT id FROM messages WHERE room_id=$1 AND card->>'silentWakeLimit'='true' AND card->>'requestId'=$2`, [R,root.messageId])).rows.map(m => m.id);
+  expect(noticeIds).toHaveLength(1);
+  const notices = (await phone.readRoom(R, H))!.messages.filter(m => noticeIds.includes(m.id));
+  expect(notices).toHaveLength(1);
+  expect(notices[0]!.text).toContain('could not answer');
+  expect(notices[0]!.text).toContain('continue');
+  const fresh = await send('@hoots Continue the README work', C);
+  expect((await commands(A,C)).some(c => c.sourceMessageId === fresh.messageId)).toBe(true);
+  console.log(`Demonstrated wake-storm-83: replayed production sequence; (${turns}) turns, one visible notice, fresh human request accepted`);
+  await db.query('DELETE FROM free_agents WHERE agent_id=$1', [A]);
+}, 60_000);

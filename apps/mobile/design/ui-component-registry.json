@@ -69,7 +69,7 @@
       "MARK_VIEWBOX"
     ],
     "components/buzz/BeelineMarkSpinner.tsx": ["BeelineMarkSpinner", "MARK_CELL"],
-    "components/buzz/ButtonRow.tsx": ["ButtonRow"],
+    "components/buzz/ButtonRow.tsx": ["ButtonRow", "ButtonRowFrame"],
     "components/buzz/Button.tsx": ["Button", "ButtonFrame", "DestinationMark", "RecoveryButton"],
     "components/buzz/ChannelHeaderTitle.tsx": ["ChannelHeaderTitle"],
     "components/buzz/ChevronGlyph.tsx": ["ChevronGlyph"],

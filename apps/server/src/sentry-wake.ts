@@ -112,10 +112,16 @@ export async function receiveSentryWake(db: SqlDatabase, raw: Buffer,
 
 /** The command and batch acknowledgement commit together under a cross-machine row lock. */
 export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgentFromEnv()): Promise<void> {
-  await db.transaction(async tx => {
+  try { await db.transaction(async tx => {
+    // Do not hold the digest singleton while waiting behind another writer's
+    // command dispatch. The next durable wake loop will find the same batch.
+    const dispatch = await tx.query<{ acquired: boolean }>(
+      `SELECT pg_try_advisory_xact_lock(hashtext($1)) acquired`,
+      [`commander-wakes:${TRIAGE}:${agentId}`]);
+    if (!dispatch.rows[0]?.acquired) return;
     const state = await tx.query<{ wake_due: boolean }>(`SELECT
       (last_wake_at IS NULL OR last_wake_at<=now()-interval '5 minutes') wake_due
-      FROM sentry_wake_state WHERE singleton FOR UPDATE`);
+      FROM sentry_wake_state WHERE singleton FOR UPDATE SKIP LOCKED`);
     if (!state.rows[0]?.wake_due) return;
     const issues = await tx.query<{ issue_id: string; level: string; title: string; permalink: string; event_count: string }>(
       `SELECT issue_id,level,title,permalink,event_count FROM sentry_wake_issues
@@ -132,7 +138,14 @@ export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgen
     if (!command) return;
     await tx.query(`UPDATE sentry_wake_issues SET pending=false,last_digested_at=clock_timestamp(),last_digested_level=level WHERE pending`);
     await tx.query(`UPDATE sentry_wake_state SET last_wake_at=clock_timestamp() WHERE singleton`);
-  });
+  }); } catch (error) {
+    if ((error as { code?: string } | null)?.code !== '55P03') throw error;
+    // SERVER-25 failed inside createAgentCommand's INSERT. FK and trigger
+    // locks can still be busy after the nonblocking dispatch reservation.
+    // Rollback preserves both pending issues and the wake clock; the existing
+    // durable loop will deliver them, without replaying a partial write here.
+    console.warn('[sentry-wake] dispatch deferred while database rows are busy');
+  }
 }
 
 export async function nextSentryWakeAt(db: SqlDatabase): Promise<Date | null> {

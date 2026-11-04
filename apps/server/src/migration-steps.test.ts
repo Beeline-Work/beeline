@@ -269,7 +269,9 @@ describe('already-done drops and nullability', () => {
     });
     expect(noOpCheck('DROP TABLE IF EXISTS old_rows')).toEqual({ kind: 'drop-relation', relation: 'old_rows' });
     expect(noOpCheck('ALTER TABLE t DROP CONSTRAINT IF EXISTS c, ADD CONSTRAINT c CHECK (a > 0)')).toBeNull();
-    expect(noOpCheck('ALTER TABLE t ALTER COLUMN a SET DEFAULT now()')).toEqual({kind:'alter',relation:'t',clauses:[{kind:'default',name:'a',expr:'now()'}]});
+    expect(noOpCheck('ALTER TABLE t ALTER COLUMN a SET DEFAULT now()')).toEqual({
+      kind: 'alter', relation: 't', clauses: [{ kind: 'default', name: 'a', expr: 'now()' }],
+    });
     expect(noOpCheck('ALTER TABLE t DROP COLUMN a')).toBeNull();
   });
 

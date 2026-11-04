@@ -6,7 +6,7 @@ mkdir -p "$EVIDENCE"
 device=''
 record_pid=''
 log_pid=''
-# shellcheck disable=SC2317 # Called by the EXIT trap, including after failed build commands.
+# shellcheck disable=SC2317,SC2329 # Called by the EXIT trap, including after failed build commands.
 cleanup() {
   local status=$?
   trap - EXIT INT TERM

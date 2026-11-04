@@ -179,3 +179,45 @@ export async function alreadySatisfied(database: CatalogDatabase, statement: str
   );
   return rows[0]?.relation === true && rows[0]?.columns === check.columns.length;
 }
+
+const stripStatement = (statement: string) =>
+  statement.replace(/^(?:\s*--[^\n]*\n)*/, '').trim().replace(/;\s*$/, '');
+const DROP_TRIGGER = new RegExp(`^DROP\\s+TRIGGER\\s+IF\\s+EXISTS\\s+${IDENT}\\s+ON\\s+(?:ONLY\\s+)?${IDENT}$`, 'i');
+const CREATE_TRIGGER = new RegExp(`^CREATE\\s+TRIGGER\\s+${IDENT}\\s[\\s\\S]*?\\bON\\s+${IDENT}\\s`, 'i');
+
+/** Compare trigger definitions the way pg_get_triggerdef prints them. */
+export function normalizeTriggerDefinition(sql: string): string {
+  return stripStatement(sql)
+    .replace(/\b[A-Za-z_][A-Za-z0-9_]*\.([A-Za-z_][A-Za-z0-9_]*)/g, '$1')
+    .replace(/\bEXECUTE\s+PROCEDURE\b/gi, 'EXECUTE FUNCTION')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([(),])\s*/g, '$1')
+    .toLowerCase();
+}
+
+/** A drop-and-recreate trigger pair whose trigger already has exactly the new
+ * definition, as [trigger, table], or null when the pair is anything else. */
+export function triggerPair(drop: string, create: string): [string, string] | null {
+  const dropped = stripStatement(drop).match(DROP_TRIGGER);
+  const created = stripStatement(create).match(CREATE_TRIGGER);
+  if (!dropped || !created) return null;
+  const [trigger, table] = [dropped[1]!.toLowerCase(), dropped[2]!.toLowerCase()];
+  return created[1]!.toLowerCase() === trigger && created[2]!.toLowerCase() === table ? [trigger, table] : null;
+}
+
+/** True when a DROP TRIGGER IF EXISTS / CREATE TRIGGER pair would recreate a
+ * trigger identical to the installed one. Dropping it would still queue for a
+ * lock on the (usually hot) table, so the pair is skipped. */
+export async function triggerAlreadyCurrent(
+  database: CatalogDatabase, drop: string, create: string,
+): Promise<boolean> {
+  const pair = triggerPair(drop, create);
+  if (!pair) return false;
+  const { rows } = await database.query(
+    `SELECT pg_get_triggerdef(oid) AS definition FROM pg_trigger
+      WHERE tgrelid = to_regclass($2) AND tgname = $1 AND NOT tgisinternal`,
+    pair,
+  );
+  const installed = rows[0]?.definition;
+  return typeof installed === 'string' && normalizeTriggerDefinition(installed) === normalizeTriggerDefinition(create);
+}

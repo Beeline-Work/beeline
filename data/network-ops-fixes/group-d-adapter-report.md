@@ -2,7 +2,7 @@
 
 The router capability remains off. This is a pre-rollout adapter follow-up, not
 whole-finding closure or an installed-native acceptance claim. The integration
-base for this report is `93e8f3c08`. Existing rollout-readiness and closure-ledger
+base for this report is `5a3dd9632`. Existing rollout-readiness and closure-ledger
 rows retain their authority; held compatibility removals stay held.
 
 ## Per-finding disposition
@@ -36,7 +36,13 @@ PostgreSQL proofs require an isolated loopback URL in
   `artifact-byte-owner.test.ts`, `artifact-link.test.ts`, `ArtifactMedia.test.tsx`,
   `router-owner.test.ts`, `livekit-owned.test.ts`, `voice-transport.test.ts` and
   `ActivityTimeline.test.tsx`.
+- Integrated auth/recovery boundaries: `monolith-session.test.ts`,
+  `session-required.test.ts`, `room-draw-barrier.test.ts`,
+  `room-view-client.test.ts` and `monolith-rig-transport.test.ts`.
 - Shared core: `packages/net/src/media-demand-owner.test.ts`.
+- Inherited timer-fix regressions: `helper-overlay.test.ts`,
+  `room-scheduled-work.integration.test.ts`, `tray-committed-clock.test.ts`
+  and `voice-cutin.test.ts`. Their assertions and deadlines stay unchanged.
 - Existing P-group PostgreSQL harnesses:
   `router-group-c-connection.postgres.test.ts` (P4/P9),
   `router-group-c-media.postgres.test.ts` (P8/P10/P11),
@@ -47,9 +53,10 @@ PostgreSQL proofs require an isolated loopback URL in
   `npm run lint:router` and unchanged
   `node --test scripts/network-codec-bundle.test.mjs`.
 
-Observed on the integrated worker source: **326 mobile regressions in 12 serial
-suites**, **11 shared-core cases**, and **13 real-PostgreSQL cases in four serial
-suites** pass. The strict 200-tool payload proof passes: initial tool rows 0,
+Observed on the integrated worker source: **421 mobile regressions in 17 serial
+suites**, **11 shared-core cases**, **34 inherited server timer regressions in four
+serial suites**, and **13 real-PostgreSQL cases in four serial suites** pass.
+The strict 200-tool payload proof passes: initial tool rows 0,
 initial value 1,970 bytes, expanded rows 200, explicit full output 32,768 bytes,
 and revoked enqueues 0. Full root typecheck, both scanners and all three bundle
 gates pass. Auth/native event and serializer seams remain as described above.

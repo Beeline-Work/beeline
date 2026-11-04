@@ -152,6 +152,8 @@
       // stay in the static graph without executing a CI-specific environment.
       "expo": false,
       "entry": [
+        // tsc executes negative read-owner capability assertions in this entry.
+        "sources/buzz/read-authority.typecheck.ts",
         "index.ts",
         // tsc executes the negative phone command capability assertions.
         "sources/sync/transport/phone-command-boundary.typecheck.ts",

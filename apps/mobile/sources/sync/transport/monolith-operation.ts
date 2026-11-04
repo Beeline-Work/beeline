@@ -1,3 +1,4 @@
+import type { ReadAuthority, OwnedSurfaceRead } from '@/buzz/read-authority';
 import { canonicalJson } from '@beeline/net/phone-inputs';
 import { clientResetGeneration } from '@/sync/client-reset';
 import { appErrorCopy } from '@/buzz/app-error-copy';
@@ -104,10 +105,10 @@ export function phoneOperationFailureReason(error: unknown): string {
   return appErrorCopy(error);
 }
 
-/** Public feature facade. It never holds a raw write capability: the typed
+/** Both public adapters converge here. The typed
  * branch below can call RPC only for reads; every write delegates to the one
  * persisted intent owner before any transport admission. */
-export async function monolithPhoneOperation<Name extends keyof PhoneOperationMap>(
+async function executePhoneOperation<Name extends keyof PhoneOperationMap>(
   name: Name, input: PhoneOperationMap[Name]['input'],
   options?: { timeoutMs?: number; signal?: AbortSignal; afterRoomDraw?: boolean },
 ): Promise<PhoneOperationMap[Name]['output']> {
@@ -146,4 +147,17 @@ async function executePhoneCommand<Name extends PhoneCommandOperation>(
     if (error instanceof PhoneSocketError) throw new MonolithPhoneOperationError(name, error.status, error.message, error.code);
     throw error;
   }
+}
+
+export function monolithPhoneOperation<Name extends Exclude<keyof PhoneOperationMap, OwnedSurfaceRead>>(
+  name: Name, input: PhoneOperationMap[Name]['input'],
+  options?: { timeoutMs?: number; signal?: AbortSignal; afterRoomDraw?: boolean },
+): Promise<PhoneOperationMap[Name]['output']> {
+  return executePhoneOperation(name, input, options);
+}
+/** Only the server read owner holds admission for these selected surfaces. */
+export function readServerSurface<Name extends OwnedSurfaceRead>(
+  _authority: ReadAuthority, name: Name, input: PhoneOperationMap[Name]['input'],
+): Promise<PhoneOperationMap[Name]['output']> {
+  return executePhoneOperation(name, input);
 }

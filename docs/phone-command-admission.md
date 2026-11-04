@@ -66,7 +66,11 @@ aliased request capabilities, command bridge access, owner replacement and serve
 capability forwarding outside exact owners. No count allowance or warning-only path
 was added. `phone-command-boundary.typecheck.ts` proves a raw write and direct command
 transport access do not typecheck. In-memory backdoor tests exercise the same scanner.
-The existing network and architecture guards retain their budgets. The runtime scanner also excludes the newly merged `test-fixtures` host folder and rejects production imports of it, so computed imports in test hosts cannot become runtime exceptions.
+The existing network and architecture guards retain their budgets.
+
+Selected list/Tray reads retain their `ReadAuthority` capability after integration
+with the read owner. The owned preview form remains a raw read, while the legacy
+mark-seen form enters command admission; `monolith-operation.test.ts` covers both.
 
 Behavioral coverage: `command-intents.test.ts` (digest-only storage),
 `command-owner.integration.test.ts` (persist-before-send, duplicate joining, uncertain

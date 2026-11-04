@@ -1,3 +1,4 @@
+import type { ReadAuthority } from '@/buzz/read-authority';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PhoneSocketDisconnectedError, PhoneSocketError } from './phone-socket-error';
 const request = vi.hoisted(() => vi.fn());
@@ -9,7 +10,7 @@ vi.mock('@/auth/monolith-session', () => ({
   MonolithRequestTimeoutError: class extends Error {},
 }));
 vi.mock('@/auth/signin-funnel', () => ({ funnelSuccessfulOperation: vi.fn() }));
-import { monolithPhoneOperation, phoneOperationFailureReason, phoneOperationRequestOptions } from './monolith-operation';
+import { readServerSurface, monolithPhoneOperation, phoneOperationFailureReason, phoneOperationRequestOptions } from './monolith-operation';
 import { MonolithRequestTimeoutError } from '@/auth/monolith-session';
 
 beforeEach(() => { request.mockReset(); command.mockReset().mockImplementation((...args) => request(...args)); });
@@ -66,7 +67,17 @@ it('delegates writes to command admission while the raw connection receives only
   await expect(monolithPhoneOperation('sendFromWallet', {} as never)).resolves.toEqual({ outcome: 'sent' });
   expect(command).toHaveBeenCalledOnce();
   expect(request).not.toHaveBeenCalled();
-  request.mockResolvedValueOnce({ count: 1 });
-  await expect(monolithPhoneOperation('countNeedsYou', { workspaceId: 'w' })).resolves.toEqual({ count: 1 });
-  expect(request).toHaveBeenCalledExactlyOnceWith('countNeedsYou', { workspaceId: 'w' }, { timeoutMs: 15_000 });
+  request.mockResolvedValueOnce({ prompt: null });
+  await expect(monolithPhoneOperation('readStarPrompt', {})).resolves.toEqual({ prompt: null });
+  expect(request).toHaveBeenCalledExactlyOnceWith('readStarPrompt', {}, { timeoutMs: 15_000 });
+});
+
+it('keeps owned previews as reads and routes the legacy mark-seen form through command admission', async () => {
+  const authority = {} as ReadAuthority;
+  request.mockResolvedValueOnce({ items: [] });
+  await readServerSurface(authority, 'readNeedsYou', { workspaceId: 'w', markSeen: false });
+  expect(request).toHaveBeenCalledOnce(); expect(command).not.toHaveBeenCalled();
+  command.mockResolvedValueOnce({ items: [] });
+  await readServerSurface(authority, 'readNeedsYou', { workspaceId: 'w' });
+  expect(command).toHaveBeenCalledOnce(); expect(request).toHaveBeenCalledOnce();
 });

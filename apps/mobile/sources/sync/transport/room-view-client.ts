@@ -1,5 +1,6 @@
 import { isPhoneReadOperation, type PhoneCommandOperation } from '@beeline/api-contract/phone';
 import { monolithPhoneOperation, MonolithPhoneOperationError } from './monolith-operation';
+import type { ReadAuthority, OwnedSurfaceRead } from '@/buzz/read-authority';
 import { RoomViewHttpError, type RoomViewClientOptions } from '@beeline/buzz-client';
 import {
   readAgentVoiceCatalog,
@@ -150,7 +151,7 @@ class MonolithRoomViewClient {
     try {
       const result = await (isPhoneReadOperation(name, input) ? sharedLiveConnection().request(name, input as never, { signal, timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
         ...(name === 'readChats' ? { afterRoomDraw: false } : {}) })
-        : monolithPhoneOperation(name as PhoneCommandOperation, input as never, { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS })) as PhoneOperationMap[Name]['output'];
+        : monolithPhoneOperation(name as Exclude<PhoneCommandOperation, OwnedSurfaceRead>, input as never, { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS })) as PhoneOperationMap[Name]['output'];
       if (name === 'readRoom') markRoomOpen('wire-headers');
       return result;
     } catch (error) {
@@ -212,7 +213,7 @@ export class RoomViewClient {
   ) {
     return this.implementation.previewAgentVoice(workspaceId, agentId, voiceId);
   }
-  chats(id: string) {
+  chats(_authority: ReadAuthority, id: string) {
     return this.implementation.chats(id);
   }
   room(id: string) {

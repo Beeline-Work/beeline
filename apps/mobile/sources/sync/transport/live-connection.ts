@@ -1225,10 +1225,7 @@ function productionRouterBridge(): RouterOwnerBridge {
     },
     refresh: roomId => {
       const current = epoch;
-      if (pending) void pending.then(async () => {
-        const { routerOwnerRefresh } = await import('@/buzz/router-owner');
-        if (current === epoch) routerOwnerRefresh(roomId);
-      }).catch(() => {});
+      if (pending) void pending.then(owner => { if (current === epoch) owner.routerOwnerRefresh(roomId); }).catch(() => {});
     },
     receive: frame => {
       const current = epoch;

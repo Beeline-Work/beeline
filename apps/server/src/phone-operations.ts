@@ -127,6 +127,9 @@ export function createPhoneOperationDispatcher(
           ...(Number.isSafeInteger(offset) && (offset as number) >= 0 ? { offset: offset as number } : {}),
         }));
       }
+      // v142 (98c2a49a) still reads this wire format; the 12-Room compatibility
+      // matrix is in data/network-ops-fixes/room-list-release-compatibility.md.
+      // New clients select/dispatch it only inside server-read-owner.ts.
       case 'readChats': return found(await phone.readChats(uuid(input, 'workspaceId'), viewerId));
       case 'readAgent': return found(await phone.readAgent(uuid(input, 'workspaceId'), required(input, 'agentId'), viewerId, optional(input, 'workCursor')));
       case 'resolveMessageLink': return found(await phone.resolveMessageLink(messageId(input), viewerId));
@@ -149,6 +152,8 @@ export function createPhoneOperationDispatcher(
         if([anchor,before,target].some(value=>value!==undefined&&(!value.length||value.length>128)))refuse(400,'invalid_tool_target');
         return readRoomTools(options.database,{roomId:uuid(input,'roomId'),anchor,...(before?{before}:{}),...(target?{messageId:target}:{})},viewerId);
       }
+      // Released wire clients retain full tool rows here; negotiated Room
+      // snapshots use the separate projection in PhoneService.buildRouterValue.
       case 'readRoom': return found(await phone.readRoom(uuid(input, 'roomId'), viewerId));
       case 'readHistory':
       case 'readHistoryAfter':

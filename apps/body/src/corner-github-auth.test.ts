@@ -975,7 +975,9 @@ appendFileSync(${JSON.stringify(calls)}, 'token\\n'); console.log('fresh-token')
     expect(
       (await execFileAsync('/usr/bin/git', ['--git-dir', remote, 'show-ref', 'raw-target'])).stdout,
     ).toContain('refs/heads/raw-target');
-  });
+    // Repository setup plus three real wrapper/token/push subprocess chains
+    // can exceed the default budget while the full CI suite runs in parallel.
+  }, 60_000);
 
   it('refuses a configured pushurl that points away from a local fixture', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-pushurl-'));

@@ -4073,6 +4073,9 @@ export function BuzzChatSurface({
             mentions: [...new Set([...mentionedPubkeys, ...(mentionedAgent ? [mentionedAgent] : [])])],
             ...(preparedReply?.reference ? { parentMessageId: preparedReply.reference.eventId } : {}),
           }) : undefined;
+      // Retain this Room's delivery handle across first paint and navigation.
+      // Session cleanup may clear its ref while this send is still preparing.
+      let activeOutbox = outbox.current();
       sendInFlightRef.current = true;
       const phonePreview = !desktopTranscript && activePendingAttachments.length === 0;
       const updateSendStatus = () => {
@@ -4224,7 +4227,7 @@ export function BuzzChatSurface({
           ...(preparedReply?.reference ? { replyToId: preparedReply.reference.eventId } : {}),
           ...(attachments.length ? { attachments } : {}),
         } satisfies ChatDisplayMessage;
-        const activeOutbox = outbox.current();
+        activeOutbox ??= outbox.current();
         if (!activeOutbox) throw new Error('Message outbox is unavailable');
         if (dictationCancelled()) return;
         if (dictated) {
@@ -4306,7 +4309,7 @@ export function BuzzChatSurface({
         return true;
       } catch (err) {
         console.warn('Send failed:', err);
-        if (phonePreview && provisionalId && (!preparedEvent || !outbox.current()?.get(preparedEvent.id))) {
+        if (phonePreview && provisionalId && (!preparedEvent || !activeOutbox?.get(preparedEvent.id))) {
           sendPreview.remove(preparedEvent?.id ?? provisionalId);
         }
         if (provisionalId && !preparedEvent) {
@@ -4315,7 +4318,7 @@ export function BuzzChatSurface({
         if (desktopExperience) setDesktopDeliveryState('failed');
         // Delivery errors stay in the outbox. Preparation errors keep the draft.
         setPendingAck(null);
-        if (isFocused() && (!preparedEvent || !outbox.current()?.get(preparedEvent.id))) {
+        if (isFocused() && (!preparedEvent || !activeOutbox?.get(preparedEvent.id))) {
           Modal.alert('Could not prepare message', appErrorCopy(err));
         }
         return false;

@@ -171,3 +171,23 @@ describe('Reproduction R3: a send addressed to an agent shows the thinking indic
     expect(context.Modal.alert).not.toHaveBeenCalled();
   });
 });
+
+
+it('finishes a first-paint send in its captured source outbox after navigation', async () => {
+  let paint!: () => void;
+  const fixture = sendContext({
+    sendPreview: { show: () => new Promise<void>(resolve => { paint = resolve; }),
+      reconcile: vi.fn(), remove: vi.fn() },
+  });
+  const original = fixture.context.outbox.current();
+  let active: typeof original | null = original;
+  fixture.context.outbox.current = () => active as typeof original;
+  const pending = runInNewContext(executable, fixture.context)();
+  active = null; // Session cleanup after changing the route's Room.
+  paint();
+  expect(await pending).toBe(true);
+  expect(fixture.transport.composeMessage).toHaveBeenCalledWith(
+    expect.objectContaining({ sessionId: 'conversation' }), expect.anything());
+  expect(fixture.enqueue).toHaveBeenCalledWith(fixture.event, expect.objectContaining({ text: fixture.text }));
+  expect(fixture.sendOutbox).toHaveBeenCalledWith(fixture.event.id);
+});

@@ -54,6 +54,9 @@ const deck = vi.hoisted(() => ({
   useRealWorkspaceRead: false,
   socketRequest: vi.fn(),
   selectedWorkspace: 'workspace' as string | null,
+  deferWorkspaceSelection: false,
+  workspaceSelectionListener: null as null | ((id: string | null) => void),
+  chatsWorkspaces: [] as string[],
   chatsResponse: null as unknown,
   connectionState: 'connected' as 'connected' | 'connecting' | 'disconnected',
   reconnects: 0,
@@ -173,7 +176,9 @@ vi.mock('expo-haptics', () => ({
 vi.mock('expo-router', () => ({
   router: { push: vi.fn(), replace: vi.fn() },
   useLocalSearchParams: () =>
-    deck.selectedWorkspace ? { communityId: deck.selectedWorkspace } : {},
+    !deck.deferWorkspaceSelection && deck.selectedWorkspace
+      ? { communityId: deck.selectedWorkspace }
+      : {},
 }));
 vi.mock('react-native-gesture-handler', () => hostModule('Swipeable'));
 vi.mock('react-native-safe-area-context', () => ({
@@ -213,7 +218,8 @@ vi.mock('@/buzz/community-storage', () => ({
   loadActiveCommunityId: vi.fn(async () => deck.selectedWorkspace),
   saveActiveCommunityId: vi.fn(async () => undefined),
   watchActiveCommunityId: vi.fn((_pubkey: string, listener: (id: string | null) => void) => {
-    void Promise.resolve(deck.selectedWorkspace).then(listener);
+    deck.workspaceSelectionListener = listener;
+    if (!deck.deferWorkspaceSelection) void Promise.resolve(deck.selectedWorkspace).then(listener);
     return () => undefined;
   }),
 }));
@@ -347,7 +353,8 @@ vi.mock('@/sync/transport/room-view-client', async () => ({
         watchFilters: [],
       };
     }
-    async chats(): Promise<ChatListView> {
+    async chats(workspaceId: string): Promise<ChatListView> {
+      deck.chatsWorkspaces.push(workspaceId);
       deck.chatsReads += 1;
       return deck.chatsResponse as ChatListView;
     }
@@ -361,6 +368,7 @@ import { resetClientState } from '@/sync/client-reset';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { cornerOpenEnded } from '@/buzz/corner-open-status';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
@@ -469,6 +477,9 @@ beforeEach(() => {
   deck.renderRows = false;
   vi.mocked(saveActiveCommunityId).mockClear();
   deck.chatsReads = 0;
+  deck.chatsWorkspaces = [];
+  deck.deferWorkspaceSelection = false;
+  deck.workspaceSelectionListener = null;
   deck.workspacesResponse = null;
   deck.workspaceFailures = [];
   deck.workspaceReads = 0;
@@ -492,6 +503,32 @@ afterEach(() => {
   deck.focusEffect = null;
   deck.focusEffects.clear();
   deck.blur = null;
+});
+
+describe('Persisted Workspace bootstrap', () => {
+  it('waits for the stored Workspace and reads its Rooms ahead of the recency-first Workspace', async () => {
+    deck.deferWorkspaceSelection = true;
+    const recent = { id: 'recent', name: 'Recent', role: 'member' as const, updatedAt: 100 };
+    const stored = { id: 'workspace', name: 'Work', role: 'member' as const, updatedAt: 1 };
+    const workspaces = { workspaces: [recent, stored], viewer, truncated: false, watchFilters: [] };
+    deck.workspacesResponse = workspaces;
+    vi.mocked(mobileSurfaceCache.read).mockImplementation(async (address) =>
+      String(address).includes('/workspaces') ? workspaces : null,
+    );
+    let renderer!: ReactTestRenderer;
+    await act(async () => {
+      renderer = create(React.createElement(BuzzChannels));
+    });
+    await vi.waitFor(() => expect(deck.workspaceSelectionListener).not.toBeNull());
+    expect(deck.workspaceReads).toBe(0);
+    expect(deck.chatsWorkspaces).toEqual([]);
+    expect(mobileSurfaceCache.read).not.toHaveBeenCalled();
+    await act(async () => deck.workspaceSelectionListener!('workspace'));
+    await vi.waitFor(() => expect(deck.chatsWorkspaces).toEqual(['workspace']));
+    expect(paintedRows(renderer).map((item) => item.room.id)).toEqual(['room-a']);
+    expect(router.replace).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
 });
 
 describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
@@ -1215,6 +1252,7 @@ describe('Room deck live path', () => {
       const header = list.props.renderSectionHeader({
         section: { kind, title, data: [{}, {}, {}] },
       });
+      expect(header.type).toBe(RoomListSectionHeader);
       expect(header.props.title).toBe(title);
       expect(header.props.inset).toBe('roomList');
       expect(header.props.count).toBeUndefined();

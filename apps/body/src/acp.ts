@@ -1465,7 +1465,7 @@ export class AcpClient extends EventEmitter {
     }
     const hardTimer = freeAgent ? setTimeout(() => stop('free-agent-time-limit'), Math.max(0, startedAt + maxTurnMs - Date.now())) : undefined;
     const isSilentCall = (call: ToolCallEntry) =>
-      /^(?:mcp__beeline[-_]agent__)?no_reply_needed$/.test(call.title ?? '');
+      /^(?:(?:mcp__)?beeline[-_]agent__|mcp\.beeline-agent\.)?no_reply_needed$/.test(call.title ?? '');
     const silentCallPending = () => toolCallEntries(updates).some(call =>
       isSilentCall(call) && !call.resultReceived && !['completed', 'failed'].includes(call.status ?? ''));
     let toolsSettled: (() => void) | undefined;

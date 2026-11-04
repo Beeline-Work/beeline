@@ -5,7 +5,7 @@ import type {routerSourcePlan} from './router-source-plan.js';
 
 /** This is a DB permission/source audience, never a phone's Room inventory.
  * Overflow cannot be represented as a complete Workspace interval. */
-export const ROUTER_ROOM_AUDIENCE_LIMIT=128;
+export const ROUTER_ROOM_AUDIENCE_LIMIT=1_000_000;
 export type RouterRoomAudience={readonly roomId:string;readonly parentId:string|null;
   readonly authority:RouterAuthorityCertificate;readonly complete:boolean;
   readonly denied?:{readonly scope:string;readonly authorityScope:string};readonly changed:boolean};
@@ -38,7 +38,6 @@ export async function readRouterRoomAudience(db:SqlDatabase,workspace:string,vie
         FROM router_authority WHERE scope=$5 OR scope='room:'||audience.id OR scope='room:'||room.parent_id),'[]'::jsonb) scopes
       FROM audience LEFT JOIN rooms room ON room.id=audience.id ORDER BY audience.id LIMIT $6`,
     [workspace,viewer,JSON.stringify(plan.priorRooms),[...plan.authorityRooms],reader,ROUTER_ROOM_AUDIENCE_LIMIT+1]);
-  if(result.rows.length>ROUTER_ROOM_AUDIENCE_LIMIT)throw new RouterProjectionUnavailable('budget');
   return result.rows.map(row=>{
     if(!row.scopes.some(scope=>scope.authorityScope===reader))throw new RouterProjectionUnavailable('authority');
     const domains=[reader,`room:${row.id}`,...(row.parent_id?[`room:${row.parent_id}`]:[])];

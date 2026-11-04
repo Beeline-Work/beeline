@@ -4,8 +4,8 @@ import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
 import { commandOwnerLiveSql, registerOwnedEffectFence } from './turn-ownership.js';
 
-/** Uninstalled, additive primitive. The actual claim/router/provider adapters
- * must opt in together; this module creates no transport or rollout switch. */
+/** Release-installed additive primitive for the claim/router/provider adapters;
+ * this module creates no transport or rollout switch. */
 export const OWNED_MODEL_CREDENTIAL_SCHEMA = `
 CREATE TABLE IF NOT EXISTS owned_model_credentials (
  id text PRIMARY KEY CHECK(id ~ '^[a-f0-9]{32}$'),

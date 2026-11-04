@@ -72,7 +72,7 @@ export function readTraySavedWindowCause(value:Record<string,unknown>):TraySaved
   return value as TraySavedWindowCause;
 }
 
-/** Uninstalled additive metadata. BEFORE INSERT always owns the UUID, including
+/** Release-installed additive metadata. BEFORE INSERT always owns the UUID, including
  * explicit/reused caller values and old-writer upserts. UPDATE of identity or
  * order creates a fresh UUID; display edits keep it, standalone UUID rewriting
  * is refused. No retained bookmark history or epoch-as-invalidation writes.

@@ -17,10 +17,15 @@ export interface OwnedModelFixture<T extends SqlDatabase> {
 }
 export async function ownedModelFixture(): Promise<OwnedModelFixture<PgliteDatabase>> {
   const db = await migratedDatabase();
-  return seedOwnedModelFixture(db);
+  return seedOwnedModelFixture(db, { installSchema: false });
 }
-export async function seedOwnedModelFixture<T extends SqlDatabase>(db: T): Promise<OwnedModelFixture<T>> {
-  await db.query(OWNED_MODEL_CREDENTIAL_SCHEMA); await db.query(OWNED_MODEL_ATTEMPT_SCHEMA);
+export async function seedOwnedModelFixture<T extends SqlDatabase>(db: T,
+  options: { installSchema?: boolean } = {}): Promise<OwnedModelFixture<T>> {
+  // Minimal contention fixtures install their own schema. Migrated databases
+  // must exercise release wiring without silently repairing missing tables.
+  if (options.installSchema !== false) {
+    await db.query(OWNED_MODEL_CREDENTIAL_SCHEMA); await db.query(OWNED_MODEL_ATTEMPT_SCHEMA);
+  }
   await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Synthetic owner'),($2,'agent','Synthetic model agent')`, [MODEL_OWNER, MODEL_AGENT]);
   await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [MODEL_AGENT, MODEL_OWNER]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Synthetic models')`, [MODEL_WORKSPACE]);

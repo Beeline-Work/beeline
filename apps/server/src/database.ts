@@ -5,6 +5,8 @@ import { TRAY_CLOCK_WORK_SCHEMA } from './tray-clock-work.js';
 import { TRAY_SAVED_WINDOW_SCHEMA } from './tray-saved-window.js';
 import { TRAY_SAVED_SOURCE_SCHEMA } from './tray-saved-source.js';
 import { TRAY_MUTABLE_SOURCE_SCHEMA } from './tray-mutable-source.js';
+import { OWNED_MODEL_CREDENTIAL_SCHEMA } from './owned-model-credential.js';
+import { OWNED_MODEL_ATTEMPT_SCHEMA } from './owned-model-attempt.js';
 import { DISPLAY_DEADLINE_SOURCE_SCHEMA } from './deadline-expiry-source.js';
 import { SENTRY_WAKE_SOURCE_SCHEMA } from './sentry-wake-source.js';
 import { CONNECTOR_OFFER_EXPIRY_SCHEMA } from './connector-offer-expiry.js';
@@ -102,7 +104,7 @@ import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { cornerWaitingFunctionSql } from './corner-waiting-report.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
-import { alreadySatisfied, logLockHolders, triggerAlreadyCurrent, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
+import { alreadyNoOp, alreadySatisfied, logLockHolders, triggerAlreadyCurrent, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 import { QueryProfiler } from './query-profile.js';
 import { DatabaseBackgroundWork } from './database-background-work.js';
@@ -116,6 +118,8 @@ export const ENRICHMENT_POOL_WAIT_TIMEOUT_MS = 500;
 export const HEALTH_STATEMENT_TIMEOUT_MS = 2_000;
 export const HEALTH_POOL_WAIT_TIMEOUT_MS = 1_000;
 export const MIGRATION_LOCK_TIMEOUT_MS = 1_000;
+/** Schema statements retry a busy table this many times (about 2 minutes). */
+export const MIGRATION_DDL_ATTEMPTS = 120;
 export const MIGRATION_STATEMENT_TIMEOUT_MS = 10 * 60_000;
 export const APP_TRANSACTION_DEADLINE_MS = 30_000;
 export const ENRICHMENT_TRANSACTION_DEADLINE_MS = 3_000;
@@ -3215,15 +3219,27 @@ export async function migrate(
   database: SqlDatabase,
   options: { deferData?: boolean } = {},
 ): Promise<void> {
-  const ddl = (name: string, sql: string) =>
-    runMigrationStep(name, async () => { await database.query(sql); }, {
-      onLockTimeout: () => logLockHolders(database, name, sql),
-    });
+  // A schema change needs its table to itself for an instant. On a live app
+  // that table is rarely idle for the whole lock timeout, so wait in line and
+  // try again rather than failing the release on the first busy moment.
+  const ddl = async (name: string, sql: string) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await runMigrationStep(name, async () => { await database.query(sql); }, {
+          onLockTimeout: attempt === 1 ? () => logLockHolders(database, name, sql) : undefined,
+        });
+      } catch (error) {
+        const code = (error as { code?: unknown } | null)?.code;
+        if ((code !== '55P03' && code !== '40P01') || attempt >= MIGRATION_DDL_ATTEMPTS) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 250 + Math.floor(Math.random() * 1250)));
+      }
+    }
+  };
   const ddlScript = async (name: string, sql: string) => {
     const statements = splitMigrationStatements(sql);
     for (let index = 0; index < statements.length; index++) {
       const statement = statements[index]!;
-      if (await alreadySatisfied(database, statement)) continue;
+      if (await alreadySatisfied(database, statement) || await alreadyNoOp(database, statement)) continue;
       const next = statements[index + 1];
       if (next && await triggerAlreadyCurrent(database, statement, next)) { index++; continue; }
       await ddl(`${name} ${index + 1}/${statements.length}`, statement);
@@ -3257,6 +3273,8 @@ export async function migrate(
   await ddlScript('router command identity', ROUTER_COMMAND_SCHEMA);
   await ddlScript('startup wake backoff', STARTUP_WAKE_BACKOFF_SCHEMA);
   await ddlScript('free agents schema', FREE_AGENTS_SCHEMA);
+  await ddlScript('owned model credentials', OWNED_MODEL_CREDENTIAL_SCHEMA);
+  await ddlScript('owned model attempts', OWNED_MODEL_ATTEMPT_SCHEMA);
   await ddlScript('starter onboarding schema', STARTER_ONBOARDING_SCHEMA);
   await runMigrationStep('checkin human history index', () => createIndexConcurrently(
     database, 'messages_checkin_author_history',
@@ -3581,6 +3599,11 @@ export async function migrate(
   await ddlScript('router profile sources', ROUTER_PROFILE_SCHEMA);
   await ddlScript('router owner sources', ROUTER_OWNER_SCHEMA);
   await ddlScript('router roster source',ROUTER_ROSTER_SCHEMA);
+  // Saved source capture reads the incarnation metadata; all Tray capture
+  // depends on the durable journal and router authority installed above.
+  await ddlScript('Tray saved window', TRAY_SAVED_WINDOW_SCHEMA);
+  await ddlScript('Tray saved sources', TRAY_SAVED_SOURCE_SCHEMA);
+  await ddlScript('Tray mutable sources', TRAY_MUTABLE_SOURCE_SCHEMA);
   await ddlScript('scheduled work authority', SCHEDULED_WORK_AUTHORITY_SCHEMA);
   await ddlScript('scheduled work sources', ROOM_SCHEDULES_CAPTURE_SCHEMA);
   await ddlScript('server lease deadlines', SERVER_LEASE_DEADLINE_SCHEMA);
@@ -3597,9 +3620,6 @@ export async function migrate(
   await ddlScript('Tray clock sources and readiness', TRAY_CLOCK_SOURCE_SCHEMA);
   await ddlScript('Tray clock commit ownership', TRAY_CLOCK_OWNER_SCHEMA);
   await ddlScript('Tray clock work streams', TRAY_CLOCK_WORK_SCHEMA);
-  await ddlScript('Tray saved window identities', TRAY_SAVED_WINDOW_SCHEMA);
-  await ddlScript('Tray saved content and access sources', TRAY_SAVED_SOURCE_SCHEMA);
-  await ddlScript('Tray mutable sources', TRAY_MUTABLE_SOURCE_SCHEMA);
   if (!options.deferData) await migrateData(database);
 }
 

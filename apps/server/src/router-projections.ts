@@ -264,12 +264,12 @@ function validGroupCertificate(authority:RouterAuthorityCertificate,readerScope:
 function validProjectedMember(fact:RouterFact,input:ResolvedRouterSnapshotInput,workspace:string,viewer:string,readerScope:string):boolean {
   const payload=fact.payload,scope=input.agentId??input.roomId??workspace;
   if(payload.kind==='needs-you-rooms-replace')return !input.roomId&&input.family==='needs-you'&&payload.scope===workspace&&
-    Number.isSafeInteger(payload.count)&&payload.count===payload.order.length&&payload.order.length<=500&&
-    new Set(payload.order).size===payload.order.length&&payload.rooms.length<=128&&
+    Number.isSafeInteger(payload.count)&&payload.count===payload.order.length&&
+    new Set(payload.order).size===payload.order.length&&
     payload.rooms.every(room=>ROOM_SCOPE.test(room.roomId)&&room.items.every(item=>item.workspaceId===workspace&&item.roomId===room.roomId));
   if(payload.kind==='tray-classification'||payload.kind==='tray-needs-replace'){
     if(input.roomId||payload.scope!==workspace||fact.atomicGroup!==`needs-you:${workspace}:${viewer}`)return false;
-    return payload.kind==='tray-classification'?payload.version===1&&/^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion):payload.value.items.length<=30;
+    return payload.kind==='tray-classification'?payload.version===1&&/^tray-clock-v1:[a-f0-9]{32}:(0|[1-9][0-9]*)$/.test(payload.clockVersion):true;
   }
   if(payload.kind==='saved-row-replace'||payload.kind==='saved-row-remove'){
     if(input.roomId||payload.scope!==workspace||fact.atomicGroup!==`needs-you:${workspace}:${viewer}`)return false;

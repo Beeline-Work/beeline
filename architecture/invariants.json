@@ -286,7 +286,7 @@
       "apps/auth/src"
     ],
     "bootstrapTotal": 1741,
-    "unusedTotal": 180,
+    "unusedTotal": 181,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -1473,7 +1473,8 @@
           "source_room_name": "existing before the registry; weekly audit reviews",
           "source_room_kind": "existing before the registry; weekly audit reviews",
           "message_created_at": "existing before the registry; weekly audit reviews",
-          "created_at": "existing before the registry; weekly audit reviews"
+          "created_at": "existing before the registry; weekly audit reviews",
+          "bookmark_id": "Server-owned incarnation distinguishes delete/recreate and ordering changes even when the bookmark natural key returns to the same value."
         }
       },
       "messages": {
@@ -3081,6 +3082,51 @@
           "generation": "Identifies the current ownership or readiness generation; stale work cannot borrow a replacement.",
           "claim_nonce": "Distinguishes the exact aggregate owner claim within an instance."
         }
+      },
+      "owned_model_credentials": {
+        "module": "Owned model credentials (apps/server/src/owned-model-credential.ts)",
+        "reason": "Immutable credential bindings survive claim replay and revoke stale provider authority without retaining the bearer token.",
+        "columns": {
+          "id": "Opaque durable credential identity selects the immutable binding without exposing its bearer.",
+          "key_version": "Pins credential MAC reconstruction to the signing key version used at issuance.",
+          "token_hash": "Verifies the issued bearer without storing recoverable bearer bytes.",
+          "agent_id": "Retains the exact admitted agent when current agent ownership changes.",
+          "owner_id": "Pins the account whose model quota and authority admitted this generation.",
+          "workspace_id": "Preserves the admitted Workspace boundary across later membership changes.",
+          "room_id": "Pins model authority to the Room that admitted the original command.",
+          "command_id": "Identifies the durable command whose claim issued this credential.",
+          "generation_id": "Distinguishes successive command claims and prevents a credential crossing generations.",
+          "request_id": "Binds model authority to the admitted helper turn request.",
+          "connection_id": "Retains the helper connection that owned the claim at issuance.",
+          "connection_epoch": "Distinguishes successive registrations of the same helper connection.",
+          "instance_id": "Binds the credential to the server instance whose live lease admitted it.",
+          "model": "Pins the selected provider model so configuration changes cannot retarget an issued credential.",
+          "agent_model": "Retains the explicit agent model selection used when the credential was issued.",
+          "model_token_hash": "Detects model-token rotation after issuance without retaining its secret.",
+          "expires_ms": "Preserves the original admitted deadline so replay cannot extend model authority.",
+          "created_at": "Records the issuance boundary independently of later command claim changes.",
+          "revoked_at": "Preserves the credential schema revocation marker checked by authentication; the existing primitive has no current revocation writer."
+        }
+      },
+      "owned_model_attempts": {
+        "module": "Owned model attempts (apps/server/src/owned-model-attempt.ts)",
+        "reason": "Durable request identity, reservation and outcome evidence prevent duplicate provider dispatch after uncertain or lost replies.",
+        "columns": {
+          "credential_id": "Links the attempt to the exact immutable authority that admitted it.",
+          "model_request_id": "Retains the helper request identity across transport loss and receipt replay.",
+          "command_id": "Preserves the original command for cross-generation UNKNOWN admission fences.",
+          "generation_id": "Pins the attempt to its admitted claim even after command lifecycle changes.",
+          "agent_id": "Retains the admitted actor for causal owner-end and source-loss checks.",
+          "owner_id": "Pins reservation and settlement accounting to the original owner account.",
+          "request_digest": "Detects a changed semantic request reusing an admitted identity without storing prompt content.",
+          "payload_digest": "Fences duplicate UNKNOWN provider payloads without retaining private request bytes.",
+          "reservation": "Retains the exact admitted quota and credit amounts needed for later evidence-based settlement.",
+          "state": "Preserves UNKNOWN, success or refusal across process loss without redispatching the provider effect.",
+          "evidence": "Retains the original usage or proven refusal that authorizes one-time settlement and receipt recovery.",
+          "evidence_hash": "Detects conflicting settlement evidence attempting to reuse the same attempt.",
+          "settled_at": "Records when the first durable settlement committed so later evidence cannot renew it.",
+          "created_at": "Records durable provider admission time independently of eventual settlement."
+        }
       }
     },
     "jsonb": {
@@ -3311,6 +3357,20 @@
         "workspace": "Binds the source deadline to its canonical Workspace.",
         "room": "Binds the source deadline to its Room for authority and audience checks.",
         "due": "Retains the exact source-derived UTC deadline at microsecond precision."
+      },
+      "reservation": {
+        "day": "Retains the quota day charged at admission even when settlement occurs on another day.",
+        "reserved": "Preserves the admitted token reservation needed for exact settlement.",
+        "maxOutput": "Pins the output clamp used to construct the admitted provider payload.",
+        "reservedUsd": "Retains the admitted model cost reservation for evidence-based accounting.",
+        "credit": "Preserves the amount of account credit included in the original reservation."
+      },
+      "evidence": {
+        "kind": "Distinguishes provider usage from proven nonentry or provider refusal for one-time settlement.",
+        "tokens": "Retains the provider token usage actually observed for this attempt.",
+        "usd": "Retains the observed model charge used for settled accounting.",
+        "reason": "Records the exact proven nonentry cause without inferring it from elapsed time.",
+        "status": "Preserves the provider refusal status that authorized settlement."
       }
     }
   }

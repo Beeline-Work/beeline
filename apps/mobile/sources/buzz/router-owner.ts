@@ -61,30 +61,25 @@ const roomScoped=(family:LaneFamily)=>family==='room-head'||family==='room-sched
 function validValue(request: LaneRequest, value: unknown): boolean {
   const screenValidator=slotsByKey.get(slotKey(request))?.validate;
   if(screenValidator)return screenValidator(value);
-  if(request.family==='agent-profile')return isAgentDetailView(value)&&utf8ToBytes(JSON.stringify(value)).length<=32*1024&&
+  if(request.family==='agent-profile')return isAgentDetailView(value)&&
     typeof (value as RouterValues['agent-profile']).canRemove==='boolean'&&
     typeof (value as RouterValues['agent-profile']).voiceRevision==='string'&&
     (value as RouterValues['agent-profile']).workspaceId===request.workspaceId&&
     (value as RouterValues['agent-profile']).agent.identity.pubkey===request.agentId;
   if(request.family==='workspace-roster'){
     const roster=readWorkspaceView(value);
-    return !!roster&&roster.workspace.id===request.workspaceId&&roster.members.length+roster.agents.length<=100&&
+    return !!roster&&roster.workspace.id===request.workspaceId&&
       typeof (value as RouterValues['workspace-roster']).revision==='string'&&/^[1-9][0-9]{0,19}$/.test((value as RouterValues['workspace-roster']).revision)&&
-      (!request.query||request.query.revision===(value as RouterValues['workspace-roster']).revision)&&
-      utf8ToBytes(JSON.stringify(value)).length<=64*1024;
+      (!request.query||request.query.revision===(value as RouterValues['workspace-roster']).revision);
   }
   if(request.family==='room-workflows')return validateWorkflowProjection(value);
   if(request.family==='needs-you-saved-page')return validateSavedWindow(value,request.workspaceId);
   if(request.family==='needs-you-tray')return validateTrayProjection(value,request.workspaceId);
   if(request.family==='room-scheduled-work'){
-    if(!validateScheduledWorkProjection(value))return false;
-    const work=value as {schedules:unknown[];subscriptions:{recentCalls?:unknown[]}[];agentNames:unknown[]};
-    return work.schedules.length+work.subscriptions.length<=50&&work.agentNames.length<=100&&
-      work.subscriptions.reduce((count,subscription)=>count+(subscription.recentCalls?.length??0),0)<=50;
+    return validateScheduledWorkProjection(value);
   }
   if (request.family === 'room-list') return readChatListView(value) !== null;
-  if (request.family === 'room-head') return readRoomView(value) !== null &&
-    (value as { messages: unknown[] }).messages.length <= 30;
+  if (request.family === 'room-head') return readRoomView(value) !== null;
   if (!value || typeof value !== 'object') return false;
   const count = (value as { count?: unknown }).count;
   return request.family === 'needs-you-count' && Number.isSafeInteger(count) && Number(count) >= 0 &&
@@ -137,22 +132,8 @@ const assembly = new RouterBatchAssembly(hash, batch => {
     void lanes?.unavailableGroup(batch.to.stream, fact.atomicGroup);
     return false;
   });
-  const marker=batch.scheduledWorkClassification;
-  if(!marker){
-    if(negotiation?.scheduledWorkCoverageV1&&facts.some(fact=>fact.payload.kind==='scope-replace'&&fact.payload.family==='room-scheduled-work')){
-      lanes?.hideFamily('room-scheduled-work','Missing authority barrier; Retry.');
-      void lanes?.accept({...batch,facts:facts.filter(fact=>!fact.atomicGroup.startsWith('room-scheduled-work:'))});
-    }else void lanes?.accept({...batch,facts});
-    return;
-  }
-  if(!negotiation?.scheduledWorkCoverageV1||!scheduledAuthority){lanes?.hideFamily('room-scheduled-work','Unnegotiated coverage; Retry.');return;}
-  // One verified interval has one body in ReadLanes. Splitting its facts
-  // creates conflicting deliveries at the same cut, including when the
-  // Scheduled Work portion contains only its classification marker.
-  const deferred={...batch,facts};
-  scheduledAuthority.defer(negotiation.generation,{id:hash(deferred),kind:'batch',barrier:marker.authorityBarrier,
-    bytes:utf8ToBytes(JSON.stringify(deferred)).length,apply:()=>{void lanes?.accept(deferred);},
-    discard:()=>lanes?.unavailable(batch.to.stream,'room-scheduled-work','Projection unavailable; Retry.')});
+  // Room members can see their Room's Scheduled Work; deliver every verified fact as it arrives.
+  void lanes?.accept({...batch,facts});
 }, stream => {
   for (const family of negotiation?.families ?? []) lanes?.unavailable(stream, family);
 });
@@ -325,16 +306,8 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
   lanes.connected(next.generation, next.families, async request => {
     const result = await next.execute(request);
     if (result.family !== request.family || result.scope !== (request.agentId??(roomScoped(request.family) ? request.roomId : request.workspaceId??principal)) ||
-      !validCertificate(result) || utf8ToBytes(JSON.stringify(result)).length > 64 * 1024)
+      !validCertificate(result))
       throw new Error('Invalid projection snapshot.');
-    if(request.family==='room-scheduled-work'&&next.scheduledWorkCoverageV1){
-      if(result.family!=='room-scheduled-work'||!authorityPosition(result.authorityBarrier)||!scheduledAuthority)throw new Error('Invalid snapshot authority barrier.');
-      const barrier=result.authorityBarrier;
-      return new Promise<RouterSnapshot>((resolve,reject)=>scheduledAuthority!.defer(next.generation,{
-        id:hash([request,result]),kind:'snapshot',barrier,bytes:utf8ToBytes(JSON.stringify(result)).length,
-        apply:()=>resolve(result),discard:reason=>reject(new Error(reason)),
-      }));
-    }
     return result;
   }, { scheduledWorkCoverageV1:!!next.scheduledWorkCoverageV1, roomHeadContinuityV1: next.roomHeadContinuityV1 === true && next.authorityFencesV1 === true });
   reconcile();

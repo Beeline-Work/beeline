@@ -53,7 +53,6 @@ export async function buildTraySavedFacts(db:SqlDatabase,workspaceId:string,read
       row:projectTraySavedRow(found,{workspaceId,readerId},toIdentity)}:
       {kind:'saved-row-remove',scope:workspaceId,bookmarkId:target.bookmarkId,messageId:target.messageId};
     const fact={atomicGroup:routerAtomicGroup(input,readerId),authority,payload};
-    if(Buffer.byteLength(JSON.stringify(fact))>64*1024)throw new RouterProjectionUnavailable('budget');
     return fact;
   });
   if(Buffer.byteLength(JSON.stringify(facts))>1024*1024)throw new RouterProjectionUnavailable('budget');

@@ -14,6 +14,7 @@ export { ScheduledWorkAuthority } from './scheduled-work-authority.js';
 export type { ScheduledAuthorityCallbacks, ScheduledAuthorityDeferred, ScheduledAuthorityFault, ScheduledAuthorityFence } from './scheduled-work-authority.js';
 export {validateTrayProjection} from './owner-inputs.js';
 export {validateNeedsRoomsPayload} from './needs-you-rooms.js';
+export {validateNeedsProjection} from './projection-codecs.js';
 export type { CommandIntent, CommandIntentStorage, CommandPartition, CommandAttempt, AdmittedCommand, IntentOperation, IntentState } from './command-intents.js';
 
 export {validateSavedWindow} from './saved-windows.js';

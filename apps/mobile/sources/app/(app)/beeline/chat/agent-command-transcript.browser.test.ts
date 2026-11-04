@@ -190,7 +190,11 @@ main().catch(error => document.getElementById('result').textContent = 'FAIL: ' +
         export const LinearTransition = builder;
         export const interpolateColor = (_value, _input, output) => output[output.length - 1];`,
         'react-native-gesture-handler': `import React from 'react';
-        export const Swipeable = props => React.createElement('div', props, props.children);
+        export const Gesture = { Pan: () => {
+          const pan = Object.fromEntries(['enabled', 'activeOffsetX', 'onStart', 'onUpdate', 'onEnd', 'onFinalize'].map(key => [key, () => pan]));
+          return pan;
+        } };
+        export const GestureDetector = ({ children }) => children;
         export const GestureHandlerRootView = props => React.createElement('div', props, props.children);`,
         'expo-router': `export const useLocalSearchParams = () => ({});
         export const router = { push() {}, back() {}, replace() {} };

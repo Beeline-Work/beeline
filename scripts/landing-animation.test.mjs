@@ -48,7 +48,8 @@ function joinDemo(reduced=false){
  const demo=create(document,Room,e=>({...e,uid:++uid}),'Join my Beeline Room: join.usebeeline.app',reduced,true,fn=>(callbacks.push(fn),callbacks.length),()=>{});
  return {demo,flush:()=>{while(callbacks.length)callbacks.shift()();}};
 }
-test('the Room does not address or list Codex before the human joins it from the CLI',()=>{
+test('the Room waits for Alan, the visible CLI user, to invite Codex before addressing it',()=>{
+ assert.match(html,/Alan’s terminal · ~\/your-project/);
  const firstPaintRoom=html.split('data-native-room="sync"')[1].split('</section>')[0];
  assert.doesNotMatch(firstPaintRoom,/codex/i);
  const {demo,flush}=joinDemo();

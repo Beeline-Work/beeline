@@ -281,7 +281,7 @@ describe('already-current trigger pairs', () => {
 });
 
 describe('already-done drops and nullability', () => {
-  it('reads back drops, NOT NULL changes and column defaults', () => {
+  it('reads back only drops and NOT NULL changes', () => {
     expect(noOpCheck('-- why\nALTER TABLE messages DROP COLUMN IF EXISTS mention_ids;'))
       .toEqual({ kind: 'alter', relation: 'messages', clauses: [{ kind: 'drop-column', name: 'mention_ids' }] });
     expect(noOpCheck('ALTER TABLE t DROP CONSTRAINT IF EXISTS c, ALTER COLUMN a DROP NOT NULL')).toEqual({

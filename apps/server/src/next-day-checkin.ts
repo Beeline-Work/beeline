@@ -151,6 +151,16 @@ export class NextDayCheckin {
     private readonly now: () => Date = () => new Date(),
     private readonly imageOrigin = 'https://server.usebeeline.app') {}
 
+  async nextDelayMs(admittedAt?:string): Promise<number | undefined> {
+    if (!enabled()) return;
+    return (await import('./background-deadline-clock.js')).backgroundNextDelay(this.db,
+      `SELECT due_at FROM next_day_checkin_candidates WHERE NOT processed
+       UNION ALL SELECT due_at+interval '24 hours' FROM next_day_checkins
+         WHERE skip_reason IS NULL AND measured_at IS NULL AND sent_at IS NULL
+       UNION ALL SELECT sent_at+interval '1 hour' FROM next_day_checkins
+         WHERE skip_reason IS NULL AND measured_at IS NULL AND sent_at IS NOT NULL`,admittedAt);
+  }
+
   async runOnce(): Promise<void> {
     if (!enabled()) return;
     const candidates = (await this.db.query<{ identity_id: string }>(
@@ -191,7 +201,7 @@ export class NextDayCheckin {
         const current = await target(this.db,row.identity_id,new Date(row.first_at));
         const skip = current.skip_reason ?? (current.room_id!==row.room_id || current.agent_id!==row.agent_id ? 'room_changed'
           : !row.command_state || ['complete','cancelled'].includes(row.command_state) ? 'agent_no_message'
-          : this.now().getTime()-new Date(row.due_at).getTime() > 24*3600_000 ? 'agent_timeout' : null);
+          : this.now().getTime()-new Date(row.due_at).getTime() >= 24*3600_000 ? 'agent_timeout' : null);
         if (skip) {
           await this.db.query(`UPDATE next_day_checkins SET skip_reason=$2 WHERE identity_id=$1 AND sent_at IS NULL`,
             [row.identity_id,skip]);

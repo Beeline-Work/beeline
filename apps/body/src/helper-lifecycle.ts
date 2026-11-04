@@ -2,7 +2,6 @@ import { captureHelperError } from './sentry.js';
 import type { EventEmitter } from 'node:events';
 import { DaemonApiError } from './daemon-api-client.js';
 import { isNetworkFailure } from './live-link.js';
-import { ROOM_RETRY_DELAYS_MS } from './room-supervisor.js';
 /** The process exits before the native manager's common 90-second ceiling. */
 export const HELPER_HARD_STOP_MS = 80_000;
 export type HelperExitReason = 'stopped' | 'update' | 'failed';
@@ -133,8 +132,7 @@ export function isTransientServerFailure(error: unknown): boolean {
 /**
  * Before READY, a transient server failure is not this release's fault. Wait
  * for the live socket to open again (asking the service manager for more start
- * time meanwhile) and retry on every open, plus the bounded early retries.
- * Network failures retry until recovery or shutdown.
+ * time meanwhile). Only a genuinely new live open permits another attempt.
  */
 export async function retryBeforeReady<T>(
   work: () => Promise<T>,
@@ -147,55 +145,30 @@ export async function retryBeforeReady<T>(
     waitSliceMs?: number;
   },
 ): Promise<T> {
-  const now = options.now ?? Date.now;
-  const slice = options.waitSliceMs ?? 60_000;
-  let failures = 0;
-  for (;;) {
-    try {
-      return await work();
-    } catch (error) {
-      if (!isTransientServerFailure(error) || options.signal?.aborted) throw error;
-      failures += 1;
-      const timedRetry = ROOM_RETRY_DELAYS_MS[failures - 1];
-      console.warn(
-        `[thin-core] server unreachable before READY; ${
-          timedRetry === undefined
-            ? 'waiting for the live socket to open'
-            : `retrying in ${timedRetry}ms or on open`
-        }:`,
-        error,
-      );
-      let opened = false;
-      let wake = () => undefined as void;
-      const off = options.onLinkOpen(() => {
-        opened = true;
-        wake();
-      });
-      try {
-        const waitStarted = now();
-        while (!opened && !options.signal?.aborted) {
-          const remaining = [
-            slice,
-            timedRetry === undefined ? Infinity : timedRetry - (now() - waitStarted),
-          ];
-          const wait = Math.min(...remaining);
-          if (wait <= 0) break;
-          await options.extendStartTimeout(wait + 15_000);
-          await new Promise<void>((resolve) => {
-            const timer = setTimeout(done, wait);
-            function done() {
-              clearTimeout(timer);
-              options.signal?.removeEventListener('abort', done);
-              resolve();
-            }
-            wake = done;
-            options.signal?.addEventListener('abort', done, { once: true });
-            if (opened || options.signal?.aborted) done();
+  const slice=options.waitSliceMs??60_000;
+  let epoch=0,wake:(()=>void)|undefined;
+  const off=options.onLinkOpen(()=>{epoch++;wake?.();});
+  try{
+    for(;;){
+      const attemptEpoch=epoch;
+      try{return await work();}
+      catch(error){
+        if(!isTransientServerFailure(error)||options.signal?.aborted)throw error;
+        console.warn('[thin-core] server unreachable before READY; waiting for the live socket to open:',error);
+        while(epoch===attemptEpoch && !options.signal?.aborted){
+          // Native manager watchdog extension is local control evidence; its
+          // timer never admits another server observation.
+          await options.extendStartTimeout(slice+15_000);
+          await new Promise<void>(resolve=>{
+            const done=()=>{clearTimeout(timer);options.signal?.removeEventListener('abort',done);resolve();};
+            const timer=setTimeout(done,slice);wake=done;
+            options.signal?.addEventListener('abort',done,{once:true});
+            if(epoch!==attemptEpoch || options.signal?.aborted)done();
           });
+          wake=undefined;
         }
-      } finally {
-        off();
+        if(options.signal?.aborted)throw error;
       }
     }
-  }
+  }finally{off();}
 }

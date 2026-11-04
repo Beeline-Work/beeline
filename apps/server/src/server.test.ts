@@ -52,6 +52,21 @@ describe('server readiness', () => {
     return fetch(`http://127.0.0.1:${port}${path}`, requestInit);
   }
 
+  it('requires explicit authenticated operator scope for vendor refresh', async () => {
+    const query = vi.fn(), transaction = vi.fn();
+    const options = { dashboardSecret: 'fixture-dashboard-secret' };
+    const denied = await get('/v1/admin/dashboard/refresh', { query, transaction }, options,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scope: 'finances' }) });
+    expect(denied.status).toBe(403);
+    for (const input of [{ scope: 'all' }, { scope: 'finances', force: true }]) {
+      const invalid = await get('/v1/admin/dashboard/refresh', { query, transaction }, options,
+        { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer fixture-dashboard-secret' }, body: JSON.stringify(input) });
+      expect(invalid.status).toBe(400);
+    }
+    expect(query).not.toHaveBeenCalled();
+    expect(transaction).not.toHaveBeenCalled();
+  });
+
   it('Reproduction RETURN-1: retains a visible verifier return when the app handoff is blocked', async () => {
     const query = vi.fn(), transaction = vi.fn();
     const response = await get('/v1/apps/oauth/verify?session_uri=session-fixture',
@@ -152,13 +167,13 @@ describe('server readiness', () => {
     expect(response.status).toBe(404);
   });
 
-  it('returns 200 after a successful database query', async () => {
+  it('returns the known readiness verdict without observing the database', async () => {
     const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 0 });
     const response = await get('/readyz', { query, transaction: vi.fn() });
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true });
-    expect(query).toHaveBeenCalledWith('SELECT 1');
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('reports app pool pressure and the oldest active app query', async () => {
@@ -259,21 +274,16 @@ describe('server readiness', () => {
     });
   });
 
-  it('returns 503 when the database query fails', async () => {
-    const response = await get('/readyz', {
-      query: vi.fn().mockRejectedValue(new Error('Connection terminated unexpectedly')),
-      transaction: vi.fn(),
-    });
-
-    expect(response.status).toBe(503);
+  it('returns 503 for a known unavailable dependency without a database probe', async () => {
+    const query=vi.fn().mockRejectedValue(new Error('must not probe'));
+    const response=await get('/readyz',{query,transaction:vi.fn()},{readiness:()=>false});
+    expect(response.status).toBe(503);expect(await response.json()).toEqual({ok:false});
+    expect(query).not.toHaveBeenCalled();
   });
 
   it('survives an injected pool checkout timeout and serves the next request', async () => {
     const timeout = new Error('timeout exceeded when trying to connect');
     const connect = vi.fn()
-      .mockRejectedValueOnce(timeout)
-      .mockRejectedValueOnce(timeout)
-      .mockRejectedValueOnce(timeout)
       .mockRejectedValueOnce(timeout)
       .mockResolvedValueOnce({
         query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
@@ -287,7 +297,7 @@ describe('server readiness', () => {
       on: vi.fn(),
       end: vi.fn(),
     } as unknown as Pool;
-    const database = new PostgresDatabase('', 5, { pool, pause: async () => {} });
+    const database = new PostgresDatabase('', 5, { pool });
     const server = createBeelineServer({
       database,
       auth: {} as TokenAuth,
@@ -298,11 +308,11 @@ describe('server readiness', () => {
     });
     servers.push(server);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
-    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/readyz`;
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/health`;
 
     const failed = await fetch(url);
     expect(failed.status).toBe(503);
-    expect(connect).toHaveBeenCalledTimes(4);
+    expect(connect).toHaveBeenCalledOnce();
     const recovered = await fetch(url);
     expect(recovered.status).toBe(200);
   });
@@ -359,6 +369,19 @@ describe('server readiness', () => {
       },
     });
   });
+
+  it.each(['readAgentUsageCell', 'readRouterSnapshot', 'readMediaMetadata', 'readMediaLink', 'readMediaPlayback'])(
+    'keeps negotiated %s on the sole phone socket', async operation => {
+      const query = vi.fn(), transaction = vi.fn(), execute = vi.fn();
+      const response = await get(`/v1/phone/operations/${operation}`, { query, transaction }, {
+        auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
+        phone: { execute } as unknown as PhoneService,
+      }, { method: 'POST', headers: { authorization: `Bearer ${'p'.repeat(20)}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ objectId: '11111111-1111-4111-8111-111111111111' }) });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toEqual({ error: 'router_socket_required' });
+      expect(execute).not.toHaveBeenCalled(); expect(query).not.toHaveBeenCalled(); expect(transaction).not.toHaveBeenCalled();
+    });
 
   it('publishes no Room invalidation when opening a Room clears its dismissal', async () => {
     const publish = vi.fn();
@@ -749,12 +772,17 @@ describe('daemon live command push', () => {
     live.publish({ type: 'thought', roomId, agentId, turnId: 'turn', text: 'thought' });
     await new Promise((resolve) => setImmediate(resolve));
     expect(inboxCalls()).toBe(1);
+    // A broad table hint carries no message-owned context and cannot admit a read.
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages' });
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(inboxCalls()).toBe(1);
     const messageTrace = { id: 'trace-message', databaseAt: 50, emittedAt: 75 };
     const replayed = nextSocketMessage(socket, 'inbox');
     live.publish({
       type: 'invalidate',
       roomId,
       reason: 'postgres:messages',
+      messageId: 'actual-committed-message',
       trace: messageTrace,
     });
     await expect(replayed).resolves.toEqual(
@@ -888,7 +916,7 @@ describe('daemon live command push', () => {
     expect(inboxCalls()).toBe(1);
 
     const replayed = nextSocketMessage(daemonSocket, 'inbox');
-    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages' });
+    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages', messageId: 'actual-committed-message' });
     await replayed;
     expect(inboxCalls()).toBe(2);
   });

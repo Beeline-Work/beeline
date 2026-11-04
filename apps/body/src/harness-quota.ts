@@ -232,7 +232,10 @@ type ReadSlot = {
   running?: Promise<AgentUsage>;
   last?: AgentUsage;
   /** Each agent's post of the latest read, so it lands once per agent. */
-  posts: Map<string, Promise<void>>;
+  posts: Map<string, { boundary: string; result: Promise<void> }>;
+  publicationScope?:string;
+  publicationSourceValid?:()=>boolean;
+  publicationSourceInvalid?:boolean;
   /** The account the last verified read named, for reads that cannot say. */
   accountKey?: string;
   /** When this home's own read last named `accountKey`, in ms. */
@@ -276,6 +279,7 @@ export class HarnessQuotaReader {
     private readonly options: {
       agentId: string;
       post: (usage: AgentUsage) => Promise<unknown>;
+      accountPublisher?:{scopeKey:()=>string;publicationKey?:()=>string;captureSource?:()=>()=>boolean;deliver:(usage:AgentUsage)=>Promise<boolean>};
       slots?: Map<string, ReadSlot>;
       run?: QuotaAxiRun;
       launch?: () => { command: string; args: string[] };
@@ -303,11 +307,13 @@ export class HarnessQuotaReader {
   ): Promise<UsageRefreshOutcome | undefined> {
     const now = this.options.now?.() ?? Date.now();
     const credential = (this.options.credentialPath ?? quotaCredentialPath)(provider, env);
-    const login = `${provider}:${credential ?? `agent:${this.options.agentId}`}`;
+    const publicationScope=this.options.accountPublisher?.scopeKey()??'legacy';
+    const login = `${publicationScope}:${provider}:${credential ?? `agent:${this.options.agentId}`}`;
     const slots = this.options.slots ?? ACCOUNT_READ_SLOTS;
     let slot = slots.get(login);
     if (!slot) slots.set(login, (slot = { lastStartedAt: -Infinity, posts: new Map() }));
     if (slot.running) return this.deliver(slot, slot.running);
+    if(slot.publicationSourceInvalid)Object.assign(slot,{lastStartedAt:-Infinity,last:undefined,posts:new Map(),accountKey:undefined,verifiedAt:undefined,publicationSourceInvalid:false});
     const fingerprint = credential ? (this.options.fingerprint ?? credentialFingerprint)(credential) : undefined;
     // The login in this home changed since its last read: forget that read,
     // its account and who it reached, so the next read is of the new login.
@@ -320,7 +326,7 @@ export class HarnessQuotaReader {
     // login rather than trust an account it named long ago.
     const verifiedFor = force ? intervalMs : intervalMs * ACCOUNT_REVERIFY_INTERVALS;
     const account = slot.accountKey && now - (slot.verifiedAt ?? -Infinity) < verifiedFor ? slot.accountKey : undefined;
-    const sibling = shareAccount && account ? slots.get(`account:${account}`) : undefined;
+    const sibling = shareAccount && account ? slots.get(`${publicationScope}:account:${account}`) : undefined;
     // Another home on this verified account is reading it now: join, unless
     // that read finds its login moved or its own sign-in broken.
     if (account && sibling && sibling !== slot && sibling.accountKey === account && sibling.running) {
@@ -340,13 +346,16 @@ export class HarnessQuotaReader {
     const held = slot;
     held.lastStartedAt = now;
     held.readLogin = fingerprint;
+    held.publicationScope=publicationScope;
+    held.publicationSourceValid=this.options.accountPublisher?.captureSource?.();
+    held.publicationSourceInvalid=false;
     held.posts = new Map();
-    if (account) slots.set(`account:${account}`, held);
+    if (account) slots.set(`${publicationScope}:account:${account}`, held);
     held.running = this.read(provider, env, held, login, now).finally(() => {
       held.running = undefined;
     });
     void held.running.then(() => {
-      if (held.accountKey && held.accountKey !== account) slots.set(`account:${held.accountKey}`, held);
+      if (held.accountKey && held.accountKey !== account) slots.set(`${publicationScope}:account:${held.accountKey}`, held);
     });
     return this.deliver(held, held.running);
   }
@@ -379,20 +388,30 @@ export class HarnessQuotaReader {
     // Without a verified account the read stays with this machine's login, so
     // two different accounts are never merged.
     const key = slot.accountKey ?? `local:${digest(hostname(), login)}`;
+    slot.publicationSourceInvalid=slot.publicationSourceValid?.()===false;
     slot.last = { ...usage, account: { provider, key } };
     return slot.last;
   }
 
   private async deliver(slot: ReadSlot, reading: Promise<AgentUsage>): Promise<UsageRefreshOutcome> {
     const usage = await reading;
+    if(slot.publicationSourceInvalid||slot.publicationScope!==undefined&&slot.publicationScope!==(this.options.accountPublisher?.scopeKey()??'legacy'))
+      return {status:'failed',reason:'usage ownership changed during read'};
     const agentId = this.options.agentId;
+    const boundary=this.options.accountPublisher?.publicationKey?.()??this.options.accountPublisher?.scopeKey()??'legacy';
     let posted = slot.posts.get(agentId);
-    if (!posted) {
-      posted = this.options.post(usage).then(() => undefined);
+    if (!posted || posted.boundary!==boundary) {
+      const result = (async()=>{
+        if(await this.options.accountPublisher?.deliver(usage))return;
+        await this.options.post(usage);
+      })();
+      posted={boundary,result};
+      // Keep only this agent's latest actor; connection churn cannot grow the
+      // shared provider read's post bookkeeping.
       slot.posts.set(agentId, posted);
     }
     try {
-      await posted;
+      await posted.result;
     } catch (error) {
       if (slot.posts.get(agentId) === posted) slot.posts.delete(agentId);
       console.error('[agent-usage] quota post failed', error instanceof Error ? error.message : error);

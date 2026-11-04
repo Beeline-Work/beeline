@@ -63,7 +63,7 @@ class ListenClient extends EventEmitter {
   async query() { this.release = await database.client.listen(POSTGRES_LIVE_CHANNEL, (payload) => this.emit('notification', { channel: POSTGRES_LIVE_CHANNEL, payload })); }
   async end() { await this.release?.(); }
 }
-const listener = new PostgresLiveListener(database, live, () => new ListenClient(), 10);
+const listener = new PostgresLiveListener(database, live, () => new ListenClient());
 void listener.run();
 const phone = new PhoneService(database, 'http://local.test', undefined, undefined, live);
 const daemon = new DaemonService(database, live);

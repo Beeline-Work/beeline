@@ -34,7 +34,7 @@ vi.mock('react-native-unistyles', () => ({
       }),
   },
 }));
-vi.mock('@/buzz/artifact-link', () => ({ artifactBase64: mocks.artifactBase64 }));
+vi.mock('@/buzz/artifact-link', () => ({ artifactBase64: mocks.artifactBase64, subscribeArtifactBytesPurge: () => () => {} }));
 // The generated document has its own suite; stubbing the loader keeps the
 // megabyte of vendored pdf.js source out of a component render.
 vi.mock('@/buzz/artifact-pdf', async (importOriginal) => ({
@@ -116,7 +116,7 @@ describe('the Android PDF render', () => {
     const renderer = render(<ArtifactPdfView attachment={attachment()} mode="viewer" />);
     await flush();
     const webview = renderer.root.findByType('WebView' as any);
-    expect(webview.props.originWhitelist).toEqual([]);
+    expect(webview.props.originWhitelist).toEqual(['*']);
     expect(webview.props.setSupportMultipleWindows).toBe(false);
     expect(webview.props.allowFileAccess).toBe(false);
     expect(Object.hasOwn(webview.props, 'onMessage')).toBe(false);

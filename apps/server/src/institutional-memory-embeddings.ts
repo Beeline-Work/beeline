@@ -21,11 +21,9 @@
  *
  * NO POLLING: there is no timer that scans the database for unembedded rows.
  * A save schedules its OWN row's embed (`scheduleEmbedInstitutionalMemoryItem`
- * / `scheduleEmbedWorkspaceSkillVersion`), retried with in-process backoff
- * bounded to that one row; the only scan is `backfillInstitutionalMemory
- * EmbeddingsOnce`, run exactly once at server start (see `index.ts`) to catch
- * rows saved before this feature shipped, or whose in-process retry died with
- * a restarted process. It never re-runs on its own.
+ * / `scheduleEmbedWorkspaceSkillVersion`), attempted once for that save.
+ * The remaining scan is `backfillInstitutionalMemoryEmbeddingsOnce`, run exactly once at server start (see `index.ts`) to catch
+ * rows saved before this feature shipped, or whose save-time embedding failed. It never re-runs on its own.
  */
 import {
   INSTITUTIONAL_MEMORY_EMBEDDING_DIMENSIONS,
@@ -38,8 +36,6 @@ import type { SqlDatabase } from './database.js';
 export const OPENROUTER_EMBEDDINGS_URL = 'https://openrouter.ai/api/v1/embeddings';
 export const EMBEDDING_FETCH_TIMEOUT_MS = 10_000;
 export const EMBEDDING_BACKFILL_BATCH = 20;
-/** Bounded in-process retry for one row's embed, never a database scan. */
-export const EMBED_RETRY_BACKOFF_MS = [5_000, 15_000, 60_000];
 
 export function memoryEnvLimit(name: string, fallback: number): number {
   const value = Number(process.env[name]);
@@ -290,42 +286,6 @@ export async function embedOneWorkspaceSkillVersion(
   return true;
 }
 
-/** Pending in-process retry timers, keyed `item:<id>` / `skill:<id>`. A save
- *  arriving again for the same row (a rapid edit) supersedes its own pending
- *  retry rather than piling up a second one. Never persisted, never scanned —
- *  a process restart simply drops whatever was pending; the next server-start
- *  backfill picks up anything left unembedded. */
-const pendingEmbedRetries = new Map<string, NodeJS.Timeout>();
-
-function scheduleWithRetry(
-  key: string,
-  attemptOnce: () => Promise<boolean>,
-  backoffMs: readonly number[] = EMBED_RETRY_BACKOFF_MS,
-): void {
-  const existing = pendingEmbedRetries.get(key);
-  if (existing) clearTimeout(existing);
-  pendingEmbedRetries.delete(key);
-  const run = (attemptIndex: number): void => {
-    attemptOnce()
-      .catch(() => false)
-      .then((ok) => {
-        if (ok || attemptIndex >= backoffMs.length) {
-          pendingEmbedRetries.delete(key);
-          return;
-        }
-        const timer = setTimeout(() => run(attemptIndex + 1), backoffMs[attemptIndex]);
-        timer.unref?.();
-        pendingEmbedRetries.set(key, timer);
-      });
-  };
-  run(0);
-}
-
-/** Only for tests: true while a row still has a pending retry scheduled. */
-export function hasPendingEmbedRetry(key: string): boolean {
-  return pendingEmbedRetries.has(key);
-}
-
 function embeddingDisabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return !env[INSTITUTIONAL_MEMORY_EMBEDDING_ENV_VAR]?.trim();
 }
@@ -344,7 +304,7 @@ export function warnIfEmbeddingKeyMissing(env: NodeJS.ProcessEnv = process.env):
 /**
  * Embed one just-saved/updated `institutional_memory_items` row. Fire-and-
  * forget from the caller's perspective (never awaited, never blocks or fails
- * the save); a failure retries this one row on a bounded in-process backoff.
+ * the save). Failure ends this attempt; a later actual save can admit another.
  *
  * With no `embedBatch` override and no key configured, this schedules
  * nothing at all — not even the row's own read: a save every ordinary
@@ -358,7 +318,7 @@ export function scheduleEmbedInstitutionalMemoryItem(
 ): void {
   if (!embedBatch && embeddingDisabled()) return;
   const batch = embedBatch ?? createDefaultEmbedBatchFn();
-  scheduleWithRetry(`item:${itemId}`, () => embedOneInstitutionalMemoryItem(database, itemId, batch));
+  void embedOneInstitutionalMemoryItem(database, itemId, batch).catch(() => false);
 }
 
 /** Same as above, for a `workspace_skills` row whose current version just changed. */
@@ -369,7 +329,7 @@ export function scheduleEmbedWorkspaceSkillVersion(
 ): void {
   if (!embedBatch && embeddingDisabled()) return;
   const batch = embedBatch ?? createDefaultEmbedBatchFn();
-  scheduleWithRetry(`skill:${skillId}`, () => embedOneWorkspaceSkillVersion(database, skillId, batch));
+  void embedOneWorkspaceSkillVersion(database, skillId, batch).catch(() => false);
 }
 
 export interface EmbeddingBackfillCounts {
@@ -416,8 +376,7 @@ function sessionDatabase(session: BackfillSession, database: SqlDatabase): SqlDa
  * embedding, a batch at a time, until none remain, then returns. Call this
  * exactly once, right after `migrate()` at server start (see `index.ts`) —
  * never on an interval, never again afterward. It exists only to cover rows
- * saved before this feature shipped, or whose in-process retry died with an
- * earlier process; every row saved from here on embeds itself on save.
+ * saved before this feature shipped, or whose save-time embedding failed; every row saved from here on embeds itself on save.
  *
  * A session advisory lock on one dedicated connection makes it single-machine.
  * Each batch's reads and writes autocommit on that connection, so no

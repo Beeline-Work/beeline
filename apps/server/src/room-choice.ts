@@ -479,16 +479,18 @@ async function wakeChoice(
   });
 }
 
-export async function closeExpiredChoices(database: SqlDatabase, now = new Date()): Promise<number> {
-  const due = await database.query<{ id: string }>(
-    `SELECT id FROM room_choices WHERE status='open' AND closes_at IS NOT NULL AND closes_at<=$1`,
-    [now],
+/** A bounded batch of actual obligations. Capture the PostgreSQL timestamp text
+ * without JS millisecond truncation; a changed deadline is a different version. */
+export async function closeExpiredChoices(database: SqlDatabase): Promise<number> {
+  const due = await database.query<{ id: string; expiry_version: string }>(
+    `SELECT id,closes_at::text expiry_version FROM room_choices
+     WHERE status='open' AND closes_at<=clock_timestamp() ORDER BY closes_at,id LIMIT 100`,
   );
   let closed = 0;
   for (const row of due.rows) {
     try {
-      await database.transaction((tx) => settleExpiredChoice(tx, row.id));
-      closed += 1;
+      const changed = await database.transaction(tx => closeExpiredChoiceVersion(tx, row.id, row.expiry_version));
+      if (changed) closed += 1;
     } catch (error) {
       if (error instanceof Error && error.message.includes('conflict')) continue;
       throw error;
@@ -497,14 +499,21 @@ export async function closeExpiredChoices(database: SqlDatabase, now = new Date(
   return closed;
 }
 
-async function settleExpiredChoice(database: SqlDatabase, choiceId: string): Promise<void> {
-  const choice = await loadChoice(database, choiceId);
-  if (!choice || choice.status !== 'open') return;
-  if (choice.mode === 'question') {
-    await skipOpenChoice(database, choice, undefined, 'expired');
-    return;
-  }
-  await closeOpenPoll(database, choice);
+/** Exact domain transition shared by the legacy batch and the owned clock.
+ * The caller owns its transaction and any stronger aggregate/source fences.
+ * No provider operation, scheduler or follow-up read is admitted here. */
+export async function closeExpiredChoiceVersion(database: SqlDatabase, id: string, expiryVersion: string): Promise<boolean> {
+  const current = await database.query(
+    `SELECT id FROM room_choices WHERE id=$1 AND status='open'
+     AND closes_at=$2::timestamptz AND closes_at<=clock_timestamp() FOR UPDATE`,
+    [id, expiryVersion],
+  );
+  if (!current.rowCount) return false;
+  const choice = await loadChoice(database, id);
+  if (!choice || choice.status !== 'open') return false;
+  if (choice.mode === 'question') await skipOpenChoice(database, choice, undefined, 'expired');
+  else await closeOpenPoll(database, choice);
+  return true;
 }
 
 async function closeOpenPoll(database: SqlDatabase, choice: ChoiceRow): Promise<void> {

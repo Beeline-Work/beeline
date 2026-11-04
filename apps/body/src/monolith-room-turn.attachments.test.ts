@@ -286,17 +286,18 @@ describe('Room turn voice', () => {
 });
 
 describe('Room turn attachment delivery', () => {
-  it('retains only successes and retries the failed file on the next delivery of the same message', async () => {
-    const { prompt, scratch, fetchImpl, redeliver } = await runTurn(false, undefined, 3);
+  it('retains successes and admits the failed file once on a separate delivery', async () => {
+    const { prompt, scratch, fetchImpl, redeliver } = await runTurn(false, undefined, 1);
     expect(String(prompt)).toContain('download failed: HTTP 503');
     expect(String(prompt)).toContain(`local file ${join(scratch, 'spec.pdf')}`);
+    expect(vi.mocked(fetchImpl).mock.calls.filter(([url]) => String(url) === PHOTO.url)).toHaveLength(1);
     const delivered = await redeliver();
     expect(await readFile(delivered[0]!.path!)).toEqual(JPEG);
     expect(delivered.every((entry) => entry.path && !entry.reason)).toBe(true);
-    expect(vi.mocked(fetchImpl).mock.calls.filter(([url]) => String(url) === PHOTO.url)).toHaveLength(4);
+    expect(vi.mocked(fetchImpl).mock.calls.filter(([url]) => String(url) === PHOTO.url)).toHaveLength(2);
     expect(vi.mocked(fetchImpl).mock.calls.filter(([url]) => String(url) === PDF.url)).toHaveLength(1);
     await redeliver();
-    expect(fetchImpl).toHaveBeenCalledTimes(5);
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
 
   it('downloads the files into the session scratch dir, names the local paths, and sends the photo inline to a multimodal harness', async () => {

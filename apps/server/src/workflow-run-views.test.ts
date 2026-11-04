@@ -279,9 +279,14 @@ describe('readWorkflowRun', () => {
     expect(live.run.status).toBe('live');
     expect(live.history[0]).toMatchObject({ displayStatus: 'current' });
     expect(live.history[0]).not.toHaveProperty('status');
-    const timer = (await database.query<{ id: string; room_id: string; workflow_run: { runId: string; workflowSlug: string; timer: 'deadline' } }>(
-      `SELECT id,room_id,workflow_run FROM agent_schedules WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='deadline'`, [first.runId],
+    // Claims keep PostgreSQL microseconds, not a truncated JavaScript Date.
+    await database.query(`UPDATE agent_schedules SET next_run_at=next_run_at+interval '0.000123 seconds',
+      updated_at=updated_at+interval '0.000123 seconds' WHERE workflow_run->>'runId'=$1`, [first.runId]);
+    const timer = (await database.query<{ id: string; room_id: string; next_run_at: Date; due_revision: string; updated_at: string; workflow_run: { runId: string; workflowSlug: string; timer: 'deadline' } }>(
+      `SELECT id,room_id,workflow_run,next_run_at,next_run_at::text due_revision,updated_at::text updated_at FROM agent_schedules WHERE workflow_run->>'runId'=$1 AND workflow_run->>'timer'='deadline'`, [first.runId],
     )).rows[0]!;
+    await expect(fireWorkflowTimer(database, { ...timer, updated_at: '2000-01-01 00:00:00+00' })).resolves.toBe(false);
+    expect((await database.query('SELECT id FROM agent_schedules WHERE id=$1', [timer.id])).rowCount).toBe(1);
     await fireWorkflowTimer(database, timer);
     const failed = await phone.execute('readWorkflowRun', { roomId: CORNER, runId: first.runId }, OWNER);
     expect(failed.run.status).toBe('failed');

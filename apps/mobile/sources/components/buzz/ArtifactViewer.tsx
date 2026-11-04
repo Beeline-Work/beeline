@@ -1,3 +1,4 @@
+import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
 import { Button } from '@/components/buzz/Button';
 import { CloseButton } from '@/components/buzz/CloseGlyph';
 import React, { useEffect, useRef, useState } from 'react';
@@ -7,7 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentReference } from '@beeline/buzz-client';
 
 import { artifactFormat, createInitialLoadGuard, wrapArtifactMarkup } from '@/buzz/artifact';
-import { artifactPdfLocalUri, fetchArtifactBytes, fetchArtifactText } from '@/buzz/artifact-link';
+import { artifactPdfLocalUri, fetchArtifactBytes, fetchArtifactText, subscribeArtifactBytesPurge } from '@/buzz/artifact-link';
 import { artifactWebViewProps } from '@/components/buzz/artifact-webview';
 import { useSandboxWebView, useSandboxWebViewStatus } from '@/components/buzz/sandbox-webview';
 import { ArtifactText } from '@/components/buzz/ArtifactMedia';
@@ -227,22 +228,28 @@ export function ArtifactViewerSandbox({
   attachment: AttachmentReference;
   format: 'html' | 'svg' | 'pdf' | 'document';
 }) {
+  const recovery = useArtifactRecoveryGeneration();
   const [source, setSource] = useState<{ html: string } | { uri: string } | null>(null);
   const [failed, setFailed] = useState<string | null>(null);
   const guardRef = useRef(createInitialLoadGuard());
   useEffect(() => {
     let live = true;
+    const controller = new AbortController();
+    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); setSource(null); setFailed('The page could not be loaded. Try again.'); });
+    setSource(null); setFailed(null);
     void (async () => {
       try {
         if (format === 'pdf') {
-          const uri = await artifactPdfLocalUri(attachment);
-          if (live) setSource({ uri });
+          const uri = await artifactPdfLocalUri(attachment, { signal: controller.signal });
+          if (live && !controller.signal.aborted) { guardRef.current = createInitialLoadGuard(uri); setSource({ uri }); }
           return;
         }
         if (format === 'html' || format === 'svg') {
-          const bytes = await fetchArtifactBytes(attachment);
-          if (live)
+          const bytes = await fetchArtifactBytes(attachment, { signal: controller.signal });
+          if (live && !controller.signal.aborted) {
+            guardRef.current = createInitialLoadGuard();
             setSource({ html: wrapArtifactMarkup(new TextDecoder().decode(bytes), format) });
+          }
           return;
         }
         if (live) setFailed('This file type has no inline preview — open it in a browser instead.');
@@ -251,9 +258,9 @@ export function ArtifactViewerSandbox({
       }
     })();
     return () => {
-      live = false;
+      live = false; controller.abort(); stopPurge();
     };
-  }, [attachment, format]);
+  }, [attachment, format, recovery]);
   const WebView = useSandboxWebView();
   const webviewStatus = useSandboxWebViewStatus();
   useEffect(() => {
@@ -287,21 +294,25 @@ export function ArtifactViewerSandbox({
 }
 
 function ArtifactViewerMarkdown({ attachment }: { attachment: AttachmentReference }) {
+  const recovery = useArtifactRecoveryGeneration();
   const [markdown, setMarkdown] = useState<string | null>(null);
   const [failed, setFailed] = useState(false);
   useEffect(() => {
     let live = true;
-    void fetchArtifactText(attachment)
+    const controller = new AbortController();
+    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); setMarkdown(null); setFailed(true); });
+    setMarkdown(null); setFailed(false);
+    void fetchArtifactText(attachment, { signal: controller.signal })
       .then((text) => {
-        if (live) setMarkdown(text);
+        if (live && !controller.signal.aborted) setMarkdown(text);
       })
       .catch(() => {
         if (live) setFailed(true);
       });
     return () => {
-      live = false;
+      live = false; controller.abort(); stopPurge();
     };
-  }, [attachment]);
+  }, [attachment, recovery]);
   if (failed) {
     return (
       <View style={styles.placeholder} testID="artifact-viewer-failed">

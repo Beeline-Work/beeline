@@ -1,3 +1,7 @@
+const profileLane=vi.hoisted(()=>({mode:'legacy' as 'legacy'|'pending'|'router',view:null as any,listeners:new Set<()=>void>(),acquire:vi.fn(),retry:vi.fn()}));
+vi.mock('@/buzz/router-family',()=>({useRouterFamily:()=>profileLane.mode}));
+vi.mock('@/buzz/router-owner',()=>({routerOwnerUsageProfile:vi.fn(),acquireRouterLane:(...args:any[])=>profileLane.acquire(...args),retryRouterLane:(...args:any[])=>profileLane.retry(...args)}));
+vi.mock('@/buzz/use-agent-usage-cell', () => ({ useAgentUsageCell: () => ({ mode: 'legacy', cell: null }) }));
 vi.mock('@/utils/responsive', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/responsive')>()), useIsDesktop: () => false }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
@@ -9,6 +13,8 @@ import { StyleSheet } from 'react-native';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create as createRenderer, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/buzz/use-surface-focus', () => ({ useSurfaceFocus: () => true }));
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const VIEWER = 'a'.repeat(64);
@@ -28,6 +34,7 @@ const roomView = vi.hoisted(() => ({
   workspace: vi.fn(),
   agent: vi.fn(),
   workspaceMembers: vi.fn(),
+  agentVoices:vi.fn(),
 }));
 const share = vi.hoisted(() => vi.fn(async () => undefined));
 const modal = vi.hoisted(() => ({
@@ -198,8 +205,9 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return { StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
-    AppState: { addEventListener: () => ({ remove: () => undefined }) },
+  return {
+    AccessibilityInfo: { announceForAccessibility: vi.fn() }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
+    AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
     Share: { share },
     Platform: platform,
     useWindowDimensions: () => ({ width: 390, height: 844 }),
@@ -362,6 +370,7 @@ vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspace = roomView.workspace;
     agent = roomView.agent;
+    agentVoices=roomView.agentVoices;
     workspaceMembers = roomView.workspaceMembers;
   },
 }));
@@ -370,6 +379,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => {
   class RoomViewClient {
     workspace = roomView.workspace;
     agent = roomView.agent;
+    agentVoices=roomView.agentVoices;
     workspaceMembers = roomView.workspaceMembers;
   }
   class SurfaceRefreshScheduler<T> {
@@ -511,6 +521,26 @@ function baseAgent() {
   };
 }
 
+it('F09 negotiated native profile and portrait consume one canonical detail; transient frames never read another profile or Workspace',async()=>{
+  const {AgentProfileView}=await import('@/components/buzz/AgentProfileView');
+  const {SoulPortraitControls}=await import('@/components/buzz/SoulPortraitControls');
+  profileLane.mode='router';profileLane.view={state:'LIVE',value:{...baseAgent(),canRemove:true,configVersion:'1',voiceRevision:'voice-1'},error:null,cut:null};
+  let renderer!:ReactTestRenderer;
+  await act(async()=>{renderer=create(<AgentProfileRoute/>);});
+  expect(profileLane.acquire).toHaveBeenCalledTimes(1);
+  expect(profileLane.acquire.mock.calls[0]![0]).toEqual({family:'agent-profile',workspaceId:WORKSPACE,agentId:AGENT});
+  expect(renderer.root.findByType(AgentProfileView).props.detail).toBe(profileLane.view.value);
+  expect(renderer.root.findByType(SoulPortraitControls).props.detail).toBe(profileLane.view.value);
+  const voiceReads=roomView.agentVoices.mock.calls.length;
+  for(let n=0;n<1000;n++)for(const listener of liveListeners)listener({monolithLive:{type:'resource-change',roomId:'',resource:'agent',resourceId:AGENT}});
+  const next={...profileLane.view.value,configVersion:'2',agent:{...profileLane.view.value.agent,identity:{...profileLane.view.value.agent.identity,avatar:'https://synthetic.invalid/committed.png'}}};
+  await act(async()=>{profileLane.view={...profileLane.view,value:next};for(const wake of profileLane.listeners)wake();});
+  expect(renderer.root.findByType(AgentProfileView).props.detail).toBe(next);
+  expect(renderer.root.findByType(SoulPortraitControls).props.detail).toBe(next);
+  expect(roomView.agent).not.toHaveBeenCalled();expect(roomView.workspace).not.toHaveBeenCalled();expect(phoneOperation).not.toHaveBeenCalled();
+  expect(profileLane.acquire).toHaveBeenCalledTimes(1);expect(roomView.agentVoices).toHaveBeenCalledTimes(voiceReads);
+});
+
 // Every screen unmounts before the next case, so it releases the shared
 // Workspace watch and the next case opens its own.
 const mounted: ReactTestRenderer[] = [];
@@ -562,12 +592,15 @@ beforeEach(() => {
   surfaces.values.clear();
   surfaces.listeners.clear();
   vi.clearAllMocks();
+  profileLane.mode='legacy';profileLane.view=null;profileLane.listeners.clear();
+  profileLane.acquire.mockImplementation(()=>({current:()=>profileLane.view,release:()=>{},subscribe:(wake:()=>void)=>{profileLane.listeners.add(wake);return()=>profileLane.listeners.delete(wake);}}));
   platform.OS = 'ios';
   navigation.beforeRemove = null;
   state.workspace = baseWorkspace();
   state.agent = baseAgent();
   roomView.workspace.mockImplementation(async () => state.workspace);
   roomView.agent.mockImplementation(async () => state.agent);
+  roomView.agentVoices.mockResolvedValue({currentVoiceId:'voice-1',canChange:true,choices:[{id:'voice-1',name:'Voice one'}]});
   roomView.workspaceMembers.mockImplementation(async () => ({
     viewer: state.workspace.viewer,
     members: state.workspace.members,
@@ -1005,7 +1038,7 @@ describe('Members workspace management', () => {
     const renderer = await personProfile();
     // Members and the profile hold one relay watch for this Workspace: the
     // profile's grant Room joins the managed Room on the same subscription.
-    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, (event?: unknown) => void][];
     expect(subscribes.at(-1)![0]).toEqual([{ kinds: [0, 9, 9000, 9001],
       '#h': ['22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'] }]);
     expect(subscribes).toHaveLength(3);
@@ -1019,7 +1052,7 @@ describe('Members workspace management', () => {
       grants: [{ ...first.grants[0], grantId: 'live-grant', target: 'beeline-work/live' }],
     }));
     const signal = subscribes.at(-1)![1];
-    await act(async () => signal());
+    await act(async () => signal({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } } as never));
     expect(roomView.workspaceMembers).toHaveBeenCalledTimes(2);
     expect(renderer.root.findByProps({ testID: 'member-grant-live-grant' }).props.title)
       .toBe('beeline-work/live');
@@ -1044,8 +1077,8 @@ describe('Members workspace management', () => {
     roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
       ...(await (base as any)(...args)), agents: [], agentsTruncated: false,
     }));
-    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
-    await act(async () => subscribes.at(-1)![1]());
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, (event?: unknown) => void][];
+    await act(async () => subscribes.at(-1)![1]({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } } as never));
     expect(shown()).toBe(0);
     list.unmount();
   });
@@ -1065,8 +1098,8 @@ describe('Members workspace management', () => {
     roomView.workspaceMembers.mockImplementation(async (...args: any[]) => ({
       ...(await (base as any)(...args)), agents: [], agentsTruncated: true,
     }));
-    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, () => void][];
-    await act(async () => subscribes.at(-1)![1]());
+    const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, (event?: unknown) => void][];
+    await act(async () => subscribes.at(-1)![1]({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } } as never));
     expect(renderer.root.findAll((node: any) =>
       node.props.title === '@clara').length).toBeGreaterThan(0);
     list.unmount();
@@ -1584,11 +1617,11 @@ describe('Members workspace management', () => {
     await openAgentProfile(renderer);
     expect(renderer.root.findAllByProps({ label: 'Retry' })).not.toHaveLength(0);
     const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, () => void]
+      [unknown, (event?: unknown) => void]
     >;
     const refresh = subscriptions.at(-1)![1];
     const readsBeforeRefresh = roomView.workspace.mock.calls.length;
-    await act(async () => refresh());
+    await act(async () => refresh({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } }));
     expect(roomView.workspace.mock.calls.length).toBeGreaterThan(readsBeforeRefresh);
     const retry = renderer.root.findAllByProps({ label: 'Retry' })[0];
     expect(retry).toBeDefined();
@@ -2059,7 +2092,7 @@ describe('Members workspace management', () => {
     // Another session removes Clara; the Workspace refresh no longer lists her.
     state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 0 };
     const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, () => void]
+      [unknown, (event?: unknown) => void]
     >;
     const global = subscriptions.find(([filters]) => Array.isArray(filters) && filters.length === 0);
     expect(global).toBeDefined();
@@ -2082,9 +2115,9 @@ describe('Members workspace management', () => {
 
     state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 1, agentsTruncated: true };
     const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, () => void]
+      [unknown, (event?: unknown) => void]
     >;
-    await act(async () => subscriptions.at(-1)![1]());
+    await act(async () => subscriptions.at(-1)![1]({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } } as never));
 
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).not.toHaveLength(0);
   });
@@ -2217,4 +2250,30 @@ describe('Members workspace management', () => {
     expect(firstPage.flatMap((item) => row(item.identity.pubkey))).toHaveLength(firstPageRows);
     expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.count).toEqual(allPeople.length);
   });
+});
+
+it('negotiated usage-only changes skip a full profile read while actual agent configuration still refreshes', async () => {
+  const { installUsageCellConnection, suspendUsageCellConnection } = await import('@/buzz/agent-usage-cell');
+  const renderer = await render(); await openAgentProfile(renderer);
+  const before = roomView.agent.mock.calls.length;
+  installUsageCellConnection({ generation: 1, usageCellV1: true, origin: 'https://relay.test', principal: VIEWER,
+    executeRead: async () => { throw new Error('No private source adapter in this compatibility fixture'); } });
+  try {
+    await act(async () => { for (const listener of liveListeners) listener({ monolithLive: {
+      type: 'resource-change', roomId: '', resource: 'agent', resourceId: AGENT, usageOnly: true,
+    } }); });
+    expect(roomView.agent.mock.calls.length).toBe(before);
+    await agentChanged(); expect(roomView.agent.mock.calls.length).toBe(before + 1);
+  } finally { suspendUsageCellConnection(); }
+});
+
+it('the existing Refresh usage action does not follow its receipt with a full Agent read', async () => {
+  state.agent.usage = { updatedAt: 10, windows: [{ rateLimitType: 'five_hour', status: 'allowed', utilization: 0.14, updatedAt: 10 }] };
+  const renderer = await render(); await openAgentProfile(renderer);
+  const before = roomView.agent.mock.calls.length; phoneOperation.mockResolvedValueOnce({ status: 'fresh' });
+  const refresh = renderer.root.findAllByType('Button' as any).find((node: any) => node.props.accessibilityLabel === 'Refresh usage');
+  expect(refresh).toBeDefined();
+  await act(async () => { await refresh!.props.onPress(); });
+  expect(phoneOperation).toHaveBeenCalledWith('refreshAgentUsage', { workspaceId: WORKSPACE, agentId: AGENT }, expect.any(Object));
+  expect(roomView.agent.mock.calls.length).toBe(before);
 });

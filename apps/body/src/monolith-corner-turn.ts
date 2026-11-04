@@ -1,3 +1,6 @@
+import { CommandActivationContext } from './helper-activation-context.js';
+import { OwnedModelOutcomeUnknown, ownedModelPrompt, ownedModelEndReceipt } from './owned-model-turn.js';
+import { helperUsageBinding, postChangedAgentUsage } from './helper-usage-binding.js';
 import { agentBehavior } from './agent-command.js';
 import type { SandboxSessionSpec } from './bwrap-sandbox.js';
 import { tryWithKernelLock } from './kernel-lock.js';
@@ -88,7 +91,6 @@ import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { isCompletedToolCall, isPrChecksRead, toolCallFailureLine } from './tool-call-failure.js';
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
-import { retryNotBefore } from './retry-barrier.js';
 import { distillTurnFailureReason, redactToolDetail, redactTurnError } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { hasCornerPrepareScript } from './corner-prepare-script.js';
@@ -119,7 +121,7 @@ import {
   ROOM_PROMPT_BACKSTOP_MS,
 } from './monolith-room-turn.js';
 import { bodyAgentCommand, type BodyConfig } from './config.js';
-import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
+import type { DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
   isSilentCompletion,
@@ -182,7 +184,6 @@ const TOOL_ARGUMENT_MAX_BYTES = 1_200;
 const TOOL_OUTPUT_MAX_BYTES = 3_200;
 const TOOL_PATH_LIMIT = 12;
 /** How long a turn start waits out a GitHub outage before it fails. */
-const GITHUB_OUTAGE_WAIT_MS = 120_000;
 
 function isCornerChecksTurn(trigger: string, restates?: readonly string[]): boolean {
   return Boolean(restates) || /\b(?:passed|failed) a check\b/i.test(trigger);
@@ -500,6 +501,7 @@ export interface MonolithCornerTurnOptions {
 /** One write-enabled corner session, driven only by monolith transcript facts. */
 export class MonolithCornerTurnLoop {
   private readonly commandContext: CommandExecutionContext;
+  private readonly activationContext: CommandActivationContext;
   private readonly squireRelay: SquireTaskRelay;
   private readonly agent: ReturnType<typeof runtimeIdentity>;
   private wakeIntake?: () => void;
@@ -683,6 +685,11 @@ export class MonolithCornerTurnLoop {
       },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
+    this.activationContext=new CommandActivationContext({
+      scope:()=>options.api.channel?.activationScope?.(),
+      selected:()=>options.api.channel?.activationContextSelected===true,
+      read:input=>options.api.readCommandActivation(input),
+    });
     const checkout = this.options;
     options.grantRunner?.register(options.cornerId, {
       workspaceId: options.workspaceId,
@@ -775,8 +782,36 @@ export class MonolithCornerTurnLoop {
     if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
   }
 
+  private commandActivation(){
+    if(!this.options.api.channel?.activationContextSelected&&!this.options.api.channel?.activationScope?.())return Promise.resolve(undefined);
+    const command=this.commandContext?.current;
+    if(!command){
+      if(this.options.api.channel?.activationContextSelected)return Promise.reject(new Error('Activation requires a claimed command'));
+      return Promise.resolve(undefined);
+    }
+    return this.activationContext.read({agentId:this.agent.publicKey,workspaceId:this.options.workspaceId,
+      roomId:this.options.cornerId,commandId:command.id,generationId:this.commandContext.generationId});
+  }
+
+  private async configuration(){
+    const activation=await this.commandActivation();
+    return activation?activation.configuration:this.options.api.execute('getAgentConfiguration',{agentId:this.agent.publicKey,roomId:this.options.cornerId});
+  }
+
+  private async restoredState(){
+    const activation=await this.commandActivation();
+    if(activation){if(!activation.corner)throw new Error('Activation corner context absent');return activation.corner;}
+    return this.options.api.execute('getCornerRestoreState',{cornerId:this.options.cornerId});
+  }
+
+  private async repositoryState(){
+    const activation=await this.commandActivation();
+    return activation?activation.repository:this.options.api.execute('getRoomRepositoryState',{roomId:this.options.cornerId});
+  }
+
   private async roster(): Promise<WorkspaceRoster> {
-    const roster = await this.options.api.execute('getWorkspaceRoster', {
+    const activation=await this.commandActivation();
+    const roster = activation?activation.roster:await this.options.api.execute('getWorkspaceRoster', {
       agentId: this.agent.publicKey,
       workspaceId: this.options.workspaceId,
     });
@@ -832,7 +867,7 @@ export class MonolithCornerTurnLoop {
         ...(refused ? { refused } : {}),
       }))
       .then((usage) => usage
-        ? this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+        ? postChangedAgentUsage(this.options.api,this.agent.publicKey,usage)
         : undefined)
       .catch((error) => console.error('[agent-usage] OpenRouter key read failed', error));
   }
@@ -840,9 +875,10 @@ export class MonolithCornerTurnLoop {
   /** After a turn, refresh the owner's view of this agent's plan quota. */
   private publishHarnessQuota(): void {
     this.harnessQuota ??= new HarnessQuotaReader({
+      accountPublisher:helperUsageBinding(this.options.api),
       agentId: this.agent.publicKey,
       post: (usage) =>
-        this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage }),
+        postChangedAgentUsage(this.options.api,this.agent.publicKey,usage),
     });
     void this.harnessQuota.publish(
       quotaAxiProvider(this.options.config.agentKind, Boolean(this.openRouterKey)),
@@ -900,13 +936,10 @@ export class MonolithCornerTurnLoop {
 
   private async currentSessionFingerprint(): Promise<string> {
     const [configuration, roster, grants, restored, cornerPrepareScript] = await Promise.all([
-      this.options.api.execute('getAgentConfiguration', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.cornerId,
-      }),
+      this.configuration(),
       this.roster(),
       this.grantedResources(),
-      this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId }),
+      this.restoredState(),
       hasCornerPrepareScript(this.options.worktreePath),
     ]);
     const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
@@ -945,7 +978,8 @@ export class MonolithCornerTurnLoop {
 
   private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[]; isolatedCategories: SharedAssetCategory[] }> {
     try {
-      const grants = await this.options.api.execute('listAgentGrants', {
+      const activation=await this.commandActivation();
+      const grants = activation?activation.grants:await this.options.api.execute('listAgentGrants', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
       });
@@ -1001,13 +1035,10 @@ export class MonolithCornerTurnLoop {
     trace?.noteActivation('cold');
     this.sectionBaseline.reset();
     const [configuration, roster, grants, restored] = await Promise.all([
-      this.options.api.execute('getAgentConfiguration', {
-        agentId: this.agent.publicKey,
-        roomId: this.options.cornerId,
-      }),
+      this.configuration(),
       this.roster(),
       this.grantedResources(),
-      this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId }),
+      this.restoredState(),
     ]);
     const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
     const privateAssetRoot = resolve(runtimeDirectory(this.options.runtime.supervisorRoot,
@@ -1380,7 +1411,7 @@ export class MonolithCornerTurnLoop {
         ? roomPermissionDecision(request, { mountedServers, hostServers, shellSandboxed: Boolean(this.options.config.bwrapPath), sandboxHome: homeOverlay.HOME })
         : 'allow',
       onUsage: (usage) => {
-        void this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+        void postChangedAgentUsage(this.options.api,this.agent.publicKey,usage)
           .catch(error => console.error('[agent-usage] publish failed', error));
       },
       onCommands: agentCommandCatalogPublisher({
@@ -1743,12 +1774,10 @@ export class MonolithCornerTurnLoop {
   private async withCheckout<T>(work: () => Promise<T>): Promise<T> {
     // Each writer owns its refs and files. Detached tools retain their harness,
     // never a checkout lock or another agent's turn.
-    const configuration = this.options.repository ? await this.options.api.execute('getAgentConfiguration', {
-      agentId: this.agent.publicKey, roomId: this.options.cornerId,
-    }) : undefined;
+    const configuration = this.options.repository ? await this.configuration() : undefined;
     this.reviewerCheckout = configuration?.isReviewer === true;
     if (this.options.prepareCheckout && this.options.repository) {
-      const restored = await this.options.api.execute('getCornerRestoreState', { cornerId: this.options.cornerId });
+      const restored = await this.restoredState();
       // An unbriefed human corner still bootstraps on its feature branch;
       // repository publication remains gated by its first assigned brief.
       const repositoryWork = !restored.brief || cornerHasRepositoryWork(restored.brief);
@@ -1889,13 +1918,13 @@ export class MonolithCornerTurnLoop {
                     narrationRequestId: requestId,
                   }),
                   this.roster(),
-                  api.execute('getCornerRestoreState', { cornerId }),
+                  this.restoredState(),
                   this.activeReviewerInstruction(),
                   awaitInstitutionalContext(institutionalContextFetch, (message) =>
                     console.warn(`[thin-core] corner ${cornerId}: ${message}`),
                   ),
                   api.execute('listRoomCorners', { roomId: this.options.parentRoomId }),
-                  api.execute('getRoomRepositoryState', { roomId: cornerId })
+                  this.repositoryState()
                     .then(state => state.repositoryOnboarding === true, () => false),
                 ]),
               );
@@ -2104,6 +2133,8 @@ export class MonolithCornerTurnLoop {
               // The corner-only work ledger below is independent of that lane.
               const stream = new AgentTurnStream({
                 api,
+                commandId:this.commandContext.current?.id,
+                turnGeneration:this.commandContext.generationId,
                 agentId: this.agent.publicKey,
                 roomId: cornerId,
                 requestId,
@@ -2271,7 +2302,7 @@ export class MonolithCornerTurnLoop {
                 try {
                   const result = await this.turnUsage.measure(
                   { agentEnv: this.agentEnv, sessionId: this.sessionId! },
-                  () =>
+                  () => ownedModelPrompt(this.commandContext, () =>
                     promptClient.sessionPrompt(
                       this.sessionId!,
                       promptWithImages(prompt, attachmentImageBlocks(delivered, this.acceptsImages())),
@@ -2316,7 +2347,7 @@ export class MonolithCornerTurnLoop {
                           status: call.status === 'failed' ? 'failed' : 'completed',
                         }).catch((error) => console.error('[corner] background tool wake failed', redactTurnError(error)));
                       },
-                    ),
+                    )),
                   );
                   this.harnessTokens = addTurnTokenFigure(this.harnessTokens, result.tokenUsage);
                   return result;
@@ -2650,6 +2681,12 @@ export class MonolithCornerTurnLoop {
         void finishTrace('cancelled').catch(() => undefined);
         return;
       }
+      if (error instanceof OwnedModelOutcomeUnknown) {
+        await this.discardSession(false, true);
+        await api.execute('postAgentTurnReceipt', ownedModelEndReceipt(error, { agentId: this.agent.publicKey,
+          roomId: cornerId, requestId, generationId: this.commandContext.generationId }));
+        throw error;
+      }
       if (error instanceof AcpTurnBackstopError) await this.discardSession();
       const reason = distillTurnFailureReason(error);
       startTraceStats();
@@ -2741,33 +2778,9 @@ export class MonolithCornerTurnLoop {
     const repository = this.options.repository;
     this.branchSyncNotice = undefined;
     if (!repository || repository.readOnly) return;
-    let token: string | undefined;
-    // A GitHub outage (the server's 502) gets a bounded wait so a short blip
-    // does not fail the turn; any other failure keeps the three quick tries.
-    const outageDeadline = Date.now() + GITHUB_OUTAGE_WAIT_MS;
-    for (let attempt = 0; ; attempt += 1) {
-      try {
-        token = (
-          await this.options.api.execute('getRoomGitHubToken', {
-            roomId: this.options.parentRoomId,
-          })
-        ).token;
-        break;
-      } catch (error) {
-        // Known resets belong to command intake's timed barrier, never this
-        // short transport retry loop. Its failed receipt requeues the turn.
-        if (retryNotBefore(error) !== undefined) throw error;
-        const outage = error instanceof DaemonApiError && error.status === 502;
-        const delay = outage ? Math.min(2_000 * 2 ** attempt, 30_000) : 250 * (attempt + 1);
-        if (
-          (outage ? Date.now() + delay > outageDeadline : attempt === 2) ||
-          this.forcedStop ||
-          (this.currentTurn && this.stoppedTurns.has(this.currentTurn.requestId))
-        )
-          throw error;
-        await new Promise((resolve) => setTimeout(resolve, delay));
-      }
-    }
+    // One command-authorized credential lookup. A failed provider observation
+    // parks through intake until configuration/link/provider recovery.
+    const token=(await this.options.api.execute('getRoomGitHubToken',{roomId:this.options.parentRoomId})).token;
     if (!token) throw new Error('corner repository credential lookup returned no token');
     const stop = new AbortController();
     let watchStop: NodeJS.Timeout | undefined;
@@ -2864,6 +2877,8 @@ export class MonolithCornerTurnLoop {
           }
           if (!this.reconcileCloseRequested) return false;
           this.reconcileCloseRequested = false;
+          // A close control owns a current authority read, independently of a
+          // command's held setup value.
           const state = await api.execute('getCornerRestoreState', { cornerId });
           if (!state.closeRequested) return false;
           // The reap deletes the worktree a harvest is still reading.

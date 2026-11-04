@@ -1,0 +1,253 @@
+{
+  "scope": "historical-source native40; current scoped viewers, store, digest and shared cache; NOT artifact-byte-owner admission, Play binary, OTA delivery, physical-phone latency or complete router cohort",
+  "cache": [
+    {
+      "kind": "start",
+      "stamp": "native40-artifact-source-3465f9ec",
+      "scenario": "cache",
+      "runtime": "40",
+      "embedded": false,
+      "emergency": false
+    },
+    {
+      "kind": "shared-cache",
+      "loads": 1,
+      "sizes": [
+        177,
+        177,
+        177
+      ],
+      "localFile": true,
+      "diagnostics": {
+        "active": 0,
+        "queued": 0,
+        "memoryBytes": 177
+      }
+    },
+    {
+      "kind": "cold-restore",
+      "bytes": 177,
+      "loads": 1
+    },
+    {
+      "kind": "native-image-load",
+      "localFile": true
+    },
+    {
+      "kind": "parallel-done",
+      "diagnostics": {
+        "active": 0,
+        "queued": 0,
+        "memoryBytes": 524465
+      }
+    },
+    {
+      "kind": "purged",
+      "uri": null
+    }
+  ],
+  "disk": [
+    {
+      "kind": "start",
+      "stamp": "native40-artifact-source-3465f9ec",
+      "scenario": "disk",
+      "runtime": "40",
+      "embedded": false,
+      "emergency": false
+    },
+    {
+      "kind": "disk-write",
+      "label": "key-0",
+      "elapsedMs": 1189,
+      "residentBytes": 26214516
+    },
+    {
+      "kind": "disk-write",
+      "label": "key-1",
+      "elapsedMs": 440,
+      "residentBytes": 52429031
+    },
+    {
+      "kind": "disk-write",
+      "label": "key-2",
+      "elapsedMs": 457,
+      "residentBytes": 78643546
+    },
+    {
+      "kind": "disk-write",
+      "label": "key-3",
+      "elapsedMs": 423,
+      "residentBytes": 104858061
+    },
+    {
+      "kind": "disk-write",
+      "label": "key-4",
+      "elapsedMs": 429,
+      "residentBytes": 131072576
+    },
+    {
+      "kind": "native-read",
+      "bytes": 26214400,
+      "first": 17,
+      "last": 23,
+      "elapsedMs": 459.9168349999818
+    },
+    {
+      "kind": "disk-write",
+      "label": "replacement",
+      "elapsedMs": 433,
+      "residentBytes": 131072576
+    },
+    {
+      "kind": "disk-write",
+      "label": "small",
+      "elapsedMs": 81,
+      "residentBytes": 109052479
+    },
+    {
+      "kind": "frame-pacing",
+      "maxRafGapMs": 270.0695800000103,
+      "warmMaxRafGapMs": 21.596374999993714,
+      "frames": 198
+    },
+    {
+      "kind": "disk-complete",
+      "maxResidentBytes": 131072576,
+      "limitBytes": 134217728,
+      "oversizeRejected": true,
+      "evictedOldest": true
+    },
+    {
+      "kind": "disk-cleared"
+    },
+    {
+      "kind": "offset-view",
+      "bytes": [
+        17,
+        23
+      ]
+    },
+    {
+      "kind": "canceled-transfer",
+      "canceled": true,
+      "elapsedMs": 10.55360399998608,
+      "uri": null,
+      "leftovers": []
+    },
+    {
+      "kind": "separate-native-sha256",
+      "bytes": 26214400,
+      "digest": "c0193ae2f5f4986864bce4a56bf5e0207075dc0dbff3850cd9508206d8550159",
+      "elapsedMs": 83.4322450000036
+    },
+    {
+      "kind": "native-hash-offset",
+      "digest": "dbe99992560260fee220d8e5948847f505e58660e9500ba2e81f08cacecbeb2b"
+    }
+  ],
+  "pdf": [
+    {
+      "kind": "start",
+      "stamp": "native40-artifact-source-3465f9ec",
+      "scenario": "pdf",
+      "runtime": "40",
+      "embedded": false,
+      "emergency": false
+    },
+    {
+      "kind": "pdf-rendered"
+    }
+  ],
+  "sandbox": [
+    {
+      "kind": "start",
+      "stamp": "native40-artifact-source-3465f9ec",
+      "scenario": "sandbox",
+      "runtime": "40",
+      "embedded": false,
+      "emergency": false
+    },
+    {
+      "kind": "load-start",
+      "scenario": "sandbox"
+    },
+    {
+      "kind": "load-end",
+      "scenario": "sandbox"
+    }
+  ],
+  "computer": [
+    {
+      "kind": "start",
+      "stamp": "native40-artifact-source-3465f9ec",
+      "scenario": "computer",
+      "runtime": "40",
+      "embedded": false,
+      "emergency": false
+    },
+    {
+      "kind": "computer-viewport",
+      "visible": false
+    },
+    {
+      "kind": "computer-viewport",
+      "visible": true
+    },
+    {
+      "kind": "computer-viewport",
+      "visible": false
+    }
+  ],
+  "browserTrace": [
+    {
+      "at": 1793675559088,
+      "kind": "browser-http",
+      "path": "/browser",
+      "warm": false,
+      "preview": true
+    },
+    {
+      "at": 1793675559617,
+      "kind": "browser-open",
+      "active": 1,
+      "warm": false
+    },
+    {
+      "at": 1793675572961,
+      "kind": "browser-http",
+      "path": "/browser",
+      "warm": true,
+      "preview": false
+    },
+    {
+      "at": 1793675572978,
+      "kind": "browser-close",
+      "active": 0
+    },
+    {
+      "at": 1793675573132,
+      "kind": "browser-open",
+      "active": 1,
+      "warm": true
+    },
+    {
+      "at": 1793675607006,
+      "kind": "browser-close",
+      "active": 0
+    },
+    {
+      "at": 1793675607010,
+      "kind": "browser-http",
+      "path": "/browser",
+      "warm": false,
+      "preview": true
+    }
+  ],
+  "maxConcurrentByteRequests": 4,
+  "forbiddenEgressRequests": 0,
+  "setupNotes": [
+    "First cache launch had no guest Wi-Fi and failed before any fixture-server request. Connected AndroidWifi inside the isolated network namespace and admitted a separate launch. No application retry was added.",
+    "Control scenario uses the same inert wrapper; it is not a raw unsafe-document positive control."
+  ],
+  "checks": "all scoped assertions passed"
+}

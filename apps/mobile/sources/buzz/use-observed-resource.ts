@@ -12,6 +12,8 @@ type Options<T> = {
   subscribe?: (invalidate: () => void, reconnect: () => void,
     replace: (data: T) => void, recover: () => void) => Promise<() => void>;
   missLimit?: number;
+  /** Failed reads wait for explicit Retry, real reconnect or a new focus. */
+  retryOnChange?: boolean;
   /** Event-driven cooldown only; never schedules a retry timer. */
   retryBackoffMs?: { initial: number; max: number };
   onError?: (cause: unknown) => void;
@@ -102,7 +104,8 @@ class Resource<T> {
       this.flight = false;
       if (!this.listeners.size) {
         if (resources.get(this.key) === this) resources.delete(this.key);
-      } else if (this.dirty && (!this.snapshot.error || this.options.subscribe) &&
+      } else if (this.dirty && !(this.options.retryOnChange === false && this.snapshot.error) &&
+          (!this.snapshot.error || this.options.subscribe) &&
           (!this.options.retryBackoffMs || Date.now() >= this.retryAfter)) {
         this.publish({ ...this.snapshot, error: null });
         void this.read();
@@ -121,9 +124,9 @@ class Resource<T> {
     };
     void Promise.resolve()
       .then(() => (active ? this.options.subscribe?.(
-        this.options.retryBackoffMs ? this.invalidate : this.retry,
+        this.options.retryBackoffMs || this.options.retryOnChange === false ? this.invalidate : this.retry,
         this.options.retryBackoffMs ? this.invalidate : this.retry, this.replace,
-        this.recover) : undefined))
+        this.options.retryOnChange === false ? () => Promise.resolve() : this.recover) : undefined))
       .then((stop) => {
         if (active) subscriptionStop = stop;
         else stop?.();

@@ -69,6 +69,16 @@ describe('unified join HTTP negotiation and OAuth discovery', () => {
       });
     }
   }
+  it.each(['server', 'short'])('%s member stream keeps bearer discovery instead of serving the join page', async host => {
+    const authority = host === 'short' ? `join.usebeeline.app:${new URL(origin).port}` : new URL(origin).host;
+    for (const headers of [{}, { accept: 'text/event-stream' }]) {
+      const response = await get('/mcp/member-stream', authority, headers);
+      expect(response.status).toBe(401);
+      expect(response.headers['content-type']).toContain('application/json');
+      expect(response.headers['www-authenticate']).toContain(`${origin}/.well-known/oauth-protected-resource/mcp`);
+      expect(JSON.parse(response.body)).toEqual({ error: 'invalid_token' });
+    }
+  });
   it('does not reflect unknown Host or forwarded headers into discovery', async () => {
     const response = await get('/join', 'attacker.example', { accept: 'text/event-stream', 'x-forwarded-host': 'attacker.example', 'x-forwarded-proto': 'https' });
     expect(response.headers['www-authenticate']).toContain(origin + '/.well-known/oauth-protected-resource/join');

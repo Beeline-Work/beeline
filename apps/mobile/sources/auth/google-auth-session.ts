@@ -28,6 +28,7 @@ function googleSignInRedirectUri(): string {
 }
 
 async function pendingGoogle(): Promise<PendingGoogle | null> {
+  await pendingMutation;
   const value = await AsyncStorage.getItem(STORAGE_KEY);
   if (!value) return null;
   try {
@@ -51,20 +52,37 @@ export async function clearPendingGoogleSignIn(expectedState?: string): Promise<
 }
 
 /** Hermes supports AbortController but not every AbortSignal static helper. */
-async function googleAuthFetch(url: string, init: RequestInit): Promise<Response> {
+async function googleAuthFetch(url: string, init: RequestInit, timeoutMs = 5_000): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 5_000);
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const abort = () => controller.abort();
+  init.signal?.addEventListener('abort', abort, { once: true });
+  if (init.signal?.aborted) abort();
   try {
     return await fetch(url, { ...init, signal: controller.signal });
-  } finally { clearTimeout(timer); }
+  } finally { clearTimeout(timer); init.signal?.removeEventListener('abort', abort); }
 }
 
-async function completion(pending: PendingGoogle): Promise<string | null> {
+let completionFlight: { key: string; promise: Promise<string | null> } | undefined;
+/** Warm Linking, browser and cold-start callbacks join the same correlated
+ * inspection. A failed/pending result never schedules another observation. */
+function completion(pending: PendingGoogle, waitMs = 0, signal?: AbortSignal): Promise<string | null> {
   const base = getBuzzRuntimeConfig().monolithUrl;
+  const key = JSON.stringify([base, pending.state, pending.recoveryToken]);
+  if (completionFlight?.key === key) return completionFlight.promise;
+  const promise = inspectCompletion(pending, base, waitMs, signal);
+  const flight = { key, promise }; completionFlight = flight;
+  void promise.finally(() => { if (completionFlight === flight) completionFlight = undefined; }).catch(() => {});
+  return promise;
+}
+async function inspectCompletion(pending: PendingGoogle, base: string, waitMs: number, signal?: AbortSignal): Promise<string | null> {
   const response = await googleAuthFetch(`${base}/auth/oidc/completion`, {
     method: 'POST', headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ recoveryToken: pending.recoveryToken }),
-  });
+    body: JSON.stringify({ recoveryToken: pending.recoveryToken, ...(waitMs ? { waitMs } : {}) }), signal,
+  }, waitMs + 5_000);
+  const current = await pendingGoogle();
+  if (signal?.aborted || current?.state !== pending.state || current.recoveryToken !== pending.recoveryToken)
+    throw new OidcBindError('browser_canceled', 'This sign-in was replaced');
   if (response.status === 202) return null;
   if (response.status >= 500 || response.status === 429) {
     throw new Error('Google sign-in service temporarily unavailable');
@@ -107,6 +125,12 @@ export async function runGoogleSignIn(input: {
   if (input.signal?.aborted) throw new OidcBindError('browser_canceled', 'This sign-in was replaced');
   const pending = { state: input.state, recoveryToken: input.recoveryToken, startedAt: Date.now(), ...(input.linkIdentity ? { linkIdentity: input.linkIdentity } : {}) };
   await savePending(pending);
+  const assertCurrent = async (token = input.recoveryToken) => {
+    const current = await pendingGoogle();
+    if (input.signal?.aborted || current?.state !== input.state || current.recoveryToken !== token)
+      throw new OidcBindError('browser_canceled', 'This sign-in was replaced');
+  };
+  await assertCurrent();
   const redirect = googleSignInRedirectUri();
   const base = getBuzzRuntimeConfig().monolithUrl;
   if (googleAccountPicker) {
@@ -118,6 +142,19 @@ export async function runGoogleSignIn(input: {
     const nativePending = { ...pending, recoveryToken: nativeToken };
     let nativeStarted = false;
     let completionAttempted = false;
+    let nativeCancellation: Promise<void> | undefined;
+    const cancelNative = () => nativeCancellation ??= (async () => {
+      if (nativeStarted) await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ recoveryToken: nativeToken }),
+      }).catch(() => undefined);
+    })();
+    const assertNativeCurrent = async () => {
+      try { await assertCurrent(nativeToken); }
+      catch (error) {
+        await cancelNative(); await clearPendingGoogleSignIn(input.state); throw error;
+      }
+    };
     try {
       await savePending(nativePending);
       const start = await googleAuthFetch(`${base}/auth/oidc/native/start`, {
@@ -125,13 +162,16 @@ export async function runGoogleSignIn(input: {
         body: JSON.stringify({ recoveryChallenge: bytesToHex(sha256(utf8ToBytes(nativeToken))),
           ...(input.funnelContext ? { funnel: JSON.stringify(input.funnelContext) } : {}) }),
       });
+      nativeStarted = start.ok;
+      await assertCurrent(nativeToken);
       if (!start.ok) throw new OidcBindError('native_google_unavailable', 'Google sign-in could not start. Try again.');
-      nativeStarted = true;
       const config = await start.json() as { state: string; nonce: string; serverClientId: string };
       if (!TOKEN.test(config.state) || !TOKEN.test(config.nonce) ||
           typeof config.serverClientId !== 'string' || !config.serverClientId.endsWith('.apps.googleusercontent.com'))
         throw new OidcBindError('invalid_response', 'Invalid Google sign-in configuration');
+      await assertCurrent(nativeToken);
       const idToken = await googleAccountPicker.signIn(config.serverClientId, config.nonce);
+      await assertCurrent(nativeToken);
       completionAttempted = true;
       const complete = await googleAuthFetch(`${base}/auth/oidc/native/complete`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -142,82 +182,95 @@ export async function runGoogleSignIn(input: {
       if (!complete.ok) throw new OidcBindError('invalid_oidc_proof', 'Google sign-in could not finish. Try again.');
       if ((await complete.json() as { completed?: unknown }).completed !== true)
         throw new OidcBindError('invalid_response', 'Invalid Google sign-in completion');
+      await assertCurrent(nativeToken);
       return nativeToken;
     } catch {
-      // A dropped response may follow a committed ticket. Recover it before
-      // falling back, without spending a second sign-in proof for that account.
+      await assertNativeCurrent();
+      // A dropped response may follow a committed ticket. Recovery belongs to
+      // this same native owner, including cancellation while it is waiting.
       if (completionAttempted) {
         const recovered = await completion(nativePending).catch(() => null);
+        await assertNativeCurrent();
         if (recovered) return recovered;
       }
-      if (nativeStarted) {
-        await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ recoveryToken: nativeToken }),
-        }).catch(() => undefined);
-      }
+      await cancelNative();
       // Missing routes/configuration and every native failure retain browser
       // sign-in, including test copies whose signing keys are unregistered.
+      await assertNativeCurrent();
       await savePending(pending);
     }
   }
+  await assertCurrent();
   const url = new URL('/auth/oidc/start', base);
   if (input.funnelContext) url.searchParams.set('funnel', JSON.stringify(input.funnelContext));
   url.searchParams.set('app_redirect', redirect);
   url.searchParams.set('app_state', input.state);
   url.searchParams.set('app_recovery_challenge', bytesToHex(sha256(utf8ToBytes(input.recoveryToken))));
-  let callbackUrl: string | null = null;
-  let browserClosed = false;
-  let browserFailure: unknown;
-  const subscription = await input.subscribeToUrls((value) => {
-    if (value === redirect || value.startsWith(`${redirect}?`)) callbackUrl = value;
+  const controller = new AbortController();
+  let terminal: ReturnType<typeof setTimeout> | undefined;
+  let completionFailure: unknown;
+  const never = () => new Promise<never>(() => {});
+  let observed!: (url: string) => void;
+  const callback = new Promise<string>(resolve => { observed = resolve; });
+  const subscription = await input.subscribeToUrls(value => {
+    if (value === redirect || value.startsWith(`${redirect}?`)) observed(value);
   });
-  try {
-    if (input.signal?.aborted) throw new OidcBindError('browser_canceled', 'This sign-in was replaced');
-    void input.openAuthSession(url.toString(), redirect).then((result) => {
-      if (result.url) callbackUrl = result.url;
-      // A dismissed tab can also have completed sign-in. Check the server
-      // before treating either close result as cancellation.
-      browserClosed = result.type === 'cancel' || result.type === 'dismiss';
-      if (browserClosed && input.platform === 'android') input.onBrowserClosed?.();
-    }, (error: unknown) => { browserFailure = error; browserClosed = true; });
-    const deadline = Date.now() + (input.platform === 'android' ? 5 * 60_000 : 120_000);
-    let closedAt: number | undefined;
-    let connectionInterrupted = false;
-    while (Date.now() < deadline) {
-      if (input.signal?.aborted) throw new OidcBindError('browser_canceled', 'This sign-in was replaced');
-      if (browserFailure) throw browserFailure;
-      const checkingClosedBrowser = browserClosed;
-      let serverPending = false;
-      try {
-        const ticket = await resumeGoogleSignIn(callbackUrl);
-        if (input.signal?.aborted) continue;
-        if (ticket) return ticket;
-        serverPending = true;
-        connectionInterrupted = false;
-      } catch (error) {
-        if (error instanceof OidcBindError) throw error;
-        // A suspended browser handoff or a slow server cannot establish that
-        // the device is offline. Keep recovering the same proof until expiry.
-        connectionInterrupted = true;
-      }
-      if (input.platform !== 'android' && checkingClosedBrowser && serverPending) {
-        closedAt ??= Date.now();
-        if (Date.now() - closedAt >= 1_500) throw new OidcBindError('browser_canceled', 'Google sign-in was canceled');
-      }
-      await new Promise((resolve) => setTimeout(resolve, 750));
+  try { await assertCurrent(); } catch (error) { subscription.remove(); throw error; }
+  // One outstanding recovery connection also covers a lost OS/browser callback.
+  const waitMs = input.platform === 'android' ? 5 * 60_000 : 120_000;
+  let rejectReplacement!: (error: OidcBindError) => void;
+  const replaced = new Promise<never>((_resolve, reject) => { rejectReplacement = reject; });
+  const abort = () => {
+    controller.abort();
+    rejectReplacement(new OidcBindError('browser_canceled', 'This sign-in was replaced'));
+  };
+  input.signal?.addEventListener('abort', abort, { once: true });
+  if (input.signal?.aborted) abort();
+  const held = completion(pending, Math.min(waitMs, 120_000), controller.signal);
+  const completed = held.then(ticket => ticket ?? never(), error => { completionFailure = error; return never(); });
+  const callbackResult = callback.then(async value => {
+    if (controller.signal.aborted) return never();
+    if ((await pendingGoogle())?.state !== input.state)
+      throw new OidcBindError('state_mismatch', 'This sign-in was replaced');
+    const ticket = new URL(value).searchParams.get('completed') === '1'
+      ? await held.catch(() => null) ?? await resumeGoogleSignIn(value)
+      : await resumeGoogleSignIn(value);
+    if (!ticket) throw new OidcBindError('token_expired', 'Google sign-in expired. Try again.');
+    return ticket;
+  });
+  let browserFailed = false;
+  const browser = input.openAuthSession(url.toString(), redirect).then(async result => {
+    if (controller.signal.aborted) return never();
+    if (result.url) { observed(result.url); return never(); }
+    if (result.type !== 'cancel' && result.type !== 'dismiss') return never();
+    if (input.platform === 'android') {
+      input.onBrowserClosed?.();
+      return never();
     }
-    throw new OidcBindError(connectionInterrupted ? 'connection_failed' : 'token_expired',
-      connectionInterrupted ? 'Could not reach Google sign-in. Try again.' : 'Google sign-in expired. Try again.');
-  } catch (error) {
-    await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ recoveryToken: input.recoveryToken }),
-    }).catch(() => undefined);
-    // A replacement may belong to either provider. Forget only this attempt.
-    await clearPendingGoogleSignIn(input.state);
+    // Stop the held request before the close event inspects once.
+    controller.abort();
+    const ticket = await held.catch(() => null) ?? await completion(pending);
+    if (ticket) return ticket;
+    throw new OidcBindError('browser_canceled', 'Google sign-in was canceled');
+  }, error => { browserFailed = true; throw error; });
+  const deadline = new Promise<never>((_resolve, reject) => {
+    terminal = setTimeout(() => reject(completionFailure ??
+      new OidcBindError('token_expired', 'Google sign-in expired. Try again.')), waitMs);
+  });
+  try { return await Promise.race([completed, callbackResult, browser, deadline, replaced]); }
+  catch (error) {
+    // Preserve correlation after uncertain transport loss so a cold callback
+    // gets one recovery inspection. Explicit close/invalid proof revokes it.
+    if (error instanceof OidcBindError || browserFailed) {
+      await googleAuthFetch(`${base}/auth/oidc/completion/cancel`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ recoveryToken: input.recoveryToken }),
+      }).catch(() => undefined);
+      await clearPendingGoogleSignIn(input.state);
+    }
     throw error;
-  } finally { subscription.remove(); }
+  } finally { if (terminal) clearTimeout(terminal); input.signal?.removeEventListener('abort', abort); controller.abort(); subscription.remove(); }
+
 }
 
 export async function pendingGoogleLinkIdentity(): Promise<string | null> {

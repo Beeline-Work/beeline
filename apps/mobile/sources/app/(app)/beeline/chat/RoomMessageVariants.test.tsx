@@ -1,4 +1,8 @@
+vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: vi.fn() }));
+vi.mock('@/components/buzz/ArtifactMedia', async () => { const R = await import('react'); return { ArtifactImage: (props: Record<string, unknown>) => R.createElement('Image', props) }; });
 vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
+import { observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
+import { routerOwnerArtifactAction } from '@/buzz/router-owner';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
@@ -231,6 +235,9 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 beforeEach(() => {
   ledgerEntryRender.mockClear();
+  vi.mocked(routerOwnerArtifactAction).mockClear();
+  setArtifactViewportActive('attachment-proof', false);
+  observeArtifactRows('attachment-proof', []);
   modal.alert.mockClear();
   modal.show.mockClear();
   pictureActions.showPictureActions.mockClear();
@@ -1770,6 +1777,9 @@ describe('Room message variant components', () => {
       );
     };
 
+    const overscan = cards(false);
+    expect(overscan.root.findAllByType('Image')).toHaveLength(0);
+    act(() => { observeArtifactRows('attachment-proof', ['with-file']); setArtifactViewportActive('attachment-proof', true); });
     const live = cards(false);
     expect(live.root.findAllByProps({ testID: 'chat-attachment-receipt.png' })).not.toHaveLength(0);
     expect(live.root.findAllByType('Image')).not.toHaveLength(0);
@@ -1837,6 +1847,8 @@ describe('Room message variant components', () => {
       expect.objectContaining({ name: 'receipt.png' }),
     );
     act(() => open.props.onPress());
+    expect(routerOwnerArtifactAction).toHaveBeenCalledWith('OpenArtifact', '11111111-1111-4111-8111-111111111111');
+    expect(vi.mocked(routerOwnerArtifactAction).mock.invocationCallOrder[0]).toBeLessThan(modal.show.mock.invocationCallOrder[0]!);
     expect(modal.show).toHaveBeenCalledWith({
       component: expect.any(Function),
       props: {
@@ -1895,6 +1907,8 @@ describe('Room message variant components', () => {
       expect.objectContaining({ name: 'receipt.png' }),
     );
     act(() => open.props.onPress());
+    expect(routerOwnerArtifactAction).toHaveBeenCalledWith('OpenArtifact', '11111111-1111-4111-8111-111111111111');
+    expect(vi.mocked(routerOwnerArtifactAction).mock.invocationCallOrder[0]).toBeLessThan(modal.show.mock.invocationCallOrder[0]!);
     expect(modal.show).toHaveBeenCalledWith({
       component: expect.any(Function),
       props: {
@@ -3283,7 +3297,7 @@ describe('Room message variant components', () => {
       expect(instagramCard).toContain('Retry Instagram');
     });
 
-    it.each(['Instagram', 'Figma'])('Reproduction CARD-1: renders the provider logo for %s and falls back on image failure', (name) => {
+    it.each(['Instagram', 'Figma'])('Reproduction CARD-1: renders the provider logo for %s and uses a local glyph on failure', (name) => {
       const logo = `https://cdn.composio.dev/${name.toLowerCase()}.png`;
       const card = render(<AppSignInCard message={message({ appSignIn: {
         appId: 'app-proof', appKey: name.toLowerCase(), name, logo,
@@ -3293,14 +3307,11 @@ describe('Room message variant components', () => {
         node.props.source?.uri === logo);
       expect(image()).toBeDefined();
       act(() => image()!.props.onError());
-      const favicon = card.root.findAllByType('Image').find((node: ReactTestInstance) =>
-        node.props.source?.uri?.includes(`${name.toLowerCase()}.com`));
-      expect(favicon).toBeDefined();
-      act(() => favicon!.props.onError());
+      expect(card.root.findAllByType('Image')).toHaveLength(0);
       expect(card.root.findAllByType('Svg').length).toBeGreaterThan(0);
       expect(card.root.findAllByType('Text').some((node: ReactTestInstance) => node.props.children === name[0])).toBe(false);
       if (process.env.BEELINE_SIGN_IN_PROOF === '1')
-        console.log(`CARD-1 ${name}: card renders provider logo; failed logo uses favicon, then website glyph`);
+        console.log(`CARD-1 ${name}: card renders provider logo; failed logo uses the local website glyph without a favicon request`);
     });
 
     it('Reproduction RS-1: a stored domain shows the app mark; no logo or domain keeps the letter', () => {
@@ -3308,8 +3319,8 @@ describe('Room message variant components', () => {
         ownerId: 'zeke', agentId: 'monarch', status: 'pending' as const };
       const card = render(<AppSignInCard message={message({ appSignIn: { ...base, domain: 'whatsapp.com' } })}
         agentName="Monarch" canConnect onConnect={vi.fn()} busy={false} />);
-      expect(card.root.findAllByType('Image').some((node: ReactTestInstance) =>
-        node.props.source?.uri?.includes('domain=whatsapp.com'))).toBe(true);
+      expect(card.root.findAllByType('Image')).toHaveLength(0);
+      expect(card.root.findAllByType('Svg').length).toBeGreaterThan(0);
       expect(card.root.findAllByType('Text').some((node: ReactTestInstance) => node.props.children === 'W')).toBe(false);
       const letter = render(<AppSignInCard message={message({ appSignIn: base })}
         agentName="Monarch" canConnect onConnect={vi.fn()} busy={false} />);

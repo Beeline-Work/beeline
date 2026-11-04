@@ -29,31 +29,42 @@ export async function failConnectingOffers(
   database: SqlDatabase,
   target: { agentId: string; connectorId?: string } | { expired: true },
 ): Promise<CompletedConnectorOffer[]> {
+  // Candidate discovery is bounded, but grants no transition authority. Keep
+  // the existing agent -> connector -> offer lock order used by status reports.
+  let expiredIds: string[] = [];
   if ('expired' in target) {
+    expiredIds = (await database.query<{ id: string }>(
+      `SELECT id FROM connector_offers WHERE status='connecting'
+       AND COALESCE(accepted_at,created_at)<=now()-interval '15 minutes'
+       ORDER BY COALESCE(accepted_at,created_at),id LIMIT 100`,
+    )).rows.map(offer => offer.id);
+    if (!expiredIds.length) return [];
     await database.query(`UPDATE agents SET squire_work=(squire_work-'install'-'signIn') ||
       '{"errorMessage":"Connection timed out. Retry to continue."}'::jsonb
       WHERE squire_work->>'install'='true'
         AND COALESCE((squire_work->>'reportedAt')::double precision,0)<extract(epoch FROM now())-900
-        AND EXISTS (SELECT 1 FROM connector_offers offer WHERE offer.agent_id=agents.agent_id
-          AND offer.status='connecting' AND COALESCE(offer.accepted_at,offer.created_at)<now()-interval '15 minutes')`);
+        AND EXISTS (SELECT 1 FROM connector_offers offer WHERE offer.id=ANY($1::uuid[])
+          AND offer.agent_id=agents.agent_id AND offer.status='connecting'
+          AND COALESCE(offer.accepted_at,offer.created_at)<=now()-interval '15 minutes')`, [expiredIds]);
     await database.query(`UPDATE workspace_connectors connector SET status='error',
       status_error='Connection timed out. Retry to continue.',sign_in=NULL,updated_at=now()
       WHERE connector.status='installing' AND connector.updated_at<now()-interval '15 minutes'
-        AND EXISTS (SELECT 1 FROM connector_offers offer WHERE offer.connector_id=connector.id
-          AND offer.status='connecting' AND COALESCE(offer.accepted_at,offer.created_at)<now()-interval '15 minutes')`);
+        AND EXISTS (SELECT 1 FROM connector_offers offer WHERE offer.id=ANY($1::uuid[])
+          AND offer.connector_id=connector.id AND offer.status='connecting'
+          AND COALESCE(offer.accepted_at,offer.created_at)<=now()-interval '15 minutes')`, [expiredIds]);
   }
   const offers = (await database.query<{ id: string; room_id: string; agent_id: string; command_id: string | null }>(
     `SELECT offer.id,offer.room_id,offer.agent_id,offer.command_id FROM connector_offers offer
      WHERE offer.status='connecting' AND ${'expired' in target
-       ? "COALESCE(offer.accepted_at,offer.created_at)<now()-interval '15 minutes'"
+       ? "offer.id=ANY($1::uuid[]) AND COALESCE(offer.accepted_at,offer.created_at)<=now()-interval '15 minutes'"
        : target.connectorId
          ? 'offer.connector_id=$1::uuid'
          : `offer.connector_type='trusty-squire' AND EXISTS (SELECT 1 FROM agents reporting
              JOIN agents offering ON offering.agent_id=offer.agent_id
              WHERE reporting.agent_id=$1 AND reporting.owner_id=offering.owner_id
                AND COALESCE(reporting.machine_id,reporting.agent_id)=offer.machine_id)`}
-     ORDER BY offer.created_at LIMIT 100 FOR UPDATE OF offer`,
-    'expired' in target ? [] : target.connectorId ? [target.connectorId] : [target.agentId],
+     ORDER BY ${'expired' in target ? 'COALESCE(offer.accepted_at,offer.created_at),offer.id' : 'offer.created_at,offer.id'} LIMIT 100 FOR UPDATE OF offer`,
+    'expired' in target ? [expiredIds] : target.connectorId ? [target.connectorId] : [target.agentId],
   )).rows;
   const result: CompletedConnectorOffer[] = [];
   for (const offer of offers) {

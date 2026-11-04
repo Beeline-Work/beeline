@@ -1,3 +1,4 @@
+import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,7 +10,7 @@ import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
  */
 function shims(mobile: string): Record<string, string> {
   return {
-    ...webProofShims(mobile),
+    ...webProofShims(mobile), ...legacyRouterProofShims(),
     'expo-router': `import React from 'react';
     export const useFocusEffect = effect => React.useEffect(effect, [effect]);
     export const useLocalSearchParams = () => ({ roomId: '11111111-1111-4111-8111-111111111111' });

@@ -7,6 +7,31 @@ import { fileURLToPath } from 'node:url';
 import { inspectSource, judgeInventory, scanRouterTree, baselineInventory } from './router-boundaries.mjs';
 
 const core = 'packages/net/src/example.ts';
+const dispatcherSource = `import { Agent } from 'undici';
+class MemberStreamAgent extends Agent {
+  override dispatch(options: Parameters<Agent['dispatch']>[0], handler: Parameters<Agent['dispatch']>[1]): ReturnType<Agent['dispatch']> {
+    return super.dispatch({ ...options, bodyTimeout: 0 }, handler);
+  }
+}
+const memberStreamAgent = new MemberStreamAgent();
+function request(url, stream) { return fetch(url, { ...(stream ? { dispatcher: memberStreamAgent } : {}) }); }`;
+test('MCP idle dispatcher only configures the existing inventoried fetch', () => {
+  const result = inspectSource('apps/body/src/session-join/beeline-api.ts', dispatcherSource);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.hits.map(hit => hit.kind), ['fetch']);
+});
+test('dispatcher aliases, exports, direct calls and altered SDK wrappers remain network boundaries', () => {
+  for (const source of [
+    `${dispatcherSource}\nconst escape = memberStreamAgent;`,
+    `${dispatcherSource}\nmemberStreamAgent.dispatch(options, handler);`,
+    `${dispatcherSource}\nexport { memberStreamAgent };`,
+    `${dispatcherSource}\nconst other = new Agent();`,
+    `${dispatcherSource}\nconst Factory = MemberStreamAgent;`,
+    dispatcherSource.replace('bodyTimeout: 0', 'bodyTimeout: options.bodyTimeout'),
+    dispatcherSource.replace('{ Agent }', '{ Agent, request as anotherRequest }'),
+  ]) assert.ok(inspectSource('apps/body/src/session-join/beeline-api.ts', source).hits.some(hit => hit.kind === 'import:undici'));
+  assert.ok(inspectSource('apps/body/src/elsewhere.ts', dispatcherSource).hits.some(hit => hit.kind === 'import:undici'));
+});
 for (const [name, source] of Object.entries({
   'alias fetch': 'const f = fetch; f("/api");',
   'global alias': 'const g = globalThis; g.fetch("/api");',
@@ -88,4 +113,130 @@ test('core cannot hide a transport in an imported test-named module', () => {
     writeFileSync(path.join(root, 'packages/net/src/helper.test.ts'), 'fetch("/hidden");');
     assert.ok(scanRouterTree(root).errors.some(x => x.includes('transport-free')));
   } finally { rmSync(root, { recursive: true, force: true }); }
+});
+
+test('the narrow public phone observer is allowed but owner factories remain private', () => {
+  assert.deepEqual(inspectSource('apps/mobile/sources/example.ts', 'import { observePhoneInput } from \"@beeline/net/phone-inputs\";').errors, []);
+  assert.ok(inspectSource('packages/net/src/phone-inputs.ts', 'export { AdmissionOwner } from \"./private/admission.js\";').errors.length);
+});
+
+
+test('only exact persisted owner may access the command executor, including aliases', () => {
+  for (const source of ['socket.requestCommand(op,args,id)', 'const send = socket.requestCommand;', 'socket["requestCommand"](op,args,id)'])
+    assert.ok(inspectSource('apps/mobile/sources/feature.ts', source).errors.length);
+  assert.deepEqual(inspectSource('apps/mobile/sources/buzz/command-owner.ts', 'socket.requestCommand(op,args,id)').errors, []);
+});
+
+
+test('owner admission cannot escape through aliases, reexports or namespace access', () => {
+  for (const source of [
+    'import { routerOwnerArtifactAction as mint } from "@/buzz/router-owner";',
+    'export { routerOwnerArtifactAction } from "@/buzz/router-owner";',
+    'export * from "@/buzz/router-owner";',
+    'import * as owner from "@/buzz/router-owner";',
+    'const owner = require("@/buzz/router-owner");',
+    'const owner = await import("@/buzz/router-owner");',
+    'owner["routerOwnerArtifactAction"]("OpenArtifact", id);',
+  ]) assert.ok(inspectSource('apps/mobile/sources/feature.ts', source).errors.length, source);
+  assert.deepEqual(inspectSource('apps/mobile/sources/components/buzz/ArtifactCard.tsx',
+    'import { routerOwnerArtifactAction as act } from "@/buzz/router-owner";').errors, []);
+  assert.ok(inspectSource('apps/mobile/sources/components/buzz/ArtifactCard.tsx',
+    'import { routerOwnerArtifactViewport } from "@/buzz/router-owner";').errors.length);
+  assert.deepEqual(inspectSource('apps/mobile/sources/feature.ts',
+    'import { routerFamilyMode } from "@/buzz/router-owner";').errors, []);
+});
+
+
+test('features cannot install a substitute media or usage executor', () => {
+  for (const source of [
+    'import { installMediaCacheConnection as replace } from "@/buzz/media-cache-connection";',
+    'import { receiveMediaAuthorityRemoval } from "./buzz/media-cache-connection";',
+    'export * from "@/buzz/media-cache-connection";',
+    'import * as media from "@/buzz/media-cache-connection";',
+    'const usage = require("@/buzz/agent-usage-cell");',
+    'import { setUsageCellProfile as mint } from "@/buzz/agent-usage-cell";',
+  ]) assert.ok(inspectSource('apps/mobile/sources/feature.ts', source).errors.length, source);
+  assert.deepEqual(inspectSource('apps/mobile/sources/buzz/router-owner.ts',
+    'import { installMediaCacheConnection } from "./media-cache-connection";').errors, []);
+  assert.deepEqual(inspectSource('apps/mobile/sources/components/File.tsx',
+    'import { mediaMetadataFor } from "@/buzz/media-cache-connection";').errors, []);
+});
+
+ test('usage admission belongs only to committed profile or desktop pane owners', () => {
+  const source = 'import { routerOwnerUsageProfile } from "@/buzz/router-owner";';
+  for (const path of ['app/(app)/beeline/agent-profile.tsx', 'app/(app)/beeline/chat/_chat-surface.tsx'])
+    assert.deepEqual(inspectSource('apps/mobile/sources/' + path, source).errors, []);
+  for (const path of ['buzz/use-agent-usage-cell.ts', 'components/buzz/AgentUsageSection.tsx', 'components/buzz/AgentProfileView.tsx'])
+    assert.ok(inspectSource('apps/mobile/sources/' + path, source).errors.length);
+});
+
+test('closed helper usage codecs are restricted to the existing machine adapters', () => {
+  const source = 'import { helperUsageCodecs } from "@beeline/net/helper-codecs";';
+  for (const file of ['apps/body/src/helper-usage-channel.ts', 'apps/server/src/daemon-live.ts'])
+    assert.deepEqual(inspectSource(file, source).errors, []);
+  for (const file of ['apps/body/src/feature.ts', 'apps/server/src/phone-operations.ts', 'apps/mobile/sources/buzz/feature.ts'])
+    assert.ok(inspectSource(file, source).errors.length);
+  assert.ok(inspectSource('packages/net/src/helper-codecs.ts', 'export { AdmissionOwner } from "./private/admission.js";').errors.length);
+});
+
+test('closed turn controls cannot escape their two existing machine adapters', () => {
+  const source = 'import { helperTurnCodecs } from "@beeline/net/helper-turn-codecs";';
+  for (const file of ['apps/body/src/helper-turn-channel.ts', 'apps/server/src/daemon-live.ts'])
+    assert.deepEqual(inspectSource(file, source).errors, []);
+  for (const file of ['apps/body/src/feature.ts', 'apps/server/src/phone-operations.ts', 'apps/mobile/sources/buzz/feature.ts'])
+    assert.ok(inspectSource(file, source).errors.length);
+  assert.ok(inspectSource('packages/net/src/helper-turn-codecs.ts', 'export { AdmissionOwner } from "./private/admission.js";').errors.length);
+});
+
+ test('closed activation codec is restricted to machine adapters', () => {
+  const source = 'import { helperActivationCodecs } from "@beeline/net/helper-activation-codecs";';
+  for (const file of ['apps/body/src/helper-activation-channel.ts', 'apps/server/src/daemon-live.ts'])
+    assert.deepEqual(inspectSource(file, source).errors, []);
+  for (const file of ['apps/body/src/feature.ts', 'apps/server/src/phone-operations.ts', 'apps/mobile/sources/buzz/feature.ts'])
+    assert.ok(inspectSource(file, source).errors.length);
+  assert.ok(inspectSource('packages/net/src/helper-activation-codecs.ts', 'export { AdmissionOwner } from "./private/admission.js";').errors.length);
+});
+
+test('Tray command and paint authority cannot escape their declared viewport and gesture wrappers',()=>{
+  for(const name of ['admitRouterTrayCommand','admitRouterTrayPaint','acquireRouterSavedContinuation']){
+    const source=`import { ${name} as mint } from '@/buzz/router-owner';`;
+    assert.deepEqual(inspectSource('apps/mobile/sources/buzz/router-tray.ts',source).errors,[]);
+    assert.ok(inspectSource('apps/mobile/sources/feature.ts',source).errors.length);
+  }
+  for(const source of [
+    "import { prepareTrayCommand as mint } from '@/buzz/router-tray';",
+    "import { acknowledgeRoutedTrayPaint } from './buzz/router-tray';",
+    "export * from '@/buzz/router-tray';",
+    "const mint=require('@/buzz/router-tray');",
+    "import * as tray from '@/buzz/router-tray';",
+  ])assert.ok(inspectSource('apps/mobile/sources/feature.ts',source).errors.length);
+  assert.deepEqual(inspectSource('apps/mobile/sources/app/(app)/beeline/tray.tsx',
+    "import { prepareTrayCommand, acknowledgeRoutedTrayPaint, useRoutedTray } from '@/buzz/router-tray';").errors,[]);
+});
+
+
+test('tool page admission belongs only to the existing explicit disclosure boundary',()=>{
+  assert.deepEqual(inspectSource('apps/mobile/sources/components/buzz/ActivityTimeline.tsx',
+    'import { readRouterToolPage } from "@/buzz/router-owner";').errors,[]);
+  assert.ok(inspectSource('apps/mobile/sources/components/Feature.tsx',
+    'import { readRouterToolPage } from "@/buzz/router-owner";').errors.length);
+});
+
+
+test('display resource authority stays within its four declared consumer adapters', () => {
+  const source = 'import { useRoutedResource } from "./router-resource";';
+  for (const name of ['use-room-workflow-run', 'workbench-surface', 'wallet-surface'])
+    assert.deepEqual(inspectSource(`apps/mobile/sources/buzz/${name}.ts`, source).errors, []);
+  for (const source of [
+    'import { useRoutedResource as escape } from "./router-resource";',
+    'export { useRoutedResource } from "./router-resource";',
+    'import * as resource from "./router-resource";',
+    'import("./router-resource");',
+  ]) assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts', source).errors.length);
+  assert.deepEqual(inspectSource('apps/mobile/sources/app/(app)/beeline/members.tsx',
+    'import { useRoutedResource } from "@/buzz/router-resource";').errors, []);
+  const owner = 'import { acquireRouterLane, retryRouterLane } from "./router-owner";';
+  assert.deepEqual(inspectSource('apps/mobile/sources/buzz/router-resource.ts', owner).errors, []);
+  for (const name of ['use-room-workflow-run', 'workbench-surface', 'wallet-surface'])
+    assert.ok(inspectSource(`apps/mobile/sources/buzz/${name}.ts`, owner).errors.length);
 });

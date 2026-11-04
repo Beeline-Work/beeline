@@ -1,0 +1,216 @@
+{
+  "recordedAt": "2026-11-02T11:18:16.167834+00:00",
+  "objectBytes": 26214400,
+  "runs": [
+    [
+      {
+        "kind": "start",
+        "stamp": "native40-artifact-source-3465f9ec",
+        "scenario": "disk",
+        "runtime": "40",
+        "embedded": false,
+        "emergency": false
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-0",
+        "elapsedMs": 682,
+        "residentBytes": 26214516
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-1",
+        "elapsedMs": 400,
+        "residentBytes": 52429031
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-2",
+        "elapsedMs": 416,
+        "residentBytes": 78643546
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-3",
+        "elapsedMs": 405,
+        "residentBytes": 104858061
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-4",
+        "elapsedMs": 413,
+        "residentBytes": 131072576
+      },
+      {
+        "kind": "native-read",
+        "bytes": 26214400,
+        "first": 17,
+        "last": 23,
+        "elapsedMs": 412.3894020000007
+      },
+      {
+        "kind": "disk-write",
+        "label": "replacement",
+        "elapsedMs": 403,
+        "residentBytes": 131072576
+      },
+      {
+        "kind": "disk-write",
+        "label": "small",
+        "elapsedMs": 68,
+        "residentBytes": 109052479
+      },
+      {
+        "kind": "frame-pacing",
+        "maxRafGapMs": 115.41173000005074,
+        "warmMaxRafGapMs": 21.251479000085965,
+        "frames": 184
+      },
+      {
+        "kind": "disk-complete",
+        "maxResidentBytes": 131072576,
+        "limitBytes": 134217728,
+        "oversizeRejected": true,
+        "evictedOldest": true
+      },
+      {
+        "kind": "disk-cleared"
+      },
+      {
+        "kind": "offset-view",
+        "bytes": [
+          17,
+          23
+        ]
+      },
+      {
+        "kind": "canceled-transfer",
+        "canceled": true,
+        "elapsedMs": 13.266594000160694,
+        "uri": null,
+        "leftovers": []
+      },
+      {
+        "kind": "separate-native-sha256",
+        "bytes": 26214400,
+        "digest": "c0193ae2f5f4986864bce4a56bf5e0207075dc0dbff3850cd9508206d8550159",
+        "elapsedMs": 71.10707699996419
+      },
+      {
+        "kind": "native-hash-offset",
+        "digest": "dbe99992560260fee220d8e5948847f505e58660e9500ba2e81f08cacecbeb2b"
+      }
+    ],
+    [
+      {
+        "kind": "start",
+        "stamp": "native40-artifact-source-3465f9ec",
+        "scenario": "disk",
+        "runtime": "40",
+        "embedded": false,
+        "emergency": false
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-0",
+        "elapsedMs": 642,
+        "residentBytes": 26214516
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-1",
+        "elapsedMs": 423,
+        "residentBytes": 52429031
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-2",
+        "elapsedMs": 397,
+        "residentBytes": 78643546
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-3",
+        "elapsedMs": 399,
+        "residentBytes": 104858061
+      },
+      {
+        "kind": "disk-write",
+        "label": "key-4",
+        "elapsedMs": 398,
+        "residentBytes": 131072576
+      },
+      {
+        "kind": "native-read",
+        "bytes": 26214400,
+        "first": 17,
+        "last": 23,
+        "elapsedMs": 411.1818450000137
+      },
+      {
+        "kind": "disk-write",
+        "label": "replacement",
+        "elapsedMs": 405,
+        "residentBytes": 131072576
+      },
+      {
+        "kind": "disk-write",
+        "label": "small",
+        "elapsedMs": 66,
+        "residentBytes": 109052479
+      },
+      {
+        "kind": "frame-pacing",
+        "maxRafGapMs": 108.27664899989031,
+        "warmMaxRafGapMs": 20.98285200004466,
+        "frames": 180
+      },
+      {
+        "kind": "disk-complete",
+        "maxResidentBytes": 131072576,
+        "limitBytes": 134217728,
+        "oversizeRejected": true,
+        "evictedOldest": true
+      },
+      {
+        "kind": "disk-cleared"
+      },
+      {
+        "kind": "offset-view",
+        "bytes": [
+          17,
+          23
+        ]
+      },
+      {
+        "kind": "canceled-transfer",
+        "canceled": true,
+        "elapsedMs": 9.458768999902532,
+        "uri": null,
+        "leftovers": []
+      },
+      {
+        "kind": "separate-native-sha256",
+        "bytes": 26214400,
+        "digest": "c0193ae2f5f4986864bce4a56bf5e0207075dc0dbff3850cd9508206d8550159",
+        "elapsedMs": 61.8754889999982
+      },
+      {
+        "kind": "native-hash-offset",
+        "digest": "dbe99992560260fee220d8e5948847f505e58660e9500ba2e81f08cacecbeb2b"
+      }
+    ]
+  ],
+  "separatePreviousSyncHashCalibration": [
+    {
+      "kind": "separate-sync-sha256",
+      "bytes": 26214400,
+      "elapsedMs": 38194.9282699998
+    }
+  ],
+  "expectedLargeDigest": "c0193ae2f5f4986864bce4a56bf5e0207075dc0dbff3850cd9508206d8550159",
+  "expectedOffsetDigest": "dbe99992560260fee220d8e5948847f505e58660e9500ba2e81f08cacecbeb2b",
+  "referenceAlgorithm": "Node crypto SHA256, independently allocated25MiB zero buffer with first17,last23; offset bytes17,23",
+  "unitSuiteExecution": "Parent serialized; helper did not execute Vitest",
+  "proofScope": "Historical native40 emulator only; store IO and integrity helper measured separately. No physical phone/end-to-end authority claim."
+}

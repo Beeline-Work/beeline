@@ -3,6 +3,19 @@ import React from 'react';
 import { act, create } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+// These fixtures exercise the negotiated legacy compatibility path. The actual
+// router owner/negotiation path has independent integration coverage.
+const protocol = vi.hoisted(() => ({ mode: 'legacy' as 'legacy' | 'router' | 'pending', acquire: vi.fn(), release: vi.fn() }));
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => protocol.mode, holdRouterConnection: () => () => {} }));
+vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+vi.mock('@/buzz/router-owner', () => ({
+  routerFamilyMode: () => protocol.mode,
+  acquireRouterLane: () => { protocol.acquire(); return { current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: protocol.release,
+    subscribe: () => () => {}, refreshVisibility: () => {} }; },
+  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
+  retryRouterLane: () => {}, routerOwnerListPanel: () => {},
+}));
+
 const fixture = vi.hoisted(() => ({
   viewer: 'viewer-a',
   disk: new Map<string, unknown>(),
@@ -52,6 +65,9 @@ import {
   removeNeedsYou,
   seedNeedsYouList,
   updateSavedList,
+  useTrayList,
+  loadTrayList,
+  subscribeTrayGap,
 } from './needs-you-store';
 
 function need(messageId: string, roomId = 'room-1') {
@@ -66,6 +82,7 @@ async function settle() {
 }
 
 beforeEach(() => {
+  protocol.mode = 'legacy'; protocol.acquire.mockClear(); protocol.release.mockClear();
   resetClientState();
   fixture.viewer = 'viewer-a';
   fixture.disk.clear();
@@ -73,6 +90,43 @@ beforeEach(() => {
   fixture.savedReads = [];
   fixture.registrations = [];
   fixture.holdRegistration = false;
+});
+
+describe('Tray family ownership gate', () => {
+  it('the count attaches only its negotiated owner and releases the router lane on pending', async () => {
+    protocol.mode = 'pending';
+    let count = -1;
+    function Badge() { count = useNeedsYouCount('ws', 'surface'); return null; }
+    let tree: ReturnType<typeof create>;
+    await act(async () => { tree = create(React.createElement(Badge)); await settle(); });
+    expect(count).toBe(0); expect(protocol.acquire).not.toHaveBeenCalled(); expect(fixture.reads).toHaveLength(0);
+    protocol.mode = 'router';
+    await act(async () => { tree.update(React.createElement(Badge)); await settle(); });
+    expect(protocol.acquire).toHaveBeenCalledTimes(1); expect(fixture.reads).toHaveLength(0);
+    protocol.mode = 'pending';
+    await act(async () => { tree.update(React.createElement(Badge)); await settle(); });
+    expect(protocol.release).toHaveBeenCalledTimes(1); expect(fixture.reads).toHaveLength(0);
+    protocol.mode = 'legacy';
+    await act(async () => { tree.update(React.createElement(Badge)); await settle(); });
+    expect(protocol.acquire).toHaveBeenCalledTimes(1); expect(fixture.reads).toHaveLength(1);
+    await act(async () => { fixture.reads[0]!([]); await settle(); tree.unmount(); });
+  });
+
+  it.each(['pending', 'router'] as const)('does not attach the legacy Tray store or read while %s', async mode => {
+    protocol.mode = mode;
+    let current: ReturnType<typeof useTrayList> | undefined;
+    function Probe() { current = useTrayList('ws', false); return null; }
+    let tree: ReturnType<typeof create>;
+    await act(async () => { tree = create(React.createElement(Probe)); await settle(); });
+    expect(current).toEqual({ needs: null, bookmarks: [], next: undefined });
+    expect(fixture.registrations).toHaveLength(0);
+    await loadTrayList('ws', true); await loadSavedList('ws', 'cursor');
+    expect(fixture.reads).toHaveLength(0); expect(fixture.savedReads).toHaveLength(0);
+    expect(fixture.registrations).toHaveLength(0);
+    const gap = vi.fn(); const stop = subscribeTrayGap('ws', gap); stop();
+    expect(gap).not.toHaveBeenCalled();
+    act(() => { tree.unmount(); });
+  });
 });
 
 describe('Needs-you disk copy', () => {

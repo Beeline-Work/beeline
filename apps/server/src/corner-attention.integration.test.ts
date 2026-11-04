@@ -114,6 +114,35 @@ const post = async (id: string, text: string, author = WORKER, age = '0 hours') 
 // the commander has effective access (inherited parent-roster access counts).
 const commanderFlags = async () => (await readAgentCommands(db, C, COMMANDER)).commands;
 
+it('MODEL-UNKNOWN: ended model work suppresses automatic idle but permits a new explicit human command', async () => {
+  const command = (await wake())!;
+  await db.query(`UPDATE agent_commands SET state='claimed',generation_id='unknown-model',
+    turn_owner_connection_id='synthetic-ended-model',turn_owner_epoch=1,lease_expires_at=now()+interval '1 hour' WHERE id=$1`, [command.id]);
+  await db.query(`DELETE FROM agent_turns WHERE room_id=$1`, [C]);
+  expect((await db.query<{worker_active: boolean}>(cornerIdleSql('$1'), [C])).rows[0]?.worker_active).toBe(true);
+  // Persisted owner-end evidence, as produced by the separately proved actual
+  // model receipt transaction. Provider outcome is intentionally not changed.
+  await db.query(`INSERT INTO agent_command_owner_ends(command_id,generation_id,model_request_id)
+    VALUES($1,'unknown-model',NULL)`, [command.id]);
+  const idle = (await db.query<{idle_eligible: boolean; suppressed: boolean; worker_active: boolean}>(cornerIdleSql('$1'), [C])).rows[0]!;
+  expect(idle.worker_active).toBe(false);
+  expect(idle.suppressed).toBe(true);
+  expect(idle.idle_eligible).toBe(false);
+  await refreshCornerAttention(db, C);
+  expect(await commanderFlags()).toHaveLength(0);
+  await post('explicit-after-unknown', 'Do this new task', HUMAN);
+  const next = (await createAgentCommand(db, {
+    id: 'explicit-after-unknown-command', roomId: C, agentId: WORKER,
+    sourceMessageId: 'explicit-after-unknown', reason: 'human_tag',
+  }))!;
+  expect((await readAgentCommands(db, C, WORKER)).commands.map(item => item.id)).toContain(next.id);
+  await daemon.execute('claimAgentCommand', {
+    roomId: C, commandId: next.id, generationId: 'new-explicit-generation',
+  }, WORKER);
+  expect((await db.query('SELECT state,generation_id FROM agent_commands WHERE id=$1', [command.id])).rows)
+    .toEqual([{state: 'claimed', generation_id: 'unknown-model'}]);
+});
+
 it('STARTUP-FAILURE-1: a bootstrap failure is idle immediately and visible in its corner', async () => {
   const command = await wake();
   expect(await state()).toBe('working');

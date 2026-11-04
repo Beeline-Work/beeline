@@ -176,7 +176,7 @@ process.stderr.write(Buffer.alloc(${size}, 121));`,
     { launcher: 'git', argv: ['push', 'origin', featureBranch] },
     { launcher: 'git', argv: ['ls-remote'] },
     { launcher: 'gh', argv: ['api', 'repos/owner/repo'] },
-  ])('refreshes and retries authentication for $launcher $argv', async ({ launcher, argv }) => {
+  ])('returns authentication failure until a new $launcher $argv invocation', async ({ launcher, argv }) => {
     const { root } = await fixture();
     const command = join(root, 'remote.mjs');
     const source = `import { existsSync, writeFileSync } from 'node:fs';
@@ -190,17 +190,20 @@ if (!existsSync(marker)) {
     await writeFile(command, '#!/usr/bin/env node\n' + source);
     await chmod(command, 0o700);
     const { git, gh, calls } = await fixture(command, source);
+    await expect(execFileAsync(launcher === 'git' ? git : gh, argv))
+      .rejects.toMatchObject({ code: 1, stderr: 'HTTP 401\n' });
+    expect(await readFile(calls, 'utf8')).toBe('token\n');
     const result = await execFileAsync(launcher === 'git' ? git : gh, argv);
     expect(result.stdout).toBe('remote ok\n');
-    expect(result.stderr).toBe('HTTP 401\n');
+    expect(result.stderr).toBe('');
     expect(await readFile(calls, 'utf8')).toBe('token\ntoken\n');
   });
 
   it.each([
-    { diagnostic: 'HTTP 403', code: 1, tokens: 'token\ntoken\n' },
+    { diagnostic: 'HTTP 403', code: 1, tokens: 'token\n' },
     { diagnostic: 'ordinary command failure', code: 7, tokens: 'token\n' },
   ])(
-    'preserves exit status and bounds retries for $diagnostic',
+    'preserves exit status without replay for $diagnostic',
     async ({ diagnostic, code, tokens }) => {
       const { gh, calls } = await fixture(
         '/usr/bin/git',
@@ -346,6 +349,7 @@ console.log('ok');`,
     });
 
     expect(await readFile(calls, 'utf8').catch(() => '')).toBe('');
+    await expect(execFileAsync(join(env.PATH!.split(':')[0]!, 'git'), ['fetch'])).rejects.toMatchObject({ code: 1 });
     const result = await execFileAsync(join(env.PATH!.split(':')[0]!, 'git'), ['fetch']);
     expect(result.stdout).toBe('ok\n');
     expect((await execFileAsync(join(env.PATH!.split(':')[0]!, 'gh'), ['pr', 'list'])).stdout).toBe(
@@ -356,7 +360,7 @@ console.log('ok');`,
     expect(lines.filter((line) => line === 'fresh-token')).toHaveLength(3);
   });
 
-  it('recovers from a transient token lookup using the same Room and refuses a persistent failure', async () => {
+  it('attempts token lookup once per explicit invocation using the same Room', async () => {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-token-'));
     const calls = join(root, 'calls');
     const cli = join(root, 'cli.mjs');
@@ -385,6 +389,10 @@ console.log('room-token');`,
       inheritedPath: process.env.PATH,
     });
     const launcher = join(env.PATH!.split(':')[0]!, 'git');
+    for (const count of [1, 2]) {
+      await expect(execFileAsync(launcher, ['fetch'])).rejects.toMatchObject({ code: 1 });
+      expect((await readFile(calls, 'utf8')).trim().split('\n')).toHaveLength(count);
+    }
     expect((await execFileAsync(launcher, ['fetch'])).stdout).toBe('ok\n');
     expect((await readFile(calls, 'utf8')).trim().split('\n')).toEqual(
       Array(3).fill('corner-read-token --config /runtime.json --room exact-room'),
@@ -392,7 +400,7 @@ console.log('room-token');`,
     await expect(
       execFileAsync(launcher, ['fetch'], { env: { ...process.env, ALWAYS_FAIL: '1' } }),
     ).rejects.toMatchObject({ code: 1 });
-    expect((await readFile(calls, 'utf8')).trim().split('\n')).toHaveLength(6);
+    expect((await readFile(calls, 'utf8')).trim().split('\n')).toHaveLength(4);
   });
 
   it('scopes the branch rule to the real origin, allowing a fixture remote', () => {

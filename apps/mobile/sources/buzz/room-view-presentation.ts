@@ -354,6 +354,8 @@ function activityItems(message: RoomViewMessage): AgentActivityItem[] | undefine
   return message.activity?.map((activity, index) => ({
     kind: activity.kind,
     title: activity.title,
+    ...(activity.toolGroup?{toolGroup:activity.toolGroup}:{}),
+    ...(activity.toolOutput?{toolOutput:activity.toolOutput}:{}),
     id: `${message.id}:${index}`,
     ...(activity.text ? { text: activity.text } : {}),
     ...(activity.continues ? { continues: true } : {}),

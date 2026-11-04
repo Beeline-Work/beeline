@@ -1,3 +1,4 @@
+import { waitForAuthTicket } from './completion-wait.js';
 import { parseSigninFunnelEvent } from '@beeline/api-contract/signin-funnel';
 import { onboardingCookie } from './onboarding-rollout.js';
 import { GITHUB_IDENTITY_AUDIENCE, type GitHubIdentity } from './github.js';
@@ -82,6 +83,21 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     });
   });
 
+  let waitingCompletions = 0;
+  const completionTicket = async (hash: string, body: Record<string, unknown>,
+    reply: import('fastify').FastifyReply) => {
+    if (body.waitMs !== undefined && (!Number.isInteger(body.waitMs) || Number(body.waitMs) < 0 || Number(body.waitMs) > 120_000))
+      throw new ProtocolError(400, 'invalid_wait', 'Invalid completion wait');
+    if (!body.waitMs || !options.subscribeCompletion) return options.store.findTicket(hash);
+    if (waitingCompletions >= 256) throw new ProtocolError(429, 'completion_busy', 'Too many pending account ceremonies');
+    const controller = new AbortController();
+    const close = () => { if (!reply.raw.writableEnded) controller.abort(); };
+    reply.raw.once('close', close); waitingCompletions++;
+    try { return await waitForAuthTicket(wake => options.subscribeCompletion!(hash, wake),
+      () => options.store.findTicket(hash), Number(body.waitMs), controller.signal); }
+    finally { waitingCompletions--; reply.raw.off('close', close); }
+  };
+
   /** Recover a completed native GitHub flow without trusting OS callback delivery. */
   app.post('/auth/github/completion', async (request, reply) => {
     const tenant = tenantFor(request);
@@ -89,7 +105,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     if (typeof body.recoveryToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.recoveryToken)) {
       throw new ProtocolError(400, 'invalid_recovery', 'GitHub recovery token is invalid');
     }
-    const ticket = await options.store.findTicket(sha256(body.recoveryToken));
+    const ticket = await completionTicket(sha256(body.recoveryToken), body, reply);
     noStore(reply);
     // Missing and not-yet-completed tokens are deliberately indistinguishable.
     if (!ticket) return reply.code(202).send({ status: 'pending' });
@@ -133,7 +149,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     if (typeof body.recoveryToken !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(body.recoveryToken)) {
       throw new ProtocolError(400, 'invalid_recovery', 'Google recovery token is invalid');
     }
-    const ticket = await options.store.findTicket(sha256(body.recoveryToken));
+    const ticket = await completionTicket(sha256(body.recoveryToken), body, reply);
     noStore(reply);
     // Missing and not-yet-completed tokens are deliberately indistinguishable.
     if (!ticket) return reply.code(202).send({ status: 'pending' });

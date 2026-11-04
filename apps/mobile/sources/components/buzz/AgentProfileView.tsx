@@ -1,3 +1,4 @@
+import type { UsageCellView } from '@/buzz/agent-usage-cell';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { InlineActionRow } from './IndexRow';
 import { ErrorBanner } from './ErrorBanner';
@@ -35,8 +36,8 @@ export function AgentProfileView({
   canEdit,
   avatarDisabled,
   onGenerateAvatar,
-  refreshAgent,
   refreshUsage,
+  usageCell,
   loadMoreWork,
   editing,
   saving,
@@ -51,6 +52,7 @@ export function AgentProfileView({
   management,
   modelManagement,
   voiceApi,
+  voiceRevision,
   saveWake,
 }: {
   detail: AgentDetailView | null;
@@ -63,8 +65,8 @@ export function AgentProfileView({
   canEdit: boolean;
   avatarDisabled: boolean;
   onGenerateAvatar: (soul: string) => Promise<void>;
-  refreshAgent: () => Promise<AgentDetailView>;
   refreshUsage?: () => Promise<unknown>;
+  usageCell?: UsageCellView;
   loadMoreWork?: (cursor: string) => Promise<AgentDetailView>;
   editing: boolean;
   saving: boolean;
@@ -79,6 +81,7 @@ export function AgentProfileView({
   management: React.ReactNode;
   modelManagement?: React.ReactNode;
   voiceApi?: AgentVoiceApi;
+  voiceRevision?:string;
   saveWake?: (url: string, key?: string) => Promise<void>;
 }) {
   const { theme } = useUnistyles();
@@ -262,7 +265,6 @@ export function AgentProfileView({
                       soul={editing ? soulDraft : soul}
                       disabled={avatarDisabled}
                       generate={onGenerateAvatar}
-                      refresh={refreshAgent}
                     />
                   )}
                 </View>
@@ -341,11 +343,11 @@ export function AgentProfileView({
                 </>
               )}
             </View>
-            {canEdit ? <AgentUsageSection key={detail.agent.identity.pubkey} usage={detail.usage} harness={detail.harness} onRefresh={refreshUsage} /> : null}
+            {canEdit && (!usageCell || usageCell.mode === 'legacy' || usageCell.mode === 'router' && usageCell.cell?.allowed) ? <AgentUsageSection key={detail.agent.identity.pubkey} usage={usageCell?.mode === 'router' && usageCell.cell?.allowed ? usageCell.cell.usage ?? undefined : detail.usage} harness={detail.harness} onRefresh={refreshUsage} /> : null}
             <AgentVoiceSection
               key={`${detail.workspaceId}:${identity.pubkey}:${voiceApi?.contextKey ?? ''}`}
               agentId={identity.pubkey}
-              configVersion={detail.configVersion}
+              configVersion={voiceRevision??detail.configVersion}
               handle={identity.handle ?? identity.name}
               canEdit={canEdit}
               api={voiceApi}

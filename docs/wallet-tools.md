@@ -31,10 +31,12 @@ Avalanche). On Zora and BNB Chain, CDP signs the transaction
 `wallet_swap` uses CDP's swap API (`POST /evm/swaps`) on Base, Ethereum,
 Arbitrum, Optimism and Polygon. An ERC-20 sell approves Permit2 first when the
 quote reports a missing allowance. Other chains fail with
-`swap unsupported on <chain>`. After submission, the swap receipt is checked
-for up to one minute. `sent` means a successful receipt; a reverted receipt
-returns `failed` with the transaction hash. Missing receipts or RPC failures
-return `pending` with the transaction link. Do not resubmit a pending swap.
+`swap unsupported on <chain>`. New callers explicitly select `completionV1`.
+After submission, that adapter makes one bounded receipt observation. `sent`
+means a successful receipt; a reverted receipt returns `failed` with the
+transaction hash. A missing receipt or RPC failure returns `pending` with the
+transaction link. It schedules no further observation or automatic redispatch.
+Do not resubmit a pending swap.
 Failed and pending swaps do not credit quoted output or write a success ledger entry.
 
 CDP v2 has no address history for server wallets. Each balance read compares
@@ -49,7 +51,11 @@ is credited to the snapshot so it is not read as a deposit.
 data (`data`) and an optional native `value`. It serves venues that take an
 approve and a call: bridges such as CCTP, lending, vaults. With `approve`
 (`{ asset, amount }`), the server first sends an ERC-20 `approve` for exactly
-that amount to the contract, waits for it to be mined, then sends the call.
+that amount to the contract. In `completionV1`, one bounded receipt observation
+must confirm the approval before the dependent call can be submitted. If it is
+pending or unavailable, the dependent call is never submitted. Its later signed
+provider completion updates only the approval notice; it does not resume the
+contract or swap. Continuing requires a new explicit action with current authority.
 Call data that grants an allowance itself (`approve`, `increaseAllowance`,
 `setApprovalForAll`) is refused, so no call can approve an unlimited amount.
 
@@ -58,6 +64,30 @@ The call's spends are the native value, the approved amount and a USDC
 the owner's signing delegation, the venue rules below and the funded balance.
 A successful call writes one `@System` notice naming the agent, the spends
 and the contract.
+
+## Uncertain submission and compatibility
+
+`completionV1: true` is additive on send, payment, swap and contract inputs. New
+phone JavaScript and Body tool callers select it; the native 40 binary remains
+compatible. An absent flag retains the old adapter and result behavior. The old
+adapter's repeated receipt observations and ambiguous-error handling remain open
+migration debt; the new adapter never maps an uncertain broadcast to `failed`.
+
+If a broadcast's response is lost, times out, contains no valid transaction hash,
+or reports an ambiguous provider failure, its result is `pending` with an UNKNOWN
+reason. A transaction link is present only when its hash is known. This does not
+write a success ledger entry, credit a swap output, or authorize another broadcast.
+Validation and definitive refusal still fail before any dependent effect. The
+existing Send form retains the uncertain intent; changing to a different explicit
+action is separate from redispatching that intent.
+
+This adapter does not establish durable idempotency for every financial intent.
+Legacy callers, process loss before a durable known hash, provider idempotency,
+and complete push coverage remain open gates. No exactly-once claim is made.
+UNKNOWN without a hash cannot be safely attached to an arbitrary later event.
+Only an authenticated delivery for the same owner, chain and known hash can
+settle that notice. Unsupported completion coverage remains pending for explicit
+human review, without replacing it with a status poller.
 
 ## Transaction notices and provider push
 

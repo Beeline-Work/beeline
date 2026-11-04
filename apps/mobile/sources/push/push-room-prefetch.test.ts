@@ -3,11 +3,13 @@ import type { RoomView } from '@beeline/api-contract/phone';
 
 const fixture = vi.hoisted(() => ({
   viewer: 'viewer-a' as string | null,
+  mode: 'legacy' as 'legacy' | 'pending' | 'router',
   monolithUrl: 'https://server.test',
   reads: [] as string[],
   cached: null as RoomView | null,
   response: null as Promise<RoomView> | null,
 }));
+vi.mock('@/buzz/router-owner', () => ({ routerFamilyMode: () => fixture.mode }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzViewerPubkey: async () => fixture.viewer,
   peekBuzzViewerContext: () => fixture.viewer ? { relayUrl: fixture.monolithUrl, viewerPubkey: fixture.viewer } : null,
@@ -40,6 +42,7 @@ import { abandonRoomDraw, finishRoomDraw, observeVisibleRoomRows, roomDrawGenera
 beforeEach(() => {
   abandonRoomDraw(roomDrawGeneration());
   fixture.viewer = 'viewer-a';
+  fixture.mode = 'legacy';
   fixture.monolithUrl = 'https://server.test';
   fixture.reads = [];
   fixture.cached = null;
@@ -47,6 +50,16 @@ beforeEach(() => {
 });
 
 describe('push Room prefetch', () => {
+  it('leaves negotiated and pending heads to destination focus without a prefetch', async () => {
+    for (const mode of ['router', 'pending'] as const) {
+      fixture.mode = mode;
+      prefetchPushRoom(`response-${mode}`, 'room-a');
+      await Promise.resolve();
+      expect(fixture.reads).toEqual([]);
+      expect(takePrefetchedPushRoom(`response-${mode}`, 'room-a')).toBeNull();
+    }
+  });
+
   it('hands the read to the Room it was started for', async () => {
     prefetchPushRoom('response-1', 'room-a');
     const view = takePrefetchedPushRoom('response-1', 'room-a');

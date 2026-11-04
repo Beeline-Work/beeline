@@ -1,0 +1,49 @@
+// Verbatim schema marker and boot check from apps/server/src/database.ts
+// Source commit: f43bd3f86e4c7a30aa75378df82fcbda10027c72
+// Complete source SHA256: 93ef608efcf6552eafa0c6fb0d89a26c7e078943bb232923b6010affaf6c3d40
+// This fixture is not a historical server build. Tests reject any retry-path use.
+
+export const REQUIRED_SCHEMA_VERSION = 46;
+
+export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
+  await database.query(`
+    CREATE TABLE IF NOT EXISTS beeline_schema_state (
+      singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+      version integer NOT NULL,
+      migrated_at timestamptz NOT NULL DEFAULT now()
+    );
+    INSERT INTO beeline_schema_state(singleton, version, migrated_at)
+    VALUES (true, ${REQUIRED_SCHEMA_VERSION}, now())
+    ON CONFLICT (singleton) DO UPDATE
+      SET version=EXCLUDED.version, migrated_at=EXCLUDED.migrated_at
+  `);
+}
+
+export async function assertSchemaCurrent(database: SqlDatabase, wait: Pause = pause): Promise<void> {
+  for (let attempt = 0; ; attempt += 1) {
+    let result: QueryResult<{ version: number }>;
+    try {
+      result = await database.query<{ version: number }>(
+        `SELECT version FROM beeline_schema_state WHERE singleton=true`,
+      );
+    } catch (error) {
+      if (isTransientDatabaseConnectionError(error)) {
+        await wait(SCHEMA_RETRY_DELAYS_MS[Math.min(attempt, SCHEMA_RETRY_DELAYS_MS.length - 1)]!);
+        continue;
+      }
+      const detail = error instanceof Error ? error.message : String(error);
+      throw new Error(
+        `database schema is not ready for this server image (${detail}); run the release migration step`,
+        { cause: error },
+      );
+    }
+    const version = result.rows[0]?.version;
+    if (version !== REQUIRED_SCHEMA_VERSION) {
+      throw new Error(
+        `database schema is not ready for this server image (expected schema version ${REQUIRED_SCHEMA_VERSION}, found ${version ?? 'no marker'}); run the release migration step`,
+      );
+    }
+    return;
+  }
+}
+

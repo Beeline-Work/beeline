@@ -1,3 +1,4 @@
+import { preparedMessageOperation } from '@/buzz/prepared-message-operation';
 import { getRandomBytes } from 'expo-crypto';
 import type { NostrEvent } from '@beeline/nostr';
 import type {
@@ -111,9 +112,6 @@ export type MonolithSurfaceEvent = {
 
 function eventId(): string {
   return [...getRandomBytes(32)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-}
-function tag(event: NostrEvent, name: string): string | undefined {
-  return event.tags.find((item) => item[0] === name)?.[1];
 }
 
 class MonolithClientAdapter {
@@ -337,26 +335,9 @@ export class MonolithRigTransport {
   }
 
   async publishPreparedMessage(event: NostrEvent): Promise<AgentMessageWriteResult> {
-    const roomId = tag(event, 'h');
-    if (!roomId) throw new Error('Prepared monolith message has no Room');
-    const attachments = JSON.parse(
-      tag(event, 'monolith-attachments') ?? '[]',
-    ) as AttachmentReference[];
-    const mentions = JSON.parse(tag(event, 'monolith-mentions') ?? '[]') as string[];
-    const parentMessageId = tag(event, 'monolith-parent');
-    // The server ignores a repeated messageId, so a timed-out send can retry.
-    return (await this.operation(
-      parentMessageId ? 'sendRoomReply' : 'sendRoomMessage',
-      {
-        roomId,
-        messageId: event.id,
-        text: event.content,
-        mentions,
-        attachments,
-        ...(parentMessageId ? { parentMessageId } : {}),
-      },
-      { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS },
-    )) as AgentMessageWriteResult;
+    const { operation, input } = preparedMessageOperation(event);
+    // Legacy no-envelope clients preserve prepared message replay semantics.
+    return (await this.operation(operation, input, { timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS })) as AgentMessageWriteResult;
   }
 
   async uploadMedia(bytes: Uint8Array, mimeType: string): Promise<any> {

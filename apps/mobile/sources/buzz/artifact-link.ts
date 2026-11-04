@@ -1,4 +1,8 @@
 import { Platform } from 'react-native';
+import { readArtifactObject, artifactObjectLocalUri, subscribeArtifactBytesPurge, type ArtifactByteOptions } from './artifact-byte-owner';
+import { bytesToBase64 } from './byte-base64';
+import { mediaTransportMode, requestMediaLink, requestMediaPlayback } from './media-cache-connection';
+import { routerOwnerArtifactAction } from './router-owner';
 
 import { Modal } from '@/modal';
 import { monolithSession } from '@/auth/monolith-session';
@@ -6,7 +10,8 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { mediaIdFromUrl } from '@/buzz/artifact';
 import { openExternalUrl } from '@/utils/open-external-url';
 import type { AttachmentReference } from '@beeline/buzz-client';
-import { cacheDirectory, writeAsStringAsync, EncodingType } from 'expo-file-system/legacy';
+export { subscribeArtifactBytesPurge };
+export type { ArtifactByteOptions };
 
 /**
  * Artifact transport: bytes for in-app rendering come through the app's
@@ -28,25 +33,24 @@ export function artifactMediaUrl(attachment: AttachmentReference): string {
 }
 
 /**
- * Images load without leaving the app. Native carries the session bearer on
- * the request itself; on web an `<img>` cannot carry a header, so the bytes
- * come through the authenticated session and are handed to the DOM as an
- * object URL — which the caller revokes with `releaseArtifactImageSource`.
+ * Images use the same authenticated byte flight as view/save. Native receives
+ * an owned local cache URI; web receives an object URL which the caller
+ * revokes with `releaseArtifactImageSource`.
  */
-export async function artifactImageSource(attachment: AttachmentReference): Promise<{
+export async function artifactImageSource(attachment: AttachmentReference, options: ArtifactByteOptions = {}): Promise<{
   uri: string;
   headers?: { authorization: string };
 }> {
-  if (Platform.OS === 'web') {
-    const bytes = await fetchArtifactBytes(attachment);
-    return {
-      uri: URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: attachment.mimeType })),
-    };
-  }
-  return {
-    uri: artifactMediaUrl(attachment),
-    headers: { authorization: `Bearer ${await monolithSession.authorization()}` },
+  const value = await readObject(attachment, options);
+  if (options.signal?.aborted || !value.isCurrent()) throw new Error('The file is no longer visible.');
+  if (Platform.OS === 'web') return {
+    uri: URL.createObjectURL(new Blob([value.bytes as unknown as BlobPart], { type: value.mimeType })),
   };
+  // Native decodes the exact same authenticated immutable bytes as the web,
+  // viewer and save paths. It never starts an untracked Image HTTP request.
+  const uri = await artifactObjectLocalUri(value.key);
+  if (options.signal?.aborted || !value.isCurrent()) throw new Error('The file is no longer visible.');
+  return { uri };
 }
 
 /** Frees an object URL minted above; a native uri is left alone. */
@@ -55,20 +59,49 @@ export function releaseArtifactImageSource(source: { uri: string } | null | unde
 }
 
 /** The file's bytes as base64, for the hosts that take a PDF as a string. */
-export async function artifactBase64(attachment: AttachmentReference): Promise<string> {
-  return toBase64(await fetchArtifactBytes(attachment));
+export async function artifactBase64(attachment: AttachmentReference, options: ArtifactByteOptions = {}): Promise<string> {
+  return bytesToBase64(await fetchArtifactBytes(attachment, options));
 }
 
-export async function fetchArtifactBytes(attachment: AttachmentReference): Promise<Uint8Array> {
-  const response = await monolithSession.fetch(artifactMediaUrl(attachment), {}, { timeoutMs: 20_000 });
-  if (!response.ok) throw new Error(`artifact fetch failed: ${response.status}`);
-  return new Uint8Array(await response.arrayBuffer());
+async function readObject(attachment: AttachmentReference, options: ArtifactByteOptions) {
+  return readArtifactObject(attachment, async (objectId, signal, maxBytes) => {
+    const response = await monolithSession.fetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/media/${objectId}`, { signal }, { timeoutMs: 20_000 });
+    if (!response.ok) throw new Error(`artifact fetch failed: ${response.status}`);
+    const length = response.headers?.get('content-length');
+    if (length && Number(length) > maxBytes) throw new Error('The file exceeds its byte limit.');
+    const reader = response.body?.getReader?.();
+    if (!reader) {
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength > maxBytes) throw new Error('The file exceeds its byte limit.');
+      return bytes;
+    }
+    const parts: Uint8Array[] = []; let total = 0;
+    try {
+      for (;;) {
+        if (signal.aborted) throw new Error('The file is no longer visible.');
+        const { done, value } = await reader.read(); if (done) break;
+        total += value.byteLength;
+        if (total > maxBytes) throw new Error('The file exceeds its byte limit.');
+        parts.push(value);
+      }
+    } catch (error) { await reader.cancel().catch(() => {}); throw error; }
+    finally { reader.releaseLock(); }
+    const bytes = new Uint8Array(total); let offset = 0;
+    for (const part of parts) { bytes.set(part, offset); offset += part.byteLength; }
+    return bytes;
+  }, options);
 }
-
-export async function fetchArtifactText(attachment: AttachmentReference): Promise<string> {
-  const response = await monolithSession.fetch(artifactMediaUrl(attachment), {}, { timeoutMs: 20_000 });
-  if (!response.ok) throw new Error(`artifact fetch failed: ${response.status}`);
-  return response.text();
+export async function fetchArtifactBytes(attachment: AttachmentReference, options: ArtifactByteOptions = {}): Promise<Uint8Array> {
+  return (await readObject(attachment, options)).bytes;
+}
+export async function fetchArtifactText(attachment: AttachmentReference, options: ArtifactByteOptions = {}): Promise<string> {
+  return new TextDecoder().decode(await fetchArtifactBytes(attachment, options));
+}
+export async function artifactLocalUri(attachment: AttachmentReference, options: ArtifactByteOptions = {}): Promise<string> {
+  const value = await readObject(attachment, options);
+  const uri = await artifactObjectLocalUri(value.key);
+  if (options.signal?.aborted || !value.isCurrent()) throw new Error('The file is no longer visible.');
+  return uri;
 }
 
 interface ArtifactLinkResponse {
@@ -78,9 +111,18 @@ interface ArtifactLinkResponse {
 
 /** Only the trusted app mints capabilities. The game receives no bearer. */
 export async function runnableArtifactUrl(attachment: AttachmentReference): Promise<string> {
-  const response = await monolithSession.fetch(`${artifactMediaUrl(attachment)}/play`, {}, { timeoutMs: 10_000 });
-  if (!response.ok) throw new Error('This interactive page could not be opened. Close and try again.');
-  const { url } = await response.json() as { url: string };
+  const objectId = mediaIdFromUrl(attachment.url);
+  if (!objectId) throw new Error('attachment is not a monolith media URL');
+  const mode = mediaTransportMode();
+  if (mode === 'pending') throw new Error('File authority is awaiting connection.');
+  const value = mode === 'router'
+    ? await requestMediaPlayback(objectId)
+    : await (async () => {
+      const response = await monolithSession.fetch(`${artifactMediaUrl(attachment)}/play`, {}, { timeoutMs: 10_000 });
+      if (!response.ok) throw new Error('This interactive page could not be opened. Close and try again.');
+      return response.json() as Promise<{ url: string }>;
+    })();
+  const { url } = value;
   const game = new URL(url);
   const app = new URL(getBuzzRuntimeConfig().monolithUrl);
   if (game.protocol !== 'https:' || game.origin === app.origin ||
@@ -94,38 +136,25 @@ export async function runnableArtifactUrl(attachment: AttachmentReference): Prom
 export async function openArtifactInBrowser(attachment: AttachmentReference): Promise<void> {
   const objectId = mediaIdFromUrl(attachment.url);
   if (!objectId) throw new Error('attachment is not a monolith media URL');
+  routerOwnerArtifactAction('OpenArtifactBrowser', objectId);
   const base = getBuzzRuntimeConfig().monolithUrl;
-  const response = await monolithSession.fetch(`${base}/v1/media/${objectId}/link`, {}, { timeoutMs: 10_000 });
-  if (!response.ok) throw new Error(`artifact link failed: ${response.status}`);
-  const body = (await response.json()) as ArtifactLinkResponse;
-  const url = body.url ?? body.link;
+  const mode = mediaTransportMode();
+  if (mode === 'pending') throw new Error('File authority is awaiting connection.');
+  const body = mode === 'router'
+    ? await requestMediaLink(objectId)
+    : await (async () => {
+      const response = await monolithSession.fetch(`${base}/v1/media/${objectId}/link`, {}, { timeoutMs: 10_000 });
+      if (!response.ok) throw new Error(`artifact link failed: ${response.status}`);
+      return response.json() as Promise<ArtifactLinkResponse>;
+    })();
+  const url = body.url ?? ('link' in body ? body.link : undefined);
   if (!url) throw new Error('artifact link response carried no URL');
   await openExternalUrl(url);
 }
 
 /** Lands the PDF bytes in a cache file so an iOS preview can render page one locally. */
-export async function artifactPdfLocalUri(attachment: AttachmentReference): Promise<string> {
-  const objectId = mediaIdFromUrl(attachment.url) ?? 'artifact';
-  if (!cacheDirectory) throw new Error('No cache directory is available for PDF previews.');
-  const path = `${cacheDirectory}artifact-pdf-${objectId.replace(/[^0-9a-zA-Z-]/g, '')}.pdf`;
-  const bytes = await fetchArtifactBytes(attachment);
-  await writeAsStringAsync(path, toBase64(bytes), { encoding: EncodingType.Base64 });
-  return `file://${path}`;
-}
-
-function toBase64(bytes: Uint8Array): string {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let output = '';
-  for (let index = 0; index < bytes.byteLength; index += 3) {
-    const a = bytes[index]!;
-    const b = bytes[index + 1];
-    const c = bytes[index + 2];
-    output += chars[a >> 2];
-    output += chars[((a & 3) << 4) | ((b ?? 0) >> 4)];
-    output += b === undefined ? '=' : chars[((b & 15) << 2) | ((c ?? 0) >> 6)];
-    output += c === undefined ? '=' : chars[c & 63];
-  }
-  return output;
+export async function artifactPdfLocalUri(attachment: AttachmentReference, options: ArtifactByteOptions = {}): Promise<string> {
+  return artifactLocalUri(attachment, options);
 }
 
 /** Opens the signed link and folds every failure into one spoken outcome. */

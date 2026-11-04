@@ -599,7 +599,7 @@ it('bootstrap identifies only pending member surfaces, including the corner pare
   expect((await daemon.execute('getDaemonBootstrap', { agentId: A }, A)).pendingRooms).toEqual([]);
 });
 
-it('shows an accepted tagged command until claim and re-nudges a connected idle helper once', async () => {
+it('shows an accepted tagged command until claim and permits only an explicit helper eligibility boundary', async () => {
   const sent = await send('@hoots Please check this');
   const [command] = await commands(A);
   const waiting = { requestId: command!.turnRequestId, agentPubkey: A };
@@ -609,7 +609,7 @@ it('shows an accepted tagged command until claim and re-nudges a connected idle 
   ]);
 
   await db.query(`UPDATE agent_commands SET created_at=now()-interval '31 seconds' WHERE id=$1`, [command!.id]);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(0);
   await db.query(`INSERT INTO live_server_instances(instance_id) VALUES('renudge-test') ON CONFLICT DO NOTHING`);
   await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
     VALUES($1,1,'renudge-test','renudge-test') ON CONFLICT(agent_id) DO UPDATE
@@ -617,10 +617,11 @@ it('shows an accepted tagged command until claim and re-nudges a connected idle 
   const busySend = await send('@hoots An earlier task');
   await db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '90 seconds'
     WHERE source_message_id=$1`, [busySend.messageId]);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(0);
   await db.query(`UPDATE agent_commands SET state='complete' WHERE source_message_id=$1`, [busySend.messageId]);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(1);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(1);
+  // A distinct reconnect boundary can notify immediately, without a 90-second retry clock.
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(1);
   await claim(command!);
   expect((await phone.readRoom(R, H))?.pendingAgentCommands).toEqual([]);
 });
@@ -662,9 +663,9 @@ it('re-nudges an order while the helper is claimed in a different room', async (
   const busy = await send('@hoots busy elsewhere');
   await db.query(`UPDATE agent_commands SET state='claimed',lease_expires_at=now()+interval '90 seconds'
     WHERE source_message_id=$1`, [busy.messageId]);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(1);
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(1);
   await db.query(`UPDATE agent_commands SET wake_after=now()+interval '1 hour',renudged_at=NULL WHERE id=$1`, [order!.id]);
-  expect(await renudgeStrandedPendingCommands(db)).toBe(0);
+  expect(await renudgeStrandedPendingCommands(db, A)).toBe(0);
 });
 async function claim(c: AgentCommand, generationId = 'g1') {
   await daemon.execute(
@@ -2632,11 +2633,11 @@ it('R-ACTIVITY-DEADLOCK: never replays another daemon operation', async () => {
 });
 
 it.each([
-  ['recover', '40P01', 1, 2],
-  ['exhaust', '40P01', 10, 3],
-  ['other error', '23505', 1, 1],
-  ['authorization changes', '40P01', 1, 1],
-])('R-ACTIVITY-DEADLOCK: %s at the owning transaction boundary', async (scenario, code, failures, expectedAttempts) => {
+  ['recover on explicit request', '40P01', 1],
+  ['persistent failure', '40P01', 10],
+  ['other error', '23505', 1],
+  ['authorization changes', '40P01', 1],
+])('R-ACTIVITY-DEADLOCK: %s at the owning transaction boundary', async (scenario, code, failures) => {
   await send('@hoots inspect recovery', C);
   const [command] = await commands(A, C);
   await claim(command!);
@@ -2673,20 +2674,28 @@ it.each([
     },
   };
   const watched = new DaemonService(wrapped, hub);
-  if (scenario === 'recover') {
+  // A failed observation is parked. A new caller invocation, not an internal
+  // retry/backoff loop, owns any later attempt and must recheck authority.
+  await expect(watched.execute('postAgentActivity', input, A)).rejects.toBe(failure);
+  expect(attempts).toBe(1);
+  expect(events).toHaveLength(0);
+  expect((await db.query(`SELECT 1 FROM messages WHERE request_id=$1 AND presentation='activity'`,
+    [input.requestId])).rowCount).toBe(0);
+  if (scenario === 'recover on explicit request') {
     const saved = await watched.execute('postAgentActivity', input, A);
-    expect(attempts).toBe(expectedAttempts);
+    expect(attempts).toBe(2);
     expect(events).toHaveLength(1);
     expect((await phone.readRoom(C, H))?.toolRows?.find(row => row.id === saved.id)?.activity).toEqual(input.activity);
     expect(await watched.execute('postAgentActivity', input, A)).toEqual(saved);
     expect(events).toHaveLength(1);
-  } else {
-    await expect(watched.execute('postAgentActivity', input, A)).rejects.toThrow(
-      scenario === 'authorization changes' ? /access|member|authority/i : failure.message);
-    expect(attempts).toBe(expectedAttempts);
+  } else if (scenario === 'authorization changes') {
+    await expect(watched.execute('postAgentActivity', input, A)).rejects.toThrow(/access|member|authority/i);
+    expect(attempts).toBe(1);
     expect(events).toHaveLength(0);
-    expect((await db.query(`SELECT 1 FROM messages WHERE request_id=$1 AND presentation='activity'`,
-      [input.requestId])).rowCount).toBe(0);
+  } else if (scenario === 'persistent failure') {
+    await expect(watched.execute('postAgentActivity', input, A)).rejects.toBe(failure);
+    expect(attempts).toBe(2);
+    expect(events).toHaveLength(0);
   }
 });
 

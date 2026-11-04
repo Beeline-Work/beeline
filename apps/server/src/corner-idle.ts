@@ -1,3 +1,4 @@
+import {commandOwnerLiveSql} from './turn-ownership.js';
 import { cornerOwedAnswerTimesSql, cornerReportAnswerTimesSql } from './corner-owed.js';
 import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { cornerImplementerSql } from './corner-worker.js';
@@ -41,9 +42,12 @@ export function cornerIdleSql(cornerId: string): string {
         to_timestamp(COALESCE(gh.lifecycle->'checksSummary'->>'statusChangedAt',
           gh.lifecycle->'checksSummary'->>'updatedAt')::double precision)))::text idle_since,
       (${cornerScheduledWaitSql('c')}
+        OR EXISTS(SELECT 1 FROM agent_commands unresolved JOIN agent_command_owner_ends ended_owner
+          ON ended_owner.command_id=unresolved.id AND ended_owner.generation_id=unresolved.generation_id
+          WHERE unresolved.room_id=c.id AND unresolved.state='claimed')
         OR EXISTS(SELECT 1 FROM corner_merge_holds WHERE corner_id=c.id AND released_at IS NULL)
         OR EXISTS(SELECT 1 FROM agent_commands queued WHERE queued.room_id=c.id AND queued.action='input'
-          AND (queued.state='pending' OR (queued.state='claimed' AND queued.lease_expires_at>now()))
+          AND (queued.state='pending' OR (queued.state='claimed' AND ${commandOwnerLiveSql('queued')}))
           AND queued.review_context->>'headSha'=gh.lifecycle->'pr'->>'headSha'
           AND queued.review_context->>'purpose' IS NULL AND queued.agent_id IS DISTINCT FROM ${cornerImplementerSql('f', 'c')})
         OR gh.lifecycle->>'checks'='pending'

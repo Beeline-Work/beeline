@@ -2,6 +2,7 @@ import { mkdir, readFile, writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { expect, it } from 'vitest';
 import { createBrowserProofDirectory, runBrowserProof, webProofShims } from './browserProof';
+import { legacyRouterProofShims } from '../test-fixtures/router-proof';
 
 it('CR1: failed workflow fetch leaves a clean objective and recovers on an event', async () => {
   const mobile = process.cwd();
@@ -32,14 +33,15 @@ it('CR1: failed workflow fetch leaves a clean objective and recovers on an event
           retry: !!panel()?.querySelector('[role="button"]'), alert: !!panel()?.querySelector('[role="alert"]'), reads: window.reads };
         document.querySelector('[data-testid="corner-objective-line-brief"]')?.click();
       }, 400);
-      setTimeout(() => { if (location.search) return; window.recover = true; window.listener({ monolithLive: { roomId: 'corner', type: 'invalidate' } }); }, 1200);
+      setTimeout(() => window.listener({ monolithLive: { roomId: 'corner', type: 'subscribed' } }), 500);
+      setTimeout(() => { if (location.search) return; window.recover = true; window.listener({ monolithLive: { roomId: 'corner', type: 'subscribed', resumed: false } }); }, 1200);
       setTimeout(() => {
         document.getElementById('result').textContent = JSON.stringify({ failed: window.failed,
           reads: window.reads, recovered: panel()?.textContent.includes('Review · Approve'), briefOpened: window.briefOpened });
       }, 1600);`);
     for (const theme of ['obsidian', 'bone']) {
       for (const width of [390, 1180]) {
-        const shims = webProofShims(mobile);
+        const shims = { ...webProofShims(mobile), ...legacyRouterProofShims() };
         shims['react-native-unistyles'] = shims['react-native-unistyles']!.replace('beelineThemes.obsidian', `beelineThemes.${theme}`);
         const options = { entry, mobile, width, head, budgetMs: 1900,
           

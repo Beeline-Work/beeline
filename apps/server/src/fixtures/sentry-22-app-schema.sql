@@ -36,4 +36,3 @@ CREATE TABLE IF NOT EXISTS corner_app_bindings (
   bound_by text NOT NULL REFERENCES identities(id),
   bound_at timestamptz NOT NULL DEFAULT now()
 );
-

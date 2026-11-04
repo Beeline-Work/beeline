@@ -54,45 +54,11 @@ describe('daemonOperationIsSafeToRepeat', () => {
 });
 
 describe('daemon tool-call network retry', () => {
-  it('retries a read after a bare fetch failed and returns the successful answer', async () => {
-    let calls = 0;
-    vi.stubGlobal('fetch', async () => {
-      calls += 1;
-      if (calls === 1) throw bareFetchFailed();
-      return Response.json({ subscriptions: [] });
-    });
-    await expect(callAgentTool('read', { facet:'addresses' }, 'call-1')).resolves.toBe(
-      JSON.stringify({ subscriptions: [] }),
-    );
-    expect(calls).toBe(2);
-  });
-
-  it('retries a read whose failure only names the code in its cause chain', async () => {
-    let calls = 0;
-    vi.stubGlobal('fetch', async () => {
-      calls += 1;
-      if (calls === 1)
-        throw new TypeError('fetch failed', {
-          cause: Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
-        });
-      return Response.json({ subscriptions: [] });
-    });
-    await expect(callAgentTool('read', { facet:'addresses' }, 'call-1')).resolves.toBe(
-      JSON.stringify({ subscriptions: [] }),
-    );
-    expect(calls).toBe(2);
-  });
-
-  it('gives up after two retries and stops sending', async () => {
-    let calls = 0;
-    vi.stubGlobal('fetch', async () => {
-      calls += 1;
-      throw bareFetchFailed();
-    });
-    await expect(callAgentTool('read', { facet:'addresses' }, 'call-1')).rejects.toThrow(
-      'daemon operation listRooms failed with a network error after 3 attempts',
-    );
-    expect(calls).toBe(3);
+  it.each([false,true])('sends one read attempt even for a transient network failure (coded=%s)',async coded=>{
+    const fetched=vi.fn(async()=>{throw coded?new TypeError('fetch failed',{cause:{code:'ECONNREFUSED'}}):bareFetchFailed();});
+    vi.stubGlobal('fetch',fetched);
+    await expect(callAgentTool('read',{facet:'addresses'},'call-1')).rejects.toThrow('await a new action or recovery boundary');
+    expect(fetched).toHaveBeenCalledTimes(1);
   });
 
   it('never retries a response the server actually sent', async () => {
@@ -118,7 +84,7 @@ describe('daemon tool-call network retry', () => {
       throw bareFetchFailed();
     });
     await expect(callAgentTool('close_corner', { address:'corner-1' }, 'call-1')).rejects.toThrow(
-      'daemon operation archiveCorner failed with a network error before the server answered; the call may not have run',
+      'daemon operation archiveCorner failed before the server answered; await a new action or recovery boundary; the write outcome is unknown',
     );
     expect(calls).toBe(1);
   });

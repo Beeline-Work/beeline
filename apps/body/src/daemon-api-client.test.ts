@@ -406,7 +406,7 @@ describe('DaemonApiClient', () => {
       ((url, protocols) => new FakeWebSocket(url, protocols)) as DaemonWebSocketFactory,
     );
     const delivered: string[] = [];
-    const states: Array<[boolean, { pushIntake: boolean; connectionPresence: boolean }?]> = [];
+    const states: Array<[boolean, { pushIntake: boolean; connectionPresence: boolean; connectionGeneration?: number }?]> = [];
     const release = client.liveSubscribe(
       'room-1',
       '1000,' + 'a'.repeat(64),
@@ -419,6 +419,10 @@ describe('DaemonApiClient', () => {
       {
         type: 'register',
         intakeHeartbeat: true,
+        overlayV1:true,
+        usageAccountV1:true,
+        activationContextV1:true,
+        turnOwnershipV1:true,
         agentId: 'b'.repeat(64),
         token: `bdt_${'y'.repeat(43)}`,
         lifecycleId: expect.any(String),
@@ -426,6 +430,8 @@ describe('DaemonApiClient', () => {
       },
       {
         type: 'subscribe',
+        requestId: expect.any(String),
+        inbox: true,
         agentId: 'b'.repeat(64),
         roomId: 'room-1',
         lifecycleId: expect.any(String),
@@ -433,17 +439,22 @@ describe('DaemonApiClient', () => {
       },
     ]);
     first.message({ type: 'subscribed', roomId: 'room-1' });
+    first.message({ type: 'commands', roomId: 'room-1', commandProtocol: 1, commands: [] });
+    first.message({ type: 'inbox', roomId: 'room-1', items: [] });
 
     first.close();
     await vi.advanceTimersByTimeAsync(1_250);
     const second = FakeWebSocket.instances[1]!;
     second.open();
-    expect(second.sent).toEqual(first.sent);
+    expect(second.sent.map(value => { const frame = JSON.parse(value); delete frame.requestId; return frame; }))
+      .toEqual(first.sent.map(value => { const frame = JSON.parse(value); delete frame.requestId; return frame; }));
+    expect(JSON.parse(second.sent[1]!).requestId).not.toBe(JSON.parse(first.sent[1]!).requestId);
     second.message({
       type: 'subscribed',
       roomId: 'room-1',
       capabilities: { pushIntake: true, connectionPresence: true },
     });
+    second.message({ type: 'commands', roomId: 'room-1', commandProtocol: 1, commands: [] });
     const items = ['1', '2', '3'].map((id) => ({
       id,
       authorId: 'a',
@@ -457,9 +468,9 @@ describe('DaemonApiClient', () => {
 
     expect(delivered).toEqual(['1', '2', '3']);
     expect(states).toEqual([
-      [true, { pushIntake: false, connectionPresence: false }],
+      [true, { pushIntake: false, connectionPresence: false, connectionGeneration: 0 }],
       [false, undefined],
-      [true, { pushIntake: true, connectionPresence: true }],
+      [true, { pushIntake: true, connectionPresence: true, connectionGeneration: 2 }],
     ]);
     release();
     vi.useRealTimers();

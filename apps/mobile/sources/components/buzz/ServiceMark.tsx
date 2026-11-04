@@ -2,7 +2,6 @@ import type { CompanyLogo } from '@beeline/api-contract/workbench';
 import React from 'react';
 import { AppMark } from './AppMark';
 
-export { serviceFaviconUrl } from './AppMark';
 
 export function ServiceMark({
   company,

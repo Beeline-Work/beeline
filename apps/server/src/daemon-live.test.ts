@@ -118,6 +118,30 @@ async function register(
 }
 
 describe('one machine socket for every agent on a helper machine', () => {
+  it.each([true,false])('negotiates real machine usage/overlay registration only with opt-in and gates enabled=%s',async enabled=>{
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1',enabled?'1':'0');
+    try{
+      const owner='e'.repeat(64),execute=vi.fn(async()=>({id:'synthetic-receipt',createdAt:1}));
+      const database={query:vi.fn(async()=>({rows:[{owner_id:owner}],rowCount:1})),transaction:vi.fn()} as unknown as SqlDatabase;
+      const presence={instanceId:'synthetic-registration',holdServerConnection:()=>()=>undefined,
+        claimConnection:vi.fn(async()=>7),releaseConnection:vi.fn(async()=>undefined)} as unknown as ConnectionPresence;
+      const {port}=await start({database,connectionPresence:presence,daemon:{execute} as unknown as DaemonService});
+      const client=await machine(port);
+      client.send({type:'register',agentId:AGENT_A,token:'bdt_a',overlayV1:true,usageAccountV1:true});
+      const registered=await client.next(frame=>frame.type==='registered'&&frame.agentId===AGENT_A);
+      const capabilities=registered.capabilities as Record<string,unknown>;
+      if(enabled){
+        expect(capabilities).toMatchObject({overlayV1:true,usageAccountV1:true,usageOwnerId:owner,usageConnectionEpoch:7,usageConnectionId:expect.any(String)});
+        client.send({type:'usage-operation',agentId:AGENT_A,requestId:'actual-registered-write',operation:'postAgentUsage',input:{agentId:AGENT_A,
+          usage:{updatedAt:100,windows:[],context:{used:1,size:10}},usageSource:{v:1,ownerId:owner,revision:1,
+            source:{connectionId:capabilities.usageConnectionId,epoch:capabilities.usageConnectionEpoch}}}});
+        expect(await client.next(frame=>frame.type==='usage-result'&&frame.requestId==='actual-registered-write')).toMatchObject({result:{id:'synthetic-receipt'}});
+        expect(execute).toHaveBeenCalledOnce();
+      }else{expect(capabilities).not.toHaveProperty('overlayV1');expect(capabilities).not.toHaveProperty('usageAccountV1');}
+      expect((await register(client,AGENT_B,'bdt_b')).capabilities).not.toHaveProperty('usageAccountV1');
+    }finally{vi.unstubAllEnvs();}
+  });
+
   it.each([MACHINE_SOCKET_PROTOCOL, 'bearer.bdt_a'])(
     'sends release pushes without Room or agent routing fields over %s', async (protocol) => {
       const live = new LiveHub();
@@ -164,7 +188,7 @@ describe('one machine socket for every agent on a helper machine', () => {
     await client.next((frame) => frame.type === 'subscribed' && frame.agentId === AGENT_A);
 
     const before = client.frames.length;
-    live.publish({ type: 'invalidate', roomId: 'room-b', reason: 'postgres:messages' });
+    live.publish({ type: 'invalidate', roomId: 'room-b', reason: 'postgres:messages', messageId: 'changed-message' });
     const inbox = await client.next((frame, ) =>
       client.frames.indexOf(frame) >= before && frame.type === 'inbox');
     expect(inbox).toMatchObject({ agentId: AGENT_B, roomId: 'room-b' });
@@ -214,7 +238,7 @@ describe('one machine socket for every agent on a helper machine', () => {
     await client.next((frame) => frame.type === 'inbox' && frame.agentId === AGENT_B);
     expect(Date.now() - subscribedAt).toBeLessThan(1_000);
     const before = client.frames.length;
-    live.publish({ type: 'invalidate', roomId: 'room-b', reason: 'postgres:messages' });
+    live.publish({ type: 'invalidate', roomId: 'room-b', reason: 'postgres:messages', messageId: 'changed-message' });
     await client.next((frame) =>
       client.frames.indexOf(frame) >= before && frame.type === 'inbox' && frame.agentId === AGENT_B);
     expect(client.socket.readyState).toBe(WebSocket.OPEN);
@@ -257,6 +281,7 @@ describe('protocol heartbeat on helper sockets', () => {
         vi.mocked(daemon.execute).mockRejectedValueOnce(new Error('transient read failure'));
         live.publish({ type: 'invalidate', roomId: 'room-a',
           reason: operation === 'getAgentCommands' ? 'postgres:agent_commands' : 'postgres:messages',
+          ...(operation === 'getRoomInbox' ? { messageId: 'changed-message' } : {}),
           targetAgentId: AGENT_A });
         expect(await client.next(frame => frame.type === 'unregistered')).toMatchObject({ agentId: AGENT_A });
         // The machine and other agents can stay connected. A new registration
@@ -484,9 +509,9 @@ describe('held presence for a live connection', () => {
 
       // Inside the lease the agent is still held online.
       await survivor.renewLease();
+      await survivor.recoverServerLeases();
       expect(await presenceBody(database)).toMatchObject({ status: 'online', held: true });
       await new Promise((resolve) => setTimeout(resolve, 300));
-      await survivor.renewLease();
       expect(await presenceBody(database)).toMatchObject({ status: 'offline', held: false });
     } finally {
       await crashed.stop();
@@ -494,4 +519,20 @@ describe('held presence for a live connection', () => {
       await database.close();
     }
   });
+});
+
+it('F14 unrelated turn/activity/usage changes make zero daemon inbox reads', async () => {
+  const live=new LiveHub(),daemon=daemonStub();
+  const {port}=await start({live,daemon});const client=await machine(port);
+  await register(client,AGENT_A,'bdt_a');
+  client.send({type:'subscribe',agentId:AGENT_A,roomId:'room-a'});
+  await client.next(frame=>frame.type==='subscribed'&&frame.agentId===AGENT_A);
+  vi.mocked(daemon.execute).mockClear();
+  for(const table of ['agent_turns','agent_activity','agent_usage','agents','agent_grants','corner_follows'])
+    live.publish({type:'invalidate',roomId:'room-a',reason:`postgres:${table}`,messageId:'another-agent-source'});
+  const after=client.frames.length;
+  live.publish({type:'invalidate',roomId:'room-a',reason:'postgres:messages',messageId:'real-message'});
+  await client.next(frame=>client.frames.indexOf(frame)>=after&&frame.type==='inbox');
+  expect(vi.mocked(daemon.execute).mock.calls.filter(([name])=>name==='getRoomInbox')).toHaveLength(1);
+  expect(vi.mocked(daemon.execute).mock.calls.filter(([name])=>name==='getAgentCommands')).toHaveLength(0);
 });

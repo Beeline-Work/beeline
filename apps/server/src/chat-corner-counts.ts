@@ -1,3 +1,4 @@
+import { commandOwnerExpiredSql, commandOwnerLiveSql } from './turn-ownership.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
 import { cornerRunOutcomeSql, cornerRunStateSql } from './corner-run.js';
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
@@ -140,12 +141,12 @@ export function deliverableCommandSql(command: string): string {
     AND ${command}.reason NOT IN ('computer_activity','report')
     AND (${command}.wake_after IS NULL OR ${command}.wake_after<=now()+interval '20 seconds')
     AND (${command}.startup_wake_after IS NULL OR ${command}.startup_wake_after<=now())
-    AND (${command}.state='pending' OR (${command}.state='claimed' AND ${command}.lease_expires_at<=now()))`;
+    AND (${command}.state='pending' OR (${command}.state='claimed' AND ${commandOwnerExpiredSql(command)}))`;
 }
 
 /** Claimed, lease still live, and no working turn yet: the helper has the order and has not started. */
 function heldCommandSql(command: string): string {
-  return `${command}.state='claimed' AND ${command}.lease_expires_at>now()
+  return `${command}.state='claimed' AND ${commandOwnerLiveSql(command)}
     AND ${command}.action IN ('input','resume')
     AND NOT ${command}.avatar_job
     AND ${command}.reason NOT IN ('computer_activity','report')

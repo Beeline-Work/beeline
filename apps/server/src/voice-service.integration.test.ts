@@ -15,7 +15,7 @@ import { PhoneService } from './phone-service.js';
 import { readChatListView, readRoomViewMessage } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
-vi.mock('./voice-room-runtime.js', () => ({ VoiceRoomRuntime: { connect: vi.fn(async (_service: unknown, _call: string, roomId: string) => ({ roomId, stopCall: vi.fn(), close: vi.fn(), park: vi.fn(), resume: vi.fn(), refresh: vi.fn(), countHumans: vi.fn(async () => {}) })) } }));
+vi.mock('./voice-room-runtime.js', () => ({ VoiceRoomRuntime: { connect: vi.fn(async (_service: unknown, _call: string, roomId: string, _owner: string, callCardId: string) => ({ roomId, callCardId, reconcileParticipants: vi.fn(async()=>{}), revalidateParticipants: vi.fn(async()=>{}), revalidateAuthorityChange: vi.fn(async()=>{}), stopCall: vi.fn(), close: vi.fn(), park: vi.fn(), resume: vi.fn(), refresh: vi.fn(), countHumans: vi.fn(async () => {}) })) } }));
 vi.mock('livekit-server-sdk', async original => {
   const actual = await original<typeof import('livekit-server-sdk')>();
   return { ...actual, RoomServiceClient: class { async removeParticipant() {} async deleteRoom() {} } };
@@ -705,4 +705,56 @@ it('VOICE-TAG-1: voice orders preserve chain depth and stop ping-pong', async ()
     await service.recordAnswer(room,A,'@sol ping again?',{replyId:'at-limit',sourceId:source});
     expect((await db.query(`SELECT * FROM agent_commands WHERE room_id=$1 AND reason='agent_tag'`,[room])).rows).toHaveLength(1);
   } finally { await service.leave(joined.call.id,H); await db.query(`DELETE FROM rooms WHERE id=$1`,[room]); }
+});
+
+it('F17: an absent-session expiry cannot remove a replacement session or a successor runtime participant',async()=>{
+  const room='12121212-1212-4212-8212-121212121212';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Voice expiry fences')`,[room,W]);
+  for(const id of [H,A])await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[W,room,id]);
+  const joined=await service.join(room,H);
+  try{
+    const owner=(await db.query<{runtime_owner:string}>('SELECT runtime_owner FROM voice_calls WHERE id=$1',[joined.call.id])).rows[0]!.runtime_owner;
+    await service.leave(joined.call.id,H,true,joined.sessionId,undefined,'stale-owner');
+    expect((await db.query('SELECT left_at FROM voice_participants WHERE call_id=$1',[joined.call.id])).rows[0]?.left_at).toBeNull();
+    await db.query("UPDATE voice_participants SET session_id='replacement' WHERE call_id=$1",[joined.call.id]);
+    await service.leave(joined.call.id,H,true,joined.sessionId,undefined,owner);
+    expect((await db.query('SELECT left_at FROM voice_participants WHERE call_id=$1',[joined.call.id])).rows[0]?.left_at).toBeNull();
+    await service.leave(joined.call.id,H,true,'replacement',undefined,owner);
+    expect((await db.query('SELECT ended_at FROM voice_calls WHERE id=$1',[joined.call.id])).rows[0]?.ended_at).not.toBeNull();
+  }finally{await service.leave(joined.call.id,H);await db.query('DELETE FROM rooms WHERE id=$1',[room]);}
+});
+
+it('F17: a committed exact call-card source reaches the held runtime participant owner without a periodic scan',async()=>{
+  const room='13131313-1313-4313-8313-131313131313';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Voice source fence')`,[room,W]);
+  for(const id of [H,A])await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[W,room,id]);
+  const joined=await service.join(room,H);
+  try{
+    const call=(await db.query<{message_id:string}>('SELECT message_id FROM voice_calls WHERE id=$1',[joined.call.id])).rows[0]!;
+    const runtime=await vi.mocked(VoiceRoomRuntime.connect).mock.results.at(-1)!.value;
+    await Promise.resolve();
+    vi.mocked(runtime.reconcileParticipants).mockClear();
+    vi.mocked(runtime.countHumans).mockClear();
+    vi.mocked(runtime.refresh).mockClear();
+    for (const reason of ['postgres:room_read_marks', 'postgres:message_bookmarks', 'postgres:push_devices'])
+      live.publish({type:'invalidate',roomId:room,reason});
+    live.publish({type:'invalidate',roomId:R,reason:'voice-participants'});
+    await new Promise(resolve=>setImmediate(resolve));
+    expect(runtime.countHumans).not.toHaveBeenCalled();
+    expect(runtime.refresh).not.toHaveBeenCalled();
+    expect(runtime.reconcileParticipants).not.toHaveBeenCalled();
+    live.publish({type:'invalidate',roomId:room,reason:'postgres:messages',messageId:'unrelated'});
+    await new Promise(resolve=>setImmediate(resolve));
+    expect(runtime.reconcileParticipants).not.toHaveBeenCalled();
+    expect(runtime.countHumans).not.toHaveBeenCalled();
+    expect(runtime.refresh).toHaveBeenCalledOnce();
+    live.publish({type:'invalidate',roomId:room,reason:'postgres:messages',messageId:call.message_id});
+    await new Promise(resolve=>setImmediate(resolve));
+    expect(runtime.reconcileParticipants).toHaveBeenCalledOnce();
+    expect(runtime.countHumans).toHaveBeenCalledOnce();
+    live.publish({type:'invalidate',roomId:room,reason:'postgres:agent_commands'});
+    await new Promise(resolve=>setImmediate(resolve));
+    expect(runtime.refresh).toHaveBeenCalledTimes(3);
+    expect(runtime.countHumans).toHaveBeenCalledOnce();
+  }finally{await service.leave(joined.call.id,H);await db.query('DELETE FROM rooms WHERE id=$1',[room]);}
 });

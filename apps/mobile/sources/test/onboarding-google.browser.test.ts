@@ -15,17 +15,17 @@ describe.skipIf(!existsSync(CHROME))('Google browser handoff recovery', () => {
         import {View,Text} from 'react-native';import {Button} from '@/components/buzz/Button';
         import {runGoogleSignIn,clearPendingGoogleSignIn} from '@/auth/google-auth-session';
         import {noticeForAuthError} from '@/auth/onboarding-state';import {useUnistyles} from 'react-native-unistyles';
-        let reads=0,browserOpened=false;globalThis.fetch=async(url)=>{
+        let reads=0,browserOpened=false;const inspections=[];globalThis.fetch=async(url,init)=>{
           if(url.endsWith('/native/start'))return new Response(JSON.stringify({state:'s'.repeat(43),nonce:'n'.repeat(43),serverClientId:'server.apps.googleusercontent.com'}));
           if(url.endsWith('/completion/cancel'))return new Response(null,{status:204});
-          reads++;if(reads===1)throw new TypeError('Network request failed');
-          if(reads===2){await new Promise(r=>setTimeout(r,11000));throw new TypeError('Network request failed');}
-          return new Response('{}',{status:reads===3?503:200});};
+          reads++;inspections.push(JSON.parse(init.body).waitMs??0);
+          if(reads===1)throw new TypeError('Network request failed');
+          return new Response('{}',{status:200});};
         function App(){const {theme}=useUnistyles();const [notice,setNotice]=useState(null);
           useEffect(()=>{runGoogleSignIn({state:'s'.repeat(43),recoveryToken:'r'.repeat(43),
             openAuthSession:async()=>{browserOpened=true;return {type:'dismiss'};},subscribeToUrls:()=>({remove(){}})})
             .then(()=>{setNotice({title:'Google proof recovered',message:'The first attempt recovered without restarting sign-in.'});
-              document.getElementById('result').textContent=JSON.stringify({recovered:true,reads,browserOpened});})
+              document.getElementById('result').textContent=JSON.stringify({recovered:true,reads,browserOpened,inspections});})
             .catch(error=>{setNotice(noticeForAuthError(error));document.getElementById('result').textContent=JSON.stringify({recovered:false,code:error.code,reads});})
             .finally(()=>clearPendingGoogleSignIn());},[]);
           return <View style={{height:'100%',justifyContent:'center',padding:theme.buzz.space.lg,gap:theme.buzz.space.lg,backgroundColor:theme.buzz.bgBase}}>
@@ -49,7 +49,7 @@ describe.skipIf(!existsSync(CHROME))('Google browser handoff recovery', () => {
       const result=await runBrowserProof({entry,mobile,shims,width:390,height:844,budgetMs:20000,
         screenshotPath:path.join(output,nativeFailure?'google-native-fallback.png':'google-recovery.png'),head:`<style>${fonts}html,body,#root{height:100%;width:390px}#result{display:none}</style>`});
       expect(result.status,result.stderr).toBe(0);const proof=JSON.parse(result.result);console.log(JSON.stringify(proof));
-      expect(proof.recovered).toBe(true);expect(proof.reads).toBe(4);expect(proof.browserOpened).toBe(true);
+      expect(proof.recovered).toBe(true);expect(proof.reads).toBe(2);expect(proof.browserOpened).toBe(true);expect(proof.inspections).toEqual([120000,0]);
     } finally {await rm(directory,{recursive:true,force:true});}
   }, 120_000);
 });

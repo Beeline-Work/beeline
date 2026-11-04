@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { compareReleasedRuntime, enforceReleasedRuntime } from './release-preflight-native.mjs';
 const require = createRequire(import.meta.url);
-const { triageFailure, recoverFailures, watchRunners } = require('./release-preflight.cjs');
+const { triageFailure, validateRunnerResults, recoverFailures } = require('./release-preflight.cjs');
 
 test('forced release failure creates exactly one triage issue even after redelivery and closure', async () => {
   const issues = [];
@@ -31,19 +31,19 @@ test('forced release failure creates exactly one triage issue even after redeliv
   assert.equal(issues.length, 2);
 });
 
-test('offline runner cancels queued probes with a clear reason; online runners pass', async () => {
-  let cancelled = false, failure;
-  let jobs = [{name: 'Runner probe android', status: 'queued'}];
-  const github = { paginate: async () => jobs, rest: { actions: { listJobsForWorkflowRun() {}, cancelWorkflowRun: async () => { cancelled = true; } } } };
-  const context = {repo: {}, runId: 42};
-  const core = {setFailed: message => {failure = message;}, info() {}};
-  await watchRunners({github, context, core, attempts: 1});
-  assert.equal(cancelled, true);
-  assert.match(failure, /offline\/busy/);
-  jobs = ['production','android','ios'].map(label => ({name: `Runner probe ${label}`, status: 'completed', conclusion: 'success'}));
-  cancelled = false;
-  await watchRunners({github, context, core, attempts: 1});
-  assert.equal(cancelled, false);
+test('runner completion inspects once and fails closed for incomplete or failed probes', async () => {
+  let reads=0;
+  let jobs=[{name:'Runner probe android',status:'queued'}];
+  const github={paginate:async()=>{reads++;return jobs;},rest:{actions:{listJobsForWorkflowRun(){}}}};
+  const context={repo:{},runId:42},core={info(){}};
+  await assert.rejects(validateRunnerResults({github,context,core}),/completion is unavailable/);
+  assert.equal(reads,1);
+  jobs=['production','android','ios'].map(label=>({name:`Runner probe ${label}`,status:'completed',conclusion:'success'}));
+  await validateRunnerResults({github,context,core});assert.equal(reads,2);
+  jobs[0].conclusion='failure';
+  await assert.rejects(validateRunnerResults({github,context,core}),/probes failed/);assert.equal(reads,3);
+  const workflow=readFileSync('.github/workflows/release-preflight.yml','utf8');
+  assert.match(workflow,/runners_online:\n    needs: runner\n    if: always\(\)/);
 });
 
 test('compares native fingerprints and shipped pins independently for each platform', () => {
@@ -65,18 +65,16 @@ test('each shell-bearing self-hosted release job installs pinned Node before its
   }
 });
 
-test('failure intake holds serialization until a new issue is visible in eventually consistent listings', async () => {
-  const issues = [];
-  let waits = 0, creates = 0;
-  const github = {
-    paginate: async method => method === github.rest.actions.listJobsForWorkflowRun ? [] : waits < 2 ? [] : issues,
-    rest: {actions:{listJobsForWorkflowRun(){}},issues:{listForRepo(){},getLabel:async()=>({}),create:async data=>{creates++;issues.push(data);return {data:{number:42}};}}},
-  };
-  const args = {github, context:{repo:{}}, run:{id:99,path:'.github/workflows/release-preflight.yml',conclusion:'failure'},wait:async()=>{waits++;}};
-  await triageFailure(args);
-  await triageFailure(args);
-  assert.equal(waits,2);
-  assert.equal(creates,1);
+test('failure intake accepts the mutation receipt without polling stale issue listings', async () => {
+  let lists=0,creates=0;
+  const receipt={data:{number:42}};
+  const github={paginate:async method=>{if(method===github.rest.issues.listForRepo)lists++;return [];},rest:{actions:{listJobsForWorkflowRun(){}},issues:{listForRepo(){},getLabel:async()=>({}),
+    create:async()=>{creates++;return receipt;}}}};
+  const args={github,context:{repo:{}},run:{id:99,path:'.github/workflows/release-preflight.yml',conclusion:'failure'}};
+  assert.equal(await triageFailure(args),receipt);assert.equal(lists,1);assert.equal(creates,1);
+  github.rest.issues.create=async()=>{creates++;throw new Error('ambiguous mutation');};
+  await assert.rejects(triageFailure(args),/ambiguous mutation/);assert.equal(creates,2);
+  assert.doesNotMatch(readFileSync('scripts/release-preflight.cjs','utf8'),/setTimeout|setInterval|watchRunners/);
 });
 
 function recoveryFixture() {
@@ -207,7 +205,7 @@ test('native preflight fails unshipped runtimes; diagnostic mode can warn', () =
   assert.match(warnings[0], /::warning::.*store build/);
   const workflow = readFileSync('.github/workflows/release-preflight.yml','utf8');
   assert.doesNotMatch(workflow, /pull_request|PREFLIGHT_REPORT_ONLY/);
-  assert.match(workflow, /schedule:/);
+  assert.doesNotMatch(workflow, /schedule:/);
   assert.match(workflow, /workflow_dispatch:/);
   assert.doesNotMatch(workflow, /continue-on-error/);
 });

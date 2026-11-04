@@ -1,3 +1,4 @@
+import { SettingsManager } from '@earendil-works/pi-coding-agent';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { execFileSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
@@ -658,10 +659,14 @@ describe('per-room harness state isolation', () => {
     expect(JSON.parse(readFileSync(isolatedModels, 'utf8')).providers).toEqual([
       expect.objectContaining({ name: 'openrouter-ox', apiKey: 'inline-secret' }),
     ]);
-    expect(JSON.parse(readFileSync(resolve(roomRoot, 'pi/settings.json'), 'utf8'))).toEqual({
+    const generatedSettings = JSON.parse(readFileSync(resolve(roomRoot, 'pi/settings.json'), 'utf8'));
+    expect(generatedSettings).toEqual({
       httpIdleTimeoutMs: 300_000,
-      retry: { enabled: true, maxRetries: 3, baseDelayMs: 2_000 },
+      retry: { enabled: false, maxRetries: 0, provider: { maxRetries: 0 } },
     });
+    const settingsManager = SettingsManager.inMemory(generatedSettings);
+    expect(settingsManager.getRetrySettings()).toMatchObject({ enabled: false, maxRetries: 0 });
+    expect(settingsManager.getProviderRetrySettings().maxRetries).toBe(0);
     const modelOptions = [
       {
         id: 'model',

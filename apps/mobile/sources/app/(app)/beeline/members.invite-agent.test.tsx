@@ -1,3 +1,4 @@
+vi.mock('@/buzz/router-resource',()=>({useRoutedResource:()=>({mode:'legacy',value:null,error:null,loading:false,retry:()=>{}})}));
 vi.mock('@/utils/responsive', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/responsive')>()), useIsDesktop: () => false }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
@@ -6,6 +7,8 @@ import { readFileSync } from 'node:fs';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/buzz/use-surface-focus', () => ({ useSurfaceFocus: () => true }));
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const VIEWER = 'a'.repeat(64);

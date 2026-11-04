@@ -1,0 +1,62 @@
+{
+  "sourceHead": "93e8f3c08289341fa72a19d307e0b548b837e8ce",
+  "scope": "Architecture repair composed with Group E; synthetic isolated loopback PostgreSQL, no production or owner Workspace",
+  "runner": {
+    "nodeOptions": "--max-old-space-size=4096",
+    "vitestArgs": [
+      "--maxWorkers=2",
+      "--minWorkers=1"
+    ],
+    "execution": "one suite at a time"
+  },
+  "passed": 48,
+  "suiteSelections": 7,
+  "vitest": [
+    {
+      "workspace": "apps/server",
+      "file": "src/agent-usage.integration.test.ts",
+      "passed": 6,
+      "logSha256": "9ff0073b23f47510de42cd9017a5bad682dac0d1be1a8f8e38d015988e7d3efb"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/turn-ownership.test.ts",
+      "passed": 5,
+      "logSha256": "10b6f78bb9df08389273bbe9243914a60e861209e69721584e6d8b4bdff15d67"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/router-phone-group-a.postgres.test.ts",
+      "passed": 10,
+      "logSha256": "7326adf261e0cd152a5396a0903f44e7586c25ab0a5e65d668195fb0a1baca78"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/background-leader.postgres.test.ts",
+      "passed": 3,
+      "logSha256": "de4f322556ff4ed695366f99c3b73bfec26dc80efaceefdd5bf565ccd2b868dc"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/background-work.test.ts",
+      "passed": 11,
+      "logSha256": "759742e182f2f09abc5ec23b917f2aa4d5b3b82f9b4b587bcb3095c667ade90f"
+    },
+    {
+      "workspace": "apps/body",
+      "file": "src/helper-overlay.integration.test.ts",
+      "passed": 5,
+      "logSha256": "23ebd40f538847c73ad599ff599fb28b296bbd61d56a0969a009a636aaa51ad2"
+    },
+    {
+      "workspace": "apps/body",
+      "file": "src/squire-share-renewals.test.ts",
+      "passed": 8,
+      "logSha256": "5fe9b6b4d7997f63340fdf6a591c4afd45fc99e2d21b593a65ffd3eca99d83e7"
+    }
+  ],
+  "checks": [
+    "full root typecheck",
+    "base-aware architecture: 20 rules"
+  ]
+}

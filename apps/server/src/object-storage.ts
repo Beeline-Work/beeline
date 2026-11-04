@@ -64,6 +64,9 @@ export class ObjectStorage {
       secretAccessKey: config.secretAccessKey,
       service: 's3',
       region: config.region ?? 'auto',
+      // Admission permits one storage attempt; an ambiguous result cannot
+      // authorize the SDK's default status retries or backoff sleeps.
+      retries: 0,
     });
     this.#endpoint = config.endpoint.replace(/\/+$/, '');
     this.#bucket = config.bucket;

@@ -32,7 +32,9 @@ export async function productionReleaseDispatch(
       `SELECT id,handle FROM identities WHERE id=$1 AND kind='agent' AND handle IS NOT NULL`, [agentId],
     )).rows[0];
     if (!agent?.handle) throw new Error('Production release requires an agent identity');
-    const command = await authorizeCommandOutput(db, input.roomId, agentId, input.requestId, input.generationId);
+    const command = await authorizeCommandOutput(db, input.roomId, agentId, input.requestId, input.generationId, false, false);
+    if (command.turn_owner_connection_id)
+      throw new ExpectedRefusalError('Owned command release adapter is not enabled');
     const human = (await db.query<{ id: string; text: string; role: string }>(
       `SELECT m.id,m.text,manager.role FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
        JOIN rooms room ON room.id=$2

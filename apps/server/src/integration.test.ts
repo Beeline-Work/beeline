@@ -1,6 +1,6 @@
 import { cornerObjectiveSql } from './corner-objective.js';
 import { cornerCommissionerSql, cornerKindSql, cornerRequestSql } from './corner-opening.js';
-import { failConnectingOffers } from './connector-offer-completion.js';
+import { ConnectorOfferExpiryLoop } from './connector-offer-expiry.js';
 import { cornerRunStateSql } from './corner-run.js';
 import * as approvalSources from './approval-card-source.js';
 import * as serverSentry from './sentry.js';
@@ -2228,7 +2228,7 @@ describe('monolith integration', () => {
       });
     };
     pgClient.end = async () => { await unlisten?.(); };
-    const listener = new PostgresLiveListener(database, live, () => pgClient, 1);
+    const listener = new PostgresLiveListener(database, live, () => pgClient);
     const sockets = [memberToken, outsiderToken].map((token) =>
       new WebSocket(`${origin.replace('http', 'ws')}/v1/phone/live`, [`bearer.${token}`]));
     const opened = Promise.all(sockets.map((socket) => new Promise<void>((resolve, reject) => {
@@ -13012,11 +13012,16 @@ describe('monolith integration', () => {
         pairingGeneration: assignments.assignments[0]!.pairingGeneration, steps: [], errorMessage: 'Squire MCP connection closed' });
       expect(report.status).toBe(200);
     } else {
+      const expiry = new ConnectorOfferExpiryLoop(database);
+      const delay = await expiry.runOnce();
+      expect(delay).toBeGreaterThan(14 * 60_000);
+      expect(delay).toBeLessThanOrEqual(15 * 60_000);
       await database.query(`UPDATE connector_offers SET accepted_at=now()-interval '16 minutes' WHERE id=$1`, [offerId]);
       await database.query(`UPDATE agents SET squire_work=jsonb_set(squire_work,'{reportedAt}',
         to_jsonb(extract(epoch FROM now())-960)) WHERE agent_id=$1`, [AGENT]);
       if (connectorType !== 'trusty-squire') await database.query(`UPDATE workspace_connectors SET updated_at=now()-interval '16 minutes' WHERE id=$1`, [connectorId]);
-      await database.transaction(db => failConnectingOffers(db, { expired: true }));
+      expect(await expiry.runOnce()).toBeUndefined();
+      expect(await expiry.runOnce()).toBeUndefined();
     }
     const room = await phone.readRoom(ROOM, HUMAN);
     expect(isRoomView(room)).toBe(true);

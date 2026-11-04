@@ -47,7 +47,7 @@ function fakeApi(handler: (name: string) => Promise<unknown>) {
 }
 
 describe('RoomSupervisor', () => {
-  it('keeps retrying a failed Room read at a bounded delay and recovers without a wake', async () => {
+  it('parks a failed Room read for a day and recovers only on a real wake', async () => {
     vi.useFakeTimers();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     let reachable = false;
@@ -78,20 +78,10 @@ describe('RoomSupervisor', () => {
     void supervised.then(() => (settled = true));
     await vi.advanceTimersByTimeAsync(0);
     expect(execute).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(86_400_000);
+    expect(execute).toHaveBeenCalledTimes(1);expect(settled).toBe(false);
+    reachable=true;supervisor.wake();await vi.advanceTimersByTimeAsync(0);
     expect(execute).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(5_000);
-    expect(execute).toHaveBeenCalledTimes(3);
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(execute).toHaveBeenCalledTimes(4);
-    // A fourth failure cannot permanently park the agent.
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(execute).toHaveBeenCalledTimes(5);
-    expect(settled).toBe(false);
-
-    reachable = true;
-    await vi.advanceTimersByTimeAsync(30_000);
-    expect(execute).toHaveBeenCalledTimes(6);
     expect(polled).toHaveBeenCalledOnce();
     expect(settled).toBe(false);
     abort.abort();
@@ -118,6 +108,8 @@ describe('RoomSupervisor', () => {
     }
     expect(reads).toBe(60);
     await vi.advanceTimersByTimeAsync(200_500);
+    expect(reads).toBe(60);
+    supervisor.wake();
     await Promise.all(jobs);
     expect(reads).toBe(120);
     abort.abort();
@@ -190,8 +182,8 @@ describe('RoomSupervisor', () => {
     // Entering a turn writes its context file, which is real I/O.
     await vi.waitFor(() => expect(turnStarted).toHaveBeenCalledOnce());
     // The socket reconnects mid-turn and the reconciliation read fails.
-    subscribed();
-    subscribed();
+    subscribed(false);subscribed();
+    subscribed(false);subscribed();
     await vi.advanceTimersByTimeAsync(0);
     expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2);
     // Intake has failed, yet the turn keeps running and nothing re-enters.
@@ -200,6 +192,8 @@ describe('RoomSupervisor', () => {
     expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2);
 
     finishTurn();
+    await vi.advanceTimersByTimeAsync(0);
+    supervisor.wake();
     await vi.waitFor(
       () =>
         expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(3),

@@ -147,6 +147,8 @@ function Gallery() {
         />
         <Text>Browser card</Text>
         <ComputerSessionCard
+          messageId="computer-gallery"
+          roomId="computer-gallery"
           session={
             {
               id: 'computer',

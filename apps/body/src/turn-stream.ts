@@ -1,3 +1,4 @@
+import { HelperOverlayOwner } from './helper-overlay.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { sanitizeAgentReply } from './reply-sanitizer.js';
@@ -36,6 +37,8 @@ export interface AgentTurnStreamOptions {
    * any other id leaves a ghost draft duplicating the message.
    */
   requestId: string;
+  commandId?:string;
+  turnGeneration?:string;
   /** Log prefix naming the surface, e.g. `monolith Room <id>` or `corner <id>`. */
   label: string;
 }
@@ -94,7 +97,18 @@ export class AgentTurnStream {
    */
   private retraction: Promise<void> | undefined;
 
-  constructor(private readonly options: AgentTurnStreamOptions) {}
+  private readonly overlay:HelperOverlayOwner|undefined;
+  constructor(private readonly options: AgentTurnStreamOptions) {
+    const transport=options.api.channel?.overlay;
+    if(transport && (transport.enabled() || transport.selected?.())) {
+      // Registration loss cannot restore the growing-snapshot producer while
+      // this command is still bound to the negotiated overlay protocol.
+      if(!options.commandId || !options.turnGeneration) throw new Error('Overlay requires a claimed command generation');
+      this.overlay=new HelperOverlayOwner({
+        agentId:options.agentId,roomId:options.roomId,commandId:options.commandId,turnId:options.requestId,
+        turnGeneration:options.turnGeneration,kind:'draft'},transport);
+    }
+  }
 
   /**
    * The ACP delta hook: hand it straight to `sessionPrompt`. `full` is every
@@ -196,6 +210,13 @@ export class AgentTurnStream {
   private publishPending(): void {
     if (this.inFlight || this.pending === undefined) return;
     const text = this.pending;
+    if(this.overlay){
+      this.pending=undefined;
+      try{this.overlay.update(text);}catch(error){
+        console.error(`[thin-core] ${this.options.label} overlay parked:`,error);void this.overlay.close('retract');
+      }
+      return;
+    }
     const latestChunk = this.latestChunk;
     this.pending = undefined;
     const { api, agentId, roomId, requestId, label } = this.options;
@@ -232,6 +253,7 @@ export class AgentTurnStream {
 
   /** Forget the previous run's stream text; a re-pinned retry starts clean. */
   beginRun(): void {
+    this.overlay?.beginRun();
     this.latest = '';
     this.latestRun = '';
     this.latestChunk = '';
@@ -268,6 +290,7 @@ export class AgentTurnStream {
       // to be the last word on this lane, or that late write puts an obsolete
       // draft back after the lane was supposed to be empty.
       await this.inFlight;
+      if(this.overlay){await this.overlay.close('retract');return;}
       const { api, agentId, roomId, requestId, label } = this.options;
       await api
         .execute('retractAgentLiveOutput', {

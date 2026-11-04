@@ -1,7 +1,9 @@
+vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: vi.fn() }));
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
   monolithUrl: 'https://server.usebeeline.app',
+  mediaMode: { value: 'legacy' as 'pending' | 'legacy' | 'router' },
   authorization: vi.fn(),
   fetch: vi.fn(),
   openExternalUrl: vi.fn(),
@@ -22,6 +24,10 @@ vi.mock('@/buzz/runtime-config', () => ({
 vi.mock('@/auth/monolith-session', () => ({
   monolithSession: { authorization: mocks.authorization, fetch: mocks.fetch },
 }));
+vi.mock('@/auth/buzz-identity-storage', () => ({ loadBuzzIdentity: async () => ({ publicKey: 'synthetic-reader' }) }));
+vi.mock('./media-cache-connection', () => ({ retainMediaObjectDisplay: () => () => {}, mediaTransportMode: () => mocks.mediaMode.value, mediaMetadataAvailable: () => false, mediaMetadataFor: async () => undefined, mediaCertificateCurrent: () => false, mediaCacheFences: () => [], subscribeMediaCacheBoundary: () => () => {} }));
+vi.mock('./artifact-byte-store', () => ({ createArtifactByteStore: () => ({ get: async () => null, set: async () => {}, remove: async () => {}, clear: async () => {}, revoke: async () => [], localUri: async () => 'file:///cache/immutable-photo.jpg' }) }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn() }));
 vi.mock('@/modal', () => ({ Modal: { alert: vi.fn() } }));
 vi.mock('@/utils/open-external-url', () => ({ openExternalUrl: mocks.openExternalUrl }));
 vi.mock('expo-file-system/legacy', () => ({
@@ -34,6 +40,7 @@ import {
   artifactBase64,
   artifactImageSource,
   artifactMediaUrl,
+  openArtifactInBrowser,
   runnableArtifactUrl,
   releaseArtifactImageSource,
 } from './artifact-link';
@@ -57,6 +64,7 @@ beforeEach(() => {
   mocks.fetch.mockReset();
   mocks.authorization.mockResolvedValue('access-token');
   mocks.platformOS.value = 'ios';
+  mocks.mediaMode.value = 'legacy';
 });
 
 describe('the artifact media url is rebuilt against the monolith origin', () => {
@@ -78,12 +86,12 @@ describe('the artifact media url is rebuilt against the monolith origin', () => 
 });
 
 describe('the authenticated image source', () => {
-  it('carries the bearer token only to the configured origin', async () => {
+  it('gives native the shared local bytes and never a separate bearer Image request', async () => {
+    mocks.fetch.mockResolvedValue(bytesResponse(new Uint8Array([1, 2, 3])));
     const source = await artifactImageSource(attachment(`https://evil.example/v1/media/${ID}`));
-    expect(source).toEqual({
-      uri: `${mocks.monolithUrl}/v1/media/${ID}`,
-      headers: { authorization: 'Bearer access-token' },
-    });
+    expect(source).toEqual({ uri: 'file:///cache/immutable-photo.jpg' });
+    expect(mocks.fetch).toHaveBeenCalledWith(`${mocks.monolithUrl}/v1/media/${ID}`, { signal: expect.any(AbortSignal) }, { timeoutMs: 20_000 });
+    expect(mocks.authorization).not.toHaveBeenCalled();
   });
 
   it('never hands the token to a host the stored url named', async () => {
@@ -103,7 +111,8 @@ describe('the authenticated image source', () => {
       created.push(blob);
       return 'blob:https://app.usebeeline.app/artifact-1';
     });
-    vi.stubGlobal('URL', { ...URL, createObjectURL, revokeObjectURL: vi.fn() });
+    vi.spyOn(URL, 'createObjectURL').mockImplementation(createObjectURL);
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
     mocks.fetch.mockResolvedValue(bytesResponse(new Uint8Array([137, 80, 78, 71])));
     const source = await artifactImageSource(attachment(`/v1/media/${ID}`));
     expect(source).toEqual({ uri: 'blob:https://app.usebeeline.app/artifact-1' });
@@ -111,21 +120,21 @@ describe('the authenticated image source', () => {
     expect(created[0]!.type).toBe('image/jpeg');
     expect(mocks.fetch).toHaveBeenCalledWith(
       `${mocks.monolithUrl}/v1/media/${ID}`,
-      {},
+      { signal: expect.any(AbortSignal) },
       { timeoutMs: 20_000 },
     );
-    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 
   it('frees the object URL it minted and leaves a native uri alone', () => {
     const revokeObjectURL = vi.fn();
-    vi.stubGlobal('URL', { ...URL, createObjectURL: vi.fn(), revokeObjectURL });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(revokeObjectURL);
     releaseArtifactImageSource({ uri: 'blob:https://app.usebeeline.app/artifact-1' });
     expect(revokeObjectURL).toHaveBeenCalledWith('blob:https://app.usebeeline.app/artifact-1');
     releaseArtifactImageSource({ uri: `${mocks.monolithUrl}/v1/media/${ID}` });
     releaseArtifactImageSource(null);
     expect(revokeObjectURL).toHaveBeenCalledTimes(1);
-    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
   });
 });
 
@@ -155,4 +164,11 @@ describe('runnable capability URL', () => {
     expect(await runnableArtifactUrl(attachment(`https://evil.example/v1/media/${ID}`))).toBe(url);
     expect(mocks.fetch).toHaveBeenLastCalledWith(`${mocks.monolithUrl}/v1/media/${ID}/play`,{}, {timeoutMs:10_000});
   });
+});
+
+it('a parked metadata route cannot downgrade link/play actions to legacy HTTP', async () => {
+  mocks.mediaMode.value = 'pending';
+  await expect(openArtifactInBrowser(attachment(`/v1/media/${ID}`))).rejects.toThrow('awaiting connection');
+  await expect(runnableArtifactUrl(attachment(`/v1/media/${ID}`))).rejects.toThrow('awaiting connection');
+  expect(mocks.fetch).not.toHaveBeenCalled();
 });

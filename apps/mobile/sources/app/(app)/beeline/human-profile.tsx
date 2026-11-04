@@ -1,3 +1,4 @@
+import { useSurfaceFocus } from '@/buzz/use-surface-focus';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
 import { useIsDesktop as useDesktopPageLayout } from '@/utils/responsive';
@@ -47,6 +48,7 @@ export function HumanProfile({
   memberId: string;
   onClose: () => void;
 }) {
+  const focused = useSurfaceFocus();
   const insets = useSafeAreaInsets();
   const desktopPageLayout = useDesktopPageLayout();
   const navigation = useNavigation();
@@ -83,8 +85,9 @@ export function HumanProfile({
   }, [editing, member?.role]);
   useEffect(() => {
     setEditing(false);
-  }, [workspaceId, memberId, retry]);
+  }, [focused, workspaceId, memberId, retry]);
   useEffect(() => {
+    if (!focused) return;
     let cancelled = false;
     let stopProfile: (() => void) | undefined;
     let stopWatch: (() => void) | undefined;
@@ -98,7 +101,7 @@ export function HumanProfile({
         { workspaceId, memberId });
       // One read names the person, their grants and the agents they own.
       const http = new RoomViewClient({ identity, baseUrl });
-      const read = () => mobileSurfaceCache.fetch(address, isWorkspaceMemberListView,
+      const read = () => cancelled ? Promise.resolve(null) : mobileSurfaceCache.fetch(address, isWorkspaceMemberListView,
         () => http.workspaceMembers(workspaceId, { memberId }));
       // The same relay watch Members refreshes from, on the grants' Rooms.
       const watch = watchWorkspace(identity, baseUrl, workspaceId,
@@ -119,6 +122,7 @@ export function HumanProfile({
         setLoading(false);
       }
       await watch.ready;
+      if (cancelled) return;
       const fresh = await read();
       if (cancelled) return;
       if (fresh) {
@@ -137,7 +141,7 @@ export function HumanProfile({
       stopProfile?.();
       stopWatch?.();
     };
-  }, [workspaceId, memberId, retry]);
+  }, [focused, workspaceId, memberId, retry]);
   const displayedError = error ?? (removed ? 'This person is no longer a member of this Workspace.' : null);
   const self = viewer?.identity.pubkey === memberId;
   const manager = Boolean(viewer?.permissions.manage);

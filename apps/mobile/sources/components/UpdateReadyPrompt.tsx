@@ -7,7 +7,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Text } from '@/components/StyledText';
 import { CloseButton } from '@/components/buzz/CloseGlyph';
 import { ContentTarget } from '@/components/buzz/IndexRow';
-import { useUpdates } from '@/hooks/useUpdates';
+import { useUpdates } from '@/hooks/update-provider';
 
 /** A root-level affordance that remains visible over every interactive route. */
 export const UpdateReadyPrompt = React.memo(function UpdateReadyPrompt() {

@@ -1,0 +1,75 @@
+{
+  "sourceParents": [
+    "40d842a73ad7707bd7ac11c46a0e84354160c5fc",
+    "10b558dd48e998c3fd2b0e0527fd9525d56418ab"
+  ],
+  "scope": "Main integration with resolved join/OAuth/phone conflicts; isolated loopback PostgreSQL, no production or owner Workspace. Native/cohort closure unchanged.",
+  "runner": {
+    "nodeOptions": "--max-old-space-size=4096",
+    "vitestArgs": [
+      "--maxWorkers=2",
+      "--minWorkers=1"
+    ],
+    "execution": "one suite at a time"
+  },
+  "passed": 180,
+  "suiteSelections": 6,
+  "vitest": [
+    {
+      "workspace": "apps/server",
+      "file": "src/rooms-mcp-join.test.ts",
+      "passed": 9,
+      "logSha256": "2cfe456dc545c261baedd6704a6fac3eeb98f2d91e00ab835712332e85f85053"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/rooms-mcp-oauth-completion.test.ts",
+      "passed": 3,
+      "logSha256": "13c69265975eb55828bd8bbcb2823df41bb2736713eec1c447eff8c7bd67167c"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/rooms-mcp-stream.test.ts",
+      "passed": 8,
+      "logSha256": "7c823d95ff739f1c7de085ddb9d6a23a6591f480bc08a32f834e10afd352b666"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/rooms-mcp-stream.postgres.test.ts",
+      "passed": 1,
+      "logSha256": "412421d44c88c091010477ed874cf0ecc5bd26be4ff9f1ed3b2fc2dbd45e4408"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/router-group-c-oauth.postgres.test.ts",
+      "passed": 1,
+      "logSha256": "fc6b8ac7dc5944e336b8c327b2b2d6fdc91ceffa624747ce5cc5e8b4b6f4a3f8"
+    },
+    {
+      "workspace": "apps/server",
+      "file": "src/rooms-mcp.test.ts",
+      "passed": 158,
+      "logSha256": "f860dcb7b00e4ef19b3cef705024c2ec1af5238c518395e8108ed3464e2d4c75"
+    }
+  ],
+  "node": [
+    {
+      "file": "scripts/ci-shards.test.mjs",
+      "passed": 10,
+      "logSha256": "6304f4c6ffd0487c1180437f281e3daf89e1008d8ebcf142473863a26c65eeb8"
+    },
+    {
+      "file": "scripts/network-codec-bundle.test.mjs",
+      "passed": 3,
+      "logSha256": "cc7598dce177146e2ae90089cfbd0348be35a4b86f836910766ad47eef8e5a21"
+    }
+  ],
+  "checks": [
+    "8 workspace builds",
+    "full root typecheck",
+    "base-aware architecture: 20 rules",
+    "phone network inventory: 72 sites / 72 entries",
+    "router boundaries: 158 inventoried, no production opt-in",
+    "workflow paths: 138 references"
+  ]
+}

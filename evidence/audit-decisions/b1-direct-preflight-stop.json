@@ -1,0 +1,25 @@
+{
+  "ok": false,
+  "phase": "connect",
+  "error": "Cleanup connection does not identify its direct backend",
+  "statistics": {
+    "globalSamples": 0,
+    "maxObservedLockWaitMs": 0,
+    "maxObservedWaitingClients": 0,
+    "acknowledgedChanges": {},
+    "completedBatches": 0
+  },
+  "recordedAt": "2026-11-04T08:05:34.337486+00:00",
+  "attempt": "direct-endpoint retry authorized by inbox 010",
+  "endpointNormalization": "Removed -pooler from URL hostname in memory; never printed connection string",
+  "backendIdentityVerified": false,
+  "restorePoint": "audit-b1-20261104080017-pre-cleanup",
+  "restoreBranchId": "br-tiny-haze-b750qrut",
+  "cleanupApplyStarted": false,
+  "deletedRows": 0,
+  "updatedRows": 0,
+  "maximumLockWait": "not measured; monitor did not start",
+  "dryRunCounts": "not collected; PID guard stopped before cleanup()",
+  "b8ContractApplied": false,
+  "nextAction": "Stopped per inbox 010 because direct-endpoint PID mismatch persists; no further retry."
+}

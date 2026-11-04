@@ -196,3 +196,18 @@ started). No fresh row counts were collected because the connection guard stoppe
 before `cleanup()`. `b1-low-traffic-preflight-stop.json` records the aggregate
 receipt. Both telemetry tables and all skill versions were untouched. B8 column
 drops remain staged and unapplied.
+
+## B1 direct-endpoint retry stop (firstmate inbox 010)
+
+Firstmate authorized retrying with `-pooler` removed from the URL hostname, using
+the ready 08:00Z restore point. The operator transformed the connection string
+in memory, connected, and ran the PID comparison before setting session limits
+or calling the dry-run cleanup. The PID comparison still failed, so the retry
+stopped immediately as instructed. No third attempt or production investigation
+was made.
+
+Deleted/updated rows across both attempts: **0**. Maximum lock wait remains
+**not measured** because neither attempt reached the monitor. Fresh dry-run
+counts were not collected. `b1-direct-preflight-stop.json` records this result.
+All skill versions and both excluded telemetry tables remain untouched; B8 drops
+remain unapplied.

@@ -2,7 +2,7 @@
 
 The router capability remains off. This is a pre-rollout adapter follow-up, not
 whole-finding closure or an installed-native acceptance claim. The integration
-base for this report is `5a3dd9632`. Existing rollout-readiness and closure-ledger
+base for this report is `1c559d844`. Existing rollout-readiness and closure-ledger
 rows retain their authority; held compatibility removals stay held.
 
 ## Per-finding disposition
@@ -65,3 +65,9 @@ The measured phone owner is **86,512 raw / 24,506 gzip bytes**, within the uncha
 90,112 / 24,576 limits. The phone manifest remains 72 sites and the router scanner
 158 legacy boundaries. Passing named local proofs does not close any whole
 finding or authorize activation.
+
+The correction from `5a3dd9632` to `1c559d844` changes only MCP fixtures and
+documentation. After merging it, `rooms-mcp-negotiation.test.ts` passes all four
+cases with the production OAuth constructor and the original HTTP 409 and
+zero-query assertions. The preceding 479-case selection remains applicable to
+the unchanged production source.

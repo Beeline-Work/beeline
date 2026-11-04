@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { backfillAgentHandles, migrate, migrateData, MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
-import { alreadySatisfied, lockedTables, logLockHolders, runMigrationStep, satisfiedCheck, splitMigrationStatements } from './migration-steps.js';
+import { alreadySatisfied, lockedTables, logLockHolders, normalizeTriggerDefinition, runMigrationStep, satisfiedCheck, splitMigrationStatements, triggerAlreadyCurrent, triggerPair } from './migration-steps.js';
 
 const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
 if (postgresUrl && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgresUrl).hostname))
@@ -254,5 +254,28 @@ describe('already-satisfied idempotent DDL', () => {
     await expect(alreadySatisfied({ query }, 'ALTER TABLE t DROP COLUMN IF EXISTS a')).resolves.toBe(false);
     expect(query).toHaveBeenCalledTimes(2);
     expect(String(query.mock.calls[0]![0])).not.toMatch(/\bLOCK\b|\bALTER\b/i);
+  });
+});
+
+describe('already-current trigger pairs', () => {
+  const drop = 'DROP TRIGGER IF EXISTS next_day_first_message ON messages;';
+  const create = 'CREATE TRIGGER next_day_first_message AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION note_checkin_first_message();';
+  const installed = 'CREATE TRIGGER next_day_first_message AFTER INSERT ON public.messages FOR EACH ROW EXECUTE FUNCTION note_checkin_first_message()';
+
+  it('pairs only a drop and create of the same trigger on the same table', () => {
+    expect(triggerPair(drop, create)).toEqual(['next_day_first_message', 'messages']);
+    expect(triggerPair(drop, create.replace('ON messages', 'ON rooms'))).toBeNull();
+    expect(triggerPair(drop, 'CREATE TRIGGER other AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION f()')).toBeNull();
+    expect(triggerPair('DROP TRIGGER next_day_first_message ON messages', create)).toBeNull();
+    expect(normalizeTriggerDefinition(installed)).toBe(normalizeTriggerDefinition(create));
+  });
+
+  it('skips only when the installed definition is identical', async () => {
+    const query = vi.fn(async () => ({ rows: [{ definition: installed }] }));
+    await expect(triggerAlreadyCurrent({ query }, drop, create)).resolves.toBe(true);
+    await expect(triggerAlreadyCurrent({ query }, drop, create.replace('AFTER INSERT', 'AFTER INSERT OR UPDATE'))).resolves.toBe(false);
+    const absent = vi.fn(async () => ({ rows: [] }));
+    await expect(triggerAlreadyCurrent({ query: absent }, drop, create)).resolves.toBe(false);
+    await expect(triggerAlreadyCurrent({ query }, 'UPDATE t SET a=1', create)).resolves.toBe(false);
   });
 });

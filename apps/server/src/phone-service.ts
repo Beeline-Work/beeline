@@ -4401,14 +4401,14 @@ export class PhoneService {
       case 'sendRoomMessage': {
         const sent = await this.sendMessage(input as Input<'sendRoomMessage'>, viewerId, sourceClient, familyId);
         this.beginAgentSignIn(input as Input<'sendRoomMessage'>, sent.messageId);
-        await observeOnboardingMessage(this.database, (input as Input<'sendRoomMessage'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
+        await this.observeSentMessage((input as Input<'sendRoomMessage'>).roomId, viewerId);
         return sent as Output<Name>;
       }
       case 'sendRoomReply': {
         await prepareMentionReplyInput(this.database, viewerId, input as Input<'sendRoomReply'>);
         const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId, sourceClient, familyId);
         this.beginAgentSignIn(input as Input<'sendRoomReply'>, sent.messageId);
-        await observeOnboardingMessage(this.database, (input as Input<'sendRoomReply'>).roomId, viewerId).catch(error => console.error('[onboarding]', error));
+        await this.observeSentMessage((input as Input<'sendRoomReply'>).roomId, viewerId);
         return sent as Output<Name>;
       }
       case 'reactToMessage':
@@ -5224,6 +5224,19 @@ export class PhoneService {
       size: stored.size,
       sha256: stored.sha256,
     };
+  }
+
+  /** Analytics follows a committed send without holding its acknowledgement. */
+  private async observeSentMessage(roomId: string, viewerId: string): Promise<void> {
+    const work = () => observeOnboardingMessage(this.database, roomId, viewerId)
+      .catch(error => console.error('[onboarding]', error));
+    const backgroundWork = CornerAccessDatabase.physical(this.database).backgroundWork;
+    if (backgroundWork) backgroundWork.run(async () => {
+      // Queue the response before analytics competes for a database connection.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      await work();
+    });
+    else await work();
   }
 
   private async sendMessage(

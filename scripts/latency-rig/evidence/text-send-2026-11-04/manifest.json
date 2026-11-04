@@ -1,0 +1,55 @@
+{
+  "before": {
+    "binary": "original Play-derived runtime44/code144",
+    "ota": "v0.1.142",
+    "source": "98c2a49a4f3df909e8fd3fc32ae39129f6f8367b"
+  },
+  "after": {
+    "native": "unchanged runtime44/code144",
+    "sourceBase": "5547a106b",
+    "changes": "outgoing sender bypasses NewMessageMaterialize; server remains production142"
+  },
+  "restored": {
+    "restoredProductionV142Sha256": "0814b713dcfa6ed20048aae18d4ce2a3b22af36d1a888b564c5b1af0cc0d6f0c",
+    "metadataRestored": true
+  },
+  "rawVideoKeptInTaskWorktree": [
+    {
+      "path": ".beeline-proof/send-latency/C.mp4",
+      "sha256": "6000c8cc8951ef0d6b70541223c1a5bf55d691c6dcf7868ff45f341abaf351f2"
+    },
+    {
+      "path": ".beeline-proof/send-latency/D.mp4",
+      "sha256": "be7effe0c87fbdcfd437d954507ef3179c926ed2dfa288539e5aaf5e221ae6a8"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold.mp4",
+      "sha256": "de9ca556661f6ee812e00f7b2d48b6ceb4edee2c702281a60b0f75adf6bd6aa9"
+    }
+  ],
+  "excluded": [
+    "B: initial #proof run, superseded by dedicated Room baseline",
+    "A: #proof concurrent connection-proof arrivals; invalid comparison"
+  ],
+  "limits": [
+    "Screenrecord capture overhead and shared20-core host load35; emulator is not a calibrated physical phone",
+    "First matched readable glyph frame >=0.97 normalized correlation; faint entrance fragments may appear earlier",
+    "D capture terminated after21 samples; all21 retained",
+    "Cold Room is one process-start sample, not a p50/p95 distribution",
+    "Production loopback includes server/DB processing and local socket/event-loop cost; not exact per-handler span",
+    "Production server after deployment and native ack->UI frame were not measured"
+  ],
+  "hostEvidence": {
+    "logicalCpus": 20,
+    "loadAverageAt2253Eastern": [
+      38.84,
+      28.87,
+      23.43
+    ],
+    "cpuPressureSomeAvg60Percent": 26.65,
+    "vmstatIdlePercent": [
+      16,
+      16
+    ]
+  }
+}

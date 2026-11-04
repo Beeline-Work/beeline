@@ -377,6 +377,63 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     expect(view.messages.filter(message => message.text === 'Retry me')).toHaveLength(2);
   });
 
+  it.each(['sendRoomMessage', 'sendRoomReply'] as const)(
+    'SEND-ACK-1: %s acknowledges the committed write while onboarding observation is blocked',
+    async (op) => {
+      const socket = await open();
+      const observing = deferred(), releaseObservation = deferred();
+      const query = db.query.bind(db);
+      const observe = vi.spyOn(db, 'query').mockImplementation(async (sql, values) => {
+        if (sql.includes('FROM free_agents f JOIN identities i')) {
+          observing.resolve();
+          await releaseObservation.promise;
+        }
+        return query(sql, values);
+      });
+      const id = 'd'.repeat(64);
+      const reply = request(socket, op, {
+        roomId: ROOM, messageId: id, text: 'Acknowledgement precedes analytics',
+        ...(op === 'sendRoomReply' ? { parentMessageId: MESSAGE } : {}),
+      });
+      let acknowledgedWhileBlocked = false;
+      try {
+        await observing.promise;
+        acknowledgedWhileBlocked = await Promise.race([
+          reply.then(frame => frame.ok && (frame.result as { messageId: string }).messageId === id),
+          new Promise<false>(resolve => setTimeout(() => resolve(false), 500)),
+        ]);
+        // Tracked background work keeps its database alive until observation finishes.
+        if (acknowledgedWhileBlocked) expect(db.backgroundWork.isEmpty).toBe(false);
+        expect((await query(`SELECT id FROM messages WHERE id=$1`, [id])).rows).toHaveLength(1);
+      } finally {
+        releaseObservation.resolve();
+        await reply;
+        await db.backgroundWork.drain();
+      }
+      expect(acknowledgedWhileBlocked).toBe(true);
+      expect(observe.mock.calls.some(([sql]) => sql.includes('onboarding_friend_id=$2'))).toBe(true);
+      expect(db.backgroundWork.isEmpty).toBe(true);
+    },
+  );
+
+  it('SEND-ACK-2: failed onboarding observation cannot fail a committed send or escape background draining', async () => {
+    const socket = await open();
+    const error = new Error('analytics unavailable');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const query = db.query.bind(db);
+    vi.spyOn(db, 'query').mockImplementation(async (sql, values) => {
+      if (sql.includes('FROM free_agents f JOIN identities i')) throw error;
+      return query(sql, values);
+    });
+    const id = 'd'.repeat(64);
+    expect(await request(socket, 'sendRoomMessage', { roomId: ROOM, messageId: id, text: 'Keep the receipt' }))
+      .toMatchObject({ ok: true, result: { messageId: id } });
+    await db.backgroundWork.drain();
+    expect(logged).toHaveBeenCalledWith('[onboarding]', error);
+    expect(db.backgroundWork.isEmpty).toBe(true);
+    expect((await query(`SELECT id FROM messages WHERE id=$1`, [id])).rows).toHaveLength(1);
+  });
+
   it('keeps write change notices and read-mark operations identical to the web path', async () => {
     const socket = await open(), publish = vi.spyOn(live, 'publish');
     const args = { roomId: ROOM, messageId: 'f'.repeat(64), text: 'Socket message' };

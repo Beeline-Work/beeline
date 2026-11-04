@@ -4484,6 +4484,16 @@ describe('Connector receipt cards', () => {
 });
 
 
+it.each([true, false])('SEND-PAINT-1: new message entrance is disabled for the sender (%s)', (isUser) => {
+  const renderer = render(<OrdinaryLedgerMessage
+    message={message({ id: 'new-message', text: 'Hello Room', isNew: true, isUser })}
+    participantsHydrated viewerPubkey="viewer" deliveryFailed={false} speakerWorking={false} continued={false}
+    participantHandles={[]} channelIndex={{ rooms: [], corners: [] }}
+    onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()} onDismiss={vi.fn()}
+  />);
+  expect(renderer.root.findByType('NewMessageMaterialize' as any).props.enabled).toBe(!isUser);
+});
+
 describe('private untagged message hint', () => {
   it.each([
     ['sender', 'viewer', true, false, undefined, 1],

@@ -1570,8 +1570,9 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     replyReference
   );
 
+  // A local send is tap feedback; never hide it behind the arrival fade.
   const content = (
-    <NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>
+    <NewMessageMaterialize enabled={Boolean(message.isNew) && !message.isUser} messageId={message.id}>
       <View>
         {isSelfSteer ? (
           <LedgerSteer

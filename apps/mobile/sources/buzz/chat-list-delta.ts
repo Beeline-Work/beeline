@@ -1,3 +1,4 @@
+import type { ReadAuthority } from './read-authority';
 import {
   chatActivityAt,
   type SidebarPreview,
@@ -59,7 +60,7 @@ function placed(
 type CornerFacts = Pick<ChatListItem, 'cornerCount' | 'waitingCornerCount' | 'mineCornerCount' | 'openCorners'>;
 
 /** The view without corner facts, once the corner store holds them. */
-export function withoutCornerFacts(view: ChatListView): ChatListView {
+function withoutCornerFactsOwned(view: ChatListView): ChatListView {
   if (!view.chats.some((item) => 'cornerCount' in item || 'openCorners' in item)) return view;
   return {
     ...view,
@@ -72,7 +73,7 @@ export function withoutCornerFacts(view: ChatListView): ChatListView {
 }
 
 /** The view with each Room's corner facts put back, for the saved copy. */
-export function withCornerFacts(
+function withCornerFactsOwned(
   view: ChatListView,
   facts: (roomId: string) => CornerFacts | undefined,
 ): ChatListView {
@@ -123,9 +124,9 @@ function applyMessage(
 /**
  * Fold one committed Room delta into the deck. A working turn lights the row;
  * a terminal one cannot clear it here, because the row's state also rolls up
- * every corner's turns — see `chatListDeltaNeedsRead`.
+ * every corner's turns — see `chatListDeltaNeedsReadOwned`.
  */
-export function applyChatListDelta(
+function applyChatListDeltaOwned(
   view: ChatListView,
   delta: ChatListDelta,
   context: ChatListDeltaContext = {},
@@ -193,7 +194,7 @@ export function applyChatListDelta(
 }
 
 /** Older live frames without a preview or terminal state need one covering read. */
-export function chatListDeltaNeedsRead(view: ChatListView, delta: ChatListDelta): boolean {
+function chatListDeltaNeedsReadOwned(view: ChatListView, delta: ChatListDelta): boolean {
   if (delta.type === 'corner-status' || delta.type === 'read-state') return false;
   if (delta.type === 'sidebar-preview') {
     return delta.preview.deleted === true && !('deckPreview' in delta) && view.chats.some((item) =>
@@ -215,7 +216,7 @@ export function chatListDeltaNeedsRead(view: ChatListView, delta: ChatListDelta)
  * later incomplete read still sees it as unknown. Corner facts are the corner
  * store's, which a read without them leaves alone.
  */
-export function keepUnavailableChatFacts(
+function keepUnavailableChatFactsOwned(
   held: ChatListView | null,
   read: ChatListView,
 ): ChatListView {
@@ -257,3 +258,13 @@ export function chatWatchFiltersKey(filters: ChatListView['watchFilters']): stri
       .sort(),
   );
 }
+
+export function withoutCornerFacts(_authority: ReadAuthority, ...args: Parameters<typeof withoutCornerFactsOwned>): ReturnType<typeof withoutCornerFactsOwned> { return withoutCornerFactsOwned(...args); }
+
+export function withCornerFacts(_authority: ReadAuthority, ...args: Parameters<typeof withCornerFactsOwned>): ReturnType<typeof withCornerFactsOwned> { return withCornerFactsOwned(...args); }
+
+export function applyChatListDelta(_authority: ReadAuthority, ...args: Parameters<typeof applyChatListDeltaOwned>): ReturnType<typeof applyChatListDeltaOwned> { return applyChatListDeltaOwned(...args); }
+
+export function chatListDeltaNeedsRead(_authority: ReadAuthority, ...args: Parameters<typeof chatListDeltaNeedsReadOwned>): ReturnType<typeof chatListDeltaNeedsReadOwned> { return chatListDeltaNeedsReadOwned(...args); }
+
+export function keepUnavailableChatFacts(_authority: ReadAuthority, ...args: Parameters<typeof keepUnavailableChatFactsOwned>): ReturnType<typeof keepUnavailableChatFactsOwned> { return keepUnavailableChatFactsOwned(...args); }

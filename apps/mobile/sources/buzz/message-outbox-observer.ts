@@ -17,13 +17,6 @@ export function observeMessageOutbox(owner?: MessageOutbox): () => void {
   publish();
   return owner?.subscribe(publish) ?? (() => undefined);
 }
-export function useOutboxRecords() {
-  return useSyncExternalStore(
-    listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-    () => records,
-  );
-}
-
 /** A Room row paints only its newest unseen refusal, not the delivery queue. */
 export function useRoomOutboxFailure(roomId: string) {
   const snapshot = useCallback(() => {

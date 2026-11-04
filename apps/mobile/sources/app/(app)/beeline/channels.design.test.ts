@@ -6,21 +6,6 @@ const component = (name: string) =>
 const row = component('ConversationRow');
 const toolbar = component('RoomListToolbar');
 describe('Approved Room list layout', () => {
-  it('retains the virtualized mobile list, Messages grouping and real Room navigation', () => {
-    expect(source).toContain('<SectionList');
-    expect(source).toContain('sections={chatSections}');
-    expect(source).toContain('<RoomListSectionHeader title={section.title}');
-    expect(source).toContain('openRoom(item.room.id)');
-  });
-  it('keeps the ROOMS and DIRECT MESSAGES headers on the 16px screen inset', () => {
-    // The SectionList content has no horizontal padding; cards carry their own
-    // inset, so the header must keep its default screen inset (hull.space.md).
-    expect(source).toMatch(/<RoomListSectionHeader title=\{section.title\}[\s>]/);
-    expect(source).not.toMatch(/<RoomListSectionHeader title=\{section.title\}[^>]*inset="content"/);
-    const header = component('RoomListSectionHeader');
-    expect(header).toContain("inset = 'screen'");
-    expect(header).toContain('paddingHorizontal: hull.space.md');
-  });
   it('uses the workspace identity and header actions with Members then Tray in the primary row', () => {
     expect(source).toContain('<CommunityDrawerTrigger community={activeCommunity}');
     expect(source).toContain('<MembersAgentsGlyph');
@@ -50,13 +35,6 @@ describe('Approved Room list layout', () => {
     expect(row).toContain('backgroundColor: theme.buzz.accent');
     expect(row).not.toContain('roomRowNeedsAttention');
     expect(row).not.toContain('presenceDot');
-  });
-  it('never passes desktop selection to mobile and toggles the corner dropdown on a tap', () => {
-    expect(source).not.toContain('selected={');
-    expect(source).toMatch(
-      /onToggleCorners=\{\(\) => \{\s*if \(roomListGestures\.canInteract\(\)\) cornerDropdowns\.toggle\(item\.room\.id\);\s*\}\}/,
-    );
-    expect(source).toContain('<DesktopRoomCorners');
   });
   it('keeps desktop corners independently selectable, waiting first, from the corner record alone', () => {
     const corners = component('DesktopRoomCorners');

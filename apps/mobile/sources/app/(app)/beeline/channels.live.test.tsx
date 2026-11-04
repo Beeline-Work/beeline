@@ -1216,6 +1216,7 @@ describe('Room deck live path', () => {
         section: { kind, title, data: [{}, {}, {}] },
       });
       expect(header.props.title).toBe(title);
+      expect(header.props.inset).toBe('roomList');
       expect(header.props.count).toBeUndefined();
     }
     act(() => renderer.unmount());

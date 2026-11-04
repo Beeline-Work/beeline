@@ -1,0 +1,55 @@
+{
+  "sourceHead": "3a77888f6b99465e9156efc237cfab7d5a5167e4",
+  "fault": "Reject one deps.save(records) containing failureproofBeta; hold only unrelatedproofBeta transport until a disarmed process restart; product handler and queue logic unchanged.",
+  "bundleSha256": "1905e2077959b7f7aa71739b62f2ffbcca39c0868c32f1677908690b6b426ff6",
+  "unrelatedTap": {
+    "tapBeforeNs": 1793775758372132586,
+    "tapAfterNs": 1793775758414730313,
+    "tapBeforeElapsedNs": 150478610000000,
+    "tapAfterElapsedNs": 150478640000000,
+    "count": 1,
+    "x": 981,
+    "y": 1438
+  },
+  "unrelatedHeldBeforeFault": true,
+  "failureTap": {
+    "tapBeforeNs": 1793775764724476514,
+    "tapAfterNs": 1793775764756149512,
+    "tapBeforeElapsedNs": 150484960000000,
+    "tapAfterElapsedNs": 150484980000000,
+    "count": 1,
+    "x": 981,
+    "y": 1438
+  },
+  "injectedFailedIds": [
+    "8f4bf9c0a8250acb11a3ee97c67ff69b0312d69205532623b23cf1f755a3e46b"
+  ],
+  "canonicalAfterFailure": [],
+  "dismissedError": {
+    "x": 923,
+    "y": 1287,
+    "title": "Could not prepare message"
+  },
+  "draftRetained": true,
+  "retryTap": {
+    "tapBeforeNs": 1793775771220916902,
+    "tapAfterNs": 1793775771263497064,
+    "tapBeforeElapsedNs": 150491460000000,
+    "tapAfterElapsedNs": 150491490000000,
+    "count": 1,
+    "x": 981,
+    "y": 1438
+  },
+  "canonicalAfterRetry": [
+    "89e2c78bc8497632b456fe311ef5c7d33d9300bbeef30885eae0f0beb7bed7a5"
+  ],
+  "unrelatedStillQueuedAfterRetry": true,
+  "faultDisarmedBeforeRestart": true,
+  "canonicalAfterRestart": [
+    "89e2c78bc8497632b456fe311ef5c7d33d9300bbeef30885eae0f0beb7bed7a5"
+  ],
+  "unrelatedAfterRestart": [
+    "3ca768107a84805a23bc69cf7cf30be11cb76a6f112a95b962caec8896784e34"
+  ],
+  "passed": true
+}

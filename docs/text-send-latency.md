@@ -1,24 +1,84 @@
 # Text send latency — November 4, 2026
 
-The 150 ms interaction budget is still missed in this capture. The native
-send path now paints one local row before signing, persistence,
-Room-wide projections or network work. Cold Room opening still misses the
-450 ms budget. The server improvement is measured in an isolated scenario;
-it has not been deployed to production.
+The current-head operator capture passes the observed 150 ms send budget:
+24 sends have p50/p95 84.259/127.081 ms and maximum 140.341 ms. This is an
+observed emulator result, not a universal all-device guarantee. The earlier
+load-variable capture below still fails at 216 ms p95. Cold Room opening
+still misses the 450 ms budget. The server improvement is measured in an
+isolated scenario; it has not been deployed to production.
 
 Firstmate approved this measured improvement under delegated overnight decision
-authority despite the unmet 150 ms send p95 and 450 ms cold-load budgets.
-Remaining send p95 work continues in follow-up; the all-surfaces worker owns
-cold Room opening. This change does not claim to meet the latency invariant.
+authority (decision006) despite the then-unmet 150 ms send p95 and 450 ms
+cold-load budgets. The all-surfaces worker owns cold Room opening in follow-up.
+Decision007's conditional native acceptance is now satisfied by the operator
+device runs attached below. This change does not claim to meet the full latency
+invariant.
 
-## Native comparison
+## Current-head native acceptance
+
+The credential-free [operator evidence index](../scripts/latency-rig/evidence/text-send-2026-11-04/current-head-native/summary.json)
+records tests on exact code head `3a77888f6b99465e9156efc237cfab7d5a5167e4`,
+using the original Play runtime44/code144 binary on emulator-5626 against
+production142, with the review identity in Beeline Review only. No OTA was
+published, native binary replaced or server deployed. The pure-Hermes bundle's
+critical Room route, chat surface, preview, row renderer and outbox sources
+were matched to the current code by the operator. Bundle hashes and source
+checks are attached; `tested-code-trees.json` identifies unchanged mobile,
+server and package implementation trees if this documentation changes HEAD.
+
+| Native scenario | Result and evidence |
+| --- | --- |
+| Empty Room send and canonical handoff | PASS: one canonical message, at most one native transcript copy, dark readable first frame at 139 ms. `functional.json`, `functional-frames.json`, `empty-first.png` and `empty-previous.png`. |
+| Double-tap Send | PASS: exactly one canonical message, at most one native transcript copy, dark readable first frame at 133 ms. `functional.json`, `functional-frames.json` and `double-first.png`. These two functional timings are one-off samples, not the performance distribution. |
+| Navigate immediately after Send | PASS: source delivery completes exactly once; destination canonical read is empty. All three source tokens are absent in all five destination-header frames; manual review of `navigation-empty.png` confirms the empty destination. `target-all-source-tokens.json` and `functional.json`. |
+| Durable enqueue failure, retry and restart | PASS: separate controlled-fault bundle rejects the real `deps.save` once; failed event never reaches the server, draft remains, retry delivers once, and disarmed process restart still shows one canonical message. An unrelated queued record survives and delivers exactly once. `enqueue-recovery.json`, `failed-save-draft.png`, `retained-draft.png` and `after-restart.png`. |
+
+The controlled `fault-injection.patch` wraps the real durable save and holds
+only the unrelated record's transport. It bypasses no product enqueue or
+handler logic and is absent from the pure latency bundle. The atomic enqueue
+fix rolls back the failed record without losing unrelated queued records.
+The Room-scope fix keys the screen by Room/Workspace so route reuse remounts
+its transcript/window/preview state; late send completion uses its captured
+source outbox rather than the destination Room's outbox. Durable outbox and
+server DTO ownership remain unchanged; no phone connection or polling is added.
+
+The fresh paired capture alternates four blocks of six sends per arm in one
+session, with fixed screenshot readiness, no UI dumps and frame extraction
+only after capture. Baseline `283dd1cfd91e2a74b7f46f909e2684c77cfa649f` already
+contains the original sender-fade fix; current head includes the atomic enqueue
+and Room-scope fixes.
+
+| Tap → readable message | Samples | p50 | p95 | Maximum | Below 150 ms |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline | 24 | 136.595 ms | 202.783 ms | 432.883 ms | 16/24 |
+| Current head | 24 | 84.259 ms | 127.081 ms | 140.341 ms | 24/24 |
+
+Current after-input-command p50/p95 is 63.583/97.081 ms. `paired-results.json`
+retains every sample, monotonic tap bracket and recognition trace;
+`paired-canonical.json` confirms all 48 exact payloads exist once, deduplicating
+overlapping history by message id. No sample was dropped. The original
+production142 launch bytes and complete Expo manifest/asset hashes were
+restored, and the operator reports a healthy phone process at versionCode144.
+
+Native live test acceptance for `TEST-CURRENT-HEAD-NATIVE` and the five pending
+native scenarios in `test-2` is recorded as PASS from these operator runs,
+including the paired comparison. This phase inspected the supplied evidence;
+it did not repeat device mutations. Earlier live server validation passed
+normal sends, blocked/erroring observation and shutdown draining: a real
+PostgreSQL onboarding lock held observation while committed-write receipts
+arrived. The physical `CornerAccessDatabase.backgroundWork` forwarding fix
+ensures tracked work reaches the underlying database and shutdown waits for it.
+Production exact handler, native wire-to-JS and ack-to-canonical spans remain
+unavailable; the measurements and limits below still apply.
+
+## Historical pre-rebase native comparison
 
 All writes used the Play-review identity in **Beeline Review**, never the
 captain's Workspace. The private `send-latency-20261104` Room
 (`ba6e778a-69ff-4ea2-8b8d-68f94039add3`) has no agent members or model invocation.
 The native binary remained the original Play-derived runtime44/code144.
 
-The final comparison alternates old/new local Hermes bundles in the same
+The earlier load-variable comparison alternates old/new local Hermes bundles in the same
 session against production142, six sends per block, four blocks per arm.
 The old local bundle already includes the sender-fade fix; the new one adds
 the independently subscribed first row. Neither bundle was published as OTA.
@@ -130,9 +190,16 @@ Production after-deployment handling also remains unmeasured.
 
 Per-sample evidence and bundle/video hashes are in
 [`scripts/latency-rig/evidence/text-send-2026-11-04`](../scripts/latency-rig/evidence/text-send-2026-11-04/).
-Raw videos, first/preceding frames and capture scripts remain in the task's
-ignored `.beeline-proof/send-latency/`; they are not available from a GitHub
-checkout. Credentials are excluded from committed evidence.
+Current-head JSON, selected PNGs, capture/analysis harnesses and the controlled
+fault patch are attached under `current-head-native/`. The harnesses are
+historical operator provenance, not portable replay commands: they reference
+operator-local fixtures and private session inputs that are deliberately absent.
+`functional.json`'s original `frame-summary.json` is copied as
+`functional-frames.json`; `local-artifact-hashes.json` retains the original local
+artifact names, including videos that remain local. Earlier failure screenshots,
+raw videos and other first/preceding frames remain in the task's ignored
+`.beeline-proof/send-latency/`, unavailable from a GitHub checkout. Launch assets,
+original manifests, secrets and private sessions are excluded from this copy.
 
 Final sends use fixed screenshot-selected composer/send coordinates, screenshot
 OCR readiness, and enabled-arrow verification before each tap. Empty draft

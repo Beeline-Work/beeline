@@ -1,0 +1,116 @@
+[
+  {
+    "label": "empty-send",
+    "token": "emptyproofGamma",
+    "first": {
+      "frame": 2,
+      "elapsedNs": 150442899440828,
+      "afterTapBeforeMs": 139.440828,
+      "hits": [
+        {
+          "word": "emptyproofGamma",
+          "box": [
+            12,
+            490,
+            195,
+            19
+          ],
+          "inkP5": 26.0,
+          "inkMin": 7
+        }
+      ]
+    },
+    "settledHits": [
+      {
+        "word": "emptyproofGamma",
+        "box": [
+          12,
+          490,
+          195,
+          19
+        ],
+        "inkP5": 19.0,
+        "inkMin": 15
+      }
+    ],
+    "maxNativeCopies": 1,
+    "targetRoomFrames": 0,
+    "targetRoomLeaks": []
+  },
+  {
+    "label": "double-tap",
+    "token": "doubleproofGamma",
+    "first": {
+      "frame": 3,
+      "elapsedNs": 150449183132885,
+      "afterTapBeforeMs": 133.132885,
+      "hits": [
+        {
+          "word": "doubleproofGamma",
+          "box": [
+            12,
+            490,
+            199,
+            19
+          ],
+          "inkP5": 24.0,
+          "inkMin": 10
+        }
+      ]
+    },
+    "settledHits": [
+      {
+        "word": "doubleproofGamma",
+        "box": [
+          12,
+          490,
+          199,
+          19
+        ],
+        "inkP5": 19.0,
+        "inkMin": 16
+      }
+    ],
+    "maxNativeCopies": 1,
+    "targetRoomFrames": 0,
+    "targetRoomLeaks": []
+  },
+  {
+    "label": "navigate-first-paint",
+    "token": "navproofGamma",
+    "first": {
+      "frame": 2,
+      "elapsedNs": 150455212681920,
+      "afterTapBeforeMs": 62.68192,
+      "hits": [
+        {
+          "word": "navproofGamma",
+          "box": [
+            13,
+            490,
+            164,
+            19
+          ],
+          "inkP5": 25.0,
+          "inkMin": 7
+        }
+      ]
+    },
+    "settledHits": [
+      {
+        "word": "navproofGamma",
+        "box": [
+          13,
+          490,
+          164,
+          19
+        ],
+        "inkP5": 19.0,
+        "inkMin": 14
+      }
+    ],
+    "maxNativeCopies": 1,
+    "targetRoomFrames": 5,
+    "targetRoomLeaks": []
+  }
+]

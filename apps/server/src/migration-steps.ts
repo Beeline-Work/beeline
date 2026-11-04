@@ -120,3 +120,62 @@ export async function logLockHolders(
     console.warn(`[migration] ${name} lock holder diagnostic failed: ${(error as Error)?.message ?? error}`);
   }
 }
+
+type CatalogDatabase = {
+  query(sql: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+};
+
+/** Split at top-level commas, ignoring commas inside parentheses or quotes. */
+function topLevelParts(text: string): string[] {
+  const parts: string[] = [];
+  let depth = 0;
+  let quote = '';
+  let start = 0;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (quote) { if (char === quote) quote = ''; continue; }
+    if (char === "'" || char === '"') quote = char;
+    else if (char === '(') depth++;
+    else if (char === ')') depth--;
+    else if (char === ',' && depth === 0) { parts.push(text.slice(start, index)); start = index + 1; }
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+const IDENT = '([A-Za-z_][A-Za-z0-9_]*)';
+const ADD_COLUMN = new RegExp(`^ALTER\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:ONLY\\s+)?${IDENT}\\s+(ADD\\s+COLUMN\\s+IF\\s+NOT\\s+EXISTS\\s+[\\s\\S]*)$`, 'i');
+const COLUMN_CLAUSE = new RegExp(`^\\s*ADD\\s+COLUMN\\s+IF\\s+NOT\\s+EXISTS\\s+${IDENT}\\b`, 'i');
+const CREATE_RELATION = new RegExp(`^CREATE\\s+(?:UNIQUE\\s+)?(?:TABLE|INDEX)\\s+IF\\s+NOT\\s+EXISTS\\s+${IDENT}\\b`, 'i');
+
+/** The catalog objects an idempotent statement would create, or null when the
+ * statement is not a plain IF NOT EXISTS create whose effect can be read back. */
+export function satisfiedCheck(statement: string): { relation: string; columns: string[] } | null {
+  const sql = statement.replace(/^(?:\s*--[^\n]*\n)*/, '').trim().replace(/;\s*$/, '');
+  const create = sql.match(CREATE_RELATION);
+  if (create && !/\bCONCURRENTLY\b/i.test(sql)) return { relation: create[1]!.toLowerCase(), columns: [] };
+  const alter = sql.match(ADD_COLUMN);
+  if (!alter) return null;
+  const columns: string[] = [];
+  for (const part of topLevelParts(alter[2]!)) {
+    const column = part.match(COLUMN_CLAUSE);
+    if (!column) return null;
+    columns.push(column[1]!.toLowerCase());
+  }
+  return { relation: alter[1]!.toLowerCase(), columns };
+}
+
+/** True when an IF NOT EXISTS statement's objects already exist. Such a statement
+ * is a no-op, but PostgreSQL still queues for the table lock to learn that, which
+ * a busy production table can refuse. Reading the catalog takes no table lock. */
+export async function alreadySatisfied(database: CatalogDatabase, statement: string): Promise<boolean> {
+  const check = satisfiedCheck(statement);
+  if (!check) return false;
+  const { rows } = await database.query(
+    `SELECT to_regclass($1) IS NOT NULL AS relation,
+       (SELECT count(*)::int FROM pg_attribute
+         WHERE attrelid = to_regclass($1) AND attname = ANY($2::text[]) AND NOT attisdropped) AS columns`,
+    [check.relation, check.columns],
+  );
+  return rows[0]?.relation === true && rows[0]?.columns === check.columns.length;
+}

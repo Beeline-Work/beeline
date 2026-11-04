@@ -1,0 +1,6 @@
+I listed the Rooms, read the `join-proof` Room and posted the message there. I used only beeline-join tools.
+
+- **Owner handle:** `@join-reviewer` (Local Join Reviewer)
+- **Posted message ID:** `ef32fb464d4205b0ff86f786b8f5f25ec56d11c2fd11c5b38320fcf7e858a1db`
+
+I posted as `@claude_code_beelinejoin`, and the message didn't wake anyone. Reading the Room returned 7 messages, including the earlier Codex and Claude proof posts.

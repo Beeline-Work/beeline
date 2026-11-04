@@ -812,7 +812,11 @@ jobs:
           bash scripts/npm-ci-timed.sh
           npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client
       - uses: ./.github/actions/eas-cli
+      # Pages keeps one deployment per commit, so a second deploy of the same
+      # release SHA is ignored. When the helper ships, its Pages deploy carries
+      # the website too; deploying here first would pin the old helper channel.
       - uses: ./.github/actions/pages-leg
+        if: needs.initialize.outputs.run_helper != 'true'
         with:
           manifest_url: ${{ vars.BEELINE_PAGES_MANIFEST_URL || 'https://beeline-work.github.io/beeline/dl/manifest.json' }}
       - uses: ./.github/actions/web-app-leg

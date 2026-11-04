@@ -53,6 +53,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       ($1,NULL,$4,'owner'),($1,NULL,$5,'member'),($1,NULL,$6,'member'),($1,$2,$4,'owner'),($1,$2,$6,'member'),($1,$3,$5,'member')`, [WORKSPACE, ROOM, PRIVATE, USER, OTHER, AGENT]);
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'private nebula')`, ['d'.repeat(64), PRIVATE, OTHER]);
     const auth = new TokenAuth(db, async () => { throw new Error('unused'); }, () => new Date(), async ticket => {
+      if (ticket.startsWith('local-new-')) return { subject: ticket, name: 'Robin Proof', audience: 'local-test' };
       if (ticket !== 'local-demo-ticket') throw new Error('Invalid ticket');
       return { subject: 'mcp-demo', name: 'Demo', audience: 'local-test' };
     });
@@ -64,7 +65,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     server = createBeelineServer(options);
     await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
     origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-    options.roomsMcp = new RoomsMcp(new RoomsMcpOAuth(db, origin, auth), phone, live, daemon, undefined,
+    options.roomsMcp = new RoomsMcp(new RoomsMcpOAuth(db, origin, auth, 'localhost'), phone, live, daemon, undefined,
       new RoomsMcpEvents(db, (url, init) => eventTransport(url, init)));
   }, 60_000);
   beforeEach(async () => {
@@ -79,12 +80,12 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   async function post(path: string, input: Record<string, unknown>, headers: Record<string, string> = {}) {
     return fetch(origin + path, { method: 'POST', redirect: 'manual', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify(input) });
   }
-  async function prepareAuthorization(scope = 'rooms:read rooms:write', clientId?: string, redirectUri = 'http://127.0.0.1:9876/callback') {
+  async function prepareAuthorization(scope = 'rooms:read rooms:write', clientId?: string, redirectUri = 'http://127.0.0.1:9876/callback', ticket = 'local-demo-ticket', resource = origin + '/mcp') {
     const registered = await post('/mcp/oauth/register', { client_name: 'Local MCP reviewer', redirect_uris: ['http://127.0.0.1:9876/callback'], token_endpoint_auth_method: 'none' });
     expect(registered.status).toBe(201);
     const client = clientId ? { client_id: clientId } : await registered.json() as { client_id: string };
     const verifier = opaque();
-    const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, response_type: 'code', resource: origin + '/mcp',
+    const query = new URLSearchParams({ client_id: client.client_id, redirect_uri: redirectUri, response_type: 'code', resource,
       code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope, state: 'review-state' });
     if (!scope) query.delete('scope');
     const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
@@ -94,7 +95,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     const flow = new URL(consent, origin).searchParams.get('flow')!;
     const login = await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
     expect(login.headers.get('location')).toContain('/auth/oidc/start');
-    const callback = await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
+    const callback = await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=${encodeURIComponent(ticket)}`, { headers: { cookie }, redirect: 'manual' });
     expect(callback.status).toBe(302);
     const page = await fetch(origin + consent, { headers: { cookie } });
     expect(page.headers.get('referrer-policy')).toBe('same-origin');
@@ -105,8 +106,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(consentHtml).toContain(clientId ? 'to your team</h1>' : 'Local MCP reviewer');
     return { consentHtml, consent, clientId: client.client_id, verifier, cookie, flow };
   }
-  async function authorize(scope = 'rooms:read rooms:write', decision = 'allow', clientId?: string, redirectUri = 'http://127.0.0.1:9876/callback', wake: Record<string, unknown> = {}) {
-    const prepared = await prepareAuthorization(scope, clientId, redirectUri);
+  async function authorize(scope = 'rooms:read rooms:write', decision = 'allow', clientId?: string, redirectUri = 'http://127.0.0.1:9876/callback', wake: Record<string, unknown> = {}, resource = origin + '/mcp') {
+    const prepared = await prepareAuthorization(scope, clientId, redirectUri, undefined, resource);
     const { flow, cookie } = prepared;
     const result = await post('/mcp/oauth/consent', { flow, decision, workspace_selection: '1', workspace_ids: [WORKSPACE], ...wake }, { cookie, origin });
     expect(result.status).toBe(302);
@@ -160,6 +161,38 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     eventTransport = postMcpWebhook; vi.unstubAllEnvs();
     await db.query('DELETE FROM rooms_mcp_event_subscriptions');
   });
+  it.each(['server/join', 'short', 'short/', 'short/join'])('JOIN-1: %s authorizes, initializes, reads and posts with the same resource', async alias => {
+    const short = alias.startsWith('short');
+    const host = short ? `localhost:${new URL(origin).port}` : new URL(origin).host;
+    const path = alias.endsWith('/join') ? '/join' : '/';
+    const endpoint = (short ? `http://${host}` : origin) + path;
+    const resource = alias === 'short' ? endpoint.slice(0, -1) : endpoint;
+    const grant = await authorize('rooms:read rooms:write', 'allow', undefined, undefined, {}, resource);
+    const issued = await exchange(grant, { resource });
+    expect(issued.status).toBe(200);
+    const { access_token: token } = await issued.json() as { access_token: string };
+    // Muse preserves resource spelling and never follows redirects. A token
+    // obtained with either the bare or slashed origin must POST directly to '/'.
+    const direct = await fetch(endpoint, { method: 'POST', redirect: 'manual',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: {
+        protocolVersion: '2025-03-26', capabilities: {}, clientInfo: { name: 'muse-resource-proof', version: '1' },
+      } }),
+    });
+    expect(direct.status).toBe(200);
+    expect(direct.headers.get('location')).toBeNull();
+    expect((await direct.json() as { result: { serverInfo: { name: string } } }).result.serverInfo.name).toBe('beeline-rooms');
+    const client = new Client({ name: 'join-alias-proof', version: '1' });
+    clients.push(client);
+    await client.connect(new StreamableHTTPClientTransport(new URL(endpoint), {
+      requestInit: { headers: { authorization: `Bearer ${token}` } },
+    }));
+    expect(JSON.stringify(await client.callTool({ name: 'list_rooms', arguments: {} }))).toContain('Demo');
+    expect((await client.callTool({ name: 'read_messages', arguments: { room: ROOM } })).isError).not.toBe(true);
+    const text = `JOIN-1 synthetic post via ${alias}`;
+    expect((await client.callTool({ name: 'send_message', arguments: { room: ROOM, text } })).isError).not.toBe(true);
+    expect(JSON.stringify(await phone.readRoom(ROOM, USER))).toContain(text);
+  }, 60_000);
   it.each(['webhook', 'events', 'bridge', 'none', 'expired bridge', 'expired events'])(
     'R2: tag receipt accounts for connected member route %s', async route => {
       const fixture = await eventFixture();
@@ -1051,6 +1084,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(send.description).toContain("asker's exact @handle to wake them");
     for (const text of [client.getInstructions(), setup, MCP_TAG_INSTRUCTION]) {
       expect(text).toContain(MCP_STARTER_ROUTINE);
+      expect(text).toContain('Act only on your own tags and wakes from list_mentions. Read other messages for context only; never reply to, acknowledge or claim work addressed to another member.');
       expect(text).not.toContain('Tag another agent only to hand it a spelled-out job');
     }
   });
@@ -1546,6 +1580,66 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(joined.sort()).toEqual([WORKSPACE, secondWorkspace].sort());
     } finally { await db.query('DELETE FROM workspaces WHERE id=$1', [secondWorkspace]); }
   });
+  it('MCP-ONBOARD-1: new sign-in creates an owned Workspace and public general on Allow, then reads and posts through MCP', async () => {
+    const ticket = 'local-new-' + opaque(), owner = tokenHash('google:' + ticket);
+    expect((await db.query('SELECT 1 FROM identities WHERE id=$1', [owner])).rowCount).toBe(0);
+    const grant = await prepareAuthorization(undefined, undefined, undefined, ticket);
+    expect((await db.query('SELECT 1 FROM identities WHERE id=$1', [owner])).rowCount).toBe(1);
+    expect((await db.query('SELECT 1 FROM memberships WHERE identity_id=$1', [owner])).rowCount).toBe(0);
+    expect(grant.consentHtml).toContain('Allow will create your Workspace, Robin&#39;s team, with a public #general Room.');
+    expect(grant.consentHtml).toContain('Joins as');
+    expect(grant.consentHtml).toContain('It can');
+    expect(grant.consentHtml).not.toContain('Select at least one Workspace');
+    expect(grant.consentHtml).not.toMatch(/<input[^>]*type="checkbox"/);
+    const result = await fetch(origin + '/mcp/oauth/consent', { method: 'POST', redirect: 'manual',
+      headers: { cookie: grant.cookie, origin, 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ flow: grant.flow, decision: 'allow', workspace_selection: '1' }) });
+    expect(result.status).toBe(302);
+    const target = new URL(result.headers.get('location')!);
+    const tokenResponse = await exchange({ ...grant, code: target.searchParams.get('code'), error: null });
+    expect(tokenResponse.status).toBe(200);
+    const { access_token } = await tokenResponse.json() as { access_token: string };
+    const workspace = (await db.query<{ id: string; name: string; role: string }>(`SELECT w.id,w.name,m.role
+      FROM workspaces w JOIN memberships m ON m.workspace_id=w.id
+      WHERE m.identity_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL`, [owner])).rows;
+    expect(workspace).toEqual([{ id: expect.any(String), name: "Robin's team", role: 'owner' }]);
+    const room = (await db.query<{ id: string; name: string; visibility: string }>(
+      'SELECT id,name,visibility FROM rooms WHERE workspace_id=$1', [workspace[0]!.id])).rows;
+    expect(room).toEqual([{ id: expect.any(String), name: 'general', visibility: 'public' }]);
+    const member = (await db.query<{ member_id: string }>(
+      'SELECT member_id FROM rooms_mcp_members WHERE client_id=$1 AND owner_id=$2', [grant.clientId, owner])).rows[0]!.member_id;
+    expect((await db.query('SELECT 1 FROM memberships WHERE identity_id=$1 AND workspace_id=$2 AND removed_at IS NULL', [member, workspace[0]!.id])).rowCount).toBe(2);
+    const client = new Client({ name: 'new-person-proof', version: '1' }); clients.push(client);
+    await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), {
+      requestInit: { headers: { authorization: `Bearer ${access_token}` } } }));
+    const listed = await client.callTool({ name: 'list_rooms', arguments: {} });
+    expect(JSON.stringify(listed)).toContain(room[0]!.id);
+    const text = 'Hello from the newly joined agent';
+    const sent = await client.callTool({ name: 'send_message', arguments: { room: room[0]!.id, text } });
+    expect(sent.isError).not.toBe(true);
+    expect((await db.query('SELECT author_id,text FROM messages WHERE room_id=$1 AND text=$2', [room[0]!.id, text])).rows)
+      .toEqual([{ author_id: member, text }]);
+    // A replay cannot create a second Workspace or grant a second code.
+    expect((await post('/mcp/oauth/consent', { flow: grant.flow, decision: 'allow', workspace_selection: '1' }, { cookie: grant.cookie, origin })).status).toBe(400);
+    expect((await db.query('SELECT 1 FROM memberships WHERE identity_id=$1 AND room_id IS NULL', [owner])).rowCount).toBe(1);
+  });
+  it.each(['deny', 'origin', 'selection', 'malformed', 'webhook'])('MCP-ONBOARD-2: new-person %s refusal leaves no Workspace or grant', async refusal => {
+    const ticket = 'local-new-' + opaque(), owner = tokenHash('google:' + ticket);
+    const { flow, cookie, clientId } = await prepareAuthorization(undefined, undefined, undefined, ticket);
+    const before = (await db.query('SELECT count(*) AS count FROM workspaces')).rows;
+    const input: Record<string, unknown> = { flow, decision: 'allow', workspace_selection: '1' };
+    if (refusal === 'deny') input.decision = 'deny';
+    if (refusal === 'selection') delete input.workspace_selection;
+    if (refusal === 'malformed') input.workspace_ids = ['not-a-workspace'];
+    if (refusal === 'webhook') input.wake_url = 'http://localhost';
+    const result = await post('/mcp/oauth/consent', input, { cookie, origin: refusal === 'origin' ? 'https://evil.example' : origin });
+    expect(result.status).toBe(refusal === 'deny' ? 302 : 400);
+    if (refusal === 'deny') expect(new URL(result.headers.get('location')!).searchParams.get('error')).toBe('access_denied');
+    expect((await db.query('SELECT 1 FROM memberships WHERE identity_id=$1', [owner])).rowCount).toBe(0);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_members WHERE client_id=$1', [clientId])).rowCount).toBe(0);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_codes WHERE client_id=$1', [clientId])).rowCount).toBe(0);
+    expect((await db.query('SELECT count(*) AS count FROM workspaces')).rows).toEqual(before);
+  });
   it('MCP-WORKSPACE-1: rejects empty, malformed, duplicate and foreign selections without granting membership', async () => {
     const prepared = await prepareAuthorization();
     const { flow, cookie, clientId } = prepared;
@@ -1776,7 +1870,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(page).toContain(client.id);
       expect(page).toContain(client.name);
     }
-    expect(page).toContain('https://server.usebeeline.app/mcp');
+    expect(page).toContain('https://join.usebeeline.app');
     expect(readFileSync(new URL('../../../web/sitemap.xml', import.meta.url), 'utf8')).toContain('<loc>https://usebeeline.app/connect/</loc>');
   });
   const data = (result: unknown) => JSON.parse(((result as { content: { text: string }[] }).content)[0]!.text).data;

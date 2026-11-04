@@ -1,0 +1,13 @@
+Command: npm run test -w @beeline/server -- src/rooms-mcp.test.ts --maxWorkers=2 --minWorkers=1 -t "JOIN-1: (server|short)" --reporter verbose
+
+Canonical production resource: https://join.usebeeline.app/
+Bare and slashed resource inputs each complete OAuth and POST initialize directly with redirect=manual, HTTP 200 and no Location header; read/post also succeed.
+
+ ✓ src/rooms-mcp.test.ts > Rooms connector HTTP OAuth and MCP > JOIN-1: server/join authorizes, initializes, reads and posts with the same resource 410ms
+ ✓ src/rooms-mcp.test.ts > Rooms connector HTTP OAuth and MCP > JOIN-1: short authorizes, initializes, reads and posts with the same resource 324ms
+ ✓ src/rooms-mcp.test.ts > Rooms connector HTTP OAuth and MCP > JOIN-1: short/ authorizes, initializes, reads and posts with the same resource 315ms
+ ✓ src/rooms-mcp.test.ts > Rooms connector HTTP OAuth and MCP > JOIN-1: short/join authorizes, initializes, reads and posts with the same resource 368ms
+ Test Files  1 passed (1)
+      Tests  4 passed | 143 skipped (147)
+   Start at  11:21:18
+   Duration  18.20s (transform 3.33s, setup 16ms, collect 5.40s, tests 5.44s, environment 0ms, prepare 257ms)

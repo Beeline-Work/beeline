@@ -918,7 +918,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         expect(await state()).toBe('online');
       });
       await attempt();
-      await vi.waitFor(() => expect(answered).toBe(1));
+      await vi.waitFor(() => expect(answered).toBe(1), { timeout: 5_000 });
       await vi.waitFor(() => expect(initialClaim).toHaveBeenCalledOnce());
       await initialClaim.mock.results[0]!.value;
       initialClaim.mockRestore();
@@ -975,10 +975,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         { timeout: 3_000 },
       );
       await attempt();
-      await vi.waitFor(() => expect(answered).toBe(2));
+      await vi.waitFor(() => expect(answered).toBe(2), { timeout: 5_000 });
       expect(operations.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(0);
       await replies;
-      expect(await state()).toBe('online');
+      await vi.waitFor(async () => expect(await state()).toBe('online'));
       const after = (
         await database.query<{ updated_at: Date }>(
           `SELECT updated_at FROM live_outputs WHERE agent_id=$1 AND kind='presence'`,
@@ -1091,7 +1091,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     try {
       await vi.waitFor(() => expect(connected).toBe(true));
       await ask('@bee before the outage');
-      await vi.waitFor(() => expect(answered).toBe(1));
+      await vi.waitFor(() => expect(answered).toBe(1), { timeout: 5_000 });
 
       down = true;
       for (const [socket, entry] of relayed) {

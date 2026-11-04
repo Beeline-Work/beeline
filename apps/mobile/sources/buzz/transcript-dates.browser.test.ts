@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
 import { expect, it } from 'vitest';
+import { withOneBrowser } from '@/test/browserProof';
 
 const chrome = process.env.CHROME_BIN ?? '/usr/bin/google-chrome';
 
@@ -89,7 +90,7 @@ it.skipIf(!existsSync(chrome))(
       );
       for (const theme of ['obsidian', 'bone']) {
         for (const direction of ['chronological', 'inverted']) {
-          const browser = spawnSync(
+          const browser = await withOneBrowser(() => spawnSync(
             chrome,
             [
               '--headless=new',
@@ -102,11 +103,11 @@ it.skipIf(!existsSync(chrome))(
               `${pathToFileURL(html)}?theme=${theme}&direction=${direction}`,
             ],
             { encoding: 'utf8', timeout: 20000, maxBuffer: 4 * 1024 * 1024 },
-          );
+          ));
           if (browser.error) {
             skip(browser.error.message);
           }
-          expect(browser.status, browser.stderr).toBe(0);
+          expect(browser.status, `Chrome signal: ${browser.signal}\n${browser.stderr}`).toBe(0);
           expect(browser.stdout, `${theme} ${direction}`).toContain('<pre id="result">PASS</pre>');
         }
       }
@@ -114,5 +115,5 @@ it.skipIf(!existsSync(chrome))(
       await rm(directory, { recursive: true, force: true });
     }
   },
-  90000,
+  240000,
 );

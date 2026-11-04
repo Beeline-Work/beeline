@@ -283,7 +283,8 @@ export async function runAgentRuntime(
   };
   let exitReason: AgentExitReason | undefined;
   try {
-    // Credential activation and interruption replay precede every intake.
+    // Interruption replay uses this same machine registration before intake opens.
+    daemonApi.channel.start();
     await retryBeforeReady(() => reportInterruptedTurns(runtimeDir, daemonApi, agentId), {
       onLinkOpen: (listener) => daemonApi.onLiveOpen(listener),
       extendStartTimeout: extendSystemdStartTimeout,

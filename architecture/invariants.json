@@ -1465,6 +1465,7 @@
         "module": "Rooms and messages",
         "reason": "existing before the registry; weekly audit reviews",
         "columns": {
+          "bookmark_id": "apps/server/src/tray-saved-window.ts: stable Saved item identity survives source changes and fences clear commands",
           "identity_id": "existing before the registry; weekly audit reviews",
           "workspace_id": "existing before the registry; weekly audit reviews",
           "room_id": "existing before the registry; weekly audit reviews",

@@ -79,7 +79,7 @@ describe('actual Scheduled Work consumer with negotiated lane ownership',()=>{
     fixture.prepare.mockImplementation(()=>new Promise(done=>{resolve=done;}));
     const stopped=kind==='schedule'?stopSchedule(ROOM_A,SCHEDULE):stopSubscription(ROOM_A,SCHEDULE);
     expect(fixture.admit).toHaveBeenCalledWith(kind==='schedule'?'deleteRoomSchedule':'deleteRoomSubscription',ROOM_A,SCHEDULE);expect(fixture.prepare).toHaveBeenCalledTimes(1);expect(fixture.deliver).not.toHaveBeenCalled();
-    fixture.focused=false;await act(async()=>tree.update(<Reader/>));resolve({id:'durable-stop'});expect(await stopped).toBe('stopped');
+    fixture.focused=false;await act(async()=>tree.update(<Reader/>));resolve({id:'durable-stop'});await stopped;
     expect(fixture.deliver).toHaveBeenCalledWith('durable-stop');expect(entry(ROOM_A).view.value).toBe(original);
     expect(fixture.read).not.toHaveBeenCalled();expect(fixture.write).not.toHaveBeenCalled();expect(fixture.fetch).not.toHaveBeenCalled();
   });

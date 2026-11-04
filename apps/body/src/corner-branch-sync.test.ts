@@ -1,3 +1,4 @@
+import { runClaimedFixtureTurn } from './command-fixture.test-support.js';
 import { execFile } from 'node:child_process';
 import {
   access,
@@ -1016,7 +1017,7 @@ setInterval(() => {}, 1000);
           },
         } as AgentRuntimeRecord,
         config: { workspaceRoot: worktree.path } as BodyConfig,
-        api: { execute } as unknown as DaemonApiClient,
+        api: { runWithTurnOwnership: runClaimedFixtureTurn, execute } as unknown as DaemonApiClient,
         // Admit the real turn body without starting a model: the stall precedes its prompt.
         scheduler: {
           snapshot: () => ({}),

@@ -675,7 +675,7 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     expect(headerText(closed)).toBe('RUBY · archived');
   });
 
-  it('Reproduction G3-R2: the Room list dropdown, Corners list and header agree after a read', async () => {
+  it('Reproduction G3-R2: the Room list dropdown adopts its own committed replacement alongside the Corners page', async () => {
     // The Room list read saw corner-1 waiting.
     const chat = {
       room: { id: 'room-a', name: 'general' },
@@ -702,10 +702,16 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:idle']));
     const header = await mountHeader({ cornerId: 'corner-1' });
     expect(headerText(header)).toBe('RUBY · idle');
+    expect(dropdownStates()).toEqual(['Open corner corner-1, waiting']);
+    // The Corners read cannot mutate the list DTO. Only its own replacement advances it.
+    await act(async () => dropdown.update(React.createElement(DesktopRoomCorners, {
+      item: {...chat, ...summaryOf(cornerList(list.state, list.extra).corners)},
+      onOpen: () => undefined,
+    })));
     expect(dropdownStates()).toEqual(['Open corner corner-1, idle']);
   });
 
-  it('Reproduction G3-R2: a corner closed before Corners opens leaves the dropdown too', async () => {
+  it('Reproduction G3-R2: a committed list replacement removes a closed corner from the dropdown', async () => {
     // The Room list read saw both corners waiting; corner-closed then closed unheard.
     const chat = {
       room: { id: 'room-a', name: 'general' },
@@ -738,10 +744,16 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:idle']));
     const closed = await mountHeader({ cornerId: 'corner-closed', archived: true });
     expect(headerText(closed)).toBe('RUBY · archived');
+    expect(dropdownStates()).toEqual(['Open corner corner-closed, waiting', 'Open corner corner-1, waiting']);
+    // The Corners read cannot mutate the list DTO. Only its own replacement advances it.
+    await act(async () => dropdown.update(React.createElement(DesktopRoomCorners, {
+      item: {...chat, ...summaryOf(cornerList(list.state, list.extra).corners)},
+      onOpen: () => undefined,
+    })));
     expect(dropdownStates()).toEqual(['Open corner corner-1, idle']);
   });
 
-  it('Reproduction G3-R2: a Mine corner opened before Corners opens joins the dropdown too', async () => {
+  it('Reproduction G3-R2: a committed list replacement adds a newly followed corner to the dropdown', async () => {
     // The Room list read saw only corner-1; corner-new then opened unheard.
     const chat = {
       room: { id: 'room-a', name: 'general' },
@@ -770,6 +782,12 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-new:working', 'corner-1:waiting']));
     const opened = await mountHeader({ cornerId: 'corner-new' });
     expect(headerText(opened)).toBe('RUBY · working');
+    expect(dropdownStates()).toEqual(['Open corner corner-1, waiting']);
+    // The Corners read cannot mutate the list DTO. Only its own replacement advances it.
+    await act(async () => dropdown.update(React.createElement(DesktopRoomCorners, {
+      item: {...chat, ...summaryOf(cornerList(list.state, list.extra).corners)},
+      onOpen: () => undefined,
+    })));
     // The dropdown lists waiting corners first.
     expect(dropdownStates()).toEqual([
       'Open corner corner-1, waiting',
@@ -777,7 +795,7 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     ]);
   });
 
-  it('Reproduction G3-R2: the dropdown follows a corner whose server Mine flag changed', async () => {
+  it('Reproduction G3-R2: the dropdown follows changed Mine flags in its committed list replacement', async () => {
     // The Room list read saw corner-1 not Mine and corner-mine Mine.
     const chat = {
       room: { id: 'room-a', name: 'general' },
@@ -807,10 +825,16 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-mine:working', 'corner-1:waiting']));
     const followed = await mountHeader({ cornerId: 'corner-1' });
     expect(headerText(followed)).toBe('RUBY · waiting');
+    expect(dropdownStates()).toEqual(['Open corner corner-mine, working']);
+    // The Corners read cannot mutate the list DTO. Only its own replacement advances it.
+    await act(async () => dropdown.update(React.createElement(DesktopRoomCorners, {
+      item: {...chat, ...summaryOf(cornerList(list.state, list.extra).corners)},
+      onOpen: () => undefined,
+    })));
     expect(dropdownStates()).toEqual(['Open corner corner-1, waiting']);
   });
 
-  it('Reproduction G3-split3: one corners read updates the Room row badge and its dropdown together', async () => {
+  it('Reproduction G3-split3: one committed list replacement updates the Room badge and dropdown together', async () => {
     // The Room list read saw two Mine corners waiting.
     const chat = {
       room: { id: 'room-a', name: 'general' },
@@ -844,6 +868,14 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     server.subscribed();
     await vi.waitFor(() => expect(painted(renderer)).toEqual(['corner-1:idle']));
     await settle();
+    expect(badge()).toBe('Expand 2 corners');
+    expect(dropdown()).toHaveLength(2);
+    await act(async () => {
+      const item = {...chat, ...summaryOf(cornerList(list.state, list.extra).corners)};
+      room.update(React.createElement(React.Fragment, null,
+        React.createElement(ConversationRow, {item, now: 0, onPress: () => undefined, onPin: () => undefined, onToggleCorners: () => undefined, testID: 'room'}),
+        React.createElement(DesktopRoomCorners, {item, onOpen: () => undefined})));
+    });
     expect(badge()).toBe('Expand 1 corners');
     expect(dropdown()).toEqual(['Open corner corner-1, idle']);
   });

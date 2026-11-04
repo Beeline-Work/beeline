@@ -224,19 +224,6 @@
     "reason": "kept, already inset: connection detail scroll content supplies the inset."
   },
   {
-    "layoutHash": "66170278634acfc57d9ad02ffc1cfd2b93b9b4b74dae048274c04c8c288d0f13",
-    "file": "app/(app)/beeline/tray.tsx",
-    "line": 843,
-    "tag": "Text",
-    "source": "<Text style={styles.empty}>",
-    "ancestors": [
-      "<Text style={styles.empty}>",
-      "<View style={styles.emptyBlock}>",
-      "<View style={styles.paneFallback} testID=\"tray-pane\">"
-    ],
-    "reason": "kept, already inset: corner inspection empty block owns its content inset."
-  },
-  {
     "layoutHash": "dc032e193f419f04be06f038a85471e0251f3f8bd99922827c33c3ab17202173",
     "file": "app/(app)/index.tsx",
     "line": 140,

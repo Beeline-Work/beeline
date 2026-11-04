@@ -142,6 +142,10 @@ async function runTurn(options: {
   };
   const execute = vi.fn(respond);
   const api = {
+      channel: { usageAccountScope: () => ({
+        origin: 'https://server.example', ownerId: 'fixture-owner',
+        source: {connectionId: 'fixture-usage', epoch: 1},
+      }) },
     execute,
     connection: () => ({
       baseUrl: 'https://server.example',

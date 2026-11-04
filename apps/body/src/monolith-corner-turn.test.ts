@@ -4798,6 +4798,10 @@ describe('a context-window overflow', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+      channel: { usageAccountScope: () => ({
+        origin: 'https://server.example', ownerId: 'fixture-owner',
+        source: {connectionId: 'fixture-usage', epoch: 1},
+      }) },
     runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({

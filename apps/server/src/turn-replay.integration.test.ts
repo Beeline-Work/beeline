@@ -1,3 +1,4 @@
+import { runClaimedFixtureTurn } from '../../body/src/command-fixture.test-support.js';
 import { randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -53,6 +54,7 @@ it.each([
   let settled = false;
   let activeAuthority: Record<string,unknown> = {};
   const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
     execute: async (name: string, input: Record<string,unknown>) => {
       if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
       if (name === 'getRoomRepositoryState') return {resolution:'none'};

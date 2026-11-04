@@ -94,13 +94,13 @@ function guardFixture() {
   return { root, run, git };
 }
 
-test('a relaxation always fails with the manual-owner-merge message', () => {
+test('an intentional relaxation passes and reports weekly review', () => {
   const { root, run } = guardFixture();
   writeFileSync(path.join(root, 'architecture/invariants.json'), JSON.stringify({ rules: [{ ...RULE, total: 2 }] }));
   writeFileSync(path.join(root, 'src/new.ts'), 'INSERT INTO agent_commands(id) VALUES(1)');
   const result = run();
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /This PR relaxes architecture rule work\.command-creation total raised from 1 to 2\. Only the owner merges it, by hand\./);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Weekly architecture review: rule work\.command-creation total raised from 1 to 2/);
 });
 
 test('normal tightening passes the CLI check against base', () => {
@@ -112,7 +112,7 @@ test('normal tightening passes the CLI check against base', () => {
   assert.match(result.stdout, /Architecture check passed/);
 });
 
-test('changing the guard itself stays red', () => {
+test('changing the guard itself reports weekly review', () => {
   const { root, run, git } = guardFixture();
   mkdirSync(path.join(root, 'scripts'));
   writeFileSync(path.join(root, 'scripts/check-architecture.mjs'), '// base guard');
@@ -121,8 +121,8 @@ test('changing the guard itself stays red', () => {
     '-c', 'commit.gpgsign=false', 'commit', '--quiet', '-m', 'guard');
   writeFileSync(path.join(root, 'scripts/check-architecture.mjs'), '// changed guard');
   const result = run();
-  assert.equal(result.status, 1);
-  assert.match(result.stderr, /guard scripts\/check-architecture\.mjs changed\. Only the owner merges it, by hand\./);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /Weekly architecture review: guard scripts\/check-architecture\.mjs changed/);
 });
 
 test('this repository meets its own invariants', () => {

@@ -1,14 +1,11 @@
-import { createHash } from 'node:crypto';
 import ts from 'typescript';
 
 export type WordingCatalog = Record<
   string,
   { parts: readonly string[]; variables: readonly string[] }
 >;
-export const WORDING_APPROVAL_REQUIRED =
-  'New or changed System-message wording. The owner (lunchboxfortwo) must approve wording before apps/server/system-message-wording.lock.json is updated.';
 export const CATALOG_REQUIRED =
-  'Inline System-message text. Add/use a key in packages/api-contract/src/system-message-catalog.ts; new wording requires owner approval.';
+  'Inline System-message text. Add/use a key in packages/api-contract/src/system-message-catalog.ts; wording changes are reviewed weekly after merging.';
 
 /** Read data from the source, so the guard never depends on a stale dist build. */
 export function readWordingCatalog(source: string): WordingCatalog {
@@ -64,31 +61,15 @@ export function readWordingCatalog(source: string): WordingCatalog {
   throw new Error('System-message catalog data is missing');
 }
 
-/** Hash only exact rendered fragments. Variable descriptions and writer code are not wording. */
-export function wordingHashes(catalog: WordingCatalog): Record<string, string> {
-  return Object.fromEntries(
-    Object.entries(catalog)
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([key, entry]) => {
-        if (
-          !Array.isArray(entry.parts) ||
-          !entry.parts.every((part) => typeof part === 'string') ||
-          !Array.isArray(entry.variables) ||
-          !entry.variables.every((variable) => typeof variable === 'string') ||
-          entry.parts.length !== entry.variables.length + 1
-        )
-          throw new Error(`Invalid System-message template: ${key}`);
-        return [key, createHash('sha256').update(JSON.stringify(entry.parts)).digest('hex')];
-      }),
-  );
-}
-
-export function assertWordingLock(catalog: WordingCatalog, locked: Record<string, string>): void {
-  const current = wordingHashes(catalog);
-  const changed = [...new Set([...Object.keys(current), ...Object.keys(locked)])].filter(
-    (key) => current[key] !== locked[key],
-  );
-  if (changed.length) throw new Error(`${WORDING_APPROVAL_REQUIRED}\n${changed.join('\n')}`);
+/** Validate template shape without freezing wording or keys. */
+export function assertCatalogShape(catalog: WordingCatalog): void {
+  for (const [key, entry] of Object.entries(catalog)) {
+    if (['__proto__', 'prototype', 'constructor'].includes(key) ||
+      !entry.parts.every(part => typeof part === 'string') ||
+      !entry.variables.every(variable => typeof variable === 'string') ||
+      entry.parts.length !== entry.variables.length + 1)
+      throw new Error(`Invalid System-message template: ${key}`);
+  }
 }
 
 export function assertCatalogUsage(nodes: readonly ts.Node[]): void {

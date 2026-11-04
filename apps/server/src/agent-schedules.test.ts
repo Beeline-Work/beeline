@@ -420,6 +420,22 @@ describe('agent schedule background posting', () => {
     }
   });
 
+  it('L1: an exhausted max_runs schedule stays stored without firing or deleting', async () => {
+    const database = await fixture();
+    try {
+      const id = randomUUID();
+      await database.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,run_count,next_run_at)
+        VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":60}','Retired schedule',2,2,now()-interval '1 hour')`,
+        [id, WORKSPACE, ROOM, AGENT, OWNER]);
+      const loop = new AgentScheduleLoop(database);
+      expect(await loop.nextDueAt()).toBeUndefined();
+      expect(await loop.runOnce()).toBe(0);
+      expect((await database.query(`SELECT max_runs,run_count FROM agent_schedules WHERE id=$1`, [id])).rows)
+        .toEqual([{ max_runs: 2, run_count: 2 }]);
+      expect((await database.query(`SELECT 1 FROM agent_schedule_occurrences WHERE schedule_id=$1`, [id])).rowCount).toBe(0);
+    } finally { await database.close(); }
+  });
+
   it.each([1, 2])('Reproduction schedule-silent-end-1: agent schedule runs %i times and deletes silently', async (maxRuns) => {
     const database = await fixture();
     try {

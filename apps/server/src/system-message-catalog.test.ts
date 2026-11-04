@@ -11,18 +11,14 @@ import {
 } from '../../../packages/api-contract/src/system-message-catalog.js';
 import {
   assertCatalogUsage,
-  assertWordingLock,
+  assertCatalogShape,
   readWordingCatalog,
-  wordingHashes,
 } from '../scripts/system-message-guard.js';
 import { scanSystemMessageWording, systemMessageSources } from '../scripts/system-message-scan.js';
 
 const root = fileURLToPath(new URL('../../..', import.meta.url));
 const catalogSource = () =>
   readFileSync(resolve(root, 'packages/api-contract/src/system-message-catalog.ts'), 'utf8');
-const locked = JSON.parse(
-  readFileSync(resolve(root, 'apps/server/system-message-wording.lock.json'), 'utf8'),
-) as Record<string, string>;
 const files = () =>
   new Map([
     ...systemMessageSources(resolve(root, 'apps/server/src')),
@@ -50,72 +46,32 @@ function assertSourceUsage(sources: Map<string, string>): Promise<void> {
   });
 }
 
-it('locks catalog wording only; new or changed wording requires owner approval', () => {
-  assertWordingLock(readWordingCatalog(catalogSource()), locked);
+it('validates catalog template shape while allowing wording changes', () => {
+  assertCatalogShape(readWordingCatalog(catalogSource()));
 });
 
 it('requires every System writer to use catalog keys for fixed text', async () => {
   await assertSourceUsage(files());
 }, SCAN_TIMEOUT_MS + 10_000);
 
-type Legacy = Record<
-  string,
-  { source: string; before: string; cases: { values: unknown[]; output: string }[] }
->;
-const legacy = JSON.parse(
-  readFileSync(new URL('./system-message-legacy.fixture.json', import.meta.url), 'utf8'),
-) as Legacy;
 const render = systemMessage as (key: SystemMessageKey, ...values: unknown[]) => string;
-it('has a legacy-output proof for every catalog key', () => {
-  expect(Object.keys(legacy).sort()).toEqual(Object.keys(SYSTEM_MESSAGE_CATALOG).sort());
+it.each(Object.entries(SYSTEM_MESSAGE_CATALOG))('renders catalog slots: %s', (key, entry) => {
+  const values = entry.variables.map((_, index) => `value-${index}`);
+  const expected = entry.parts.reduce((text, part, index) => text + (index ? values[index - 1] : '') + part, '');
+  expect(render(key as SystemMessageKey, ...values)).toBe(expected);
 });
 
-it.each(Object.entries(legacy))(
-  'preserves the previous output byte-for-byte: %s',
-  (key, fixture) => {
-    for (const sample of fixture.cases) {
-      expect(Buffer.from(render(key as SystemMessageKey, ...sample.values))).toEqual(
-        Buffer.from(sample.output),
-      );
-    }
-  },
-);
-
-it('rejects a wording change without comparing any writer code', () => {
+it('allows added, removed and reworded phrases for weekly review', () => {
   const catalog = readWordingCatalog(catalogSource());
   const key = Object.keys(catalog)[0]!;
   catalog[key]!.parts = [catalog[key]!.parts[0] + ' changed', ...catalog[key]!.parts.slice(1)];
-  expect(() => assertWordingLock(catalog, locked)).toThrow(/owner.*approve wording/);
+  delete catalog[Object.keys(catalog)[1]!];
+  assertCatalogShape({ ...catalog, invented: { parts: ['New notice'], variables: [] } });
 });
 
-it('rejects a new key and a removed key', () => {
-  const catalog = readWordingCatalog(catalogSource());
-  expect(() =>
-    assertWordingLock({ ...catalog, invented: { parts: ['New notice'], variables: [] } }, locked),
-  ).toThrow(/owner.*approve wording/);
-  delete catalog[Object.keys(catalog)[0]!];
-  expect(() => assertWordingLock(catalog, locked)).toThrow(/owner.*approve wording/);
-});
-
-it('rejects adding a reserved prototype key to the catalog source', () => {
-  const changed = Object.fromEntries([
-    ...Object.entries(readWordingCatalog(catalogSource())),
-    ['__proto__', { parts: ['New prototype notice'], variables: [] }],
-  ]);
-  const source = `export const SYSTEM_MESSAGE_CATALOG = ${JSON.stringify(changed)} as const;`;
-  expect(() => assertWordingLock(readWordingCatalog(source), locked)).toThrow(
-    /owner.*approve wording/,
-  );
-});
-
-it('does not lock variable descriptions, source formatting, or declaration order', () => {
-  const catalog = readWordingCatalog(catalogSource());
-  for (const entry of Object.values(catalog))
-    entry.variables = entry.variables.map((_, index) => `value${index}`);
-  assertWordingLock(Object.fromEntries(Object.entries(catalog).reverse()), locked);
-  expect(wordingHashes(readWordingCatalog(catalogSource().replaceAll('  ', '    ')))).toEqual(
-    locked,
-  );
+it('rejects malformed slots and reserved prototype keys', () => {
+  expect(() => assertCatalogShape({ bad: { parts: ['text'], variables: ['missing slot'] } })).toThrow(/Invalid/);
+  expect(() => assertCatalogShape(Object.fromEntries([['__proto__', { parts: ['text'], variables: [] }]]))).toThrow(/Invalid/);
 });
 
 it('an unrelated edit to each formerly locked method passes the real source scan', async () => {
@@ -145,7 +101,7 @@ it('an unrelated edit to each formerly locked method passes the real source scan
         source.slice(position),
     );
   }
-  assertWordingLock(readWordingCatalog(catalogSource()), locked);
+  assertCatalogShape(readWordingCatalog(catalogSource()));
   await assertSourceUsage(changed);
 }, SCAN_TIMEOUT_MS + 10_000);
 

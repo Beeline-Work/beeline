@@ -55,7 +55,8 @@ export function renderWake(w: Wake, joined: JoinedSession, runner: Runner): stri
   const header = [`Beeline: private ${w.kind ?? w.reason} for you (@${joined.handle ?? joined.name}) at ${w.address}. It is not a tag; do not reply with --reply-to.`,
     ...(w.text ? [w.text.split('\n').map(l => `> ${l}`).join('\n')] : []), w.next ?? 'Handle it.'];
   if (w.kind === 'order') return [...header,
-    `Report the outcome to whoever ordered you (a plain post does not report): ${command(runner, joined, `tool report '{"address":"${w.address}","status":"done","text":"done: <result>"}'`)}`,
+    `Report the outcome to whoever ordered you (a plain post does not report): ${command(runner, joined, `tool report '{"address":"${w.address}","commandId":"${w.id}","status":"done","text":"done: <result>"}'`)}`,
+    `Pass commandId ${w.id} on other Beeline tool calls for this order.`,
     'status is done, blocked, failed or needs_decision, and text starts with the matching done:, blocked:, failed: or needs-decision:.',
     `Other Beeline tools: ${command(runner, joined, `tool <name> '<json arguments>'`)}`].join('\n');
   return [...header,

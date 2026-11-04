@@ -252,8 +252,8 @@ describe('a tag reaches the joined session', () => {
     const call = /session tool report '(\{[^']*\})' --as codex:\/w/.exec(order);
     expect(call).not.toBeNull();
     const args = JSON.parse(call![1]!) as Record<string, string>;
-    expect(Object.keys(args).sort()).toEqual(['address', 'status', 'text']);
-    expect(args).toMatchObject({ address, status: 'done' });
+    expect(Object.keys(args).sort()).toEqual(['address', 'commandId', 'status', 'text']);
+    expect(args).toMatchObject({ address, commandId: 'w1', status: 'done' });
     expect(args.text!.startsWith('done:')).toBe(true);
     const lifecycle = renderWake({ id: 'w2', address, reason: 'corner_lifecycle', kind: 'lifecycle', createdAt: '' }, joined, runner);
     expect(lifecycle).toContain(`reply --room ${address} "<text>" --as codex:/w`);

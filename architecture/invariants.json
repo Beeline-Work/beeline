@@ -286,7 +286,7 @@
       "apps/auth/src"
     ],
     "bootstrapTotal": 1741,
-    "unusedTotal": 181,
+    "unusedTotal": 180,
     "tables": {
       "agent_avatars": {
         "module": "Agent types",
@@ -574,7 +574,10 @@
           "squire_report": "existing before the registry; weekly audit reviews",
           "squire_work": "existing before the registry; weekly audit reviews",
           "harness": "existing before the registry; weekly audit reviews",
-          "custom_tags": "existing before the registry; weekly audit reviews",
+          "custom_tags": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "scripts/audit-decisions-drop-columns.sql after serving and rollback images drain"
+          },
           "chosen_voices": "existing before the registry; weekly audit reviews"
         }
       },
@@ -1479,7 +1482,10 @@
           "reply_to_message_id": "existing before the registry; weekly audit reviews",
           "root_message_id": "existing before the registry; weekly audit reviews",
           "request_id": "existing before the registry; weekly audit reviews",
-          "turn_id": "existing before the registry; weekly audit reviews",
+          "turn_id": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "scripts/audit-decisions-drop-columns.sql after serving and rollback images drain"
+          },
           "activity": "existing before the registry; weekly audit reviews",
           "durable_fact": "existing before the registry; weekly audit reviews",
           "card_type": "existing before the registry; weekly audit reviews",
@@ -2702,7 +2708,10 @@
           "updated_at": "existing before the registry; weekly audit reviews",
           "allow_fix_sweep": "existing before the registry; weekly audit reviews",
           "internal": "existing before the registry; weekly audit reviews",
-          "weight_tier_rules": "existing before the registry; weekly audit reviews"
+          "weight_tier_rules": {
+            "reason": "existing before the registry; weekly audit reviews",
+            "drop": "scripts/audit-decisions-drop-columns.sql after serving and rollback images drain"
+          }
         }
       },
       "x_ad_daily": {

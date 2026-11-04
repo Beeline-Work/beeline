@@ -102,7 +102,8 @@ export class AgentScheduleLoop {
       await this.database.query<{ next_run_at: Date | null }>(
         `SELECT min(schedule.next_run_at) next_run_at
          FROM agent_schedules schedule
-         JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL`,
+         JOIN rooms room ON room.id=schedule.room_id AND room.archived_at IS NULL
+         WHERE schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs`,
       )
     ).rows[0];
     return row?.next_run_at ?? undefined;
@@ -123,6 +124,7 @@ export class AgentScheduleLoop {
        JOIN memberships agent_membership ON agent_membership.room_id=schedule.room_id
          AND agent_membership.identity_id=schedule.agent_id AND agent_membership.removed_at IS NULL
        WHERE schedule.next_run_at <= $1 AND schedule.workflow_run IS NULL
+         AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)
        ORDER BY schedule.next_run_at,schedule.id LIMIT 100`,
       [now],
     );
@@ -148,6 +150,7 @@ export class AgentScheduleLoop {
                  AND agent_membership.identity_id=schedule.agent_id
                  AND agent_membership.removed_at IS NULL
                WHERE schedule.id=$1 AND schedule.next_run_at <= $2 AND schedule.workflow_run IS NULL
+                 AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs)
                FOR UPDATE OF schedule`,
               [candidate.id, now],
             )

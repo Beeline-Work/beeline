@@ -450,7 +450,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(JSON.parse((await queued(cornerCommand.id))[0]!.body).data).toMatchObject({
       roomId: opened.cornerId, address: opened.cornerId, commandId: cornerCommand.id, kind: 'order',
       text: 'Private corner assignment for the subscribed implementer',
-      next: 'Do the work, then call report with this address.',
+      next: MCP_ORDER_WAKE_HINT,
     });
     const report = await createAgentCommand(db, {
       roomId: ROOM, agentId: member, sourceMessageId: null, reason: 'report',
@@ -2360,6 +2360,51 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     }
     // Reproduction (R-MCP-PROGRESS): an outside agent could only post whole messages, so a corner showed none of
     // its work while it ran; created agents' narration lands as corner activity.
+    it('E1: explicit order preserves requester and generation through merge yes and report', async () => {
+      const { client, member } = await connected();
+      const corner = await reportCorner(member);
+      const source = 'e1'.repeat(32), unrelated = 'e2'.repeat(32);
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$3,$4,'Please finish this order'),($2,$3,$5,'Unrelated later tag')`,
+        [source, unrelated, ROOM, USER, OTHER]);
+      await db.query(`INSERT INTO rooms_mcp_mentions(member_id,room_id,message_id) VALUES($1,$2,$3)`, [member, corner, unrelated]);
+      const order = await createAgentCommand(db, { roomId: corner, agentId: member, sourceMessageId: source,
+        reason: 'order', privatePayload: { kind: 'order', authorId: AGENT, fromRoomId: ROOM, text: 'Finish this order' } });
+      const head = 'd'.repeat(40);
+      await db.query(`UPDATE corner_github_cache SET lifecycle=$2::jsonb WHERE corner_id=$1`, [corner,
+        JSON.stringify({ lifecycle: 'in-review', checks: 'passing', pr: { number: 7, headSha: head } })]);
+      await ok(client, 'post', { address: corner, commandId: order!.id, progress: true, text: 'Checking the order.' });
+      const before = (await db.query<{ generation_id: string; root_source_message_id: string; state: string }>(
+        `SELECT generation_id,root_source_message_id,state FROM agent_commands WHERE id=$1`, [order!.id])).rows[0]!;
+      expect(before).toMatchObject({ state: 'claimed', root_source_message_id: source });
+      await ok(client, 'record_merge_yes', { address: corner, commandId: order!.id });
+      expect((await db.query(`SELECT approved_by,head_sha FROM corner_merge_approvals WHERE corner_id=$1`, [corner])).rows[0])
+        .toMatchObject({ approved_by: USER, head_sha: head });
+      expect((await db.query(`SELECT generation_id FROM agent_commands WHERE id=$1`, [order!.id])).rows[0])
+        .toEqual({ generation_id: before.generation_id });
+      await ok(client, 'report', { address: corner, commandId: order!.id, status: 'done', text: 'done: order complete' });
+      expect((await db.query(`SELECT state FROM agent_commands WHERE id=$1`, [order!.id])).rows[0]).toEqual({ state: 'complete' });
+      expect((await call(client, 'record_merge_yes', { address: corner, commandId: order!.id })).error).toBe(true);
+    });
+    it('E1: ambiguous fallback refuses; explicit order fences wrong member, address and generation', async () => {
+      const { client, member } = await connected();
+      const first = await reportCorner(member), second = await reportCorner(member);
+      const orders = [];
+      for (const corner of [first, second]) orders.push(await createAgentCommand(db, { roomId: corner, agentId: member, sourceMessageId: null,
+        reason: 'corner_objective', privatePayload: { kind: 'order', authorId: AGENT, fromRoomId: ROOM, text: 'Finish' } }));
+      expect((await call(client, 'report', { address: ROOM, status: 'done', text: 'done: ambiguous' })).text).toContain('ambiguous report');
+      expect((await call(client, 'post', { address: second, commandId: orders[0]!.id, text: 'wrong address' })).error).toBe(true);
+      expect((await call(client, 'post', { address: first, commandId: '0'.repeat(64), text: 'fabricated' })).error).toBe(true);
+      await db.query(`UPDATE agent_commands SET agent_id=$2 WHERE id=$1`, [orders[0]!.id, AGENT]);
+      expect((await call(client, 'post', { address: first, commandId: orders[0]!.id, text: 'wrong member' })).error).toBe(true);
+      await db.query(`UPDATE agent_commands SET agent_id=$2 WHERE id=$1`, [orders[0]!.id, member]);
+      await db.query(`UPDATE agent_commands SET state='claimed',generation_id='helper-generation',lease_expires_at=now()+interval '1 minute' WHERE id=$1`, [orders[0]!.id]);
+      expect((await call(client, 'post', { address: first, commandId: orders[0]!.id, text: 'another active lease' })).error).toBe(true);
+      await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '1 second' WHERE id=$1`, [orders[0]!.id]);
+      await ok(client, 'post', { address: first, commandId: orders[0]!.id, progress: true, text: 'Recovered lease' });
+      expect((await db.query<{ generation_id: string }>(`SELECT generation_id FROM agent_commands WHERE id=$1`, [orders[0]!.id])).rows[0]!.generation_id).toMatch(/^mcp:/);
+      await ok(client, 'report', { address: first, commandId: orders[0]!.id, status: 'done', text: 'done: first' });
+      await ok(client, 'report', { address: second, commandId: orders[1]!.id, status: 'done', text: 'done: second' });
+    });
     it('R-MCP-PROGRESS: post progress:true records a progress line in the corner, not a message', async () => {
       const { client, member } = await connected();
       const corner = await reportCorner(member);

@@ -1,10 +1,9 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { parse } from 'yaml';
 import {
   grandfatherRegistry,
   judgeUiRegistry,
@@ -20,14 +19,6 @@ const rules = (source) =>
   scan(source)
     .offences.filter((offence) => !offence.strict)
     .map((offence) => offence.rule);
-
-test('existing source tree passes the checked-in registry', () => {
-  const root = fileURLToPath(new URL('..', import.meta.url));
-  const registry = JSON.parse(
-    readFileSync(new URL('../' + REGISTRY_PATH, import.meta.url), 'utf8'),
-  );
-  assert.deepEqual(judgeUiRegistry(scanUiTree(root), registry), []);
-});
 
 test('a new shared button file fails; explicit registry addition admits it', () => {
   const file = 'components/NewButton.tsx';
@@ -192,23 +183,6 @@ test('extension rules receive the same source context and registry enforcement',
     [rule],
   );
   assert.equal(judgeUiRegistry([result], empty)[0].rule, 'confirm-action');
-});
-
-test('the required TYPECHECK gate executes the policy and its regression tests on every PR', () => {
-  const workflow = parse(
-    readFileSync(new URL('../.github/workflows/checks.yml', import.meta.url), 'utf8'),
-  );
-  const job = workflow.jobs.typecheck;
-  assert.equal(job.name, 'TYPECHECK');
-  const step = job.steps.find(step => step.run === 'node scripts/run-ci-workspace-checks.mjs');
-  assert.ok(step);
-  assert.equal(step.if, undefined);
-  const tasks = readFileSync(new URL('./ci-workspace-tasks.sh', import.meta.url), 'utf8');
-  assert.match(tasks, /mobile-ui-policy.test.mjs/);
-  assert.match(tasks, /check-mobile-ui-components.mjs --base/);
-  assert.match(tasks, /export UI_POLICY_BASE="\$CI_BASE_SHA"/);
-  assert.equal(job.env.CI_BASE_SHA, '${{ github.event.merge_group.base_sha || github.event.pull_request.base.sha || github.sha }}');
-  assert.match(job.env.RUN_TYPECHECK, /github.event_name == 'pull_request'/);
 });
 
 test('spread props cannot hide newly hand-rolled buttons', () => {

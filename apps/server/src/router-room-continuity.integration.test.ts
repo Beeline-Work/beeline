@@ -6,7 +6,7 @@ import type {RouterSnapshotInput} from '@beeline/api-contract/router-protocol';
 import type {SqlDatabase} from './database.js';
 import {LiveHub} from './live.js';
 import {PhoneService} from './phone-service.js';
-import {readRouterRoomAudience,ROUTER_ROOM_AUDIENCE_LIMIT} from './router-room-audience.js';
+import {readRouterRoomAudience} from './router-room-audience.js';
 import {routerSourcePlan} from './router-source-plan.js';
 import {routerSocketProtocol} from './router-socket.js';
 import {buildRouterSnapshot,readRouterAuthority} from './router-projections.js';
@@ -153,7 +153,7 @@ describe('DB-derived Room audience and snapshot subscription barrier',()=>{
     const began=deferred(),release=deferred(),followed=deferred(),failed=deferred();
     let reads=0,block=false,fail=false;
     const observed:SqlDatabase={transaction:work=>db.transaction(work),query:async(sql,args)=>{
-      if(sql.includes('ORDER BY workspace_id LIMIT 129')){
+      if(sql.includes('SELECT workspace_id FROM memberships')&&sql.includes('ORDER BY workspace_id')){
         reads++;
         if(block){block=false;began.resolve();await release.promise;}
         if(fail){fail=false;failed.resolve();throw new Error('Synthetic membership query failure');}
@@ -195,7 +195,7 @@ describe('DB-derived Room audience and snapshot subscription barrier',()=>{
       protocol.close();expect(unsubscribed.every(count=>count===1)).toBe(true);
     }finally{protocol.close();}
   });
-  for(const size of [16,ROUTER_ROOM_AUDIENCE_LIMIT])it(`records ${size}-Room unrelated-source fanout with one audience query and zero DTO builders`,async()=>{
+  for(const size of [16,128])it(`records ${size}-Room unrelated-source fanout with one audience query and zero DTO builders`,async()=>{
     await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name) SELECT ('88888888-8888-4888-8888-'||lpad(n::text,12,'0'))::uuid,$1,$2,'Measured'||n FROM generate_series(1,$3::int)n`,[WS,PEER,size-2]);
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) SELECT $1,id,$2,'member' FROM rooms WHERE workspace_id=$1 AND id NOT IN($3,$4)`,[WS,VIEWER,A,B]);
     let queries=0,audienceQueries=0,builders=0;const observed:SqlDatabase={transaction:work=>db.transaction(tx=>work(wrap(tx))),query:(sql,args)=>db.query(sql,args)};
@@ -210,20 +210,28 @@ describe('DB-derived Room audience and snapshot subscription barrier',()=>{
       expect(builders).toBe(0);expect(audienceQueries).toBe(1);expect(c.transportReads()).toBe(0);
       console.log('ROOM_AUDIENCE_WORKLOAD',JSON.stringify({cohort:'local PGlite; synthetic authorized Rooms',audience:size,
         statements:queries,audienceQueries,builders,wireBytes:Buffer.byteLength(JSON.stringify(c.frames.slice(1))),facts:batch.facts.length,
-        limits:'Metadata fanout is linear in DB audience. No real PostgreSQL CPU/WAL or native parse/render claim; cohort remains disabled.'}));
+        limits:'Metadata fanout is linear in DB audience. No real PostgreSQL CPU/WAL or native parse/render claim; no latency comparison.'}));
     }finally{c.protocol.close();}
   });
-  it('explicitly refuses audience overflow before a snapshot and parks source coverage without minting a read',async()=>{
-    await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name) SELECT ('99999999-9999-4999-8999-'||lpad(n::text,12,'0'))::uuid,$1,$2,'Overflow'||n FROM generate_series(1,$3::int)n`,[WS,PEER,ROUTER_ROOM_AUDIENCE_LIMIT-1]);
+  it('installs snapshots and a complete push for 129 authorized Rooms beyond the former audience cap',async()=>{
+    const size=129,last='99999999-9999-4999-8999-000000000127';
+    await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name) SELECT ('99999999-9999-4999-8999-'||lpad(n::text,12,'0'))::uuid,$1,$2,'Room'||n FROM generate_series(1,$3::int)n`,[WS,PEER,size-2]);
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) SELECT $1,id,$2,'member' FROM rooms WHERE workspace_id=$1 AND id NOT IN($3,$4)`,[WS,VIEWER,A,B]);
     let reads=0;const original=phone.readRouterSnapshot.bind(phone);phone.readRouterSnapshot=async(...args)=>{reads++;return original(...args);};
     const c=connect();try{
-      await c.negotiate();await expect(c.protocol.snapshot(room(A))).rejects.toMatchObject({status:503});expect(reads).toBe(0);
-      const unavailable=deferred();const other=routerSocketProtocol(db,VIEWER,raw=>{const frame=JSON.parse(raw);if(frame.kind==='router-unavailable'&&frame.reason==='budget')unavailable.resolve();},
-        {families:['room-head'],listenerReady:()=>true,roomHeadContinuityV1:true},{live:c.live,phone,rooms:()=>[]});
-      try{await other.handle({type:'router-negotiate',protocol:1,families:['room-head'],roomHeadContinuityV1:true,authorityFencesV1:true});
-        await db.query(`UPDATE workspaces SET name='Overflow source' WHERE id=$1`,[WS]);c.live.journalChanged([`workspace:${WS}`]);await unavailable.promise;expect(reads).toBe(0);
-      }finally{other.close();}
+      await c.negotiate();
+      expect(await readRouterRoomAudience(db,WS,VIEWER,routerSourcePlan([],VIEWER))).toHaveLength(size);
+      const releaseA=await c.demand(),releaseLast=await c.demand(room(last));
+      expect(reads).toBe(2);expect(c.lanes.peek(room(last)).state).toBe('LIVE');
+      const heldA=c.lanes.peek(room(A)).value;
+      const batch=await c.change(()=>db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('beyond-old-cap',$1,$2,'Room 129 committed edit')`,[last,PEER]));
+      expect(batch.facts).toHaveLength(size);
+      expect(JSON.stringify(c.lanes.peek(room(last)).value)).toContain('Room 129 committed edit');
+      expect(c.lanes.peek(room(last)).state).toBe('LIVE');
+      expect(c.lanes.peek(room(A)).state).toBe('LIVE');expect(c.lanes.peek(room(A)).value).toEqual(heldA);
+      expect(c.lanes.peek(room(last)).cut?.through).toBe(batch.to.through);
+      expect(c.frames.some(frame=>frame.kind==='router-unavailable')).toBe(false);
+      expect(reads).toBe(2);expect(c.transportReads()).toBe(0);releaseA();releaseLast();
     }finally{c.protocol.close();}
   });
 });

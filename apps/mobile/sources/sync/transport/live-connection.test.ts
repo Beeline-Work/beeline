@@ -45,7 +45,7 @@ import {
   finishRoomDraw,
   observeVisibleRoomRows,
 } from '@/buzz/room-draw-barrier';
-import { LiveConnection, resetSharedLiveConnection, sharedLiveConnection } from './live-connection';
+import { createTestLiveConnection, resetSharedLiveConnection, sharedLiveConnection } from './live-connection';
 import {
   MonolithSession,
   MonolithRequestTimeoutError,
@@ -119,7 +119,7 @@ function stubSockets(): TestSocket[] {
 function createConnection(authorization = vi.fn().mockResolvedValue('phone-session')) {
   const identityListeners = new Set<() => void>();
   const networkListeners = new Set<() => void>();
-  const connection = new LiveConnection({
+  const connection = createTestLiveConnection({
     authorization,
     liveUrl: () => 'wss://server.example/v1/phone/live',
     subscribeIdentityChange: (listener) => {
@@ -148,6 +148,16 @@ function createConnection(authorization = vi.fn().mockResolvedValue('phone-sessi
 }
 
 describe('LiveConnection', () => {
+  it('shares a frozen operation facade without lifecycle or raw socket handles', async () => {
+    const client = sharedLiveConnection();
+    expect(sharedLiveConnection()).toBe(client);
+    expect(Object.isFrozen(client)).toBe(true);
+    for (const key of ['dispose', 'socket', 'deps', 'declareDead', 'dropConnection', 'forgetSocket'])
+      expect(key in client).toBe(false);
+    const detachedDiagnostics = client.diagnostics;
+    expect(detachedDiagnostics()).toEqual({ state: null, connecting: false });
+  });
+
   let sockets: TestSocket[];
 
   beforeEach(() => {
@@ -262,12 +272,13 @@ describe('LiveConnection', () => {
     expect(sockets[0]!.closed).toBe(false);
     sockets[0]!.drop();
     await vi.waitFor(() => expect(sockets).toHaveLength(2));
-    connection.dispose();
+    resetSharedLiveConnection();
     expect(unsubscribe).toHaveBeenCalledOnce();
   });
 
   it('does not attach a native listener after disposal during import', async () => {
-    sharedLiveConnection().dispose();
+    sharedLiveConnection();
+    resetSharedLiveConnection();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(netInfo.addEventListener).not.toHaveBeenCalled();
   });
@@ -302,7 +313,7 @@ describe('LiveConnection', () => {
       disconnected: vi.fn(),
       receive: vi.fn(),
     };
-    const connection = new LiveConnection({
+    const connection = createTestLiveConnection({
       authorization: async () => 'token',
       liveUrl: () => 'wss://server.example/v1/phone/live',
       subscribeIdentityChange: () => () => {},
@@ -332,7 +343,7 @@ describe('LiveConnection', () => {
         disconnected: vi.fn(),
         receive: vi.fn(),
       };
-      const connection = new LiveConnection({
+      const connection = createTestLiveConnection({
         authorization: async () => 'token',
         liveUrl: () => 'wss://server.example/v1/phone/live',
         subscribeIdentityChange: () => () => {},
@@ -365,7 +376,7 @@ describe('LiveConnection', () => {
       disconnected: vi.fn(),
       receive: vi.fn(),
     };
-    const connection = new LiveConnection({
+    const connection = createTestLiveConnection({
       authorization: async () => 'token',
       liveUrl: () => 'wss://server.example/v1/phone/live',
       subscribeIdentityChange: () => () => {},
@@ -401,7 +412,7 @@ describe('LiveConnection', () => {
     let ready!: () => void;
     const router = { negotiated: vi.fn(() => new Promise<void>(resolve => { ready = resolve; })),
       disconnected: vi.fn(), receive: vi.fn() };
-    const connection = new LiveConnection({ authorization: async () => 'token',
+    const connection = createTestLiveConnection({ authorization: async () => 'token',
       liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
     try {
       await connection.register([], () => {}); sockets[0]!.open();
@@ -420,7 +431,7 @@ describe('LiveConnection', () => {
 
   it('does not let a Workspace reply downgrade an in-flight router negotiation', async () => {
     const router = { negotiated: vi.fn(async (_next: unknown) => {}), disconnected: vi.fn(), receive: vi.fn() };
-    const connection = new LiveConnection({ authorization: async () => 'token',
+    const connection = createTestLiveConnection({ authorization: async () => 'token',
       liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
     try {
       await connection.register([], () => {});
@@ -441,7 +452,7 @@ describe('LiveConnection', () => {
 
   it.each([[true, true], [true, false], [false, true], [false, false]])('passes negotiated Tray families only with command=%s and authority=%s', async (commandDedupV1, authorityFencesV1) => {
     const router = { negotiated: vi.fn(async (_next: unknown) => {}), disconnected: vi.fn(), receive: vi.fn() };
-    const connection = new LiveConnection({ authorization: async () => 'token',
+    const connection = createTestLiveConnection({ authorization: async () => 'token',
       liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
     try {
       await connection.register([], () => {}); sockets[0]!.open();
@@ -458,7 +469,7 @@ describe('LiveConnection', () => {
       disconnected: vi.fn(),
       receive: vi.fn(),
     };
-    const connection = new LiveConnection({
+    const connection = createTestLiveConnection({
       authorization: async () => 'token',
       liveUrl: () => 'wss://server.example/v1/phone/live',
       subscribeIdentityChange: () => () => {},
@@ -480,14 +491,14 @@ describe('LiveConnection', () => {
     'P10: old negotiated executors cannot send on a replacement socket (router=%s)',
     async (selected) => {
       type Negotiated = Parameters<
-        NonNullable<ConstructorParameters<typeof LiveConnection>[0]['router']>['negotiated']
+        NonNullable<Parameters<typeof createTestLiveConnection>[0]['router']>['negotiated']
       >[0];
       const router = {
         negotiated: vi.fn(async (_next: Negotiated) => {}),
         disconnected: vi.fn(),
         receive: vi.fn(),
       };
-      const connection = new LiveConnection({
+      const connection = createTestLiveConnection({
         authorization: async () => 'token',
         liveUrl: () => 'wss://server.example/v1/phone/live',
         subscribeIdentityChange: () => () => {},
@@ -549,7 +560,7 @@ describe('LiveConnection', () => {
 
   it('requires negotiated command support and preserves durable identity independently of request ids', async () => {
     const router = { negotiated: vi.fn(async () => {}), disconnected: vi.fn(), receive: vi.fn() };
-    const connection = new LiveConnection({
+    const connection = createTestLiveConnection({
       authorization: async () => 'token',
       liveUrl: () => 'wss://server.example/v1/phone/live',
       subscribeIdentityChange: () => () => {},
@@ -636,7 +647,7 @@ describe('LiveConnection', () => {
     let ready!: () => void;
     const router = { negotiated: vi.fn(() => new Promise<void>(resolve => { ready = resolve; })),
       disconnected: vi.fn(), receive: vi.fn() };
-    const connection = new LiveConnection({ router, authorization: async () => 'token',
+    const connection = createTestLiveConnection({ router, authorization: async () => 'token',
       liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {} });
     await connection.register([], () => {}); sockets[0]!.open();
     sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-head'] });
@@ -741,7 +752,7 @@ describe('LiveConnection', () => {
     for (const listener of appStateListeners) listener('active');
     expect(sockets).toHaveLength(1);
     expect(sockets[0]!.closed).toBe(false);
-    connection.dispose();
+    resetSharedLiveConnection();
   });
 
   it('NATIVE-142-BACKGROUND: leaves a healthy socket to Android beyond two minutes', async () => {
@@ -2244,7 +2255,7 @@ describe('LiveConnection', () => {
       .fn()
       .mockResolvedValueOnce('cached-access')
       .mockResolvedValue('renewed-access');
-    const connection = new LiveConnection({
+    const connection = createTestLiveConnection({
       authorization,
       invalidateAuthorization,
       liveUrl: () => 'wss://server.example/v1/phone/live',
@@ -2266,7 +2277,7 @@ describe('LiveConnection', () => {
   it('covers Workspace discovery when the first successful socket follows a rejected handshake', async () => {
     vi.useFakeTimers();
     const received = vi.fn();
-    const connection = new LiveConnection({
+    const connection = createTestLiveConnection({
       authorization: vi.fn().mockResolvedValue('token'),
       invalidateAuthorization: vi.fn(),
       liveUrl: () => 'wss://server.example/v1/phone/live',
@@ -2312,7 +2323,7 @@ describe('LiveConnection', () => {
           }),
       )
       .mockResolvedValue(capabilities);
-    const connection = new LiveConnection({
+    const connection = createTestLiveConnection({
       authorization: async () => 'token',
       liveUrl: () => 'wss://server.example/v1/phone/live',
       subscribeIdentityChange: () => () => {},
@@ -2798,7 +2809,7 @@ describe('native brief-drop recovery', () => {
       .mockResolvedValue('renewed');
     const invalidateAuthorization = vi.fn(),
       connected = vi.fn();
-    const connection = new LiveConnection({
+    const connection = createTestLiveConnection({
       authorization,
       invalidateAuthorization,
       liveUrl: () => 'wss://server.example/v1/phone/live',

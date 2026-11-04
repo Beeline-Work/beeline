@@ -5,8 +5,11 @@ pattern (a SQL write, a notify, a timer, a merge call), the files that own it,
 and a `total`: how many sites outside those files exist today. `total` is a
 one-way ratchet. `scripts/check-architecture.mjs` runs in the TYPECHECK job.
 
-The check reads behaviour boundaries, never bytes: editing an owner file,
-renaming a function, or moving an existing site to another file passes. A
+The sink check confines matching syntax to declared owners. It does not prove
+that an owner exposes only one capability. The phone-network and router-boundary
+checks also inspect lifecycle capability exports and raw server socket access;
+the connection rules have zero external allowance. Negative type assertions
+prove phone handlers cannot close a connection through their client view. A
 failure names the rule, every site, and the one way to comply.
 
 The command-creation, live-notify, membership-write and server-interval rules
@@ -52,12 +55,18 @@ each app so a module cannot grow a second path for the same job.
 | --- | --- |
 | Lower a `total`, add a rule, reword `invariant`/`fix`/`module`, register storage or mark it for deletion, lower `bootstrapTotal`/`unusedTotal` | Normal CI and merge authority. |
 | Remove a rule whose pattern matches nothing any more | None. |
-| Raise a `total`, `bootstrapTotal` or `unusedTotal`, remove a live rule, change `pattern`/`flags`/`scope`/`owners`/`distinct` or the storage `scope`, or change the guard scripts | Candidate invariants must pass CI; owner reviews the diff weekly after merging. |
+| Raise a `total`, `bootstrapTotal` or `unusedTotal`, remove a live rule, change `pattern`/`flags`/`distinct`, shrink `scope`, widen `owners`, or change the storage `scope` | Fails the trusted-base check, even when the candidate satisfies its own rules. |
+| Narrow `owners`, add scan roots, or edit guard code | Normal CI and merge authority; guard source edits are reported separately and the candidate runner executes. |
 
-Invariant changes, including approved relaxations, pass CI when the candidate
-satisfies its declared rules. `--base` reports those changes for the weekly audit;
-it adds no approval or merge gate. CI executes the candidate guard. The owner
-reviews invariant and guard diffs weekly after merging.
+`--base` rejects policy relaxations rather than issuing weekly-review warnings.
+There is no override flag. CI executes the candidate guard, so this is a rule
+comparison, not a claim that the guard can protect itself from arbitrary source
+rewrites. Guard changes still receive ordinary code review.
+
+The [connection-door audit](connection-door-audit.md) records the kept shutdown,
+identity-boundary, helper-protocol and test-injection exceptions. The old `paths.*`
+name counts also include unrelated display defaults, installed-data migrations
+and generated vendor code; they are not evidence of a single capability owner.
 
 System message wording is not a rule here: it lives in one catalog file and
 never blocks a PR.

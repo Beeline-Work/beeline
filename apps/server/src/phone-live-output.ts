@@ -1,7 +1,30 @@
-import type { WebSocket } from 'ws';
+import type { WebSocket, RawData } from 'ws';
+
+/** Phone protocol code observes loss but cannot cause it. Shutdown owns teardown. */
+export interface PhoneSocket {
+  readonly OPEN: number;
+  readonly readyState: number;
+  readonly bufferedAmount: number;
+  send(data: string, callback?: (error?: Error) => void): void;
+  on(event: 'message', listener: (data: RawData, isBinary: boolean) => void): void;
+  on(event: 'close' | 'error', listener: () => void): void;
+  once(event: 'close' | 'error', listener: () => void): void;
+}
+
+/** Strip raw handles, including EventEmitter methods that return the socket. */
+export function phoneSocketView(client: WebSocket): PhoneSocket {
+  return Object.freeze({
+    get OPEN() { return client.OPEN; },
+    get readyState() { return client.readyState; },
+    get bufferedAmount() { return client.bufferedAmount; },
+    send(data: string, callback?: (error?: Error) => void) { client.send(data, error => callback?.(error)); },
+    on(event: string, listener: (...args: any[]) => void) { client.on(event, (...args) => listener(...args)); },
+    once(event: string, listener: () => void) { client.once(event, () => listener()); },
+  });
+}
 
 /** A slow reader loses replaceable updates, never replies or its connection. */
-export function phoneLiveOutput(client: WebSocket, maximumBufferedBytes: number, dropped: () => void) {
+export function phoneLiveOutput(client: PhoneSocket, maximumBufferedBytes: number, dropped: () => void) {
   const rooms = new Set<string>();
   const streams = new Set<string>();
   let workspace = false;

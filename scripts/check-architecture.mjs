@@ -1,6 +1,6 @@
 // Checks `architecture/invariants.json` against the tree. With `--base <ref>`
-// it reports relaxed rules and guard changes for weekly owner review.
-// The candidate must still satisfy its declared invariants.
+// it rejects relaxed rules as well as violations of candidate invariants.
+// CI executes this candidate runner; guard edits remain ordinary reviewed code.
 import { execFileSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -10,7 +10,7 @@ import {
 } from './architecture-invariants.mjs';
 import { judgeStorage, storageRelaxations } from './architecture-storage.mjs';
 
-/** The guard itself. CI runs the base copy, so a change to it is a relaxation. */
+/** Candidate guard edits are reported separately from policy relaxations. */
 const RUNNER_FILES = ['scripts/check-architecture.mjs', 'scripts/architecture-invariants.mjs', 'scripts/architecture-storage.mjs'];
 
 function changedRunnerFiles(root, base) {
@@ -42,10 +42,10 @@ async function main() {
   const relaxed = base ? [
     ...relaxations(root, invariantsAtRef(root, base), head),
     ...storageRelaxations(invariantsAtRef(root, base), head),
-    ...changedRunnerFiles(root, base).map((file) => `guard ${file} changed`),
   ] : [];
-  for (const item of relaxed)
-    console.warn(`Weekly architecture review: ${item}.`);
+  errors.push(...relaxed.map(item => `Architecture relaxation forbidden: ${item}.`));
+  if (base) for (const file of changedRunnerFiles(root, base))
+    console.log(`Candidate architecture guard changed: ${file}.`);
   for (const error of errors) console.error(error);
   if (errors.length) {
     console.error(`Architecture check failed: ${errors.length} problem(s). See ${INVARIANTS_PATH} and architecture/README.md.`);

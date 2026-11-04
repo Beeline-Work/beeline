@@ -3,18 +3,18 @@
 // counted against the rule's `total`, a one-way ratchet for today's
 // exceptions. The rules live in `architecture/invariants.json`.
 //
-// Candidate rules must hold. Rule changes, including higher totals and widened
-// owner sets, are reported for weekly review after merging.
+// Candidate rules must hold. Higher totals, wider owners and weaker boundaries
+// fail against the trusted base; tightening is permitted.
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 
 export const INVARIANTS_PATH = 'architecture/invariants.json';
 const SOURCE_FILE = /\.(ts|tsx|mjs|js)$/;
-const SKIP_FILE = /\.(test|spec)\.[^.]+$|\.d\.ts$/;
+const SKIP_FILE = /\.(test|spec|typecheck)\.[^.]+$|\.d\.ts$/;
 const SKIP_DIRS = new Set(['node_modules', 'dist', 'build', '__tests__', 'test-fixtures']);
 const RULE_KEYS = ['id', 'module', 'invariant', 'pattern', 'scope', 'owners', 'total', 'fix'];
-/** Fields whose change moves what a rule catches; any change to them is a relaxation. */
+/** Fields that define which sites the rule catches and exempts. */
 const BOUNDARY_KEYS = ['pattern', 'flags', 'scope', 'owners', 'distinct'];
 
 export function readInvariants(root) {
@@ -22,6 +22,7 @@ export function readInvariants(root) {
 }
 
 export function invariantsAtRef(root, ref) {
+  execFileSync('git', ['rev-parse', '--verify', `${ref}^{commit}`], { cwd: root, stdio: 'pipe' });
   try {
     return JSON.parse(execFileSync('git', ['show', `${ref}:${INVARIANTS_PATH}`], {
       cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'],
@@ -98,7 +99,7 @@ export function judgeTree(root, invariants) {
         `  Found ${sites.length} site(s) outside ${rule.owners.join(', ') || 'any owner file'}; at most ${rule.total} are allowed:`,
         ...sites.map((site) => `    ${site}`),
         `  Fix: ${rule.fix}`,
-        '  Moving an existing site between files is fine. Update the declared invariant for an intentional change; the owner reviews rule changes weekly.',
+        '  Move work behind the existing owner. Exception budgets and authority boundaries may not be relaxed.',
       ].join('\n'));
     else if (sites.length < rule.total)
       errors.push(`[${rule.id}] only ${sites.length} site(s) remain outside the owner files. Lower "total" from ${rule.total} to ${sites.length} in ${INVARIANTS_PATH}; tightening needs no review.`);
@@ -119,9 +120,12 @@ export function relaxations(root, base, head) {
       continue;
     }
     if (rule.total > was.total) found.push(`rule ${was.id} total raised from ${was.total} to ${rule.total}`);
-    for (const key of BOUNDARY_KEYS)
+    for (const key of BOUNDARY_KEYS) {
+      if (key === 'owners' && rule.owners.every(owner => was.owners.includes(owner))) continue;
+      if (key === 'scope' && was.scope.every(scope => rule.scope.includes(scope))) continue;
       if (JSON.stringify(rule[key] ?? null) !== JSON.stringify(was[key] ?? null))
         found.push(`rule ${was.id} ${key} changed`);
+    }
   }
   return found;
 }

@@ -1017,7 +1017,7 @@ describe('Members workspace management', () => {
   });
 
   it('Reproduction 2315-R4: live socket grant event refreshes the rendered profile', async () => {
-    const { LiveConnection } = await vi.importActual<any>('@/sync/transport/live-connection');
+    const { createTestLiveConnection } = await vi.importActual<any>('@/sync/transport/live-connection');
     let socket: any;
     class TestSocket {
       readyState = 0;
@@ -1029,7 +1029,7 @@ describe('Members workspace management', () => {
       close() { this.readyState = 3; }
     }
     vi.stubGlobal('WebSocket', TestSocket);
-    const connection = new LiveConnection({
+    const connection = createTestLiveConnection({
       authorization: async () => 'test-session', liveUrl: () => 'wss://test.invalid/live',
       recordScope: async () => undefined,
       subscribeIdentityChange: () => () => {},

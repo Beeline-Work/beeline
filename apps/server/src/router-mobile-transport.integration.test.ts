@@ -27,7 +27,7 @@ interface Connection {
   reconnectNow(): void;
   dispose(): void;
 }
-let ConnectionClass: new (deps: object) => Connection;
+let createConnection: (deps: object) => Connection;
 let bundleDirectory: string;
 beforeAll(async () => {
   const root = fileURLToPath(new URL('../../../', import.meta.url));
@@ -51,7 +51,7 @@ beforeAll(async () => {
   };
   const outfile = path.join(bundleDirectory, 'mobile.mjs');
   const result = await build({
-    stdin: { contents: "export {LiveConnection} from './apps/mobile/sources/sync/transport/live-connection';", resolveDir: root },
+    stdin: { contents: "export {createTestLiveConnection} from './apps/mobile/sources/sync/transport/live-connection';", resolveDir: root },
     outfile, bundle: true, platform: 'node', format: 'esm', packages: 'external', metafile: true,
     plugins: [{ name: 'explicit-mobile-host-seams', setup(context) {
       context.onResolve({ filter: /^(?:@\/|react-native$|react$)/ }, args => {
@@ -62,7 +62,7 @@ beforeAll(async () => {
     } }],
   });
   expect(Object.keys(result.metafile!.inputs).some(file => file.endsWith('/sync/transport/live-connection.ts'))).toBe(true);
-  ConnectionClass = (await import(/* @vite-ignore */ pathToFileURL(outfile).href)).LiveConnection;
+  createConnection = (await import(/* @vite-ignore */ pathToFileURL(outfile).href)).createTestLiveConnection;
 });
 afterAll(async () => { if (bundleDirectory) await rm(bundleDirectory, { recursive: true, force: true }); });
 
@@ -141,7 +141,7 @@ it.each(['policy-off', 'legacy-sync'] as const)(
     }
     vi.stubGlobal('WebSocket', LoopbackSocket); vi.stubGlobal('fetch', http);
     let origin = origins[0]!;
-    connection = new ConnectionClass({
+    connection = createConnection({
       authorization: async () => 'fixture-token', liveUrl: () => `${origin}/v1/phone/live`,
       subscribeIdentityChange: () => () => {},
       router: { requestedCapabilities: async () => ({ families: ['needs-you-count'], authorityFencesV1: true }),

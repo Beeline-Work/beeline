@@ -20,7 +20,7 @@ const SKIP_DIRS = new Set(['node_modules', 'build', '.gradle', 'Pods', '__tests_
 const SKIP_FILES = new Set(['apps/mobile/sources/vendor/pdfjs/pdfjs.gen.ts']);
 const JS_FILE = /\.(ts|tsx|js|jsx|mjs|cjs)$/;
 const NATIVE_FILE = /\.(kt|java|swift|m|mm)$/;
-const TEST_FILE = /\.(test|spec)\.[^.]+$|\.d\.ts$/;
+const TEST_FILE = /\.(test|spec|typecheck)\.[^.]+$|\.d\.ts$/;
 
 /** Libraries whose job is to open their own network connections. */
 export const NETWORK_LIBRARIES = [
@@ -291,9 +291,99 @@ function lineAt(text, index) {
   return line;
 }
 
+// Lifecycle authority is forbidden even if somebody adds a manifest entry.
+// Production can report evidence or Retry an absent socket, never obtain its owner.
+function inspectPhoneSocketAuthority(file, text) {
+  if (!JS_FILE.test(file) || TEST_FILE.test(file)) return [];
+  if (file !== TRANSPORT_FILE && !/live-connection|\.(?:test|spec|typecheck)\b/.test(text)) return [];
+  const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+  const hits = [];
+  const deny = node => hits.push({ kind: 'socket-authority', line: source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1 });
+  const moduleTarget = node => {
+    if (!node || !ts.isStringLiteralLike(node)) return false;
+    const resolved = node.text.startsWith('.') ? path.posix.normalize(path.posix.join(path.posix.dirname(file), node.text))
+      : node.text.replace(/^@\//, 'apps/mobile/sources/');
+    return resolved.replace(/\.[cm]?[jt]sx?$/, '') === TRANSPORT_FILE.slice(0, -3);
+  };
+  const publicNames = new Set(['sharedLiveConnection', 'reconnectNow', 'reportRequestDeadlineMissed', 'useConnectionState']);
+  const clientMethods = new Set(['register', 'request', 'requestCommand', 'commandState', 'subscribeCommandCapabilities',
+    'diagnostics', 'routeDiagnostics', 'view', 'isViewing', 'liveDrafts', 'whenSubscribed', 'notePushedMessage',
+    'subscribeConnected', 'subscribeDisconnected', 'refreshRoom', 'reconnectNow', 'reportRequestDeadlineMissed']);
+  const publicBinding = binding => binding && ts.isObjectBindingPattern(binding) &&
+    binding.elements.every(item => !item.dotDotDotToken && publicNames.has((item.propertyName ?? item.name).getText(source)));
+  const owner = file === TRANSPORT_FILE;
+  const methodOf = node => {
+    for (let at = node.parent; at; at = at.parent) if (ts.isMethodDeclaration(at)) return at.name.getText(source);
+  };
+  function visit(node) {
+    // Negative type/guard fixtures are not runtime escape hatches.
+    const fixture = value => value && ts.isStringLiteralLike(value) && /\.(?:test|spec|typecheck)(?:\.[cm]?[jt]sx?)?$/.test(value.text);
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && fixture(node.moduleSpecifier) &&
+        !node.isTypeOnly && !node.importClause?.isTypeOnly) deny(node);
+    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        ts.isIdentifier(node.expression) && node.expression.text === 'require') && fixture(node.arguments[0])) deny(node);
+    if (!owner && (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && moduleTarget(node.moduleSpecifier) &&
+        !node.isTypeOnly && !node.importClause?.isTypeOnly) {
+      const names = node.importClause?.namedBindings;
+      if (ts.isExportDeclaration(node) || node.importClause?.name || !names || !ts.isNamedImports(names)) deny(node);
+      else for (const item of names.elements)
+        if (!item.isTypeOnly && !publicNames.has((item.propertyName ?? item.name).text)) deny(item);
+    }
+    // Dynamic imports must destructure the public operations immediately;
+    // retaining a module namespace would also retain the test-only owner seam.
+    if (!owner && ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        ts.isIdentifier(node.expression) && node.expression.text === 'require') && moduleTarget(node.arguments[0])) {
+      const parent = ts.isAwaitExpression(node.parent) ? node.parent.parent : node.parent;
+      let binding = ts.isVariableDeclaration(parent) ? parent.name : undefined;
+      // Promise.all preserves slot identity: only the public operation binding
+      // may leave this lazy bootstrap, never the module namespace/test seam.
+      if (ts.isArrayLiteralExpression(parent) && ts.isCallExpression(parent.parent) &&
+          parent.parent.expression.getText(source) === 'Promise.all') {
+        const awaited = parent.parent.parent;
+        const declaration = ts.isAwaitExpression(awaited) ? awaited.parent : undefined;
+        if (declaration && ts.isVariableDeclaration(declaration) && ts.isArrayBindingPattern(declaration.name))
+          binding = declaration.name.elements[parent.elements.indexOf(node)]?.name;
+      }
+      if (!publicBinding(binding)) deny(node);
+    }
+    if (owner) {
+      if (ts.isBinaryExpression(node) && node.left.getText(source) === 'sharedClient' &&
+          node.operatorToken.kind === ts.SyntaxKind.QuestionQuestionEqualsToken) {
+        const value = node.right;
+        const fields = ts.isCallExpression(value) && value.expression.getText(source) === 'Object.freeze' && value.arguments[0];
+        if (!fields || !ts.isObjectLiteralExpression(fields)) deny(node);
+        else for (const field of fields.properties) {
+          const name = field.name?.getText(source);
+          if (!ts.isPropertyAssignment(field) || !clientMethods.has(name) ||
+              field.initializer.getText(source) !== `owner.${name}.bind(owner)`) deny(field);
+        }
+      }
+      if (node.modifiers?.some(item => item.kind === ts.SyntaxKind.ExportKeyword)) {
+        if (ts.isClassDeclaration(node) || ts.isVariableStatement(node) ||
+            node.modifiers.some(item => item.kind === ts.SyntaxKind.DefaultKeyword) ||
+            ts.isFunctionDeclaration(node) && !publicNames.has(node.name?.text) &&
+              !['createTestLiveConnection', 'resetSharedLiveConnection'].includes(node.name?.text)) deny(node);
+      }
+      if (ts.isExportDeclaration(node) || ts.isExportAssignment(node)) deny(node);
+      const member = ts.isPropertyAccessExpression(node) ? node.name.text :
+        ts.isElementAccessExpression(node) && ts.isStringLiteralLike(node.argumentExpression) ? node.argumentExpression.text : undefined;
+      if (['close', 'terminate'].includes(member) && !['declareDead', 'dropConnection'].includes(methodOf(node))) deny(node);
+      // The only public return is the frozen client facade, never the owner.
+      if (ts.isReturnStatement(node)) {
+        let at = node.parent;
+        while (at && !ts.isFunctionLike(at)) at = at.parent;
+        if (at?.name?.text === 'sharedLiveConnection' && node.expression?.getText(source) !== 'sharedClient') deny(node);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+  return hits;
+}
+
 /** Network call sites in one source file: `[{ kind, line }]`. */
 export function scanSource(file, text, networkLibraries = NETWORK_LIBRARIES) {
-  const hits = [];
+  const hits = inspectPhoneSocketAuthority(file, text);
   const add = (kind, source, pattern) => {
     for (const match of source.matchAll(pattern)) hits.push({ kind, line: lineAt(source, match.index) });
   };
@@ -449,6 +539,10 @@ export function judgeChannels(sites, allowlist, baseAllowlist) {
   for (const [key, site] of sites) {
     const entry = allowed.get(key);
     const at = site.lines.map((line) => `${site.file}:${line}`).join(', ');
+    if (site.kind === 'socket-authority') {
+      errors.push(`phone socket lifecycle authority escaped its owner at ${at}. Use the shared client facade; test lifecycle seams cannot ship.`);
+      continue;
+    }
     if (!entry)
       errors.push(`new phone network call site (${site.kind}) at ${at}. Send it over the main live socket in ${TRANSPORT_FILE} instead.`);
     else if (site.lines.length > entry.count)

@@ -1,5 +1,5 @@
 import { parseRouterCommandIdentity } from '@beeline/api-contract/router-command';
-import type { WebSocket } from 'ws';
+import type { PhoneSocket } from './phone-live-output.js';
 import {
   PHONE_SOCKET_MAX_IN_FLIGHT, PHONE_SOCKET_MAX_REQUEST_ID_LENGTH,
   type PhoneRequestFrame, type PhoneResponseFrame,
@@ -9,7 +9,7 @@ import { PhoneOperationError, type PhoneOperationDispatcher } from './phone-oper
 
 /** Requests do not join the ordered subscription queue; each owns one bounded slot. */
 export function phoneSocketRequests(
-  client: WebSocket,
+  client: PhoneSocket,
   viewerId: string,
   dispatch: PhoneOperationDispatcher,
   send: (frame: string) => unknown,

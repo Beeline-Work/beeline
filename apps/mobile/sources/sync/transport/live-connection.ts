@@ -159,7 +159,7 @@ function dropExpiredOverlays(cache: RoomOverlayCache, now: number): void {
  * One phone live socket for the app. `surfaceSubscribe` only registers;
  * rooms are refcounted over this connection and the socket outlives screens.
  */
-export class LiveConnection {
+class LiveConnection {
   private readonly registrations = new Map<number, Registration>();
   private readonly refcount = new Map<string, number>();
   private readonly seenSubscribed = new Set<string>();
@@ -537,7 +537,7 @@ export class LiveConnection {
     }
   }
 
-  /** Explicit transport Retry only recovers an absent socket. */
+  /** User Retry may revive exhausted offline recovery; a present socket is never replaced. */
   reconnectNow(): void {
     if (!this.socket && this.hasDemand()) {
       this.recoverySpent = false;
@@ -610,6 +610,8 @@ export class LiveConnection {
    * each hears a fresh `subscribed` (or a roomless reconnect signal) and reads
    * again as the new identity.
    */
+  // Identity/relay changes cross authorization boundaries; liveness recovery
+  // cannot retain their cursors, pending requests or old credentials.
   private handleIdentityChanged(): void {
     this.routeObservation.clear();
     this.dropConnection();
@@ -1223,9 +1225,18 @@ function productionRouterBridge(): RouterOwnerBridge {
   };
 }
 
-let shared: LiveConnection | undefined;
+// The owner keeps lifecycle handles. Production receives only bound operations:
+// even a runtime cast of this facade cannot dispose or recover the raw socket.
+type LiveConnectionClient = Readonly<Pick<LiveConnection,
+  'register' | 'request' | 'requestCommand' | 'commandState' | 'subscribeCommandCapabilities' |
+  'diagnostics' | 'routeDiagnostics' | 'view' | 'isViewing' | 'liveDrafts' | 'whenSubscribed' |
+  'notePushedMessage' | 'subscribeConnected' | 'subscribeDisconnected' | 'refreshRoom' |
+  'reconnectNow' | 'reportRequestDeadlineMissed'>>;
 
-export function sharedLiveConnection(): LiveConnection {
+let shared: LiveConnection | undefined;
+let sharedClient: LiveConnectionClient | undefined;
+
+export function sharedLiveConnection(): LiveConnectionClient {
   shared ??= new LiveConnection({
     router: productionRouterBridge(),
     authorization: () => monolithSession.authorization(),
@@ -1263,7 +1274,27 @@ export function sharedLiveConnection(): LiveConnection {
       };
     },
   });
-  return shared;
+  const owner = shared;
+  sharedClient ??= Object.freeze({
+    register: owner.register.bind(owner),
+    request: owner.request.bind(owner),
+    requestCommand: owner.requestCommand.bind(owner),
+    commandState: owner.commandState.bind(owner),
+    subscribeCommandCapabilities: owner.subscribeCommandCapabilities.bind(owner),
+    diagnostics: owner.diagnostics.bind(owner),
+    routeDiagnostics: owner.routeDiagnostics.bind(owner),
+    view: owner.view.bind(owner),
+    isViewing: owner.isViewing.bind(owner),
+    liveDrafts: owner.liveDrafts.bind(owner),
+    whenSubscribed: owner.whenSubscribed.bind(owner),
+    notePushedMessage: owner.notePushedMessage.bind(owner),
+    subscribeConnected: owner.subscribeConnected.bind(owner),
+    subscribeDisconnected: owner.subscribeDisconnected.bind(owner),
+    refreshRoom: owner.refreshRoom.bind(owner),
+    reconnectNow: owner.reconnectNow.bind(owner),
+    reportRequestDeadlineMissed: owner.reportRequestDeadlineMissed.bind(owner),
+  });
+  return sharedClient;
 }
 
 /** Later request/reply code reports its own one-off deadline here. */
@@ -1276,7 +1307,14 @@ export function reconnectNow(): void {
   sharedLiveConnection().reconnectNow();
 }
 
+// Dependency injection and teardown are test-only. Both existing boundary
+// scanners reject production imports/forwarding of these lifecycle capabilities.
+export function createTestLiveConnection(deps: LiveConnectionDeps) {
+  return new LiveConnection(deps);
+}
+
 export function resetSharedLiveConnection(): void {
   shared?.dispose();
   shared = undefined;
+  sharedClient = undefined;
 }

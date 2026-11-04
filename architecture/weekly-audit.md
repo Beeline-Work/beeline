@@ -38,11 +38,12 @@ wake(action: "create", trigger: "schedule", title: "Architecture audit",
      it.
    Dropping a column or deleting production rows waits for the owner: ask in
    the Room with the evidence.
-7. Open a PR for needed changes. Candidate invariants must be green. Approved
-   rule changes, including relaxations, need no new merge gate.
+7. Open a PR for needed changes. Candidate invariants must be green and the
+   trusted-base comparison must reject relaxed budgets or boundaries.
 8. Review all merged invariant and guard changes, the System phrase catalog diff,
    and `docs/corner-state-reference.md` with the owner in this weekly batch.
    Include the PR URLs, reasons and any behavior changes. Review is after the fact;
-   neither invariant changes nor new System phrases block CI for approval.
+   Guard source changes use normal code review. System phrases do not add an
+   approval gate; invariant relaxations fail CI rather than waiting for this audit.
 9. Report the PRs reviewed, each finding with file:line, the new PR URL, and the
    week's invariant, phrase and corner reference changes.

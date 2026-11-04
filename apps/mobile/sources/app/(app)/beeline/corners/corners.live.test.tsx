@@ -21,7 +21,7 @@ const list = vi.hoisted(() => ({
   createCalls: [] as unknown[][],
   createGate: null as Promise<void> | null,
   createFailure: null as Error | null,
-  live: null as null | import('@/sync/transport/live-connection').LiveConnection,
+  live: null as null | ReturnType<typeof import('@/sync/transport/live-connection').createTestLiveConnection>,
   identityPubkey: 'viewer',
   appListeners: new Set<(state: string) => void>(),
 }));
@@ -152,7 +152,7 @@ import {
 } from '@/buzz/room-corner-store';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
-import { LiveConnection } from '@/sync/transport/live-connection';
+import { createTestLiveConnection } from '@/sync/transport/live-connection';
 import { router } from 'expo-router';
 import { cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
 import { useCornerHeaderItem } from '@/buzz/use-room-corners';
@@ -365,7 +365,7 @@ beforeEach(() => {
     close() { this.readyState = 3; }
   });
   resetRoomCornerStore();
-  list.live = new LiveConnection({
+  list.live = createTestLiveConnection({
     authorization: async () => 'phone-session',
     liveUrl: () => 'wss://server.example/v1/phone/live',
     subscribeIdentityChange: () => () => undefined,

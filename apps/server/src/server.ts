@@ -1,4 +1,4 @@
-import { phoneLiveOutput } from './phone-live-output.js';
+import { phoneLiveOutput, phoneSocketView, type PhoneSocket } from './phone-live-output.js';
 import { HelperOverlayViewer, helperOverlayEnabled, fenceHelperOverlayEnqueue } from './helper-overlay.js';
 import { syncXAdReports } from './x-ad-reports.js';
 import { syncXSiteVisits } from './x-site-visits.js';
@@ -467,7 +467,7 @@ export function createBeelineServer(options: ServerOptions): Server {
   const socketCounts = new Map<string, number>();
   /** Admitted daemon sockets per agent on this machine; a newer upgrade retires them. */
   const daemonSockets = new Map<string, Set<{ socket: Duplex; release: () => void }>>();
-  const socketSubscriptions = new Map<WebSocket, () => number>();
+  const socketSubscriptions = new Map<WebSocket | PhoneSocket, () => number>();
   const liveErrors = { database: 0, invalid: 0, internal: 0, overload: 0 };
   const liveCounters = {
     helperVersionRefusals: 0,
@@ -651,6 +651,7 @@ export function createBeelineServer(options: ServerOptions): Server {
     for (const stopHeartbeat of heartbeatStops.values()) stopHeartbeat();
     heartbeatStops.clear();
     releaseConnectionEpochs?.();
+    // Process shutdown must release upgraded sockets before HTTP close can drain.
     for (const client of webSockets.clients) client.terminate();
     webSockets.close();
     return closeHttp((error) => {
@@ -668,6 +669,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       socket.destroy();
       return;
     }
+    let phoneAdmitted = false;
     void (async () => {
       const url = exactPath(request.url);
       const computer = /^\/s\/([A-Za-z0-9_-]{43})\/(?:ws|stream)$/.exec(url.pathname);
@@ -792,16 +794,22 @@ export function createBeelineServer(options: ServerOptions): Server {
         daemonSockets.set(daemonId, agentSockets);
       }
       socket.once('close', admitted.release);
-      webSockets.handleUpgrade(request, socket, head, (client) =>
+      webSockets.handleUpgrade(request, socket, head, (client) => {
+        phoneAdmitted = !daemonId;
         webSockets.emit('connection', client, request, {
           identityId,
           kind: daemonId ? 'daemon' : 'phone',
           helperVersion,
           helperSourceSha,
           ...(phoneSession?.familyId ? { familyId: phoneSession.familyId } : {}),
-        }),
-      );
-    })().catch(() => socket.destroy());
+        });
+      });
+    })().catch(error => {
+      // Reject unauthenticated upgrades, but an admitted phone's setup failure
+      // is application evidence. Only shutdown may terminate its transport.
+      if (!phoneAdmitted) socket.destroy();
+      else console.error('[live] phone setup failed', error);
+    });
   });
   webSockets.on(
     'connection',
@@ -816,19 +824,19 @@ export function createBeelineServer(options: ServerOptions): Server {
         familyId?: string;
       },
     ) => {
-      const sendLive = principal.kind === 'phone'
-        ? phoneLiveOutput(client, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, () => { liveErrors.overload++; })
-        : (payload: string):boolean => {
-        if (client.readyState !== client.OPEN) return false;
-        if (client.bufferedAmount + Buffer.byteLength(payload) > MAX_LIVE_OUTBOUND_BUFFERED_BYTES) {
-          liveErrors.overload++;
-          client.close(1013, 'live backpressure');
-          return false;
-        }
-        client.send(payload);
-        return true;
-      };
       if (principal.kind !== 'phone') {
+        // Helper sockets have their own heartbeat/backpressure protocol. Phone
+        // handlers below never receive this close-capable owner handle.
+        const sendLive = (payload: string):boolean => {
+          if (client.readyState !== client.OPEN) return false;
+          if (client.bufferedAmount + Buffer.byteLength(payload) > MAX_LIVE_OUTBOUND_BUFFERED_BYTES) {
+            liveErrors.overload++;
+            client.close(1013, 'live backpressure');
+            return false;
+          }
+          client.send(payload);
+          return true;
+        };
         watchConnectionEpochs();
         let answered = true;
         const stopHeartbeat = (options.connectionWork ?? startConnectionWork)(() => {
@@ -870,6 +878,12 @@ export function createBeelineServer(options: ServerOptions): Server {
         else serveAgentSocket(daemonLive, client, principal, sendLive, trackSubscriptions);
         return;
       }
+      servePhoneSocket(phoneSocketView(client), principal);
+    },
+  );
+
+  function servePhoneSocket(client: PhoneSocket, principal: { identityId: string; familyId?: string }) {
+      const sendLive = phoneLiveOutput(client, MAX_LIVE_OUTBOUND_BUFFERED_BYTES, () => { liveErrors.overload++; });
       const releaseServerConnection = options.connectionPresence?.holdServerConnection();
       client.once('close', () => releaseServerConnection?.());
       client.once('error', () => releaseServerConnection?.());
@@ -1606,8 +1620,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         draftWire.clear();
         sentRows.clear();
       });
-    },
-  );
+  }
   server.once('listening', () => { void options.daemon.warmConnectorIndex?.(); });
   return server;
 }

@@ -21,7 +21,7 @@ typecheck() {
   export ARCHITECTURE_BASE="$CI_BASE_SHA"
   git fetch --no-tags --depth=1 origin "$ARCHITECTURE_BASE"
   node --test --test-concurrency=1 scripts/check-architecture.test.mjs
-  # G1: candidate invariants govern CI; changes are reviewed weekly after merging.
+  # Candidate invariants must hold and cannot relax trusted-base policy.
   node scripts/check-architecture.mjs --root . --base "$ARCHITECTURE_BASE"
   # The root command also generates mobile routes and typechecks mobile.
   node --test scripts/eas-api-contract.test.mjs scripts/server-previous-sources.test.mjs

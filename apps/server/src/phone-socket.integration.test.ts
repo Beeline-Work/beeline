@@ -108,6 +108,18 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     await once(socket, 'open');
     return socket;
   }
+  it('keeps an admitted phone open when application setup throws after upgrade', async () => {
+    vi.spyOn(live, 'humanConnected').mockImplementationOnce(() => { throw new Error('setup failed'); });
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const socket = await open();
+    await new Promise<void>((resolve, reject) => {
+      socket.once('pong', () => resolve());
+      socket.once('close', () => reject(new Error('admitted phone was closed')));
+      socket.ping();
+    });
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+  });
+
   function response(socket: WebSocket, id: string): Promise<PhoneResponseFrame> {
     return new Promise((resolve, reject) => {
       const onMessage = (raw: WebSocket.RawData) => {

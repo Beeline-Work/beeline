@@ -28,7 +28,7 @@ export async function proveMobileHistoricalRecovery({ selectedOrigin, historical
       '@/buzz/router-owner': 'throw Error("Production navigation bridge is outside this transport proof");',
     };
     const outfile = path.join(directory, 'transport.mjs');
-    await build({ stdin: { contents: "export {LiveConnection} from './apps/mobile/sources/sync/transport/live-connection';", resolveDir: process.cwd() },
+    await build({ stdin: { contents: "export {createTestLiveConnection} from './apps/mobile/sources/sync/transport/live-connection';", resolveDir: process.cwd() },
       outfile, bundle: true, platform: 'node', format: 'esm', packages: 'external',
       plugins: [{ name: 'historical-mobile-host-seams', setup(api) {
         api.onResolve({ filter: /^(?:@\/|react-native$|react$)/ }, args => {
@@ -38,7 +38,7 @@ export async function proveMobileHistoricalRecovery({ selectedOrigin, historical
         api.onLoad({ filter: /.*/, namespace: 'host-seam' }, args => ({ contents: stubs[args.path], loader: 'js' }));
       } }],
     });
-    const { LiveConnection } = await import(pathToFileURL(outfile).href);
+    const { createTestLiveConnection } = await import(pathToFileURL(outfile).href);
     const origins = new Set([selectedOrigin, historicalOrigin]);
     class LoopbackSocket extends WebSocket {
       constructor(url, protocols) {
@@ -64,7 +64,7 @@ export async function proveMobileHistoricalRecovery({ selectedOrigin, historical
     globalThis.WebSocket = LoopbackSocket;
     globalThis.fetch = () => { fetches++; throw new Error('Unexpected HTTP fallback'); };
     let origin = selectedOrigin, snapshot;
-    connection = new LiveConnection({ authorization: async () => 'synthetic', liveUrl: () => `${origin}/v1/phone/live`,
+    connection = createTestLiveConnection({ authorization: async () => 'synthetic', liveUrl: () => `${origin}/v1/phone/live`,
       subscribeIdentityChange: () => () => {},
       router: { requestedCapabilities: async () => ({ families: ['needs-you-count'], authorityFencesV1: true }),
         negotiated: async next => { if (next.families.includes('needs-you-count')) snapshot = next.execute; },

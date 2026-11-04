@@ -4,7 +4,7 @@ This package stages local admission, read lanes and durable command intents for 
 
 The private owner entry is allowed only in the exact mobile navigation and persisted-command owners enforced by `scripts/router-boundaries.mjs`. The navigation owner observes committed navigator residency; consumers observe/refcount lanes without minting passes. List, count and Room-head choose exactly one legacy/router path per negotiated epoch. Command intents persist immutable bytes and identity before dispatch and cannot downgrade an uncertain result. Web cross-tab ownership and upload-dependent prepared identities remain explicit gates.
 
-LiveConnection negotiates on its existing socket, queues bounded committed pushes until the local owner is ready, and selects legacy from an old-server acknowledgement without a fallback timer. Foreground and duplicate reachability samples preserve an open socket. An actual request deadline permits one replacement; open/close flaps cannot replenish that allowance. Shadow input diagnostics remain local and bounded (100 entries/16 KiB), with no telemetry or pass payload.
+LiveConnection negotiates on its existing socket, queues bounded committed pushes until the local owner is ready, and selects legacy from an old-server acknowledgement without a fallback timer. Foreground and duplicate reachability samples preserve an open socket. Slow requests and foreground inactivity use the same ping challenge; only native loss or an unanswered challenge declares the connection dead. Production callers receive a frozen operation facade without the constructor, socket or disposal handle. Identity/relay changes remain a private authorization-boundary teardown. Shadow input diagnostics remain local and bounded (100 entries/16 KiB), with no telemetry or pass payload.
 
 A pass is an empty frozen object recognized by an owner-local WeakMap. Its route, canonical parameters, origin, principal, session, residency, and spend state remain local. Screen owners join an existing navigation generation; blur/background revoke it. Tap authority ends on synchronous handler return even when that handler returns a promise. A negotiated connection gets one bounded recovery batch per generation. Atomic spend produces only an operation name and immutable canonical input. It never sends a pass or reports held keys. Commands prepared before tap expiry remain immutable intent; session reset fences their later delivery.
 
@@ -20,7 +20,7 @@ A pass is an empty frozen object recognized by an owner-local WeakMap. Its route
 - `npm run typecheck -w @beeline/net`: operation exhaustiveness and negative type fixtures.
 - `node --test scripts/router-boundaries.test.mjs`: P11 boundary, native, alias, SDK, and trusted-base bootstrap fixtures.
 - `node scripts/check-router-boundaries.mjs --base <trusted-base>`: pure core, private imports, and migration non-growth.
-- Existing `scripts/check-phone-network-channels.mjs` and its tests continue unchanged in TYPECHECK. SHARED PACKAGE TESTS executes the admission suite with a 4096 MiB heap cap and at most two workers.
+- The phone-network and router-boundary checks also reject lifecycle capability escapes, including test-seam imports and raw server phone socket captures. SHARED PACKAGE TESTS executes the admission suite with a 4096 MiB heap cap and at most two workers.
 
 ## Remaining migration gates
 

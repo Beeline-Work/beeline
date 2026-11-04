@@ -46,6 +46,35 @@ test('only the transport module holds the main socket', () => {
   assert.deepEqual(sockets.map((entry) => [entry.file, entry.kind, entry.count]), [[TRANSPORT_FILE, 'websocket', 1]]);
 });
 
+test('lifecycle backdoors fail even when planted in the channel manifest', () => {
+  const file = 'apps/mobile/sources/buzz/backdoor.ts';
+  for (const text of [
+    'import { resetSharedLiveConnection as reset } from "@/sync/transport/live-connection"; reset();',
+    'import { createTestLiveConnection as create } from "@/sync/transport/live-connection";',
+    'export { sharedLiveConnection } from "@/sync/transport/live-connection";',
+    'const owner = await import("@/sync/transport/live-connection");',
+    'import * as owner from "@/sync/transport/live-connection";',
+    'import { reset } from "./backdoor.typecheck";',
+  ]) {
+    const hits = scanSource(file, text);
+    assert.ok(hits.some(hit => hit.kind === 'socket-authority'), text);
+    const sites = new Map([[`${file}::socket-authority`, { file, kind: 'socket-authority', lines: [1] }]]);
+    const errors = judgeChannels(sites, { entries: [{ file, kind: 'socket-authority', count: 1, fate: 'exception', why: 'planted backdoor' }] });
+    assert.ok(errors.some(error => error.includes('lifecycle authority escaped')), text);
+  }
+});
+
+test('owner file is checked for exported construction, raw return and a second close sink', () => {
+  const text = readFileSync(path.join(repo, TRANSPORT_FILE), 'utf8');
+  assert.equal(scanSource(TRANSPORT_FILE, text).filter(hit => hit.kind === 'socket-authority').length, 0);
+  for (const changed of [
+    text.replace('class LiveConnection {', 'export class LiveConnection {'),
+    text.replace('return sharedClient;', 'return shared;'),
+    text.replace('register: owner.register.bind(owner),', 'dispose: owner.dispose.bind(owner), register: owner.register.bind(owner),'),
+    text.replace('refreshRoom(roomId?: string): void {', 'refreshRoom(roomId?: string): void { this.socket?.close();'),
+  ]) assert.ok(scanSource(TRANSPORT_FILE, changed).some(hit => hit.kind === 'socket-authority'));
+});
+
 test('a new fetch( outside the transport module fails the check', () => {
   const root = copyOfRepo('new-fetch');
   assert.equal(runCheck(root).status, 0);

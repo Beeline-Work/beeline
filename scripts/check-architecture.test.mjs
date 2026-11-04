@@ -57,6 +57,8 @@ test('tightening is not a relaxation', () => {
   assert.deepEqual(relaxations(root, base, { rules: [{ ...RULE, total: 0 }] }), []);
   assert.deepEqual(relaxations(root, base, { rules: [RULE, { ...RULE, id: 'new.rule' }] }), []);
   assert.deepEqual(relaxations(root, base, { rules: [{ ...RULE, fix: 'Reworded fix.' }] }), []);
+  assert.deepEqual(relaxations(root, base, { rules: [{ ...RULE, owners: [] }] }), []);
+  assert.deepEqual(relaxations(root, base, { rules: [{ ...RULE, scope: ['src', 'new-src'] }] }), []);
   assert.deepEqual(relaxations(root, undefined, { rules: [] }), []);
 });
 
@@ -94,13 +96,33 @@ function guardFixture() {
   return { root, run, git };
 }
 
-test('an intentional relaxation passes and reports weekly review', () => {
+test('a planted backdoor cannot be legalized by raising the candidate budget', () => {
   const { root, run } = guardFixture();
   writeFileSync(path.join(root, 'architecture/invariants.json'), JSON.stringify({ rules: [{ ...RULE, total: 2 }] }));
   writeFileSync(path.join(root, 'src/new.ts'), 'INSERT INTO agent_commands(id) VALUES(1)');
   const result = run();
-  assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stderr, /Weekly architecture review: rule work\.command-creation total raised from 1 to 2/);
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Architecture relaxation forbidden: rule work\.command-creation total raised from 1 to 2/);
+});
+
+test('owner, scope and pattern backdoors fail even when the candidate passes', () => {
+  for (const change of [
+    { owners: [...RULE.owners, 'src/mcp.ts'], total: 0 },
+    { scope: [], total: 0 },
+    { pattern: 'no_longer_catches_the_write', total: 0 },
+  ]) {
+    const { root, run } = guardFixture();
+    writeFileSync(path.join(root, 'architecture/invariants.json'), JSON.stringify({ rules: [{ ...RULE, ...change }] }));
+    const result = run();
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stderr, /Architecture relaxation forbidden/);
+  }
+});
+
+test('a missing trusted base cannot silently disable relaxation checking', () => {
+  const { root } = guardFixture();
+  const result = spawnSync(process.execPath, [RUNNER, '--root', root, '--base', 'missing-base'], { encoding: 'utf8' });
+  assert.equal(result.status, 1);
 });
 
 test('normal tightening passes the CLI check against base', () => {
@@ -112,7 +134,7 @@ test('normal tightening passes the CLI check against base', () => {
   assert.match(result.stdout, /Architecture check passed/);
 });
 
-test('changing the guard itself reports weekly review', () => {
+test('candidate guard changes are reported separately from invariant relaxation', () => {
   const { root, run, git } = guardFixture();
   mkdirSync(path.join(root, 'scripts'));
   writeFileSync(path.join(root, 'scripts/check-architecture.mjs'), '// base guard');
@@ -122,7 +144,7 @@ test('changing the guard itself reports weekly review', () => {
   writeFileSync(path.join(root, 'scripts/check-architecture.mjs'), '// changed guard');
   const result = run();
   assert.equal(result.status, 0, result.stderr);
-  assert.match(result.stderr, /Weekly architecture review: guard scripts\/check-architecture\.mjs changed/);
+  assert.match(result.stdout, /Candidate architecture guard changed: scripts\/check-architecture\.mjs/);
 });
 
 test('this repository meets its own invariants', () => {
@@ -131,6 +153,20 @@ test('this repository meets its own invariants', () => {
   assert.deepEqual(validateRules(invariants), []);
   assert.deepEqual(judgeTree(root, invariants), []);
   assert.deepEqual(judgeStorage(root, invariants.storage), []);
+});
+
+test('locked capability paths have zero budget and reject planted second owners', () => {
+  const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
+  const { rules } = readInvariants(root);
+  for (const [id, file, text] of [
+    ['paths.phone-connection-owner', 'apps/mobile/sources/buzz/backdoor.ts', 'createTestLiveConnection({});'],
+    ['paths.server-phone-socket-owner', 'apps/server/src/backdoor.ts', 'phoneSocketView(raw);'],
+    ['paths.phone-server-read-owner', 'apps/mobile/sources/buzz/backdoor.ts', 'readServerSurface({}, "readChats", {});'],
+  ]) {
+    const rule = rules.find(rule => rule.id === id);
+    assert.equal(rule.total, 0);
+    assert.ok(judgeTree(tree({ [file]: text }), { rules: [rule] }).some(error => error.includes(id)));
+  }
 });
 
 test('a distinct rule counts different names, not uses', () => {

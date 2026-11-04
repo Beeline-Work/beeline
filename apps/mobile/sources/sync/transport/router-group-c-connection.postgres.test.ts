@@ -36,7 +36,7 @@ vi.mock('react-native', () => ({ AppState: {
     app.listeners.add(listener); return { remove: () => app.listeners.delete(listener) };
   },
 }, NativeModules: { RNCNetInfo: {} }, Platform: { OS: 'android' } }));
-import { LiveConnection, sharedLiveConnection, resetSharedLiveConnection } from './live-connection';
+import { sharedLiveConnection, resetSharedLiveConnection } from './live-connection';
 import { monolithSession } from '@/auth/monolith-session';
 
 const authStorage = vi.hoisted(() => new Map<string, string>());
@@ -90,7 +90,7 @@ describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
     const reads: RouterSnapshotInput[] = [], errors: unknown[] = [];
     const protocols: ReturnType<typeof routerSocketProtocol>[] = [];
     const lanes = new ReadLanes({ origin: 'https://synthetic.test', principal: viewer, sessionEpoch: 1 }, () => true);
-    let connection: LiveConnection | undefined, path = 1;
+    let connection: ReturnType<typeof sharedLiveConnection> | undefined, path = 1;
     const sample = () => app.network!({ type: 'wifi', isConnected: true, isInternetReachable: true, details: { ipAddress: `192.0.2.${path}` } });
     const network = () => { path++; sample(); };
     let challenged = deferred(), negotiated = deferred(), installed = deferred(), rejected = deferred();
@@ -205,7 +205,7 @@ describe.skipIf(!url)('Group C P4 real socket/PostgreSQL lane recovery', () => {
       expect({ queries, sockets, attempts }).toEqual({ queries: count, sockets: 3, attempts: 6 });
       expect(reads).toHaveLength(4); expect(errors).toEqual([]);
     } finally {
-      resetSharedLiveConnection(); connection?.dispose(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();
+      resetSharedLiveConnection(); vi.useRealTimers(); vi.unstubAllGlobals(); vi.restoreAllMocks();
       for (const protocol of protocols) protocol.close(); for (const socket of wss.clients) socket.terminate();
       await new Promise<void>(resolve => wss.close(() => resolve())); await db.close();
       await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); app.listeners.clear();

@@ -1,12 +1,35 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { inspectSource, judgeInventory, scanRouterTree, baselineInventory } from './router-boundaries.mjs';
 
 const core = 'packages/net/src/example.ts';
+
+test('phone lifecycle authority has zero allowance in router inventory too', () => {
+  for (const source of [
+    'import { createTestLiveConnection as create } from "@/sync/transport/live-connection";',
+    'export * from "@/sync/transport/live-connection";',
+    'const { resetSharedLiveConnection } = await import("@/sync/transport/live-connection");',
+  ]) assert.ok(inspectSource('apps/mobile/sources/buzz/backdoor.ts', source).errors.some(error => error.includes('socket lifecycle')));
+});
+
+test('phone handlers cannot capture the raw server socket outside the helper branch', () => {
+  const file = 'apps/server/src/server.ts';
+  const source = readFileSync(fileURLToPath(new URL('../apps/server/src/server.ts', import.meta.url)), 'utf8');
+  assert.deepEqual(inspectSource(file, source).errors, []);
+  for (const changed of [
+    source.replace('servePhoneSocket(phoneSocketView(client), principal);', 'client.close(); servePhoneSocket(phoneSocketView(client), principal);'),
+    source.replace("principal.kind !== 'phone'", "principal.kind === 'phone'"),
+    source.replace('servePhoneSocket(phoneSocketView(client), principal);', 'const alias = client; alias.terminate(); servePhoneSocket(phoneSocketView(client), principal);'),
+    source.replace('if (!phoneAdmitted) socket.destroy();', 'socket.destroy();'),
+    source.replace('phoneAdmitted = !daemonId;', 'phoneAdmitted = !daemonId; socket.destroy();'),
+    source.replace('servePhoneSocket(phoneSocketView(client), principal);', 'client.close(); servePhoneSocket(phoneSocketView(client), principal);').replace(/\bclient\b/g, 'peer'),
+  ]) assert.ok(inspectSource(file, changed).errors.some(error => error.includes('phone socket lifecycle')));
+  assert.ok(inspectSource('apps/server/src/feature.ts', 'import { phoneSocketView as mint } from "./phone-live-output.js";').errors.length);
+});
 const dispatcherSource = `import { Agent } from 'undici';
 class MemberStreamAgent extends Agent {
   override dispatch(options: Parameters<Agent['dispatch']>[0], handler: Parameters<Agent['dispatch']>[1]): ReturnType<Agent['dispatch']> {

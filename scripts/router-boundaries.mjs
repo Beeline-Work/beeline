@@ -115,6 +115,88 @@ const OWNER_CALLERS = {
   acquireRouterLane: ['buzz/router-resource.ts', 'buzz/router-scheduled-work.ts', 'buzz/router-tray.ts', 'app/(app)/beeline/chat/useRoomSurfaceSession.ts', 'buzz/server-read-owner.ts'],
 };
 const OWNER_READS = new Set(['routerFamilyMode', 'routerLaneSnapshot', 'subscribeRouterOwner']);
+
+// Only server admission may mint a phone view. The admitted phone handler has
+// no close-capable socket, including through chained EventEmitter methods.
+function inspectServerPhoneSocket(file, source, errors) {
+  const server = 'apps/server/src/server.ts';
+  const output = 'apps/server/src/phone-live-output';
+  const deny = node => errors.push(`${file}:${source.getLineAndCharacterOfPosition(node.getStart(source)).line + 1}: phone socket lifecycle belongs to admission/shutdown; use PhoneSocket`);
+  const connectionCallback = node => {
+    for (let at = node.parent; at; at = at.parent) {
+      if (!ts.isFunctionLike(at) || !ts.isCallExpression(at.parent)) continue;
+      const call = at.parent;
+      const event = call.arguments[0];
+      if (ts.isPropertyAccessExpression(call.expression) && call.expression.name.text === 'on' &&
+          event && ts.isStringLiteralLike(event) && event.text === 'connection' && call.arguments[1] === at) return at;
+    }
+  };
+  const inHelperBranch = (node, callback) => {
+    const principal = callback.parameters[2]?.name.getText(source);
+    for (let at = node.parent; at && at !== callback; at = at.parent) {
+      if (!ts.isIfStatement(at)) continue;
+      const test = at.expression;
+      if (ts.isBinaryExpression(test) && test.operatorToken.kind === ts.SyntaxKind.ExclamationEqualsEqualsToken &&
+          ts.isPropertyAccessExpression(test.left) && test.left.expression.getText(source) === principal &&
+          test.left.name.text === 'kind' && ts.isStringLiteralLike(test.right) && test.right.text === 'phone' &&
+          node.pos >= at.thenStatement.pos && node.end <= at.thenStatement.end) return true;
+    }
+    return false;
+  };
+  function visit(node) {
+    if (file === server && ts.isBinaryExpression(node) && node.left.getText(source) === 'phoneAdmitted' &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken && node.right.getText(source) !== '!daemonId') deny(node);
+    if (file === server && ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === 'handleUpgrade') {
+      const callback = node.arguments[3];
+      if (callback && ts.isFunctionLike(callback)) {
+        const inspectCapture = child => {
+          if (ts.isIdentifier(child) && child.text === 'socket') deny(child);
+          ts.forEachChild(child, inspectCapture);
+        };
+        inspectCapture(callback.body);
+      }
+    }
+    if (file === server && ts.isPropertyAccessExpression(node) && node.expression.getText(source) === 'socket' && node.name.text === 'destroy') {
+      let at = node.parent;
+      let guarded = false;
+      while (at) {
+        if (ts.isIfStatement(at) && at.expression.getText(source) === '!phoneAdmitted' &&
+            node.pos >= at.thenStatement.pos && node.end <= at.thenStatement.end) guarded = true;
+        if (ts.isArrowFunction(at) && ts.isCallExpression(at.parent) && ts.isPropertyAccessExpression(at.parent.expression) &&
+            at.parent.expression.name.text === 'catch' && !guarded) deny(node);
+        at = at.parent;
+      }
+    }
+    if (ts.isCallExpression(node) && (node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+        ts.isIdentifier(node.expression) && node.expression.text === 'require') &&
+        node.arguments[0] && ts.isStringLiteralLike(node.arguments[0])) {
+      const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), node.arguments[0].text)).replace(/\.js$/, '');
+      if (target === output) deny(node);
+    }
+    if ((ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) && node.moduleSpecifier &&
+        !node.isTypeOnly && !node.importClause?.isTypeOnly) {
+      const target = node.moduleSpecifier.text.startsWith('.')
+        ? path.posix.normalize(path.posix.join(path.posix.dirname(file), node.moduleSpecifier.text)).replace(/\.js$/, '') : node.moduleSpecifier.text;
+      if (target === output) {
+        const names = node.importClause?.namedBindings;
+        if (ts.isExportDeclaration(node) || node.importClause?.name || !names || !ts.isNamedImports(names)) deny(node);
+        else for (const item of names.elements)
+          if (!item.isTypeOnly && (item.propertyName ?? item.name).text === 'phoneSocketView' && file !== server) deny(item);
+      }
+    }
+    if (file === server && ts.isIdentifier(node)) {
+      const callback = connectionCallback(node);
+      const rawName = callback?.parameters[0]?.name;
+      if (rawName && ts.isIdentifier(rawName) && node.text === rawName.text &&
+          !inHelperBranch(node, callback) && !ts.isParameter(node.parent) &&
+          !(ts.isCallExpression(node.parent) && node.parent.expression.getText(source) === 'phoneSocketView')) deny(node);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(source);
+}
+
 function inspectOwnerAccess(file, source, errors) {
   const allowed = name => OWNER_READS.has(name) || (Object.hasOwn(OWNER_CALLERS, name) && OWNER_CALLERS[name].some(caller => MOBILE + caller === file));
   const ownerModule = specifier => {
@@ -315,6 +397,9 @@ export function inspectSource(file, text) {
   const errors = [];
   const inCore = file.startsWith('packages/net/src/');
   let hits = scanSource(file, text, LIBRARIES).filter(hit => !hit.kind.startsWith('origin:'));
+  for (const hit of hits.filter(hit => hit.kind === 'socket-authority'))
+    errors.push(`${file}:${hit.line}: phone socket lifecycle authority escaped its owner`);
+  hits = hits.filter(hit => hit.kind !== 'socket-authority');
   // Rust HTTP clients are native leaves too; imports remain explicit inventory.
   if (file.endsWith('.rs')) {
     for (const match of text.matchAll(/\b(?:reqwest|hyper|TcpStream|UdpSocket|tungstenite)\b/g))
@@ -322,6 +407,7 @@ export function inspectSource(file, text) {
   }
   if (/\.[cm]?[jt]sx?$/.test(file)) {
     const source = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    if (file.startsWith('apps/server/')) inspectServerPhoneSocket(file, source, errors);
     if (configuredMcpDispatcher(file, source)) hits = hits.filter(hit => hit.kind !== 'import:undici');
     const commandOwners = ['apps/mobile/sources/buzz/command-owner.ts', 'apps/mobile/sources/sync/transport/live-connection.ts'];
     function commandAccess(node) {

@@ -278,6 +278,49 @@
       "owners": [],
       "total": 4,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
+    },
+    {
+      "id": "paths.phone-connection-owner",
+      "module": "Phone live connection",
+      "invariant": "Only the live owner constructs, disposes or resets the phone connection.",
+      "pattern": "\\b(?:new\\s+LiveConnection\\s*\\(|(?:resetSharedLiveConnection|createTestLiveConnection)\\s*\\()",
+      "scope": [
+        "apps/mobile/sources"
+      ],
+      "owners": [
+        "apps/mobile/sources/sync/transport/live-connection.ts"
+      ],
+      "total": 0,
+      "fix": "Use sharedLiveConnection(); report transport evidence or Retry an absent socket. Lifecycle injection/reset are test-only."
+    },
+    {
+      "id": "paths.server-phone-socket-owner",
+      "module": "Server phone admission",
+      "invariant": "Only server admission mints the restricted phone socket capability.",
+      "pattern": "\\bphoneSocketView\\s*\\(",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/server.ts",
+        "apps/server/src/phone-live-output.ts"
+      ],
+      "total": 0,
+      "fix": "Pass the existing PhoneSocket view; never obtain a raw phone WebSocket in a handler."
+    },
+    {
+      "id": "paths.phone-server-read-owner",
+      "module": "Server-indexed phone reads",
+      "invariant": "Only server-read-owner constructs durable surface stores or invokes their committed read adapter.",
+      "pattern": "\\b(?:new\\s+(?:ChatReads|TrayReads)\\s*\\(|readServerSurface\\s*\\()",
+      "scope": [
+        "apps/mobile/sources"
+      ],
+      "owners": [
+        "apps/mobile/sources/buzz/server-read-owner.ts"
+      ],
+      "total": 0,
+      "fix": "Observe server-read-owner surfaces. Feature code cannot own a durable read or construct its capability."
     }
   ],
   "storage": {

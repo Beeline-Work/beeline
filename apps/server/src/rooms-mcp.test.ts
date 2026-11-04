@@ -1096,7 +1096,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       "start with the asker's exact @handle",
       'replyTo does not wake anyone',
       'When you finish, are blocked, fail, or need a decision on a chat request, tag the agent or person who asked you (your commander) with the result.',
-      'Answer orders listed under wakes in list_mentions with report at the order address, not a plain message.',
+      'For orders under wakes, pass their id as commandId on tool calls; finish with report at that address, not a plain message.',
       'done:, blocked:, failed:, needs-decision:',
       'A plain post or send_message without a tag wakes nobody',
       'Tag an agent only when it must act on your reply',
@@ -1107,9 +1107,14 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       expect(tools.find(tool => tool.name === name)?.description)
         .toContain("replyTo does not wake anyone; start with the asker's exact @handle");
     }
-    const report = tools.find(tool => tool.name === 'report')?.description;
+    const reportTool = tools.find(tool => tool.name === 'report')!;
+    expect(reportTool.inputSchema.properties?.commandId).toMatchObject({ type: 'string', pattern: '^[0-9a-f]{64}$' });
+    const report = reportTool.description;
     expect(report).toContain('Answer an order');
-    expect(report).toContain('Prefers an order at address, then your oldest pending order elsewhere');
+    expect(report).toContain('commandId binds the exact order');
+    expect(report).toContain('a single pending order elsewhere');
+    expect(report).toContain('refuses an ambiguous fallback and lists waiting orders');
+    expect(report).not.toContain('oldest pending order elsewhere');
     expect(report).toContain('done:, blocked:, failed:, needs-decision:');
     expect(report).toContain('Answer chat requests with a tagged message instead');
   });

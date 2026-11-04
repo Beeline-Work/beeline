@@ -134,3 +134,17 @@ Validation: both targeted corner/webhook reproductions passed; the full
 feedback-triage-workflow suite passed (23 tests). Root typecheck, architecture
 and workflow-path checks passed. No production mutation was performed; the
 08:00Z B1 hold remains in effect.
+
+## Served external-rule correction (firstmate inbox 005)
+
+The R-WAKING-REPORTING failure reproduced against freshly built API-contract
+output: its expected sentence predated E1. The expectation now requires the
+served commandId order-binding instruction and advertised commandId schema.
+The report descriptor also now teaches the existing exact-order binding and
+single-order/ambiguous fallback behavior, rather than promising the retired
+oldest-order fallback. No handler behavior changed. Existing asker-tag, replyTo,
+commander and report-prefix assertions remain.
+
+Validation: API-contract build; full MCP suite (155 tests); external-agent-rules
+suite (4 tests); root typecheck and architecture check passed. No production
+mutation was performed, and the 08:00Z B1 hold remains in effect.

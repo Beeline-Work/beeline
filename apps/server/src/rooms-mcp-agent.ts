@@ -148,7 +148,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('stop', 'Stop the running turn of an agent you ordered, or one working in a corner you opened.', {
     address: address(), agent: { type: 'string', maxLength: 120 },
   }, ['address']),
-  tool('report', 'Answer an order with its outcome to whoever ordered you. Answer chat requests with a tagged message instead. Prefers an order at address, then your oldest pending order elsewhere; without an order, a corner address reports to its commander. Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
+  tool('report', 'Answer an order with its outcome to whoever ordered you. Answer chat requests with a tagged message instead. commandId binds the exact order. Without it, prefers an order at address, then a single pending order elsewhere; refuses an ambiguous fallback and lists waiting orders. Without an order, a corner address reports to its commander. Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
     address: address(), status: { type: 'string', enum: ['done', 'blocked', 'failed', 'needs_decision'] },
     text: { type: 'string', minLength: 1, maxLength: 16000 }, ask: { type: 'string', maxLength: 140 },
   }, ['address', 'status', 'text']),

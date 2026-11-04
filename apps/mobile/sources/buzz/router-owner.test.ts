@@ -132,7 +132,9 @@ describe('real mobile router owner', () => {
     await routerOwnerNegotiated({generation:1,families:['room-list','needs-you-tray','needs-you-count','needs-you-saved-page'],authorityFencesV1:true,execute});await settle();
     expect(head.current().state).toBe(phase==='live'?'LIVE':'OPENING');expect(rooms.current().state).toBe('LIVE');const count=execute.mock.calls.length;
     routerOwnerReceive({kind:'router-unavailable',stream:'control:tray-clock',families:['needs-you-tray','needs-you-count','needs-you-saved-page'],reason:'dependency'});
-    expect(head.current().state).toBe('OPENING');expect(rooms.current()).toMatchObject({state:'LIVE',value:listValue});
+    expect(head.current()).toMatchObject({state:phase==='live'?'LIVE':'OPENING',error:null,refreshing:phase==='live'});
+    if(phase==='live')expect(head.current().value).not.toBeNull();
+    expect(rooms.current()).toMatchObject({state:'LIVE',value:listValue});
     open();await settle();expect(head.current().state).toBe('LIVE');expect(execute.mock.calls).toHaveLength(count+1);
     head.release();rooms.release();routerOwnerListPanel(false);
   });

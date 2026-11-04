@@ -33,6 +33,61 @@ describe('local read lanes (P2)', () => {
     lanes.demand(request,{},permit);await drain();
     expect(lanes.peek(request)).toMatchObject({state:'LIVE',value:{count:1}});expect(reads).toBe(1);
   });
+  it('keeps LIVE data visible without an error throughout an in-place refresh', async () => {
+    let reads = 0;
+    let resolve!: (value: LaneSnapshot) => void;
+    const lanes = setup(async () => ++reads === 1 ? snapshot() : new Promise(done => { resolve = done; }));
+    lanes.demand(request, {}, permit); await drain();
+    const views: ReturnType<ReadLanes['peek']>[] = [];
+    lanes.subscribe(request, () => views.push(lanes.peek(request)));
+
+    lanes.refresh();
+    expect(lanes.peek(request)).toMatchObject({ state: 'LIVE', value: { count: 1 }, error: null, refreshing: true });
+    await drain();
+    expect(reads).toBe(2);
+    resolve(snapshot(2, { count: 2 })); await drain();
+    expect(lanes.peek(request)).toMatchObject({ state: 'LIVE', value: { count: 2 }, error: null, refreshing: false });
+    expect(views.length).toBeGreaterThan(0);
+    expect(views.every(view => view.state === 'LIVE' && view.error === null && view.value !== null)).toBe(true);
+  });
+
+  it('keeps an inactive cache visible and opens its invalidated coverage when demanded again', async () => {
+    let reads = 0;
+    let resolve!: (value: LaneSnapshot) => void;
+    const lanes = setup(async () => ++reads === 1 ? snapshot() : new Promise(done => { resolve = done; }));
+    const release = lanes.demand(request, {}, permit); await drain(); release();
+    lanes.refresh(); await drain();
+    expect(lanes.peek(request)).toMatchObject({ state: 'INACTIVE_CACHED', value: { count: 1 }, error: null });
+    expect(reads).toBe(1);
+    lanes.demand(request, {}, permit); await drain();
+    expect(lanes.peek(request)).toMatchObject({ state: 'INACTIVE_CACHED', value: { count: 1 }, error: null, refreshing: true });
+    resolve(snapshot(2)); await drain();
+    expect(lanes.peek(request)).toMatchObject({ state: 'LIVE', error: null, refreshing: false });
+    expect(reads).toBe(2);
+  });
+
+  it('reports a refresh error only after the re-read fails', async () => {
+    let reads = 0;
+    let reject!: (reason: Error) => void;
+    const lanes = setup(async () => ++reads === 1 ? snapshot() : new Promise((_resolve, fail) => { reject = fail; }));
+    lanes.demand(request, {}, permit); await drain();
+    lanes.refresh(); await drain();
+    expect(lanes.peek(request)).toMatchObject({ state: 'LIVE', value: { count: 1 }, error: null, refreshing: true });
+    reject(new Error('offline')); await drain();
+    expect(lanes.peek(request)).toMatchObject({ state: 'PARKED', value: { count: 1 }, error: "Couldn't load this. Retry.", refreshing: false });
+  });
+
+  it('still hides data immediately when refresh follows an authority failure', async () => {
+    let reads = 0;
+    let resolve!: (value: LaneSnapshot) => void;
+    const lanes = setup(async () => ++reads === 1 ? snapshot() : new Promise(done => { resolve = done; }));
+    lanes.demand(request, {}, permit); await drain();
+    lanes.refresh(() => true, true);
+    expect(lanes.peek(request)).toMatchObject({ state: 'OPENING', value: null, error: null });
+    await drain(); resolve(snapshot(2)); await drain();
+    expect(lanes.peek(request)).toMatchObject({ state: 'LIVE', error: null });
+  });
+
   it('unavailable re-reads only its lane and a failed read parks only that item', async () => {
     const other = { ...request, workspaceId: 'other' };
     const calls: string[] = [];
@@ -47,7 +102,7 @@ describe('local read lanes (P2)', () => {
     failing = true;
     lanes.unavailable('workspace:w', request.family); await drain();
     expect(calls).toEqual(['w', 'other', 'w']);
-    expect(lanes.peek(request)).toMatchObject({ state: 'PARKED', error: 'This item could not be loaded; Retry.' });
+    expect(lanes.peek(request)).toMatchObject({ state: 'PARKED', error: "Couldn't load this. Retry." });
     expect(lanes.peek(other)).toMatchObject({ state: 'LIVE', error: null });
     failing = false;
     lanes.unavailable('workspace:w', request.family); await drain();

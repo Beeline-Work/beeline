@@ -29,7 +29,7 @@ const {lanes,counts}=await setup();await lanes.advance('scheduled-work-room:b','
 await lanes.accept(replacement(2,3));expect(lanes.peek(a).cut?.through).toBe(3);expect(lanes.peek(b).value).toBeNull();expect(counts().reads).toBe(2);
 });
 it('local unavailable re-reads its data while actual disconnect still hides it',async()=>{
-const {lanes,counts}=await setup();await lanes.accept(marker(1,2));lanes.unavailable('workspace:w','room-scheduled-work');await lanes.accept(marker(2,3));expect(lanes.peek(a).state).toBe('OPENING');await settle();
+const {lanes,counts}=await setup();await lanes.accept(marker(1,2));lanes.unavailable('workspace:w','room-scheduled-work');await lanes.accept(marker(2,3));expect(lanes.peek(a)).toMatchObject({state:'LIVE',value:{name:'a'},error:null});await settle();
 lanes.disconnected();await lanes.accept(replacement(3,4));expect(lanes.peek(a).value).toBeNull();expect(counts().reads).toBe(4);
 });
 it('retains Scheduled classification when a ready future interval merges independent count facts',async()=>{

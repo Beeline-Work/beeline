@@ -46,6 +46,18 @@ const edits=()=>[fact({kind:'scope-replace',family:'needs-you-count',scope:ws,va
   fact({kind:'saved-row-remove',scope:ws,bookmarkId:row(3).bookmarkId,messageId:row(3).value.messageId})];
 
 describe('Saved selected whole Needs/Tray/window group assembly',()=>{
+  it('keeps a LIVE Tray visible during refresh and clears refreshing after an unchanged reply',async()=>{
+    const reply=deferred<LaneSnapshot>();let refreshing=false;
+    const{lanes}=await setup(async request=>refreshing&&request.family==='needs-you-tray'?reply.promise:snapshot(request));
+    const seen:ReturnType<ReadLanes['peek']>[]=[];lanes.subscribe(head,()=>seen.push(lanes.peek(head)));
+    refreshing=true;lanes.unavailable(`workspace:${ws}`,'needs-you-tray');await settle();
+    expect(lanes.peek(head)).toMatchObject({state:'LIVE',value:headValue(),error:null,refreshing:true});
+    reply.resolve(snapshot(head));await settle();
+    expect(lanes.peek(head)).toMatchObject({state:'LIVE',value:headValue(),error:null,refreshing:false});
+    expect(seen.every(view=>view.state==='LIVE'&&view.error===null&&view.value!==null)).toBe(true);
+    expect(lanes.peek(count)).toMatchObject({state:'LIVE',value:{count:1},error:null});
+  });
+
   it('a failed Tray re-read parks only that item and retains the healthy count',async()=>{
     let failing=false;
     const{lanes,reads}=await setup(async request=>{
@@ -53,7 +65,7 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
       return snapshot(request);
     });
     failing=true;lanes.unavailable(`workspace:${ws}`,'needs-you-tray');await settle();
-    expect(lanes.peek(head)).toMatchObject({state:'PARKED',error:'This item could not be loaded; Retry.'});
+    expect(lanes.peek(head)).toMatchObject({state:'PARKED',error:"Couldn't load this. Retry."});
     expect(lanes.peek(count)).toMatchObject({state:'LIVE',value:{count:1},error:null});
     expect(reads()).toBe(3);
   });

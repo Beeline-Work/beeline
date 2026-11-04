@@ -37,12 +37,12 @@ describe('classified per-group authority intervals',()=>{
     expect(lanes.peek(count)).toMatchObject({state:'LIVE',cut:{through:2},value:{count:2}});
     expect(lanes.peek(tray)).toMatchObject({state:'LIVE',cut:{through:3},value:{name:'needs-you'}});expect(reads).toBe(2);
   });
-  it('a reentrant recovery during failure notification cannot enqueue old-generation facts for the new opening',async()=>{
+  it('a reentrant recovery during re-read notification cannot enqueue old-generation facts for the new opening',async()=>{
     const lanes=new ReadLanes(identity,(_request,value)=>!(value as {invalid?:boolean})?.invalid);let recovering=false;
     lanes.connected(1,['room-head'],async request=>base(request));
     lanes.demand(a,{}, {isCurrent:()=>true});lanes.demand(b,{}, {isCurrent:()=>true});await settle();
     lanes.subscribe(a,()=>{
-      if(!recovering||lanes.peek(a).state!=='PARKED')return;recovering=false;
+      if(!recovering||lanes.peek(a).refreshing!==true)return;recovering=false;
       lanes.connected(2,['room-head'],async request=>({...base(request),cut:cut(10),value:{name:'fresh generation'}}));
     });
     recovering=true;await lanes.accept(interval(1,100,[replace(a,cert('room:a'),{invalid:true}),replace(b,cert('room:b'),{name:'old source'})]));await settle();

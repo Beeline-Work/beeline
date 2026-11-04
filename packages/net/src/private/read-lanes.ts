@@ -10,7 +10,9 @@ export type LaneCut = Readonly<{ stream: string; epoch: string; through: number;
 export type LaneAuthority = Readonly<{ digest: string; scopes: readonly Readonly<{ authorityScope: string; epoch: string }>[] }>;
 export type LaneSnapshot = Readonly<{ kind: 'snapshot'; value: unknown; cut: LaneCut; atomicGroup: string; authority: LaneAuthority;clockVersion?:string }>;
 export type LaneState = 'ABSENT' | 'OPENING' | 'LIVE' | 'PARKED' | 'INACTIVE_CACHED' | 'REVOKED';
-export type LaneView = Readonly<{ state: LaneState; value: unknown | null; error: string | null; cut: LaneCut | null }>;
+export type LaneView = Readonly<{ state: LaneState; value: unknown | null; error: string | null; cut: LaneCut | null;
+  /** An in-place re-read keeps the last authorized value and state visible. */
+  refreshing?: boolean }>;
 export type LaneFact = Readonly<{ atomicGroup: string; authority: LaneAuthority; payload:SavedRowPayload|TrayGroupPayload|NeedsYouRoomsPayload
   | { kind: 'scope-replace'; family: LaneFamily; scope: string; value: unknown }
   | { kind: 'authority'; scope: string; authorityScope?: string; allowed: boolean }
@@ -47,7 +49,7 @@ const roomFamily=(family:LaneFamily):boolean=>family==='room-head'||family===SCH
  * Missed or unreadable updates re-read their affected demand in place.
  */
 const AUTHORITY_FENCE_KIND='authority-fence';
-const UNAVAILABLE='Projection unavailable; Retry.', ACCESS_REMOVED='Access removed.';
+const UNAVAILABLE="Couldn't load this. Retry.", ACCESS_REMOVED='Access removed.';
 export class ReadLanes {
   private get entries():Map<string,Entry>{return this.groups.cells;}
   private readonly fences = new Map<string, string>();
@@ -120,7 +122,7 @@ export class ReadLanes {
       entry.flight = undefined;
       this.clearQueued(entry);
       if (this.supports(entry.request.family)) this.open(entry);
-      else this.publish(entry, { ...absent(), state: 'PARKED', error: 'Projection unavailable.' });
+      else this.publish(entry, { ...absent(), state: 'PARKED', error: UNAVAILABLE });
     }
   }
 
@@ -173,7 +175,7 @@ export class ReadLanes {
         }
         const state=entry.view.state==='PARKED'||entry.view.state==='REVOKED'?entry.view.state:
           reusable?'INACTIVE_CACHED':entry.snapshot?'PARKED':'ABSENT';
-        this.publish(entry, { ...entry.view, state,error:state==='PARKED'?(entry.view.error??'Connection interrupted; Retry.'):entry.view.error });
+        this.publish(entry, { ...entry.view, state,refreshing:false,error:state==='PARKED'?(entry.view.error??'Connection interrupted; Retry.'):entry.view.error });
       }
       this.evict();
     };
@@ -194,12 +196,12 @@ export class ReadLanes {
   private queueBatch(batch:LaneBatch,replay:boolean):Promise<void>{
     const stream=batch.to.stream;
     if(this.interrupted.has(stream))return Promise.resolve();
-    try{batch=JSON.parse(JSON.stringify(batch)) as LaneBatch;}catch{this.parkStream(stream,'Invalid projection; Retry.');return Promise.resolve();}
+    try{batch=JSON.parse(JSON.stringify(batch)) as LaneBatch;}catch{this.parkStream(stream,UNAVAILABLE);return Promise.resolve();}
     const held=[...(this.activeArrival?[this.activeArrival]:[]),...this.arrivals];
     const duplicate=held.find(item=>item.generation===this.generation&&item.session===this.session&&item.replay===replay&&item.batch.from.through===batch.from.through&&
       item.batch.to.through===batch.to.through&&sameStream(item.batch.to,batch.to));
     if(duplicate){
-      if(JSON.stringify(duplicate.batch)!==JSON.stringify(batch)){this.interrupted.add(stream);this.parkStream(stream,'Conflicting projection; Retry.');}
+      if(JSON.stringify(duplicate.batch)!==JSON.stringify(batch)){this.interrupted.add(stream);this.parkStream(stream,UNAVAILABLE);}
       return duplicate.promise;
     }
     let done!:()=>void;const promise=new Promise<void>(resolve=>{done=resolve;});
@@ -210,7 +212,7 @@ export class ReadLanes {
     this.draining=true;
     const item=this.arrivals.shift()!;this.activeArrival=item;
     const work=this.serial.then(()=>this.applyBatch(item.batch,item.session,item.generation,item.replay));
-    this.serial=work.catch(()=>{if(item.session===this.session&&item.generation===this.generation)this.parkStream(item.batch.to.stream,'Projection storage failed; Retry.');});
+    this.serial=work.catch(()=>{if(item.session===this.session&&item.generation===this.generation)this.parkStream(item.batch.to.stream,UNAVAILABLE);});
     void this.serial.finally(()=>{item.done();this.activeArrival=undefined;this.draining=false;this.drainArrivals();});
   }
   private async applyBatch(batch:LaneBatch,session:number,generation:number,replay:boolean):Promise<void>{
@@ -282,20 +284,21 @@ export class ReadLanes {
         try{await this.installGroup(proposal,session,generation);}
         catch(error){
           if(!proposal.group)throw error;
-          if(session===this.session&&generation===this.generation)for(const{cell}of proposal.items)this.park(cell,'Projection storage failed; Retry.');
+          if(session===this.session&&generation===this.generation)for(const{cell}of proposal.items)this.park(cell,UNAVAILABLE);
         }
       }
       if(session!==this.session||generation!==this.generation)return;
       for(const future of this.groups.ready())void this.queueBatch(future,true);
   }
 
-  /** Data recovery reuses the negotiated executor and current visible owners. */
+  /** Data recovery reuses the executor and visible owners without publishing
+   * an error over authorized data. Authority failures explicitly hide it. */
   refresh(matches: (request: LaneRequest, stream: string) => boolean = () => true, hide = false): void {
     const affected = [...this.entries.values()].filter(entry => matches(entry.request,
       entry.snapshot?.cut.stream ?? entry.baseline?.cut.stream ?? `workspace:${entry.request.workspaceId}`));
     for (const entry of affected) {
       if (hide) { this.transition(entry, { ...absent(), state: 'PARKED', error: UNAVAILABLE }); this.notify(entry); }
-      else this.parkItem(entry, UNAVAILABLE);
+      else { this.transition(entry, { ...entry.view, error: null }, 'keep'); this.notify(entry); }
     }
     for (const entry of affected) if (liveOwner(entry)) this.open(entry);
   }
@@ -341,7 +344,7 @@ export class ReadLanes {
     if(!continuity)entry.classified=undefined;
     this.clearQueued(entry);
     if(future)for(const batch of future)entry.queued.add(batch,batch.facts,bytes(batch),true);
-    entry.view=Object.freeze(view);
+    entry.view=Object.freeze({ ...view, refreshing: false });
   }
   private retire(entry:Entry):void{
     const future=this.groups.salvage(entry,(entry.snapshot??entry.baseline)?.atomicGroup??'');
@@ -381,7 +384,7 @@ export class ReadLanes {
       const joint=this.joint(entry);
       const view:LaneView=deny?{...absent(),state:'REVOKED',error:ACCESS_REMOVED}:
         {state:future&&!joint?(liveOwner(entry)?'OPENING':'INACTIVE_CACHED'):'PARKED',value:null,
-          error:sealed?'Roster changed; Retry.':joint?UNAVAILABLE:future?null:'Projection queue overflow; Retry.',cut:snapshot!.cut};
+          error:sealed?'Roster changed; Retry.':joint?UNAVAILABLE:future?null:UNAVAILABLE,cut:snapshot!.cut};
       this.transition(entry,view,'baseline',future,true);changed.push(entry);
     }
     this.pruneQueued();
@@ -427,7 +430,8 @@ export class ReadLanes {
     entry.classified=undefined;
     entry.covered=false;
     entry.connection = generation;
-    this.publish(entry, { state: 'OPENING', value: entry.view.value, error: null, cut: entry.view.cut });
+    const refreshing = entry.view.value !== null && (entry.view.state === 'LIVE' || entry.view.state === 'INACTIVE_CACHED');
+    this.publish(entry, { state: refreshing ? entry.view.state : 'OPENING', value: entry.view.value, error: null, cut: entry.view.cut, refreshing });
     const current = () => session === this.session && generation === this.generation && revision === entry.revision && liveOwner(entry);
     // Recheck immediately before dispatch, with no intervening await.
     if (!current()) return;
@@ -437,12 +441,12 @@ export class ReadLanes {
       const install = this.serial.then(async () => {
         if (!current()) return;
         let proposal:GroupProposal<Entry>|undefined;
-        try{proposal=this.groups.snapshot(entry,snapshot);}catch{this.parkItem(entry,'Invalid snapshot; Retry.');return;}
+        try{proposal=this.groups.snapshot(entry,snapshot);}catch{this.parkItem(entry,UNAVAILABLE);return;}
         if(proposal)await this.installGroup(proposal,session,generation);
       });
-      this.serial = install.catch(() => { if (current()) this.park(entry, 'Projection storage failed; Retry.'); });
+      this.serial = install.catch(() => { if (current()) this.park(entry, UNAVAILABLE); });
       await this.serial;
-    }).catch(() => { if (current()) this.parkItem(entry, 'This item could not be loaded; Retry.'); }).finally(() => {
+    }).catch(() => { if (current()) this.parkItem(entry, UNAVAILABLE); }).finally(() => {
       if (entry.flight !== flight) return;
       entry.flight = undefined;
       for (const batch of entry.queued.take()) void this.queueBatch(batch,true);
@@ -473,7 +477,7 @@ export class ReadLanes {
     if(!this.groups.committed(proposal)){
       if(!authorityCurrent())for(const{cell}of items)this.park(cell,'Authority changed; Retry.');return;
     }
-    for(const{cell,snapshot}of items)cell.view={state:liveOwner(cell)?'LIVE':'INACTIVE_CACHED',value:snapshot.value,cut:snapshot.cut,error:null};
+    for(const{cell,snapshot}of items)cell.view={state:liveOwner(cell)?'LIVE':'INACTIVE_CACHED',value:snapshot.value,cut:snapshot.cut,error:null,refreshing:false};
     for(const{cell}of items)this.notify(cell);
     this.evict();
   }

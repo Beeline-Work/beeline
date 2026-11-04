@@ -38,34 +38,30 @@ export class MobileCommandOwner {
     this.storageKey = key;
     const saved = storage.getString(key);
     const initial: CommandIntent[] = saved ? JSON.parse(saved) : [];
-    let observed = new Map(initial.map(record => [intentKey(record), JSON.stringify(record)]));
-    this.intents = new CommandIntents({ save: async records => {
+    this.intents = new CommandIntents({ save: async (records, record) => {
       if (this.suspended) throw new Error('Command owner suspended');
       if (!web) { storage.set(key, JSON.stringify(records)); return; }
       if (!storageReady()) throw new Error('Atomic command storage is unavailable');
       // Each tab changes only its own records. Preserve other tabs' intents
       // and terminal outcomes while replacing the shared snapshot atomically.
-      const changes = records.filter(record => observed.get(intentKey(record)) !== JSON.stringify(record));
       const claimed: string[] = [];
       try { await navigator.locks.request(namespace + key, { mode: 'exclusive' }, async () => {
         if (this.suspended) throw new Error('Command owner suspended');
         const shared: CommandIntent[] = JSON.parse(web.storage!.getItem(namespace + key) ?? '[]');
         const merged = new Map(shared.map(record => [intentKey(record), record]));
-        for (const record of changes) {
-          const prior = merged.get(intentKey(record));
-          if (!prior && record.state === 'prepared') {
-            if (!await this.holdPrepared(record.id)) throw new Error('Command gesture is active in another tab');
-            claimed.push(record.id);
-            if (this.suspended) throw new Error('Command owner suspended');
-          }
-          if (prior && (prior.bytes !== record.bytes || prior.digest !== record.digest))
-            throw new Error('Command storage identity changed');
-          if (record.state === 'sending' && prior && terminal(prior))
-            throw new Error('Command ended before dispatch');
-          if (record.state === 'cancelled' && prior?.sent)
-            throw new Error('Command already admitted to transport');
-          if (!prior || !terminal(prior)) merged.set(intentKey(record), record);
+        const prior = merged.get(intentKey(record));
+        if (!prior && record.state === 'prepared') {
+          if (!await this.holdPrepared(record.id)) throw new Error('Command gesture is active in another tab');
+          claimed.push(record.id);
+          if (this.suspended) throw new Error('Command owner suspended');
         }
+        if (prior && (prior.bytes !== record.bytes || prior.digest !== record.digest))
+          throw new Error('Command storage identity changed');
+        if (record.state === 'sending' && prior && terminal(prior))
+          throw new Error('Command ended before dispatch');
+        if (!record.sent && prior?.sent)
+          throw new Error('Command already admitted to transport');
+        if (!prior || !terminal(prior)) merged.set(intentKey(record), record);
         const pending = [...merged.values()].filter(record => !terminal(record));
         if (pending.length > 100 || pending.reduce((bytes, record) =>
           bytes + utf8ToBytes(JSON.stringify(record)).length + 128, 0) > 2 * 1024 * 1024)
@@ -78,7 +74,6 @@ export class MobileCommandOwner {
         for (const id of claimed) this.releasePrepared(id);
         throw error;
       }
-      observed = new Map(records.map(record => [intentKey(record), JSON.stringify(record)]));
     } }, async value => bytesToHex(sha256(utf8ToBytes(value))), randomId, Date.now);
     this.intents.setPartition(partition);
     if (saved) {
@@ -122,7 +117,11 @@ export class MobileCommandOwner {
   private adopt(): void {
     if (!web || this.suspended) return;
     const saved = storage.getString(this.storageKey);
-    if (saved) this.intents.adopt(JSON.parse(saved));
+    if (saved) {
+      const known = new Set(this.intents.view().map(record => record.id));
+      this.intents.adopt(JSON.parse(saved));
+      for (const record of this.intents.view()) if (!known.has(record.id)) this.restored.add(record.id);
+    }
   }
   async deliver(id: string, cause: 'send' | 'reconnect' = 'send'): Promise<AgentMessageWriteResult> {
     this.adopt();

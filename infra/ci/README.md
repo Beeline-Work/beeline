@@ -33,17 +33,11 @@ falls back to the existing hosted pool; this is not a completed rollout or a
    `beeline-ci-balanced` to those eight listeners, retaining their current
    `beeline-ci-control`, `beeline-ci-heavy` or `beeline-ci-workspace` role.
    Do not give the rollout label to 08/09 or a production/release listener.
-5. After landing, measure the first ten PR runs whose head contains the CI fix:
-
-   ```sh
-   node scripts/ci-wall-time.mjs --since <merge-time-ISO> --contains <full-merge-SHA> --limit 10
-   ```
-
-   The report separates job queues/runtime by job and pool and measures from
-   push/run creation through the final check. Failed, cancelled, pending and
-   undersampled cohorts cannot pass. Reruns retain their original push clock.
-   Old branch workflows are excluded by commit ancestry; rerunning one is not
-   a trial of this policy. No required check is added or renamed.
+5. After landing, measure the first ten PR runs carrying the fix from push/run
+   creation through the final check, including queues and rerun delay. Record
+   job queues and runtime by pool. Failed, cancelled, pending and undersampled
+   runs cannot establish the target. An old branch workflow is not a trial of
+   this policy. No required check is added or renamed.
 
 ## Measurement and abort
 

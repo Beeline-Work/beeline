@@ -1,6 +1,6 @@
-// This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+// UI fixtures provide complete DTOs at the canonical lane boundary.
+vi.mock('@/buzz/router-owner', async () => (await import('@/test/canonical-resource-fixture')).createCanonicalWorkbenchFixture());
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'router', holdRouterConnection: () => () => {} }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -46,7 +46,8 @@ vi.mock('@/components/buzz/HullActionSheet', () => ({
   HullActionSheetCancel: (props: any) => React.createElement('HullActionSheetCancel', props),
 }));
 
-beforeEach(() => {
+beforeEach(async () => {
+  (await import('@/buzz/router-owner') as any).resetFixture();
   mobileSurfaceCache.clear();
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   params.service = 'vercel'; params.helperId = ''; browser.open.mockClear();
@@ -107,7 +108,7 @@ it('Reproduction squire-false-card: account replaces Ready and reconnect hides D
   expect(renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.description).toBe('owner@example.com');
   await act(async () => renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.onPress());
   source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, reconnecting: true, statusText: 'Waiting for sign-in' })) }]);
-  await act(async () => mobileSurfaceCache.clear());
+  await act(async () => (await import('@/buzz/router-owner') as any).publish({ family: 'owner-workbench' }, await source.readWorkbench({workspaceId: 'ws', viewerId: 'human-dani'})));
   await act(async () => renderer.unmount());
   navigation.push.mockClear();
   const reconnecting = await render();

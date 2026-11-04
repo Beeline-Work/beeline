@@ -1,7 +1,6 @@
 import { artifactObjectIdsFromVisibleRows, observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
 import { routerOwnerArtifactViewport, routerOwnerUsageProfile } from '@/buzz/router-owner';
 import { useSurfaceFocus } from '@/buzz/use-surface-focus';
-import { prepareRouterMessageGesture } from '@/buzz/command-message-gesture';
 import { trackDictatedMessage } from '@/buzz/dictation-timing';
 import { presentPersonInvite } from '@/components/buzz/PersonInviteSheet';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
@@ -892,7 +891,6 @@ export function BuzzChatSurface({
     hydrationFailed: transcriptHydrationFailed,
     hydrationError: transcriptHydrationError,
     retryHydration,
-    refreshSignal,
     outbox,
   } = session;
   useEffect(() => {
@@ -3524,7 +3522,7 @@ export function BuzzChatSurface({
         // A turn that settled while the press was in the air is the ordinary
         // race, not a failure worth a dialog: the line is already gone.
         if (err instanceof MonolithRequestTimeoutError) {
-          refreshSignal.force();
+
           Modal.alert('Stop result unknown', phoneOperationFailureReason(err));
         }
         console.warn('Stopping the turn failed:', err);
@@ -3995,14 +3993,6 @@ export function BuzzChatSurface({
         isCorner ||
         Boolean(mentionedAgent) ||
         (roomAgents.length === 1 && roomParticipants.length <= 2);
-      // Prepare immutable final message bytes inside this existing gesture,
-      // before the paint yield. Upload-dependent legacy sends keep their path.
-      const routerPrepared = activePendingAttachments.length === 0 && !viewer?.screenshotBase64
-        ? prepareRouterMessageGesture({ roomId: decodedId, principal: userPubkey, text,
-            attachments: viewer?.artifact ? [viewer.artifact] : [],
-            mentions: [...new Set([...mentionedPubkeys, ...(mentionedAgent ? [mentionedAgent] : [])])],
-            ...(preparedReply?.reference ? { parentMessageId: preparedReply.reference.eventId } : {}),
-          }) : undefined;
       setReceivedSteer(null);
       setPendingAck(addressesAgent ? { sentAt: Date.now() } : null);
 
@@ -4038,7 +4028,6 @@ export function BuzzChatSurface({
       }
       let preparedEvent: Awaited<ReturnType<BuzzRigTransport['composeMessage']>> | undefined;
       try {
-        if (routerPrepared) await routerPrepared.persisted;
         // A warm/partial snapshot can paint before the hydration effect has
         // published its transport state. Sending is still a valid operation:
         // construct the monolith transport on demand rather than
@@ -4053,7 +4042,6 @@ export function BuzzChatSurface({
         // ■ on a dictated message drops it at any step before it enters the Room.
         const dictationCancelled = () => {
           if (!dictated?.cancelled) return false;
-          if (routerPrepared) void routerPrepared.cancelBeforeSend().catch(() => undefined);
           setPendingAck(null);
           if (provisionalId) removeOptimistic(preparedEvent?.id ?? provisionalId);
           if (desktopExperience) setDesktopDeliveryState(null);
@@ -4085,7 +4073,7 @@ export function BuzzChatSurface({
         if (dictationCancelled()) return;
         // Sign before append. The authoritative event id is the optimistic row
         // identity and the durable outbox key from its first frame onward.
-        preparedEvent = routerPrepared?.event ?? (preparedReply?.reference
+        preparedEvent = preparedReply?.reference
           ? await sendTransport.composeReplyMessage(
               text,
               preparedReply.reference,
@@ -4101,7 +4089,7 @@ export function BuzzChatSurface({
                     ...(mentionedPubkeys.length ? { mentionPubkeys: mentionedPubkeys } : {}),
                   }
                 : undefined,
-            ));
+            );
         if (addressesAgent) {
           setPendingAck((current) =>
             current ? { ...current, requestId: preparedEvent!.id } : current,
@@ -4505,7 +4493,7 @@ export function BuzzChatSurface({
         if (picked?.options.find(option => option.optionId === optionId)?.label === 'Something else') focusComposer();
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
-        refreshSignal.force();
+
         console.warn('Choice answer failed:', err);
         Modal.alert('Could not answer', phoneOperationFailureReason(err));
       } finally {
@@ -4796,7 +4784,7 @@ export function BuzzChatSurface({
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         returnToRoomList();
       } catch (err) {
-        refreshSignal.force();
+
         setMembershipError(
           appErrorCopy(err, `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}.`),
         );
@@ -5261,12 +5249,12 @@ export function BuzzChatSurface({
       await transport.closeCorner(decodedId);
       handleBack();
     } catch (error) {
-      refreshSignal.force();
+
       Modal.alert('Could not close corner', appErrorCopy(error));
     } finally {
       closeCornerPending.current = false;
     }
-  }, [decodedId, handleBack, transport, refreshSignal]);
+  }, [decodedId, handleBack, transport]);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -7432,9 +7420,9 @@ export function BuzzChatSurface({
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           handleBack();
         }}
-        onSaved={() => refreshSignal.force()}
+        onSaved={() => {}}
         onError={(error) => {
-          refreshSignal.force();
+
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           Modal.alert('Could not complete request', appErrorCopy(error));
         }}

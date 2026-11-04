@@ -10,7 +10,7 @@ function rejected(owner: AdmissionOwner, room: Pass<'phone.readRoom'>): void {
   // @ts-expect-error wrong screen
   owner.focus(1, 'AppShell', [{ route: 'phone.readRoom', input: { roomId: 'r' } }]);
   // @ts-expect-error arbitrary action
-  owner.tap('Timer', { route: 'phone.sendRoomMessage', input: { roomId: 'r', text: 'x' } }, () => {});
+  owner.tap('Timer', { route: 'phone.deleteRoomSchedule', input: { roomId: 'r', scheduleId: 's' } }, () => {});
   // @ts-expect-error pass cannot be constructed by features
   const forged: Pass<'phone.readRoom'> = {};
   const count: RouteOutput<'phone.countNeedsYou'> = { count: 1 };

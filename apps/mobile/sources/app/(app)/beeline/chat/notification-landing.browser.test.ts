@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '../../../../test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '../../../../test-fixtures/router-proof';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -108,7 +108,7 @@ const roomView = {
 };
 
 function shims(mobile: string): Record<string, string> {
-  const base = { ...webProofShims(mobile), ...legacyRouterProofShims() };
+  const base = { ...webProofShims(mobile), ...canonicalRouterProofShims(['room-head']) };
   return {
     ...base,
     'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';
@@ -205,8 +205,7 @@ function shims(mobile: string): Record<string, string> {
     '@react-native-async-storage/async-storage': `const store = new Map();
     export default { getItem: async (k) => store.get(k) ?? null, setItem: async (k, v) => { store.set(k, v); }, removeItem: async (k) => { store.delete(k); },
       multiGet: async (keys) => keys.map((k) => [k, store.get(k) ?? null]), multiSet: async () => undefined, getAllKeys: async () => [...store.keys()] };`,
-    '@/auth/buzz-identity-storage': `export const peekBuzzViewerContext = () => null;
-    export const getEffectiveRelayUrl = async () => 'https://relay.test';
+    '@/auth/buzz-identity-storage': `    export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzViewerPubkey = async () => '${VIEWER}';
     export const loadBuzzIdentity = async () => ({ publicKey: '${VIEWER}', secretKey: new Uint8Array(32) });`,
     // \`?cache=1\`: the Room was opened earlier, so its last response is saved.

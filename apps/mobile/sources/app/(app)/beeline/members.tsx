@@ -248,13 +248,6 @@ export default function BuzzMembers({
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [localAgentId, setLocalAgentId] = useState<string | null>(null);
-  const workspaceAddress = useMemo(
-    () =>
-      identity && relayUrl && workspaceId
-        ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', { workspaceId })
-        : null,
-    [identity?.publicKey, relayUrl, workspaceId],
-  );
   const agentId = profileAgentId ?? localAgentId;
   const usageCell = useAgentUsageCell(focused ? profileAgentId : null);
   const agentAddress = useMemo(
@@ -268,15 +261,14 @@ export default function BuzzMembers({
     [identity?.publicKey, relayUrl, workspaceId, agentId],
   );
   const roster=useRoutedRoster(workspaceId,focused&&!profileAgentId);
-  const cachedWorkspace=useSurfaceSnapshot(roster.mode==='legacy'?workspaceAddress:null,isWorkspaceView);
-  const surface=roster.mode==='legacy'?cachedWorkspace:roster.value;
+  const surface=roster.value;
   const routedAgent = useRoutedResource('agent-profile', workspaceId && profileAgentId
     ? {family:'agent-profile',workspaceId,agentId:profileAgentId} : undefined, focused&&!!profileAgentId);
-  const cachedAgent = useSurfaceSnapshot(profileAgentId&&routedAgent.mode!=='legacy'?null:agentAddress, isAgentDetailView);
+  const cachedAgent = useSurfaceSnapshot(profileAgentId?null:agentAddress, isAgentDetailView);
   const profileMode=profileAgentId?routedAgent.mode:'legacy';
-  const selectedAgent = profileAgentId&&routedAgent.mode!=='legacy' ? routedAgent.value : cachedAgent;
+  const selectedAgent = profileAgentId ? routedAgent.value : cachedAgent;
   const setSelectedAgent = (value: AgentDetailView | null) => {
-    if(roster.mode!=='legacy'||profileAgentId&&routedAgent.mode!=='legacy')return;
+    if(profileAgentId)return;
     if (!value) {
       setLocalAgentId(null);
       return;
@@ -325,9 +317,7 @@ export default function BuzzMembers({
   const [pairCommand, setPairCommand] = useState<string | null>(null);
   const [memberQuery, setMemberQuery] = useTextDraft(`member-search:${workspaceId}`, '');
   // Search selection is local; its ordered pages and rows live in the records.
-  const [rosterQuery, setRosterQuery] = useState('');
-  const [rosterLoading, setRosterLoading] = useState(false);
-  const schedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView | null> | null>(null);
+  const rosterLoading = roster.loading;
   const agentRequestGenerationRef = useRef(0);
   const allowProfileNavigationRef = useRef(false);
   const requestedActionHandledRef = useRef(false);
@@ -446,120 +436,17 @@ export default function BuzzMembers({
     };
   };
 
-  const applyMemberPage = (
-    page: Awaited<ReturnType<typeof readMemberPage>>,
-    kind: 'human' | 'agent' | undefined,
-    append: boolean,
-  ) => {
-    if (recordScope)
-      recordWorkspacePage(recordScope, page, {
-        query: page.query,
-        kind,
-        append,
-        stamp: page.stamp,
-      });
-    setRosterQuery(page.query);
-  };
-
-  const readMemberPage = async (input: {
-    q?: string;
-    kind?: 'human' | 'agent';
-    offset?: number;
-  }) => {
-    if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
-    // A removal or receipt recorded while this page is in flight is newer than it.
-    const stamp = currentSurfaceStamp();
-    const page = await new RoomViewClient({ baseUrl: relayUrl, identity }).workspaceMembers(
-      workspaceId,
-      input,
-    );
-    return { ...page, query: input.q ?? '', stamp };
-  };
-
   useEffect(() => {
     if (!focused || !workspaceId) return;
     let cancelled = false;
-    let stopWatch: (() => void) | undefined;
-    let scheduler: SurfaceRefreshScheduler<WorkspaceView | null> | undefined;
-    void (async () => {
-      const [nextIdentity, nextRelayUrl] = await Promise.all([
-        loadBuzzIdentity(),
-        getEffectiveRelayUrl(),
-      ]);
-      if (!nextIdentity) {
-        router.replace('/beeline/onboarding');
-        return;
-      }
-      const address = surfaceAddress(nextRelayUrl, nextIdentity.publicKey, '/workspace/:id', {
-        workspaceId,
-      });
-      const cached = await mobileSurfaceCache.read(address, isWorkspaceView);
+    void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(([nextIdentity, nextRelayUrl]) => {
       if (cancelled) return;
-      if (profileAgentId && !cached && routedAgent.mode==='legacy') {
-        // A direct profile open needs both authority and detail, but one wire
-        // response writes the two existing keyed entries for later visits.
-        const profile = await monolithPhoneOperation('readAgentProfile', {
-          workspaceId,
-          agentId: profileAgentId,
-        });
-        if (cancelled) return;
-        await Promise.all([
-          mobileSurfaceCache.write(address, profile.workspace, isWorkspaceView),
-          mobileSurfaceCache.write(
-            surfaceAddress(nextRelayUrl, nextIdentity.publicKey, '/workspace/:id/agents/:agentId', {
-              workspaceId,
-              agentPubkey: profileAgentId,
-            }),
-            profile.agent,
-            isAgentDetailView,
-          ),
-        ]);
-      }
-      if (cancelled) return;
-      setIdentity((current) =>
-        current?.publicKey === nextIdentity.publicKey ? current : nextIdentity,
-      );
+      if (!nextIdentity) { router.replace('/beeline/onboarding'); return; }
+      setIdentity(current => current?.publicKey === nextIdentity.publicKey ? current : nextIdentity);
       setRelayUrl(nextRelayUrl);
-      if(roster.mode!=='legacy'||profileAgentId&&routedAgent.mode!=='legacy')return;
-      // Every Members instance (the list under an agent profile included)
-      // paints the one shared entry; rows and totals read the shared records,
-      // which hear every write of this entry.
-      const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
-      scheduler = new SurfaceRefreshScheduler({
-        fetch: () => cancelled || !focusedRef.current ? Promise.resolve(null) :
-          mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
-        apply: (value) => {
-          // Null: a newer write or an eviction overtook the read; the entry
-          // listener already painted whatever is current.
-          if (!value) return;
-          setWorkspaceError(null);
-        },
-        onError: (reason) => setWorkspaceError(appErrorCopy(reason)),
-      });
-      schedulerRef.current = scheduler;
-      const watch = watchWorkspace(
-        nextIdentity,
-        nextRelayUrl,
-        workspaceId,
-        () => scheduler?.signal(),
-        (reason) => setWorkspaceError(appErrorCopy(reason)),
-      );
-      stopWatch = watch.release;
-      await watch.ready;
-      if (cancelled) return;
-      if (!profileAgentId||routedAgent.mode==='router') await scheduler.startAfter(Promise.resolve());
-    })().catch((reason) => {
-      if (!cancelled) setWorkspaceError(appErrorCopy(reason));
-    });
-    return () => {
-      cancelled = true;
-      agentRequestGenerationRef.current += 1;
-      stopWatch?.();
-      scheduler?.dispose();
-      schedulerRef.current = null;
-      setRosterQuery('');
-    };
-  }, [focused, retryGeneration, workspaceId, profileAgentId,routedAgent.mode,roster.mode]);
+    }).catch(reason => { if (!cancelled) setWorkspaceError(appErrorCopy(reason)); });
+    return () => { cancelled = true; agentRequestGenerationRef.current += 1; };
+  }, [focused, retryGeneration, workspaceId]);
 
   const closeAgentSettings = () => {
     agentRequestGenerationRef.current += 1;
@@ -601,11 +488,7 @@ export default function BuzzMembers({
   };
 
   useEffect(() => {
-    if (routedAgent.mode!=='legacy'||!focused || !profileAgentId || !identity || !relayUrl || !workspaceId) return;
-    void openAgent(profileAgentId);
-    return () => {
-      agentRequestGenerationRef.current += 1;
-    };
+    return;
   }, [routedAgent.mode,focused, profileAgentId, identity, relayUrl, workspaceId, profileRetryGeneration]);
 
   const invitePerson = async () => {
@@ -669,53 +552,10 @@ export default function BuzzMembers({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focused, requestedAction, surface]);
 
-  useEffect(() => {
-    if (roster.mode!=='legacy'||!focused || !identity || !relayUrl || !workspaceId) return;
-    const q = memberQuery.trim();
-    if (!q) {
-      setRosterQuery('');
-      return;
-    }
-    let cancelled = false;
-    setRosterLoading(true);
-    void readMemberPage({ q })
-      .then((page) => {
-        if (!cancelled) applyMemberPage(page, undefined, false);
-      })
-      .catch((reason) => {
-        if (!cancelled) setError(appErrorCopy(reason, `Could not search members.`));
-      })
-      .finally(() => {
-        if (!cancelled) setRosterLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-    // Search is a dedicated server read; identity/relay are the auth it needs.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [focused, memberQuery, identity, relayUrl, workspaceId,roster.mode]);
-
   const loadMoreMembers = async (kind: 'human' | 'agent') => {
-    if (!surface || rosterLoading) return;
-    if(roster.mode==='router'){
-      try{roster.more(kind);}catch(reason){setError(appErrorCopy(reason,'Could not load more members.'));}return;
-    }
-    const q = memberQuery.trim();
-    const page = workspacePage(recordScope, q);
-    setRosterLoading(true);
-    setError(null);
-    try {
-      const next = await readMemberPage({
-        kind,
-        offset: kind === 'human' ? (page.people?.ids.length ?? 0) : (page.agents?.ids.length ?? 0),
-        ...(q ? { q } : {}),
-      });
-      applyMemberPage(next, kind, true);
-    } catch (reason) {
-      setError(appErrorCopy(reason, `Could not load more members.`));
-    } finally {
-      setRosterLoading(false);
-    }
+    if (!surface || rosterLoading || roster.mode !== 'router') return;
+    try { roster.more(kind); }
+    catch (reason) { setError(appErrorCopy(reason, 'Could not load more members.')); }
   };
 
   const messagePerson = async (pubkey: string) => {
@@ -1064,7 +904,7 @@ export default function BuzzMembers({
     };
   }, [selectedAgent]);
 
-  const displayedError = roster.error ?? (profileAgentId&&routedAgent.mode!=='legacy'?routedAgent.error:null) ?? error ?? workspaceError;
+  const displayedError = roster.error ?? (profileAgentId?routedAgent.error:null) ?? error ?? workspaceError;
   const busy = working !== null;
   if (profileAgentId) {
     return (
@@ -1075,7 +915,7 @@ export default function BuzzMembers({
         onRetry={() => {
           if(routedAgent.mode==='router'){routedAgent.retry();return;}
           setError(null);
-          if (workspaceError) schedulerRef.current?.force();
+          if (workspaceError) roster.retry();
           setWorkspaceError(null);
           if (!identity || !relayUrl) setRetryGeneration((value) => value + 1);
           else setProfileRetryGeneration((value) => value + 1);
@@ -1368,19 +1208,12 @@ export default function BuzzMembers({
   }
 
   const canManage = surface.viewer.permissions.manage;
-  const page = workspacePage(recordScope, rosterQuery);
-  const people = roster.mode==='router'?surface.members:workspaceRows<WorkspaceView['members'][number]>(
-    recordScope,
-    page.people?.ids ?? [],
-  );
-  const agents = roster.mode==='router'?surface.agents:workspaceRows<WorkspaceView['agents'][number]>(
-    recordScope,
-    page.agents?.ids ?? [],
-  );
-  const peopleTotal = roster.mode==='router'?surface.peopleTotal:page.people?.total;
-  const agentTotal = roster.mode==='router'?surface.agentTotal:page.agents?.total;
-  const canLoadMorePeople = (roster.mode==='router'?surface.membersTruncated:Boolean(page.people?.truncated)) && !rosterLoading&&!roster.loading;
-  const canLoadMoreAgents = (roster.mode==='router'?surface.agentsTruncated:Boolean(page.agents?.truncated)) && !rosterLoading&&!roster.loading;
+  const people = surface.members;
+  const agents = surface.agents;
+  const peopleTotal = surface.peopleTotal;
+  const agentTotal = surface.agentTotal;
+  const canLoadMorePeople = surface.membersTruncated && !rosterLoading;
+  const canLoadMoreAgents = surface.agentsTruncated && !rosterLoading;
 
   const personRow = (member: (typeof people)[number]) => {
     return (
@@ -1438,7 +1271,7 @@ export default function BuzzMembers({
           titleTestID="members-title"
         />
         {!!displayedError && (
-          <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); if(roster.mode==='router'){roster.retry();return;}schedulerRef.current?.force(); }} />
+          <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); roster.retry(); }} />
         )}
         <KeyboardAwareScrollView
           bottomOffset={16}

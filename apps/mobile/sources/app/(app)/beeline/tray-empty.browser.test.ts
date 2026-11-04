@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '@/test-fixtures/router-proof';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -16,7 +16,7 @@ function dataShims(
   link: 'workspace' | 'active' | 'none' = 'workspace',
 ): Record<string, string> {
   return {
-    ...webProofShims(mobile), ...legacyRouterProofShims(),
+    ...webProofShims(mobile), ...canonicalRouterProofShims(['needs-you-tray']),
     'expo-router': `import React from 'react';
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
     export const useLocalSearchParams = () => (${link === 'workspace' ? "{ communityId: 'workspace-1' }" : '{}'});
@@ -42,7 +42,10 @@ function dataShims(
       async workspaces() { return { workspaces: ${link === 'active' ? "[{ id: 'workspace-0' }, { id: 'workspace-1' }]" : '[]'} }; }
       async workspace() { return { workspace: { id: 'workspace-1', name: 'Clover Workspace' } }; }
     }`,
-    '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
+    '@/buzz/surface-storage': `export const surfaceAddress = (_relay,_viewer,endpoint) => ({endpoint});
+      export const mobileSurfaceCache = {read: async ({endpoint}) => endpoint === '/workspaces'
+        ? {workspaces: ${link === 'active' ? "[{id:'workspace-1',name:'Clover Workspace'}]" : '[]'}}
+        : {workspace:{id:'workspace-1',name:'Clover Workspace'}}, peek:()=>null,subscribe:()=>()=>{}};`,
     '@/sync/transport/live-connection':
       'export const sharedLiveConnection = () => ({ register: async () => () => undefined });',
     '@/buzz/community-storage': `export const loadActiveCommunityId = async () => ${link === 'active' ? "'workspace-1'" : 'null'};

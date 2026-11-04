@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PgliteDatabase } from './test-support.js';
 import {
-  TURN_OWNERSHIP_SCHEMA, assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerLiveSql, turnOwnershipEnabled, workingTurnFreshSql,
+  TURN_OWNERSHIP_SCHEMA, assertCurrentTurnOwner, commandOwnerExpiredSql, commandOwnerLiveSql, workingTurnFreshSql,
 } from './turn-ownership.js';
 
 describe('effective command ownership', () => {
@@ -26,8 +26,7 @@ describe('effective command ownership', () => {
     `SELECT command.id,${commandOwnerLiveSql('command')} active,${commandOwnerExpiredSql('command')} expired
       FROM agent_commands command ORDER BY command.id`)).rows;
 
-  it('keeps legacy null/expiry semantics and a disabled admission gate cannot reinterpret an owned row', async () => {
-    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', '0'); expect(turnOwnershipEnabled()).toBe(false);
+  it('preserves installed-client null/expiry semantics alongside owned rows', async () => {
     expect(await active(db)).toEqual([
       { id: 'legacy-dead', active: false, expired: true }, { id: 'legacy-live', active: true, expired: false },
       { id: 'legacy-null', active: null, expired: null }, { id: 'owned', active: true, expired: false },

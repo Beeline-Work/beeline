@@ -54,9 +54,9 @@ describe('actual daemon usage transport selection',()=>{
     await expect(api.execute('postAgentUsage',{agentId:agent,usage:{updatedAt:1,windows:[]}})).rejects.toThrow('unavailable');
     expect(fetcher).not.toHaveBeenCalled();
   });
-  it('keeps the explicit initial old-server postAgentUsage cohort on its existing HTTP adapter',async()=>{
-    const {api,socket,fetcher}=fixture(false);await postChangedAgentUsage(api,agent,{updatedAt:100,windows:[],context:{used:10,size:100}});
-    expect(fetcher).toHaveBeenCalledOnce();expect(socket.frames.some(frame=>frame.type==='usage-operation')).toBe(false);
+  it('refuses unsupported usage without an HTTP fallback',async()=>{
+    const {api,socket,fetcher}=fixture(false);await expect(postChangedAgentUsage(api,agent,{updatedAt:100,windows:[],context:{used:10,size:100}})).rejects.toThrow('source required');
+    expect(fetcher).not.toHaveBeenCalled();expect(socket.frames.some(frame=>frame.type==='usage-operation')).toBe(false);
   });
   it('rejects malformed exact-route parameters before sending and without invoking getters',async()=>{
     const {api,socket,fetcher}=fixture(true);let invoked=false;

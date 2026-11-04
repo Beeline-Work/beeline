@@ -107,9 +107,9 @@
     {
       "file": "apps/mobile/sources/buzz/artifact-link.ts",
       "kind": "session-fetch",
-      "count": 3,
+      "count": 1,
       "fate": "exception",
-      "why": "One authenticated immutable byte-download leaf; /link and /play HTTP remain only for servers without negotiated media metadata support."
+      "why": "One authenticated immutable byte-download leaf, admitted only after the main socket returns current media authority. Link and playback metadata use that socket."
     },
     {
       "file": "apps/mobile/sources/buzz/runtime-config.ts",

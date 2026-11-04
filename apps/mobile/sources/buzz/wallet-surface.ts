@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useState } from 'react';
 import type { WalletHistoryResult, WalletView } from '@beeline/api-contract/wallet';
 import { getWalletSource } from './wallet-source';
 import { useFreshWorkbenchSurface } from './use-shared-surface';
@@ -28,19 +28,16 @@ const isWalletHistory = (value: unknown): value is WalletHistoryResult =>
 export function useSharedWallet(workspaceId: string | null | undefined) {
   const focused=useSurfaceFocus();
   const routed=useRoutedResource('owner-wallet',workspaceId?{family:'owner-wallet'}:undefined,focused&&!!workspaceId,isOwnerWallet);
-  const request = useCallback(() => getWalletSource().readWallet({ workspaceId: workspaceId! }),
-    [workspaceId]);
-  const resource=useFreshWorkbenchSurface('/workspace/:id/wallet', workspaceId ? { workspaceId } : undefined,
-    isWalletView, request, Boolean(workspaceId)&&focused&&routed.mode==='legacy');
+  const [error, setError] = useState<string | null>(null);
   const refresh=useCallback(async()=>{
-    if(routed.mode!=='router')return resource.refresh();
+    if(routed.mode!=='router')return null;
     const refreshWallet=getWalletSource().refreshWallet;
     if(!refreshWallet){routed.retry();return null;}
-    try{const value=await refreshWallet.call(getWalletSource());resource.setError(null);return value;}
-    catch(error){resource.setError(appErrorCopy(error));return null;}
-  },[routed.mode,resource.refresh,resource.setError,routed.retry]);
-  if(routed.mode==='legacy')return resource;
-  return {...resource,value:routed.value?.wallet??null,loading:routed.loading,error:routed.error??resource.error??
+    try{const value=await refreshWallet.call(getWalletSource());setError(null);return value;}
+    catch(error){setError(appErrorCopy(error));return null;}
+  },[routed.mode,routed.retry]);
+
+  return {value:routed.value?.wallet??null,loading:routed.loading,error:routed.error??error??
     (routed.value?.summary&&!routed.value.wallet?'Balance has not been read. Refresh to load it.':null),refresh};
 }
 

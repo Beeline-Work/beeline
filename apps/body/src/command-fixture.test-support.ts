@@ -1,6 +1,12 @@
 import type { AgentCommand, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { DaemonApiClient, InboxItem } from './daemon-api-client.js';
 
+/** Session fixtures already supply an accepted synthetic claim. Transport
+ * ownership and revocation are exercised by the real machine-channel tests. */
+export function runClaimedFixtureTurn<T>(_turn: unknown, task: () => Promise<T>): Promise<T> {
+  return task();
+}
+
 /** Convert the explicitly supplied work in older session-mechanics fixtures to
  * protocol commands. Routing eligibility is tested against the real server.
  * This adapter is test-only and never participates in production intake. */
@@ -69,6 +75,10 @@ export function commandFixtureApi(
   return new Proxy(api, {
     get(target, key) {
       if (key === 'flushFixtureInbox') return pump;
+      // Conversation fixtures supply synthetic claimed commands. Real source
+      // ownership and loss fencing are covered by helper-turn-socket.test.ts.
+      if (key === 'runWithTurnOwnership' && !target.runWithTurnOwnership)
+        return runClaimedFixtureTurn;
       if (key === 'liveSubscribe')
         return (...args: unknown[]) => {
           const onItems = args[2] as

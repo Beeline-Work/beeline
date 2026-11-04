@@ -296,7 +296,6 @@ export async function runServerCommandIntake(options: {
               if (claimOwner && startingTurn) api.noteOwnedTurnClaim?.({
                 roomId, requestId: command.turnRequestId, generationId: claimedGeneration,
               }, claimOwner, () => options.stop(command.turnRequestId));
-              else if (startingTurn) api.noteLegacyTurnClaim?.({ roomId, requestId: command.turnRequestId, generationId: claimedGeneration });
               break;
             } catch (error) {
               const retryable = error instanceof DaemonApiError

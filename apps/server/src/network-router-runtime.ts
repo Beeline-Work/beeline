@@ -3,7 +3,6 @@ import type { SqlDatabase } from './database.js';
 import type { LeaderConnection } from './background-leader.js';
 import { BackgroundOwnership } from './background-ownership.js';
 import type { LiveHub } from './live.js';
-import { networkRouterEnabled } from './network-router-rollout.js';
 import { RouterBuildCoordinator } from './router-build-coordinator.js';
 import type { RouterProjectionPolicy } from './router-socket.js';
 import { TrayClockAvailability } from './tray-clock-availability.js';
@@ -21,7 +20,6 @@ export function createNetworkRouterRuntime(options: {
   wake: () => void;
   retireOwner: (connection: LeaderConnection) => void;
 }) {
-  if (!networkRouterEnabled()) return undefined;
   const { database, jobsDatabase, live, listenerReady } = options;
   const coordinator = new RouterBuildCoordinator();
   const availability = new TrayClockAvailability(database, live, { listenerReady, unavailable: () => {} });

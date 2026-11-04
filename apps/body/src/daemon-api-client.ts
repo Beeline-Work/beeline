@@ -418,10 +418,9 @@ export class DaemonApiClient {
     onLost: () => void,
   ): void { this.channel.turn.claimed(turn, source, onLost); }
   releaseOwnedTurn(turn: { roomId: string; requestId: string; generationId?: string }): void { this.channel.turn.release(turn); }
-  noteLegacyTurnClaim(turn: { roomId: string; requestId: string; generationId?: string }): void { this.channel.turn.claimedLegacy(turn); }
   runWithTurnOwnership<T>(
     turn: { roomId: string; requestId: string; generationId?: string }, task: () => Promise<T>, onLost?: () => void,
-  ): Promise<T> | undefined { return this.channel.turn.runOwned(turn, task, onLost); }
+  ): Promise<T> { return this.channel.turn.runOwned(turn, task, onLost); }
 
   async execute<Name extends keyof DaemonOperationMap>(
     name: Name,
@@ -432,8 +431,7 @@ export class DaemonApiClient {
     if (typeof candidate.agentId === 'string' && candidate.agentId !== this.agentId) {
       throw new Error('daemon operation agentId does not match the runtime identity');
     }
-    if (((name === 'claimAgentCommand' || name === 'acknowledgeAgentCommand') && this.channel.turn.selected) ||
-        (name === 'postAgentTurnReceipt' && this.channel.turn.selected && !this.channel.turn.isLegacy(input as Input<'postAgentTurnReceipt'>))) {
+    if (name === 'claimAgentCommand' || name === 'acknowledgeAgentCommand' || name === 'postAgentTurnReceipt') {
       this.requestCount++; this.inFlight++;
       try {
         return await this.channel.turn.request(name as import('@beeline/api-contract/helper-turn-ownership').HelperTurnOperation,
@@ -443,8 +441,7 @@ export class DaemonApiClient {
           503, true, 'turn ownership outcome unknown');
       } finally { this.inFlight--; }
     }
-    if((HELPER_USAGE_OPERATIONS as readonly string[]).includes(String(name)) &&
-      (name!=='postAgentUsage'||candidate.usageSource!==undefined||this.channel.usageAccountSelected)){
+    if((HELPER_USAGE_OPERATIONS as readonly string[]).includes(String(name))){
       // Existing collectors need not construct protocol ownership metadata.
       // Bind their report to this negotiated actor before the single socket write.
       if(name==='postAgentUsage'&&candidate.usageSource===undefined)
@@ -521,10 +518,6 @@ export class DaemonApiClient {
       clearTimeout(deadline);
       if (admitted) this.inFlight -= 1;
       await release?.();
-    }
-    if(name==='postAgentUsage'&&(input as {usage?:{spend?:unknown}}).usage?.spend){
-      const scope=this.channel.usageAccountScope();
-      if(scope)invalidateUsageAccountAttachment(scope.origin,scope.ownerId,this.agentId);
     }
     return output;
   }

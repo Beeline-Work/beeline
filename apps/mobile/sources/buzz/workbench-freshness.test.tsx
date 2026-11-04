@@ -1,5 +1,7 @@
-vi.mock('@/buzz/use-surface-focus',()=>({useSurfaceFocus:()=>true}));
-vi.mock('@/buzz/router-resource',()=>({useRoutedResource:()=>({mode:'legacy',value:null,error:null,loading:false,retry:()=>{}})}));
+vi.mock('react-native',()=>({AppState:{currentState:'active',addEventListener:()=>({remove(){}})}}));
+vi.mock('@/buzz/router-family',()=>({useRouterFamily:()=> 'router',holdRouterConnection:()=>()=>{}}));
+vi.mock('@/buzz/router-owner',async()=> (await import('@/test/canonical-router-fixture')).canonicalRouterFixture(async input=>
+  input.family==='owner-wallet'?{wallet: await state.reads.wallet({workspaceId:'ws'}),summary:null,observedAt:Date.now()}:state.reads.workbench()));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -41,7 +43,8 @@ import { mobileSurfaceCache } from './surface-storage';
 import { useSharedWallet, useSharedWalletHistory } from './wallet-surface';
 import { useSharedConnectionDetail, useSharedWorkbench } from './workbench-surface';
 
-beforeEach(() => {
+beforeEach(async () => {
+  (await import('@/buzz/router-owner') as any).resetFixture();
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   resetClientState(); mobileSurfaceCache.clear(); state.live.clear(); state.focus.clear(); state.blur.clear();
   state.wallet = { address: 'owner-wallet', coins: [], totalUsd: '$100' };
@@ -54,8 +57,6 @@ beforeEach(() => {
 });
 
 const cases = [
-  { name: 'wallet balance', hook: () => useSharedWallet('ws'), read: state.reads.wallet,
-    update: () => { state.wallet = { ...state.wallet, totalUsd: '$60' }; }, text: (value: any) => value?.totalUsd, expected: '$60' },
   { name: 'wallet history', hook: () => useSharedWalletHistory('ws'), read: state.reads.history,
     update: () => { state.history = { entries: [{ amount: '-$40' }] }; }, text: (value: any) => value?.entries[0]?.amount ?? 'No transactions', expected: '-$40' },
   { name: 'connection detail', hook: () => useSharedConnectionDetail({ workspaceId: 'ws', viewerId: 'owner' }, 'key'), read: state.reads.detail,
@@ -86,17 +87,21 @@ for (const test of cases) {
   }
 }
 
-it('switches Wallet Workspace without writing the new answer into the old cache address', async () => {
-  let workspaceId = 'ws';
-  state.reads.wallet.mockImplementation(async (input) => ({ ...state.wallet, totalUsd: input.workspaceId }));
-  function Screen() { const { value } = useSharedWallet(workspaceId); return React.createElement('Text', {}, value?.totalUsd); }
-  let renderer!: ReactTestRenderer;
-  await act(async () => { renderer = create(React.createElement(Screen)); });
-  workspaceId = 'other';
-  await act(async () => { renderer.update(React.createElement(Screen)); });
-  expect(renderer.root.findByType('Text').props.children).toBe('other');
-  expect(mobileSurfaceCache.peek({ endpoint: '/workspace/:id/wallet', params: { workspaceId: 'ws' } } as any, ((value: unknown) => Boolean(value)) as any)).toMatchObject({ totalUsd: 'ws' });
-  await act(async () => renderer.unmount());
+it('shares the personal Wallet across Workspace changes without writing legacy cache entries', async () => {
+  let workspaceId='ws';
+  function Screen(){const {value}=useSharedWallet(workspaceId);return React.createElement('Text',{},value?.totalUsd);}
+  let renderer!:ReactTestRenderer;
+  await act(async()=>{renderer=create(<Screen/>);});
+  expect(renderer.root.findByType('Text').props.children).toBe('$100');
+  workspaceId='other';
+  await act(async()=>{renderer.update(<Screen/>);});
+  expect(state.reads.wallet).toHaveBeenCalledTimes(1);
+  expect(renderer.root.findByType('Text').props.children).toBe('$100');
+  await act(async()=>{(await import('@/buzz/router-owner') as any).publish({family:'owner-wallet'},{wallet:{...state.wallet,totalUsd:'$60'},summary:null,observedAt:Date.now()});});
+  expect(renderer.root.findByType('Text').props.children).toBe('$60');
+  expect(state.reads.wallet).toHaveBeenCalledTimes(1);
+  expect(mobileSurfaceCache.peek({endpoint:'/workspace/:id/wallet',params:{workspaceId:'ws'}} as any,Boolean as any)).toBeNull();
+  await act(async()=>renderer.unmount());
 });
 
 it('Reproduction squire-spinner: reopening Connectors with a hung read reaches an error and retry', async () => {
@@ -111,7 +116,7 @@ it('Reproduction squire-spinner: reopening Connectors with a hung read reaches a
   let renderer!: ReactTestRenderer;
   try {
     await act(async () => { renderer = create(React.createElement(Screen)); });
-    await act(async () => { await vi.advanceTimersByTimeAsync(15_001); });
+    await act(async () => { (await import('@/buzz/router-owner') as any).park({family:'owner-workbench'},'Couldn’t reach Beeline'); });
     expect(renderer.root.findByType('Text').props.children).toBe('Couldn’t reach Beeline');
     const calls = state.reads.workbench.mock.calls.length;
     await act(async () => { void resource.refresh(); });
@@ -130,18 +135,18 @@ it('Reproduction NET-WASTE-1: two visible Workbench consumers release independen
   let first!: ReactTestRenderer, second!: ReactTestRenderer;
   await act(async () => { first = create(React.createElement(Screen)); second = create(React.createElement(Screen)); });
   const emit = async () => act(async () => {
-    for (const listener of state.live) listener({ monolithLive: { type: 'resource-change', resource: 'workbench' } });
+    (await import('@/buzz/router-owner') as any).publish({family:'owner-workbench'},{connectors:[],connections:[],apps:[],helpers:[]});
   });
   await act(async () => first.unmount());
   const before = state.reads.workbench.mock.calls.length;
   await emit();
-  expect(state.reads.workbench.mock.calls.length).toBe(before + 1);
+  expect(state.reads.workbench.mock.calls.length).toBe(before);
   await act(async () => second.unmount());
   const hidden = state.reads.workbench.mock.calls.length;
   await emit(); await emit(); await emit();
   expect(state.reads.workbench.mock.calls.length).toBe(hidden);
   await act(async () => { first = create(React.createElement(Screen)); });
-  expect(state.reads.workbench.mock.calls.length).toBe(hidden + 1);
+  expect(state.reads.workbench.mock.calls.length).toBe(hidden);
   await act(async () => first.unmount());
 });
 
@@ -161,7 +166,7 @@ it('Reproduction NET-WASTE-1: mounted Settings releases Workbench on blur and re
   });
   expect(state.reads.workbench.mock.calls.length).toBe(before);
   await act(async () => { for (const focus of state.focus) focus(); });
-  expect(state.reads.workbench.mock.calls.length).toBe(before + 1);
+  expect(state.reads.workbench.mock.calls.length).toBe(before);
   await act(async () => renderer.unmount());
 });
 
@@ -186,6 +191,6 @@ it('negotiated canonical usage cells do not refresh Workbench, wallet, history o
     await act(async () => {
       for (const listener of state.live) listener({ monolithLive: { type: 'resource-change', resource: 'agent', resourceId: 'agent-a' } });
     });
-    for (const [name, read] of Object.entries(state.reads)) expect(read.mock.calls.length).toBe(before[name]! + 1);
+    for (const [name, read] of Object.entries(state.reads)) expect(read.mock.calls.length).toBe(before[name]! + (name === 'workbench' || name === 'wallet' ? 0 : 1));
   } finally { suspendUsageCellConnection(); await act(async () => renderer.unmount()); }
 });

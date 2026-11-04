@@ -1,9 +1,7 @@
 import type { RouteInput } from '../routes.js';
-import { validateOwnerInput } from './owner-inputs.js';
 import { canonical } from './canonical.js';
 
-// Initial shadow policies. These do NOT opt any wire family into router-v1.
-// Extend only alongside a real trusted owner and its closure proofs.
+// Closed local owner bindings. Wire shapes are validated by the dispatcher.
 const policies = {
   'phone.countNeedsYou': { mode: 'read', screen: 'AppShell' },
   'phone.readRoom': { mode: 'read', screen: 'Room' },
@@ -14,8 +12,6 @@ const policies = {
   'phone.readRoomTools': {mode:'read-action',action:'OpenToolGroup'},
   'phone.readMediaLink': { mode: 'read-action', action: 'OpenArtifactBrowser' },
   'phone.readMediaPlayback': { mode: 'read-action', action: 'RunArtifact' },
-  'phone.sendRoomMessage': { mode: 'command', action: 'SendMessage' },
-  'phone.sendRoomReply': { mode: 'command', action: 'SendMessage' },
   'phone.clearNeedsYou':{mode:'command',action:'EditTray'},
   'phone.clearNeedsYouSection':{mode:'command',action:'EditTray'},
   'phone.clearMessageBookmarks':{mode:'command',action:'EditTray'},
@@ -241,8 +237,6 @@ export class AdmissionOwner {
         const family = request.input.family;
         if (screen === 'Room' ? !['room-head','room-workflows'].includes(family) :screen==='AgentProfile'?!['workspace-roster','agent-profile'].includes(family):screen==='ScheduledWork'?family!=='room-scheduled-work':screen==='Tray'?family!=='needs-you-tray':!['room-list', 'needs-you-count','workspace-roster'].includes(family)&&!family.startsWith('owner-'))
           return this.deny('wrong screen family');
-        if (family === 'room-head'||family==='room-scheduled-work'||family==='room-workflows' ? !request.input.roomId : request.input.roomId !== undefined)
-          return this.deny('wrong family scope');
       } else if (policy.screen !== screen) return this.deny('wrong screen');
     }
     if (residency) residency.lifetime.active = false;
@@ -289,9 +283,6 @@ export class AdmissionOwner {
     if (policies[request.route]?.mode!=='command'||policies[request.route].action!==action||
       (request.route as string)==='phone.markNeedsYouSeen') return this.deny('wrong action');
     this.validateRequests([request as Requests<PolicyId>]);
-    if (action==='SendMessage' && (typeof (request.input as {messageId?:unknown}).messageId !== 'string' ||
-      !/^[0-9a-f]{64}$/.test((request.input as {messageId:string}).messageId)))
-      return this.deny('prepared message identity required');
     const lifetime = { active: true };
     try { return handler(this.mint(request, lifetime)); }
     finally { lifetime.active = false; }
@@ -328,7 +319,6 @@ export class AdmissionOwner {
     const residency=[...this.residencies.values()].find(value=>value.generation===generation&&value.screen==='Tray'&&
       value.lifetime.active&&value.keys.includes(this.key(head)));
     if(!this.foreground||!residency)return this.deny('inactive Saved action');
-    if(typeof before!=='string'||before.length>1024||!/^saved1\.[a-zA-Z0-9_-]+$/.test(before))return this.deny('invalid Saved continuation');
     const request={route:'phone.readRouterSnapshot' as const,input:{family:'needs-you-saved-page' as const,workspaceId,before}};
     this.validateRequests([request]);
     const lifetime={active:true},pass=this.mint(request,lifetime);
@@ -395,7 +385,7 @@ export class AdmissionOwner {
 
   /** Atomic spend precedes all asynchronous work. Only the wire operation and
    * canonical input leave admission; principal/pass/generation/key stay local.
-   * This shadow result has no executor. Production continues through legacy.
+   * The existing socket dispatcher owns wire validation.
    */
   spend<K extends PolicyId>(request: Request<K>, pass: Pass<K>) {
     const state = this.states.get(pass);
@@ -424,7 +414,6 @@ export class AdmissionOwner {
     const keys = new Set<string>();
     for (const request of requests) {
       if (!Object.hasOwn(policies, request.route)) return this.deny('unknown route');
-      validateOwnerInput(request.route, request.input);
       const key = this.key(request);
       if (keys.has(key)) return this.deny('duplicate key');
       keys.add(key);

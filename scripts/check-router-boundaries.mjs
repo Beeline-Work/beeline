@@ -11,4 +11,4 @@ const inventory = JSON.parse(readFileSync(path.join(root, INVENTORY), 'utf8'));
 errors.push(...judgeInventory(sites, inventory, base === -1 ? undefined : baselineInventory(root, args[base + 1], sites)));
 for (const error of errors) console.error(error);
 if (errors.length) process.exitCode = 1;
-else console.log(`Router boundaries passed: ${sites.size} legacy boundaries inventoried.`);
+else console.log(`Router boundaries passed: ${sites.size} physical boundaries checked; front-door ownership enforced.`);

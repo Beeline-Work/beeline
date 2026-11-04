@@ -12,7 +12,6 @@ import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 
 /** Independent deployment gate. Never infer support from native/helper version. */
-export { networkRouterEnabled as helperOverlayEnabled } from './network-router-rollout.js';
 export const HELPER_OVERLAY_SCHEMA=`
 ${committedCommandNotificationSchema()}
 CREATE TABLE IF NOT EXISTS helper_overlay_demand(room_id uuid PRIMARY KEY,revision bigint NOT NULL DEFAULT 0);

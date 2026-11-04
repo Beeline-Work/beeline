@@ -4,7 +4,7 @@ import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-sto
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { clientResetGeneration } from '@/sync/client-reset';
 import { MonolithWorkbenchSource } from './workbench-source';
-import { isWorkbenchView, noteWorkbenchAnswer } from './workbench-surface';
+import { isWorkbenchView } from './workbench-surface';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 
 export const isManagedIdentity = (value: unknown): value is ManagedIdentityResult => {
@@ -88,7 +88,6 @@ export async function readIdentitySettings(workspaceId?: string) {
         const scope = { workspaceId: selected.id, viewerId: pubkey };
         const view = await new MonolithWorkbenchSource().readWorkbench(scope, result.workbench);
         const address = surfaceAddress(relay, pubkey, '/workspace/:id/workbench', scope);
-        noteWorkbenchAnswer(address);
         await mobileSurfaceCache.write(address, view, isWorkbenchView);
       }
       return result;

@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '@/test-fixtures/router-proof';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -16,7 +16,7 @@ describe.skipIf(!existsSync(CHROME))('Connect an app above the Android navigatio
       entry: path.join(mobile, 'scripts/connect-app-nav-inset-proof.tsx'),
       mobile,
       shims: {
-        ...webProofShims(mobile), ...legacyRouterProofShims(),
+        ...webProofShims(mobile), ...canonicalRouterProofShims(['owner-workbench']),
         'react-native-safe-area-context':
           'export const useSafeAreaInsets = () => ({ top: 24, bottom: 48, left: 0, right: 0 });',
         'expo-router': `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]); export const router = { back: () => undefined, replace: () => undefined, push: () => undefined };

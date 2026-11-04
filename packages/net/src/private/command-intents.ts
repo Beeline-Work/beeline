@@ -65,6 +65,25 @@ export class CommandIntents {
    * preserves uncertainty; it never changes immutable bytes or invents failure. */
   restore(records: readonly CommandIntent[]): void {
     if (this.records.size || this.reservations.size || this.flights.size) throw new Error('command restore requires empty owner');
+    for (const [key, record] of this.decodeStored(records)) this.records.set(key, record);
+  }
+  /** Shared browser storage can advance another tab's intent. Immutable
+   * identity and active flights remain local; a terminal outcome never regresses. */
+  adopt(records: readonly CommandIntent[]): void {
+    const incoming = this.decodeStored(records);
+    for (const [key, record] of incoming) {
+      const current = this.records.get(key);
+      if (current && (current.bytes !== record.bytes || current.digest !== record.digest))
+        throw new Error('command storage identity changed');
+    }
+    for (const [key, record] of incoming) {
+      const current = this.records.get(key);
+      if (!this.flights.has(key) && (!current || !terminal(current.state))) this.records.set(key, record);
+    }
+    const completed = [...this.records.entries()].filter(([, record]) => terminal(record.state));
+    for (const [key] of completed.slice(0, Math.max(0, completed.length - 100))) this.records.delete(key);
+  }
+  private decodeStored(records: readonly CommandIntent[]): Map<string, CommandIntent> {
     const restored = new Map<string, CommandIntent>();
     let pending = 0, bytes = 0;
     if (records.length > 200) throw new Error('command storage capacity');
@@ -83,7 +102,7 @@ export class CommandIntents {
       if (!terminal(saved.state)) { pending++; bytes += byteLength(canonical(saved)) + 128; }
     }
     if (pending > 100 || bytes > 2 * 1024 * 1024) throw new Error('command storage capacity');
-    for (const [key, record] of restored) this.records.set(key, record);
+    return restored;
   }
   /** Must be called in the synchronous action prefix after admission.spend.
    * Capacity reserves synchronously; persistence/hash may outlive the tap.

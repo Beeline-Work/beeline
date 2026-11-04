@@ -13,7 +13,6 @@ if (url && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname))
 afterEach(() => vi.unstubAllEnvs());
 describe.skipIf(!url)('production router composition on migrated PostgreSQL', () => {
   it('boots every family without an opt-in and runs Tray on the existing physical leader', async () => {
-    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', undefined);
     const schema = `router_activation_${randomUUID().replaceAll('-', '')}`;
     const admin = new Pool({ connectionString: url, max: 1 });
     await admin.query(`CREATE SCHEMA ${schema}`);

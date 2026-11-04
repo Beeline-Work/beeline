@@ -20,7 +20,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
-import { refreshChatList, useChatList, type ChatListKey } from '@/buzz/chat-list-store';
+import { useChatList, type ChatListKey } from '@/buzz/chat-list-store';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
 import { buildCommunityInviteUrl } from '@/buzz/community-invite';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -385,7 +385,6 @@ function WorkspaceSettings({ workspaceId }, ref) {
       try {
         await monolithPhoneOperation('updateRoom', { roomId: room.id, visibility });
         workspaceSchedulerRef.current?.force();
-        if (chatListKey) refreshChatList(chatListKey);
       } catch (caught) {
         setError(appErrorCopy(caught, `Could not change ${ROOM_LABEL} visibility.`));
       } finally {
@@ -405,7 +404,6 @@ function WorkspaceSettings({ workspaceId }, ref) {
       try {
         await monolithPhoneOperation('addRoomMember', { roomId: room.id, memberId: viewerId });
         setRoomSheetId(null);
-        if (chatListKey) refreshChatList(chatListKey);
         router.push(roomHref(room.id, communityId));
       } catch (caught) {
         setRoomSheetId(null);

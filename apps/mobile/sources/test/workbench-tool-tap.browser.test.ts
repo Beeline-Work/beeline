@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '@/test-fixtures/router-proof';
 import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -41,7 +41,7 @@ describe('workbench tool tap in the desktop web renderer', () => {
         }, 3000);
         }`,
       );
-      const shims = {...webProofShims(mobile), ...legacyRouterProofShims()};
+      const shims = {...webProofShims(mobile), ...canonicalRouterProofShims(['owner-workbench', 'owner-wallet'])};
       const result = await runBrowserProof({
         entry,
         mobile,

@@ -1,4 +1,3 @@
-import { useTrayList } from '@/buzz/needs-you-store';
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { AppState } from 'react-native';
 import type { RouterValues } from '@beeline/api-contract/router-protocol';
@@ -23,7 +22,6 @@ const detached = () => noop;
  */
 export function useRoutedTray(workspaceId: string, focused: boolean) {
   const mode = useRouterFamily('needs-you-tray');
-  const stored = useTrayList(workspaceId, mode === 'legacy');
   const visible = useRef(focused);
   visible.current = focused;
   const request = useMemo(() => workspaceId
@@ -74,9 +72,9 @@ export function useRoutedTray(workspaceId: string, focused: boolean) {
     mode,
     value,savedRows,savedLoading,savedError,
     // The route consumes one selected view; capability absence is resolved here.
-    needs: mode === 'legacy' ? stored.needs : value?.needs.items ?? null,
-    bookmarks: mode === 'legacy' ? stored.bookmarks : savedRows.map(row => row.value),
-    savedNext: mode === 'legacy' ? stored.next : savedNext,
+    needs: value?.needs.items ?? null,
+    bookmarks: savedRows.map(row => row.value),
+    savedNext: savedNext,
     loadMoreSaved:()=>{
       if(mode!=='router'||!focused||!savedNext||savedLoading||pages.current.cursors.has(savedNext))return;
       const handle=acquireRouterSavedContinuation(workspaceId,savedNext,()=>visible.current&&AppState.currentState==='active',()=>publishPages(value=>value+1));
@@ -98,9 +96,9 @@ export function useRoutedTray(workspaceId: string, focused: boolean) {
  * A section's existing Undo deadline may send this prepared intent, but cannot
  * create a pass or reconstruct command input after the gesture returns.
  */
-export function prepareTrayCommand(workspaceId: string, command: TrayCommand): PreparedTrayCommand | undefined {
+export function prepareTrayCommand(workspaceId: string, command: TrayCommand): PreparedTrayCommand {
   const mode = routerFamilyMode('needs-you-tray');
-  if (mode === 'legacy') return;
+
   const owner = activeCommandOwner();
   if (mode !== 'router' || !owner?.canPrepare()) throw new Error('Tray command delivery is unavailable.');
   const record = owner.prepare(admitRouterTrayCommand(workspaceId, command));

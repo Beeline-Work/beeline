@@ -21,7 +21,7 @@ describe('actual selected model credential claim socket', () => {
   let socket: WebSocket, origin: string, commandId: string, epoch: number;
   let frames: Frame[];
   beforeEach(async () => {
-    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', '1'); f = await ownedModelFixture(); epoch = 1; frames = [];
+     f = await ownedModelFixture(); epoch = 1; frames = [];
     await f.db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [MODEL_CLAIM.commandId]);
     await f.db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
       VALUES($1,NULL,$2,'owner'),($1,$3,$2,'owner')`, [MODEL_WORKSPACE, MODEL_OWNER, MODEL_ROOM]);

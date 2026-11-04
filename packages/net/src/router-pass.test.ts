@@ -6,9 +6,9 @@ import { routes } from './routes.js';
 const identity = { origin: 'https://example.test', principal: 'ada', sessionEpoch: 1 };
 const room = { route: 'phone.readRoom', input: { roomId: 'room-a' } } as const;
 const count = { route: 'phone.countNeedsYou', input: { workspaceId: 'workspace-a' } } as const;
-const send = { route: 'phone.sendRoomMessage', input: { roomId: 'room-a', text: 'Hello', messageId: 'a'.repeat(64) } } as const;
+const stop = { route: 'phone.deleteRoomSchedule', input: { roomId: 'room-a', scheduleId: 'schedule-a' } } as const;
 
-describe('local admission shadow core (P1)', () => {
+describe('local network ownership', () => {
   it('spends atomically once and carries no pass fields into the wire operation', () => {
     const owner = new AdmissionOwner(identity);
     const [pass] = owner.focus(1, 'Room', [room]);
@@ -65,11 +65,11 @@ describe('local admission shadow core (P1)', () => {
 
   it('ends a tap on synchronous return, even when its handler returns a Promise', async () => {
     const owner = new AdmissionOwner(identity);
-    await owner.tap('SendMessage', send, async pass => {
+    await owner.tap('StopScheduledWork', stop, async pass => {
       await Promise.resolve();
-      expect(() => owner.spend(send, pass)).toThrow('inactive pass');
+      expect(() => owner.spend(stop, pass)).toThrow('inactive pass');
     });
-    const prepared = owner.tap('SendMessage', send, pass => owner.spend(send, pass));
+    const prepared = owner.tap('StopScheduledWork', stop, pass => owner.spend(stop, pass));
     expect(prepared.isCurrent()).toBe(true); // immutable intent outlives gesture
     owner.background();
     expect(prepared.isCurrent()).toBe(true);
@@ -77,18 +77,12 @@ describe('local admission shadow core (P1)', () => {
     expect(prepared.isCurrent()).toBe(false); // cannot flush under a new session
   });
 
-  it('checks the real input codec before minting and preserves JSON optional-field semantics', () => {
+  it('leaves input validation to the wire codec and preserves JSON optional-field semantics', () => {
     const owner = new AdmissionOwner(identity);
-    expect(() => owner.focus(1, 'Room', [{ ...room, input: { roomId: 42 } } as never])).toThrow('contract mismatch');
-    const withOptional = { ...send, input: { ...send.input, attachments: undefined } };
-    const prepared = owner.tap('SendMessage', withOptional, pass => owner.spend(withOptional, pass));
-    expect(JSON.parse(prepared.wire.input)).toEqual(send.input);
-  });
-
-  it('requires prepared command identity before admitting a send', () => {
-    const owner = new AdmissionOwner(identity);
-    expect(() => owner.tap('SendMessage', { ...send, input: { roomId: 'room-a', text: 'Hello' } }, () => {}))
-      .toThrow('prepared message identity required');
+    expect(() => routes['phone.readRoom'].params.parse({ roomId: 42 })).toThrow('contract mismatch');
+    const withOptional = { ...stop, input: { ...stop.input, unused: undefined } };
+    const prepared = owner.tap('StopScheduledWork', withOptional, pass => owner.spend(withOptional, pass));
+    expect(JSON.parse(prepared.wire.input)).toEqual(stop.input);
   });
 
   it('gives a negotiated generation one recovery batch, never renews on failures', () => {
@@ -146,13 +140,13 @@ describe('local admission shadow core (P1)', () => {
     expect(retry.isCurrent()).toBe(false);
   });
 
-  it('does not enable any production route or export an arbitrary executor', async () => {
+  it('keeps the closed operation registry free of arbitrary executors', async () => {
     const api = await import('./index.js');
     expect(Object.keys(api)).toEqual(['routes', 'validateWorkflowProjection', 'validateScheduledWorkProjection']);
     expect(api.validateWorkflowProjection({workflows:[]})).toBe(true);
     expect(api.validateWorkflowProjection({workflows:[{}]})).toBe(false);
     expect(Object.keys(routes).length).toBeGreaterThan(300);
-    expect(Object.values(routes).every(route => route.compatibility === 'legacy-only')).toBe(true);
+    expect(Object.values(routes).some(route => 'compatibility' in route || 'migration' in route)).toBe(false);
     expect(Object.isFrozen(routes)).toBe(true);
     expect(Object.isFrozen(routes['phone.readRoom'])).toBe(true);
   });

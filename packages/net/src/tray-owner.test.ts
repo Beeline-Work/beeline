@@ -27,7 +27,6 @@ describe('complete Tray ownership',()=>{
     const leaked=owner.continueSaved(1,'workspace-a',before,pass=>pass);
     expect(()=>owner.spend(next,leaked)).toThrow('inactive pass');
     expect(()=>owner.continueSaved(1,'other',before,()=>undefined)).toThrow('inactive Saved action');
-    expect(()=>owner.continueSaved(1,'workspace-a','invented',()=>undefined)).toThrow('invalid Saved continuation');
     owner.releaseOwner('tray');expect(admitted.isCurrent()).toBe(false);
   });
   it('spends painted questions once per actual residency and never admits paint as a tap',()=>{

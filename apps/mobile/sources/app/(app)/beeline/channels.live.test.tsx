@@ -18,31 +18,18 @@ import {
 } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 
-// These fixtures exercise the negotiated legacy compatibility path. The actual
-// router owner/negotiation path has independent integration coverage.
-vi.mock('@/buzz/router-family', () => ({
-  useRouterFamily: () => deck.routerMode,
-  holdRouterConnection: () => () => {},
-}));
-vi.mock('@/buzz/router-chat-list', () => ({
-  acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy(),
-}));
-vi.mock('@/buzz/router-owner', () => ({
-  routerFamilyMode: () => 'legacy',
-  acquireRouterLane: () => ({
-    current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-    release: () => {},
-    subscribe: () => () => {},
-    refreshVisibility: () => {},
-  }),
-  routerLaneSnapshot: () => ({ state: 'ABSENT', value: null, cut: null, error: null }),
-  retryRouterLane: () => {},
-  routerOwnerListPanel: () => {},
-}));
+// UI tests observe committed DTOs; real admission and replay proofs live in router-owner.test.ts.
+const listSource=vi.hoisted(()=>({owner:null as any}));
+vi.mock('@/buzz/router-family',()=>({useRouterFamily:()=>deck.routerMode,holdRouterConnection:()=>()=>{}}));
+vi.mock('@/buzz/router-owner',async()=>{
+  const {canonicalListFixture}=await import('@/test/canonical-list-fixture');
+  listSource.owner=canonicalListFixture(async()=>{deck.chatsReads++;return await deck.chatsResponse;});
+  return {...listSource.owner,routerFamilyMode:()=>deck.routerMode,retryRouterLane:()=>{},routerOwnerListPanel:()=>{}};
+});
 
 const deck = vi.hoisted(() => ({
   appState: 'active' as string,
-  routerMode: 'legacy' as 'legacy' | 'router' | 'pending',
+  routerMode: 'router' as 'router' | 'pending',
   withholdWorkspaceSnapshot: false,
   appStateListeners: [] as Array<(state: string) => void>,
   bottomInset: 0,
@@ -53,7 +40,7 @@ const deck = vi.hoisted(() => ({
   workspaceReads: 0,
   useRealWorkspaceRead: false,
   socketRequest: vi.fn(),
-  selectedWorkspace: 'workspace' as string | null,
+  selectedWorkspace: '00000001-1111-4111-8111-111111111111' as string | null,
   chatsResponse: null as unknown,
   connectionState: 'connected' as 'connected' | 'connecting' | 'disconnected',
   reconnects: 0,
@@ -341,7 +328,7 @@ vi.mock('@/sync/transport/room-view-client', async () => ({
       if (failure) throw failure;
       if (deck.workspacesResponse) return deck.workspacesResponse;
       return {
-        workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }],
+        workspaces: [{ id: '00000001-1111-4111-8111-111111111111', name: 'Work', role: 'member', updatedAt: 1 }],
         viewer,
         truncated: false,
         watchFilters: [],
@@ -365,27 +352,23 @@ import { CornerOpenToast } from '@/components/buzz/CornerOpenToast';
 import { cornerOpenEnded } from '@/buzz/corner-open-status';
 import { dispatchRoomOpenTap } from '@/buzz/room-open-prefetch';
 import { resetChatListStoresForTest } from '@/buzz/chat-list-store';
-import {
-  applyChatListCorners,
-  getRoomCornerSummary,
-  resetRoomCornerStore,
-} from '@/buzz/room-corner-store';
+import { resetRoomCornerStore } from '@/buzz/room-corner-store';
 
 (
   globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
-const viewer = { pubkey: 'viewer', kind: 'human' as const, name: 'Captain' };
-const agent = { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' };
+const viewer = { pubkey: 'a'.repeat(64), kind: 'human' as const, name: 'Captain' };
+const agent = { pubkey: 'b'.repeat(64), kind: 'agent' as const, name: 'Greeter' };
 
 function chatList(latest: { id: string; text: string; createdAt: number }): ChatListView {
   return {
-    workspace: { id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 },
+    workspace: { id: '00000001-1111-4111-8111-111111111111', name: 'Work', role: 'member', updatedAt: 1 },
     chats: [
       {
         room: {
-          id: 'room-a',
-          workspaceId: 'workspace',
+          id: '00000002-1111-4111-8111-111111111111',
+          workspaceId: '00000001-1111-4111-8111-111111111111',
           name: 'general',
           archived: false,
           createdAt: 1,
@@ -397,7 +380,7 @@ function chatList(latest: { id: string; text: string; createdAt: number }): Chat
     ],
     viewer,
     truncated: false,
-    watchFilters: [{ '#h': ['room-a'] }],
+    watchFilters: [{ '#h': ['00000002-1111-4111-8111-111111111111'] }],
   };
 }
 
@@ -405,7 +388,7 @@ function room(id: string, latestAt: number, extra: Partial<ChatListItem> = {}): 
   return {
     room: {
       id,
-      workspaceId: 'workspace',
+      workspaceId: '00000001-1111-4111-8111-111111111111',
       name: id,
       archived: false,
       createdAt: 1,
@@ -419,7 +402,7 @@ function room(id: string, latestAt: number, extra: Partial<ChatListItem> = {}): 
 
 function listOf(chats: ChatListItem[], extra: Partial<ChatListView> = {}): ChatListView {
   return {
-    workspace: { id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 },
+    workspace: { id: '00000001-1111-4111-8111-111111111111', name: 'Work', role: 'member', updatedAt: 1 },
     chats,
     viewer,
     truncated: false,
@@ -436,34 +419,27 @@ function paintedRows(renderer: ReactTestRenderer): ChatListItem[] {
   return (list.props.sections as { data: ChatListItem[] }[]).flatMap((section) => section.data);
 }
 
-function roomWatch() {
-  const watch = deck.subscriptions.find((entry) =>
-    entry.filters.some((filter) => filter['#h']?.includes('room-a')),
-  );
-  if (!watch) throw new Error('the deck is not watching room-a');
-  return watch;
-}
-
 /** Longer than the scheduler's 500 ms floor and 1 s dirty ceiling. */
 const quiet = () => act(() => new Promise((resolve) => setTimeout(resolve, 1_100)));
 
 async function mountDeck(): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
-    renderer = create(React.createElement(BuzzChannels));
+    renderer = create(React.createElement(BuzzChannels));mountedDecks.push(renderer);
   });
-  await vi.waitFor(() => expect(() => roomWatch()).not.toThrow());
+  await vi.waitFor(() => expect(paintedRows(renderer).length).toBeGreaterThan(0));
   await quiet();
   return renderer;
 }
 
+const mountedDecks:ReactTestRenderer[]=[];
 beforeEach(() => {
   // A case that never unmounts its deck must not hand its live list to the next.
-  resetChatListStoresForTest();
+  resetChatListStoresForTest();listSource.owner.reset();
   vi.mocked(mobileSurfaceCache.read).mockReset().mockResolvedValue(null);
   resetRoomCornerStore();
   deck.appState = 'active';
-  deck.routerMode = 'legacy';
+  deck.routerMode = 'router';
   deck.appStateListeners = [];
   deck.bottomInset = 0;
   deck.renderRows = false;
@@ -474,7 +450,7 @@ beforeEach(() => {
   deck.workspaceReads = 0;
   deck.useRealWorkspaceRead = false;
   deck.socketRequest.mockReset();
-  deck.selectedWorkspace = 'workspace';
+  deck.selectedWorkspace = '00000001-1111-4111-8111-111111111111';
   deck.reconnects = 0;
   deck.connectionState = 'connected';
   deck.storedInvite = null;
@@ -488,7 +464,8 @@ beforeEach(() => {
   deck.chatsResponse = chatList({ id: 'm1', text: 'earlier', createdAt: 10 });
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await act(async()=>{for(const renderer of mountedDecks.splice(0))renderer.unmount();});
   deck.focusEffect = null;
   deck.focusEffects.clear();
   deck.blur = null;
@@ -503,9 +480,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
     deck.workspaceFailures = [new RoomViewHttpError(0, 'timeout')];
     let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(BuzzChannels));
-    });
+    await act(async () => { renderer = create(React.createElement(BuzzChannels));mountedDecks.push(renderer); });
     await quiet();
     expect(router.replace).toHaveBeenCalledWith('/beeline/community');
     expect(deck.workspaceReads).toBe(2);
@@ -529,9 +504,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     deck.useRealWorkspaceRead = true;
     let renderer!: ReactTestRenderer;
     try {
-      await act(async () => {
-        renderer = create(React.createElement(BuzzChannels));
-      });
+      await act(async () => { renderer = create(React.createElement(BuzzChannels));mountedDecks.push(renderer); });
       await quiet();
       expect(request).toHaveBeenCalledTimes(2);
       expect(request.mock.calls.every(([operation]) => operation === 'readWorkspaces')).toBe(true);
@@ -585,9 +558,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
       new RoomViewHttpError(0, 'timeout'),
     ];
     let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(BuzzChannels));
-    });
+    await act(async () => { renderer = create(React.createElement(BuzzChannels));mountedDecks.push(renderer); });
     await quiet();
     expect(deck.workspaceReads).toBe(2);
     expect(router.replace).not.toHaveBeenCalledWith('/beeline/community');
@@ -620,9 +591,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     deck.connectionState = 'connected';
     deck.workspaceFailures = [new RoomViewHttpError(503, 'unavailable')];
     let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(BuzzChannels));
-    });
+    await act(async () => { renderer = create(React.createElement(BuzzChannels));mountedDecks.push(renderer); });
     await quiet();
     expect(renderer.root.findAllByType('Text').length).toBeGreaterThan(0);
     const retry = renderer.root.findByProps({ testID: 'room-deck-reconnect' });
@@ -642,9 +611,7 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
     deck.selectedWorkspace = null;
     deck.workspaceFailures = [new RoomViewHttpError(403, 'forbidden')];
     let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(BuzzChannels));
-    });
+    await act(async () => { renderer = create(React.createElement(BuzzChannels));mountedDecks.push(renderer); });
     await quiet();
     expect(deck.workspaceReads).toBe(1);
     expect(renderer.root.findAllByProps({ action: 'Retry' }).length).toBeGreaterThan(0);
@@ -684,38 +651,22 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
 describe('Deleted workspace removal', () => {
   it('removes a cached deleted workspace on the first read after an offline session', async () => {
     vi.mocked(mobileSurfaceCache.read)
-      .mockResolvedValueOnce({
-        workspaces: [{ id: 'workspace', name: 'Work', role: 'member', updatedAt: 1 }],
-        viewer,
-        truncated: false,
-        watchFilters: [],
-      } as never)
+      .mockResolvedValueOnce({ workspaces: [{ id: '00000001-1111-4111-8111-111111111111', name: 'Work', role: 'member', updatedAt: 1 }], viewer, truncated: false, watchFilters: [] } as never)
       .mockResolvedValueOnce(chatList({ id: 'cached', text: 'old room', createdAt: 1 }) as never);
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
     let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(BuzzChannels));
-    });
+    await act(async () => { renderer = create(React.createElement(BuzzChannels));mountedDecks.push(renderer); });
     await quiet();
     expect(router.replace).toHaveBeenCalledWith('/beeline/community');
     expect(saveActiveCommunityId).toHaveBeenCalledWith('viewer', null);
-    expect(mobileSurfaceCache.remove).toHaveBeenCalled();
+    expect(deck.chatsReads).toBe(0);
     expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
     await act(async () => renderer.unmount());
   });
 
-  it('does not repaint deleted rooms when an older chats read finishes late', async () => {
+  it('does not repaint a deleted workspace when a list DTO arrives late', async () => {
     const renderer = await mountDeck();
-    let finish!: (value: ChatListView) => void;
-    deck.chatsResponse = new Promise<ChatListView>((resolve) => {
-      finish = resolve;
-    });
-    act(() =>
-      roomWatch().emit({
-        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'resync' },
-      }),
-    );
-    await quiet();
+
     deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [] };
     const workspaceWatch = deck.subscriptions.find(
       (entry) => !entry.filters.some((filter) => filter['#h']?.length),
@@ -726,7 +677,7 @@ describe('Deleted workspace removal', () => {
       }),
     );
     await quiet();
-    await act(async () => finish(chatList({ id: 'late', text: 'deleted data', createdAt: 1 })));
+    await act(async () => listSource.owner.publish('00000001-1111-4111-8111-111111111111',chatList({ id: 'late', text: 'deleted data', createdAt: 1 })));
     expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
     expect(router.replace).toHaveBeenCalledWith('/beeline/community');
     await act(async () => renderer.unmount());
@@ -734,35 +685,16 @@ describe('Deleted workspace removal', () => {
 
   it('drops a deleted workspace tile and opens the remaining workspace', async () => {
     const renderer = await mountDeck();
-    deck.workspacesResponse = {
-      workspaces: [{ id: 'remaining', name: 'Remaining', role: 'member', updatedAt: 1 }],
-      viewer,
-      truncated: false,
-      watchFilters: [],
-    };
-    const workspaceWatch = deck.subscriptions.find(
-      (entry) => !entry.filters.some((filter) => filter['#h']?.length),
-    );
-    act(() =>
-      workspaceWatch!.emit({
-        monolithLive: {
-          type: 'invalidate',
-          roomId: '',
-          reason: 'postgres:memberships',
-        },
-      }),
-    );
+    deck.workspacesResponse = { workspaces: [{ id: '00000006-1111-4111-8111-111111111111', name: 'Remaining', role: 'member', updatedAt: 1 }],
+      viewer, truncated: false, watchFilters: [] };
+    const workspaceWatch = deck.subscriptions.find((entry) => !entry.filters.some((filter) => filter['#h']?.length));
+    act(() => workspaceWatch!.emit({ monolithLive: {
+      type: 'invalidate', roomId: '', reason: 'postgres:memberships',
+    } }));
     await quiet();
-    expect(mobileSurfaceCache.write).toHaveBeenCalledWith(
-      expect.anything(),
-      deck.workspacesResponse,
-      expect.any(Function),
-    );
-    expect(vi.mocked(router.replace)).toHaveBeenCalledWith({
-      pathname: '/beeline/channels',
-      params: { communityId: 'remaining' },
-    });
-    expect(vi.mocked(saveActiveCommunityId)).toHaveBeenCalledWith('viewer', 'remaining');
+    expect(mobileSurfaceCache.write).toHaveBeenCalledWith(expect.anything(), deck.workspacesResponse, expect.any(Function));
+    expect(vi.mocked(router.replace)).toHaveBeenCalledWith({ pathname: '/beeline/channels', params: { communityId: '00000006-1111-4111-8111-111111111111' } });
+    expect(vi.mocked(saveActiveCommunityId)).toHaveBeenCalledWith('viewer', '00000006-1111-4111-8111-111111111111');
     expect(renderer.root.findAllByType('SectionList')).toHaveLength(0);
     await act(async () => renderer.unmount());
   });
@@ -770,25 +702,13 @@ describe('Deleted workspace removal', () => {
   it('clears the last workspace rooms and persisted selection after live deletion', async () => {
     const renderer = await mountDeck();
     expect(paintedRows(renderer)).toHaveLength(1);
-    deck.workspacesResponse = {
-      workspaces: [],
-      viewer,
-      truncated: false,
-      watchFilters: [],
-      deletedNotices: [{ workspaceId: 'workspace', workspaceName: 'Work' }],
-    };
-    const workspaceWatch = deck.subscriptions.find(
-      (entry) => !entry.filters.some((filter) => filter['#h']?.length),
-    );
-    act(() =>
-      workspaceWatch!.emit({
-        monolithLive: {
-          type: 'invalidate',
-          roomId: '',
-          reason: 'postgres:memberships',
-        },
-      }),
-    );
+    deck.workspacesResponse = { workspaces: [], viewer, truncated: false, watchFilters: [],
+      deletedNotices: [{ workspaceId: '00000001-1111-4111-8111-111111111111', workspaceName: 'Work' }] };
+    const workspaceWatch = deck.subscriptions.find((entry) =>
+      !entry.filters.some((filter) => filter['#h']?.length));
+    act(() => workspaceWatch!.emit({ monolithLive: {
+      type: 'invalidate', roomId: '', reason: 'postgres:memberships',
+    } }));
     await quiet();
     expect(vi.mocked(router.replace)).toHaveBeenCalledWith('/beeline/community');
     expect(vi.mocked(saveActiveCommunityId)).toHaveBeenCalledWith('viewer', null);
@@ -820,7 +740,7 @@ describe('Room list gestures', () => {
     );
   const pressIn = (renderer: ReactTestRenderer) =>
     renderer.root.find(
-      (node: any) => node.type === 'Pressable' && node.props.testID === 'room-room-a',
+      (node: any) => node.type === 'Pressable' && node.props.testID === 'room-00000002-1111-4111-8111-111111111111',
     );
   const swipeIn = (renderer: ReactTestRenderer) => renderer.root.findByType('Swipeable');
 
@@ -918,16 +838,16 @@ describe('Room list gestures', () => {
   it('blocks a corner long press and toggle during scrolling', async () => {
     deck.renderRows = true;
     deck.chatsResponse = listOf([
-      room('room-a', 10, {
+      room('00000002-1111-4111-8111-111111111111', 10, {
         cornerCount: 1,
-        openCorners: [{ id: 'corner-1', name: 'fix', state: 'working', mine: true }],
+        openCorners: [{ id: '00000005-1111-4111-8111-111111111111', name: 'fix', state: 'working', mine: true }],
       }),
     ]);
     const renderer = await mountDeck();
     const list = listIn(renderer);
     const glyph = () =>
       renderer.root.find(
-        (node: any) => node.type === 'Pressable' && node.props.testID === 'room-room-a-corners',
+        (node: any) => node.type === 'Pressable' && node.props.testID === 'room-00000002-1111-4111-8111-111111111111-corners',
       );
     await act(async () => {
       list.props.onScrollBeginDrag();
@@ -1016,7 +936,7 @@ describe('Room deck live path', () => {
     deck.storedInvite = token;
     let renderer!: ReactTestRenderer;
     await act(async () => {
-      renderer = create(React.createElement(BuzzChannels));
+      renderer = create(React.createElement(BuzzChannels));mountedDecks.push(renderer);
     });
     await vi.waitFor(() =>
       expect(router.replace).toHaveBeenCalledWith({
@@ -1058,20 +978,8 @@ describe('Room deck live path', () => {
 
   it("toggles the Room's corner dropdown on mobile without a selected conversation state", async () => {
     const renderer = await mountDeck();
-    const item = paintedRows(renderer)[0]!;
-    // The row and its dropdown read the Room's corners from the corner store.
-    applyChatListCorners(
-      [
-        {
-          room: item.room,
-          cornerCount: 1,
-          openCorners: [
-            { id: 'corner-1', name: 'fix', state: 'working' as const, mine: true as const },
-          ],
-        },
-      ],
-      -1,
-    );
+    const item = {...paintedRows(renderer)[0]!,cornerCount:1,openCorners:[
+      {id:'00000005-1111-4111-8111-111111111111',name:'fix',state:'working' as const,mine:true as const}]};
     const renderRow = () => {
       const list = renderer.root.find((node: any) => node.type === 'SectionList');
       return create(list.props.renderItem({ item, index: 0, section: { data: [item] } }));
@@ -1091,7 +999,7 @@ describe('Room deck live path', () => {
     });
     expect(opened!.root.findByType(ConversationRow).props.cornersExpanded).toBe(true);
     expect(
-      opened!.root.findAllByProps({ testID: 'desktop-corner-corner-1' }).length,
+      opened!.root.findAllByProps({ testID: 'desktop-corner-00000005-1111-4111-8111-111111111111' }).length,
     ).toBeGreaterThan(0);
     act(() => {
       row!.unmount();
@@ -1121,12 +1029,12 @@ describe('Room deck live path', () => {
 
     expect(deck.createCorner).toHaveBeenCalledOnce();
     const [roomId, title] = deck.createCorner.mock.calls[0]!;
-    expect(roomId).toBe('room-a');
+    expect(roomId).toBe('00000002-1111-4111-8111-111111111111');
     expect(title).toMatch(/-corner$/);
     expect(router.push).toHaveBeenCalledOnce();
     expect(router.push).toHaveBeenCalledWith({
       pathname: '/beeline/chat/[channelId]',
-      params: { channelId: 'corner-new', parent: 'room-a', title, returnTo: 'room-list' },
+      params: { channelId: 'corner-new', parent: '00000002-1111-4111-8111-111111111111', title, returnTo: 'room-list' },
     });
     act(() => {
       row!.unmount();
@@ -1231,7 +1139,7 @@ describe('Room deck live path', () => {
       renderer.root.findByType('RoomListToolbar' as any).props.onQuery('general'),
     );
     expect(header()).toBeNull();
-    expect(paintedRows(renderer).map((item) => item.room.id)).toEqual(['room-a']);
+    expect(paintedRows(renderer).map((item) => item.room.id)).toEqual(['00000002-1111-4111-8111-111111111111']);
     let footer!: ReactTestRenderer;
     await act(async () => {
       footer = create(list().props.ListFooterComponent);
@@ -1244,96 +1152,33 @@ describe('Room deck live path', () => {
     });
   });
 
-  it('paints a Room delta into the list without a chats read, and ignores drafts', async () => {
-    const renderer = await mountDeck();
-    const readsAtRest = deck.chatsReads;
-    expect(paintedRows(renderer)[0]!.latestMessage?.text).toBe('earlier');
-
-    await act(async () => {
-      for (let index = 0; index < 5; index += 1)
-        roomWatch().emit({
-          monolithLive: {
-            type: 'draft',
-            roomId: 'room-a',
-            agentId: 'agent',
-            turnId: 'turn',
-            text: 'thinking '.repeat(index + 1),
-          },
-        });
-      roomWatch().emit({
-        monolithLive: {
-          type: 'message-delta',
-          roomId: 'room-a',
-          message: {
-            id: 'm2',
-            text: 'the answer',
-            createdAt: 20,
-            author: agent,
-            presentation: 'message',
-          },
-        },
-      });
-    });
-    await quiet();
-
-    expect(paintedRows(renderer)[0]).toMatchObject({
-      unread: true,
-      latestMessage: { id: 'm2', text: 'the answer' },
-    });
-    expect(deck.chatsReads).toBe(readsAtRest);
-    await act(async () => renderer.unmount());
+  it('paints committed Room facts without a second list read',async()=>{
+    const renderer=await mountDeck();const reads=deck.chatsReads;
+    const value=listOf([room('00000002-1111-4111-8111-111111111111',20,{unread:true,latestMessage:{id:'m2',text:'the answer',createdAt:20,author:agent}})]);
+    await act(async()=>listSource.owner.publish('00000001-1111-4111-8111-111111111111',value));
+    expect(paintedRows(renderer)[0]).toMatchObject({unread:true,latestMessage:{id:'m2',text:'the answer'}});
+    expect(deck.chatsReads).toBe(reads);await act(async()=>renderer.unmount());
   });
 
-  it('reads the list when a corner under a Room changes working or waiting state', async () => {
-    const renderer = await mountDeck();
-    const readsAtRest = deck.chatsReads;
-
-    await act(async () =>
-      roomWatch().emit({
-        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'corner-status' },
-      }),
-    );
-    await quiet();
-
-    expect(deck.chatsReads).toBe(readsAtRest + 1);
-    await act(async () => renderer.unmount());
+  it('paints committed corner changes without reading the list',async()=>{
+    const renderer=await mountDeck();const reads=deck.chatsReads;
+    const value=listOf([room('00000002-1111-4111-8111-111111111111',10,{cornerCount:1,openCorners:[{id:'00000005-1111-4111-8111-111111111111',name:'fix',state:'waiting',mine:true}]})]);
+    await act(async()=>listSource.owner.publish('00000001-1111-4111-8111-111111111111',value));
+    expect(paintedRows(renderer)[0]!.openCorners?.[0]?.state).toBe('waiting');
+    expect(deck.chatsReads).toBe(reads);await act(async()=>renderer.unmount());
   });
 
-  it('keeps the last known unread dot and corners when the server could not read them', async () => {
-    deck.chatsResponse = listOf([
-      room('room-a', 10, {
-        unread: true,
-        cornerCount: 2,
-        waitingCornerCount: 1,
-        openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }],
-      }),
-    ]);
-    const renderer = await mountDeck();
-    expect(paintedRows(renderer)[0]).toMatchObject({ unread: true });
-    expect(getRoomCornerSummary('room-a')).toEqual({
-      cornerCount: 2,
-      openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }],
-    });
-
-    deck.chatsResponse = listOf([room('room-a', 10)], { unavailable: ['unread', 'corners'] });
-    await act(async () =>
-      roomWatch().emit({
-        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'activity' },
-      }),
-    );
-    await quiet();
-
-    expect(paintedRows(renderer)[0]).toMatchObject({ unread: true });
-    // The corner store keeps the last known summary; a read without it says nothing.
-    expect(getRoomCornerSummary('room-a')).toEqual({
-      cornerCount: 2,
-      openCorners: [{ id: 'corner-1', name: 'fix', state: 'waiting' }],
-    });
-    await act(async () => renderer.unmount());
+  it('renders the committed replacement without restoring older unread or corner facts',async()=>{
+    deck.chatsResponse=listOf([room('00000002-1111-4111-8111-111111111111',10,{unread:true,cornerCount:1,openCorners:[{id:'00000005-1111-4111-8111-111111111111',name:'fix',state:'waiting'}]})]);
+    const renderer=await mountDeck();
+    const value=listOf([room('00000002-1111-4111-8111-111111111111',10,{unread:false,cornerCount:0,openCorners:[]})]);
+    await act(async()=>listSource.owner.publish('00000001-1111-4111-8111-111111111111',value));
+    expect(paintedRows(renderer)[0]).toMatchObject({unread:false,cornerCount:0,openCorners:[]});
+    expect(deck.chatsReads).toBe(1);await act(async()=>renderer.unmount());
   });
 
   it('mounts a fresh card frame when a reorder changes its rounded edges', async () => {
-    deck.chatsResponse = listOf([room('room-a', 30), room('room-b', 20), room('room-c', 10)]);
+    deck.chatsResponse = listOf([room('00000002-1111-4111-8111-111111111111', 30), room('00000003-1111-4111-8111-111111111111', 20), room('00000004-1111-4111-8111-111111111111', 10)]);
     const renderer = await mountDeck();
     const list = renderer.root.find(
       (node: { type: unknown; props: { testID?: string } }) =>
@@ -1345,105 +1190,46 @@ describe('Room deck live path', () => {
       return cell.props.children.props.children.key;
     };
 
-    // room-c moving from last to first or middle must not reuse its clipped frame.
+    // 00000004-1111-4111-8111-111111111111 moving from last to first or middle must not reuse its clipped frame.
     expect(new Set([frameKey(0), frameKey(1), frameKey(2)]).size).toBe(3);
     expect(frameKey(1)).toBe(frameKey(1));
     await act(async () => renderer.unmount());
   });
 
-  it('keeps its live watch when Rooms only change order', async () => {
-    deck.chatsResponse = listOf([room('room-a', 20), room('room-b', 10)]);
-    const renderer = await mountDeck();
-    const watches = deck.subscriptions.length;
-
-    deck.chatsResponse = listOf([room('room-b', 30), room('room-a', 20)]);
-    await act(async () =>
-      roomWatch().emit({
-        monolithLive: { type: 'invalidate', roomId: 'room-b', reason: 'activity' },
-      }),
-    );
-    await quiet();
-
-    expect(paintedRows(renderer).map((item) => item.room.id)).toEqual(['room-b', 'room-a']);
-    expect(deck.subscriptions).toHaveLength(watches);
-    await act(async () => renderer.unmount());
+  it('renders the committed Room order without another read or watch',async()=>{
+    deck.chatsResponse=listOf([room('00000002-1111-4111-8111-111111111111',20),room('00000003-1111-4111-8111-111111111111',10)]);
+    const renderer=await mountDeck();const watches=deck.subscriptions.length;
+    await act(async()=>listSource.owner.publish('00000001-1111-4111-8111-111111111111',listOf([room('00000003-1111-4111-8111-111111111111',30),room('00000002-1111-4111-8111-111111111111',20)])));
+    expect(paintedRows(renderer).map(item=>item.room.id)).toEqual(['00000003-1111-4111-8111-111111111111','00000002-1111-4111-8111-111111111111']);
+    expect(deck.chatsReads).toBe(1);expect(deck.subscriptions).toHaveLength(watches);
+    await act(async()=>renderer.unmount());
   });
 
-  it('makes the covering read on open even when every cached Room resumes its lane', async () => {
-    // Reproduction 4.3: a stored list whose Rooms all resume never read again.
-    vi.mocked(mobileSurfaceCache.read)
-      .mockResolvedValueOnce(null)
-      .mockImplementationOnce(
-        async (address) =>
-          mobileSurfaceCache.publish(
-            address,
-            chatList({ id: 'cached', text: 'stale', createdAt: 1 }),
-            (_value): _value is ChatListView => true,
-          ) as never,
-      );
-    deck.chatsResponse = chatList({ id: 'm9', text: 'current', createdAt: 50 });
-    let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(React.createElement(BuzzChannels));
-    });
-    await vi.waitFor(() => expect(() => roomWatch()).not.toThrow());
-    await act(async () =>
-      roomWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a', resumed: true } }),
-    );
-    await act(() => new Promise((resolve) => setTimeout(resolve, 1_700)));
-    await quiet();
-    expect(deck.chatsReads).toBe(1);
+  it('opens with the admitted canonical snapshot and never restores the retired list cache',async()=>{
+    hotSurfaces.values.set('/workspace/:id/chats',chatList({id:'cached',text:'stale',createdAt:1}));
+    deck.chatsResponse=chatList({id:'m9',text:'current',createdAt:50});
+    const renderer=await mountDeck();expect(deck.chatsReads).toBe(1);
     expect(paintedRows(renderer)[0]!.latestMessage?.text).toBe('current');
-    await act(async () => renderer.unmount());
+    await act(async()=>renderer.unmount());
   });
 
-  it('reads once when the app returns to the foreground, and never on a timer', async () => {
-    const renderer = await mountDeck();
-    const readsAtRest = deck.chatsReads;
-
-    await act(async () => {
-      deck.appState = 'background';
-      for (const listener of deck.appStateListeners) listener('background');
+  it('foregrounding does not mint a consumer read',async()=>{
+    const renderer=await mountDeck();const reads=deck.chatsReads;
+    for(const state of ['background','active'])await act(async()=>{
+      deck.appState=state;for(const listener of deck.appStateListeners)listener(state);
     });
-    await quiet();
-    await act(async () => {
-      deck.appState = 'active';
-      for (const listener of deck.appStateListeners) listener('active');
-    });
-    await quiet();
-    expect(deck.chatsReads).toBe(readsAtRest);
-    await act(async () =>
-      roomWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } }),
-    );
-    await quiet();
-    expect(deck.chatsReads).toBe(readsAtRest + 1);
+    await quiet();expect(deck.chatsReads).toBe(reads);
+    await act(async()=>renderer.unmount());
+  });
 
-    await quiet();
-    await quiet();
-    expect(deck.chatsReads).toBe(readsAtRest + 1);
-    await act(async () => renderer.unmount());
-  }, 10_000);
-
-  it('reads nothing while hidden under a Room, then catches up on focus', async () => {
-    const renderer = await mountDeck();
-    const readsAtRest = deck.chatsReads;
-
-    await act(async () => deck.blur?.());
-    await act(async () =>
-      roomWatch().emit({
-        monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'activity' },
-      }),
-    );
-    await quiet();
-    expect(deck.chatsReads).toBe(readsAtRest);
-
-    await act(async () => {
-      deck.blur = (deck.focusEffect?.() as (() => void) | undefined) ?? null;
-    });
-    await quiet();
-    expect(deck.chatsReads).toBe(readsAtRest + 1);
-    expect(deck.reconnects).toBe(0);
-    await act(async () => renderer.unmount());
+  it('focus observes committed facts without a consumer catch-up read',async()=>{
+    const renderer=await mountDeck();const reads=deck.chatsReads;
+    await act(async()=>deck.blur?.());
+    await act(async()=>listSource.owner.publish('00000001-1111-4111-8111-111111111111',chatList({id:'m3',text:'committed while covered',createdAt:30})));
+    await act(async()=>{deck.blur=(deck.focusEffect?.() as (()=>void)|undefined)??null;});
+    await quiet();expect(deck.chatsReads).toBe(reads);expect(deck.reconnects).toBe(0);
+    expect(paintedRows(renderer)[0]!.latestMessage?.text).toBe('committed while covered');
+    await act(async()=>renderer.unmount());
   });
 
   it('reads nothing when the deck comes back with nothing it skipped', async () => {
@@ -1458,34 +1244,12 @@ describe('Room deck live path', () => {
     await act(async () => renderer.unmount());
   });
 
-  it.each([
-    ['a message the socket never announced', 30],
-    ['an unannounced message that landed in the same second', 10],
-  ])('reconnects the socket when a read finds %s', async (_case, createdAt) => {
-    deck.chatsResponse = listOf([room('room-a', 10), room('room-b', 10)]);
-    const renderer = await mountDeck();
-    expect(deck.reconnects).toBe(0);
-
-    // room-a gets a message the socket never mentions; a change it does
-    // announce in room-b is what reads the list next.
-    deck.chatsResponse = listOf([
-      room('room-a', 10, {
-        latestMessage: { id: 'm3', text: 'sent while we were deaf', createdAt, author: agent },
-      }),
-      room('room-b', 10),
-    ]);
-    await act(async () =>
-      roomWatch().emit({
-        monolithLive: { type: 'invalidate', roomId: 'room-b', reason: 'phone-write' },
-      }),
-    );
-    await quiet();
-
-    expect(paintedRows(renderer).find((row) => row.room.id === 'room-a')!.latestMessage?.text).toBe(
-      'sent while we were deaf',
-    );
-    expect(deck.reconnects).toBe(1);
-    await act(async () => renderer.unmount());
+  it('does not infer a connection fault from a committed list replacement',async()=>{
+    const renderer=await mountDeck();
+    await act(async()=>listSource.owner.publish('00000001-1111-4111-8111-111111111111',chatList({id:'m3',text:'new committed state',createdAt:30})));
+    expect(paintedRows(renderer)[0]!.latestMessage?.text).toBe('new committed state');
+    expect(deck.reconnects).toBe(0);expect(deck.chatsReads).toBe(1);
+    await act(async()=>renderer.unmount());
   });
 });
 

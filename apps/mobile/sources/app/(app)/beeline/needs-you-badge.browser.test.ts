@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '../../../test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '../../../test-fixtures/router-proof';
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -11,7 +11,7 @@ import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
  */
 function shims(mobile: string): Record<string, string> {
   return {
-    ...webProofShims(mobile), ...legacyRouterProofShims(),
+    ...webProofShims(mobile), ...canonicalRouterProofShims(['needs-you-count', 'needs-you-tray']),
     'expo-router': `import React from 'react';
     export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
     export const useLocalSearchParams = () => ({ communityId: 'workspace-1' });
@@ -57,7 +57,7 @@ function shims(mobile: string): Record<string, string> {
     });`,
     // The session's identity listener calls resetClientState on a switch; this does the same.
     '@/auth/buzz-identity-storage': `import { resetClientState } from '@/sync/client-reset';
-    window.__switchViewer = (viewer) => { window.__server.viewer = viewer; resetClientState(); };
+    window.__switchViewer = (viewer) => { window.__server.viewer = viewer; resetClientState(); void window.__routerFixture.pushServer({family:'needs-you-count',workspaceId:'workspace-1'}); };
     export const getEffectiveRelayUrl = async () => 'https://relay.test';
     export const loadBuzzIdentity = async () => ({ publicKey: window.__server.viewer });`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {

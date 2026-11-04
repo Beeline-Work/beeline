@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '@/test-fixtures/router-proof';
 import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { it, expect } from 'vitest';
@@ -18,7 +18,7 @@ it.each(['bone', 'obsidian'])('CONNECTORS-1: %s removes a disconnected row despi
         await wait(()=>!find('ai-client-grok'));globalThis.releaseStale();await new Promise(r=>setTimeout(r,300));
         document.getElementById('result').textContent=JSON.stringify({before,attention,after:document.body.innerText,removed:!find('ai-client-grok')});
       }run().catch(e=>document.getElementById('result').textContent=JSON.stringify({error:String(e)}));`);
-    const shims={...webProofShims(mobile), ...legacyRouterProofShims()};
+    const shims={...webProofShims(mobile), ...canonicalRouterProofShims(['owner-workbench'])};
     shims['react-native-unistyles']=shims['react-native-unistyles'].replace('beelineThemes.obsidian','beelineThemes.'+palette);
     Object.assign(shims,{
       '@expo/vector-icons':'export const Ionicons=()=>null;',
@@ -33,7 +33,7 @@ it.each(['bone', 'obsidian'])('CONNECTORS-1: %s removes a disconnected row despi
         const view=()=>{const active=clients.filter(c=>!removed||c.clientId!=='grok');return{workspaceId:'ws',catalog:[],helpers:[],connectors:[],connections:[],apps:[],aiClients:active,companies:companyWorkbench([{...companyRow('notion','Notion','attention'),state:'connect'},...active.map(c=>({...companyRow('rooms:'+c.clientId,c.name,'apps'),roomsClientId:c.clientId,items:[]}))]).companies};};
         globalThis.startStaleRead=()=>{stale=true;void readSharedWorkbench({workspaceId:'ws',viewerId:'viewer'},{refresh:true});};
         export class MonolithPhoneOperationError extends Error{};export const phoneOperationFailureReason=e=>String(e);
-        export const monolithPhoneOperation=async(operation)=>{if(operation==='disconnectAiClient'){removed=true;return;}if(operation==='readWorkbench'){const answer=view();if(stale){stale=false;return new Promise(resolve=>{globalThis.releaseStale=()=>resolve(answer);});}return answer;}return{};};`,
+        export const monolithPhoneOperation=async(operation)=>{if(operation==='disconnectAiClient'){removed=true;globalThis.__routerFixture.publish({family:'owner-workbench'},view());return;}if(operation==='readWorkbench'){const answer=view();if(stale){stale=false;return new Promise(resolve=>{globalThis.releaseStale=()=>resolve(answer);});}return answer;}return{};};`,
     });
     const result=await runBrowserProof({entry,mobile,shims,width:430,height:932,budgetMs:14000});
     expect(result.status,result.stderr).toBe(0);const shown=JSON.parse(result.result);

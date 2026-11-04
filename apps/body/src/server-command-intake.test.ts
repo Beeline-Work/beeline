@@ -152,7 +152,7 @@ describe('command intake mechanics', () => {
     expect(run.mock.calls[0]![0].source.body).toContain('An earlier ping');
   });
 
-  it('demonstrates R2a–R2f: user messages receive answers over HTTP and live WebSocket after failures', async () => {
+  it('demonstrates R2a–R2f: user messages receive answers with machine-owned claims after failures', async () => {
     const abort = new AbortController();
     const ctx = await context();
     // An actual disk error on the first entry; receipt handling repairs the directory.
@@ -166,9 +166,30 @@ describe('command intake mechanics', () => {
     let requeued = false;
     let firstLeave = true;
     const errors: unknown[] = [];
+    const turnOperations: string[] = [];
+    const subscriptionIds = new Map<unknown, string>();
+    const applyTurnOperation = async (operation: string, input: Record<string, any>) => {
+      turnOperations.push(operation);
+      if (operation === 'claimAgentCommand') {
+        claims.push(input.commandId);
+        if (claimFailure) {
+          claimFailure = false;
+          throw new Error('temporarily_unavailable');
+        }
+        queued.delete(input.commandId);
+      } else if (operation === 'postAgentTurnReceipt' && input.status === 'failed') {
+        expect(input.generationId).toBe(ctx.generationId);
+        await rm(join(ctx.path, '..'));
+        await mkdir(join(ctx.path, '..'));
+        queued.set(input.requestId, rows.get(input.requestId)!);
+        push();
+      }
+      return { id: 'ok', createdAt: 1 };
+    };
     const push = () => {
       for (const socket of sockets.clients) socket.send(JSON.stringify({
         type: 'commands', roomId: 'room', agentId: 'agent', commandProtocol: 1,
+        requestId: subscriptionIds.get(socket),
         commands: [...queued.values()],
       }));
     };
@@ -189,21 +210,7 @@ describe('command intake mechanics', () => {
         res.end(JSON.stringify({ commandProtocol: 1, commands: [...queued.values()] }));
         return;
       } else if (req.url?.endsWith('/claimAgentCommand')) {
-        claims.push(input.commandId);
-        if (claimFailure) {
-          claimFailure = false;
-          res.statusCode = 503;
-          res.setHeader('retry-after', '0.3');
-          res.end(JSON.stringify({ error: 'temporarily_unavailable' }));
-          return;
-        }
-        queued.delete(input.commandId);
-      } else if (req.url?.endsWith('/postAgentTurnReceipt') && input.status === 'failed') {
-        expect(input.generationId).toBe(ctx.generationId);
-        await rm(join(ctx.path, '..'));
-        await mkdir(join(ctx.path, '..'));
-        queued.set(input.requestId, rows.get(input.requestId)!);
-        push();
+        throw new Error('Turn claims must use the existing machine socket');
       } else if (req.url?.endsWith('/postRoomMessage')) {
         expect(input.generationId).toBe(ctx.generationId);
         answers.push(input.text);
@@ -211,14 +218,27 @@ describe('command intake mechanics', () => {
       res.end(JSON.stringify({ id: 'ok' }));
     });
     const sockets = new WebSocketServer({ server });
-    sockets.on('connection', (socket) => socket.on('message', (data) => {
+    sockets.on('connection', (socket) => socket.on('message', async (data) => {
       const frame = JSON.parse(data.toString());
-      if (frame.type === 'register') socket.send(JSON.stringify({ type: 'registered', agentId: 'agent' }));
+      if (frame.type === 'register') socket.send(JSON.stringify({ type: 'registered', agentId: 'agent', capabilities: {
+        turnOwnershipV1: true, turnConnectionId: 'fixture-source', turnConnectionEpoch: 1, initialSnapshotsV1: true,
+      } }));
+      if (frame.type === 'turn-operation') {
+        try {
+          const result = await applyTurnOperation(frame.operation, frame.input);
+          socket.send(JSON.stringify({ type: 'turn-result', agentId: 'agent', requestId: frame.requestId, result }));
+        } catch {
+          socket.send(JSON.stringify({ type: 'turn-result', agentId: 'agent', requestId: frame.requestId,
+            error: 'turn_operation_unconfirmed' }));
+        }
+      }
       if (frame.type === 'subscribe') {
-        socket.send(JSON.stringify({ type: 'subscribed', roomId: 'room', agentId: 'agent',
-          capabilities: { pushIntake: true, connectionPresence: true } }));
+        subscriptionIds.set(socket, frame.requestId);
+        socket.send(JSON.stringify({ type: 'subscribed', roomId: 'room', agentId: 'agent', requestId: frame.requestId,
+          capabilities: { pushIntake: true, connectionPresence: true, initialSnapshotsV1: true,
+            inboxSnapshot: frame.inbox !== false } }));
         push();
-        socket.send(JSON.stringify({type:'inbox',roomId:'room',agentId:'agent',items:[]}));
+        socket.send(JSON.stringify({type:'inbox',roomId:'room',agentId:'agent',requestId:frame.requestId,items:[]}));
       }
     }));
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -271,6 +291,7 @@ describe('command intake mechanics', () => {
       await vi.waitFor(() => expect(answers).toHaveLength(3), { timeout: 3000 });
       expect(answers).toEqual(['Answer: first', 'Answer: first', 'Answer: next']);
       expect(claims.filter((id) => id === 'first')).toHaveLength(4);
+      expect(turnOperations).toContain('postAgentTurnReceipt');
       expect(errors.map((error) => String(error))).toEqual(expect.arrayContaining([
         expect.stringMatching(/EEXIST/), 'Error: onLeave failure', 'Error: leave failure',
       ]));
@@ -289,11 +310,20 @@ describe('command intake mechanics', () => {
   it('R2c: reclaims a socket-delivered requeue with a real DaemonApiClient', async () => {
     class Socket {
       readyState = 0;
+      readonly turnOperations: string[] = [];
       onopen?: () => void;
       onmessage?: (event: { data: string }) => void;
       onclose?: () => void;
       send(value: string) {
-        if (JSON.parse(value).type === 'register') this.message({ type: 'registered' });
+        const frame = JSON.parse(value);
+        if (frame.type === 'register') this.message({ type: 'registered', capabilities: {
+          turnOwnershipV1: true, turnConnectionId: 'fixture-source', turnConnectionEpoch: 1,
+        } });
+        if (frame.type === 'turn-operation') {
+          this.turnOperations.push(frame.operation);
+          if (frame.operation === 'claimAgentCommand') pendingRequeue = false;
+          this.message({ type: 'turn-result', requestId: frame.requestId, result: { id: 'ok', createdAt: 1 } });
+        }
       }
       message(value: Record<string, unknown>) {
         this.onmessage?.({ data: JSON.stringify({ ...value, agentId: 'agent' }) });
@@ -306,7 +336,6 @@ describe('command intake mechanics', () => {
     const request = vi.fn<typeof fetch>(async (url) => {
       if (String(url).endsWith('/getAgentCommands'))
         return Response.json({ commandProtocol: 1, commands: pendingRequeue ? [command()] : [] });
-      if (String(url).endsWith('/claimAgentCommand')) pendingRequeue = false;
       return Response.json({ id: 'ok' });
     });
     const api = new DaemonApiClient('http://127.0.0.1:43123', 'token', 'agent', request,
@@ -333,7 +362,8 @@ describe('command intake mechanics', () => {
     clearTimeout(timeout);
     api.closeLive();
     expect(run).toHaveBeenCalledTimes(2);
-    expect(request.mock.calls.filter(([url]) => String(url).endsWith('/claimAgentCommand'))).toHaveLength(2);
+    expect(socket.turnOperations.filter(operation => operation === 'claimAgentCommand')).toHaveLength(2);
+    expect(request.mock.calls.some(([url]) => String(url).endsWith('/claimAgentCommand'))).toBe(false);
   });
 
   it('R2d: a real configuration recovery retries a transient claim in the same generation once', async () => {

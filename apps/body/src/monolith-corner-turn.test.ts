@@ -1,7 +1,7 @@
 import { harvestWarmNodeModules, warmNodeModulesStoreDir, mobileNodeModulesStoreDir } from './warm-node-modules.js';
 import { existsSync } from 'node:fs';
 import { resetOpenRouterKeyThrottle } from './openrouter-key-usage.js';
-import { commandFixtureApi } from './command-fixture.test-support.js';
+import { commandFixtureApi, runClaimedFixtureTurn } from './command-fixture.test-support.js';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -112,7 +112,8 @@ describe('corner merge instructions', () => {
         targetBranch: 'main',
         githubToken: 'stale-token',
       },
-      api: { execute },
+      api: {
+    runWithTurnOwnership: runClaimedFixtureTurn, execute },
       parentRoomId: 'exact-room',
       worktreePath: '/unused',
     };
@@ -137,7 +138,8 @@ describe('corner merge instructions', () => {
       };
       loop.options = {
         repository: { featureBranch: 'feature/widget', targetBranch: 'main' },
-        api: { execute },
+        api: {
+    runWithTurnOwnership: runClaimedFixtureTurn, execute },
         parentRoomId: 'exact-room',
         worktreePath: '/unused',
       };
@@ -171,7 +173,8 @@ describe('corner merge instructions', () => {
     };
     loop.options = {
       repository: { featureBranch: 'feature/widget', targetBranch: 'main' },
-      api: { execute },
+      api: {
+    runWithTurnOwnership: runClaimedFixtureTurn, execute },
       parentRoomId: 'exact-room',
       worktreePath: '/unused',
     };
@@ -284,7 +287,8 @@ describe('corner merge instructions', () => {
       worktreePath: root,
       runtime: { agent, supervisorRoot: root } as AgentRuntimeRecord,
       config: { agentHomeRoot: root } as BodyConfig,
-      api: { execute } as unknown as DaemonApiClient,
+      api: {
+    runWithTurnOwnership: runClaimedFixtureTurn, execute } as unknown as DaemonApiClient,
       scheduler,
       onPoll: vi.fn(),
       onFailure: vi.fn(),
@@ -338,6 +342,7 @@ describe('corner merge instructions', () => {
       mcpBinary: '/fake-dev-mcp',
     } as unknown as AgentRuntimeRecord;
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute: vi.fn(async (name: string) => {
         if (name === 'getAgentConfiguration')
           return { commands: [], yoloMode: true, isReviewer: true, reviewerHandle: 'echo' };
@@ -606,6 +611,7 @@ describe('Reproduction reviewer-opener-2224: a Room reviewer that opened its cor
       mcpBinary: '/fake-dev-mcp',
     } as unknown as AgentRuntimeRecord;
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute: vi.fn(async (name: string) => {
         if (name === 'getAgentConfiguration')
           return { commands: [], yoloMode: false, isReviewer: true };
@@ -766,6 +772,7 @@ describe('corner close-request delivery', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',
@@ -926,6 +933,7 @@ describe('corner close-request delivery', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',
@@ -1049,6 +1057,7 @@ describe('corner close-request delivery', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',
@@ -1225,6 +1234,7 @@ describe('corner close-request delivery', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',
@@ -1382,6 +1392,7 @@ describe('corner close-request delivery', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',
@@ -1641,6 +1652,7 @@ describe('corner close-request delivery', () => {
     let inboxSent = false;
     let terminalReceipts = 0;
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       baseUrl: 'https://server.example',
       execute: async (name: string, input: Record<string, unknown>) => {
         if (!liveSubscribe && name === 'getRoomInbox') {
@@ -4018,6 +4030,7 @@ describe('thin monolith corner turn', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',
@@ -4396,6 +4409,7 @@ describe('corner turn institutional-memory prefetch', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',
@@ -4509,6 +4523,7 @@ describe('corner turn rename prompt', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',
@@ -4627,6 +4642,7 @@ describe('corner turn failure receipt', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',
@@ -4782,6 +4798,7 @@ describe('a context-window overflow', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',
@@ -4990,6 +5007,7 @@ describe('an instantly approved device grant', () => {
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',
@@ -5149,6 +5167,7 @@ describe('Reproduction steer-dead-acp: a steer after the corner harness exited',
       return { id: 'write-id', createdAt: 1 };
     });
     const api = {
+    runWithTurnOwnership: runClaimedFixtureTurn,
       execute,
       connection: () => ({
         baseUrl: 'https://server.example',

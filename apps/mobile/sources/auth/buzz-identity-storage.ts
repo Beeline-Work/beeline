@@ -56,13 +56,6 @@ async function secretRemove(): Promise<void> {
   await secretRemoveAt(BUZZ_NSEC_KEY);
 }
 
-/** A warm cache may render synchronously only for the current in-memory account. */
-export function peekBuzzViewerContext(): { relayUrl: string; viewerPubkey: string } | null {
-  const runtime = getBuzzRuntimeConfig();
-  const viewerPubkey = monolithSession.peekIdentityId();
-  return viewerPubkey ? { relayUrl: runtime.monolithUrl, viewerPubkey } : null;
-}
-
 /** Viewer pubkey for cache/addressing. Does not wait on token refresh. */
 export async function loadBuzzViewerPubkey(): Promise<string | null> {
   return monolithSession.identityId();

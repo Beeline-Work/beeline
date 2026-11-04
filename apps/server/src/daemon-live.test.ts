@@ -118,8 +118,7 @@ async function register(
 }
 
 describe('one machine socket for every agent on a helper machine', () => {
-  it.each([true,false])('negotiates real machine usage/overlay registration only with opt-in and gates enabled=%s',async enabled=>{
-    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1',enabled?'1':'0');
+  it('negotiates real machine usage and overlay registration on the existing connection',async()=>{
     try{
       const owner='e'.repeat(64),execute=vi.fn(async()=>({id:'synthetic-receipt',createdAt:1}));
       const database={query:vi.fn(async()=>({rows:[{owner_id:owner}],rowCount:1})),transaction:vi.fn()} as unknown as SqlDatabase;
@@ -130,14 +129,14 @@ describe('one machine socket for every agent on a helper machine', () => {
       client.send({type:'register',agentId:AGENT_A,token:'bdt_a',overlayV1:true,usageAccountV1:true});
       const registered=await client.next(frame=>frame.type==='registered'&&frame.agentId===AGENT_A);
       const capabilities=registered.capabilities as Record<string,unknown>;
-      if(enabled){
+      {
         expect(capabilities).toMatchObject({overlayV1:true,usageAccountV1:true,usageOwnerId:owner,usageConnectionEpoch:7,usageConnectionId:expect.any(String)});
         client.send({type:'usage-operation',agentId:AGENT_A,requestId:'actual-registered-write',operation:'postAgentUsage',input:{agentId:AGENT_A,
           usage:{updatedAt:100,windows:[],context:{used:1,size:10}},usageSource:{v:1,ownerId:owner,revision:1,
             source:{connectionId:capabilities.usageConnectionId,epoch:capabilities.usageConnectionEpoch}}}});
         expect(await client.next(frame=>frame.type==='usage-result'&&frame.requestId==='actual-registered-write')).toMatchObject({result:{id:'synthetic-receipt'}});
         expect(execute).toHaveBeenCalledOnce();
-      }else{expect(capabilities).not.toHaveProperty('overlayV1');expect(capabilities).not.toHaveProperty('usageAccountV1');}
+      }
       expect((await register(client,AGENT_B,'bdt_b')).capabilities).not.toHaveProperty('usageAccountV1');
     }finally{vi.unstubAllEnvs();}
   });

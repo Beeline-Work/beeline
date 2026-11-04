@@ -2,7 +2,7 @@ import type {TrayClockAvailability} from './tray-clock-availability.js';
 import {ROUTER_TRAY_CLOCK_STREAM} from '@beeline/api-contract/router-protocol';
 import {readTrayClockBasis} from './tray-clock-basis.js';
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
-import { helperUsageEnabled, subscribeAgentUsageCells, fenceAgentUsageCellEnqueue } from './helper-usage.js';
+import { subscribeAgentUsageCells, fenceAgentUsageCellEnqueue } from './helper-usage.js';
 import type { MediaMetadata } from '@beeline/api-contract/media-metadata';
 import { fenceMediaMetadataEnqueue } from './phone-media.js';
 import { subscribeAuthorityFences } from './router-authority-fences.js';
@@ -26,8 +26,8 @@ import type { SqlDatabase } from './database.js';
 import { PhoneOperationError } from './phone-operations.js';
 import { RouterProjectionDrain, RouterProjectionUnavailable, encodeRouterBatch, fenceRouterBatch, readRouterAuthority, readRouterCertificate, deniedRouterAuthorityScope, resolveRouterInput, routerAtomicGroup, fenceRouterEnqueue } from './router-projections.js';
 
-/** Server composition selects the supported protocols. The committed LISTEN
- * independently gates admission and current authority still fences delivery. */
+/** Installed protocol support. The committed listener must be healthy before
+ * this socket can expose canonical projections. */
 export interface RouterProjectionPolicy {
   readonly needsYouRoomsV1?:boolean;
   readonly families: readonly RouterFamily[];
@@ -89,7 +89,7 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
       }));
       let authorityFencesV1=message.authorityFencesV1===true&&Boolean(sources)&&policy?.listenerReady()===true
         && (negotiated.length>0||sources?.mediaMetadataV1===true);
-      usageCellV1 = message.protocol === 1 && message.usageCellV1 === true && helperUsageEnabled() && !!sources && policy?.listenerReady() === true;
+      usageCellV1 = message.protocol === 1 && message.usageCellV1 === true && !!sources && policy?.listenerReady() === true;
       try {
       if(sources&&negotiated.includes('workspace-roster'))releases.push(subscribeRosterAuthority(database,sources.live,viewer,()=>subscribedWorkspaces,
         frame=>{if(!stopped&&generation===currentGeneration&&send(JSON.stringify(frame))===false)throw new RouterProjectionUnavailable('budget');return undefined;},

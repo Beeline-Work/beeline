@@ -19,7 +19,7 @@ const flights = new Map<string, Promise<MediaCacheMetadata>>();
 const playbacks = new Map<string, MediaCacheMetadata>();
 const fences = new Map<string, string>();
 let connection: Connection | undefined;
-let transportMode: 'pending' | 'legacy' | 'router' = 'pending';
+let transportMode: 'pending' | 'router' = 'pending';
 let installedGeneration = -1;
 let demandEpoch = 0;
 const keyOf = (origin: string, principal: string, objectId: string) => JSON.stringify([new URL(origin).origin, principal, objectId]);
@@ -52,13 +52,9 @@ function valid(value: MediaCacheMetadata, objectId: string): boolean {
  */
 export function installMediaCacheConnection(next: Connection | { generation: number; mediaMetadataV1: false }): void {
   if (next.generation <= installedGeneration) return;
-  installedGeneration = next.generation;
-  // Only an authenticated explicit capability receipt selects the adapter.
-  // Disconnects and authority failures never select the old-server path.
-  transportMode = next.mediaMetadataV1 ? 'router' : 'legacy';
-  connection = next.mediaMetadataV1 ? next : undefined;
-  held.clear(); flights.clear(); playbacks.clear(); notify({ kind: 'connection' });
-  recoveryRevision++; for (const listener of recoveryListeners) listener();
+  installedGeneration = next.generation; transportMode = next.mediaMetadataV1 ? 'router' : 'pending';
+  connection = next.mediaMetadataV1 ? next : undefined; held.clear(); flights.clear(); playbacks.clear(); notify({ kind: 'connection' });
+  if (next.mediaMetadataV1) { recoveryRevision++; for (const listener of recoveryListeners) listener(); }
 }
 /** Current mounted, actually visible byte/runnable displays only. Cache
  * inventories and hidden overscan rows never register here.
@@ -124,10 +120,9 @@ export function subscribeMediaCacheBoundary(listener: (event: MediaCacheBoundary
 /** Explicit visible/open/save demand only. A valid held certificate permits
  * completed byte reuse; legacy capability absence never does.
  */
-export function mediaMetadataFor(origin: string, principal: string, objectId: string): Promise<MediaCacheMetadata | undefined> {
+export function mediaMetadataFor(origin: string, principal: string, objectId: string): Promise<MediaCacheMetadata> {
   const owner = connection;
   const epoch = demandEpoch;
-  if (transportMode === 'legacy') return Promise.resolve(undefined);
   if (!owner?.mediaMetadataV1) return Promise.reject(new Error('File authority is awaiting connection.'));
   const key = keyOf(origin, principal, objectId);
   const cached = held.get(key);
@@ -161,4 +156,4 @@ subscribeClientReset(() => {
 export function mediaCacheFences(): readonly (readonly [string, string])[] { return [...fences]; }
 
 export function mediaMetadataAvailable(): boolean { return connection?.mediaMetadataV1 === true; }
-export function mediaTransportMode(): 'pending' | 'legacy' | 'router' { return transportMode; }
+export function mediaTransportMode(): 'pending' | 'router' { return transportMode; }

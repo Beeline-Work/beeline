@@ -9,3 +9,6 @@ export const controls: {
 export function resetProof(cached?: boolean): void;
 export function failRefresh(): void;
 export function recoverServer(): void;
+export class RoomViewClient {
+  room(): Promise<RoomView>;
+}

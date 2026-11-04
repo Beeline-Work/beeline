@@ -1,7 +1,7 @@
 vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => { throw new Error('Legacy Scheduled Work must not use router command authority'); } }));
-// This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+// UI fixtures provide complete DTOs at the canonical lane boundary.
+vi.mock('@/buzz/router-owner', async () => (await import('@/test/canonical-resource-fixture')).createCanonicalScheduledFixture());
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'router', holdRouterConnection: () => () => {} }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
@@ -74,7 +74,7 @@ async function render(element: React.ReactElement) {
 }
 
 // Reproduction MOBILE-D: a valid scheduled-work DTO has no Room viewer.
-it.each(['fetched', 'cached'] as const)('MOBILE-D: renders %s scheduled work after an identity update', async (source) => {
+it.each(['fetched', 'held'] as const)('MOBILE-D: renders %s scheduled work after an identity update', async (source) => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   resetClientState();
   mobileSurfaceCache.clear();
@@ -83,22 +83,10 @@ it.each(['fetched', 'cached'] as const)('MOBILE-D: renders %s scheduled work aft
   recordPerson(identityScope('http://local', 'viewer'),
     { pubkey: 'agent-1', kind: 'agent', name: 'Updated agent' }, Number.MAX_SAFE_INTEGER);
   params.value = { roomId: source, workspaceId: 'ws' };
-  let finishCovering: (() => void) | undefined;
-  let coveringFinished = false;
-  if (source === 'cached') {
+  if (source === 'held') {
     const value = await operation('readScheduledWork');
-    await mobileSurfaceCache.persist(
-      surfaceAddress('http://local', 'viewer', '/room/:id/scheduled-work', { roomId: source }),
-      value as unknown as ScheduledWorkResult,
-      (candidate): candidate is ScheduledWorkResult => Boolean(candidate && typeof candidate === 'object' && 'schedules' in candidate),
-    );
+    (await import('@/buzz/router-owner') as any).publish({family: 'room-scheduled-work', roomId: source}, value);
     operation.mockClear();
-    // Legacy disk data paints immediately, but the actual visible residency
-    // still owns one covering read. Hold it to prove this is cached painting,
-    // rather than silently replacing the cached regression with a fresh DTO.
-    operation.mockImplementationOnce(() => new Promise<typeof value>(resolve => {
-      finishCovering = () => { coveringFinished = true; resolve(value); };
-    }));
   }
   const tree = await render(<ScheduledWork />);
   try {
@@ -106,17 +94,15 @@ it.each(['fetched', 'cached'] as const)('MOBILE-D: renders %s scheduled work aft
       .toBe('Morning summary');
     expect(tree.root.findByProps({ testID: 'subscription-sub' }).props.title)
       .toBe('Triage new issues');
-    if (source === 'cached') { expect(finishCovering).toEqual(expect.any(Function)); expect(coveringFinished).toBe(false); }
-    expect(operation.mock.calls.filter(([name]) => name === 'readScheduledWork')).toHaveLength(1);
+    expect(operation.mock.calls.filter(([name]) => name === 'readScheduledWork')).toHaveLength(source === 'held' ? 0 : 1);
     await act(async () => {
       recordPerson(identityScope('http://local', 'viewer'),
         { pubkey: 'agent-1', kind: 'agent', name: 'Changed again' }, Number.MAX_SAFE_INTEGER);
       tree.update(<ScheduledWork />);
     });
     expect(tree.root.findByProps({ testID: 'scheduled-work-daily' }).props.title).toBe('Morning summary');
-    expect(operation.mock.calls.filter(([name]) => name === 'readScheduledWork')).toHaveLength(1);
+    expect(operation.mock.calls.filter(([name]) => name === 'readScheduledWork')).toHaveLength(source === 'held' ? 0 : 1);
   } finally {
-    if (finishCovering) await act(async () => finishCovering?.());
     await act(async () => tree.unmount());
   }
 });

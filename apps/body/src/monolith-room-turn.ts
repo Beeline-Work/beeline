@@ -142,7 +142,6 @@ import { roomReplySteps } from './room-turn-steps.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { isCompletedToolCall, isPrivateWorkToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason, redactTurnError, redactToolDetail } from './turn-failure-reason.js';
-import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
 import { PromptSectionBaseline } from './prompt-section-baseline.js';
@@ -1838,10 +1837,7 @@ export class MonolithRoomTurnLoop {
       // The first row of the turn names who asked; learn the name once per session.
       if (!this.memberNames.has(item.authorId)) await this.roster().catch(() => undefined);
       let deliberateNoReply = false;
-      await withTurnReceiptHeartbeat(
-        api,
-        {
-          agentId: this.agent.publicKey,
+      await api.runWithTurnOwnership({
           roomId: this.options.roomId,
           requestId: item.id,
           generationId: this.commandContext.generationId,
@@ -2297,19 +2293,13 @@ export class MonolithRoomTurnLoop {
             { priority: 'interactive', roomKey: this.options.roomId },
           );
         },
-        (error) =>
-          console.error(
-            `[thin-core] monolith Room ${this.options.roomId} receipt heartbeat failed:`,
-            error,
-          ),
-        () => {
+() => {
           console.warn(
             `[thin-core] monolith Room ${this.options.roomId} turn ${item.id} dropped: ` +
               'the server revoked its output authority',
           );
           this.stopTurn(item.id);
-        },
-      );
+        });
       await Promise.all(this.approvalDecisionWrites);
       const decisionFailure = this.approvalDecisionFailures.get(item.id);
       if (decisionFailure) throw new Error(`Squire approval decision was not published: ${distillTurnFailureReason(decisionFailure).text}`);

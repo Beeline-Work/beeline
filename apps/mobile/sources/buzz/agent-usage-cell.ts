@@ -1,12 +1,11 @@
 import { readAgentUsageCellValue, type AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { subscribeClientReset } from '@/sync/client-reset';
-export type UsageCellView = Readonly<{ mode: 'pending' | 'legacy' | 'router'; cell: AgentUsageCell | null }>;
+export type UsageCellView = Readonly<{ mode: 'pending' | 'router'; cell: AgentUsageCell | null }>;
 type Connection = Readonly<{ generation: number; usageCellV1: boolean; origin: string; principal: string;
   executeRead(agentId: string): Promise<AgentUsageCell>; joinedRead?(agentId: string): void }>;
 type Fence = Readonly<{ generation: string; revision: number; allowed: boolean }>;
 const pending: UsageCellView = Object.freeze({ mode: 'pending', cell: null });
-const legacy: UsageCellView = Object.freeze({ mode: 'legacy', cell: null });
 const listeners = new Set<() => void>();
 const fences = new Map<string, Fence>();
 let connection: Connection | undefined;
@@ -78,7 +77,7 @@ export function installUsageCellConnection(next: Connection): void {
   if (partition !== key) { fences.clear(); partition = key; installedGeneration = -1; }
   if (!Number.isSafeInteger(next.generation) || next.generation < 0 || next.generation <= installedGeneration) return;
   installedGeneration = next.generation;
-  connection = next; profileEpoch++; flight = undefined; blocked = undefined; value = next.usageCellV1 ? pending : legacy; notify(); readFocused();
+  connection = next; profileEpoch++; flight = undefined; blocked = undefined; value = pending; notify(); readFocused();
 }
 export function suspendUsageCellConnection(): void {
   connection = undefined; profileEpoch++; flight = undefined; value = pending; notify();
@@ -89,11 +88,10 @@ export function suspendUsageCellConnection(): void {
 export function setUsageCellProfile(agentId: string | null): void {
   if (profile === agentId) return;
   profile = agentId; profileEpoch++; flight = undefined; blocked = undefined;
-  value = connection?.usageCellV1 ? pending : connection ? legacy : pending; notify(); readFocused();
+  value = pending; notify(); readFocused();
 }
 export function receiveUsageCell(incoming: unknown): void { accept(incoming, false); }
 export function usageCellSnapshot(agentId: string | null | undefined): UsageCellView {
-  if (connection && !connection.usageCellV1) return legacy;
   return agentId && agentId === profile ? value : pending;
 }
 export function subscribeUsageCell(listener: () => void): () => void { listeners.add(listener); return () => { listeners.delete(listener); }; }

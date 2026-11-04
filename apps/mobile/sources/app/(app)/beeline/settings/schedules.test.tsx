@@ -1,7 +1,19 @@
-vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => { throw new Error('Legacy Scheduled Work must not use router command authority'); } }));
-// This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+vi.mock('@/buzz/command-owner', () => ({ activeCommandOwner: () => { throw new Error('UI stop fixture must not acquire production command storage'); } }));
+// The UI consumes the stop result; durable delivery is covered by command-owner suites.
+vi.mock('@/buzz/router-scheduled-work', async () => ({
+  ...await vi.importActual<typeof import('@/buzz/router-scheduled-work')>('@/buzz/router-scheduled-work'),
+  prepareScheduledStop: async (name: 'deleteRoomSchedule' | 'deleteRoomSubscription', roomId: string, id: string) => {
+    try { await operation(name, {roomId, [name === 'deleteRoomSchedule' ? 'scheduleId' : 'subscriptionId']: id}); }
+    catch (error) {
+      // The real command endpoint treats a missing target as committed desired state.
+      if (!(error instanceof PhoneError) || error.status !== 404 || error.code !==
+        (name === 'deleteRoomSchedule' ? 'schedule not found' : 'subscription not found')) throw error;
+    }
+  },
+}));
+// UI fixtures provide complete DTOs at the canonical lane boundary.
+vi.mock('@/buzz/router-owner', async () => (await import('@/test/canonical-resource-fixture')).createCanonicalScheduledFixture());
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'router', holdRouterConnection: () => () => {} }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
@@ -82,7 +94,8 @@ import ScheduledWork, { orderScheduledWork } from './schedules';
 import PromptSchedule from './schedule';
 import Subscription from './subscription';
 
-beforeEach(() => {
+beforeEach(async () => {
+  (await import('@/buzz/router-owner') as any).resetFixture();
   resetClientState();
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   router.push.mockClear();
@@ -199,7 +212,7 @@ function failStops(failure: (name: string) => Error, gone?: string) {
 it.each([
   ['schedule', PromptSchedule, { scheduleId: 'daily' }, 'stop-schedule', 'schedule not found', 'schedule-gone'],
   ['subscription', Subscription, { subscriptionId: 'sub' }, 'stop-subscription', 'subscription not found', 'subscription-gone'],
-] as const)('R1: shows a %s the server already deleted as stopped, with no error', async (_kind, Page, ids, stopId, code, goneId) => {
+] as const)('R1: returns after an idempotent stop of a %s the server already deleted', async (_kind, Page, ids, stopId, code, goneId) => {
   params.value = { roomId: 'room', ...ids };
   const restore = failStops((name) => new PhoneError(name, 404, code), Object.values(ids)[0]);
   const tree = await render(<Page />);
@@ -207,10 +220,9 @@ it.each([
     await act(async () => press(tree, stopId));
     await act(async () => press(tree, `${stopId}-confirm`));
     expect(tree.root.findAll((node: any) => /stop-error/.test(String(node.props?.testID ?? '')))).toHaveLength(0);
-    expect(tree.root.findByProps({ testID: goneId })).toBeTruthy();
+    expect(router.back).toHaveBeenCalledOnce();
     expect(words(tree)).not.toMatch(/Could not|Monolith|404/);
-    // The list is read again rather than trusting the stale copy.
-    expect(operation.mock.calls.filter(([name]) => name === 'readScheduledWork').length).toBeGreaterThan(1);
+    expect(operation.mock.calls.filter(([name]) => name === 'readScheduledWork')).toHaveLength(1);
   } finally { restore(); await act(async () => tree.unmount()); }
 });
 

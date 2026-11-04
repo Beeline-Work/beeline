@@ -24,7 +24,7 @@ describe('command-owned coherent activation context',()=>{
       root_source_message_id,agent_depth,state,generation_id,lease_expires_at)
       VALUES($1,$2,$3,NULL,'activation-turn','input','system',$1,'synthetic-source',0,'claimed',$4,now()+interval '1 day')`,
       [input.commandId,room,agent,input.generationId]);
-    daemon=new DaemonService(db,new LiveHub());vi.stubEnv('BEELINE_NETWORK_ROUTER_V1','1');
+    daemon=new DaemonService(db,new LiveHub());
   },60000);
   afterAll(async()=>{vi.unstubAllEnvs();await db.close();});
   it('uses real DB-only configuration/roster/grant/repository readers without durable setup writes',async()=>{
@@ -58,9 +58,7 @@ describe('command-owned coherent activation context',()=>{
     await db.query(`UPDATE agent_commands SET root_source_message_id='synthetic-source' WHERE id=$1`,[input.commandId]);
     await expect(captureCommandActivation(db,input,async tx=>{await tx.query('UPDATE agents SET fast_mode=false');return snapshot;})).rejects.toThrow();
     expect(delivered).not.toHaveBeenCalled();
-    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1','0');
-    await expect(daemon.readCommandActivation(input,agent)).rejects.toThrow('capability unavailable');
-    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1','1');
+
   });
   it('keeps held grant setup separate from the existing current grant effect gate',async()=>{
     const grantId='33333333-3333-4333-8333-333333333333';

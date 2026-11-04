@@ -38,8 +38,8 @@ const ABSENT_VIEW: LaneView = Object.freeze({ state: 'ABSENT', value: null, erro
 const absent = (): LaneView => ABSENT_VIEW;
 const liveOwner = (entry: Entry): boolean => [...entry.owners.values()].some(owner => owner.active && owner.permit.isCurrent());
 const roomFamily=(family:LaneFamily):boolean=>family==='room-head'||family===SCHEDULED_FAMILY||family==='room-workflows';
-// The original projection cohort has no proven inactive Room feed. Only an
-// explicitly negotiated DB-audience feed can lift that conservative guard.
+// Only a DB-audience feed can keep an inactive Room current.
+// Installed peers negotiate that protocol guarantee explicitly.
 
 
 /** An executor is installed only by the negotiated connection owner. Demand

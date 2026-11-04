@@ -45,9 +45,8 @@ export default function PromptSchedule() {
     setWorking(true);
     setStopFailed(false);
     try {
-      // Already gone on the server: the page shows it stopped and rereads the list.
-      if ((await stopSchedule(roomId, schedule.id)) === 'already-stopped') retry();
-      else router.back();
+      await stopSchedule(roomId, schedule.id);
+      router.back();
     } catch {
       setStopFailed(true);
     } finally {

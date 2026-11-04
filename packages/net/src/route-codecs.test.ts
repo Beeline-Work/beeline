@@ -9,7 +9,6 @@ describe('contract-derived operation codecs', () => {
     for (const route of Object.values(routes)) {
       expect(typeof route.params.parse).toBe('function');
       expect(typeof route.result.parse).toBe('function');
-      expect(route.compatibility).toBe('legacy-only');
     }
   });
 

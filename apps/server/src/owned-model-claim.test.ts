@@ -23,7 +23,7 @@ describe('actual owned-model claim transaction and secret boundary', () => {
   const capability = async () => (await daemon.negotiateOwnedModel(MODEL_AGENT, MODEL_SOURCE, true)).capability!;
 
   it('atomically issues the current claimed generation credential and keeps it out of activation, journal and live events', async () => {
-    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', '1');
+
     const events: unknown[] = []; const publish = vi.spyOn(live, 'publish').mockImplementation(event => { events.push(event); });
     const selected = await capability(), result = await daemon.execute('claimAgentCommand', input(), MODEL_AGENT, MODEL_SOURCE, selected);
     expect(result.modelCredential).toMatchObject({ v: 1 }); expect(Number.isSafeInteger(result.modelCredential?.expiresAt)).toBe(true);

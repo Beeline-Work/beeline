@@ -21,8 +21,8 @@ afterEach(() => { resetClientState(); vi.restoreAllMocks(); });
 describe('independently negotiated current media authority', () => {
   it('does not dispatch metadata on a legacy server or on install/suspend boundaries', async () => {
     const executeMetadata = vi.fn(async () => metadata());
-    installMediaCacheConnection({ origin, principal: 'ada', generation: 1, mediaMetadataV1: false, executeMetadata });
-    expect(await mediaMetadataFor(origin, 'ada', id)).toBeUndefined();
+    installMediaCacheConnection({ generation: 1, mediaMetadataV1: false });
+    await expect(mediaMetadataFor(origin, 'ada', id)).rejects.toThrow('awaiting connection');
     suspendMediaCacheConnection(); expect(executeMetadata).not.toHaveBeenCalled();
   });
   it('authority unavailability parks a capable route until an explicit new negotiation', async () => {
@@ -32,7 +32,7 @@ describe('independently negotiated current media authority', () => {
     await expect(mediaMetadataFor(origin, 'ada', id)).rejects.toThrow('awaiting connection');
     expect(executeMetadata).toHaveBeenCalledTimes(1);
     installMediaCacheConnection({ generation: 2, mediaMetadataV1: false });
-    expect(await mediaMetadataFor(origin, 'ada', id)).toBeUndefined();
+    await expect(mediaMetadataFor(origin, 'ada', id)).rejects.toThrow('awaiting connection');
   });
   it('shares explicit metadata demand, partitions principal/origin and suspends held certificates', async () => {
     const value = metadata(); const executeMetadata = vi.fn(async () => value);

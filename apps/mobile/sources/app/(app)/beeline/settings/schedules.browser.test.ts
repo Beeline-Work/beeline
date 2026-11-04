@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '@/test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '@/test-fixtures/router-proof';
 import { existsSync, readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -9,7 +9,7 @@ const NEXT_RUN = Date.parse('2026-10-23T13:00:00Z') / 1000;
 function shims(mobile: string): Record<string, string> {
   const contract = readFileSync(path.join(mobile, '../../docs/workflows/feedback-triage.json'), 'utf8');
   return {
-    ...webProofShims(mobile), ...legacyRouterProofShims(),
+    ...webProofShims(mobile), ...canonicalRouterProofShims(['room-scheduled-work']),
     'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';
       const theme = { buzz: new URLSearchParams(location.search).get('theme') === 'light'
         ? beelineThemes.bone : beelineThemes.obsidian };
@@ -359,11 +359,11 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
   it.each([
     ['schedule', 'scheduleId=daily', 'This schedule has stopped.'],
     ['subscription', 'subscriptionId=sub-1', 'This subscription has stopped.'],
-  ] as const)('R1: shows a %s already gone on the server as stopped, with no error', async (pageName, id, gone) => {
+  ] as const)('R1: returns after an idempotent stop of a %s already gone on the server', async (pageName, id, gone) => {
     for (const theme of ['dark', 'light']) {
       const page = await proof(`?page=${pageName}&roomId=room-1&${id}&stopFails=gone&theme=${theme}`,
         shot(`R1-${pageName}-gone-${theme}`));
-      expect(page.afterConfirm).toContain(gone);
+      expect(page.back).toBe(1);
       expect(page.afterConfirm.join(' ')).not.toMatch(/Could not|Monolith|404|not found/);
       expect(page.bannerBelowHeader).toBeNull();
     }

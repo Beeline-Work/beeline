@@ -33,10 +33,11 @@ describe('the shared artifact byte owner', () => {
     await drain(); expect(read).toHaveBeenCalledTimes(1); resolve(bytes); await Promise.all(requests);
     expect((await readArtifactObject(attachment, read)).bytes).toEqual(bytes); expect(read).toHaveBeenCalledTimes(1);
   });
-  it('legacy servers coalesce live requests but never reuse completed private bytes', async () => {
+  it('an incapable server cannot admit private bytes through another route', async () => {
     install(false); const read = vi.fn(async () => bytes);
-    await Promise.all([readArtifactObject(attachment, read), readArtifactObject(attachment, read)]);
-    await readArtifactObject(attachment, read); expect(read).toHaveBeenCalledTimes(2);
+    const results = await Promise.allSettled([readArtifactObject(attachment, read), readArtifactObject(attachment, read)]);
+    expect(results.map(value => value.status)).toEqual(['rejected', 'rejected']);
+    expect(read).not.toHaveBeenCalled();
   });
   it('capable disconnect never silently downgrades a later Open to legacy byte HTTP', async () => {
     install(); const read = vi.fn(async () => bytes); await readArtifactObject(attachment, read);
@@ -44,12 +45,13 @@ describe('the shared artifact byte owner', () => {
     await expect(readArtifactObject(attachment, read)).rejects.toThrow('awaiting connection');
     expect(read).toHaveBeenCalledTimes(1);
     installMediaCacheConnection({ generation: 2, mediaMetadataV1: false });
-    await readArtifactObject(attachment, read); expect(read).toHaveBeenCalledTimes(2);
+    await expect(readArtifactObject(attachment, read)).rejects.toThrow('awaiting connection');
+    expect(read).toHaveBeenCalledTimes(1);
   });
-  it('refuses eager whole-document or unbounded legacy previews', async () => {
+  it('refuses preview bytes without current server authority', async () => {
     install(false); const read = vi.fn(async () => bytes);
-    await expect(readArtifactObject({ ...attachment, size: 32 * 1024 }, read, { preview: true })).rejects.toThrow('bounded preview');
-    await expect(readArtifactObject(attachment, read, { preview: true, thumbnail: true })).rejects.toThrow('bounded preview');
+    await expect(readArtifactObject({ ...attachment, size: 32 * 1024 }, read, { preview: true })).rejects.toThrow('awaiting connection');
+    await expect(readArtifactObject(attachment, read, { preview: true, thumbnail: true })).rejects.toThrow('awaiting connection');
     expect(read).not.toHaveBeenCalled();
   });
   it('a known large object cannot use a small legacy attachment size to start an eager preview', async () => {

@@ -2,8 +2,7 @@ import type { HelperTurnOwnershipSource } from '@beeline/api-contract/helper-tur
 import type { SqlDatabase } from './database.js';
 import { OWNED_MODEL_OWNER_END_SCHEMA } from './owned-model-parking.js';
 
-/** Independent rollout gate. Legacy rows and helpers retain their receipt adapter. */
-export { networkRouterEnabled as turnOwnershipEnabled } from './network-router-rollout.js';
+/** Operations whose effects are fenced by the current execution owner. */
 const ownedTurnAdapters = new Set([
   'claimAgentCommand', 'acknowledgeAgentCommand', 'getAgentCommands',
   'postRoomMessage', 'postCornerMessage', 'postAgentTurnReceipt', 'markAgentTurnSilent',
@@ -167,7 +166,7 @@ export function commandOwnerExpiredBeforeSql(alias: string | undefined, before: 
     ELSE ${commandOwnerExpiredSql(alias)} END)`;
 }
 
-/** Visible working state follows real execution ownership for the new cohort.
+/** Visible working state follows real execution ownership.
  * Immutable bindings prevent an old owned turn borrowing legacy freshness
  * after its command was requeued or moved to a newer generation. */
 export function workingTurnFreshSql(alias: string): string {

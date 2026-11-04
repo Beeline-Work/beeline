@@ -1,6 +1,6 @@
 import React from 'react';
 import type { ChatListItem } from '@beeline/buzz-client';
-import { useRoomCornerSummaries, type RoomCornerSummary } from './room-corner-store';
+import type { RoomCornerSummary } from './room-corner-store';
 
 /** One of the corners in this Room owes the viewer something they have not opened it to see. */
 export function roomHasMineWaiting(summary: RoomCornerSummary | undefined): boolean {
@@ -43,14 +43,15 @@ export function nextExpandedRooms(
 export function useCornerDropdowns(chats: readonly ChatListItem[] | undefined) {
   const [expanded, setExpanded] = React.useState<ReadonlySet<string>>(() => new Set());
   const wasWaiting = React.useRef<ReadonlySet<string>>(new Set());
-  const summaries = useRoomCornerSummaries();
+
   React.useEffect(() => {
     if (!chats) return;
     const previous = wasWaiting.current;
-    const waiting = mineWaitingRooms(chats, summaries);
+    const waiting = mineWaitingRooms(chats, new Map(chats.flatMap(item =>
+      item.cornerCount === undefined ? [] : [[item.room.id, {cornerCount:item.cornerCount,openCorners:item.openCorners??[]}]])));
     wasWaiting.current = waiting;
     setExpanded((current) => nextExpandedRooms(current, previous, waiting, chats));
-  }, [chats, summaries]);
+  }, [chats]);
   const toggle = React.useCallback((roomId: string) => {
     setExpanded((current) => {
       const next = new Set(current);

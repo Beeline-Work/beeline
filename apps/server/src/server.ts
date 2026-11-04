@@ -1,4 +1,4 @@
-import { HelperOverlayViewer, helperOverlayEnabled, fenceHelperOverlayEnqueue } from './helper-overlay.js';
+import { HelperOverlayViewer, fenceHelperOverlayEnqueue } from './helper-overlay.js';
 import { syncXAdReports } from './x-ad-reports.js';
 import { syncXSiteVisits } from './x-site-visits.js';
 import { dashboardFinances } from './operator-finances.js';
@@ -1302,7 +1302,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   if (event.type === 'draft') streamed.add(event.agentId);
                   if (event.type !== 'invalidate') {
                     if (client.readyState !== client.OPEN) return;
-                    if(helperOverlayEnabled() && 'overlayV1' in event && event.overlayV1){
+                    if('overlayV1' in event && event.overlayV1){
                       if(!viewedRooms.has(roomId)||!overlayViewer.accept(event))return;
                       return fenceHelperOverlayEnqueue(options.database,event,()=>enqueueHelperOverlay(event),principal.identityId);
                     }
@@ -1523,7 +1523,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                 if (event.type === 'draft' && streamed.has(event.agentId)) continue;
                 if (client.readyState === client.OPEN &&
                     (event.type === 'draft' || event.type === 'thought')) {
-                  if(helperOverlayEnabled() && event.overlayV1)continue;
+                  if(event.overlayV1)continue;
                   sendDraft(event);
                 }
               }
@@ -1538,31 +1538,31 @@ export function createBeelineServer(options: ServerOptions): Server {
             ROOM_ID_PATTERN.test(item.roomId) &&
             typeof item.viewing === 'boolean'
           ) {
-            if(helperOverlayEnabled()){
+
               if(item.viewing && !viewedRooms.has(item.roomId))overlayViewer.enter(item.roomId);
               else if(!item.viewing)overlayViewer.leave(item.roomId);
-            }
+
             if (item.viewing) viewedRooms.add(item.roomId);
             else viewedRooms.delete(item.roomId);
             if (!phoneViewClosed){
               try {
                 const revision=await phoneViewing.view(viewingSession, principal.identityId, item.roomId, item.viewing);
-                if(helperOverlayEnabled() && item.viewing) {
+                if(item.viewing) {
                   if(revision!==undefined)overlayViewer.commit(item.roomId,revision);
                   else { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
                 }
               } catch(error) {
-                if(helperOverlayEnabled() && item.viewing) { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
+                if(item.viewing) { overlayViewer.leave(item.roomId); viewedRooms.delete(item.roomId); }
                 throw error;
               }
             }
             return;
           }
           if (item.type === 'unsubscribe' && typeof item.roomId === 'string') {
-            if(helperOverlayEnabled()){
+
               overlayViewer.leave(item.roomId);
               if(viewedRooms.delete(item.roomId) && !phoneViewClosed)await phoneViewing.view(viewingSession,principal.identityId,item.roomId,false);
-            }
+
             releases.get(item.roomId)?.();
             releases.delete(item.roomId);
             previewRooms.delete(item.roomId);

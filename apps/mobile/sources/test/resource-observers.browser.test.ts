@@ -1,4 +1,4 @@
-import { legacyRouterProofShims } from '../test-fixtures/router-proof';
+import { canonicalRouterProofShims } from '../test-fixtures/router-proof';
 import { writeFile, rm } from 'node:fs/promises';
 import path from 'node:path';
 import { describe, it, expect } from 'vitest';
@@ -64,7 +64,7 @@ describe('resource observers in the desktop web renderer', () => {
           output.workflowReads = globalThis.__workflowReads;
           output.workflowText = document.querySelector('[data-testid="corner-objective-line-workflow-copy"]')?.textContent;
           document.getElementById('result').textContent = JSON.stringify(output); }, 9000);`);
-      const shims = { ...webProofShims(mobile), ...legacyRouterProofShims() };
+      const shims = { ...webProofShims(mobile), ...canonicalRouterProofShims(['room-workflows']) };
       shims['react-native-unistyles'] = shims['react-native-unistyles'].replace('buzz: beelineThemes.obsidian', `buzz: beelineThemes.obsidian, colors: { groupped: { background: '#171717' }, divider: '#333', text: '#eee', textSecondary: '#aaa', surface: '#222' }`);
       const result = await runBrowserProof({ entry, mobile, width: 1200, budgetMs: 10000, shims: {
         ...shims,
@@ -123,9 +123,11 @@ describe('resource observers in the desktop web renderer', () => {
         createRoot(document.getElementById('root')).render(<WorkflowRun />);
         setTimeout(() => { globalThis.__invalidate?.({ monolithLive: { type: 'subscribed', roomId: 'corner' } }); globalThis.__offline = true;
           globalThis.__invalidate?.({ monolithLive: { type: 'invalidate', roomId: 'corner', reason: 'postgres:messages' } });
+          globalThis.__routerFixture.park({family:'room-workflows',roomId:'corner'},'offline');
         }, 600);
         setTimeout(() => { globalThis.__failureText = document.getElementById('root').textContent; globalThis.__offline = false; globalThis.__done = true;
-          globalThis.__invalidate?.({ monolithLive: { type: 'subscribed', roomId: 'corner' } }); }, 1800);
+          globalThis.__invalidate?.({ monolithLive: { type: 'subscribed', roomId: 'corner' } });
+          globalThis.__routerFixture.publish({family:'room-workflows',roomId:'corner'},{workflows:[]}); }, 1800);
         setTimeout(() => { document.getElementById('result').textContent = JSON.stringify({
           failureText: globalThis.__failureText, status: document.querySelector('[data-testid="workflow-run-status"]')?.textContent,
           reads: globalThis.__reads, errors: globalThis.__console });
@@ -135,7 +137,7 @@ describe('resource observers in the desktop web renderer', () => {
         contract: { slug: 'demo', description: 'Demo', initial: 'work', roles: {}, states: { work: { kind: 'terminal' } } }, history: [],
       };
       const result = await runBrowserProof({ entry, mobile, width: 1000, shims: {
-        ...webProofShims(mobile), ...legacyRouterProofShims(),
+        ...webProofShims(mobile), ...canonicalRouterProofShims(['room-workflows']),
         'expo-router': `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]);
           export const useLocalSearchParams = () => ({ roomId: 'corner', runId: 'run' }); export const router = { back() {}, replace() {}, push() {} };`,
         '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ publicKey: 'a' });`,
@@ -145,6 +147,7 @@ describe('resource observers in the desktop web renderer', () => {
         '@/components/buzz/IdentityMark': `export const IdentityMark = () => null;`,
         '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async operation => {
           globalThis.__reads = (globalThis.__reads ?? 0) + 1; if (globalThis.__offline) throw new Error('offline'); const detail = ${JSON.stringify(detail)};
+          if(operation==='listRoomWorkflowRuns')return {workflows:[]};
           if (globalThis.__done) { detail.run.status = 'done'; detail.run.updatedAt = 1790000100; }
           return detail; };`,
       } });
@@ -152,10 +155,9 @@ describe('resource observers in the desktop web renderer', () => {
       console.log('Reproductions R9d and R9-OBS-01 desktop web:', result.result);
       expect(JSON.parse(result.result).status).toBe('Done');
       expect(JSON.parse(result.result).failureText).toContain('Couldn’t reach Beeline');
-      // The run page's "Also running in this corner" section reads the room's
-      // other live runs alongside the run itself, so each cycle (initial load,
-      // the postgres invalidate, and the reconnect) now fires two reads.
-      expect(JSON.parse(result.result).reads).toBe(6);
+      // The explicit run detail reads on its existing events. The sibling list
+      // consumes one canonical opening value and subsequent pushes.
+      expect(JSON.parse(result.result).reads).toBe(4);
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
   it('Reproductions R9-OBS-06 and R12k: workflow failures stay silent and recover on the next eligible event', async () => {
@@ -175,20 +177,22 @@ describe('resource observers in the desktop web renderer', () => {
         new MutationObserver(() => { const present = !!errorLine(); if (present && !visible) notices++; visible = present; })
           .observe(document.getElementById('root'), { childList: true, subtree: true });
         createRoot(document.getElementById('root')).render(<App />);
-        const push = () => globalThis.__listener({ monolithLive: { type: 'invalidate', roomId: 'corner', reason: 'message' } });
-        setTimeout(() => globalThis.__listener({ monolithLive: { type: 'subscribed', roomId: 'corner' } }), 150);
+        const request={family:'room-workflows',roomId:'corner'};
+        const recovered={workflows:[{roomId:'corner',runId:'run',status:'live',workflowSlug:'review',state:'approve',updatedAt:1}]};
+        const push = () => globalThis.__routerFixture.park(request,'offline');
+        setTimeout(push, 150);
         for (let i = 1; i <= 5; i++) setTimeout(push, i * 200);
-        setTimeout(() => { globalThis.__streakNotices = notices; globalThis.__streakText = errorLine()?.textContent; globalThis.__recover = true; globalThis.__listener({monolithLive:{type:'subscribed',roomId:'corner',resumed:false}}); }, 3200);
-        setTimeout(() => { globalThis.__clearedAfterSuccess = !errorLine(); }, 3400);
+        setTimeout(() => { globalThis.__streakNotices = notices; globalThis.__streakText = errorLine()?.textContent; globalThis.__routerFixture.publish(request,recovered); }, 3200);
+        setTimeout(() => { globalThis.__clearedAfterSuccess = !errorLine(); globalThis.__recoveredText=document.querySelector('[data-testid="corner-objective-line-workflow-copy"]')?.textContent; }, 3400);
         setTimeout(() => { globalThis.__recover = false; push(); }, 3500);
         setTimeout(() => { globalThis.__secondError = errorLine()?.textContent; globalThis.__noticesAfterSuccess = notices;
-          globalThis.__recover = true; globalThis.__listener({monolithLive:{type:'subscribed',roomId:'corner',resumed:false}}); }, 4800);
+          globalThis.__routerFixture.publish(request,recovered); }, 4800);
         setTimeout(() => { document.getElementById('result').textContent = JSON.stringify({
           streakNotices: globalThis.__streakNotices, noticesAfterSuccess: globalThis.__noticesAfterSuccess,
           streakText: globalThis.__streakText, visibleError: globalThis.__secondError,
-          clearedAfterSuccess: globalThis.__clearedAfterSuccess, retryRecovered: !errorLine(), reads: globalThis.__reads }); }, 5100);`);
+          clearedAfterSuccess: globalThis.__clearedAfterSuccess, recoveredText:globalThis.__recoveredText, retryRecovered: !errorLine()&&document.querySelector('[data-testid="corner-objective-line-workflow-copy"]')?.textContent==='Review · Approve', reads: globalThis.__reads }); }, 5100);`);
       const result = await runBrowserProof({ entry, mobile, width: 1000, budgetMs: 5500, shims: {
-        ...webProofShims(mobile), ...legacyRouterProofShims(),
+        ...webProofShims(mobile), ...canonicalRouterProofShims(['room-workflows']),
         'expo-router': `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]);`,
         '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({ register: async (_, listener) => { globalThis.__listener = listener; return () => {}; } });`,
         '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async () => {
@@ -199,7 +203,7 @@ describe('resource observers in the desktop web renderer', () => {
       } });
       expect(result.status, result.stderr).toBe(0);
       console.log('Reproductions R9-OBS-06 and R12k desktop web:', result.result);
-      expect(JSON.parse(result.result)).toMatchObject({ streakNotices: 0, noticesAfterSuccess: 0, reads: 4, clearedAfterSuccess: true, retryRecovered: true });
+      expect(JSON.parse(result.result)).toMatchObject({ streakNotices: 0, noticesAfterSuccess: 0, reads: 1, clearedAfterSuccess: true, recoveredText: 'Review · Approve', retryRecovered: true });
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
 

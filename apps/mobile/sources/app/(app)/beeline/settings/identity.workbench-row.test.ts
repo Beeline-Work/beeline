@@ -1,6 +1,6 @@
-// This suite exercises an installed old-server path, with explicit legacy negotiation.
-vi.mock('@/buzz/router-owner', async () => (await import('@/test-fixtures/legacy-router-owner')).legacyRouterOwner);
-vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
+// UI fixtures provide complete DTOs at the canonical lane boundary.
+vi.mock('@/buzz/router-owner', async () => (await import('@/test/canonical-resource-fixture')).createCanonicalWorkbenchFixture());
+vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'router', holdRouterConnection: () => () => {} }));
 vi.mock('@/components/buzz/WorkspaceSettingsPanel', async () => { const React = await import('react'); return { WORKSPACE_VISIBILITY_LABELS: { public: 'Public', 'invite-only': 'Invite-only' }, default: React.forwardRef((props: object, _ref) => React.createElement('WorkspaceSettings', props)) }; });
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
@@ -351,7 +351,8 @@ async function refocus(): Promise<void> {
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+  (await import('@/buzz/router-owner') as any).resetFixture();
   vi.clearAllMocks();
   mobileSurfaceCache.clear();
   workspaceRead.workspaces.mockResolvedValue({ workspaces: [{ id: 'workspace-1' }] });
@@ -371,17 +372,12 @@ beforeEach(() => {
 });
 
 describe('Settings Workbench row shares the held Workbench projection', () => {
-  it('shows the updated server summary and reconciles once on focus', async () => {
-    workbench.readWorkbench
-      .mockResolvedValueOnce(view('0 connections', ''))
-      .mockResolvedValue(view('2 connections'));
+  it('shows the updated canonical server summary across refocus', async () => {
+    workbench.readWorkbench.mockResolvedValue(view('0 connections', ''));
     const renderer = await renderScreen();
     await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('0 connections'));
 
-    await act(async () => { await mobileSurfaceCache.write({ relayOrigin: 'https://relay.test',
-      viewerPubkey: VIEWER, endpoint: '/workspace/:id/workbench',
-      params: { workspaceId: 'workspace-1', viewerId: VIEWER } }, view('2 connections'),
-      (value): value is WorkbenchView => Boolean(value)); });
+    await act(async () => (await import('@/buzz/router-owner') as any).publish({family: 'owner-workbench'}, view('2 connections')));
     await refocus();
 
     await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('2 connections'));
@@ -407,13 +403,12 @@ describe('Settings Workbench row shares the held Workbench projection', () => {
     });
   });
 
-  it('keeps the last value when the refocus reconciliation fails', async () => {
-    workbench.readWorkbench
-      .mockResolvedValueOnce(view('2 connections'))
-      .mockRejectedValue(new Error('offline'));
+  it('keeps the canonical value when another settings read fails', async () => {
+    workbench.readWorkbench.mockResolvedValue(view('2 connections'));
     const renderer = await renderScreen();
     await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('2 connections'));
 
+    workbench.readWorkbench.mockRejectedValue(new Error('offline'));
     await refocus();
 
     expect(workbench.readWorkbench).toHaveBeenCalledTimes(2);

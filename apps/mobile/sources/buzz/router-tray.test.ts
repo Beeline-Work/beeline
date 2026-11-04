@@ -110,10 +110,10 @@ describe('Tray canonical observation', () => {
     // The first render cannot expose the prior handle before effect detaches it.
     expect(observed[0]).toBe(null);
   });
-  it('attaches no canonical lane in explicit legacy mode', () => {
+  it('parks an unsupported connection without installing a fallback', () => {
     fixture.mode = 'legacy'; act(() => { tree = create(React.createElement(Probe)); });
     expect(fixture.acquire).not.toHaveBeenCalled(); expect(latest.value).toBe(null);
-    expect(latest.needs).toEqual([{ messageId: 'old-server' }]);
+    expect(latest.needs).toBeNull();
     expect(latest.bookmarks).toEqual([]);
     fixture.mode = 'pending'; act(() => { tree.update(React.createElement(Probe)); });
     expect(latest.needs).toBeNull(); expect(latest.bookmarks).toEqual([]);
@@ -142,7 +142,7 @@ describe('Tray immutable actions', () => {
     fixture.mode = 'router'; fixture.capable = false;
     expect(() => prepareTrayCommand('ws', command)).toThrow('unavailable');
     expect(fixture.admit).not.toHaveBeenCalled(); fixture.mode = 'legacy';
-    expect(prepareTrayCommand('ws', command)).toBeUndefined();
+    expect(() => prepareTrayCommand('ws', command)).toThrow('unavailable');
   });
   it('paint spends owner-validated batches and delivers them without fetching rows', async () => {
     fixture.paint.mockReturnValue([{ wire: { operation: 'markNeedsYouSeen' } }, { wire: { operation: 'markNeedsYouSeen' } }]);

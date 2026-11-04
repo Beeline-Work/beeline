@@ -103,37 +103,31 @@ describe('routeBuzzNotificationResponse', () => {
   it('keeps an incomplete Room target on the landing fallback without adding a prefetch', async () => {
     let finishLanding!: (value: 'committed') => void;
     const landing = new Promise<'committed'>((resolve) => { finishLanding = resolve; });
-    const prefetchRoom = vi.fn();
     const { openStack, routing: deps } = routing({
       waitForInitialLanding: () => landing,
-      prefetchRoom,
     });
     const routed = routeBuzzNotificationResponse(tap('prefetch-1', 'room-early'), deps);
     await Promise.resolve();
-    expect(prefetchRoom).not.toHaveBeenCalled();
     expect(openStack).not.toHaveBeenCalled();
     finishLanding('committed');
     await routed;
     expect(openStack).toHaveBeenCalledOnce();
   });
 
-  it('prefetches a complete Room while waiting for a committed cold landing', async () => {
+  it('opens a complete Room only after a committed cold landing', async () => {
     let finishLanding!: (value: 'committed') => void;
     const landing = new Promise<'committed'>((resolve) => { finishLanding = resolve; });
     const waitForInitialLanding = vi.fn(() => landing);
     const resolveTarget = vi.fn(() => new Promise<never>(() => undefined));
-    const prefetchRoom = vi.fn();
     const { openStack, suppressPendingInitialLanding, routing: deps } = routing({
       waitForInitialLanding,
       resolveTarget,
-      prefetchRoom,
     });
     const routed = routeBuzzNotificationResponse(
       tap('fast-cold', 'room-fast', { workspaceId: 'workspace-fast' }),
       deps,
     );
     await vi.waitFor(() => expect(waitForInitialLanding).toHaveBeenCalledOnce());
-    expect(prefetchRoom).toHaveBeenCalledOnce();
     expect(suppressPendingInitialLanding).not.toHaveBeenCalled();
     expect(openStack).not.toHaveBeenCalled();
     finishLanding('committed');
@@ -143,19 +137,16 @@ describe('routeBuzzNotificationResponse', () => {
     expect(openStack).toHaveBeenCalledOnce();
   });
 
-  it('prefetches during root startup but navigates only after the navigator renders', async () => {
+  it('navigates only after the root navigator renders', async () => {
     let releaseRoot!: () => void;
     const ready = new Promise<void>((resolve) => { releaseRoot = resolve; });
-    const prefetchRoom = vi.fn();
     const { openStack, routing: deps } = routing({
       waitForRootReady: () => ready,
-      prefetchRoom,
     });
     const routed = routeBuzzNotificationResponse(
       tap('early-root', 'room-early', { workspaceId: 'workspace-early' }),
       deps,
     );
-    await vi.waitFor(() => expect(prefetchRoom).toHaveBeenCalledOnce());
     expect(openStack).not.toHaveBeenCalled();
     releaseRoot();
     await routed;
@@ -411,9 +402,7 @@ describe('notification response wiring', () => {
           },
         },
       };
-      const prefetchRoom = vi.fn();
       const { openStack, routing: deps } = routing({
-        prefetchRoom,
         resolveTarget: async (target) => {
           expect(target.workspaceId).toBe('other-workspace');
           return target;
@@ -434,8 +423,6 @@ describe('notification response wiring', () => {
       if (entry === 'background') listener?.(response);
 
       await vi.waitFor(() => expect(openStack).toHaveBeenCalledTimes(1));
-      if (surface === 'corner') expect(prefetchRoom).not.toHaveBeenCalled();
-      else expect(prefetchRoom).toHaveBeenCalledWith(responseId, channelId, messageId);
       // Back from the notified screen stays in its Workspace: the stack
       // underneath is that Workspace's Room list (and a corner's corners list).
       expect(openStack).toHaveBeenCalledWith([

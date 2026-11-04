@@ -163,8 +163,6 @@ export type NotificationResponseRouting = {
   /** Clears the retained native "last response" once it has been routed. */
   clearLastResponse: () => Promise<void>;
   resolveTarget: (target: BuzzNotificationTarget) => Promise<BuzzNotificationTarget>;
-  /** Optional read started before landing; it never gates navigation. */
-  prefetchRoom?: (responseId: string, roomId: string, messageId?: string) => void;
   /** Same durable ids the entry adapter consults; a leftover replay is not a new tap. */
   consumedResponses?: ConsumedNotificationResponseStore;
   log?: (message: string) => void;
@@ -241,15 +239,6 @@ export async function routeBuzzNotificationResponse(
       Boolean(buzzTarget.workspaceId) &&
       buzzTarget.roomId === buzzTarget.channelId &&
       !buzzTarget.cornerId;
-    if (responseId && directRoom && buzzTarget?.channelId) {
-      try {
-        const messageId = buzzTarget.messageId ?? buzzTarget.eventId;
-        if (messageId) routing.prefetchRoom?.(responseId, buzzTarget.channelId, messageId);
-        else routing.prefetchRoom?.(responseId, buzzTarget.channelId);
-      } catch (error) {
-        log(`Could not prefetch pushed Room: ${String(error)}`);
-      }
-    }
     await routing.waitForRootReady?.();
 
     // The Room read may finish during startup, but navigation must wait until

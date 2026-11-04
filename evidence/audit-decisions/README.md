@@ -2,8 +2,9 @@
 
 This batch implements the captain's accepted recommendations. Production was
 read-only during implementation. B1 remains a reviewed, explicit one-time action;
-its dry run is `b1-dry-run.json`. L1 is the only authorized production write and
-runs after the pull request exists, with a separate read-back.
+its dry run is `b1-dry-run.json`. L1 was the only production write, after
+https://github.com/Beeline-Work/beeline/pull/3447 existed. The four rows remain
+stored; `l1-stop-and-readback.json` records the stop and independent read-back.
 
 | Decision | Implementation |
 | --- | --- |
@@ -52,3 +53,11 @@ session (11), and external rules (4). Push-outbox tests passed (10 passed; the
 isolated PostgreSQL performance proof was skipped without its opt-in local URL).
 The one-time cleanup's PGlite proof passed and retained every skill version.
 No lifecycle command, release, B1 apply or B8 contract was run.
+
+## L1 production read-back
+
+All four rows remain stored. `max_runs` now equals `run_count`:
+0487e469 = 14, e61b92db = 2, ea5594a0 = 7, fc1f2142 = 5.
+Every `next_run_at` is 9999-12-31 00:00:00+00, and no workflow is running on
+these rows. An independent READ ONLY transaction matched the update receipt.
+B1 deletion and the B8 column contract were not run.

@@ -8,6 +8,12 @@ import type { SqlDatabase } from './database.js';
 import type { TokenAuth } from './auth.js';
 import type { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { UnauthorizedError, type OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js';
+import type { OAuthClientInformationFull } from '@modelcontextprotocol/sdk/shared/auth.js';
+import { migrate } from './database.js';
+import { PgliteDatabase } from './test-support.js';
 
 describe('unified join HTTP negotiation and OAuth discovery', () => {
   let origin: string;
@@ -50,6 +56,8 @@ describe('unified join HTTP negotiation and OAuth discovery', () => {
         }
         for (const [method, headers] of [
           ['POST', { 'content-type': 'application/json' }],
+          ['GET', { accept: 'application/json' }],
+          ['GET', { accept: 'Application/JSON; charset=utf-8' }],
           ['GET', { accept: 'text/event-stream' }],
           ['GET', { authorization: 'Basic invalid' }],
           ['GET', { 'mcp-protocol-version': '2025-03-26' }],
@@ -86,4 +94,70 @@ describe('unified join HTTP negotiation and OAuth discovery', () => {
     expect(JSON.parse(metadata.body).resource).toBe(origin + '/join');
     expect((await get('/', 'attacker.example')).status).toBe(404);
   });
+});
+
+describe('hosted Claude connector discovery through the MCP SDK', () => {
+  let db: PgliteDatabase;
+  let origin: string;
+  let short: string;
+  let mcp: RoomsMcp;
+  const server = createServer((req, res) => {
+    void mcp.handle(req, res).then(handled => { if (!handled) { res.writeHead(404); res.end(); } });
+  });
+  beforeAll(async () => {
+    db = new PgliteDatabase(); await migrate(db);
+    // Listen on both loopback families so the issuer and localhost alias can differ.
+    await new Promise<void>(resolve => server.listen(0, resolve));
+    const port = (server.address() as AddressInfo).port;
+    origin = `http://127.0.0.1:${port}`;
+    short = `http://localhost:${port}`;
+    mcp = new RoomsMcp(new RoomsMcpOAuth(db, origin, {} as TokenAuth, 'localhost'), {} as PhoneService, new LiveHub());
+  }, 60_000);
+  afterAll(async () => {
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await db.close();
+  });
+  for (const path of ['', '/', '/mcp']) {
+    it.each(['https://claude.ai/api/mcp/auth_callback', 'https://claude.com/api/mcp/auth_callback'])(
+      `discovers ${path || '(bare origin)'}, registers %s and reaches sign-in`, async redirectUri => {
+        let registration: OAuthClientInformationFull | undefined;
+        let authorization: URL | undefined;
+        let verifier: string | undefined;
+        const provider: OAuthClientProvider = {
+          redirectUrl: redirectUri,
+          clientMetadata: { client_name: 'Claude', redirect_uris: [redirectUri], token_endpoint_auth_method: 'none',
+            grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'] },
+          clientInformation: () => registration,
+          saveClientInformation: value => { registration = value; },
+          tokens: () => undefined,
+          saveTokens: () => { throw new Error('No account sign-in in this proof'); },
+          codeVerifier: () => verifier!,
+          saveCodeVerifier: value => { verifier = value; },
+          state: () => 'hosted-claude-proof',
+          redirectToAuthorization: value => { authorization = value; },
+        };
+        const client = new Client({ name: 'claude-ai', version: '1' });
+        try {
+          await expect(client.connect(new StreamableHTTPClientTransport(new URL(short + path), { authProvider: provider })))
+            .rejects.toBeInstanceOf(UnauthorizedError);
+          expect(registration).toMatchObject({ redirect_uris: [redirectUri], token_endpoint_auth_method: 'none' });
+          expect(registration?.client_secret).toBeUndefined();
+          const target = authorization!;
+          expect(target.origin).toBe(origin);
+          expect(target.pathname).toBe('/mcp/oauth/authorize');
+          expect(target.searchParams.get('resource')).toBe(new URL(short + path).href);
+          expect(target.searchParams.get('code_challenge_method')).toBe('S256');
+          expect(target.searchParams.get('redirect_uri')).toBe(redirectUri);
+          const start = await fetch(target, { redirect: 'manual' });
+          expect(start.status).toBe(302);
+          const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
+          const page = await fetch(new URL(start.headers.get('location')!, origin), { headers: { cookie } });
+          expect(page.status).toBe(200);
+          const html = await page.text();
+          expect(html).toContain('Continue with Google');
+          expect(html).toContain('Continue with GitHub');
+        } finally { await client.close(); }
+      });
+  }
 });

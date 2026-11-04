@@ -432,7 +432,7 @@ describe('LiveConnection', () => {
     expect(sockets[0]!.closed).toBe(false);
     AppState.currentState = 'active'; foreground();
     expect(sockets).toHaveLength(1);
-    expect(sockets[0]!.sent).toEqual(sent);
+    expect(sockets[0]!.sent).toEqual([...sent, JSON.stringify({ type: 'ping' })]);
     expect(vi.getTimerCount()).toBe(0);
     sockets[0]!.drop();
     await vi.advanceTimersByTimeAsync(0);
@@ -1320,14 +1320,14 @@ describe('LiveConnection', () => {
 
     connection.dispose();
   });
-  it('keeps a healthy socket on a network notification without extra traffic', async () => {
+  it('keeps a healthy socket on a network notification with one bounded challenge', async () => {
     const { connection, networkChanged } = createConnection();
     await connection.register([{ '#h': [ROOM_A] }], () => {});
     sockets[0]!.open();
     const sent = [...sockets[0]!.sent];
     networkChanged();
     expect(sockets).toHaveLength(1);
-    expect(sockets[0]!.sent).toEqual(sent);
+    expect(sockets[0]!.sent).toEqual([...sent, JSON.stringify({ type: 'ping' })]);
     expect(sockets[0]!.closed).toBe(false);
     connection.dispose();
   });
@@ -1500,9 +1500,161 @@ describe('LiveConnection', () => {
     await vi.advanceTimersByTimeAsync(60_000);
     expect(sockets[0]!.closed).toBe(false);
     expect(authorization).toHaveBeenCalledOnce();
-    expect(sockets[0]!.sent.some(frame => JSON.parse(frame).type === 'ping')).toBe(false);
+    expect(sockets[0]!.sent.filter(frame => JSON.parse(frame).type === 'ping')).toHaveLength(1);
     connection.dispose();
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each(['foreground', 'network'] as const)('replaces a silently dead OPEN socket once after a %s challenge fails', async (boundary) => {
+    vi.useFakeTimers();
+    const { connection, foreground, networkChanged } = createConnection();
+    try {
+      await connection.register([{ '#h': [ROOM_A] }], () => {});
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[0]!.open();
+      sockets[0]!.autoPong = false;
+      if (boundary === 'foreground') foreground();
+      else networkChanged();
+      networkChanged();
+      expect(sockets[0]!.sent.filter(frame => JSON.parse(frame).type === 'ping')).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(4_999);
+      expect(sockets[0]!.closed).toBe(false);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(sockets[0]!.closed).toBe(true);
+      expect(sockets).toHaveLength(2);
+      sockets[1]!.open();
+      sockets[1]!.drop();
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(sockets).toHaveLength(2);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { connection.dispose(); }
+  });
+
+  it('sends immediately during a foreground challenge and retains the responsive socket', async () => {
+    vi.useFakeTimers();
+    const { connection, foreground } = createConnection();
+    try {
+      await connection.register([], () => {});
+      sockets[0]!.open();
+      sockets[0]!.autoPong = false;
+      foreground();
+      const pending = connection.request('sendRoomMessage', { roomId: ROOM_A, messageId: 'm', text: 'hello' });
+      const frame = JSON.parse(sockets[0]!.sent.at(-1)!);
+      expect(frame).toMatchObject({ t: 'req', op: 'sendRoomMessage' });
+      sockets[0]!.emit({ t: 'res', id: frame.id, ok: true, result: { messageId: 'm' } });
+      await expect(pending).resolves.toEqual({ messageId: 'm' });
+      await vi.advanceTimersByTimeAsync(4_999);
+      sockets[0]!.emit({ type: 'pong' });
+      const traffic = [...sockets[0]!.sent];
+      await vi.advanceTimersByTimeAsync(30 * 60_000);
+      expect(sockets).toHaveLength(1);
+      expect(sockets[0]!.closed).toBe(false);
+      expect(sockets[0]!.sent).toEqual(traffic);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { connection.dispose(); }
+  });
+
+  it('does not challenge an idle socket without demand', async () => {
+    vi.useFakeTimers();
+    const { connection, foreground, networkChanged } = createConnection();
+    const release = await connection.register([], () => {});
+    sockets[0]!.open();
+    release();
+    const traffic = [...sockets[0]!.sent];
+    foreground();
+    networkChanged();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(sockets[0]!.sent).toEqual(traffic);
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]!.closed).toBe(false);
+    connection.dispose();
+  });
+
+  it('clears a pending challenge on identity change without replacing the new socket', async () => {
+    vi.useFakeTimers();
+    const { connection, foreground, changeIdentity } = createConnection();
+    try {
+      await connection.register([], () => {});
+      sockets[0]!.open();
+      sockets[0]!.autoPong = false;
+      foreground();
+      changeIdentity();
+      await vi.advanceTimersByTimeAsync(0);
+      sockets[1]!.open();
+      sockets[0]!.emit({ type: 'pong' });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sockets).toHaveLength(2);
+      expect(sockets[1]!.closed).toBe(false);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally { connection.dispose(); }
+  });
+
+  it.each([false, true])('recovers an unsent request awaiting a stalled handshake, delayed authorization: %s', async (delayedAuthorization) => {
+    vi.useFakeTimers();
+    let authorize!: (token: string) => void;
+    const authorization = delayedAuthorization
+      ? vi.fn().mockImplementationOnce(() => new Promise<string>((resolve) => { authorize = resolve; })).mockResolvedValue('renewed')
+      : vi.fn().mockResolvedValue('token');
+    const { connection, foreground, networkChanged } = createConnection(authorization);
+    try {
+      await connection.register([{ '#h': [ROOM_A] }], () => {});
+      const pending = connection.request('readRoom', { roomId: ROOM_A }, { timeoutMs: 25_000 }).catch(error => error);
+      if (delayedAuthorization) authorize('initial');
+      await vi.advanceTimersByTimeAsync(16_000);
+      foreground();
+      networkChanged();
+      expect(sockets).toHaveLength(1);
+      expect(sockets[0]!.closed).toBe(false);
+      expect(sockets[0]!.sent).toEqual([]);
+      await vi.advanceTimersByTimeAsync(9_000);
+      expect(await pending).toBeInstanceOf(MonolithRequestTimeoutError);
+      expect(sockets).toHaveLength(2);
+      expect(sockets[0]!.closed).toBe(true);
+      const another = connection.request('readRoom', { roomId: ROOM_A }, { timeoutMs: 1_000 }).catch(error => error);
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await another).toBeInstanceOf(MonolithRequestTimeoutError);
+      await vi.advanceTimersByTimeAsync(10 * 60_000);
+      expect(sockets).toHaveLength(2);
+    } finally { connection.dispose(); }
+  });
+
+  it('preserves a slow opening handshake when it opens before the request deadline', async () => {
+    vi.useFakeTimers();
+    const { connection, foreground, networkChanged } = createConnection();
+    try {
+      await connection.register([], () => {});
+      const pending = connection.request('readRoom', { roomId: ROOM_A }, { timeoutMs: 25_000 });
+      await vi.advanceTimersByTimeAsync(16_000);
+      foreground();
+      networkChanged();
+      await vi.advanceTimersByTimeAsync(4_000);
+      expect(sockets).toHaveLength(1);
+      expect(sockets[0]!.closed).toBe(false);
+      sockets[0]!.open();
+      const frame = sockets[0]!.sent.map(value => JSON.parse(value)).find(value => value.t === 'req');
+      sockets[0]!.emit({ t: 'res', id: frame.id, ok: true, result: { room: { id: ROOM_A } } });
+      await expect(pending).resolves.toEqual({ room: { id: ROOM_A } });
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(sockets).toHaveLength(1);
+      expect(sockets[0]!.closed).toBe(false);
+    } finally { connection.dispose(); }
+  });
+
+  it('does not let an old unsent deadline replace a newer opening socket', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    try {
+      await connection.register([], () => {});
+      const pending = connection.request('readRoom', { roomId: ROOM_A }, { timeoutMs: 5_000 }).catch(error => error);
+      await vi.advanceTimersByTimeAsync(0);
+      connection.reconnectNow();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sockets).toHaveLength(2);
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await pending).toBeInstanceOf(MonolithRequestTimeoutError);
+      expect(sockets).toHaveLength(2);
+      expect(sockets[1]!.closed).toBe(false);
+    } finally { connection.dispose(); }
   });
 
   it('keeps an opening handshake on foreground until a real request deadline', async () => {
@@ -1781,14 +1933,18 @@ describe('LiveConnection', () => {
       router: { requestedCapabilities, negotiated: vi.fn(async () => {}), disconnected: vi.fn(), receive: vi.fn() } });
     await connection.register([], () => {});
     await vi.advanceTimersByTimeAsync(15_000);
-    expect(sockets).toHaveLength(0);
+    expect(sockets).toHaveLength(1);
+    expect(requestedCapabilities).toHaveBeenCalledTimes(2);
     expect(connection.diagnostics().connecting).toBe(false);
+    release(capabilities);
+    await vi.advanceTimersByTimeAsync(10 * 60_000);
+    expect(sockets).toHaveLength(1);
+    expect(requestedCapabilities).toHaveBeenCalledTimes(2);
+    expect(sockets[0]!.closed).toBe(false);
     connection.reconnectNow();
     await vi.advanceTimersByTimeAsync(0);
-    expect(sockets).toHaveLength(1);
-    release(capabilities);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(sockets).toHaveLength(1);
+    expect(sockets).toHaveLength(2);
+    expect(sockets[0]!.closed).toBe(true);
     connection.dispose();
   });
 

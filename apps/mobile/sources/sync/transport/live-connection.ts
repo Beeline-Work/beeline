@@ -30,6 +30,7 @@ import { setRequestDeadlineHandler } from './request-deadline';
 type PendingRequest = {
   frame: string;
   socket?: WebSocket;
+  awaitedSocket?: WebSocket;
   resolve: (value: unknown) => void;
   reject: (error: unknown) => void;
 };
@@ -114,6 +115,7 @@ export function useConnectionState(): ConnectionState {
 
 /** Message ids recently delivered by the socket, to judge a later push. */
 const HEARD_MESSAGE_LIMIT = 256;
+const HEALTH_CHALLENGE_DEADLINE_MS = 5_000;
 /** Parent-Room invalidations that name a corner change without its rows. */
 const CORNER_LIST_REASONS: ReadonlySet<string> = new Set(['corner-status', 'corner', 'resync']);
 /** The same window the server's own `liveDraftSnapshot` is gated on: past it a
@@ -170,6 +172,7 @@ export class LiveConnection {
   /** True only after this socket's `onopen`. A failed handshake stays false. */
   private socketReachedOpen = false;
   private recoverySpent = false;
+  private healthChallenge: { socket: WebSocket; timer: ReturnType<typeof setTimeout> } | undefined;
   private socketEpoch = 0;
   private routerState: 'waiting' | 'initializing' | 'ready' = 'waiting';
   private routerQueue: Array<RouterPushFrame | RouterUnavailable | RouterAuthorityFence> = [];
@@ -283,20 +286,23 @@ export class LiveConnection {
         return Promise.reject(new PhoneSocketError('invalid_request', 'Phone request is too large', false));
     } catch (error) { return Promise.reject(error); }
     this.routeObservation.observe(op, args);
+    const generation = this.generation;
     return new Promise((resolve, reject) => {
       const finish = () => {
         clearTimeout(timer);
         options.signal?.removeEventListener('abort', abort);
         this.requests.delete(id);
       };
-      const request: PendingRequest = { frame,
+      const request: PendingRequest = { frame, awaitedSocket: this.socket,
         resolve: value => { finish(); resolve(value); },
         reject: error => { finish(); reject(error); },
       };
       const abort = () => request.reject(this.requestAbortError());
       const timer = setTimeout(() => {
         request.reject(new MonolithRequestTimeoutError());
-        if (request.socket === this.socket) this.reportRequestDeadlineMissed();
+        const awaited = request.socket ?? request.awaitedSocket;
+        if (generation === this.generation && awaited && awaited === this.socket)
+          this.reportRequestDeadlineMissed();
       }, options.timeoutMs ?? 20_000);
       this.requests.set(id, request);
       options.signal?.addEventListener('abort', abort, { once: true });
@@ -539,8 +545,9 @@ export class LiveConnection {
       // settling. Keep a foreground/read recovery request made in that gap.
       if (this.socket) {
         const generation = this.generation;
+        const socket = this.socket;
         void this.connectInFlight.then(() => {
-          if (generation === this.generation) this.reconnectSocket();
+          if (generation === this.generation && this.socket === socket) this.reconnectSocket();
         });
       }
       return;
@@ -566,18 +573,39 @@ export class LiveConnection {
   }
 
   private handleForeground(): void {
+    this.checkBoundaryHealth();
+  }
+
+  private checkBoundaryHealth(): void {
+    if (!this.hasDemand() || this.healthChallenge) return;
     this.recoverySpent = false;
-    // Android owns the socket while the app is away. Returning alone is no
-    // evidence of a broken connection, including a handshake still opening.
-    if (!this.socket) this.reconnectNow();
+    const socket = this.socket;
+    if (!socket) {
+      this.reconnectNow();
+      return;
+    }
+    if (!isSocketOpen(socket)) return;
+    const timer = setTimeout(() => {
+      if (this.healthChallenge?.socket !== socket) return;
+      this.clearHealthChallenge();
+      if (this.socket === socket && this.hasDemand()) this.reportRequestDeadlineMissed();
+    }, HEALTH_CHALLENGE_DEADLINE_MS);
+    this.healthChallenge = { socket, timer };
+    try { socket.send(JSON.stringify({ type: 'ping' })); }
+    catch {
+      this.clearHealthChallenge();
+      if (this.socket === socket) this.reportRequestDeadlineMissed();
+    }
+  }
+
+  private clearHealthChallenge(): void {
+    if (this.healthChallenge) clearTimeout(this.healthChallenge.timer);
+    this.healthChallenge = undefined;
   }
 
   private handleNetworkChange(): void {
     if (AppState.currentState !== 'active') return;
-    this.recoverySpent = false;
-    // A native close/error or a request deadline proves an existing socket
-    // failed. Connectivity notifications must not tear down a healthy one.
-    if (!this.socket) this.reconnectNow();
+    this.checkBoundaryHealth();
   }
 
   /**
@@ -599,6 +627,7 @@ export class LiveConnection {
   }
 
   private dropConnection(): void {
+    this.clearHealthChallenge();
     this.resetRouterState();
     this.authorizationRecoveryUsed = false;
     this.handshakeRecoveryUsed = false;
@@ -712,6 +741,8 @@ export class LiveConnection {
       const url = this.deps.liveUrl();
       const next = new WebSocket(url, [`bearer.${token}`]);
       this.socket = next;
+      for (const request of this.requests.values())
+        if (!request.socket && !request.awaitedSocket) request.awaitedSocket = next;
       this.socketReachedOpen = false;
       next.onopen = () => {
         if (this.socket !== next) return;
@@ -837,6 +868,7 @@ export class LiveConnection {
   }
 
   private dropSocketState(): void {
+    this.clearHealthChallenge();
     this.resetRouterState();
     // Unsent calls have no ambiguous server result and keep their own deadline.
     // Only a call dispatched on the dropped socket belongs to the outbox to retry.

@@ -274,3 +274,53 @@ Focused verification, from `apps/mobile`:
 R4/R5 focused review result: **151 tests passed across three files**
 (81 transport, 26 chat-list store, and 44 deck tests), with `--maxWorkers=2`.
 These results are pipeline verification, not additional native measurements.
+
+## Pipeline review fixes: recovery-boundary liveness and opening deadlines
+
+The existing manual native evidence applies to candidate **32a**. It does not
+validate this later rebased head or the R6/R7 changes described here.
+
+R6 restores the existing five-second application ping/pong challenge on genuine
+foreground or active network recovery events with demand. Concurrent events
+join the pending challenge. A responsive OPEN socket stays in place; a missing
+pong permits one bounded replacement. No recurring challenge, background-close
+timer, send-path wait, or new channel is introduced. CONNECTING sockets remain
+untouched by these events until an actual request deadline expires.
+
+R7 records the first socket an unsent request awaited, including sockets created
+after credential acquisition. Its deadline may recover that current stalled
+handshake, but cannot replace a newer socket still opening. Sent requests remain
+bound to their actual dispatch socket. Identity generation and deferred socket
+replacement checks fence stale recovery. Deadline recovery preserves the
+existing incident and authorization retry budgets.
+
+Executable fake-time cases cover silent OPEN failures on foreground and network
+events, coalesced challenges, timely pong preservation, sending while a challenge
+is pending, no demand, identity changes, stalled CONNECTING sockets with immediate
+or delayed credentials, slow success before the request deadline, and stale
+unsent deadlines after socket replacement. Long idle waits check that failure
+stops at one replacement. The real `MonolithSession` timeout regression continues
+to check its bounded authorization retries. Router negotiation remains covered
+by the existing connection tests; these fixes do not change its wire frames.
+
+Focused verification, from `apps/mobile`:
+
+```sh
+./node_modules/.bin/vitest run \
+  sources/sync/transport/live-connection.test.ts \
+  --maxWorkers=2
+```
+
+These are pipeline behavioral checks with mocked sockets, not additional native
+captures or latency measurements.
+
+The router late-capability regression now expects the approved immediate
+retry after the first authorization deadline, while still checking that late
+capabilities cannot create a stale socket and that no further attempt occurs
+during a ten-minute idle wait. Router runtime negotiation is unchanged.
+
+R6/R7 focused review result: **104 connection tests passed**, with
+`--maxWorkers=2`, including the real refresh-timeout bound and router capability
+fencing. Local workspace dependencies were rebuilt for the rebased imports;
+an initial collection attempt lacked the generated `@beeline/net` output.
+No native captures were repeated for this later head.

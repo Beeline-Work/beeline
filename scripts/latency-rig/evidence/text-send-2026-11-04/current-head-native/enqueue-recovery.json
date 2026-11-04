@@ -21,9 +21,7 @@
     "x": 981,
     "y": 1438
   },
-  "injectedFailedIds": [
-    "8f4bf9c0a8250acb11a3ee97c67ff69b0312d69205532623b23cf1f755a3e46b"
-  ],
+  "injectedFailedIds": ["8f4bf9c0a8250acb11a3ee97c67ff69b0312d69205532623b23cf1f755a3e46b"],
   "canonicalAfterFailure": [],
   "dismissedError": {
     "x": 923,
@@ -40,16 +38,10 @@
     "x": 981,
     "y": 1438
   },
-  "canonicalAfterRetry": [
-    "89e2c78bc8497632b456fe311ef5c7d33d9300bbeef30885eae0f0beb7bed7a5"
-  ],
+  "canonicalAfterRetry": ["89e2c78bc8497632b456fe311ef5c7d33d9300bbeef30885eae0f0beb7bed7a5"],
   "unrelatedStillQueuedAfterRetry": true,
   "faultDisarmedBeforeRestart": true,
-  "canonicalAfterRestart": [
-    "89e2c78bc8497632b456fe311ef5c7d33d9300bbeef30885eae0f0beb7bed7a5"
-  ],
-  "unrelatedAfterRestart": [
-    "3ca768107a84805a23bc69cf7cf30be11cb76a6f112a95b962caec8896784e34"
-  ],
+  "canonicalAfterRestart": ["89e2c78bc8497632b456fe311ef5c7d33d9300bbeef30885eae0f0beb7bed7a5"],
+  "unrelatedAfterRestart": ["3ca768107a84805a23bc69cf7cf30be11cb76a6f112a95b962caec8896784e34"],
   "passed": true
 }

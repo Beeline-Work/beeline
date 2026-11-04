@@ -9,16 +9,16 @@ import { markRoomOpen } from '@/buzz/room-open-trace';
 import { abandonRoomDraw, roomDrawGeneration } from '@/buzz/room-draw-barrier';
 import { RoomOpenTraceOverlay } from '@/components/buzz/RoomOpenTraceOverlay';
 import { BuzzChatSurface } from './_chat-surface';
-import {
-  useRoomSurfaceSession,
-  type RoomSurfaceSessionBindings,
-} from './useRoomSurfaceSession';
+import { useRoomSurfaceSession, type RoomSurfaceSessionBindings } from './useRoomSurfaceSession';
 
-const RoomSurface = memo(BuzzChatSurface, (previous, next) =>
-  previous.bindingsRef === next.bindingsRef &&
-  (Object.keys(previous.session) as Array<keyof typeof previous.session>).every(
-    (key) => Object.is(previous.session[key], next.session[key]),
-  ));
+const RoomSurface = memo(
+  BuzzChatSurface,
+  (previous, next) =>
+    previous.bindingsRef === next.bindingsRef &&
+    (Object.keys(previous.session) as Array<keyof typeof previous.session>).every((key) =>
+      Object.is(previous.session[key], next.session[key]),
+    ),
+);
 
 export default function BuzzChat() {
   const { channelId, notificationResponseId } = useLocalSearchParams<{

@@ -45,13 +45,16 @@ function sendContext(overrides: Record<string, unknown> = {}) {
     selectedMentionAgentPubkey: noop, selectedAgentMentionsRef: { current: [] },
     roomAgents: [{ pubkey: 'ruby-key' }], mentionedAgentPubkey: () => 'ruby-key',
     setReceivedSteer: noop, setTagMenuOpen: noop, setPendingAck: noop, setSending: noop,
-    desktopExperience: false,
+    desktopExperience: false, desktopTranscript: false,
+    sendPreview: { show: async () => { order.push('row'); order.push('paint'); }, reconcile: noop, remove: noop },
+    scrollController: { request: noop }, removeOptimistic: noop,
     addMessages: () => { order.push('row'); },
     landAtOwnSend: noop,
     yieldToNextPaint: async () => { order.push('paint'); },
     roomSurface: null, userPubkey: 'human-key', fallbackMemberName: () => 'Person',
     decodedId: 'conversation', reconcileOptimistic: noop,
-    outbox: { current: () => ({ enqueue, send: sendOutbox }) },
+    outbox: { current: () => ({ enqueue, send: sendOutbox, get: () => ({}) }) },
+    isFocused: () => false,
     activeComposerDraftRef: { current: draft }, composerInputRevisionRef: { current: 0 },
     composerRef: { current: { clear: noop } }, setComposerInputRevision: noop,
     setComposerHeight: noop, COMPOSER_MIN_HEIGHT: 40, setInputSelection: noop,
@@ -88,6 +91,44 @@ describe('Reproduction R1: corner requests use ordinary message delivery', () =>
     expect(context.Modal.alert).not.toHaveBeenCalled();
     if (isDirectMessage) expect(prompt).not.toHaveBeenCalled();
   });
+});
+
+it('SEND-LIST-2: only the local row runs before native paint; duplicate taps cannot start another send', async () => {
+  let paint!: () => void;
+  const show = vi.fn(() => new Promise<void>(resolve => { paint = resolve; }));
+  const status = vi.fn(), land = vi.fn();
+  const { context, transport, prompt } = sendContext({
+    sendPreview: { show, reconcile: vi.fn(), remove: vi.fn() },
+    setSending: status, setPendingAck: status, landAtOwnSend: land,
+  });
+  const send = runInNewContext(executable, context);
+  const pending = send();
+  expect(show).toHaveBeenCalledOnce();
+  expect(status).not.toHaveBeenCalled();
+  expect(prompt).not.toHaveBeenCalled();
+  expect(land).not.toHaveBeenCalled();
+  expect(transport.composeMessage).not.toHaveBeenCalled();
+  expect(await send()).toBeUndefined();
+  expect(show).toHaveBeenCalledOnce();
+  paint();
+  expect(await pending).toBe(true);
+  expect(land).toHaveBeenCalled();
+  expect(status).toHaveBeenCalled();
+  expect(prompt).toHaveBeenCalled();
+});
+
+it('removes a preview when durable enqueue fails and keeps the submitted draft for retry', async () => {
+  const remove = vi.fn();
+  const enqueue = vi.fn(async () => { throw new Error('storage unavailable'); });
+  const { context, draft, text } = sendContext({
+    sendPreview: { show: async () => undefined, reconcile: vi.fn(), remove },
+    outbox: { current: () => ({ enqueue, get: () => undefined }) },
+    console: { warn: vi.fn() },
+  });
+  expect(await runInNewContext(executable, context)()).toBe(false);
+  expect(remove).toHaveBeenCalledWith('signed-message');
+  expect(draft.value).toBe(text);
+  expect(context.sendInFlightRef.current).toBe(false);
 });
 
 describe('Reproduction R3: a send addressed to an agent shows the thinking indicator, not a Sending line', () => {

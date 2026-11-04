@@ -1,123 +1,159 @@
 # Text send latency — November 4, 2026
 
-The 150 ms interaction budget is **not met**. These targeted fixes improve the
-send path, but this is an incomplete performance checkpoint, not a release pass.
+The 150 ms interaction budget is still missed in this capture. The native
+send path now paints one local row before signing, persistence,
+Room-wide projections or network work. Cold Room opening still misses the
+450 ms budget. The server improvement is measured in an isolated scenario;
+it has not been deployed to production.
 
-## Changes
+## Native comparison
 
-- The sender's ordinary message skips the 140 ms `NewMessageMaterialize`
-  entrance, including provisional-to-signed replacement. The existing text,
-  byline, ordering, outbox, and incoming-arrival motion remain authoritative.
-- After message/reply commit, `PhoneService.observeSentMessage` schedules
-  onboarding observation on the physical database's tracked background work.
-  The response queues before observation requests a database connection.
-  Shutdown drains observation; an observation failure cannot fail the receipt.
-  Previously every ordinary send awaited two onboarding lookups even when it
-  had no onboarding context. Real onboarding can perform more work.
+All writes used the Play-review identity in **Beeline Review**, never the
+captain's Workspace. The private `send-latency-20261104` Room
+(`ba6e778a-69ff-4ea2-8b8d-68f94039add3`) has no agent members or model invocation.
+The native binary remained the original Play-derived runtime44/code144.
 
-`SEND-PAINT-1` fails with the original entrance policy. `SEND-ACK-1` fails for
-both messages and replies on the original implementation: blocking onboarding
-also blocks the acknowledgement. With the fix the receipt succeeds while
-observation remains blocked, and database close still owns its lifetime.
-`SEND-ACK-2` covers failed observation after a successful committed write.
+The final comparison alternates old/new local Hermes bundles in the same
+session against production142, six sends per block, four blocks per arm.
+The old local bundle already includes the sender-fade fix; the new one adds
+the independently subscribed first row. Neither bundle was published as OTA.
 
-## Measured results
-
-All production writes used the dedicated Play-review identity and its own
-**Beeline Review** Workspace, never the captain's Workspace. The final native
-comparison used its private `send-latency-20261104` Room
-`ba6e778a-69ff-4ea2-8b8d-68f94039add3`, with no agent members or model invocation.
-
-| Measurement | Samples | p50 | p95 | Meaning |
+| Measurement | Samples | p50 | p95 | Budget |
 | --- | ---: | ---: | ---: | --- |
-| Original v142 Android tap → readable transcript text | 25 | 256 ms | 508 ms | FAIL, <150 ms |
-| Candidate Android tap → readable transcript text | 21 | 239 ms | 372 ms | FAIL, <150 ms |
-| Production host live-socket send → receipt | 25 | 129 ms | 172 ms | Existing v142 server |
-| Same host/socket application ping → pong | 25 | 67 ms | 71 ms | Network/edge/event-loop baseline |
-| Host receipt minus adjacent ping | 25 | 58 ms | 105 ms | Residual, not an exact server span |
-| Production server-machine loopback send → receipt | 25 | 266 ms | 483 ms | Server/DB plus local socket/event-loop cost |
-| Same machine loopback ping → pong | 25 | 1 ms | 4 ms | Negligible external network leg |
-| Isolated server handling, original code, 25 ms per-query scenario | 25 | 189 ms | 227 ms | `PhoneService.execute` stopwatch |
-| Same isolated scenario, changed code | 25 | 85 ms | 109 ms | Controlled proof; not production after deployment |
+| Old local send, tap → readable message | 24 | 208 ms | 448 ms | <150 ms |
+| New local send, tap → readable message | 24 | 103 ms | 216 ms | FAIL, <150 ms |
+| Original production142, cold Room tap → first screen of messages | 25 | 1,323 ms | 2,251 ms | FAIL, <450 ms |
 
-The host and production-loopback runs occurred at different times and can hit
-different serving machines. Their variance must not be presented as a paired
-production before/after comparison. The server patch has **not been deployed**;
-production after-deployment handling remains unmeasured.
+Both send percentiles improve by about half, but the new p95 still fails.
+The new maximum is 301 ms; even measured from after the input command it is
+241 ms. After-command p50/p95 is 83/156 ms, so command overhead alone does not
+explain every miss. All 48 exact old/new payloads were verified in canonical
+server reads; no final sample was dropped.
 
-One original-v142 process-cold deep-link Room open took **1,867 ms** to a
-meaningful Room frame, retaining its DTO cache. This includes Android/JS process
-startup. It misses 450 ms, but one observation is not a p50/p95 distribution or
-a cold-cache page-read benchmark. This send-path change does not resolve it.
+Cold Room timing starts at a ready Room list, on tapping the Room. Each trial
+restarts the app and clears only its disposable DTO cache before that point;
+identity, selected Workspace and durable outbox remain intact. It excludes
+process startup from the measured interval. The first native frame containing
+at least three readable message lines is the endpoint, distinguishing Room
+messages from the list's one-line preview. This is measurement only; the send
+change does not fix cold page loading.
 
-## Capture and limits
+## Why the send path changes
 
-The phone retained the original Play-derived native runtime44/code144 binary.
-The before run used actual production OTA142, source
-`98c2a49a4f3df909e8fd3fc32ae39129f6f8367b`. The candidate was a local Hermes
-launch-asset fixture from base `5547a106b` plus the outgoing-entrance change,
-against the unchanged production server. It was never published as an OTA.
+- `RoomSendPreview` updates a child of the existing inverted FlatList header.
+  The first commit leaves the list's data array and existing message bodies
+  intact, avoiding a full Room render and history projection/sort.
+- The preview uses the existing row renderer, reply context and appearance.
+  Native layout plus the following frame releases signing, outbox persistence,
+  status updates, optional repository guidance and transcript bookkeeping.
+- A send gives the scroll controller the newest destination immediately.
+  During first paint it suppresses native anchor preservation: Android's
+  `MaintainVisibleScrollPositionHelper` otherwise offsets the old row and
+  invokes `reactSmoothScrollTo`, animating new text into view.
+- The signed id retains its provisional key. The existing durable outbox and
+  canonical DTO take over; the preview is transient, per Room, and disposed
+  on navigation. Failed enqueue removes it while retaining the draft.
+- `OrdinaryLedgerMessage` skips its 140 ms entrance for own sends. Incoming
+  motion is unchanged. No new UI, connection or polling path is added.
+- After durable server commit, onboarding observation runs through the physical
+  database's tracked background work. The receipt queues before observation
+  requests another DB connection; shutdown drains it. Analytics failure cannot
+  reject a committed message or reply.
 
-`adb input tap` was bracketed by on-device `date +%s%N`. A 540×1200 screen
-recording supplies each frame's device-clock timestamp. Android's
-[screenrecord metadata implementation](https://android.googlesource.com/platform/frameworks/av/+/b675cea85b508d7f60f1344e5a24c3db7a5b8d0f/cmds/screenrecord/screenrecord.cpp)
-records elapsed-clock frame timestamps and a realtime offset. The analyzer
-matches the unique message suffix in the transcript at normalized correlation
-≥0.97, excluding the composer. It retains the preceding and first matching
-frames and rejects an already-matching pre-tap frame. Faint entrance fragments
-can precede the readable match; these are conservative readable-text bounds,
-not physical display scanout times. The on-device input command itself took
-roughly 20–75 ms in most candidate samples and is included in the table.
+Behavior coverage: `room-send-list.test.tsx` verifies unchanged parent/history
+and existing row bodies, one visible copy, stable handoff key, layout/frame
+ordering, empty Room and unmount. `SEND-LIST-2` exercises the real send callback,
+including duplicate taps and status/preparation ordering. Its failure case
+retains the draft if enqueue fails. `SEND-PAINT-1` fails with the old entrance
+policy. `SEND-ACK-1` fails on both original message/reply paths when analytics
+blocks; the new receipt succeeds while database shutdown still drains analytics.
+`SEND-ACK-2` covers observation failure after commit.
 
-An initial after-capture in shared #proof was contaminated by concurrent
-connection-proof messages and excluded. Dedicated runs replaced it. The final
-candidate harness terminated after 21 sends; all 21 completed samples were
-retained, without dropping slow samples. A bounded canonical read found 20 exact expected candidate strings; all 21
-messages committing was not established. No delivery-complete assertion is
-implied by the 21 optimistic visibility samples. Native timings include screenrecord
-and shared-host overhead. This emulator is not a calibrated physical A15.
+## React row cost
 
-The 20-CPU host repeatedly had load averages around 31–39. A later direct
-snapshot showed 27–34 runnable tasks, 16% idle CPU, and CPU pressure of 26.65%
-over the preceding minute. This prevents certifying performance on a quiet
-physical phone. It does not turn the measured budget failures into passes.
+On-device `React.Profiler` used the installed `ReactFabric-profiling` renderer,
+four process launches, and 20 mount samples for each representative local row
+fixture. These are real existing row renderers; fixtures never entered the
+production database and diagnostic instrumentation is absent from the diff.
 
-Content-free diagnostic JS probes, excluded from the uninstrumented comparison,
-showed 76–184 ms from optimistic append to React layout-effect commit across
-five samples. A second five-sample probe showed another **92–238 ms** between
-that commit and the existing two-frame yield finishing. The yield finished
-*after* commit in these samples, so an assumed yield-before-commit race was not
-confirmed and no speculative commit barrier was added. Preparation after the
-yield took only 2–11 ms in the latter probe. Further investigation belongs in
-the React/native frame path and its contention, not just server SQL.
+| Row | Mount p50 | Mount p95 | p95 / 16 ms frame |
+| --- | ---: | ---: | ---: |
+| Plain short text | 6.95 ms | 13.04 ms | 0.82 |
+| Rich Markdown, bullets and code | 21.63 ms | 36.63 ms | 2.29 |
+| Completed command/tool row | 8.95 ms | 11.45 ms | 0.72 |
+| Permission decision card | 14.90 ms | 22.87 ms | 1.43 |
 
-The first diagnostic's native tap → JS acknowledgement ranged 575–833 ms,
-consistent with the reported problem. Its wire → JS-ack durations include
-network, server work and JS handling delay. Neither that probe nor the host
-client separates native wire arrival from JS processing, and native
-acknowledgement → visible canonical UI remains **unmeasured**. ICMP on the
-emulator varied 37–432 ms; it is not a calibrated application RTT. The stable
-host socket ping and nontrivial production-loopback receipt time show that
-physical network RTT alone does not explain this send latency.
+`actualDuration` measures React render work, excluding native layout/draw and
+scheduler waiting. These fixtures are not a production complexity distribution.
+Rich text and cards demonstrably exceed one frame. Earlier five-send probes
+measured 76–184 ms optimistic append → Room layout effect, plus 92–238 ms waiting
+for the old two-frame yield. The new first frame does not render that Room root;
+its behavior test asserts this separately from wall-clock capture.
 
-## Evidence and next step
+## Server and acknowledgement
 
-Content-free per-sample JSON is committed under
+| Measurement | Samples | p50 | p95 |
+| --- | ---: | ---: | ---: |
+| Production host live-socket send → receipt | 25 | 129 ms | 172 ms |
+| Same host/socket application ping → pong | 25 | 67 ms | 71 ms |
+| Receipt minus adjacent ping | 25 | 58 ms | 105 ms |
+| Production server-machine loopback send → receipt | 25 | 266 ms | 483 ms |
+| Same machine loopback ping → pong | 25 | 1 ms | 4 ms |
+| Isolated original `PhoneService.execute`, 25 ms per-query scenario | 25 | 189 ms | 227 ms |
+| Same isolated scenario, new server code | 25 | 85 ms | 109 ms |
+
+The exact isolated handling stopwatch removes about 104 ms at the median by
+moving onboarding work after receipt. Its artificial per-query delay is a
+controlled before/after scenario, not a deployed production result. Production
+host and loopback runs occurred at different times and can hit different
+machines; they are not a paired production comparison. Loopback includes DB,
+server dispatch and local socket/event-loop cost. The external 67/71 ms ping
+and substantial 266/483 ms loopback acknowledgement show that physical network
+RTT alone does not explain the reported delay.
+
+Five earlier native diagnostic sends measured tap → JS acknowledgement at
+575–833 ms. Wire → JS acknowledgement includes network, server and client
+scheduling delay. Production142 socket replies do not expose an exact handler
+span. Native wire arrival → JS handling and acknowledgement → canonical React
+commit remain unmeasured. Ordinary text is already visible optimistically;
+there is no added delivered indicator to use as a visual acknowledgement.
+Production after-deployment handling also remains unmeasured.
+
+## Evidence and capture limits
+
+Per-sample evidence and bundle/video hashes are in
 [`scripts/latency-rig/evidence/text-send-2026-11-04`](../scripts/latency-rig/evidence/text-send-2026-11-04/).
-The manifest identifies native/OTA/candidate scope, restoration and raw-video
-SHA256 values. Raw videos, frame pairs and scripts remain only in the task's ignored
-`.beeline-proof/send-latency/` directory. The temporary proof-session file was
-removed; credentials are never part of committed evidence. Their local presence is not
-a claim that the videos are available from a GitHub checkout.
+Raw videos, first/preceding frames and capture scripts remain in the task's
+ignored `.beeline-proof/send-latency/`; they are not available from a GitHub
+checkout. Credentials are excluded from committed evidence.
 
-The phone's original v142 launch bytes and exact Expo manifest/hash metadata
-were restored and verified. Launch bundle SHA256 is
+Final sends use fixed screenshot-selected composer/send coordinates, screenshot
+OCR readiness, and enabled-arrow verification before each tap. Empty draft
+readiness precedes typing the next message, avoiding a prior send's draft clear.
+No `uiautomator` dumps are used. Android
+[screenrecord metadata](https://android.googlesource.com/platform/frameworks/av/+/b675cea85b508d7f60f1344e5a24c3db7a5b8d0f/cmds/screenrecord/screenrecord.cpp)
+provides elapsed-clock frame timestamps. On-device `/proc/uptime` brackets
+`input tap` in the same clock domain, with 10 ms clock granularity; wall-clock
+`date` brackets are retained too. The reported before-command upper bound
+includes input-command overhead. First readable unique suffix and preceding
+frames are retained, with a preexisting-text guard. Both arms use identical OCR.
+
+Earlier C/D measurements used ≥0.97 settled-glyph template correlation and
+reported 256/508 ms and 239/372 ms. Frame review found that this also counted
+fractional scrolling/settling after text was already readable. Those numbers
+are retained as conservative settling proxies, not used for the final first
+readable-text comparison. Earlier fixed-delay K/L captures did not verify full
+draft or enabled send state; their overlapping draft clears and censored final
+frames make them unsuitable as a successful-send latency distribution. They
+remain local evidence rather than silently discarded slow final-run samples.
+
+The emulator shares a busy 20-CPU host; alternating builds controls session
+ordering but does not make this a calibrated physical-phone certification.
+All final-run samples are retained. The original production142 launch bytes
+and Expo manifest/hash metadata were restored and verified: source
+`98c2a49a4f3df909e8fd3fc32ae39129f6f8367b`, launch SHA256
 `0814b713dcfa6ed20048aae18d4ce2a3b22af36d1a888b564c5b1af0cc0d6f0c`.
-Temporary diagnostic code is absent from the product diff.
 
-Next: obtain a quiet/controlled emulator capture and profile the native frame
-wait. If it persists there, isolate the local send render from the full Room
-render while preserving chronology, outbox persistence and committed DTO
-reconciliation. Repeat 20+ native samples before declaring <150 ms. Measure
-actual production server handling again after an authorized release; retain
-separate native wire-arrival and UI-update measurements.
+Validation before pipeline: root typecheck; 213 mobile regression tests; 19
+phone-socket integration tests; network, UI component and architecture guards.
+Vitest used `--maxWorkers=2` (`--minWorkers=1` on server Vitest 2).

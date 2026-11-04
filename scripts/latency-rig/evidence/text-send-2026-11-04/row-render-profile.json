@@ -1,0 +1,1016 @@
+{
+  "method": "On-device ReactFabric-profiling and React.Profiler actualDuration, representative local row fixtures; complete row records retained from logcat, trailing truncated record excluded; repeated reader lines deduplicated. No fixture persisted to production.",
+  "processes": 4,
+  "samples": [
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 7.94809290766716,
+      "baseDuration": 6.929234862327576
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 38.84776267409325,
+      "baseDuration": 32.12987461686134
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 13.06627106666565,
+      "baseDuration": 10.838295102119446
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 15.432773023843765,
+      "baseDuration": 11.501623004674911
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 5.253115206956863,
+      "baseDuration": 4.3122261464595795
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 16.627665102481842,
+      "baseDuration": 12.810986012220383
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 6.1101977825164795,
+      "baseDuration": 5.031776785850525
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 12.15282142162323,
+      "baseDuration": 7.8084511160850525
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 6.789852738380432,
+      "baseDuration": 5.540053874254227
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 19.00880092382431,
+      "baseDuration": 14.635278195142746
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.3831089437007904,
+      "baseDuration": 3.2602598965168
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 5.518649697303772,
+      "baseDuration": 30.335674583911896
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 4.777395009994507,
+      "baseDuration": 5.015457928180695
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 11.165147125720978,
+      "baseDuration": 15.280906051397324
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.3890950083732605,
+      "baseDuration": 3.2261000275611877
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 4.69083046913147,
+      "baseDuration": 11.971815317869186
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 4.542276173830032,
+      "baseDuration": 4.253477156162262
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 4.295460075139999,
+      "baseDuration": 6.610081762075424
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.171485036611557,
+      "baseDuration": 3.1497280299663544
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 5.134490966796875,
+      "baseDuration": 9.622684061527252
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 9.904737710952759,
+      "baseDuration": 8.181947886943817
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 16.8293240070343,
+      "baseDuration": 11.331776171922684
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 15.771118968725204,
+      "baseDuration": 14.310660928487778
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 23.095913916826248,
+      "baseDuration": 15.738834947347641
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 9.877718836069107,
+      "baseDuration": 8.204930871725082
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 16.763852149248123,
+      "baseDuration": 11.541278094053268
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 13.041300117969513,
+      "baseDuration": 11.59952199459076
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 21.29045459628105,
+      "baseDuration": 15.028545945882797
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 9.529055088758469,
+      "baseDuration": 7.76737904548645
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 20.175986170768738,
+      "baseDuration": 15.30267882347107
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 2.98430997133255,
+      "baseDuration": 2.671330004930496
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 6.086185932159424,
+      "baseDuration": 10.208461731672287
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 4.200611859560013,
+      "baseDuration": 4.403923988342285
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 3.680470824241638,
+      "baseDuration": 7.852878034114838
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 7.632982820272446,
+      "baseDuration": 7.315784007310867
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 6.651895672082901,
+      "baseDuration": 11.80213376879692
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 4.316999137401581,
+      "baseDuration": 3.9959069192409515
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 3.9027121365070343,
+      "baseDuration": 6.196255147457123
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.3491742312908173,
+      "baseDuration": 3.02604603767395
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 6.950192809104919,
+      "baseDuration": 6.010262995958328
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 22.18716871738434,
+      "baseDuration": 15.878819018602371
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 6.683334052562714,
+      "baseDuration": 5.661686986684799
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 11.509289920330048,
+      "baseDuration": 8.060157120227814
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 5.408394038677216,
+      "baseDuration": 4.478408098220825
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 22.52949497103691,
+      "baseDuration": 17.461218059062958
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 8.951627850532532,
+      "baseDuration": 7.4604699313640594
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 12.400165677070618,
+      "baseDuration": 8.147750914096832
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 7.950277924537659,
+      "baseDuration": 6.538194954395294
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 21.625274896621704,
+      "baseDuration": 17.35212504863739
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 1.9135950803756714,
+      "baseDuration": 1.969999998807907
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 5.719464123249054,
+      "baseDuration": 16.50034412741661
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 2.441998064517975,
+      "baseDuration": 2.555532842874527
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 2.2752670645713806,
+      "baseDuration": 4.8244359493255615
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 1.5626388788223267,
+      "baseDuration": 1.650301992893219
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 2.298342853784561,
+      "baseDuration": 13.277653902769089
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 3.1315330266952515,
+      "baseDuration": 3.0442791283130646
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 2.233020395040512,
+      "baseDuration": 5.046121209859848
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 1.577293336391449,
+      "baseDuration": 1.708790123462677
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 2.187925100326538,
+      "baseDuration": 7.90587791800499
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 4.798346608877182,
+      "baseDuration": 3.9400978088378906
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 12.763171255588531,
+      "baseDuration": 9.585417985916138
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 4.8470650017261505,
+      "baseDuration": 4.026315987110138
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 13.358211725950241,
+      "baseDuration": 9.65485292673111
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 5.531313121318817,
+      "baseDuration": 4.5271942019462585
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 12.080630093812943,
+      "baseDuration": 8.964914917945862
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 4.77375203371048,
+      "baseDuration": 3.787735015153885
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 13.622989803552628,
+      "baseDuration": 9.805243968963623
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 5.87413814663887,
+      "baseDuration": 4.8495601415634155
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 12.444397032260895,
+      "baseDuration": 9.467247098684311
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 1.8198270201683044,
+      "baseDuration": 1.6637479066848755
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 6.187001943588257,
+      "baseDuration": 8.363789141178131
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 2.383142113685608,
+      "baseDuration": 2.48455810546875
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 2.235889583826065,
+      "baseDuration": 4.716951847076416
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 2.363895058631897,
+      "baseDuration": 2.1659200489521027
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 4.128565400838852,
+      "baseDuration": 12.270349383354187
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 2.564609110355377,
+      "baseDuration": 2.4387689232826233
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 2.2670858204364777,
+      "baseDuration": 5.0349710285663605
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 1.6748851537704468,
+      "baseDuration": 1.5226529240608215
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 12.305301189422607,
+      "baseDuration": 10.76310020685196
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 36.632458597421646,
+      "baseDuration": 25.415828973054886
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 10.51154014468193,
+      "baseDuration": 8.978559017181396
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 17.22151407599449,
+      "baseDuration": 12.532453000545502
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 8.043984830379486,
+      "baseDuration": 6.699061006307602
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 24.656196981668472,
+      "baseDuration": 19.310459852218628
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 9.391826093196869,
+      "baseDuration": 7.72038409113884
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 14.896051973104477,
+      "baseDuration": 10.414882957935333
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 7.958567887544632,
+      "baseDuration": 6.474489122629166
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 24.648004055023193,
+      "baseDuration": 19.13504195213318
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.2685869932174683,
+      "baseDuration": 3.4207760989665985
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 12.116316109895706,
+      "baseDuration": 28.292514115571976
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 4.747751325368881,
+      "baseDuration": 4.768303096294403
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 4.703939199447632,
+      "baseDuration": 8.521870076656342
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.3439060747623444,
+      "baseDuration": 3.3288678526878357
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 4.884072989225388,
+      "baseDuration": 15.994286894798279
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 4.702666282653809,
+      "baseDuration": 4.364763081073761
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 4.483455985784531,
+      "baseDuration": 8.38765612244606
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.32238307595253,
+      "baseDuration": 3.364335149526596
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 4.86266165971756,
+      "baseDuration": 11.196011990308762
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 11.004874259233475,
+      "baseDuration": 9.158565104007721
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 23.046620965003967,
+      "baseDuration": 17.682451903820038
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 8.673111945390701,
+      "baseDuration": 7.208775013685226
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 23.168291985988617,
+      "baseDuration": 16.868581146001816
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 10.203745037317276,
+      "baseDuration": 8.144250065088272
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 22.869633048772812,
+      "baseDuration": 17.342632055282593
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 8.820180118083954,
+      "baseDuration": 7.394678026437759
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 22.936538070440292,
+      "baseDuration": 16.18328696489334
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 11.446674108505249,
+      "baseDuration": 9.451060950756073
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 22.25883838534355,
+      "baseDuration": 16.962454110383987
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.5648840963840485,
+      "baseDuration": 3.213810086250305
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 13.62489777803421,
+      "baseDuration": 17.45826494693756
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 4.293208062648773,
+      "baseDuration": 4.30135902762413
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 3.9837420880794525,
+      "baseDuration": 7.827316045761108
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.2775149643421173,
+      "baseDuration": 2.9443880021572113
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 6.5874819457530975,
+      "baseDuration": 15.092120051383972
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 4.406207889318466,
+      "baseDuration": 4.130905002355576
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 3.834236055612564,
+      "baseDuration": 7.729233115911484
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.1287347078323364,
+      "baseDuration": 2.8288587629795074
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 10.32461592555046,
+      "baseDuration": 8.759701043367386
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 29.316955715417862,
+      "baseDuration": 21.269858837127686
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 11.064676880836487,
+      "baseDuration": 9.353519022464752
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 15.673912316560745,
+      "baseDuration": 11.234386205673218
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 5.370277136564255,
+      "baseDuration": 4.4585681557655334
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 18.092888087034225,
+      "baseDuration": 14.403360158205032
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 4.992404133081436,
+      "baseDuration": 4.173749923706055
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 10.344039052724838,
+      "baseDuration": 6.947668880224228
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 5.708842158317566,
+      "baseDuration": 4.651500076055527
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 17.77925616502762,
+      "baseDuration": 13.09154736995697
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 1.9924399852752686,
+      "baseDuration": 2.246920108795166
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 6.282995164394379,
+      "baseDuration": 19.655930936336517
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 2.7007811963558197,
+      "baseDuration": 3.0018280744552612
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 2.487780123949051,
+      "baseDuration": 5.742259055376053
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 1.7404022216796875,
+      "baseDuration": 1.8077711760997772
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 2.5891581177711487,
+      "baseDuration": 10.586985141038895
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 2.592439830303192,
+      "baseDuration": 2.4404709935188293
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 2.786301612854004,
+      "baseDuration": 5.431350737810135
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 2.646424949169159,
+      "baseDuration": 2.6405749917030334
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 3.1729089319705963,
+      "baseDuration": 8.10678830742836
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 6.215149939060211,
+      "baseDuration": 5.112059056758881
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 15.55145463347435,
+      "baseDuration": 12.012981116771698
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 6.255306929349899,
+      "baseDuration": 4.787381052970886
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 17.95620909333229,
+      "baseDuration": 13.219976037740707
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 8.79104146361351,
+      "baseDuration": 7.378084182739258
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 14.252599328756332,
+      "baseDuration": 10.793747276067734
+    },
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "actualDuration": 5.241854250431061,
+      "baseDuration": 4.248651325702667
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "actualDuration": 18.237862199544907,
+      "baseDuration": 12.79715433716774
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "actualDuration": 6.476832002401352,
+      "baseDuration": 5.273343920707703
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "actualDuration": 12.768435060977936,
+      "baseDuration": 9.672591000795364
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 2.791226029396057,
+      "baseDuration": 2.5100220441818237
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 10.419442892074585,
+      "baseDuration": 12.980823904275894
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 4.581020951271057,
+      "baseDuration": 4.653323918581009
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 4.2877519726753235,
+      "baseDuration": 7.313815146684647
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.4439470767974854,
+      "baseDuration": 3.1242569386959076
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "actualDuration": 6.503437876701355,
+      "baseDuration": 12.533976972103119
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "actualDuration": 4.7952940464019775,
+      "baseDuration": 4.416950017213821
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "actualDuration": 4.459390044212341,
+      "baseDuration": 6.949327051639557
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "actualDuration": 3.39854097366333,
+      "baseDuration": 3.1031759679317474
+    }
+  ],
+  "summary": [
+    {
+      "kind": "plain",
+      "phase": "mount",
+      "n": 20,
+      "p50Ms": 6.950192809104919,
+      "p95Ms": 13.041300117969513,
+      "maxMs": 15.771118968725204,
+      "p95FrameFraction": 0.8150812573730946
+    },
+    {
+      "kind": "plain",
+      "phase": "update",
+      "n": 24,
+      "p50Ms": 3.1287347078323364,
+      "p95Ms": 3.5648840963840485,
+      "maxMs": 7.632982820272446,
+      "p95FrameFraction": 0.22280525602400303
+    },
+    {
+      "kind": "rich",
+      "phase": "mount",
+      "n": 20,
+      "p50Ms": 21.625274896621704,
+      "p95Ms": 36.632458597421646,
+      "maxMs": 38.84776267409325,
+      "p95FrameFraction": 2.289528662338853
+    },
+    {
+      "kind": "rich",
+      "phase": "update",
+      "n": 20,
+      "p50Ms": 5.518649697303772,
+      "p95Ms": 12.116316109895706,
+      "maxMs": 13.62489777803421,
+      "p95FrameFraction": 0.7572697568684816
+    },
+    {
+      "kind": "tool",
+      "phase": "mount",
+      "n": 20,
+      "p50Ms": 8.951627850532532,
+      "p95Ms": 11.446674108505249,
+      "maxMs": 13.06627106666565,
+      "p95FrameFraction": 0.7154171317815781
+    },
+    {
+      "kind": "tool",
+      "phase": "update",
+      "n": 16,
+      "p50Ms": 4.293208062648773,
+      "p95Ms": 4.7952940464019775,
+      "maxMs": 4.7952940464019775,
+      "p95FrameFraction": 0.2997058779001236
+    },
+    {
+      "kind": "card",
+      "phase": "mount",
+      "n": 20,
+      "p50Ms": 14.896051973104477,
+      "p95Ms": 22.869633048772812,
+      "maxMs": 23.046620965003967,
+      "p95FrameFraction": 1.4293520655483007
+    },
+    {
+      "kind": "card",
+      "phase": "update",
+      "n": 16,
+      "p50Ms": 3.834236055612564,
+      "p95Ms": 11.165147125720978,
+      "maxMs": 11.165147125720978,
+      "p95FrameFraction": 0.6978216953575611
+    }
+  ]
+}

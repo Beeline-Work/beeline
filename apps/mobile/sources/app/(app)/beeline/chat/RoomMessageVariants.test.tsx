@@ -129,7 +129,7 @@ vi.mock('react-native', async () => {
   };
 });
 
-vi.mock('react-native-gesture-handler/ReanimatedSwipeable', async () => {
+vi.mock('@/components/buzz/TranscriptSwipeable', async () => {
   const ReactModule = await import('react');
   return {
     default: ReactModule.forwardRef((props: any, ref: any) => {
@@ -1650,6 +1650,9 @@ describe('Room message variant components', () => {
       leftAction.root.findByProps({ testID: 'corner-swipe-action-swipe-corner' }).props
         .accessibilityLabel,
     ).toBe('Forward message to a new corner');
+    expect(leftAction.root.findAllByType('CornerGlyph' as never)).toHaveLength(0);
+    act(() => swipeable.props.onSwipeableOpenStartDrag());
+    act(() => leftAction.update(swipeable.props.renderLeftActions()));
     const glyph = leftAction.root.findByType('CornerGlyph' as never);
     expect(glyph.props.color).toBe(beelineThemes.obsidian.accent);
     act(() => {

@@ -1,0 +1,5 @@
+import { useSyncExternalStore } from 'react';
+let value={turn:'proof-A',stopped:false};
+const listeners=new Set<()=>void>();
+export function setWorkingProof(next:typeof value){value=next;for(const fn of listeners)fn();}
+export function useWorkingProof(){return useSyncExternalStore(fn=>{listeners.add(fn);return()=>{listeners.delete(fn);};},()=>value);}

@@ -76,7 +76,7 @@ vi.mock('react-native', async () => {
   };
 });
 
-vi.mock('react-native-gesture-handler/ReanimatedSwipeable', async () => ({
+vi.mock('@/components/buzz/TranscriptSwipeable', async () => ({
   default: (await import('react-native-gesture-handler')).Swipeable,
 }));
 

@@ -63,7 +63,7 @@ import{MESSAGE_REACTION_EMOJIS}from'@beeline/buzz-client';
 import{emojiTextStyle}from'@/buzz/emoji-text';
 import{GestureHandlerRootView}from'react-native-gesture-handler';
 import{useRoomMessageRenderItem}from'@/buzz/room-message-cell';
-import ReanimatedSwipeable from'react-native-gesture-handler/ReanimatedSwipeable';
+import TranscriptSwipeable from'@/components/buzz/TranscriptSwipeable';
 const CORNER_LABEL='corner',ALIVE_RING_PAD=4;const CornerGlyph=()=>null;
 const styles=StyleSheet.create(theme=>({${styles}}));
 ${swipe.getText(file)}

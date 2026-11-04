@@ -1,6 +1,6 @@
 import { routerFamilyMode } from '@/buzz/router-owner';
 import { isRoomView, isChatListView } from '@beeline/buzz-client';
-import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
+import { mobileSurfaceCache, restoreStoredSurface, surfaceAddress } from '@/buzz/surface-storage';
 import type { RoomView } from '@beeline/api-contract/phone';
 import { loadBuzzViewerPubkey, peekBuzzViewerContext } from '@/auth/buzz-identity-storage';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
@@ -85,9 +85,10 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
     return response;
   };
   const hotAddress = hotViewer ? surfaceAddress(config.monolithUrl, hotViewer, `/room/${roomId}`) : null;
-  const hotCache = hotAddress ? mobileSurfaceCache.peek(hotAddress, isRoomView) : null;
-  // A warm authorized cache can decide whether to fetch on the tap's stack,
-  // before navigation renders. Cold storage retains its asynchronous path.
+  const hotCache = hotAddress ? restoreStoredSurface(hotAddress, isRoomView) : null;
+  // A known viewer can restore an authorized stored response on the tap's
+  // stack, before navigation renders. A cache miss or unresolved viewer
+  // retains the asynchronous path.
   const view = hotViewer && hotCache
     ? openCached(hotViewer, hotCache)
     : viewer.then(async (pubkey) => {

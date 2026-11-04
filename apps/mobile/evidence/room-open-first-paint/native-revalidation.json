@@ -1,0 +1,217 @@
+{
+  "testedHead": "4e4fd5edc2885aecadc7df03d54b43dee1b00e8e",
+  "recordedAt": "2026-11-04T08:24:00.703929+00:00",
+  "device": "emulator-5634",
+  "nativeRuntime": "40",
+  "versionCode": 27,
+  "versionName": "0.2.22",
+  "workspace": "bee11e00-0000-4000-8000-000000000105",
+  "room": "bee11e00-0000-4000-8000-000000000103",
+  "verdict": "PASS",
+  "causeOfPreviousFinding": "Native scenarios had not been exercised by the prior test phase; no product failure reproduced on the assigned device.",
+  "build": {
+    "sdkCompilation": "tsc --noCheck -p apps/mobile/scripts/tsconfig.eas-{api-contract,nostr,net,buzz-client}.json, sequentially",
+    "export": "NODE_ENV=production EXPO_RUNTIME_OVERRIDE=40 EXPO_PUBLIC_BUZZY_MONOLITH_URL=https://server.usebeeline.app EXPO_PUBLIC_ROOM_OPEN_TRACE=1 EXPO_PUBLIC_LATENCY_RIG_TRACE=1 expo export --platform android --source-maps --max-workers 2",
+    "gestureAndCacheBundle": {
+      "gitHead": "4e4fd5edc2885aecadc7df03d54b43dee1b00e8e",
+      "bundleSHA256": "bad4b249388b04535857cb3b311b474b1fe4836de43e077ba2aadab66f7b314e",
+      "originalSHA256": "0814b713dcfa6ed20048aae18d4ce2a3b22af36d1a888b564c5b1af0cc0d6f0c",
+      "device": "emulator-5634",
+      "assets": 98,
+      "androidVersion": "15"
+    },
+    "directCacheMissBundle": {
+      "gitHead": "4e4fd5edc2885aecadc7df03d54b43dee1b00e8e",
+      "bundleSHA256": "5dbf630face8a551a1e3c677b8d2afd6c09d3520be13011aaf269eac33db3755",
+      "originalSHA256": "0814b713dcfa6ed20048aae18d4ce2a3b22af36d1a888b564c5b1af0cc0d6f0c",
+      "device": "emulator-5634",
+      "assets": 98,
+      "androidVersion": "15"
+    },
+    "temporaryHooks": [
+      "profile.py apply: profiling renderer, React Profiler and transcript layout/commit records",
+      "First proof-Room tap only: remove its scoped hot/durable DTO, assert hot/restore/durable miss, then use ordinary tap dispatch",
+      "Second export: same removal hook navigates directly, bypassing ordinary tap dispatch and prefetchRoomOpen"
+    ],
+    "interruption": "One second-export attempt ended with SIGTERM and no diagnostic; identical focused retry exported successfully."
+  },
+  "scenarios": [
+    {
+      "scenario": 1,
+      "name": "Restart app and tap a previously opened Room within 450 ms",
+      "result": "PASS",
+      "basis": "Accepted prior alternating native A/B; unchanged timing logic, not rerun in this phase",
+      "evidence": [
+        "measurements.json",
+        "raw-records.json.gz",
+        "provenance.json"
+      ],
+      "coldP95BeforeMs": 916.27,
+      "coldP95AfterMs": 413.065
+    },
+    {
+      "scenario": 2,
+      "name": "Reopen cached Room within 450 ms while refreshing",
+      "result": "PASS",
+      "basis": "Accepted prior alternating native A/B; unchanged timing logic, not rerun in this phase",
+      "evidence": [
+        "measurements.json",
+        "raw-records.json.gz",
+        "provenance.json"
+      ],
+      "warmP95BeforeMs": 415.801,
+      "warmP95AfterMs": 331.384
+    },
+    {
+      "scenario": 3,
+      "name": "Remove scoped stored and hot Room without resurrection; fresh read arrives",
+      "result": "PASS",
+      "basis": "Live candidate on owned emulator",
+      "cacheRemoval": {
+        "phase": "cache-removed",
+        "roomId": "bee11e00-0000-4000-8000-000000000103",
+        "hadStoredRoom": true,
+        "hot": false,
+        "restored": false,
+        "durable": false
+      },
+      "readBeforeNonemptyTranscript": true,
+      "firstFreshTranscriptRows": 30,
+      "evidence": [
+        "native-revalidation-records.json.gz:cache-removal.log",
+        "screenshots/revalidation-under-threshold.png"
+      ]
+    },
+    {
+      "scenario": 4,
+      "name": "Open Room without tap-prefetch and reach transcript without deadlock",
+      "result": "PASS",
+      "basis": "Live fresh-process deep link and uncached navigation after targeted removal",
+      "deepLink": "beeline://beeline/chat/bee11e00-0000-4000-8000-000000000103",
+      "uncachedNavigation": {
+        "prefetchRan": false,
+        "cacheRead": "miss",
+        "readCompletedBeforeNonemptyTranscript": true,
+        "transcriptRows": 30,
+        "nativeVisibleMessageRows": 13
+      },
+      "evidence": [
+        "native-revalidation-records.json.gz:direct.log",
+        "native-revalidation-records.json.gz:direct-missing.log",
+        "screenshots/revalidation-direct.png",
+        "screenshots/revalidation-direct-missing.png"
+      ]
+    },
+    {
+      "scenario": 5,
+      "name": "Cancel short swipe or interrupt by scrolling; row returns without action",
+      "result": "PASS",
+      "basis": "Live native gestures after unused-prop removal",
+      "checks": [
+        {
+          "case": "under-threshold",
+          "horizontalOffsetPx": 0,
+          "verticalOffsetPx": 0,
+          "quote": false
+        },
+        {
+          "case": "scroll-interrupted",
+          "horizontalOffsetPx": 0,
+          "verticalOffsetPx": 150,
+          "quote": false
+        }
+      ],
+      "evidence": [
+        "screenshots/revalidation-under-threshold.png",
+        "screenshots/revalidation-scroll-interrupted.png"
+      ]
+    },
+    {
+      "scenario": 6,
+      "name": "Reply swipe, corner prompt/cancel and long press retain expected controls",
+      "result": "PASS",
+      "basis": "Live native gestures after unused-prop removal",
+      "checks": [
+        {
+          "case": "reply",
+          "horizontalOffsetPx": 0,
+          "verticalOffsetPx": 0,
+          "quote": true
+        },
+        {
+          "case": "corner",
+          "prompt": true,
+          "cancelled": true,
+          "createdCorner": false
+        },
+        {
+          "case": "long-press",
+          "messageActions": true
+        }
+      ],
+      "evidence": [
+        "screenshots/revalidation-reply.png",
+        "screenshots/revalidation-reply-cancelled.png",
+        "screenshots/revalidation-corner.png",
+        "screenshots/revalidation-corner-cancelled.png",
+        "screenshots/revalidation-long-press.png"
+      ]
+    }
+  ],
+  "screenshots": {
+    "under-threshold": {
+      "path": "screenshots/revalidation-under-threshold.png",
+      "sha256": "8c2888b24b3647d04532fcdf491bf65e63b1ab67a0ff1aef66fe9c90b747bd0c"
+    },
+    "scroll-interrupted": {
+      "path": "screenshots/revalidation-scroll-interrupted.png",
+      "sha256": "d930b5d0a016c22902470acf32c3b891ed93687ab4d73836285381a9b7188d04"
+    },
+    "reply": {
+      "path": "screenshots/revalidation-reply.png",
+      "sha256": "4972a9f63eff51cb2d7df9ebca20eb281a24423b42386e492c62ef2e795b2d86"
+    },
+    "reply-cancelled": {
+      "path": "screenshots/revalidation-reply-cancelled.png",
+      "sha256": "744d9030eaae44cad257b43189071ce27263e8aebc3bdfbd7a7795ef6fb577a8"
+    },
+    "corner": {
+      "path": "screenshots/revalidation-corner.png",
+      "sha256": "1a129c0cef9520b36390cf56f5d1495ca9d15dd6f19249928d0d8fe97fe8f7ba"
+    },
+    "corner-cancelled": {
+      "path": "screenshots/revalidation-corner-cancelled.png",
+      "sha256": "545b74de8e3445bb38fa07078134973e5bd765dfaaf451ade26679f857a27466"
+    },
+    "long-press": {
+      "path": "screenshots/revalidation-long-press.png",
+      "sha256": "11a7d1ce964dd4ced4cf57b6d9a59ea158ec7326afe997bc57a6724734418001"
+    },
+    "direct": {
+      "path": "screenshots/revalidation-direct.png",
+      "sha256": "9ec3543c113852b57d713768b74df41206e43fb28ac25b4631bbecff377d5237"
+    },
+    "direct-missing": {
+      "path": "screenshots/revalidation-direct-missing.png",
+      "sha256": "6cd4f23c4a7b74854764a7f8af97a75d32a0036928e5a157b4f7d9d0c5e614f0"
+    }
+  },
+  "restoration": {
+    "productionLaunchAssetRestored": true,
+    "verifiedSHA256": "0814b713dcfa6ed20048aae18d4ce2a3b22af36d1a888b564c5b1af0cc0d6f0c",
+    "addedExportedAssetsRemoved": true,
+    "temporarySourceHooksRestored": true,
+    "authStorageUntouched": true,
+    "messageSends": 0,
+    "cornersCreated": 0,
+    "publishedOTA": false,
+    "otherDevicesDriven": false
+  },
+  "scopeLimits": [
+    "Timing cases 1/2 reuse explicitly accepted earlier native measurements; these are not new target-head latency measurements.",
+    "Synthetic cache-removal and direct-navigation checks establish behavior, not a first-ever uncached tap-to-paint budget.",
+    "First-ever uncached Room total latency remains unmeasured; exploratory ~377 ms response wait is not total latency.",
+    "Room-list-return p95 250.815 ms remains OPEN for the PR body.",
+    "Tray experiment excluded; no universal interaction-budget claim."
+  ]
+}

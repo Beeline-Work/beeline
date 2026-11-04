@@ -1022,7 +1022,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect(await response.json()).toMatchObject({ token_type: 'Bearer' });
   });
   it.each([false, true])('MCP-STREAM-RESOURCE: an exchange without resource reaches the intended refusal (enabled=%s)', async enabled => {
-    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', enabled ? '1' : undefined);
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', enabled ? '1' : '0');
     try {
       const grant = await authorize();
       const issued = await exchange(grant, { resource: undefined, redirect_uri: undefined });

@@ -332,6 +332,14 @@ function cornerMessageCandidatesSql(corner?: string, parent?: string): string {
  * Expired rows stay; readers skip them by `expires_at`.
  */
 export function cornerOwedSchemaSql(): string {
+  const reportScope = `report_corner.parent_id IS NOT NULL
+      AND (report_corner.id=scope OR (scope IS NULL AND report_corner.id::text IN (
+        SELECT answer_room::text
+        UNION SELECT report.private_payload->>'fromRoomId' FROM agent_commands report
+          WHERE report.room_id=answer_room AND report.private_payload->>'kind'='report'
+        UNION SELECT ${humanReportCornerSql('report')} FROM messages report
+          WHERE report.room_id=answer_room AND report.card->>'reportToId' IS NOT NULL
+      )))`;
   return `
 CREATE INDEX IF NOT EXISTS corner_private_reports_origin ON agent_commands
   ((private_payload->>'fromRoomId'),(private_payload->>'authorId'),created_at DESC,id DESC)
@@ -350,17 +358,15 @@ BEGIN
       OR NEW.lifecycle->'pr'->>'headSha' IS NULL THEN RETURN NULL; END IF;
     scope=NEW.corner_id;
   END IF;
+  -- Most Room inserts cannot answer a corner report. Resolve the small indexed
+  -- candidate set before planning/evaluating the full waiting-report projection.
+  -- Keep the identical scope predicate below so this shortcut cannot broaden or
+  -- narrow which existing reports are answered.
+  IF NOT EXISTS(SELECT 1 FROM rooms report_corner WHERE ${reportScope}) THEN RETURN NULL; END IF;
   WITH answered AS MATERIALIZED (
     SELECT DISTINCT waiting.report_id,waiting.message_id,waiting.card_id
     FROM rooms report_corner CROSS JOIN LATERAL (${cornerWaitingReportSql('report_corner')}) waiting
-    WHERE report_corner.parent_id IS NOT NULL
-      AND (report_corner.id=scope OR (scope IS NULL AND report_corner.id::text IN (
-        SELECT answer_room::text
-        UNION SELECT report.private_payload->>'fromRoomId' FROM agent_commands report
-          WHERE report.room_id=answer_room AND report.private_payload->>'kind'='report'
-        UNION SELECT ${humanReportCornerSql('report')} FROM messages report
-          WHERE report.room_id=answer_room AND report.card->>'reportToId' IS NOT NULL
-      )))
+    WHERE ${reportScope}
       AND (TG_TABLE_NAME='corner_github_cache'
         OR (TG_TABLE_NAME='agent_commands' AND waiting.commander_id=answer_author)
         OR (TG_TABLE_NAME='messages' AND waiting.created_at<answer_at

@@ -26,8 +26,8 @@ import type { SqlDatabase } from './database.js';
 import { PhoneOperationError } from './phone-operations.js';
 import { RouterProjectionDrain, RouterProjectionUnavailable, encodeRouterBatch, fenceRouterBatch, readRouterAuthority, readRouterCertificate, deniedRouterAuthorityScope, resolveRouterInput, routerAtomicGroup, fenceRouterEnqueue } from './router-projections.js';
 
-/** An explicit rollout policy, independently gated on the committed LISTEN.
- * Defaults advertise no families until capture/fence/differential proofs pass. */
+/** Server composition selects the supported protocols. The committed LISTEN
+ * independently gates admission and current authority still fences delivery. */
 export interface RouterProjectionPolicy {
   readonly needsYouRoomsV1?:boolean;
   readonly families: readonly RouterFamily[];

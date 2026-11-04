@@ -23,6 +23,38 @@ function registry() {
 }
 
 describe('shared mobile surface registry', () => {
+  it('restores a validated stored response before navigation', () => {
+    const { cache } = registry();
+    const read = vi.fn(() => ({ count: 1 }));
+    const listener = vi.fn();
+    cache.subscribe(address, listener);
+    expect(cache.restoreStored(address, isCount, read)).toEqual({ count: 1 });
+    expect(cache.peek(address, isCount)).toEqual({ count: 1 });
+    expect(read).toHaveBeenCalledWith(surfaceCacheKey(address));
+    expect(listener).toHaveBeenCalledOnce();
+    cache.publish(address, { count: 2 }, isCount);
+    expect(cache.restoreStored(address, isCount, read)).toEqual({ count: 2 });
+    expect(read).toHaveBeenCalledOnce();
+  });
+
+  it('cannot synchronously restore a removed response or a response for another scope', async () => {
+    const { cache } = registry();
+    const read = vi.fn(() => ({ count: 1 }));
+    await cache.remove(address);
+    expect(cache.restoreStored(address, isCount, read)).toBeNull();
+    expect(read).not.toHaveBeenCalled();
+    const other = { ...address, viewerPubkey: 'other' };
+    expect(cache.restoreStored(other, isCount, key => key === surfaceCacheKey(address) ? { count: 1 } : null)).toBeNull();
+    expect(cache.peek(other, isCount)).toBeNull();
+  });
+
+  it('ignores invalid and unavailable synchronous storage without preventing the ordinary read', async () => {
+    const { cache, rows } = registry();
+    expect(cache.restoreStored(address, isCount, () => ({ invalid: true }))).toBeNull();
+    expect(cache.restoreStored(address, isCount, () => { throw Error('unavailable'); })).toBeNull();
+    rows.set(surfaceCacheKey(address), JSON.stringify({ count: 3 }));
+    expect(await cache.read(address, isCount)).toEqual({ count: 3 });
+  });
   it.each(['write', 'persist'] as const)('does not resurrect a removed Room through deferred %s', async (method) => {
     const writes = vi.fn(async () => {});
     let release!: () => Promise<void>;

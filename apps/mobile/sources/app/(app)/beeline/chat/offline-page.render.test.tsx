@@ -94,7 +94,7 @@ vi.mock('expo-file-system/legacy', () => ({
 vi.mock('react-native-view-shot', () => ({ captureRef: async () => '', releaseCapture() {} }));
 vi.mock('expo-sharing', () => ({}));
 vi.mock('expo-web-browser', () => ({}));
-vi.mock('react-native-gesture-handler/ReanimatedSwipeable', async () => ({
+vi.mock('@/components/buzz/TranscriptSwipeable', async () => ({
   default: (await import('react-native-gesture-handler')).Swipeable,
 }));
 

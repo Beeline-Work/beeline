@@ -1,5 +1,11 @@
 # Linux desktop surface audit
 
+## Current-main continuation
+
+The [continuation audit](continued/README.md) records the complete repeated walk,
+two additional sheet/navigation repairs, and final native validation after this
+first repair merged.
+
 2026-11-04. Real Tauri/WebKitGTK windows, built from current main
 `525dfedb5e1f351e4493a8c2bbf52f5d41a49568`, against the production server.
 The fixed build contains this PR's frame-policy and row-presentation changes on

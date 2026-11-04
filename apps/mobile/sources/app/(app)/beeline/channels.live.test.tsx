@@ -153,7 +153,7 @@ vi.mock('@/components/buzz/ChevronGlyph', () => ({
   ChevronGlyph: () => null,
 }));
 vi.mock('@/components/buzz/CommunityRail', () =>
-  hostModule('BuzzCommunityShell', 'CommunityDrawerTrigger'),
+  hostModule('BuzzCommunityShell', 'CommunityDrawerTrigger', 'CommunitySwitcherTrigger'),
 );
 vi.mock('@/components/buzz/CornerGlyph', () => ({ CORNER_META_SIZE: 12, CornerGlyph: () => null }));
 vi.mock('@/components/buzz/CornerWorkingPulse', () => hostModule('CornerWorkingPulse'));

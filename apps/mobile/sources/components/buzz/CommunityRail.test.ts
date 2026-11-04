@@ -136,6 +136,20 @@ function renderShell(
 }
 
 describe('Workspace drawer', () => {
+  it('keeps the loaded workspace identity without adding a control while Rooms cannot load', () => {
+    let renderer!: ReactTestRenderer;
+    act(() => {
+      renderer = create(React.createElement(CommunitySwitcherTrigger, {
+        community: { communityId: 'sample', name: 'Sample' }, expanded: false,
+      }));
+    });
+    expect(renderer.root.findAll((node) => node.props.testID === 'workspace-avatar-trigger')).toHaveLength(0);
+    expect(renderer.root.findAll((node) => node.type === 'View' && node.props.testID === 'workspace-header-plate')).toHaveLength(1);
+    expect(renderer.root.findAll((node) => node.type === 'Text' && node.props.testID === 'workspace-active-sample')[0].props.children).toBe('Sample');
+    expect(renderer.root.findAll((node) => typeof node.props.onPress === 'function')).toHaveLength(0);
+    act(() => renderer.unmount());
+  });
+
   it('shows an attention dot on the desktop Workspace avatar', () => {
     layout.desktop = true;
     try {

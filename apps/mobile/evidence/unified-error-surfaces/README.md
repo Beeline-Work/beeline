@@ -37,3 +37,11 @@ node apps/mobile/scripts/update-error-surface-evidence.mjs --write \
 ```
 
 Changed production elements must be retargeted explicitly, for example `--retarget sweep-04=IndexRow:transcriptHydrationError`. The script verifies every selector before writing. Historical JSX and the archived banner fixture stay pinned; active product code never imports that fixture. Run the mobile policy/design guards and `sources/buzz/error-rows.browser.test.ts` with `vitest run --maxWorkers=2` after updating evidence.
+
+## Room-list header follow-up
+
+The unavailable Room list now uses the loaded header’s shared workspace identity and header style: 62px height, 20px leading inset, 34px workspace plate, and body-strong title. The passive identity has no caret or press target; Reconnect remains the only failure action. Desktop follows the loaded content-pane header, with workspace navigation owned by the rail.
+
+[Live comparison board](https://uncertainty-generally-life-processes.trycloudflare.com/header-comparison.html) shows real-code before, loaded-reference and after frames in both themes at 360px and 1200px. [Measured comparison](header-comparison.json) records matching mark/title bounds and typography; phone mark x=20, title x=62. The loaded-reference drawer action is inert, and the frame uses fixture workspace data and native services. Images use `header-{before,loaded,after}-{bone,obsidian}-{360,1200}.png`.
+
+Follow-up checks: root typecheck; component policy with the shared identity registered; error/control guards; workspace identity, Room-list layout and live recovery tests; source-bound error browser proofs; and the 532-frame implementation matrix. The error state preserves the approved control count in every region.

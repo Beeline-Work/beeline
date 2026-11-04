@@ -82,6 +82,7 @@
       "BuzzCommunityShell",
       "CommunityDrawerContext",
       "CommunityDrawerTrigger",
+      "CommunityHeaderIdentity",
       "CommunityRail",
       "CommunitySwitcherTrigger",
       "HEADER_PLATE",

@@ -6,6 +6,15 @@ const component = (name: string) =>
 const row = component('ConversationRow');
 const toolbar = component('RoomListToolbar');
 describe('Approved Room list layout', () => {
+  it('keeps the unloaded header on the loaded header geometry and workspace type', () => {
+    const unavailable = source.slice(source.indexOf('if (error === connectionErrorTitle)'), source.indexOf("if (landing.kind !== 'deck'"));
+    expect(unavailable).toContain('<InlineRow style={styles.header}>');
+    expect(unavailable).toContain('<CommunitySwitcherTrigger community={activeCommunity} expanded={false} />');
+    expect(unavailable).not.toContain('<PageHeader');
+    expect(unavailable).not.toContain('<MembersAgentsGlyph');
+    expect(unavailable).not.toContain('<TrayGlyph');
+  });
+
   it('uses the workspace identity and header actions with Members then Tray in the primary row', () => {
     expect(source).toContain('<CommunityDrawerTrigger community={activeCommunity}');
     expect(source).toContain('<MembersAgentsGlyph');

@@ -1,7 +1,7 @@
 {
   "regions": 133,
   "sourceSha256": {
-    "app/(app)/beeline/channels.tsx": "8d725048e715a7015f5172096ec4919d945d3593f2bc762880e0481b0d011b09",
+    "app/(app)/beeline/channels.tsx": "ba8a1a3f8e489cae06324bb95950b3f0153db50145df6daa6cd2e3e2a8dc1c9a",
     "app/(app)/beeline/chat/RoomMessageVariants.tsx": "541682ad60b80e38816903df70786a5d6fb502bfd8bd621400d3af7c8445ac71",
     "app/(app)/beeline/chat/_chat-surface.tsx": "b4625e76b66d1f14108edcd297cac7ff3aa6a3b4554a4d0af636e309b87f1b9a",
     "app/(app)/beeline/community.tsx": "4ff7a72f85f96b13a747cfe4d64b9659eaea31c7af0c0d3ae9579c29e130e5c3",
@@ -42,6 +42,7 @@
     "components/buzz/ArtifactViewer.tsx": "a8e0ed043d08eb4fd9361a0e79243d522c176708bc58973d518c0da6cb44edb6",
     "components/buzz/Button.tsx": "3dcb57cc89868651e67c38257b7e0da61bb789d84475df28d66bdef7ace17d3e",
     "components/buzz/ChoiceVideoPreview.tsx": "84b03bf7d50f4705d688cc1667cd781eb111620aa48351ead0883ed8a91a6335",
+    "components/buzz/CommunityRail.tsx": "ad19f825931c6392884b6a9c49c387989f8086ae506a3a0fd5ec1afc2244635c",
     "components/buzz/ComputerSession.tsx": "331f377f9fe8dff572605a5fe658ecc5baaa17fee3c24684549e0f2879fa4e42",
     "components/buzz/ConnectionStatus.tsx": "00c58e7933cee0e354bdd217aed5c7ba4477d019a818927cdd93a6fa6bd74fb3",
     "components/buzz/ConversationComposer.tsx": "65bac9d50d17a0e6d10b38307f15d101b79e3d54b5de7dbabf5b3e9a565f964c",

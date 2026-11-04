@@ -1,0 +1,201 @@
+{
+  "fixtureBoundary": "Real production header JSX and shared identity. Drawer action is an inert callback, the same shared switcher used by the loaded drawer. Workspace data, native services, safe area and recovery callbacks are fixture values. Desktop retains the loaded header with its workspace identity owned by the desktop rail.",
+  "matrix": [
+    {
+      "width": 360,
+      "theme": "bone",
+      "state": "before",
+      "errors": [],
+      "controls": 1,
+      "title": null
+    },
+    {
+      "width": 360,
+      "theme": "bone",
+      "state": "loaded",
+      "errors": [],
+      "controls": 3,
+      "plate": {
+        "x": 20,
+        "y": 13.5,
+        "width": 34,
+        "height": 34,
+        "top": 13.5,
+        "right": 54,
+        "bottom": 47.5,
+        "left": 20
+      },
+      "title": {
+        "rect": {
+          "x": 62,
+          "y": 19,
+          "width": 83.953125,
+          "height": 23,
+          "top": 19,
+          "right": 145.953125,
+          "bottom": 42,
+          "left": 62
+        },
+        "font": "SpaceGrotesk-SemiBold",
+        "size": "16px",
+        "lineHeight": "23px",
+        "weight": "400"
+      }
+    },
+    {
+      "width": 360,
+      "theme": "bone",
+      "state": "after",
+      "errors": [],
+      "controls": 1,
+      "plate": {
+        "x": 20,
+        "y": 13.5,
+        "width": 34,
+        "height": 34,
+        "top": 13.5,
+        "right": 54,
+        "bottom": 47.5,
+        "left": 20
+      },
+      "title": {
+        "rect": {
+          "x": 62,
+          "y": 19,
+          "width": 83.953125,
+          "height": 23,
+          "top": 19,
+          "right": 145.953125,
+          "bottom": 42,
+          "left": 62
+        },
+        "font": "SpaceGrotesk-SemiBold",
+        "size": "16px",
+        "lineHeight": "23px",
+        "weight": "400"
+      }
+    },
+    {
+      "width": 360,
+      "theme": "obsidian",
+      "state": "before",
+      "errors": [],
+      "controls": 1,
+      "title": null
+    },
+    {
+      "width": 360,
+      "theme": "obsidian",
+      "state": "loaded",
+      "errors": [],
+      "controls": 3,
+      "plate": {
+        "x": 20,
+        "y": 13.5,
+        "width": 34,
+        "height": 34,
+        "top": 13.5,
+        "right": 54,
+        "bottom": 47.5,
+        "left": 20
+      },
+      "title": {
+        "rect": {
+          "x": 62,
+          "y": 19,
+          "width": 83.953125,
+          "height": 23,
+          "top": 19,
+          "right": 145.953125,
+          "bottom": 42,
+          "left": 62
+        },
+        "font": "SpaceGrotesk-SemiBold",
+        "size": "16px",
+        "lineHeight": "23px",
+        "weight": "400"
+      }
+    },
+    {
+      "width": 360,
+      "theme": "obsidian",
+      "state": "after",
+      "errors": [],
+      "controls": 1,
+      "plate": {
+        "x": 20,
+        "y": 13.5,
+        "width": 34,
+        "height": 34,
+        "top": 13.5,
+        "right": 54,
+        "bottom": 47.5,
+        "left": 20
+      },
+      "title": {
+        "rect": {
+          "x": 62,
+          "y": 19,
+          "width": 83.953125,
+          "height": 23,
+          "top": 19,
+          "right": 145.953125,
+          "bottom": 42,
+          "left": 62
+        },
+        "font": "SpaceGrotesk-SemiBold",
+        "size": "16px",
+        "lineHeight": "23px",
+        "weight": "400"
+      }
+    },
+    {
+      "width": 1200,
+      "theme": "bone",
+      "state": "before",
+      "errors": [],
+      "controls": 1,
+      "title": null
+    },
+    {
+      "width": 1200,
+      "theme": "bone",
+      "state": "loaded",
+      "errors": [],
+      "controls": 0,
+      "title": null
+    },
+    {
+      "width": 1200,
+      "theme": "bone",
+      "state": "after",
+      "errors": [],
+      "controls": 1,
+      "title": null
+    },
+    {
+      "width": 1200,
+      "theme": "obsidian",
+      "state": "before",
+      "errors": [],
+      "controls": 0,
+      "title": null
+    },
+    {
+      "width": 1200,
+      "theme": "obsidian",
+      "state": "loaded",
+      "errors": [],
+      "controls": 0,
+      "title": null
+    },
+    {
+      "width": 1200,
+      "theme": "obsidian",
+      "state": "after",
+      "errors": [],
+      "controls": 1,
+      "title": null
+    }
+  ]
+}

@@ -1,4 +1,3 @@
-import { PageHeader } from '@/components/buzz/PageHeader';
 import { EmptyState } from '@/components/buzz/EmptyState';
 import { appErrorCopy, connectionErrorDescription, connectionErrorTitle } from '@/buzz/app-error-copy';
 import { IndexRow } from '@/components/buzz/IndexRow';
@@ -44,7 +43,7 @@ import { inviteOnlyForRepository, type RepoCandidate } from '@/buzz/room-repo-pi
 import { workspaceRailItem, type WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { ROOM_LABEL, WORKSPACE_LABEL } from '@/buzz/vocabulary';
-import { BuzzCommunityShell, CommunityDrawerTrigger } from '@/components/buzz/CommunityRail';
+import { BuzzCommunityShell, CommunityDrawerTrigger, CommunitySwitcherTrigger } from '@/components/buzz/CommunityRail';
 import { ConversationRow } from '@/components/buzz/ConversationRow';
 import { DesktopRoomCorners } from '@/components/buzz/DesktopRoomCorners';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
@@ -957,7 +956,11 @@ export default function BuzzChannels() {
     if (error === connectionErrorTitle) {
       return (
         <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID="room-deck-unavailable">
-          <PageHeader eyebrow="Beeline" title="Rooms" prominent />
+          <InlineRow style={styles.header}>
+            {!isDesktop && (
+              <CommunitySwitcherTrigger community={activeCommunity} expanded={false} />
+            )}
+          </InlineRow>
           <View style={styles.failureInset}>
             <IndexRow
               inset="flush"

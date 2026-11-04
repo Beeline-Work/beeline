@@ -462,6 +462,46 @@ describe('negotiated Scheduled Work authority barrier',()=>{
     await routerOwnerNegotiated({generation:1,families:['room-scheduled-work'],authorityFencesV1:true,
       scheduledWorkCoverageV1:{version:1,authorityStart:position(0)},execute});await settle();return {execute,lane};
   }
+  it.each([
+    {phase: 'live', scheduled: false}, {phase: 'opening', scheduled: false},
+    {phase: 'live', scheduled: true}, {phase: 'opening', scheduled: true},
+  ])('keeps a mixed classified Workspace interval coherent: $phase, scheduled payload $scheduled', async ({phase, scheduled}) => {
+    const request = {family: 'room-head' as const, roomId};
+    const roomScopes = [...scopes, {authorityScope: `room:${roomId}`, epoch: '1'}];
+    const certificate = {scopes: roomScopes, digest: hash(roomScopes)};
+    const value = {room: {id: roomId, workspaceId: 'w'}, messages: []};
+    const initial = {...snapshot(), family: 'room-head', scope: roomId, value,
+      cut: data(81), authority: certificate, atomicGroup: `room-head:${roomId}:ada`} as RouterSnapshot<'room-head'>;
+    let finish!: () => void;
+    const pending = new Promise<void>(resolve => { finish = resolve; });
+    if (phase === 'live') finish();
+    const execute = vi.fn(async () => { await pending; return initial; });
+    routerOwnerNavigation({routes: [{key: 'room', name: 'beeline/chat/[channelId]', params: {channelId: roomId, communityId: 'w'}}]});
+    const lane = acquireRouterLane(request, () => true, () => {});
+    await routerOwnerNegotiated({generation: 1, families: ['room-head', 'room-scheduled-work'], authorityFencesV1: true,
+      roomHeadContinuityV1: true, scheduledWorkCoverageV1: {version: 1, authorityStart: position(0)}, execute});
+    await settle();
+    expect(lane.current().state).toBe(phase === 'live' ? 'LIVE' : 'OPENING');
+    const next = {...value, messages: [{id: 'committed'}]};
+    // Production sent independent Room facts with only a Scheduled Work classification.
+    const facts: unknown[] = Array.from({length: 13}, (_, index) => ({atomicGroup: initial.atomicGroup, authority: certificate,
+      payload: {kind: 'scope-replace', family: 'room-head', scope: index ? `other-${index}` : roomId, value: next}}));
+    if (scheduled) facts.push({atomicGroup: result().atomicGroup, authority: result().authority,
+      payload: {kind: 'scope-replace', family: 'room-scheduled-work', scope: roomId, value: result().value}});
+    const writes = fixture.storage.write.mock.calls.length;
+    batch(81, 83, facts); await settle();
+    expect(lane.current().state).toBe(phase === 'live' ? 'LIVE' : 'OPENING');
+    expect(lane.current().value).toEqual(phase === 'live' ? value : null);
+    expect(fixture.storage.write).toHaveBeenCalledTimes(writes);
+    authorityFrames(); await settle();
+    finish(); await settle();
+    expect(lane.current()).toMatchObject({state: 'LIVE', value: next, cut: {through: 83}, error: null});
+    batch(83, 84, [{atomicGroup: initial.atomicGroup, authority: certificate,
+      payload: {kind: 'scope-replace', family: 'room-head', scope: roomId, value: {...next, messages: [{id: 'later'}]}}}]);
+    await settle();
+    expect(lane.current()).toMatchObject({state: 'LIVE', value: {messages: [{id: 'later'}]}, cut: {through: 84}});
+    expect(execute).toHaveBeenCalledTimes(1); lane.release();
+  });
   it('holds a snapshot until complete authority controls are durable and cannot restore an old certificate',async()=>{
     const {execute,lane}=await open(1);expect(lane.current().value).toBeNull();
     let release!:()=>void;fixture.storage.floor.mockImplementationOnce(()=>new Promise<void>(resolve=>{release=resolve;}));

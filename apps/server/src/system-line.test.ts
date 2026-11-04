@@ -132,12 +132,12 @@ describe('who an event line mentions', () => {
       WORKSPACE,
     ]);
     await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-       VALUES($1,$2,$3,'member','[]'::jsonb),($1,$2,$4,'member','["joined"]'::jsonb),
-             ($1,$2,$5,'member','["merged"]'::jsonb)`,
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
       [WORKSPACE, ROOM, HUMAN, GREETER, QUIET_AGENT],
     );
     await setRoomEventSubscriptions(database, ROOM, GREETER, ['joined']);
+    await setRoomEventSubscriptions(database, ROOM, QUIET_AGENT, ['schedule-ran']);
   });
   afterEach(() => database.close());
 
@@ -204,10 +204,7 @@ describe('who an event line mentions', () => {
   });
 
   it('never mentions a human or a member who left', async () => {
-    await database.query(
-      `UPDATE memberships SET event_subscriptions='["joined"]'::jsonb WHERE identity_id=$1`,
-      [HUMAN],
-    );
+    await setRoomEventSubscriptions(database, ROOM, HUMAN, ['joined']);
     await database.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [GREETER]);
     const written = await systemLine(database, {
       roomId: ROOM,

@@ -801,7 +801,7 @@ beforeEach(async () => {
   await db.query(`DELETE FROM corner_brief_revisions`);
   await db.query(`UPDATE agents SET access_policy='{"type":"everyone"}'::jsonb`);
   await db.query(`UPDATE memberships SET removed_at=NULL`);
-  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
+  await db.query(`DELETE FROM agent_subscriptions WHERE source='room'`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL`);
   await db.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`, [C]);
   await db.query(
@@ -1507,7 +1507,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
   await expect(
     daemon.execute('getAgentConfiguration', { agentId: A, roomId: C }, A),
   ).resolves.toEqual(expect.objectContaining({ reviewerHandle: 'hoots' }));
-  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE identity_id=$1`, [
+  await db.query(`DELETE FROM agent_subscriptions WHERE source='room' AND agent_id=$1`, [
     A,
   ]);
   for (let n = 0; n < 2; n++)
@@ -1660,7 +1660,7 @@ it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green he
       daemon.execute('setEventSubscriptions', { roomId, kinds: [] }, A),
     ).resolves.toEqual({ kinds: ['check-passed'] });
   }
-  await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb WHERE identity_id=$1`, [
+  await db.query(`DELETE FROM agent_subscriptions WHERE source='room' AND agent_id=$1`, [
     A,
   ]);
 

@@ -1,3 +1,4 @@
+import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 /**
  * How far an event may travel, and how many turns it may pay for.
  *
@@ -176,10 +177,8 @@ describe('an event cascade', () => {
     // The join must survive: a greeting Room with more subscribers than the
     // per-chain budget is a Room, not an attack, and losing the membership
     // write to a guard meant for agents is the silent failure this forbids.
-    await database.query(
-      `UPDATE memberships SET event_subscriptions='["joined"]'::jsonb WHERE identity_id=ANY($1::text[])`,
-      [[AGENT_A, AGENT_B]],
-    );
+    for (const agent of [AGENT_A, AGENT_B])
+      await setRoomEventSubscriptions(database, ROOM, agent, ['joined']);
     const join = await systemLine(database, {
       roomId: ROOM,
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },
@@ -197,10 +196,8 @@ describe('an event cascade', () => {
   });
 
   it('counts a subscriber fan-out toward the same budget its emits spend', async () => {
-    await database.query(
-      `UPDATE memberships SET event_subscriptions='["joined"]'::jsonb WHERE identity_id=ANY($1::text[])`,
-      [[AGENT_A, AGENT_B]],
-    );
+    for (const agent of [AGENT_A, AGENT_B])
+      await setRoomEventSubscriptions(database, ROOM, agent, ['joined']);
     const root = await systemLine(database, {
       roomId: ROOM,
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },

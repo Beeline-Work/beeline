@@ -880,7 +880,7 @@ jobs:
         env:
           BEELINE_INCIDENT_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
       - name: Prove release migration lock handoff on isolated PostgreSQL
-        run: npm test -w @beeline/server -- --run src/migration-steps.test.ts --maxWorkers=1 --minWorkers=1
+        run: npm test -w @beeline/server -- --run src/migration-steps.test.ts src/router-release-migration.postgres.test.ts --maxWorkers=1 --minWorkers=1
         env:
           BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL: postgres://postgres:isolated-proof@127.0.0.1:${{ job.services.postgres.ports['5432'] }}/postgres
       - name: Prove push outbox migration lock handoff on isolated PostgreSQL

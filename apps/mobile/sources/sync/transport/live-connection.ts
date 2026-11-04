@@ -242,8 +242,8 @@ export class LiveConnection {
   request<Name extends keyof PhoneOperationMap>(
     op: Name, args: PhoneOperationMap[Name]['input'], options: SocketRequestOptions = {},
   ): Promise<PhoneOperationMap[Name]['output']> {
-    if (op === 'readRouterSnapshot') return Promise.reject(
-      new PhoneSocketError('owner_required', 'Projection reads require the local router owner', false));
+    if (['readRouterSnapshot', 'readRoomTools', 'readMediaMetadata', 'readMediaLink', 'readMediaPlayback'].includes(op)) return Promise.reject(
+      new PhoneSocketError('owner_required', 'This read requires the local router owner', false));
     const generation = this.generation;
     const start = () => {
       if (generation !== this.generation) return Promise.reject(new MonolithSessionChangedError());
@@ -1237,7 +1237,9 @@ export function sharedLiveConnection(): LiveConnection {
           NetInfo.configure({ reachabilityShouldRun: () => false });
           let previous: string | undefined;
           unsubscribe = NetInfo.addEventListener(state => {
-            const current = JSON.stringify([state?.type, state?.isConnected, state?.isInternetReachable]);
+            const details = state?.details;
+            const current = JSON.stringify([state?.type, state?.isConnected, state?.isInternetReachable,
+              details && 'ipAddress' in details ? details.ipAddress : null]);
             const changed = previous !== undefined && previous !== current;
             previous = current;
             if (changed) listener();

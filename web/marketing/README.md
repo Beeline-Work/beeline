@@ -12,7 +12,7 @@ node scripts/marketing/build.mjs
 
 Run it after changing `demo-source.mjs`, `story.mjs` or `ui.json`, and commit the generated `demo.js`. The browser lazy-loads this dependency-free controller; it never loads React or React Native Web. The hero's first message and platform download destinations are present before JavaScript runs.
 
-Both composers use the deterministic response table in `story.mjs`, with no model, backend, socket, polling or storage. User messages enter through text nodes; histories are capped at 50 messages. Existing download attribution runs separately on download clicks. Normal-motion playback follows the visible section and stops for manual terminal interaction. Reduced motion shows a settled transcript and connected terminal without autoplay.
+The hero and join-demo composers use the deterministic response table in `story.mjs`, with no model, backend, socket, polling or storage. User messages enter through text nodes; histories are capped at 50 messages. Existing download attribution runs separately on download clicks. Normal-motion playback follows the visible section and stops for manual terminal interaction. Reduced motion shows a settled transcript and connected terminal without autoplay.
 
 Run the targeted JS checks:
 
@@ -21,3 +21,5 @@ node --test scripts/landing-animation.test.mjs scripts/desktop-download.test.mjs
 ```
 
 For visual changes, serve `web/` and check 1440px desktop and 360/390/412/430px phones, keyboard send, tool disclosures, the download chooser and reduced motion. Review screenshots and the original full Lighthouse reports are linked in the PR body rather than committed as production assets.
+
+The same-page artwork in `context-art.mjs` moves seven assigned tasks along a center rail, with two or three in focus. `boot.mjs` imports this controller so the runtime and dead-code graph share the same entry. Complete output lines fade as a unit. It runs only in the visible section and freezes under reduced motion. `identities.css` and `logos/provenance.json` own the local company marks and native person avatars. The join-demo Room starts without Codex: Alan, identified in the CLI header, types the join prompt; the exported system line credits @alan before Claude’s welcome.

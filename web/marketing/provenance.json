@@ -1,5 +1,5 @@
 {
-  "approvedMock": "da5eb80dd",
+  "approvedMock": "9daa5e323 (join-order correction f83c97faf)",
   "sharedComponents": [
     {
       "path": "apps/mobile/sources/components/buzz/Ledger.tsx",
@@ -63,5 +63,8 @@
     }
   ],
   "runtime": "dependency-free DOM controller",
-  "fontBytes": 327392
+  "fontBytes": 327392,
+  "brandAssets": "logos/provenance.json",
+  "workflowArtwork": "workflow-provenance.json",
+  "joinSystemMarkup": "LedgerSystemLine static export reused as joinSystem, with native mention colors and timestamp."
 }

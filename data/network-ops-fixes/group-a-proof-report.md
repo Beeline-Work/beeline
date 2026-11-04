@@ -254,3 +254,28 @@ the router PR has not landed there yet. Firstmate instruction015 holds all
 pushes and combined-branch merges until that landing and an explicit release
 to retarget this continuation to main. The two downstream aggregate failures
 are consequences of the failing server shards, not additional test failures.
+
+
+## Main integration after router landing
+
+Firstmate instruction016 releases the hold after the router landed on main.
+This continuation now targets main `f1ec3c759`. The merge uses the exact 45-file
+Group A delta from the previous integrated base over the current main tree,
+avoiding duplicate-history add/add resolutions while preserving all unrelated
+main files and its phone-auth, timer, media and MCP fixture repairs. Local
+commit `c17886ff2` remains in the merge history and its exact Tray assertion is
+retained. No production behavior was changed to satisfy that assertion.
+
+Fresh verification passes **336 cases across 15 serial Vitest suites**, each
+with `--maxWorkers=2`: MCP negotiation4, Tray mutable source16, source
+planning17, real PostgreSQL11 plus strict5, Members83, actual phone owner31,
+picker5, owner hooks3, live connection91, lanes34, atomic groups11,
+admission14, display2 and Room folds9. All16 PostgreSQL cases pass without
+skips. Full root typecheck, dependency builds, codec generation, bundle3,
+boundary regressions29, architecture checks and phone inventory72/72 pass;
+all46 production evidence selectors remain valid. Scenario deadlines, exact
+assertions, byte budgets and production capability settings remain unchanged.
+
+Per instruction016 this merged head receives one push and one CI round.
+Remote readiness must be checked on that exact head; the ten whole findings
+remain Open for the consumer/cohort obligations documented above.

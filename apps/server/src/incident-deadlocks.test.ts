@@ -10,6 +10,8 @@ import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { lockCornerLifecycle } from './corner-lifecycle.js';
 import { createAgentCommand } from './agent-command.js';
+import { TokenAuth } from './auth.js';
+import { flushSentryWakes, runSentryWakeDeadline } from './sentry-wake.js';
 
 const url = process.env.BEELINE_INCIDENT_TEST_POSTGRES_URL;
 if (url && !['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname))
@@ -112,6 +114,135 @@ describe.skipIf(!url)('production incident deadlocks on real PostgreSQL', () => 
       pr:{number:1,headSha,url:'https://github.com/owner/widgets/pull/1',mergeability:'clean'}}), workflowState: 'implement' });
     for (const who of [H,A,B,F]) for (const room of [null,R])
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`, [W,room,who]);
+  });
+
+  it('SERVER-26/1A: one blocked command cannot consume the phone and webhook connections', async () => {
+    // Real events: 5bb487e9f3c748f08d428fe653981658 (receipt deadline),
+    // 4ad2aae26c47425298fcfb3d2a4b5bb8 (phone auth checkout),
+    // 70aec06b59b34e22b735171fcf55e500 (GitHub webhook checkout).
+    // Fly logs show command-row waits before the checkout failures.
+    const isolated = new URL(url!); isolated.pathname = `/${databaseName}`;
+    const appDb = new PostgresDatabase('', 2, { pool: new Pool({ connectionString: isolated.toString(), max: 2,
+      connectionTimeoutMillis: 50, statement_timeout: 2000 }), transactionDeadlineMs: 1000 });
+    const source = 'e'.repeat(64);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Work')`, [source,R,H]);
+    const command = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: source, reason: 'human_tag' });
+    const setup = new DaemonService(db, new LiveHub());
+    await setup.execute('claimAgentCommand', { roomId: R, commandId: command!.id, generationId: 'rollout-proof' }, A);
+    await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+      VALUES('github','rollout-proof',$1,'https://github.com','beeline','owner') ON CONFLICT DO NOTHING`, [H]);
+    const auth = new TokenAuth(appDb, async () => ({ subject: 'rollout-proof', login: 'owner', name: 'Owner' }));
+    const token = (await auth.exchangeGitHubOidc('fixture')).accessToken;
+    const locked = deferred(), release = deferred(), entered = deferred();
+    const blocker = db.transaction(async tx => {
+      await tx.query(`SELECT id FROM agent_commands WHERE id=$1 FOR UPDATE`, [command!.id]);
+      locked.resolve(); await release.promise;
+    });
+    await locked.promise;
+    let writers = 0;
+    const watched: SqlDatabase = {
+      query: appDb.query.bind(appDb),
+      transaction: work => appDb.transaction(tx => {
+        const wrapped: SqlDatabase = { query: async (sql, values) => {
+          if (/FROM agent_commands command/.test(sql) && /FOR UPDATE OF command/.test(sql)) { writers++; entered.resolve(); }
+          return tx.query(sql, values);
+        }, transaction: nested => nested(wrapped) };
+        return work(wrapped);
+      }),
+    };
+    const daemon = new DaemonService(watched, new LiveHub());
+    const turn = { roomId: R, requestId: command!.turn_request_id, generationId: 'rollout-proof', agentId: A };
+    const requests = Array.from({ length: 8 }, (_, n) => n % 2
+      ? daemon.execute('postAgentTurnReceipt', { ...turn, status: 'working', heartbeat: true }, A)
+      : daemon.execute('postAgentActivity', { ...turn, activity: [{ kind: 'thinking', title: 'Working', status: 'in_progress' }] }, A));
+    // Observe all promises immediately, including on the failing pre-fix path.
+    const settled = Promise.allSettled(requests);
+    try {
+      await entered.promise;
+      expect(await auth.authenticatePhoneSession(token)).toMatchObject({ identityId: H });
+      const app = {
+        installationToken: async () => ({ token: 'fixture' }),
+        readCommitCheckRollup: async () => ({ state: 'passed', total: 1, failing: [], checks: [{ name: 'lint', status: 'passed' }] }),
+        readPullRequest: async () => ({ number: 1, headSha, mergeability: 'clean' }),
+      } as unknown as GitHubAppClient;
+      const github = new GitHubOperations(appDb, {} as GitHubOAuthClient, app, 'secret');
+      await github.processWebhook('check_run', { action: 'completed', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
+        check_run: { name: 'lint', status: 'completed', conclusion: 'success', head_sha: headSha,
+          check_suite: { head_branch: 'feature/corner-333333333333', head_sha: headSha } } });
+      expect(writers).toBe(1);
+    } finally {
+      release.resolve(); await blocker;
+      const results = await settled;
+      await appDb.close();
+      expect(results.map(result => result.status)).toEqual(Array(8).fill('fulfilled'));
+      expect(appDb.transactionDeadlineCount()).toBe(0);
+    }
+  }, 20_000);
+
+  it('SERVER-24: receipt writers wait before starting their transaction deadline', async () => {
+    // Event 5bb487e9f3c748f08d428fe653981658 was postAgentTurnReceipt.
+    // Each writer is short enough individually; waiting behind the preceding
+    // writer must not consume the next writer's transaction deadline.
+    const isolated = new URL(url!); isolated.pathname = `/${databaseName}`;
+    const appDb = new PostgresDatabase('', 4, { pool: new Pool({ connectionString: isolated.toString(), max: 4,
+      connectionTimeoutMillis: 2000, statement_timeout: 2000 }), transactionDeadlineMs: 1000 });
+    const source = 'e'.repeat(64);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Work')`, [source,R,H]);
+    const command = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: source, reason: 'human_tag' });
+    await new DaemonService(db, new LiveHub()).execute('claimAgentCommand',
+      { roomId: R, commandId: command!.id, generationId: 'deadline-proof' }, A);
+    const watched: SqlDatabase = { query: appDb.query.bind(appDb), transaction: work => appDb.transaction(tx => {
+      const wrapped: SqlDatabase = { query: async (sql, values) => {
+        const result = await tx.query(sql, values);
+        if (/FROM agent_commands command/.test(sql) && /FOR UPDATE OF command/.test(sql))
+          await new Promise(resolve => setTimeout(resolve, 650));
+        return result;
+      }, transaction: nested => nested(wrapped) };
+      return work(wrapped);
+    }) };
+    const daemon = new DaemonService(watched, new LiveHub());
+    try {
+      const results = await Promise.allSettled(Array.from({ length: 4 }, () => daemon.execute('postAgentTurnReceipt', {
+        roomId: R, requestId: command!.turn_request_id, generationId: 'deadline-proof', agentId: A,
+        status: 'working', heartbeat: true,
+      }, A)));
+      const errors = results.flatMap(result => result.status === 'rejected' ? [String(result.reason)] : []);
+      expect(errors).toEqual([]);
+      expect(appDb.transactionDeadlineCount()).toBe(0);
+    } finally { await appDb.close(); }
+  });
+
+  it.each(['dispatch','singleton','insert'])('SERVER-25: a busy %s leaves the Sentry batch pending and delivers it once after release', async kind => {
+    const triage = 'a914716f-cd6c-4663-b42a-6e1044dc2bb9';
+    await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Triage',$4)`, [triage,W,R,A]);
+    await db.query(`DELETE FROM sentry_wake_issues`);
+    await db.query(`UPDATE sentry_wake_state SET last_wake_at=NULL`);
+    await db.query(`INSERT INTO sentry_wake_issues(issue_id,event_type,title,level,culprit,permalink,first_seen,last_seen,event_count,delivery_hash)
+      VALUES('7825612495','issue.created','canceling statement due to lock timeout','error','createAgentCommand',
+        'https://beeline-bt.sentry.io/issues/7825612495/',now(),now(),1,'534f2fb1712b472fb6d3210b4b4aac0c')`);
+    const locked = deferred(), release = deferred();
+    if (kind === 'insert') await db.query(`CREATE FUNCTION sentry_insert_contention() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN IF NEW.reason='subscribed_event' THEN PERFORM pg_advisory_xact_lock(739125); END IF; RETURN NEW; END $$;
+      CREATE TRIGGER sentry_insert_contention BEFORE INSERT ON agent_commands FOR EACH ROW EXECUTE FUNCTION sentry_insert_contention()`);
+    const blocker = db.transaction(async tx => {
+      if (kind === 'dispatch') await tx.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`commander-wakes:${triage}:${A}`]);
+      else if (kind === 'singleton') await tx.query(`SELECT singleton FROM sentry_wake_state WHERE singleton FOR UPDATE`);
+      else await tx.query(`SELECT pg_advisory_xact_lock(739125)`);
+      locked.resolve(); await release.promise;
+    });
+    await locked.promise;
+    const bounded: SqlDatabase = { query: db.query.bind(db), transaction: work => db.transaction(async tx => {
+      await tx.query(`SET LOCAL lock_timeout='30ms'`); return work(tx);
+    }) };
+    try {
+      await expect(runSentryWakeDeadline(bounded,A)).resolves.toBeUndefined();
+      expect((await db.query(`SELECT pending FROM sentry_wake_issues`)).rows).toEqual([{ pending: true }]);
+    } finally { release.resolve(); await blocker; }
+    await flushSentryWakes(bounded,A);
+    await flushSentryWakes(bounded,A);
+    if (kind === 'insert') await db.query(`DROP TRIGGER sentry_insert_contention ON agent_commands; DROP FUNCTION sentry_insert_contention()`);
+    expect((await db.query(`SELECT pending FROM sentry_wake_issues`)).rows).toEqual([{ pending: false }]);
+    expect((await db.query(`SELECT id FROM agent_commands WHERE room_id=$1 AND reason='subscribed_event'`, [triage])).rowCount).toBe(1);
   });
 
   it('R-BRIEF-DEADLOCK: brief revision returns a real deadlock and a separate action can recover', async () => {

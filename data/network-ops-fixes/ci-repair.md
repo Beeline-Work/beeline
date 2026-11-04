@@ -120,3 +120,50 @@ instead of assuming a fixed number of promise turns.
 unchanged phone/router/base-aware architecture guards. The previous server and
 bundle validation remains applicable: this additional delta changes neither.
 Capability remains off, and native/cohort closure is unchanged.
+
+## MCP negotiation fixture correction (instruction057)
+
+The composed main join endpoint reads `RoomsMcpOAuth.resource`, a service URL
+initialized by its real constructor from the configured origin. The negotiation
+test's hand-written OAuth object omitted it, reproducing three409→500 failures.
+The fixture now uses the production constructor and stubs only authentication
+and admission; its zero-application-read assertions remain unchanged.
+
+The real HTTP/OAuth `MCP-STREAM-RESOURCE` cases issue tokens through an exchange
+that omits `resource` and `redirect_uri`. With the deployment flag off and with it
+on but the committed listener unready, these tokens receive409
+`member_stream_unavailable`. Missing, invalid and revoked bearer credentials
+receive401 `invalid_token` and canonical resource discovery. The configured
+service URL is independent of the bearer token, so the missing-fixture property
+is not reachable by omitting a token-exchange parameter. No production handler
+change or new authorization gate is needed.
+
+Validation: `rooms-mcp-negotiation.test.ts` **4/4 pass**; `rooms-mcp.test.ts`
+selected with `--testNamePattern 'MCP-STREAM-RESOURCE|MCP-TOKEN-1'` **3/3 pass**
+(the other157 cases are deliberately unselected); server `tsc --noEmit` passes.
+Both suites ran serially with `--maxWorkers=2 --minWorkers=1` and a4096 MiB heap.
+This preserves F15 negotiation coverage; whole-finding closure and rollout
+capability remain unchanged.
+
+## Schema rollout and contention integration
+
+Main `776405f0cd7d1b2c9eb7322663a9066d10017304` introduced four conflicts
+after the negotiation correction. Their resolution retains main's same-turn
+queue before database checkout, the router's current authority/model credential
+fences, and single-attempt transactions. Sentry uses nonblocking dispatch and
+singleton acquisition; lock refusal returns no retry deadline while retaining
+the pending batch. Explicit later admission can deliver it once. The existing
+60-second incident setup deadline is retained.
+
+Main also preserves two columns read by older serving images and adds its
+post-drain contract guard. These additive repairs change the schema relative to
+earlier byte-identical notification-migration evidence. Historical image proofs
+are not promoted to proof of this candidate or of the deployed recovery floor.
+
+[Merge evidence](rollout-main-integration-validation.json): **42 server
+cases in eight serial suites** and **75 Node checks** pass, including
+real PostgreSQL contention/authority/model/lost-reply proofs and repeated
+schema overlap. All8 builds, full root typecheck, the existing architecture and
+phone/router/workflow guards, and main's schema compatibility guard pass.
+The full combined candidate remains capability-off; this is neither rollout
+approval nor an additional whole-finding closure.

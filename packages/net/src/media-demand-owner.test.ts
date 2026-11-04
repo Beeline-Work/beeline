@@ -100,3 +100,16 @@ describe('real private media demand ownership', () => {
     await expect(f.owner.dispatch('readMediaMetadata', objectId, async () => 'explicit')).resolves.toBe('explicit');
   });
 });
+
+
+it('F23: a browser gesture owns metadata and link, and a cache join consumes its metadata opportunity', async () => {
+  const f = fixture(); f.owner.connected(1); const send = vi.fn(async () => 'capability');
+  f.owner.action('OpenArtifactBrowser', objectId);
+  await f.owner.dispatch('readMediaMetadata', objectId, send);
+  await f.owner.dispatch('readMediaLink', objectId, send);
+  await expect(f.owner.dispatch('readMediaMetadata', objectId, send)).rejects.toThrow('not current');
+  f.owner.action('OpenArtifactBrowser', objectId); f.owner.satisfy('readMediaMetadata', objectId);
+  await expect(f.owner.dispatch('readMediaMetadata', objectId, send)).rejects.toThrow('not current');
+  await f.owner.dispatch('readMediaLink', objectId, send);
+  expect(send).toHaveBeenCalledTimes(3);
+});

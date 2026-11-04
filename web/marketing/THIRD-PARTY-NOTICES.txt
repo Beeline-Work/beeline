@@ -46,3 +46,5 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Company marks in logos/ identify their respective harnesses and services. Sources, retrieval dates and SHA-256 hashes are recorded in logos/provenance.json. Marks are served locally and remain the property of their respective owners. People avatars are rendered from Beeline’s native personFaceLayers.

@@ -199,7 +199,7 @@ html{scroll-snap-type:y mandatory;scroll-padding-top:0}.page{max-width:1280px;pa
 
 .shared-context-room{height:365px;overflow:hidden}.context-graphic .native-room{height:100%}
 
-/* Codex has the same shared cat mark and seed in the rail and transcript. */
+/* Codex uses its official local mark in the rail and transcript. */
 .native-codex-mark{overflow:visible}.native-codex-mark svg{width:100%!important;height:100%!important;max-width:none!important;max-height:none!important}
 
 /* Keep scrolled terminal output below its fixed welcome box. */
@@ -222,3 +222,15 @@ html{scroll-snap-type:y mandatory;scroll-padding-top:0}.page{max-width:1280px;pa
 /* Reserve the final graph positions before its lightweight router runs. */
 .node{left:var(--node-x);top:var(--node-y)}
 @media(max-width:760px){.node{left:var(--phone-x)}.stage:not(.phone) .node{gap:6px}.stage:not(.phone) .node.agent{top:44px}.stage:not(.phone) .node.human{top:auto;bottom:16px;transform:translateX(-50%)}.stage:not(.phone) .node .tile{width:36px;height:36px}.stage:not(.phone) .node .name{font-size:9px;line-height:14px}.stage:not(.phone) .node .tile>svg,.stage:not(.phone) .node .tile>img{width:24px;height:24px;max-width:28px;max-height:28px}.stage:not(.phone) .node.human .tile>svg{width:28px;height:28px}}
+
+/* Human direction and agent output remain distinct in the existing CLI. */
+.codex-tui{font-size:14px;line-height:1.6;color:#c9c9d1}
+.codex-welcome strong{display:flex;align-items:center;gap:10px;color:#f0f0f3}
+.codex-title-logo{display:block;width:30px;height:30px;flex-shrink:0}
+.codex-welcome p,.tui-hint{color:#b8b8c2}
+.tui-human,.tui-prompt{color:#e5b76e}
+.tui-human{font-weight:600}
+.tui-agent{color:#c9c9d1}
+.tui-prompt input::placeholder{color:#c9aa7b;opacity:1}
+.tui-output>div{max-width:100%;overflow-wrap:anywhere}
+@media(max-width:760px){.codex-tui{font-size:13px;line-height:1.5}.codex-welcome{font-size:13px}.codex-title-logo{width:26px;height:26px}}

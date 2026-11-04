@@ -8437,6 +8437,7 @@ export class PhoneService {
       for (const [table, column] of [
         ['messages', 'deleted_by'],
         // Retained only for rolling-deployment and rollback compatibility.
+        ['corner_facts', 'owner_agent_id'],
         ['corner_apps', 'author_agent_id'],
         ['corner_app_installations', 'installed_by'],
         ['corner_app_installations', 'developer_agent_id'],

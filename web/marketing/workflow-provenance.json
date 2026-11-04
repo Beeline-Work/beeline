@@ -1,0 +1,68 @@
+{
+  "visualSource": "Native WorkflowStepCircle geometry on a continuously moving center rail. Seven assigned tasks alternate left/right; only two or three remain in focus. Outputs are complete static text nodes, faded as a unit; no typewriter effect. Reduced motion freezes the final three tasks. Astra uses the locally recorded OpenAI company mark.",
+  "tasks": [
+    {
+      "id": "keys",
+      "owner": "Grok Bot",
+      "asset": "grok-bot.svg",
+      "title": "Sign up + get API keys",
+      "detail": "Grok Whisper \u00b7 Deepgram",
+      "method": "via Trusty Squire",
+      "output": "Keys connected."
+    },
+    {
+      "id": "research",
+      "owner": "Muse",
+      "asset": "muse.svg",
+      "title": "Research best speech patterns + handoff phrases",
+      "output": "Patterns mapped."
+    },
+    {
+      "id": "mock",
+      "owner": "Claude Code",
+      "asset": "claude.png",
+      "title": "Mock frontend",
+      "output": "Mock ready."
+    },
+    {
+      "id": "approve",
+      "owner": "Jimmy",
+      "asset": "jimmy.svg",
+      "title": "Approve frontend",
+      "output": "Looks good.",
+      "person": true
+    },
+    {
+      "id": "wiring",
+      "owner": "Codex",
+      "asset": "codex.png",
+      "title": "Backend + API wiring",
+      "output": "APIs connected."
+    },
+    {
+      "id": "review",
+      "owner": "Astra",
+      "asset": "codex.png",
+      "title": "Code review",
+      "output": "Checks pass."
+    },
+    {
+      "id": "testing",
+      "owner": "Alan",
+      "asset": "alan.svg",
+      "title": "User testing",
+      "output": "Feels natural.",
+      "person": true
+    }
+  ],
+  "sources": [
+    {
+      "path": "apps/mobile/sources/components/buzz/WorkflowRunLine.tsx",
+      "sha256": "1ba306c89bf0eef210d1e24d84d3e482ee4468aa66e397036a643cbcf0b830d5"
+    },
+    {
+      "path": "apps/mobile/sources/components/buzz/Ledger.tsx",
+      "sha256": "6f2ee4b68433d8132a1e93f767a5239504e25572cb8c5658b5c54a43d8b215a8"
+    }
+  ]
+}

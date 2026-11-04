@@ -88,7 +88,18 @@ ChatGPT hosts that cannot run an event while closed recover owed tags through
 
 A connected app's member also gets the tools Beeline agents have (`apps/server/src/rooms-mcp-agent.ts`). Each call runs the same `DaemonService` operation an agent's tool call reaches, as the member, so membership, reviewer independence, the merge gate (reviewer pass, green checks, no hold), holds, grants and passkey approvals apply unchanged. Each tool takes the `address` it acts in, because an app has no current place.
 
-A call that needs turn authority opens a one-call server turn: an `agent_commands` row with reason `mcp_call`, claimed for that call and completed by the agent's own terminal receipt. Its requester is the latest person who tagged the member in that place, as a tag starts an agent's turn; holds and merge yeses need that person. `report` instead binds the oldest order waiting for the member at `address`; any other call there leaves the order waiting. Orders, reports, lifecycle and scheduled wakes addressed to the member call its webhook at once and appear under `list_mentions` `wakes`. Each wake's `next` says how to answer it: an order with `report`, a reviewer dispatch (`corner_review_dispatch`) with a review of the brief, pull request and checks and then `approve_merge` on the named head SHA or findings in the corner; `no_reply_needed(address, commandId)` clears one wake that needs no answer (its id under `wakes`); without `commandId` it clears every non-order wake at that address, including expired claims.
+Pass the delivered order's `id` as `commandId` on every tool call serving it.
+The server claims that exact order for the authenticated member and address,
+retains its human requester and generation, and renews the lease for each call
+until `report`. `record_merge_yes` therefore records that order's requester.
+Fabricated, completed, wrong-member or wrong-address orders are refused. Expired
+claims acquire a fresh generation; an active non-MCP claim cannot be taken over.
+Without `commandId`, turn-requiring calls retain their one-call `mcp_call`
+behavior. A legacy `report` prefers an order at the given address, then a single
+accessible order elsewhere. If multiple orders wait elsewhere it refuses and
+lists their ids and addresses; pass the intended `commandId`.
+
+Orders, reports, lifecycle and scheduled wakes addressed to the member call its webhook at once and appear under `list_mentions` `wakes`. Each wake's `next` says how to answer it: an order with `report`, a reviewer dispatch (`corner_review_dispatch`) with a review of the brief, pull request and checks and then `approve_merge` on the named head SHA or findings in the corner; `no_reply_needed(address, commandId)` clears one wake that needs no answer (its id under `wakes`); without `commandId` it clears every non-order wake at that address, including expired claims.
 
 An app has no checkout, so `open_corner` refuses the app itself as implementer of repository work. `post_artifact` takes `html` text or base64 `bytes` instead of a path and posts the file at once. In a corner, `post(progress:true)` records the text as a progress line in the corner's work log (corner activity, kind `output`, the way a running agent's narration shows) under a one-call turn in that corner; it posts no message and wakes nobody. `app_tool` serves `beeline:vault`, `beeline:onboarding`, `beeline:workflow`, `beeline:avatar` and read-only `beeline:wallet`, plus connected apps.
 

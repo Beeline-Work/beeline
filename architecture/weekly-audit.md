@@ -38,11 +38,11 @@ wake(action: "create", trigger: "schedule", title: "Architecture audit",
      it.
    Dropping a column or deleting production rows waits for the owner: ask in
    the Room with the evidence.
-7. Open one PR with only tightening changes: new rules and lower totals. It
-   merges without owner review. Never raise a total or widen a rule in this
-   PR.
-8. If an existing rule is wrong, so that following its `fix` would break
-   behaviour, open a separate relaxing PR. Then ask the owner in the Room,
-   naming the PR URL and head commit. That PR stays red; only the owner merges it, by hand.
-9. Report: the PRs reviewed, each finding with file:line, the tightening PR
-   URL, and any relaxing PR URL waiting on the owner.
+7. Open a PR for needed changes. Candidate invariants must be green. Approved
+   rule changes, including relaxations, need no new merge gate.
+8. Review all merged invariant and guard changes, the System phrase catalog diff,
+   and `docs/corner-state-reference.md` with the owner in this weekly batch.
+   Include the PR URLs, reasons and any behavior changes. Review is after the fact;
+   neither invariant changes nor new System phrases block CI for approval.
+9. Report the PRs reviewed, each finding with file:line, the new PR URL, and the
+   week's invariant, phrase and corner reference changes.

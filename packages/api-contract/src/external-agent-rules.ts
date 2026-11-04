@@ -40,8 +40,8 @@ export const EXTERNAL_AGENT_RULES: readonly ExternalAgentRule[] = [
   },
   {
     id: 'orders',
-    mcp: 'Answer orders listed under wakes in list_mentions with report at the order address, not a plain message. Match status and text prefix: done:, blocked:, failed:, needs-decision:.',
-    session: 'An order is private work from your commander. Do it, then answer with the report command it arrives with, not a plain reply. Match status and text prefix: done:, blocked:, failed:, needs-decision:.',
+    mcp: 'For orders under wakes, pass their id as commandId on tool calls; finish with report at that address, not a plain message. Match status and text prefix: done:, blocked:, failed:, needs-decision:.',
+    session: 'An order is private work from your commander. Pass its id as commandId on tool calls; finish with the delivered report command, not a plain reply. Match status and text prefix: done:, blocked:, failed:, needs-decision:.',
   },
   {
     id: 'wakes',

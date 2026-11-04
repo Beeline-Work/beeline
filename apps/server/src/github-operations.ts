@@ -1806,7 +1806,6 @@ export class GitHubOperations {
               headSha: pr.headSha,
             },
             cardType: 'github-corner-note',
-            card: { source: 'github', dedupe: conflictKey },
           });
           await queueCornerMergeConflict(tx, row.corner_id, note.id);
           if (note.inserted) this.onRoomChanged?.(row.corner_id);
@@ -2539,7 +2538,7 @@ export class GitHubOperations {
           // on a failure, so the implementer knows what to fix and a passing
           // check can never be described as the failure.
           const failing = reportFailure && newFailures.length ? newFailures : summary.failing?.length ? summary.failing : [check.name];
-          if (!options?.quiet || becamePassing || becameFailing)
+          if (becamePassing || becameFailing || (check.status === 'failed' && !options?.quiet))
           noteInserted = await this.systemNote(
             target.corner_id,
             target.author_id,
@@ -2653,7 +2652,6 @@ export class GitHubOperations {
       authorId,
       ...phrase,
       cardType: 'github-corner-note',
-      card: { source: 'github', dedupe },
     });
     if (note.inserted && !deferNotification) this.onRoomChanged?.(roomId);
     // A previously written green fact can outlive a lost dispatch. Its note
@@ -2789,7 +2787,6 @@ export class GitHubOperations {
         authorId: target.author_id,
         ...merged,
         cardType: 'github-corner-note',
-        card: { source: 'github', dedupe: mergeKey },
       });
       await advanceCorner(database, target.corner_id, {
         kind: 'merged',

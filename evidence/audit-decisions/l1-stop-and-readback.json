@@ -1,0 +1,73 @@
+{
+  "pr": "https://github.com/Beeline-Work/beeline/pull/3447",
+  "readBackAt": "2026-11-04T01:47:50.605425+00:00",
+  "before": [
+    {
+      "id": "0487e469-2907-47e7-8432-7ec4ec49ad42",
+      "title": "Daily 9am owner fix",
+      "max_runs": null,
+      "run_count": 14,
+      "next_run_at": "2026-11-04 14:00:00+00",
+      "workflow_running": false
+    },
+    {
+      "id": "e61b92db-9b4b-43a2-8f90-c3a3a1a44e58",
+      "title": "Nightly CI loop",
+      "max_runs": null,
+      "run_count": 2,
+      "next_run_at": "2026-11-04 09:15:00+00",
+      "workflow_running": false
+    },
+    {
+      "id": "ea5594a0-42ec-49dd-8957-5582216ebedd",
+      "title": "Run the nightly prompt",
+      "max_runs": null,
+      "run_count": 7,
+      "next_run_at": "2026-11-04 09:00:00+00",
+      "workflow_running": false
+    },
+    {
+      "id": "fc1f2142-3d5f-4114-82ed-b6e12bcecf5f",
+      "title": "Loops writer",
+      "max_runs": null,
+      "run_count": 5,
+      "next_run_at": "2026-11-04 15:00:00+00",
+      "workflow_running": false
+    }
+  ],
+  "after": [
+    {
+      "id": "0487e469-2907-47e7-8432-7ec4ec49ad42",
+      "title": "Daily 9am owner fix",
+      "max_runs": 14,
+      "run_count": 14,
+      "next_run_at": "9999-12-31 00:00:00+00",
+      "workflow_running": false
+    },
+    {
+      "id": "e61b92db-9b4b-43a2-8f90-c3a3a1a44e58",
+      "title": "Nightly CI loop",
+      "max_runs": 2,
+      "run_count": 2,
+      "next_run_at": "9999-12-31 00:00:00+00",
+      "workflow_running": false
+    },
+    {
+      "id": "ea5594a0-42ec-49dd-8957-5582216ebedd",
+      "title": "Run the nightly prompt",
+      "max_runs": 7,
+      "run_count": 7,
+      "next_run_at": "9999-12-31 00:00:00+00",
+      "workflow_running": false
+    },
+    {
+      "id": "fc1f2142-3d5f-4114-82ed-b6e12bcecf5f",
+      "title": "Loops writer",
+      "max_runs": 5,
+      "run_count": 5,
+      "next_run_at": "9999-12-31 00:00:00+00",
+      "workflow_running": false
+    }
+  ],
+  "independentReadbackMatches": true
+}

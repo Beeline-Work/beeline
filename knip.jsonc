@@ -37,8 +37,12 @@
         "web/marketing/boot.mjs",
         "web/marketing/demo-source.mjs",
         "scripts/marketing/build.mjs",
-        // TYPECHECK runs the base commit's copy of the architecture guard by path.
+        // TYPECHECK invokes the architecture guard by path.
         "scripts/check-architecture.mjs",
+        // Accepted audit decisions: explicit one-time operator entrypoints.
+        "scripts/audit-decisions-cleanup.mjs",
+        "scripts/audit-decisions-prod-read.mjs",
+        "scripts/audit-decisions-schedules.mjs",
         // Rollout replay and the post-drain release action invoke these CLIs by path.
         "scripts/prove-rollout-overlap.mjs",
         "scripts/run-contract-migrations.mjs",

@@ -95,7 +95,7 @@ export const MCP_APP_ROUTE_OPERATIONS: readonly string[] = Object.values(APP_ROU
 
 const address = (description = 'Room, corner or DM id you belong to.') => ({ type: 'string', format: 'uuid', description });
 const tool = (name: string, description: string, properties: Record<string, object>, required: string[], write = true): Tool => ({
-  name, description, inputSchema: { type: 'object', properties, required, additionalProperties: false },
+  name, description, inputSchema: { type: 'object', properties: { commandId: { type: 'string', pattern: '^[0-9a-f]{64}$', description: 'Order id from the delivery you are serving. Keeps its requester and generation through calls until report.' }, ...properties }, required, additionalProperties: false },
   annotations: { readOnlyHint: !write, destructiveHint: false, openWorldHint: write, idempotentHint: !write },
 });
 const brief = {
@@ -149,7 +149,7 @@ export const MCP_AGENT_TOOLS: Tool[] = [
   tool('stop', 'Stop the running turn of an agent you ordered, or one working in a corner you opened.', {
     address: address(), agent: { type: 'string', maxLength: 120 },
   }, ['address']),
-  tool('report', 'Answer an order with its outcome to whoever ordered you. Answer chat requests with a tagged message instead. Prefers an order at address, then your oldest pending order elsewhere; without an order, a corner address reports to its commander. Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
+  tool('report', 'Answer an order with its outcome to whoever ordered you. Answer chat requests with a tagged message instead. commandId binds the exact order. Without it, prefers an order at address, then a single pending order elsewhere; refuses an ambiguous fallback and lists waiting orders. Without an order, a corner address reports to its commander. Status and text prefix agree: done:, blocked:, failed:, needs-decision:.', {
     address: address(), status: { type: 'string', enum: ['done', 'blocked', 'failed', 'needs_decision'] },
     text: { type: 'string', minLength: 1, maxLength: 16000 }, ask: { type: 'string', maxLength: 140 },
   }, ['address', 'status', 'text']),
@@ -254,6 +254,8 @@ export class RoomsMcpAgentTools {
     private readonly objects?: ObjectService,
   ) {}
 
+  private readonly boundTurn = new AsyncLocalStorage<McpTurn>();
+
   private readonly postReplyRouting = new AsyncLocalStorage<unknown>();
 
   private exec(member: string, op: string, input: Args): Promise<unknown> {
@@ -292,6 +294,15 @@ export class RoomsMcpAgentTools {
     const chain = incoming?.command;
     return this.db.transaction(async tx => {
       if (order) {
+        const waiting = (await tx.query<{ id: string; room_id: string }>(
+          `SELECT ordered.id,ordered.room_id FROM agent_commands ordered
+           JOIN rooms room ON room.id=ordered.room_id AND room.archived_at IS NULL
+           JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$1 AND member.removed_at IS NULL
+           WHERE ordered.agent_id=$1 AND ordered.action IN ('input','resume')
+             AND ordered.private_payload->>'kind'='order'
+             AND (ordered.state='pending' OR (ordered.state='claimed' AND ordered.lease_expires_at<=now()))`, [member])).rows;
+        if (!waiting.some(item => item.room_id === target) && waiting.length > 1)
+          throw new McpToolError(`ambiguous report; pass commandId from the order: ${waiting.map(item => `${item.id} at ${item.room_id}`).join(', ')}`);
         const bound = (await tx.query<{ id: string; turn_request_id: string; room_id: string }>(
           `UPDATE agent_commands SET state='claimed',generation_id=$3,lease_expires_at=now()+interval '90 seconds',claimed_at=now(),
              turn_owner_connection_id=NULL,turn_owner_epoch=NULL
@@ -345,7 +356,7 @@ export class RoomsMcpAgentTools {
         `UPDATE agent_commands SET state='pending',generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL
          WHERE id=$1 AND state='claimed' AND generation_id=$2`, [turn.commandId, turn.generationId]);
       await this.db.query(`UPDATE agent_turns SET status='complete',created_at=now()
-        WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`, [turn.roomId, member, turn.requestId]);
+        WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working' AND generation_id=$4`, [turn.roomId, member, turn.requestId, turn.generationId]);
       return;
     }
     try {
@@ -353,13 +364,15 @@ export class RoomsMcpAgentTools {
         generationId: turn.generationId, status: 'complete' });
     } catch (error) {
       console.error('[rooms-mcp] turn receipt failed; completing the command directly', error);
-      await this.db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1 AND state='claimed'`, [turn.commandId]);
+      await this.db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1 AND state='claimed' AND generation_id=$2`, [turn.commandId, turn.generationId]);
       await this.db.query(`UPDATE agent_turns SET status='complete',created_at=now()
-        WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`, [turn.roomId, member, turn.requestId]);
+        WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working' AND generation_id=$4`, [turn.roomId, member, turn.requestId, turn.generationId]);
     }
   }
 
   private async inTurn<T>(member: string, target: string, run: (turn: McpTurn, context: Args) => Promise<T>, order = false): Promise<T> {
+    const bound = this.boundTurn.getStore();
+    if (bound) return run(bound, { roomId: bound.roomId, requestId: bound.requestId, generationId: bound.generationId });
     const turn = await this.begin(member, await this.place(member, target), order, target);
     let reported = false;
     try {
@@ -380,6 +393,33 @@ export class RoomsMcpAgentTools {
     if (extra.length) throw new McpToolError(`${name}: unknown fields: ${extra.join(', ')}`);
     const missing = (definition.inputSchema.required ?? []).filter(key => args[key] === undefined);
     if (missing.length) throw new McpToolError(`${name}: required: ${missing.join(', ')}`);
+    if (args.commandId !== undefined && name !== 'no_reply_needed') {
+      if (typeof args.commandId !== 'string' || !/^[0-9a-f]{64}$/.test(args.commandId)) throw new McpToolError('Invalid commandId');
+      const target = addressArg(args.address ?? args.room);
+      await this.place(member, target);
+      const turn = await this.db.transaction(async tx => {
+        const claimed = (await tx.query<{ id: string; room_id: string; turn_request_id: string; generation_id: string }>(
+          `UPDATE agent_commands SET state='claimed',
+             generation_id=CASE WHEN state='claimed' AND lease_expires_at>now() THEN generation_id ELSE $4 END,
+             lease_expires_at=now()+interval '90 seconds',claimed_at=now()
+           WHERE id=$1 AND agent_id=$2 AND room_id=$3 AND action IN ('input','resume')
+             AND private_payload->>'kind'='order'
+             AND (state='pending' OR (state='claimed' AND (lease_expires_at<=now() OR generation_id LIKE 'mcp:%')))
+           RETURNING id,room_id,turn_request_id,generation_id`,
+          [args.commandId, member, target, `mcp:${randomUUID()}`])).rows[0];
+        if (!claimed) throw new McpToolError('commandId is not an available order for you at this address');
+        await this.startTurn(tx, claimed.room_id, member, claimed.turn_request_id, claimed.generation_id);
+        return { roomId: claimed.room_id, requestId: claimed.turn_request_id, generationId: claimed.generation_id,
+          commandId: claimed.id, order: true };
+      });
+      const { commandId: _, ...input } = args;
+      return this.boundTurn.run(turn, async () => {
+        const result = await this.call(member, name, input);
+        // Other calls retain the command and generation until its report.
+        if (name === 'report') await this.end(member, turn, true);
+        return result;
+      });
+    }
     const exec = (op: string, input: Args) => this.exec(member, op, defined(input));
     const turn = <T>(run: (turn: McpTurn, context: Args) => Promise<T>, target = addressArg(args.address)) =>
       this.inTurn(member, target, run);
@@ -571,13 +611,14 @@ export class RoomsMcpAgentTools {
     await this.place(member, corner);
     if (!(await this.db.query('SELECT 1 FROM corner_facts WHERE corner_id=$1', [corner])).rowCount)
       throw new McpToolError('progress lines go in a corner; post a message in a Room');
-    const turn = await this.begin(member, corner, false);
+    const bound = this.boundTurn.getStore();
+    const turn = bound ?? await this.begin(member, corner, false);
     try {
       await exec('postAgentActivity', { roomId: corner, agentId: member, requestId: turn.requestId, generationId: turn.generationId,
         activity: [{ kind: 'output', title: 'Update', text: progress }] });
       return { recorded: true, address: corner };
     } finally {
-      await this.end(member, turn, false);
+      if (!bound) await this.end(member, turn, false);
     }
   }
 

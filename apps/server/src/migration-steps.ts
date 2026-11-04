@@ -229,7 +229,8 @@ const NOT_NULL = new RegExp(`^\\s*ALTER\\s+COLUMN\\s+${IDENT}\\s+(SET|DROP)\\s+N
 const DROP_RELATION = new RegExp(`^DROP\\s+(?:TABLE|INDEX)\\s+IF\\s+EXISTS\\s+${IDENT}(?:\\s+CASCADE)?$`, 'i');
 
 type AlterClause =
-  | { kind: 'drop-column' | 'drop-constraint'; name: string }
+  | { kind: 'drop-column'; name: string }
+  | { kind: 'drop-constraint'; name: string }
   | { kind: 'not-null'; name: string; notNull: boolean };
 
 /** The catalog state that makes an ALTER TABLE / DROP statement a no-op, or null. */
@@ -282,7 +283,7 @@ export async function alreadyNoOp(database: CatalogDatabase, statement: string):
     const { rows } = await database.query(
       `SELECT attnotnull FROM pg_attribute WHERE attrelid = to_regclass($1) AND attname = $2 AND NOT attisdropped`,
       [check.relation, clause.name]);
-    if (clause.kind === 'drop-column' ? rows.length > 0 : rows[0]?.attnotnull !== clause.notNull) return false;
+    if (clause.kind === 'not-null' ? rows[0]?.attnotnull !== clause.notNull : rows.length > 0) return false;
   }
   return true;
 }

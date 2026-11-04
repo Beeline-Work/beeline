@@ -1,3 +1,4 @@
+import { retryRolledBackWork } from './background-work.js';
 /** Split a migration script without breaking SQL strings, comments, or PL/pgSQL
  * dollar-quoted bodies. Each returned statement is one explicit release step. */
 export function splitMigrationStatements(sql: string): string[] {
@@ -57,22 +58,23 @@ export function splitMigrationStatements(sql: string): string[] {
   return statements;
 }
 
-/** One release-owned step. Contention reports its original outcome and never
- * creates a timer or repeats completed work. A later release command can
- * resume the existing idempotent migration. */
+/** Retry only the current DB-only, release-owned step after a proven rollback.
+ * Completed steps and uncertain transport outcomes are never replayed. */
 export async function runMigrationStep(
   name: string,
   run: () => Promise<void>,
   options: { onLockTimeout?: () => Promise<void> } = {},
 ): Promise<void> {
-  try {
-    await run();
-  } catch (error) {
-    const code = (error as { code?: unknown } | null)?.code;
-    if (code === '55P03') await options.onLockTimeout?.().catch(() => undefined);
-    if (code === '40P01' || code === '55P03') console.warn(`[migration] ${name} lock conflict; step stopped`);
-    throw error;
-  }
+  await retryRolledBackWork(async () => {
+    try {
+      await run();
+    } catch (error) {
+      const code = (error as { code?: unknown } | null)?.code;
+      if (code === '55P03') await options.onLockTimeout?.().catch(() => undefined);
+      if (code === '40P01' || code === '55P03') console.warn(`[migration] ${name} lock conflict; retrying rolled-back step`);
+      throw error;
+    }
+  });
 }
 
 type DiagnosticDatabase = {

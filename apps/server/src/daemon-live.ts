@@ -1,11 +1,9 @@
-import { helperUsageCodecs } from '@beeline/net/helper-codecs';
+import { helperUsageCodecs, HelperFrameReader, helperFrames } from '@beeline/net/helper-codecs';
 import { helperActivationCodecs } from '@beeline/net/helper-activation-codecs';
 import { helperTurnCodecs } from '@beeline/net/helper-turn-codecs';
-import { HELPER_TURN_MAX_FRAME_BYTES } from '@beeline/api-contract/helper-turn-ownership';
 import { turnOwnershipEnabled } from './turn-ownership.js';
 import { helperActivationEnabled,fenceCommandActivationEnqueue } from './helper-activation.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
-import { HELPER_OVERLAY_MAX_FRAME_BYTES } from '@beeline/api-contract/helper-overlay';
 import { helperUsageEnabled } from './helper-usage.js';
 import { applyHelperOverlay, helperOverlayEnabled, subscribeHelperOverlayDemand } from './helper-overlay.js';
 import { changesDaemonInbox } from './daemon-inbox-cause.js';
@@ -108,6 +106,8 @@ export class DaemonConnectionRegistry {
 export interface DaemonSessionTransport {
   send(event: Record<string, unknown>): void;
   isOpen(): boolean;
+  pause?(): void;
+  resume?(): void;
   /** Ends this agent's session: an old socket closes; a registration is dropped. */
   drop(code: number, reason: string): void;
   /** False after the socket refused a frame for its helper version. */
@@ -125,6 +125,7 @@ export class DaemonAgentSession {
   readonly #releases = new Map<string, () => void>();
   readonly #subscriptionIntents = new Map<string, Record<string, unknown>>();
   readonly #wakeReleases: Array<() => void> = [];
+  readonly #frames = new HelperFrameReader();
   #tasks = 0;
   #queuedBytes = 0;
   #tail = Promise.resolve();
@@ -305,16 +306,8 @@ export class DaemonAgentSession {
   /** Queue one frame behind this agent's earlier frames. */
   frame(raw: Record<string, unknown>, frameBytes: number): void {
     if (this.#closed) return;
-    if((raw.type==='overlay-update'||raw.type==='usage-operation'||raw.type==='activation-context'||raw.type==='turn-operation')&&frameBytes>HELPER_OVERLAY_MAX_FRAME_BYTES){
-      this.deps.errors.overload++;this.transport.drop(1009,'overlay frame capacity exceeded');this.close();return;
-    }
-    if (this.#tasks >= MAX_LIVE_SESSION_TASKS ||
-        this.#queuedBytes + frameBytes > MAX_LIVE_SESSION_QUEUED_BYTES) {
-      this.deps.errors.overload++;
-      this.transport.drop(1013, 'live admission overloaded');
-      this.close();
-      return;
-    }
+    if (this.#tasks >= MAX_LIVE_SESSION_TASKS || this.#queuedBytes + frameBytes > MAX_LIVE_SESSION_QUEUED_BYTES)
+      this.transport.pause?.();
     // Cancellation does no database work and must fence an already awaited
     // projection immediately, rather than queue behind that same projection.
     if (raw.type === 'unsubscribe' && typeof raw.roomId === 'string') {
@@ -358,6 +351,7 @@ export class DaemonAgentSession {
         if (intent === raw) this.#subscriptionIntents.delete(roomId);
       this.#tasks--;
       this.#queuedBytes -= frameBytes;
+      if (this.#tasks < MAX_LIVE_SESSION_TASKS && this.#queuedBytes < MAX_LIVE_SESSION_QUEUED_BYTES) this.transport.resume?.();
     });
   }
 
@@ -365,6 +359,7 @@ export class DaemonAgentSession {
     if (this.#closed) return;
     this.#forUpdate = forUpdate;
     this.#closed = true;
+    this.#frames.clear(); this.transport.resume?.();
     this.#ownedModelCapability = undefined;
     for (const release of this.#wakeReleases.splice(0)) release();
     for (const release of this.#releases.values()) release();
@@ -385,6 +380,12 @@ export class DaemonAgentSession {
 
   async #process(item: Record<string, unknown>): Promise<void> {
     if (!this.transport.admit(item)) return;
+    if (['turn-operation-chunk', 'activation-context-chunk', 'usage-operation-chunk'].includes(String(item.type))) {
+      const complete = this.#frames.receive(item); if (!complete) return;
+      // A chunk cannot supply a different registration identity.
+      if (complete.agentId !== undefined && complete.agentId !== this.agentId) throw new Error('Helper registration mismatch');
+      item = complete;
+    }
     if (item.type === 'turn-operation') {
       const operation = item.operation;
       if (!this.turnOwnershipV1 || this.epoch === undefined || typeof item.requestId !== 'string' ||
@@ -398,9 +399,8 @@ export class DaemonAgentSession {
         const source = { connectionId: this.connectionId, epoch: this.epoch };
         const result = helperTurnCodecs(operation).result.parse(await this.deps.daemon.execute(operation, input, this.agentId, source, this.#ownedModelCapability));
         const reply = { type: 'turn-result', requestId: item.requestId, result };
-        if (Buffer.byteLength(JSON.stringify(reply)) > HELPER_TURN_MAX_FRAME_BYTES) throw new Error('Turn reply capacity');
         await this.deps.daemon.fenceOwnedTurnReply(this.agentId, source, input, () => {
-          if (!this.#closed && this.transport.isOpen()) this.transport.send(reply);
+          if (!this.#closed && this.transport.isOpen()) for (const part of helperFrames(reply)) this.transport.send(part);
         }, operation === 'claimAgentCommand');
       } catch {
         if (!this.#closed && this.transport.isOpen())
@@ -418,8 +418,7 @@ export class DaemonAgentSession {
         const snapshot=helperActivationCodecs.result.parse(await this.deps.daemon.readCommandActivation(input,this.agentId));
         const accepted=await fenceCommandActivationEnqueue(this.deps.database,snapshot,current=>{
           const reply={type:'activation-context-result',requestId:item.requestId,result:current};
-          if(Buffer.byteLength(JSON.stringify(reply))+256>HELPER_OVERLAY_MAX_FRAME_BYTES)throw new Error('Activation reply capacity');
-          if(!this.#closed&&this.transport.isOpen())this.transport.send(reply);
+          if(!this.#closed&&this.transport.isOpen())for (const part of helperFrames(reply)) this.transport.send(part);
         });
         if(!accepted)throw new Error('Activation source changed before enqueue');
       }catch{
@@ -445,8 +444,7 @@ export class DaemonAgentSession {
         const rawResult=await this.deps.daemon.execute(operation,input as unknown as DaemonOperationMap[typeof operation]['input'],this.agentId);
         const result=helperUsageCodecs(operation).result.parse(rawResult);
         const reply={type:'usage-result',requestId:item.requestId,result};
-        if(Buffer.byteLength(JSON.stringify(reply))>HELPER_OVERLAY_MAX_FRAME_BYTES)throw new Error('Usage reply capacity');
-        if(!this.#closed&&this.transport.isOpen())this.transport.send(reply);
+        if(!this.#closed&&this.transport.isOpen())for (const part of helperFrames(reply)) this.transport.send(part);
       }catch{
         if(!this.#closed&&this.transport.isOpen())this.transport.send({type:'usage-result',requestId:item.requestId,error:'usage_operation_refused'});
       }
@@ -769,6 +767,7 @@ export function serveAgentSocket(
   const session = new DaemonAgentSession(deps, principal.identityId, {
     send,
     isOpen,
+    pause: () => client.pause(), resume: () => client.resume(),
     drop: (code, reason) => {
       // A newer connection replaced this socket: it holds nothing worth a
       // graceful close, and its count was already released at upgrade.
@@ -819,6 +818,7 @@ export function serveMachineSocket(
 ): void {
   const sessions = new Map<string, DaemonAgentSession>();
   const checkpointAgents = new Set<string>();
+  const pausedAgents = new Set<string>();
   trackCheckpoint(() => {
     for (const agentId of checkpointAgents) sessions.get(agentId)?.checkpoint();
   });
@@ -895,6 +895,8 @@ export function serveMachineSocket(
         agentId,
         {
           send: (event) => send({ ...event, agentId }),
+          pause: () => { pausedAgents.add(agentId); client.pause(); },
+          resume: () => { pausedAgents.delete(agentId); if (!pausedAgents.size) client.resume(); },
           isOpen: (): boolean => isOpen() && sessions.get(agentId) === session,
           drop: (code, reason) => {
             if (sessions.get(agentId) !== session) return;

@@ -54,24 +54,36 @@ describe('daemonOperationIsSafeToRepeat', () => {
 });
 
 describe('daemon tool-call network retry', () => {
-  it.each([false,true])('sends one read attempt even for a transient network failure (coded=%s)',async coded=>{
-    const fetched=vi.fn(async()=>{throw coded?new TypeError('fetch failed',{cause:{code:'ECONNREFUSED'}}):bareFetchFailed();});
+  it.each([false,true])('recovers a safe read after transient network failure (coded=%s)',async coded=>{
+    const fetched=vi.fn().mockRejectedValueOnce(coded?new TypeError('fetch failed',{cause:{code:'ECONNREFUSED'}}):bareFetchFailed()).mockResolvedValue(Response.json({rooms:[]}));
     vi.stubGlobal('fetch',fetched);
-    await expect(callAgentTool('read',{facet:'addresses'},'call-1')).rejects.toThrow('await a new action or recovery boundary');
-    expect(fetched).toHaveBeenCalledTimes(1);
+    await callAgentTool('read',{facet:'addresses'},'call-1');
+    expect(fetched).toHaveBeenCalledTimes(2);
+    expect(fetched.mock.calls[0]?.[1]?.body).toBe(fetched.mock.calls[1]?.[1]?.body);
+  });
+  it('recovers safe reads from temporary server overload',async()=>{
+    const fetched=vi.fn().mockResolvedValueOnce(Response.json({error:'busy'},{status:503})).mockResolvedValue(Response.json({rooms:[]}));
+    vi.stubGlobal('fetch',fetched);await callAgentTool('read',{facet:'addresses'},'call-1');expect(fetched).toHaveBeenCalledTimes(2);
+  });
+  it('bounds failed read recovery and leaves an uncertain write single-attempt',async()=>{
+    vi.useFakeTimers();try{
+      const fetched=vi.fn(async()=>{throw bareFetchFailed();});vi.stubGlobal('fetch',fetched);
+      const result=callAgentTool('read',{facet:'addresses'},'call-1').catch(error=>error);
+      await vi.advanceTimersByTimeAsync(10_000);expect((await result).message).toContain('failed before');expect(fetched).toHaveBeenCalledTimes(4);
+    }finally{vi.useRealTimers();}
   });
 
-  it('never retries a response the server actually sent', async () => {
+  it('never retries a permanent server refusal', async () => {
     let calls = 0;
     vi.stubGlobal('fetch', async () => {
       calls += 1;
       return new Response(JSON.stringify({ error: 'boom' }), {
-        status: 500,
+        status: 403,
         headers: { 'content-type': 'application/json' },
       });
     });
     await expect(callAgentTool('read', { facet:'addresses' }, 'call-1')).rejects.toThrow(
-      'daemon operation listRooms failed (500: boom)',
+      'daemon operation listRooms failed (403: boom)',
     );
     expect(calls).toBe(1);
   });

@@ -78,20 +78,22 @@ describe('shared DB-derived canonical projection builds',()=>{
     expect(coordinator.stats().flights).toBe(0);
     await coordinator.build(failure,build);expect(builds).toBe(5);
   });
-  it('bounds waiting sockets and active identities without cancelling admitted shared work',async()=>{
+  it('queues distinct builds and shares unlimited waiters while limiting active builders',async()=>{
     const coordinator=new RouterBuildCoordinator({flights:1,waiters:2}),blocked=deferred<{count:number}>();
-    const current=await ticket(),other=await ticket(new ReadSnapshot(2));let builds=0;
-    const first=coordinator.build(current,async()=>{builds++;return blocked.promise;});
-    const joined=coordinator.build(current,async()=>{throw new Error('Unexpected duplicate');});
-    await expect(coordinator.build(current,async()=>({count:0}))).rejects.toMatchObject({reason:'budget'});
-    await expect(coordinator.build(other,async()=>({count:0}))).rejects.toMatchObject({reason:'budget'});
-    blocked.resolve({count:1});await Promise.all([first,joined]);expect(builds).toBe(1);
+    const current=await ticket(),other=await ticket(new ReadSnapshot(2));let builds=0,active=0,maxActive=0;
+    const build:RouterValueBuilder=async()=>{builds++;maxActive=Math.max(maxActive,++active);const value=await blocked.promise;active--;return value;};
+    const first=coordinator.build(current,build);
+    const joined=Array.from({length:128},()=>coordinator.build(current,build));
+    const queued=Array.from({length:128},()=>coordinator.build(other,build));
+    await Promise.resolve();expect(builds).toBe(1);
+    blocked.resolve({count:1});expect(await Promise.all([first,...joined,...queued])).toHaveLength(257);
+    expect(builds).toBe(2);expect(maxActive).toBe(1);
   });
-  it('rejects a noncoherent transaction and an oversized physical snapshot',async()=>{
+  it('validates coherent cuts but returns a result larger than the optional cache without retaining it',async()=>{
     await expect(ticket(new ReadSnapshot(1,'1','epoch','read committed'))).rejects.toMatchObject({reason:'dependency'});
-    const coordinator=new RouterBuildCoordinator();
-    await expect(coordinator.build(await ticket(),async()=>({count:1,padding:'x'.repeat(1024)}))).rejects.toMatchObject({reason:'budget'});
-    expect(coordinator.stats()).toMatchObject({entries:0,flights:0});
+    const coordinator=new RouterBuildCoordinator({bytes:1024}),value={count:1,padding:'x'.repeat(1024*1024)};
+    expect((await coordinator.build(await ticket(),async()=>value)).value).toEqual(value);
+    expect(coordinator.stats()).toMatchObject({entries:0,flights:0,bytes:0});
   });
   it('does not retain a stale in-flight result after a known authority invalidation',async()=>{
     const coordinator=new RouterBuildCoordinator(),blocked=deferred<{count:number}>();const current=await ticket();

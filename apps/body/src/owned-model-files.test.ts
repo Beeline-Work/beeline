@@ -118,6 +118,21 @@ describe('owned model private generation files (uninstalled)', () => {
     expect(() => OwnedModelFiles.create({ root: linkedRoot, binding, credential: granted })).toThrow(OwnedModelFileRefusal);
   });
 
+  it('compacts successful history through more than 128 provider requests without admitting UNKNOWN replay', () => {
+    const {root, owner, granted}=fixture();let oldReceipt='';
+    for(let index=0;index<256;index++){
+      const request=owner.prepareHeaders();
+      const signed=encodeOwnedModelReceipt(token,{requestId:request.requestId,state:'succeeded',evidence:{kind:'usage',tokens:1,usd:0}});
+      if(oldReceipt)expect(owner.confirmReceipt(oldReceipt)).toBe(false);
+      expect(owner.confirmReceipt(signed)).toBe(true);oldReceipt=signed;
+      expect(journal(owner).requests.length).toBeLessThanOrEqual(1);
+    }
+    const request=owner.prepareHeaders();const restarted=OwnedModelFiles.create({root,binding,credential:granted});
+    expect(restarted.snapshot()).toEqual({state:'unknown',requests:[request.requestId]});
+    expect(()=>restarted.prepareHeaders()).toThrow(OwnedModelFileRefusal);
+    expect(lstatSync(owner.paths().journal).size).toBeLessThan(OWNED_MODEL_FILE_MAX_BYTES);
+  });
+
   it('revoke erases only its exact bearer file and preserves UNKNOWN without resurrection', () => {
     const { root, granted, owner } = fixture(); const request = owner.prepareHeaders();
     owner.revoke(); owner.revoke();

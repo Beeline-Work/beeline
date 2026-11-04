@@ -1,7 +1,9 @@
+import { HelperWorkQueue } from './helper-work-queue.js';
+import { HelperFrameReader, sendHelperFrame } from '@beeline/net/helper-turn-codecs';
 import { randomUUID } from 'node:crypto';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
-  HELPER_TURN_MAX_FRAME_BYTES, HELPER_TURN_MAX_INFLIGHT, HELPER_TURN_REQUEST_DEADLINE_MS,
+  HELPER_TURN_MAX_INFLIGHT, HELPER_TURN_REQUEST_DEADLINE_MS,
   type HelperTurnOperation, type HelperTurnOwnershipSource,
 } from '@beeline/api-contract/helper-turn-ownership';
 import { helperTurnCodecs } from '@beeline/net/helper-turn-codecs';
@@ -23,6 +25,8 @@ export class HelperTurnChannel {
     operation: HelperTurnOperation; resolve: (value: unknown) => void; reject: (error: Error) => void;
     deadline: ReturnType<typeof setTimeout>;
   }>();
+  private readonly queue = new HelperWorkQueue(HELPER_TURN_MAX_INFLIGHT);
+  private readonly frames = new HelperFrameReader();
   constructor(private readonly send: (frame: Record<string, unknown>) => boolean, private readonly open: () => boolean) {}
 
   scope(): HelperTurnOwnershipSource | undefined { return this.open() ? this.source : undefined; }
@@ -41,6 +45,7 @@ export class HelperTurnChannel {
     try { owned.onLost?.(); } catch { console.warn('[turn-owner] local cancellation failed'); }
   }
   suspend(): void {
+    this.queue.cancel(new Error('Helper channel ended before dispatch')); this.frames.clear();
     this.source = undefined;
     for (const owned of this.owned.values()) this.lose(owned);
     for (const pending of this.pending.values()) {
@@ -51,18 +56,12 @@ export class HelperTurnChannel {
   }
   isLegacy(turn: Turn): boolean { return this.legacy.has(key(turn)); }
   claimedLegacy(turn: Turn): void {
-    if (this.legacy.size >= 8_192) throw new Error('Legacy turn ownership capacity');
     this.legacy.add(key(turn));
   }
   claimed(turn: Turn, source: HelperTurnOwnershipSource, onLost: () => void): void {
     const id = key(turn), previous = this.owned.get(id);
     if (previous && !same(previous.source, source)) throw new Error('Turn generation cannot change owner');
     if (previous && !previous.active) throw new Error('Turn generation already ended');
-    if (!previous && this.owned.size >= 8_192) {
-      const old = [...this.owned].find(([, owned]) => !owned.active);
-      if (!old) throw new Error('Turn ownership capacity');
-      this.owned.delete(old[0]);
-    }
     const owned: Owned = previous ?? { source, active: true, lost: false };
     owned.onLost = onLost;
     this.owned.set(id, owned);
@@ -73,6 +72,10 @@ export class HelperTurnChannel {
     this.legacy.delete(key(turn));
     const owned = this.owned.get(key(turn));
     if (owned) { owned.active = false; owned.onLost = undefined; }
+    if (this.owned.size > 8_192) for (const [id, value] of this.owned) {
+      if (!value.active) this.owned.delete(id);
+      if (this.owned.size <= 8_192) break;
+    }
   }
   runOwned<T>(turn: Turn, task: () => Promise<T>, onLost?: () => void): Promise<T> | undefined {
     const owned = this.owned.get(key(turn));
@@ -87,35 +90,42 @@ export class HelperTurnChannel {
     return task();
   }
   request<N extends HelperTurnOperation>(operation: N, input: DaemonOperationMap[N]['input']): Promise<DaemonOperationMap[N]['output']> {
-    if (!this.scope() || this.pending.size >= HELPER_TURN_MAX_INFLIGHT)
+    return this.queue.run(() => this.dispatch(operation, input));
+  }
+  private dispatch<N extends HelperTurnOperation>(operation: N, input: DaemonOperationMap[N]['input']): Promise<DaemonOperationMap[N]['output']> {
+    if (!this.scope())
       return Promise.reject(new Error('Turn machine capability unavailable; no legacy fallback.'));
     return new Promise((resolve, reject) => {
       let parsed: DaemonOperationMap[N]['input'];
       try { parsed = helperTurnCodecs(operation).params.parse(input) as DaemonOperationMap[N]['input']; }
       catch (error) { reject(error); return; }
       const requestId = randomUUID(), frame = { type: 'turn-operation', requestId, operation, input: parsed };
-      if (Buffer.byteLength(JSON.stringify(frame)) + 256 > HELPER_TURN_MAX_FRAME_BYTES) {
-        reject(new Error('Turn request exceeds capacity')); return;
-      }
       const deadline = setTimeout(() => {
-        this.pending.delete(requestId);
+        this.pending.delete(requestId);this.frames.discard(requestId);
         reject(new Error('Turn operation outcome is UNKNOWN; keep the same command and generation.'));
       }, HELPER_TURN_REQUEST_DEADLINE_MS);
       deadline.unref?.();
       this.pending.set(requestId, { operation, resolve: value => resolve(value as DaemonOperationMap[N]['output']), reject, deadline });
-      if (!this.send(frame)) {
-        this.pending.delete(requestId); clearTimeout(deadline);
+      if (!sendHelperFrame(this.send, frame)) {
+        this.pending.delete(requestId);this.frames.discard(requestId); clearTimeout(deadline);
         reject(new Error('Turn operation outcome is UNKNOWN; keep the same command and generation.'));
       }
     });
   }
   receive(frame: Record<string, unknown>): boolean {
+    if(frame.type==='turn-result-chunk'){
+      if(typeof frame.requestId!=='string'||!this.pending.has(frame.requestId))return true;
+      const id=frame.requestId;
+      try { const complete=this.frames.receive(frame);if(!complete)return true;frame=complete; }
+      catch { const pending=this.pending.get(id);this.pending.delete(id);this.frames.discard(id);
+        if(pending){clearTimeout(pending.deadline);pending.reject(new Error('Malformed helper reply; outcome is UNKNOWN'));}return true; }
+    }
+
     if (frame.type !== 'turn-result') return false;
     const pending = typeof frame.requestId === 'string' ? this.pending.get(frame.requestId) : undefined;
     if (!pending) return true;
     this.pending.delete(frame.requestId as string); clearTimeout(pending.deadline);
-    if (Buffer.byteLength(JSON.stringify(frame)) > HELPER_TURN_MAX_FRAME_BYTES ||
-        Object.keys(frame).some(field => !['type', 'agentId', 'requestId', 'result', 'error'].includes(field)) ||
+    if (Object.keys(frame).some(field => !['type', 'agentId', 'requestId', 'result', 'error'].includes(field)) ||
         typeof frame.error === 'string') {
       pending.reject(new Error('Turn operation outcome is UNKNOWN; keep the same command and generation.'));
       return true;

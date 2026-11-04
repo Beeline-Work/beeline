@@ -1,3 +1,4 @@
+import { HelperWorkQueue } from './helper-work-queue.js';
 import { randomUUID } from 'node:crypto';
 import { HELPER_OVERLAY_MAX_FRAME_BYTES, readHelperOverlayDemand, type HelperOverlayAck, type HelperOverlayDemand, type HelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
 import type { HelperOverlayTransport } from './helper-overlay.js';
@@ -10,11 +11,13 @@ export class HelperOverlayChannel implements HelperOverlayTransport {
   private readonly demands=new Map<string,HelperOverlayDemand>();
   private readonly listeners=new Map<string,Set<(demand:HelperOverlayDemand)=>void>>();
   private readonly pending=new Map<string,{revision:number;resolve:(ack:HelperOverlayAck)=>void;deadline:ReturnType<typeof setTimeout>}>();
+  private readonly queue = new HelperWorkQueue(128);
   constructor(private readonly write:(frame:Record<string,unknown>)=>boolean,private readonly isOpen:()=>boolean){}
   enabled():boolean{return this.supported&&this.isOpen();}
   selected():boolean{return this.wasSelected;}
   negotiate(enabled:boolean):void{this.supported=enabled;if(enabled)this.wasSelected=true;}
   suspend():void{
+    this.queue.cancel(new Error('Overlay channel ended before dispatch'));
     this.supported=false;
     for(const pending of this.pending.values()){clearTimeout(pending.deadline);pending.resolve({accepted:false,reason:'unavailable'});}this.pending.clear();
     for(const [roomId,demand]of this.demands){const paused={...demand,viewing:false};this.demands.set(roomId,paused);
@@ -43,7 +46,10 @@ export class HelperOverlayChannel implements HelperOverlayTransport {
     return true;
   }
   send(frame:HelperOverlayFrame):Promise<HelperOverlayAck>{
-    if(!this.enabled()||this.pending.size>=128)return Promise.resolve({accepted:false,reason:'unavailable'});
+    return this.queue.run(() => this.dispatch(frame)).catch(() => ({accepted:false,reason:'unavailable'}));
+  }
+  private dispatch(frame:HelperOverlayFrame):Promise<HelperOverlayAck>{
+    if(!this.enabled())return Promise.resolve({accepted:false,reason:'unavailable'});
     return new Promise(resolve=>{
       const requestId=randomUUID();
       const envelope={type:'overlay-update',requestId,frame};

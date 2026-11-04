@@ -23,13 +23,20 @@ describe('one correlated held OAuth completion',()=>{
     const recovered=structuredClone(state);await finishSignIn('https://synthetic.invalid','client',recovered,Date.now()+1);
     expect(fetcher).toHaveBeenCalledTimes(2);
   });
-  it('keeps old-server pending and lost token results UNKNOWN without repeating an observation/exchange',async()=>{
-    const fetcher=vi.fn(async()=>Response.json({error:'authorization_pending'},{status:400}));vi.stubGlobal('fetch',fetcher);
-    await expect(finishSignIn('https://synthetic.invalid','client',signIn())).rejects.toBeInstanceOf(SignInPendingError);expect(fetcher).toHaveBeenCalledOnce();
-    const state=signIn();fetcher.mockResolvedValueOnce(Response.json({code:'synthetic-code'})).mockRejectedValueOnce(new Error('response lost'));
-    await expect(finishSignIn('https://synthetic.invalid','client',state)).rejects.toBeInstanceOf(SignInPendingError);
-    expect(state.exchangeStarted).toBe(true);const sent=fetcher.mock.calls.length;
-    await expect(finishSignIn('https://synthetic.invalid','client',structuredClone(state))).rejects.toBeInstanceOf(SignInPendingError);expect(fetcher).toHaveBeenCalledTimes(sent);
+  it('re-observes broken/pending completion reads but never repeats an uncertain token exchange',async()=>{
+    vi.useFakeTimers();
+    const fetcher=vi.fn().mockRejectedValueOnce(new Error('held connection lost'))
+      .mockResolvedValueOnce(Response.json({error:'authorization_pending'},{status:400}))
+      .mockResolvedValueOnce(Response.json({code:'synthetic-code'})).mockResolvedValueOnce(Response.json(tokens));
+    vi.stubGlobal('fetch',fetcher);const state=signIn();
+    const done=finishSignIn('https://synthetic.invalid','client',state);await vi.advanceTimersByTimeAsync(1000);
+    expect(await done).toEqual(tokens);expect(fetcher).toHaveBeenCalledTimes(4);
+    expect(fetcher.mock.calls.slice(0,3).every(([url])=>url.endsWith('/handoff'))).toBe(true);
+    expect(fetcher.mock.calls.slice(0,3).map(([,init])=>JSON.parse(init.body).state)).toEqual([state.state,state.state,state.state]);
+    const lost=signIn();fetcher.mockResolvedValueOnce(Response.json({code:'synthetic-code'})).mockRejectedValueOnce(new Error('response lost'));
+    await expect(finishSignIn('https://synthetic.invalid','client',lost)).rejects.toBeInstanceOf(SignInPendingError);
+    expect(lost.exchangeStarted).toBe(true);const sent=fetcher.mock.calls.length;
+    await expect(finishSignIn('https://synthetic.invalid','client',structuredClone(lost))).rejects.toBeInstanceOf(SignInPendingError);expect(fetcher).toHaveBeenCalledTimes(sent);
   });
   it('sends no token exchange after local persistence failure',async()=>{
     const fetcher=vi.fn(async()=>Response.json({code:'synthetic-code'}));vi.stubGlobal('fetch',fetcher);

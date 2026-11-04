@@ -25,7 +25,7 @@ export interface JoinedSession {
   /** Mentions after this `list_mentions` cursor are not delivered yet. */
   cursor: string;
   /** Committed member-stream delivery cursor, persisted after durable inbox. */
-  streamCursor?: { epoch: string; through: number };
+  streamCursor?: { epoch: string; through: number; pending?:true };
   /** Wakes already handed to the session, so a waiting order is delivered once. */
   deliveredWakes: string[];
   /** The newest wake handed over: only a newer one ends a long poll early. */

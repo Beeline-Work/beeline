@@ -13,16 +13,16 @@ describe('command setup admission and reuse',()=>{
     expect(new Set(values).size).toBe(1);expect(read).toHaveBeenCalledTimes(1);
     await context.read({...input,commandId:'next-command'});expect(read).toHaveBeenCalledTimes(2);
   });
-  it('parks failed captures until an actual different connection or command and never downgrades selected mode',async()=>{
+  it('re-observes failed captures for the same command and never downgrades selected mode',async()=>{
     let generation=1,available=false;const read=vi.fn(async(value:CommandActivationInput)=>snapshot(value));
     read.mockRejectedValueOnce(new Error('capture unavailable'));
     const transport:ActivationTransport={scope:()=>available?{origin:'https://synthetic.invalid',generation,source:{connectionId:'source-'+generation,epoch:generation}}:undefined,selected:()=>false,read};
     const context=new CommandActivationContext(transport,()=>100);
     expect(await context.read(input)).toBeUndefined();expect(read).not.toHaveBeenCalled();
-    available=true;await expect(context.read(input)).rejects.toThrow('capture unavailable');
-    await expect(context.read(input)).rejects.toThrow('capture unavailable');expect(read).toHaveBeenCalledTimes(1);
-    generation++;await context.read(input);expect(read).toHaveBeenCalledTimes(2);
-    available=false;await expect(context.read(input)).rejects.toThrow('parked');expect(read).toHaveBeenCalledTimes(2);
+    available=true;await expect(context.read(input)).resolves.toMatchObject({commandId:input.commandId});
+    await expect(context.read(input)).resolves.toMatchObject({commandId:input.commandId});expect(read).toHaveBeenCalledTimes(2);
+    generation++;await context.read(input);expect(read).toHaveBeenCalledTimes(3);
+    available=false;await expect(context.read(input)).rejects.toThrow('parked');expect(read).toHaveBeenCalledTimes(3);
   });
   it('refuses a late old-actor result and an expired held grant without refetching',async()=>{
     let generation=1,at=100,finish!:(snapshot:CommandActivationSnapshot)=>void;

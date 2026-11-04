@@ -1,3 +1,4 @@
+import { BackgroundWorkQueue } from './background-work.js';
 import type {RouterAuthorityCertificate,RouterCut,RouterSnapshot,RouterSnapshotInput} from '@beeline/api-contract/router-protocol';
 import type {SqlDatabase} from './database.js';
 import {readRouterAuthority,readRouterCut,resolveRouterInput,routerAtomicGroup,RouterProjectionUnavailable,type RouterValueBuilder} from './router-projections.js';
@@ -47,9 +48,11 @@ export class RouterBuildCoordinator{
   private retainedBytes=0;
   private generation=0;
   private readonly limits:{entries:number;bytes:number;flights:number;waiters:number};
+  private readonly queue: BackgroundWorkQueue;
   private builds=0;private joins=0;private hits=0;private evictions=0;
   constructor(limits:RouterBuildCoordinatorLimits={}){
     this.limits={entries:limits.entries??64,bytes:limits.bytes??8*1024*1024,flights:limits.flights??16,waiters:limits.waiters??64};
+    this.queue = new BackgroundWorkQueue(this.limits.flights);
     if(Object.values(this.limits).some(value=>!Number.isSafeInteger(value)||value<1))throw new Error('Invalid projection coordinator limits');
   }
 
@@ -62,7 +65,6 @@ export class RouterBuildCoordinator{
       ticket.cut.stream,ticket.cut.epoch,ticket.cut.through,ticket.cut.protocol,ticket.authority.digest,
       ticket.authority.scopes.map(scope=>[scope.authorityScope,scope.epoch]),
       ticket.basis.schema,ticket.basis.databaseScope,ticket.basis.version,ticket.basis.publicOrigin,ticket.basis.clockVersion]);
-    if(Buffer.byteLength(key)>8192)throw new RouterProjectionUnavailable('budget');
     const cached=this.settled.get(key);
     if(cached){
       this.hits++;this.settled.delete(key);this.settled.set(key,cached);
@@ -70,20 +72,18 @@ export class RouterBuildCoordinator{
     }
     let flight=this.flights.get(key);
     if(flight){
-      if(flight.waiters>=this.limits.waiters)throw new RouterProjectionUnavailable('budget');
       this.joins++;flight.waiters++;
     }else{
-      if(this.flights.size>=this.limits.flights)throw new RouterProjectionUnavailable('budget');
-      const generation=this.generation;this.builds++;
-      const promise=Promise.resolve().then(async()=>{
+      const generation=this.generation;
+      const promise=this.queue.run(async()=>{
+        this.builds++;
         const value=await builder(db,ticket.input,ticket.reader);
         if(value===null)throw new RouterProjectionUnavailable('authority');
         const snapshot={kind:'snapshot' as const,family:ticket.input.family,scope:ticket.input.agentId??ticket.input.roomId??ticket.input.workspaceId,
           value,cut:ticket.cut,authority:ticket.authority,atomicGroup:routerAtomicGroup(ticket.input,ticket.reader),
           ...(ticket.trayClockVersion?{clockVersion:ticket.trayClockVersion}:{})};
         const encoded=JSON.stringify(snapshot),bytes=Buffer.byteLength(encoded)+Buffer.byteLength(key);
-        if(bytes>this.limits.bytes)throw new RouterProjectionUnavailable('budget');
-        if(generation===this.generation&&this.flights.get(key)?.cacheable)this.remember(key,{encoded,bytes,authority:ticket.authority});
+        if(bytes<=this.limits.bytes&&generation===this.generation&&this.flights.get(key)?.cacheable)this.remember(key,{encoded,bytes,authority:ticket.authority});
         return encoded;
       });
       flight={promise,waiters:1,generation,authority:ticket.authority,cacheable:true};this.flights.set(key,flight);

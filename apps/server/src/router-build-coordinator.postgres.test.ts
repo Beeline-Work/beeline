@@ -30,6 +30,19 @@ async function fixture(){
 }
 const count=async(db:SqlDatabase)=>({count:(await db.query<{count:number}>(`SELECT count(*)::int count FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND removed_at IS NULL`,[WORKSPACE])).rows[0]!.count});
 describe.skipIf(!postgresUrl)('P5 shared canonical reader builds across real PostgreSQL snapshots',()=>{
+  it('queues burst builds and returns an uncached large-Workspace result across actual PostgreSQL snapshots',async()=>{
+    const {a,b,close}=await fixture(),coordinator=new RouterBuildCoordinator({flights:1,waiters:1,bytes:1024});
+    try{
+      await a.query(`INSERT INTO rooms(id,workspace_id,parent_id,archived_at)
+        SELECT md5(n::text)::uuid,$1,NULL,CASE WHEN n%2=0 THEN now() ELSE NULL END FROM generate_series(1,1895)n`,[WORKSPACE]);
+      const values=await Promise.all(Array.from({length:129},()=>b.transaction(async tx=>{
+        await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+        return coordinator.build(await readRouterBuildTicket(tx,input,VIEWER,basis),async db=>({count:(await db.query<{count:number}>('SELECT count(*)::int count FROM rooms')).rows[0]!.count,context:'rich context '.repeat(30000)}));
+      })));
+      expect(values).toHaveLength(129);expect(values.every(value=>(value.value as {count:number}).count===1895)).toBe(true);
+      expect(coordinator.stats().bytes).toBeLessThanOrEqual(1024);
+    }finally{await close();}
+  },30000);
   it('concurrent and staggered same-reader sockets build once using one coherent read-only transaction',async()=>{
     const {a,b,close}=await fixture(),coordinator=new RouterBuildCoordinator(),began=deferred(),joined=deferred(),release=deferred();
     let first:Promise<RouterSnapshot>|undefined,second:Promise<RouterSnapshot>|undefined,builds=0;

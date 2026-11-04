@@ -38,7 +38,7 @@ export interface FreeAgentModelProxyOptions {
   ownedModel?: Readonly<{
     credentials: OwnedModelCredentials;
     ready(): boolean;
-    /** Synchronous server-known model evidence only; absent means text-only. */
+    /** Explicit server-known incompatibility may disable images; absent allows them. */
     acceptsImages?(model: string): boolean;
   }>;
 }
@@ -454,12 +454,12 @@ class OwnedModelAllowanceRefusal extends CommandRefusalError {
     super('Owned model allowance is unavailable', limit === 'rate' ? 429 : 403);
   }
 }
-function ownedOutcome(response: ServerResponse, receipt: OwnedModelAttemptReceipt): void {
+function ownedOutcome(response: ServerResponse, token: string, receipt: OwnedModelAttemptReceipt): void {
   if (response.destroyed || response.writableEnded) return;
   if (response.headersSent) { response.destroy(); return; }
   sendJson(response, 409, { error: {
     code: receipt.state === 'unknown' ? 'owned_model_unknown' : 'owned_model_recorded',
-    message: receipt.state === 'unknown' ? 'Model request outcome is UNKNOWN; do not resubmit.' : 'Model request already has a recorded outcome; do not resubmit.',
+    message: receipt.state === 'refused' ? `Recorded model refusal: ${encodeOwnedModelReceipt(token, receipt)}` : receipt.state === 'unknown' ? 'Model request outcome is UNKNOWN; do not resubmit.' : 'Model request already has a recorded outcome; do not resubmit.',
   }, receipt });
 }
 function waitOwned<T>(pending: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -503,9 +503,9 @@ async function handleOwnedFreeAgentModel(request: IncomingMessage, response: Ser
   try {
     body = JSON.parse((await readBody(request)).toString('utf8')) as Record<string, unknown>;
     if (!body || typeof body !== 'object' || Array.isArray(body) || !Array.isArray(body.messages)) throw new Error('messages required');
-    // No public model-metadata network read. Initial text-only compatibility is
-    // an explicit activation gate until pinned modality evidence is supplied.
-    imageInput(body, selected.acceptsImages?.(binding.model) === true);
+    // Image capability is allowed unless the pinned model has explicit
+    // incompatibility evidence; token reservations still account for images.
+    imageInput(body, selected.acceptsImages?.(binding.model) !== false);
   } catch {
     sendJson(response, 400, { error: { message: 'Invalid owned model request' } }); return true;
   }
@@ -538,7 +538,7 @@ async function handleOwnedFreeAgentModel(request: IncomingMessage, response: Ser
     else sendJson(response, 503, { error: { code: 'owned_model_unknown', message: 'Model request admission is uncertain; do not resubmit.' } });
     return true;
   }
-  if (!admitted.permit) { ownedOutcome(response, admitted.receipt); return true; }
+  if (!admitted.permit) { ownedOutcome(response, token, admitted.receipt); return true; }
   const permit = admitted.permit;
   const settle = async (tx: SqlDatabase, reservation: OwnedModelReservation, evidence: OwnedModelEvidence): Promise<void> => {
     const tokens = evidence.kind === 'usage' ? evidence.tokens : 0, usd = evidence.kind === 'usage' ? evidence.usd : 0;
@@ -552,8 +552,8 @@ async function handleOwnedFreeAgentModel(request: IncomingMessage, response: Ser
   const timer = setTimeout(close, Math.max(0, deadline - Date.now()));
   let release: (() => void) | undefined;
   const knownNonentry = async (reason: 'authority' | 'queue' | 'cancelled' | 'deadline') => {
-    try { ownedOutcome(response, await attempts.refuseBeforeHandoff(permit, reason, settle)); }
-    catch { ownedOutcome(response, admitted.receipt); }
+    try { ownedOutcome(response, token, await attempts.refuseBeforeHandoff(permit, reason, settle)); }
+    catch { ownedOutcome(response, token, admitted.receipt); }
   };
   try {
     release = await callGate(limits.maxConcurrentCalls).acquire(abort.signal, deadline);
@@ -569,31 +569,30 @@ async function handleOwnedFreeAgentModel(request: IncomingMessage, response: Ser
     if (started.state === 'unknown') {
       abort.abort();
       void started.completion?.then(upstream => upstream.body?.cancel()).catch(() => {});
-      ownedOutcome(response, admitted.receipt); return true;
+      ownedOutcome(response, token, admitted.receipt); return true;
     }
     let upstream: Response;
     void started.completion.then(result => {
       if (abort.signal.aborted) void result.body?.cancel().catch(() => {});
     }).catch(() => {});
     try { upstream = await waitOwned(started.completion, abort.signal); }
-    catch { ownedOutcome(response, admitted.receipt); return true; }
+    catch { ownedOutcome(response, token, admitted.receipt); return true; }
     if (!upstream.ok) {
       void upstream.body?.cancel().catch(() => {});
       if ([400, 401, 402, 403, 404, 413, 422, 429].includes(upstream.status)) {
-        try { ownedOutcome(response, await attempts.refuseFromProvider(actor, id, upstream.status, settle)); }
-        catch { ownedOutcome(response, admitted.receipt); }
-      } else ownedOutcome(response, admitted.receipt);
+        try { ownedOutcome(response, token, await attempts.refuseFromProvider(actor, id, upstream.status, settle)); }
+        catch { ownedOutcome(response, token, admitted.receipt); }
+      } else ownedOutcome(response, token, admitted.receipt);
       return true;
     }
-    if (!upstream.body) { ownedOutcome(response, admitted.receipt); return true; }
+    if (!upstream.body) { ownedOutcome(response, token, admitted.receipt); return true; }
     const reader = upstream.body.getReader(), decoder = new TextDecoder(), usage = new StreamUsageReader(), filtered = new OwnedModelStream();
-    let whole = '', bytes = 0, complete = false, reported: Usage | undefined, answer: Record<string, unknown> | undefined;
+    let whole = '', complete = false, reported: Usage | undefined, answer: Record<string, unknown> | undefined;
     let receipt: OwnedModelAttemptReceipt | undefined;
     response.writeHead(upstream.status, { 'content-type': upstream.headers.get('content-type') ?? 'application/json', 'cache-control': 'no-store' });
     try {
       for (;;) {
         const next = await waitOwned(reader.read(), abort.signal); if (next.done) { complete = true; break; }
-        bytes += next.value.byteLength; if (bytes > MAX_REQUEST_BYTES) throw new Error('Owned model response exceeds capacity');
         const text = decoder.decode(next.value, { stream: true });
         if (stream) {
           usage.push(text);

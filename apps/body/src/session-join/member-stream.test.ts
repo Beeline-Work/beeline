@@ -71,6 +71,15 @@ describe('existing authenticated stream transport',()=>{
     expect(fetched).toHaveBeenCalledTimes(2);expect(opened).toHaveBeenCalledTimes(1);
     controller.close();expect((await stream.next()).done).toBe(true);
   });
+  it('accepts a large valid delivery through the NDJSON parser and durable inbox owner',async()=>{
+    const text='large valid mention '.repeat(30_000),frame={...delivery(),mentions:Array.from({length:31},(_,index)=>({id:'large-'+index,room_id:'room',text:index===0?text:'ordinary mention'}))};
+    const encoded=new TextEncoder().encode(JSON.stringify(frame)+'\n');
+    const body=new ReadableStream<Uint8Array>({start(controller){for(let offset=0;offset<encoded.length;offset+=8192)controller.enqueue(encoded.slice(offset,offset+8192));controller.close();}});
+    vi.stubGlobal('fetch',vi.fn(async(_url:string,init?:RequestInit)=>init?.method==='POST'?Response.json({result:{capabilities:{memberStreamV1:true}}}):new Response(body,{headers:{'content-type':'application/x-ndjson'}})));
+    const stream=memberStream(joined,'fixture-access',new AbortController().signal),received=(await stream.next()).value;
+    const dir=scratch();await updateState(dir,state=>state.sessions.push({...joined}));
+    expect(await acceptMemberDelivery(dir,joined.key,runner,received)).toBe(31);expect(takeInbox(dir,joined.key)).toContain(text);expect((await stream.next()).done).toBe(true);
+  });
   it('parks on an old server response without a fallback inbox poll',async()=>{
     const fetched=vi.fn(async()=>new Response('',{status:404}));vi.stubGlobal('fetch',fetched);
     await expect(memberStream(joined,'fixture-access',new AbortController().signal).next()).rejects.toThrow('unavailable');

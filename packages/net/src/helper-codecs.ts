@@ -26,3 +26,5 @@ export function helperUsageCodecs<K extends HelperUsageCodecOperation>(operation
   if(!Object.hasOwn(codecs,operation))throw new Error('Helper usage route unavailable');
   return codecs[operation];
 }
+
+export { HelperFrameReader, helperFrames, sendHelperFrame } from './helper-channel.js';

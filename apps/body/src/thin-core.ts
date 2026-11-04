@@ -185,7 +185,7 @@ export class ThinDaemonCore {
         await acknowledgeProgress();
         const authorityRefused = lastFault instanceof DaemonApiError && !lastFault.retryable && lastFault.status >= 400 && lastFault.status < 500;
         if (failures > 0 && !authorityRefused) {
-          await supervisor.retryDelay(Math.min(failures, supervisor.retries), opts.signal, wakesBefore);
+          await supervisor.retryDelay(failures, opts.signal, wakesBefore);
           discover = true;
         } else {
           // Healthy idle reads and authority refusals wait for a real discovery event. Local

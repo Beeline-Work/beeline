@@ -4,7 +4,7 @@ import { OwnedModelFiles, OWNED_MODEL_DENY_TOKEN } from './owned-model-files.js'
 const unavailable = 'Owned model outcome UNKNOWN or unavailable; do not resubmit.';
 const abort = (ctx: ExtensionContext) => { try { ctx.abort(); } catch { /* Explicit error replacement still terminates the core loop. */ } };
 
-export { piNoRetrySettings as ownedModelPiSettings } from './pi-retry-settings.js';
+export { piKnownRefusalRetrySettings as ownedModelPiSettings } from './pi-retry-settings.js';
 
 /** Uninstalled, filesystem-only supported extension factory. No registration,
  * fetch wrapper, status observation, environment mutation or request retry. A
@@ -33,6 +33,13 @@ export function createOwnedModelPiExtension(owner: OwnedModelFiles): ExtensionFa
     pi.on('message_end', (event, ctx) => {
       if (event.message.role !== 'assistant') return;
       if (!faulted && awaiting && owner.confirmReceipt(event.message.responseId)) { awaiting = false; return; }
+      const refusal = event.message.responseId ?? event.message.errorMessage?.match(/bfmr_v1\.[A-Za-z0-9_-]+\.[a-f0-9]{64}/)?.[0];
+      if (!faulted && awaiting && owner.confirmRetryableRefusal(refusal)) {
+        awaiting = false;
+        const message = {...event.message, content: [], stopReason: 'error' as const, errorMessage: 'Rate limit: authenticated model refusal; retry is safe.'};
+        delete message.responseId;
+        return {message};
+      }
       faulted = true; abort(ctx);
       // Pinned Pi awaits this result before tools/continuations and replaces
       // the core's exact finalized message in place, before journal persistence.

@@ -47,7 +47,7 @@ function fakeApi(handler: (name: string) => Promise<unknown>) {
 }
 
 describe('RoomSupervisor', () => {
-  it('parks a failed Room read for a day and recovers only on a real wake', async () => {
+  it('bounds failed read retries and renews recovery on a real wake', async () => {
     vi.useFakeTimers();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     let reachable = false;
@@ -79,9 +79,9 @@ describe('RoomSupervisor', () => {
     await vi.advanceTimersByTimeAsync(0);
     expect(execute).toHaveBeenCalledTimes(1);
     await vi.advanceTimersByTimeAsync(86_400_000);
-    expect(execute).toHaveBeenCalledTimes(1);expect(settled).toBe(false);
+    expect(execute).toHaveBeenCalledTimes(4);expect(settled).toBe(false);
     reachable=true;supervisor.wake();await vi.advanceTimersByTimeAsync(0);
-    expect(execute).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(5);
     expect(polled).toHaveBeenCalledOnce();
     expect(settled).toBe(false);
     abort.abort();
@@ -108,11 +108,19 @@ describe('RoomSupervisor', () => {
     }
     expect(reads).toBe(60);
     await vi.advanceTimersByTimeAsync(200_500);
-    expect(reads).toBe(60);
+    expect(reads).toBe(120);
     supervisor.wake();
     await Promise.all(jobs);
     expect(reads).toBe(120);
     abort.abort();
+  });
+
+  it('recovers a transient Room read without a socket/focus/manual wake',async()=>{
+    vi.useFakeTimers();vi.spyOn(console,'error').mockImplementation(()=>{});
+    const run=vi.fn().mockRejectedValueOnce(networkFailure()).mockResolvedValue(undefined);
+    const supervisor=new RoomSupervisor();const result=supervisor.supervise('Room',undefined,run);
+    await vi.advanceTimersByTimeAsync(249);expect(run).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1);await result;expect(run).toHaveBeenCalledTimes(2);
   });
 
   it('WAKE-STORM: a protocol rejection stays parked across unrelated wakes', async () => {

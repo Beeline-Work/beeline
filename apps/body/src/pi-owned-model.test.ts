@@ -118,12 +118,27 @@ describe('pinned Pi owned-model leaf (uninstalled)', () => {
     f.assertServer(); expect(f.counts().entered).toBe(0); expect(f.counts().tools).toBe(0);
   });
 
-  it.each([429, 500, 'disconnect'] as const)('pins both retry layers to zero for %s and keeps UNKNOWN', async status => {
+  it('retries an authenticated provider refusal with a fresh journal UUID and then completes normally',async()=>{
+    const ids:string[]=[];
+    const f=await fixture({reply(_request,response,id,number){
+      ids.push(id);
+      if(number===1){
+        const evidence=encodeOwnedModelReceipt(token,{requestId:id,state:'refused',evidence:{kind:'provider-refused',status:429}});
+        response.writeHead(409,{'content-type':'application/json'});response.end(JSON.stringify({error:{message:'Recorded model refusal: '+evidence}}));return;
+      }
+      response.writeHead(200,{'content-type':'text/event-stream'});
+      response.end(chunk({id:receipt(id),choices:[{index:0,delta:{role:'assistant',content:'recovered'},finish_reason:'stop'}],usage})+'data: [DONE]\n\n');
+    }});
+    await f.session.prompt('Synthetic prompt.');f.assertServer();
+    expect(f.counts()).toEqual({requests:2,entered:2,tools:0});expect(new Set(ids).size).toBe(2);expect(f.owner.snapshot().state).toBe('idle');
+  });
+
+  it.each([429, 500, 'disconnect'] as const)('never retries an unauthenticated %s outcome despite enabling known-refusal recovery', async status => {
     const f = await fixture({ reply(_request, response) {
       if (status === 'disconnect') response.destroy();
       else { response.writeHead(status, { 'content-type': 'application/json' }); response.end('{"error":{"message":"synthetic refusal"}}'); }
     } });
-    expect(f.settingsManager.getRetrySettings()).toMatchObject({ enabled: false, maxRetries: 0 });
+    expect(f.settingsManager.getRetrySettings()).toMatchObject({ enabled: true, maxRetries: 3 });
     expect(f.settingsManager.getProviderRetrySettings().maxRetries).toBe(0);
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await f.session.prompt('Synthetic prompt.'); await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000);

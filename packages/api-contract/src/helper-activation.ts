@@ -26,4 +26,3 @@ export interface CommandActivationSnapshot extends CommandActivationInput {
   readonly corner?:DaemonOperationMap['getCornerRestoreState']['output'];
 }
 
-export const COMMAND_ACTIVATION_MAX_BYTES=256*1024;

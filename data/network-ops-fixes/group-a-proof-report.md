@@ -209,3 +209,22 @@ architecture20 and phone inventory72/72 pass. Limits and assertions remain
 unchanged. The latest router-head shard2 failure is in `voice-cutin.test.ts`
 timer-state handling and was reported to firstmate; it is outside Group A.
 Remote green status must still be verified for the newly rebased PR head.
+
+## CI hold release: timer and phone-auth composition
+
+Firstmate released the CI hold after the shared timer and urgent phone-auth
+repairs landed. Router integration head `5a3dd9632` merged cleanly into this
+continuation, preserving the repository's native I/O scheduler configuration
+and the Group A portable-proof transform.
+
+Fresh affected local verification passes **261 cases across nine serial
+Vitest suites** at `--maxWorkers=2`: source planning17, shared timer15, real
+PostgreSQL11 plus strict5, Members83, actual router owner31, picker5, owner
+Workbench/wallet3 and main live connection91. The PostgreSQL closure suites
+have zero skips. Full root typecheck, dependency builds, bundle3, boundary
+regressions29, architecture20 and phone inventory72/72 pass. All46 evidence
+selectors still bind exact production JSX. No assertion or budget changed.
+
+Per instruction014, this composition is pushed once and receives one fresh
+remote CI run. Whole-finding/cohort closure remains Open, and remote completion
+is reported separately as green checks or a concrete failed-job result.

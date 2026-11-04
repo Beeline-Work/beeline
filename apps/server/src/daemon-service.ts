@@ -8219,10 +8219,10 @@ export class DaemonService {
     if (!(await this.composio.account(row.composio_account_id,
       row.owner_identity_id, composioToolkitForApp(row.app_key))))
       throw new Error('App account is unavailable; reconnect it');
-    const tools = await this.composio.listTools(composioToolkitForApp(row.app_key), input.query);
-    if (!tools.length && !input.query)
+    const { tools, next } = await this.composio.listTools(composioToolkitForApp(row.app_key), input.query);
+    if (!tools.length && !input.query && !next)
       throw new Error('App provider returned no tools');
-    return { tools, next: 'Use app_tool with query set to a tool slug or search phrase for matching input schemas. The compact catalog is capped at 24000 bytes; query to find tools beyond this list.' };
+    return { tools, next: next ?? 'Use app_tool with query set to a tool slug or search phrase for matching input schemas.' };
   }
 
   private deferredAppTool?: (database: SqlDatabase) => Promise<Output<'executeAppTool'>>;

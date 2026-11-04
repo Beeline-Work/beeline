@@ -1,10 +1,11 @@
 import { COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion } from './command-completion.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
+import { Pool } from 'pg';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import { LinkAgentWallet } from './link-agent-wallet.js';
-import { migrate } from './database.js';
+import { migrate, PostgresDatabase } from './database.js';
 import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
@@ -188,7 +189,8 @@ describe('the app route order', () => {
 });
 
 describe('connect_app', () => {
-  let database: PgliteDatabase;
+  let database: PgliteDatabase | PostgresDatabase;
+  let cleanupPostgres: (() => Promise<void>) | undefined;
 
   const daemonWith = (registry: McpRegistryClient, composio: ComposioApps = {
     supportsOAuth: async () => false,
@@ -232,8 +234,8 @@ describe('connect_app', () => {
         active = true;
         return { accountId: 'ca_fixture', toolkit: completedToolkit };
       }),
-      listTools: vi.fn(async () => [{ slug: 'SLACK_POST_MESSAGE', name: 'Post message',
-        description: 'Post to a channel', inputParameters: {} }]),
+      listTools: vi.fn(async () => ({ tools: [{ slug: 'SLACK_POST_MESSAGE', name: 'Post message',
+        description: 'Post to a channel', inputParameters: {} }] })),
       execute: vi.fn(async () => ({ ok: true })),
       deleteAccount: vi.fn(async () => { active = false; }),
     };
@@ -242,8 +244,26 @@ describe('connect_app', () => {
 
   let releaseCompletions: () => Promise<void>;
   beforeEach(async () => {
-    database = await migratedDatabase();
-    releaseCompletions = await database.client.listen(COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion);
+    const postgresUrl = process.env.BEELINE_APP_DISCOVERY_TEST_POSTGRES_URL;
+    if (postgresUrl) {
+      if (!['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgresUrl).hostname))
+        throw new Error('App discovery proofs require isolated loopback PostgreSQL');
+      const name = `app_discovery_${randomUUID().replaceAll('-', '')}`;
+      const admin = new Pool({ connectionString: postgresUrl, max: 1 });
+      await admin.query(`CREATE DATABASE ${name}`);
+      const isolatedUrl = new URL(postgresUrl);
+      isolatedUrl.pathname = `/${name}`;
+      database = new PostgresDatabase(isolatedUrl.toString(), 2, { mode: 'migration' });
+      cleanupPostgres = async () => {
+        await admin.query(`DROP DATABASE ${name}`);
+        await admin.end();
+      };
+      await migrate(database);
+      releaseCompletions = async () => {};
+    } else {
+      database = await migratedDatabase();
+      releaseCompletions = await database.client.listen(COMMAND_COMPLETION_CHANNEL, notifyCommandCompletion);
+    }
     await database.query(
       `INSERT INTO identities(id,kind,name,handle)
        VALUES($1,'human','Owner','owner'),($2,'agent','Bee','bee')`,
@@ -277,9 +297,14 @@ describe('connect_app', () => {
          'claimed',$5,now()+interval '10 minutes')`,
       [COMMAND, ROOM, HELPER, REQUEST, GENERATION],
     );
-  });
+  }, 120_000);
 
-  afterEach(async () => { await releaseCompletions(); await database.close(); });
+  afterEach(async () => {
+    await releaseCompletions?.();
+    await database?.close();
+    await cleanupPostgres?.();
+    cleanupPostgres = undefined;
+  });
 
   it.each(['registry-mcp', 'trusty-squire'])(
     'R-STALE-SIGN-IN: %s stale card returns reconnect guidance through HTTP', async connectKind => {
@@ -1198,6 +1223,45 @@ describe('connect_app', () => {
     console.log('Reproduction CRED-1: connect and status select vault:github-work among two GitHub keys');
   });
 
+  it('Reproduction APP-CATALOG-CONTINUATION: reaches every tool in a 1,895-Room Workspace', async () => {
+    await database.query(`INSERT INTO rooms(id,workspace_id,created_by,name,parent_id,archived_at)
+      SELECT md5('catalog-room-'||n)::uuid,$1,$2,'Archived corner '||n,$3,now()
+      FROM generate_series(1,1894) n`, [WORKSPACE, OWNER, ROOM]);
+    const appId = randomUUID();
+    await database.query(`INSERT INTO workspace_apps
+      (id,workspace_id,owner_identity_id,app_key,display_name,transport,route,composio_account_id)
+      VALUES($1,$2,$3,'slack','Slack','composio','composio','ca_fixture')`, [appId, WORKSPACE, OWNER]);
+    const items = Array.from({ length: 1000 }, (_, i) => ({ slug: `SLACK_TOOL_${i}`,
+      name: `Tool ${i}`, toolkit: { slug: 'slack' }, description: 'Useful description '.repeat(30),
+      input_parameters: { type: 'object' } }));
+    const transport = vi.fn(async (url: URL | string) => {
+      const parsed = new URL(String(url));
+      if (parsed.pathname.endsWith('/connected_accounts/ca_fixture')) return Response.json({
+        id: 'ca_fixture', user_id: OWNER, toolkit: { slug: 'slack' }, status: 'ACTIVE',
+      });
+      if (!parsed.searchParams.has('cursor') && !parsed.searchParams.has('query'))
+        return Response.json({ items: [], next_cursor: 'catalog' });
+      return Response.json({ items });
+    });
+    const daemon = daemonWith(fakeRegistry([]).client, new ComposioApps('fixture-only', transport as typeof fetch));
+    const slugs: string[] = [];
+    let query: string | undefined;
+    let pages = 0;
+    do {
+      const page = await daemon.execute('listAppTools', { ...turn, appId, query }, HELPER);
+      slugs.push(...page.tools.map(tool => tool.slug));
+      query = /query="(beeline-page:[^"]+)"/.exec(page.next ?? '')?.[1];
+      pages++;
+    } while (query);
+    expect(pages).toBeGreaterThan(1);
+    expect(slugs).toEqual(items.map(tool => tool.slug));
+    expect((await database.query(`SELECT count(*)::int count FROM rooms WHERE workspace_id=$1`, [WORKSPACE])).rows[0]).toEqual({ count: 1895 });
+    const schema = await daemon.execute('listAppTools', { ...turn, appId, query: 'SLACK_TOOL_999' }, HELPER);
+    expect(schema.tools).toEqual([expect.objectContaining({ slug: 'SLACK_TOOL_999', inputParameters: { type: 'object' } })]);
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [HELPER]);
+    await expect(daemon.execute('listAppTools', { ...turn, appId }, HELPER)).rejects.toThrow();
+  }, 120_000);
+
   it('uses a connected owner app from a Room and corner where only the agent is a member', async () => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);
@@ -1420,7 +1484,7 @@ describe('connect_app', () => {
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
     await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: started.appId! }, OWNER);
-    provider.listTools.mockResolvedValueOnce([]);
+    provider.listTools.mockResolvedValueOnce({ tools: [] });
     const server = createBeelineServer({ database, phone, daemon, live: new LiveHub(),
       mediaMaximumBytes: 1,
       auth: { authenticateDaemon: async () => HELPER, authenticatePhone: async () => null } as unknown as TokenAuth });
@@ -1453,7 +1517,7 @@ describe('connect_app', () => {
       undefined, false, database, undefined, undefined, fakeRegistry([]).client, provider);
     await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
     await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: started.appId! }, OWNER);
-    provider.listTools.mockResolvedValueOnce([]);
+    provider.listTools.mockResolvedValueOnce({ tools: [] });
     await expect(daemon.execute('listAppTools', { ...turn, appId: started.appId! }, HELPER))
       .rejects.toThrow(/no tools/i);
   });

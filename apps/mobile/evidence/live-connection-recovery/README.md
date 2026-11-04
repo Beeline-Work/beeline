@@ -39,13 +39,12 @@ No update is published. The original v142 bytes are restored after capture.
 
 ## Reproduced and fixed
 
-**Healthy return.** v142 always calls `reconnectNow()` on active AppState,
+**Healthy return (candidate 32a capture).** v142 always calls `reconnectNow()` on active AppState,
 discarding the socket and rejecting dispatched operations. Native traces show
 a new handshake on each quick return. The fix retains an existing socket,
 including an opening handshake. Connectivity notifications also retain it.
-An absent socket can still recover on those events; close/error, missed
-requests, missing live delivery, explicit Retry and identity changes retain
-their existing recovery authority.
+These captures predate the R6/R7 liveness and opening-deadline fixes below.
+The current recovery contract is owned by [Idle phones do not poll](../../../../docs/agent-server-surfaces.md).
 
 **Transient authorization failure.** The native fixture fails one upgrade,
 then fails one renewal request with a transient network error. v142 does not

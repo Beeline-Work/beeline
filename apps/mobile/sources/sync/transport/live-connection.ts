@@ -1,9 +1,25 @@
 import type { AgentUsageCell } from '@beeline/api-contract/helper-usage';
 import type { MediaMetadata, MediaLink } from '@beeline/api-contract/phone';
-import { parseRouterCommandIdentity, type RouterCommandIdentity, type RouterCommandReceipt } from '@beeline/api-contract/router-command';
-import type { RouterFamily, RouterSnapshotInput, RouterSnapshot, RouterPushFrame, RouterUnavailable, RouterAuthorityFence, RouterCapabilities } from '@beeline/api-contract/router-protocol';
+import {
+  parseRouterCommandIdentity,
+  type RouterCommandIdentity,
+  type RouterCommandReceipt,
+} from '@beeline/api-contract/router-command';
+import type {
+  RouterFamily,
+  RouterSnapshotInput,
+  RouterSnapshot,
+  RouterPushFrame,
+  RouterUnavailable,
+  RouterAuthorityFence,
+  RouterCapabilities,
+} from '@beeline/api-contract/router-protocol';
 import { RouteObservation } from './route-observation';
-import { PHONE_SOCKET_MAX_IN_FLIGHT, PHONE_SOCKET_MAX_FRAME_BYTES, type PhoneOperationMap } from '@beeline/api-contract/phone';
+import {
+  PHONE_SOCKET_MAX_IN_FLIGHT,
+  PHONE_SOCKET_MAX_FRAME_BYTES,
+  type PhoneOperationMap,
+} from '@beeline/api-contract/phone';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { MonolithRequestTimeoutError, MonolithSessionChangedError } from '@/auth/monolith-session';
 import { waitForRoomDraw } from '@/buzz/room-draw-barrier';
@@ -72,8 +88,28 @@ type Registration = {
 type RoomCursor = { epoch: string; base: number; seen: Set<number> };
 
 type RouterOwnerBridge = {
-  requestedCapabilities?: () => Promise<{ families: readonly RouterFamily[]; authorityFencesV1: boolean; scheduledWorkCoverageV1?:boolean }>;
-  negotiated: (next: { generation: number; families: readonly RouterFamily[]; usageCellV1?: boolean; executeTools?: (input:PhoneOperationMap['readRoomTools']['input'])=>Promise<PhoneOperationMap['readRoomTools']['output']>; executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>; authorityFencesV1?: boolean; roomHeadContinuityV1?: boolean; scheduledWorkCoverageV1?:RouterCapabilities['scheduledWorkCoverageV1']; mediaMetadataV1?: boolean; executeMetadata?: (objectId: string) => Promise<MediaMetadata>; executeLink?: (objectId: string) => Promise<MediaLink>; executePlayback?: (objectId: string) => Promise<MediaLink>; execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot> }) => Promise<void>;
+  requestedCapabilities?: () => Promise<{
+    families: readonly RouterFamily[];
+    authorityFencesV1: boolean;
+    scheduledWorkCoverageV1?: boolean;
+  }>;
+  negotiated: (next: {
+    generation: number;
+    families: readonly RouterFamily[];
+    usageCellV1?: boolean;
+    executeTools?: (
+      input: PhoneOperationMap['readRoomTools']['input'],
+    ) => Promise<PhoneOperationMap['readRoomTools']['output']>;
+    executeUsageCell?: (agentId: string) => Promise<AgentUsageCell>;
+    authorityFencesV1?: boolean;
+    roomHeadContinuityV1?: boolean;
+    scheduledWorkCoverageV1?: RouterCapabilities['scheduledWorkCoverageV1'];
+    mediaMetadataV1?: boolean;
+    executeMetadata?: (objectId: string) => Promise<MediaMetadata>;
+    executeLink?: (objectId: string) => Promise<MediaLink>;
+    executePlayback?: (objectId: string) => Promise<MediaLink>;
+    execute: (input: RouterSnapshotInput) => Promise<RouterSnapshot>;
+  }) => Promise<void>;
   disconnected: () => void;
   receive: (frame: RouterPushFrame | RouterUnavailable | RouterAuthorityFence) => void;
 };
@@ -237,54 +273,103 @@ export class LiveConnection {
 
   /** Each call owns one deadline and one reply; reconnect never resends it. */
   request<Name extends keyof PhoneOperationMap>(
-    op: Name, args: PhoneOperationMap[Name]['input'], options: SocketRequestOptions = {},
+    op: Name,
+    args: PhoneOperationMap[Name]['input'],
+    options: SocketRequestOptions = {},
   ): Promise<PhoneOperationMap[Name]['output']> {
-    if (['readRouterSnapshot', 'readRoomTools', 'readMediaMetadata', 'readMediaLink', 'readMediaPlayback'].includes(op)) return Promise.reject(
-      new PhoneSocketError('owner_required', 'This read requires the local router owner', false));
+    if (
+      [
+        'readRouterSnapshot',
+        'readRoomTools',
+        'readMediaMetadata',
+        'readMediaLink',
+        'readMediaPlayback',
+      ].includes(op)
+    )
+      return Promise.reject(
+        new PhoneSocketError('owner_required', 'This read requires the local router owner', false),
+      );
     const generation = this.generation;
     const start = () => {
       if (generation !== this.generation) return Promise.reject(new MonolithSessionChangedError());
       return this.startRequest(op, args, options) as Promise<PhoneOperationMap[Name]['output']>;
     };
-    const optional = ['readWorkspace', 'readChats', 'markRead', 'readStarPrompt', 'reportPageLoad', 'listRoomWorkflowRuns', 'readHistory'].includes(op);
+    const optional = [
+      'readWorkspace',
+      'readChats',
+      'markRead',
+      'readStarPrompt',
+      'reportPageLoad',
+      'listRoomWorkflowRuns',
+      'readHistory',
+    ].includes(op);
     const draw = (options.afterRoomDraw ?? optional) ? waitForRoomDraw(options.signal) : undefined;
     return draw ? draw.then(start) : start();
   }
 
   commandState(): { generation: number; commandDedupV1: boolean; ready: boolean } {
-    return { generation: this.socketEpoch, commandDedupV1: this.commandDedupV1,
-      ready: this.routerState === 'ready' && Boolean(this.socket && isSocketOpen(this.socket)) };
+    return {
+      generation: this.socketEpoch,
+      commandDedupV1: this.commandDedupV1,
+      ready: this.routerState === 'ready' && Boolean(this.socket && isSocketOpen(this.socket)),
+    };
   }
 
   subscribeCommandCapabilities(listener: () => void): () => void {
     this.commandCapabilityListeners.add(listener);
-    return () => { this.commandCapabilityListeners.delete(listener); };
+    return () => {
+      this.commandCapabilityListeners.delete(listener);
+    };
   }
 
   /** The prepared intent owner supplies immutable identity; transport never
    * retries it, regenerates it or downgrades it to a legacy write. */
-  requestCommand(operation: string, args: unknown, command: RouterCommandIdentity,
-    options: SocketRequestOptions = {}): Promise<RouterCommandReceipt> {
+  requestCommand(
+    operation: string,
+    args: unknown,
+    command: RouterCommandIdentity,
+    options: SocketRequestOptions = {},
+  ): Promise<RouterCommandReceipt> {
     const state = this.commandState();
-    if (!state.ready || !state.commandDedupV1) return Promise.reject(
-      new PhoneSocketError('command_unavailable', 'Durable commands are unavailable on this connection', false));
+    if (!state.ready || !state.commandDedupV1)
+      return Promise.reject(
+        new PhoneSocketError(
+          'command_unavailable',
+          'Durable commands are unavailable on this connection',
+          false,
+        ),
+      );
     let identity: RouterCommandIdentity;
-    try { identity = parseRouterCommandIdentity(command); } catch (error) { return Promise.reject(error); }
+    try {
+      identity = parseRouterCommandIdentity(command);
+    } catch (error) {
+      return Promise.reject(error);
+    }
     return this.startRequest(operation, args, options, identity) as Promise<RouterCommandReceipt>;
   }
 
-  private startRequest(op: string, args: unknown, options: SocketRequestOptions,
-    command?: RouterCommandIdentity): Promise<unknown> {
+  private startRequest(
+    op: string,
+    args: unknown,
+    options: SocketRequestOptions,
+    command?: RouterCommandIdentity,
+  ): Promise<unknown> {
     if (options.signal?.aborted) return Promise.reject(this.requestAbortError());
     if (this.requests.size >= PHONE_SOCKET_MAX_IN_FLIGHT)
-      return Promise.reject(new PhoneSocketError('busy', 'Too many phone requests in flight', true));
+      return Promise.reject(
+        new PhoneSocketError('busy', 'Too many phone requests in flight', true),
+      );
     const id = `phone-${++this.nextRequestId}`;
     let frame: string;
     try {
       frame = JSON.stringify({ t: 'req', id, op, args, ...(command ? { command } : {}) });
       if (utf8ToBytes(frame).length > PHONE_SOCKET_MAX_FRAME_BYTES)
-        return Promise.reject(new PhoneSocketError('invalid_request', 'Phone request is too large', false));
-    } catch (error) { return Promise.reject(error); }
+        return Promise.reject(
+          new PhoneSocketError('invalid_request', 'Phone request is too large', false),
+        );
+    } catch (error) {
+      return Promise.reject(error);
+    }
     this.routeObservation.observe(op, args);
     const generation = this.generation;
     return new Promise((resolve, reject) => {
@@ -293,9 +378,17 @@ export class LiveConnection {
         options.signal?.removeEventListener('abort', abort);
         this.requests.delete(id);
       };
-      const request: PendingRequest = { frame, awaitedSocket: this.socket,
-        resolve: value => { finish(); resolve(value); },
-        reject: error => { finish(); reject(error); },
+      const request: PendingRequest = {
+        frame,
+        awaitedSocket: this.socket,
+        resolve: (value) => {
+          finish();
+          resolve(value);
+        },
+        reject: (error) => {
+          finish();
+          reject(error);
+        },
       };
       const abort = () => request.reject(this.requestAbortError());
       const timer = setTimeout(() => {
@@ -335,8 +428,12 @@ export class LiveConnection {
 
   private receiveReply(value: unknown, socket: WebSocket): boolean {
     if (!value || typeof value !== 'object' || (value as { t?: unknown }).t !== 'res') return false;
-    const frame = value as { id?: unknown; ok?: unknown; result?: unknown;
-      error?: { code?: unknown; message?: unknown; retryable?: unknown } };
+    const frame = value as {
+      id?: unknown;
+      ok?: unknown;
+      result?: unknown;
+      error?: { code?: unknown; message?: unknown; retryable?: unknown };
+    };
     if (typeof frame.id !== 'string') return true;
     const request = this.requests.get(frame.id);
     if (!request || request.socket !== socket) return true;
@@ -344,22 +441,53 @@ export class LiveConnection {
       // An unrelated successful request does not prove every demanded lane
       // caught up. Only a distinct external/user boundary resets this latch.
       request.resolve(frame.result);
-    }
-    else if (frame.ok === false && typeof frame.error?.code === 'string' &&
-      typeof frame.error.message === 'string' && typeof frame.error.retryable === 'boolean')
-      request.reject(new PhoneSocketError(frame.error.code, frame.error.message, frame.error.retryable));
+    } else if (
+      frame.ok === false &&
+      typeof frame.error?.code === 'string' &&
+      typeof frame.error.message === 'string' &&
+      typeof frame.error.retryable === 'boolean'
+    )
+      request.reject(
+        new PhoneSocketError(frame.error.code, frame.error.message, frame.error.retryable),
+      );
     return true;
   }
 
   private receiveRouterFrame(value: unknown, socket: WebSocket): boolean {
     if (!this.deps.router || !value || typeof value !== 'object') return false;
     const frame = value as Record<string, unknown>;
-    if (this.routerState === 'waiting' && (frame.type === 'router-capabilities' ||
-      frame.type === 'sync-ok' || frame.type === 'subscribed' || frame.t === 'res')) {
-      const families: RouterFamily[] = frame.type === 'router-capabilities' && frame.protocol === 1 && Array.isArray(frame.families)
-        ? ['room-list', 'needs-you-count', 'room-head','room-scheduled-work','workspace-roster','room-workflows','agent-profile','owner-workbench','owner-wallet'].filter(f => (frame.families as unknown[]).includes(f)&&
-          (f!=='room-scheduled-work'||frame.commandDedupV1===true&&frame.authorityFencesV1===true)) as RouterFamily[] : [];
-      this.commandDedupV1 = frame.type === 'router-capabilities' && frame.protocol === 1 && frame.commandDedupV1 === true;
+    if (
+      this.routerState === 'waiting' &&
+      (frame.type === 'router-capabilities' ||
+        frame.type === 'sync-ok' ||
+        frame.type === 'subscribed' ||
+        frame.t === 'res')
+    ) {
+      const families: RouterFamily[] =
+        frame.type === 'router-capabilities' &&
+        frame.protocol === 1 &&
+        Array.isArray(frame.families)
+          ? ([
+              'room-list',
+              'needs-you-count',
+              'room-head',
+              'room-scheduled-work',
+              'workspace-roster',
+              'room-workflows',
+              'agent-profile',
+              'owner-workbench',
+              'owner-wallet',
+            ].filter(
+              (f) =>
+                (frame.families as unknown[]).includes(f) &&
+                (f !== 'room-scheduled-work' ||
+                  (frame.commandDedupV1 === true && frame.authorityFencesV1 === true)),
+            ) as RouterFamily[])
+          : [];
+      this.commandDedupV1 =
+        frame.type === 'router-capabilities' &&
+        frame.protocol === 1 &&
+        frame.commandDedupV1 === true;
       this.routerState = 'initializing';
       // A negotiated executor belongs to this physical connection. Retained
       // work cannot borrow a replacement socket's capabilities after rollback.
@@ -368,42 +496,96 @@ export class LiveConnection {
           return Promise.reject(new MonolithSessionChangedError());
         return this.startRequest(operation, args, {});
       };
-      void this.deps.router.negotiated({ generation: this.socketEpoch, families,
-        scheduledWorkCoverageV1: families.includes('room-scheduled-work') ? frame.scheduledWorkCoverageV1 as RouterCapabilities['scheduledWorkCoverageV1'] : undefined,
-        roomHeadContinuityV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.roomHeadContinuityV1 === true && families.includes('room-head'),
-        authorityFencesV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.authorityFencesV1 === true,
-        mediaMetadataV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.mediaMetadataV1 === true,
-        usageCellV1: frame.type === 'router-capabilities' && frame.protocol === 1 && frame.usageCellV1 === true,
-        executeTools: input=>executeCurrent('readRoomTools',input) as Promise<PhoneOperationMap['readRoomTools']['output']>,
-        executeUsageCell: agentId => executeCurrent('readAgentUsageCell', { agentId }) as Promise<AgentUsageCell>,
-        executeMetadata: objectId => executeCurrent('readMediaMetadata', { objectId }) as Promise<MediaMetadata>,
-        executeLink: objectId => executeCurrent('readMediaLink', { objectId }) as Promise<MediaLink>,
-        executePlayback: objectId => executeCurrent('readMediaPlayback', { objectId }) as Promise<MediaLink>,
-        execute: input => executeCurrent('readRouterSnapshot', input) as Promise<RouterSnapshot>,
-      }).then(() => {
-        if (this.socket !== socket) return;
-        this.routerState = 'ready';
-        for (const listener of this.commandCapabilityListeners) listener();
-        for (const queued of this.routerQueue) this.deps.router!.receive(queued);
-        this.routerQueue = []; this.routerQueueBytes = 0;
-      }).catch(() => { if (this.socket === socket) this.deps.router?.disconnected(); });
+      void this.deps.router
+        .negotiated({
+          generation: this.socketEpoch,
+          families,
+          scheduledWorkCoverageV1: families.includes('room-scheduled-work')
+            ? (frame.scheduledWorkCoverageV1 as RouterCapabilities['scheduledWorkCoverageV1'])
+            : undefined,
+          roomHeadContinuityV1:
+            frame.type === 'router-capabilities' &&
+            frame.protocol === 1 &&
+            frame.roomHeadContinuityV1 === true &&
+            families.includes('room-head'),
+          authorityFencesV1:
+            frame.type === 'router-capabilities' &&
+            frame.protocol === 1 &&
+            frame.authorityFencesV1 === true,
+          mediaMetadataV1:
+            frame.type === 'router-capabilities' &&
+            frame.protocol === 1 &&
+            frame.mediaMetadataV1 === true,
+          usageCellV1:
+            frame.type === 'router-capabilities' &&
+            frame.protocol === 1 &&
+            frame.usageCellV1 === true,
+          executeTools: (input) =>
+            executeCurrent('readRoomTools', input) as Promise<
+              PhoneOperationMap['readRoomTools']['output']
+            >,
+          executeUsageCell: (agentId) =>
+            executeCurrent('readAgentUsageCell', { agentId }) as Promise<AgentUsageCell>,
+          executeMetadata: (objectId) =>
+            executeCurrent('readMediaMetadata', { objectId }) as Promise<MediaMetadata>,
+          executeLink: (objectId) =>
+            executeCurrent('readMediaLink', { objectId }) as Promise<MediaLink>,
+          executePlayback: (objectId) =>
+            executeCurrent('readMediaPlayback', { objectId }) as Promise<MediaLink>,
+          execute: (input) =>
+            executeCurrent('readRouterSnapshot', input) as Promise<RouterSnapshot>,
+        })
+        .then(() => {
+          if (this.socket !== socket) return;
+          this.routerState = 'ready';
+          for (const listener of this.commandCapabilityListeners) listener();
+          for (const queued of this.routerQueue) this.deps.router!.receive(queued);
+          this.routerQueue = [];
+          this.routerQueueBytes = 0;
+        })
+        .catch(() => {
+          if (this.socket === socket) this.deps.router?.disconnected();
+        });
     }
     if (frame.type === 'router-capabilities') return true;
-    if (!['push-part', 'push-commit', 'scheduled-work-authority-part', 'scheduled-work-authority-commit', 'scheduled-work-authority-restart', 'router-unavailable', 'authority-fence', 'usage-cell', 'usage-unavailable'].includes(String(frame.kind))) return false;
-    if (this.routerState === 'ready') this.deps.router.receive(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence);
+    if (
+      ![
+        'push-part',
+        'push-commit',
+        'scheduled-work-authority-part',
+        'scheduled-work-authority-commit',
+        'scheduled-work-authority-restart',
+        'router-unavailable',
+        'authority-fence',
+        'usage-cell',
+        'usage-unavailable',
+      ].includes(String(frame.kind))
+    )
+      return false;
+    if (this.routerState === 'ready')
+      this.deps.router.receive(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence);
     else {
       const bytes = utf8ToBytes(JSON.stringify(value)).length;
       if (this.routerQueue.length >= 32 || this.routerQueueBytes + bytes > 1024 * 1024) {
-        this.routerQueue = []; this.routerQueueBytes = 0;
+        this.routerQueue = [];
+        this.routerQueueBytes = 0;
         this.deps.router.disconnected();
-        this.forgetSocket(); socket.close();
-      } else { this.routerQueue.push(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence); this.routerQueueBytes += bytes; }
+        this.forgetSocket();
+        socket.close();
+      } else {
+        this.routerQueue.push(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence);
+        this.routerQueueBytes += bytes;
+      }
     }
     return true;
   }
 
-  private rejectRequests(reason: unknown = new PhoneSocketDisconnectedError(), onlySent = false): void {
-    for (const request of this.requests.values()) if (!onlySent || request.socket) request.reject(reason);
+  private rejectRequests(
+    reason: unknown = new PhoneSocketDisconnectedError(),
+    onlySent = false,
+  ): void {
+    for (const request of this.requests.values())
+      if (!onlySent || request.socket) request.reject(reason);
   }
 
   /** Safe transport metadata for a recovery receipt; no URL or authorization. */
@@ -412,7 +594,9 @@ export class LiveConnection {
   }
 
   /** Local shadow evidence only; intentionally separate from telemetry diagnostics. */
-  routeDiagnostics() { return this.routeObservation.snapshot(); }
+  routeDiagnostics() {
+    return this.routeObservation.snapshot();
+  }
 
   dispose(): void {
     this.routeObservation.clear();
@@ -591,8 +775,9 @@ export class LiveConnection {
       if (this.socket === socket && this.hasDemand()) this.reportRequestDeadlineMissed();
     }, HEALTH_CHALLENGE_DEADLINE_MS);
     this.healthChallenge = { socket, timer };
-    try { socket.send(JSON.stringify({ type: 'ping' })); }
-    catch {
+    try {
+      socket.send(JSON.stringify({ type: 'ping' }));
+    } catch {
       this.clearHealthChallenge();
       if (this.socket === socket) this.reportRequestDeadlineMissed();
     }
@@ -703,7 +888,8 @@ export class LiveConnection {
         if (attempt === this.authorizationAttempt) {
           this.authorizationAttempt += 1;
           setConnectionState('disconnected');
-          if (!this.recoverAuthorizationFailure()) this.rejectRequests(new MonolithRequestTimeoutError());
+          if (!this.recoverAuthorizationFailure())
+            this.rejectRequests(new MonolithRequestTimeoutError());
         }
         resolve();
       }, 15_000);
@@ -732,7 +918,11 @@ export class LiveConnection {
       if (generation !== this.generation || attempt !== this.authorizationAttempt) return;
       const requested = this.deps.router?.requestedCapabilities
         ? await this.deps.router.requestedCapabilities()
-        : { families: ['room-list', 'needs-you-count', 'room-head'], authorityFencesV1: true, scheduledWorkCoverageV1:false };
+        : {
+            families: ['room-list', 'needs-you-count', 'room-head'],
+            authorityFencesV1: true,
+            scheduledWorkCoverageV1: false,
+          };
       if (generation !== this.generation || attempt !== this.authorizationAttempt) return;
       if (this.registrations.size === 0 && this.requests.size === 0) {
         setConnectionState('disconnected');
@@ -751,10 +941,21 @@ export class LiveConnection {
         this.authorizationRecoveryUsed = false;
         setConnectionState('connected');
         this.socketEpoch += 1;
-        if (this.deps.router) next.send(JSON.stringify({ type: 'router-negotiate', protocol: 1,
-          families: requested.families, authorityFencesV1: requested.authorityFencesV1, usageCellV1: true,
-          ...(requested.scheduledWorkCoverageV1&&requested.families.includes('room-scheduled-work')?{scheduledWorkCoverageV1:true}:{}),
-          ...(requested.families.includes('room-head') ? { roomHeadContinuityV1: true } : {}) }));
+        if (this.deps.router)
+          next.send(
+            JSON.stringify({
+              type: 'router-negotiate',
+              protocol: 1,
+              families: requested.families,
+              authorityFencesV1: requested.authorityFencesV1,
+              usageCellV1: true,
+              ...(requested.scheduledWorkCoverageV1 &&
+              requested.families.includes('room-scheduled-work')
+                ? { scheduledWorkCoverageV1: true }
+                : {}),
+              ...(requested.families.includes('room-head') ? { roomHeadContinuityV1: true } : {}),
+            }),
+          );
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
         this.sendSubscribe([...this.refcount.keys()]);
         this.sendWorkspaceSync();
@@ -836,7 +1037,12 @@ export class LiveConnection {
    * another. Unsent requests also hold the connection until their own deadline.
    */
   private recoverOpenedSocket(consumeSocketRecovery = true): void {
-    if (AppState.currentState !== 'active' || (consumeSocketRecovery && this.recoverySpent) || !this.hasDemand()) return;
+    if (
+      AppState.currentState !== 'active' ||
+      (consumeSocketRecovery && this.recoverySpent) ||
+      !this.hasDemand()
+    )
+      return;
     if (consumeSocketRecovery) this.recoverySpent = true;
     const generation = this.generation;
     const flight = this.connectInFlight;
@@ -949,11 +1155,23 @@ export class LiveConnection {
   }
 
   private sendWorkspaceSync(): void {
-    if (!this.socket || !isSocketOpen(this.socket) ||
-        ![...this.registrations.values()].some(r => !r.closed && !r.roomIds.size)) return;
-    this.socket.send(JSON.stringify({ type: 'sync', workspaceCursors:
-      Object.fromEntries([...this.workspaceCursors].map(([id, cursor]) =>
-        [id, { epoch: cursor.epoch, base: cursor.base, seen: [...cursor.seen] }])) }));
+    if (
+      !this.socket ||
+      !isSocketOpen(this.socket) ||
+      ![...this.registrations.values()].some((r) => !r.closed && !r.roomIds.size)
+    )
+      return;
+    this.socket.send(
+      JSON.stringify({
+        type: 'sync',
+        workspaceCursors: Object.fromEntries(
+          [...this.workspaceCursors].map(([id, cursor]) => [
+            id,
+            { epoch: cursor.epoch, base: cursor.base, seen: [...cursor.seen] },
+          ]),
+        ),
+      }),
+    );
   }
 
   private replayLateJoin(registration: Registration, roomId: string): void {
@@ -978,17 +1196,26 @@ export class LiveConnection {
     if (live.type === 'pong') return;
     if (live.type === 'workspace-cursor') {
       this.workspaceCursors.set(live.workspaceId, {
-        epoch: live.epoch, base: live.sequence, seen: new Set(),
+        epoch: live.epoch,
+        base: live.sequence,
+        seen: new Set(),
       });
       if (!live.epoch) this.workspaceCursors.delete(live.workspaceId);
       if (!live.reload) return;
       live = { type: 'invalidate', roomId: '', reason: 'reconnect' };
-    } else if ('roomId' in live && live.roomId === '' && live.workspaceId &&
-        live.epoch && typeof live.sequence === 'number') {
+    } else if (
+      'roomId' in live &&
+      live.roomId === '' &&
+      live.workspaceId &&
+      live.epoch &&
+      typeof live.sequence === 'number'
+    ) {
       const cursor = this.workspaceCursors.get(live.workspaceId);
       if (cursor?.epoch === live.epoch && live.sequence <= cursor.base) return;
       this.workspaceCursors.set(live.workspaceId, {
-        epoch: live.epoch, base: live.sequence, seen: new Set(),
+        epoch: live.epoch,
+        base: live.sequence,
+        seen: new Set(),
       });
       // Existing list handlers use reconnect for a covering workspace read.
       if (live.type === 'invalidate' && live.reason === 'workspace-replay')
@@ -996,8 +1223,12 @@ export class LiveConnection {
     }
     if (live.type === 'cursor') {
       const cursor = this.roomCursors.get(live.roomId);
-      if (cursor && cursor.epoch === live.epoch && Number.isSafeInteger(live.sequence) &&
-          live.sequence! >= cursor.base) {
+      if (
+        cursor &&
+        cursor.epoch === live.epoch &&
+        Number.isSafeInteger(live.sequence) &&
+        live.sequence! >= cursor.base
+      ) {
         cursor.base = live.sequence!;
         for (const seen of cursor.seen) if (seen <= cursor.base) cursor.seen.delete(seen);
       }
@@ -1008,16 +1239,28 @@ export class LiveConnection {
       this.overlays.delete(live.roomId);
       noteCornerLaneSubscribed(live.roomId, false);
       if (live.epoch && Number.isSafeInteger(live.sequence))
-        this.roomCursors.set(live.roomId, { epoch: live.epoch, base: live.sequence!, seen: new Set() });
+        this.roomCursors.set(live.roomId, {
+          epoch: live.epoch,
+          base: live.sequence!,
+          seen: new Set(),
+        });
       live = { type: 'invalidate', roomId: live.roomId, reason: 'resync' };
     }
     // An event may race the replay that covers it. Its durable id is the
     // stream epoch plus sequence, including for draft append validation.
-    if ('roomId' in live && live.roomId && live.type !== 'subscribed' &&
-        live.epoch && typeof live.sequence === 'number') {
+    if (
+      'roomId' in live &&
+      live.roomId &&
+      live.type !== 'subscribed' &&
+      live.epoch &&
+      typeof live.sequence === 'number'
+    ) {
       const cursor = this.roomCursors.get(live.roomId);
-      if (cursor?.epoch === live.epoch &&
-          (live.sequence <= cursor.base || cursor.seen.has(live.sequence))) return;
+      if (
+        cursor?.epoch === live.epoch &&
+        (live.sequence <= cursor.base || cursor.seen.has(live.sequence))
+      )
+        return;
     }
     if (live.type === 'message-delta') this.hear(live.message.id);
     else if (live.type === 'sidebar-preview') this.hear(live.preview.id);
@@ -1202,21 +1445,31 @@ export class LiveConnection {
 function productionRouterBridge(): RouterOwnerBridge {
   let epoch = 0;
   let pending: Promise<typeof import('@/buzz/router-owner')> | undefined;
-  const load = () => pending ??= import('@/buzz/router-owner');
+  const load = () => (pending ??= import('@/buzz/router-owner'));
   return {
     requestedCapabilities: async () => (await load()).routerOwnerCapabilities(),
-    negotiated: async next => {
+    negotiated: async (next) => {
       const current = ++epoch;
       const owner = await load();
       if (current === epoch) await owner.routerOwnerNegotiated(next);
     },
     disconnected: () => {
       const current = ++epoch;
-      if (pending) void pending.then(owner => { if (current === epoch) owner.routerOwnerDisconnected(); }).catch(() => {});
+      if (pending)
+        void pending
+          .then((owner) => {
+            if (current === epoch) owner.routerOwnerDisconnected();
+          })
+          .catch(() => {});
     },
-    receive: frame => {
+    receive: (frame) => {
       const current = epoch;
-      if (pending) void pending.then(owner => { if (current === epoch) owner.routerOwnerReceive(frame); }).catch(() => {});
+      if (pending)
+        void pending
+          .then((owner) => {
+            if (current === epoch) owner.routerOwnerReceive(frame);
+          })
+          .catch(() => {});
     },
   };
 }
@@ -1245,10 +1498,14 @@ export function sharedLiveConnection(): LiveConnection {
           // need native connectivity change events for socket recovery.
           NetInfo.configure({ reachabilityShouldRun: () => false });
           let previous: string | undefined;
-          unsubscribe = NetInfo.addEventListener(state => {
+          unsubscribe = NetInfo.addEventListener((state) => {
             const details = state?.details;
-            const current = JSON.stringify([state?.type, state?.isConnected, state?.isInternetReachable,
-              details && 'ipAddress' in details ? details.ipAddress : null]);
+            const current = JSON.stringify([
+              state?.type,
+              state?.isConnected,
+              state?.isInternetReachable,
+              details && 'ipAddress' in details ? details.ipAddress : null,
+            ]);
             const changed = previous !== undefined && previous !== current;
             previous = current;
             if (changed) listener();

@@ -4,7 +4,7 @@
       "id": "work.command-creation",
       "module": "Work authority",
       "invariant": "Agent commands are created only by agent-command.ts creation functions; only a command authorizes a turn.",
-      "pattern": "INSERT\\s+INTO\\s+agent_commands\\b",
+      "pattern": "INSERT\\s+INTO\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?agent_commands\"?\\b",
       "flags": "i",
       "scope": [
         "apps/server/src"
@@ -13,7 +13,104 @@
         "apps/server/src/agent-command.ts"
       ],
       "total": 0,
-      "fix": "Call createAgentCommand(db, {...}) or createClaimedMcpAgentCommand for an explicit connected-app call in apps/server/src/agent-command.ts instead of inserting the row; it owns depth, dedupe and wake routing."
+      "fix": "Call createAgentCommand(db, {...}) or createClaimedMcpAgentCommand for an explicit connected-app call in apps/server/src/agent-command.ts instead of inserting the row; it owns depth, dedupe and wake routing.",
+      "strict": true,
+      "ownerFunctions": {
+        "apps/server/src/agent-command.ts": [
+          "createAgentCommand",
+          "createClaimedMcpAgentCommand"
+        ]
+      },
+      "ownerSites": 2
+    },
+    {
+      "id": "work.command-claim",
+      "module": "Work authority",
+      "invariant": "Only claimAgentCommand can assign a claimed command; its working-turn write must succeed first.",
+      "pattern": "UPDATE\\s+(?:\\\"?\\w+\\\"?\\s*\\.\\s*)?\\\"?agent_commands\\\"?\\s+(?:(?:AS\\s+)?\"?\\w+\"?\\s+)?SET\\s+(?:(?!\\bWHERE\\b|;|`).)*?\\b\\\"?state\\\"?\\s*=\\s*'claimed'",
+      "flags": "is",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/agent-command.ts"
+      ],
+      "ownerFunctions": {
+        "apps/server/src/agent-command.ts": [
+          "claimAgentCommand"
+        ]
+      },
+      "ownerSites": 1,
+      "strict": true,
+      "total": 0,
+      "fix": "Call claimAgentCommand; connected apps select orders with claimMcpOrder."
+    },
+    {
+      "id": "work.command-owner-fields",
+      "module": "Work authority",
+      "invariant": "Only the command owner assigns generations, owners and leases; progress cannot acquire a command.",
+      "pattern": "UPDATE\\s+(?:\\\"?\\w+\\\"?\\s*\\.\\s*)?\\\"?agent_commands\\\"?\\s+(?:(?:AS\\s+)?\"?\\w+\"?\\s+)?SET\\s+(?:(?!\\bWHERE\\b|;|`).)*?\\b\\\"?(?:generation_id|lease_expires_at|claimed_at|turn_owner_connection_id|turn_owner_epoch)\\\"?\\s*=(?!\\s*NULL\\b)",
+      "flags": "is",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/agent-command.ts"
+      ],
+      "ownerFunctions": {
+        "apps/server/src/agent-command.ts": [
+          "claimAgentCommand",
+          "renewAgentCommandLease"
+        ]
+      },
+      "ownerSites": 2,
+      "strict": true,
+      "total": 0,
+      "fix": "Call claimAgentCommand; connected apps select orders with claimMcpOrder."
+    },
+    {
+      "id": "work.mcp-turn-state",
+      "module": "Work authority",
+      "invariant": "MCP transport adapters never write command or turn state; only command/receipt owners settle work.",
+      "pattern": "(?:INSERT\\s+INTO|UPDATE|DELETE\\s+FROM)\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?agent_(?:commands|turns)\"?\\b",
+      "flags": "i",
+      "scope": [
+        "apps/server/src"
+      ],
+      "filePattern": "(?:^|/)rooms-mcp(?:-[^/]*)?\\.(?:tsx?|m?js)$",
+      "owners": [],
+      "strict": true,
+      "total": 0,
+      "fix": "Use the command owner (claimMcpOrder, dismissAgentCommandWakes, releaseUnreportedMcpOrder) or postAgentTurnReceipt; MCP may only adapt ingress."
+    },
+    {
+      "id": "work.subscription-store",
+      "module": "Work authority",
+      "invariant": "Actionable subscriptions live in agent_subscriptions; old JSON is upgrade input only.",
+      "pattern": "jsonb_array_elements_text\\(\\s*(?:\\w+\\.)?event_subscriptions\\s*\\)|\\b(?:\\w+\\.)?event_subscriptions\\s*(?:@>|\\?\\||\\?)",
+      "flags": "i",
+      "scope": [
+        "apps/server/src"
+      ],
+      "owners": [
+        "apps/server/src/agent-subscriptions.ts",
+        "apps/server/src/corner-person-state.ts",
+        "apps/server/src/membership-join.ts"
+      ],
+      "ownerFunctions": {
+        "apps/server/src/agent-subscriptions.ts": [
+          "migrateMembershipSubscriptions"
+        ],
+        "apps/server/src/corner-person-state.ts": [
+          "migrateCornerPersonState"
+        ],
+        "apps/server/src/membership-join.ts": [
+          "perItemMembershipSubscriptionCleanupSql"
+        ]
+      },
+      "strict": true,
+      "total": 0,
+      "fix": "Read roomEventSubscriptions or subscriptionRooms from agent-subscriptions.ts; do not dispatch from old membership JSON."
     },
     {
       "id": "corner.state-writes",
@@ -82,18 +179,24 @@
     {
       "id": "corner.archive",
       "module": "Corner state machine",
-      "invariant": "A corner is archived only by closeCornerState or the merge path, so its run, wakes and state end with it.",
-      "pattern": "UPDATE\\s+rooms\\s+(?:\\w+\\s+)?SET\\s+archived_at",
-      "flags": "i",
+      "invariant": "Only archiveCornerState archives a corner, with commands, workflow runs, wakes and holds in one transaction.",
+      "pattern": "UPDATE\\s+(?:\"?\\w+\"?\\s*\\.\\s*)?\"?rooms\"?\\s+(?:(?:AS\\s+)?\"?\\w+\"?\\s+)?SET\\s+(?:(?!\\bWHERE\\b|;|`).)*?\\b\"?archived_at\"?\\s*=",
+      "flags": "is",
       "scope": [
         "apps/server/src"
       ],
       "owners": [
-        "apps/server/src/corner-close.ts",
-        "apps/server/src/github-operations.ts"
+        "apps/server/src/corner-close.ts"
       ],
       "total": 0,
-      "fix": "Close the corner with closeCornerState(db, cornerId) from apps/server/src/corner-close.ts. It archives the room, cancels commands, abandons the workflow run, deletes wake sources and advances the corner to closed."
+      "fix": "Call archiveCornerState in corner-close.ts; retain outcome-specific lifecycle writes in the caller.",
+      "ownerFunctions": {
+        "apps/server/src/corner-close.ts": [
+          "archiveCornerState"
+        ]
+      },
+      "ownerSites": 1,
+      "strict": true
     },
     {
       "id": "corner.merge-call",
@@ -240,7 +343,7 @@
         "apps/server/src"
       ],
       "owners": [],
-      "total": 18,
+      "total": 16,
       "fix": "Change the main path instead of adding a legacy/fallback/compat variant beside it, or remove an old variant in the same PR."
     },
     {
@@ -515,7 +618,8 @@
           "webhook_token": "existing before the registry; weekly audit reviews",
           "webhook_suffix": "existing before the registry; weekly audit reviews",
           "webhook_token_created_at": "existing before the registry; weekly audit reviews",
-          "webhook_owner_id": "existing before the registry; weekly audit reviews"
+          "webhook_owner_id": "existing before the registry; weekly audit reviews",
+          "inherit_to_corners": "Preserves a subscribe_events parent inheritance request independently of an explicit prompt on the same single-store Room/event key."
         }
       },
       "agent_turn_traces": {
@@ -814,7 +918,8 @@
           "identity_profile": "existing before the registry; weekly audit reviews",
           "push_muted": "existing before the registry; weekly audit reviews",
           "generation": "existing before the registry; weekly audit reviews",
-          "created_at": "existing before the registry; weekly audit reviews"
+          "created_at": "existing before the registry; weekly audit reviews",
+          "subscriptions_overridden": "Distinguishes an explicit empty corner subscription preference from inheritance of the parent Room single-store subscriptions."
         }
       },
       "corner_watches": {

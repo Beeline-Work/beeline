@@ -1,3 +1,5 @@
+import { MAX_TURNS_PER_ROOT } from '@beeline/api-contract/phone';
+import { setRoomEventSubscriptions } from './agent-subscriptions.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { parseGrantDecisionLine } from '@beeline/api-contract/agent-grants';
 import { SCHEDULE_RAN_VERB } from '@beeline/api-contract/scheduled-prompts';
@@ -130,11 +132,12 @@ describe('who an event line mentions', () => {
       WORKSPACE,
     ]);
     await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-       VALUES($1,$2,$3,'member','[]'::jsonb),($1,$2,$4,'member','["joined"]'::jsonb),
-             ($1,$2,$5,'member','["merged"]'::jsonb)`,
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+       VALUES($1,$2,$3,'member'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
       [WORKSPACE, ROOM, HUMAN, GREETER, QUIET_AGENT],
     );
+    await setRoomEventSubscriptions(database, ROOM, GREETER, ['joined']);
+    await setRoomEventSubscriptions(database, ROOM, QUIET_AGENT, ['schedule-ran']);
   });
   afterEach(() => database.close());
 
@@ -201,10 +204,7 @@ describe('who an event line mentions', () => {
   });
 
   it('never mentions a human or a member who left', async () => {
-    await database.query(
-      `UPDATE memberships SET event_subscriptions='["joined"]'::jsonb WHERE identity_id=$1`,
-      [HUMAN],
-    );
+    await setRoomEventSubscriptions(database, ROOM, HUMAN, ['joined']);
     await database.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [GREETER]);
     const written = await systemLine(database, {
       roomId: ROOM,
@@ -236,16 +236,27 @@ describe('who an event line mentions', () => {
     expect(await wokenBy(written.id)).toEqual([QUIET_AGENT]);
   });
 
+  it('counts subscribed wakes against the cascade limit and rolls back a refused fact', async () => {
+    const cause='d'.repeat(64),attempt='e'.repeat(64);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,event_root_cause_id,event_depth,event_woken)
+      VALUES($1,$2,$3,'Cause',$1,0,$4)`,[cause,ROOM,HUMAN,MAX_TURNS_PER_ROOT-1]);
+    await expect(systemLine(database,{id:attempt,roomId:ROOM,subject:{kind:'person',id:HUMAN,name:'Ada'},
+      verb:'joined',kind:'joined',causeId:cause,wakes:[QUIET_AGENT]})).rejects.toThrow();
+    expect((await database.query(`SELECT 1 FROM messages WHERE id=$1`,[attempt])).rowCount).toBe(0);
+    expect(await wokenBy(attempt)).toEqual([]);
+    expect((await database.query(`SELECT event_woken FROM messages WHERE id=$1`,[cause])).rows[0]!.event_woken).toBe(MAX_TURNS_PER_ROOT-1);
+  });
+
   it('still writes the line when the subscriber lookup fails', async () => {
     // The caller is a real membership write. Losing a join to a subscription
     // lookup would be a silent partial join, so the fill is best-effort.
-    const failing: SqlDatabase = {
-      query: async (sql: string, values?: unknown[]) => {
-        if (sql.includes('event_subscriptions')) throw new Error('column is gone');
-        return database.query(sql, values ?? []);
-      },
-      transaction: (work) => database.transaction(work),
-    };
+    const withFailedLookup = (db: SqlDatabase): SqlDatabase => ({
+      query: ((sql: string, values?: unknown[]) => sql.includes('FROM room_event_subscriptions subscription')
+        ? db.query('SELECT missing_subscription_column FROM agent_subscriptions')
+        : db.query(sql, values ?? [])) as SqlDatabase['query'],
+      transaction: work => db.transaction(tx => work(withFailedLookup(tx))),
+    });
+    const failing = withFailedLookup(database);
     const written = await systemLine(failing, {
       roomId: ROOM,
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },

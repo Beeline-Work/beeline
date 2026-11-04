@@ -678,9 +678,12 @@ export function retryRouterLane(request: LaneRequest): void {
   if (!admission || !lanes) return;
   const key = slotKey(request);
   const slot = slotsByKey.get(key);
-  if (!slot || !eligible(slot)) return;
+  // Retry is the user's own gesture: it always re-reads and never throws into the screen.
+  const reread = () => lanes?.refresh(held => slotKey(held) === key);
+  if (!slot || !eligible(slot)) { reread(); return; }
   const read = { route: 'phone.readRouterSnapshot' as const, input: slot.request };
-  admission.retry(slotNames.get(slot)!, read, pass => lanes!.retry(slot.request, admission!.spend(read, pass)));
+  try { admission.retry(slotNames.get(slot)!, read, pass => lanes!.retry(slot.request, admission!.spend(read, pass))); }
+  catch { reread(); }
 }
 
 /** Background revokes screen authority immediately. Returning foreground does

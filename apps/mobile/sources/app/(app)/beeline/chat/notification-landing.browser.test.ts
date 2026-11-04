@@ -123,6 +123,7 @@ function shims(mobile: string): Record<string, string> {
     // and a timing or delay settles after its duration, so the arrival flash
     // holds visibly and then clears, as the app's does.
     'react-native-reanimated': `import React from 'react';
+    import { flushSync } from 'react-dom';
     import { Animated } from 'react-native';
     const identity = value => value;
     export const useEvent = handler => handler;
@@ -144,7 +145,11 @@ function shims(mobile: string): Record<string, string> {
       if (!shared.current) {
         let current = initial;
         let timer = null;
-        const set = (next) => { current = next; rerender(); };
+        // Shared-value styles update on Reanimated's UI thread. Flush the
+        // stand-in before Chrome advances virtual time to the expiry timer;
+        // React's wall-clock scheduler can otherwise skip the visible hold.
+        // The microtask also keeps flushSync outside the mounting effect.
+        const set = (next) => { current = next; queueMicrotask(() => flushSync(rerender)); };
         shared.current = {
           get value() { return current; },
           set value(next) {

@@ -193,7 +193,7 @@ export class AdmissionOwner {
     const operation = action === 'OpenArtifactBrowser' ? 'phone.readMediaLink' : action === 'RunArtifact'
       ? 'phone.readMediaPlayback' : ['OpenArtifact', 'CopyArtifact', 'SaveArtifact'].includes(action) ? 'phone.readMediaMetadata' : undefined;
     if (!this.foreground || !owner?.lifetime.active || owner.generation !== generation || owner.roomId !== roomId ||
-        request.route !== operation && !(action === 'RunArtifact' && request.route === 'phone.readMediaMetadata'))
+        request.route !== operation && !(['RunArtifact', 'OpenArtifactBrowser'].includes(action) && request.route === 'phone.readMediaMetadata'))
       return this.deny('inactive media action');
     this.validateRequests([request as Requests<PolicyId>]);
     const lifetime = { active: true }; const pass = this.mint(request, lifetime);

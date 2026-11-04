@@ -6,7 +6,7 @@ import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 export type MediaCacheMetadata = MediaMetadata;
 export type MediaCacheBoundary = Readonly<{ kind: 'connection' }> | Readonly<{ kind: 'identity' }> |
   Readonly<{ kind: 'revoke'; authorityScope: string; epoch: string; objectIds: readonly string[] }>;
-type Connection = { generation: number; mediaMetadataV1: true; executeMetadata(objectId: string): Promise<MediaCacheMetadata>;
+type Connection = { origin: string; principal: string; generation: number; mediaMetadataV1: true; executeMetadata(objectId: string): Promise<MediaCacheMetadata>;
   executeLink?(objectId: string): Promise<MediaLink>; executePlayback?(objectId: string): Promise<MediaLink>;
   joinedMetadata?(objectId: string): void };
 type Held = { metadata: MediaCacheMetadata; generation: number };
@@ -83,17 +83,22 @@ export function suspendMediaCacheConnection(): void {
 export function invalidateMediaCacheDemand(): void {
   demandEpoch++; held.clear(); flights.clear(); playbacks.clear(); notify({ kind: 'connection' });
 }
-export function requestMediaLink(objectId: string): Promise<MediaLink> {
-  if (!connection?.mediaMetadataV1 || !connection.executeLink) return Promise.reject(new Error('File action is unavailable.'));
-  return connection.executeLink(objectId);
+export async function requestMediaLink(objectId: string): Promise<MediaLink> {
+  const owner = connection; const epoch = demandEpoch;
+  if (!owner?.mediaMetadataV1 || !owner.executeLink) throw new Error('File action is unavailable.');
+  const metadata = await mediaMetadataFor(owner.origin, owner.principal, objectId);
+  if (connection !== owner || epoch !== demandEpoch || !metadata || !valid(metadata, objectId)) throw new Error('File authority could not be verified.');
+  const result = await owner.executeLink(objectId);
+  if (connection !== owner || epoch !== demandEpoch || !valid(metadata, objectId)) throw new Error('File authority could not be verified.');
+  return result;
 }
 export async function requestMediaPlayback(objectId: string): Promise<MediaLink> {
   const owner = connection; const epoch = demandEpoch;
   if (!owner?.mediaMetadataV1 || !owner.executePlayback) throw new Error('File action is unavailable.');
   // The actual Run/Reopen action admits both reads synchronously. A signed
   // capability alone is insufficient proof for keeping a private frame alive.
-  const metadata = await owner.executeMetadata(objectId);
-  if (connection !== owner || epoch !== demandEpoch || !valid(metadata, objectId)) throw new Error('File authority could not be verified.');
+  const metadata = await mediaMetadataFor(owner.origin, owner.principal, objectId);
+  if (connection !== owner || epoch !== demandEpoch || !metadata || !valid(metadata, objectId)) throw new Error('File authority could not be verified.');
   const result = await owner.executePlayback(objectId);
   if (connection !== owner || epoch !== demandEpoch || !valid(metadata, objectId)) throw new Error('File authority could not be verified.');
   playbacks.set(objectId, metadata);

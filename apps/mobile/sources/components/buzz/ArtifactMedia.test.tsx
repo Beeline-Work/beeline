@@ -212,7 +212,7 @@ describe('the raster artifact view', () => {
     mocks.artifactImageSource.mockRejectedValueOnce(new Error('interrupted')).mockResolvedValue({ uri: 'blob:recovered' });
     const renderer = render(<ArtifactImage attachment={attachment()} fit="contain" testID="artifact-image" />);
     await flush(); expect(renderer.root.findAllByProps({ testID: 'artifact-image-failed' }).length).toBeGreaterThan(0);
-    const connection = { generation: 10, mediaMetadataV1: true, executeMetadata: async () => { throw new Error('not used by mocked bytes'); } };
+    const connection = { origin: 'https://synthetic.test', principal: 'reader', generation: 10, mediaMetadataV1: true, executeMetadata: async () => { throw new Error('not used by mocked bytes'); } };
     act(() => { installMediaCacheConnection(connection); }); await flush();
     expect(hostNode(renderer, 'artifact-image').props.source.uri).toBe('blob:recovered');
     expect(mocks.artifactImageSource).toHaveBeenCalledTimes(2);
@@ -231,7 +231,7 @@ describe('the raster artifact view', () => {
     const renderer = render(<ArtifactImage attachment={attachment()} fit="contain" testID="artifact-image" />);
     await flush(); expect(renderer.root.findAllByProps({ testID: 'artifact-image-failed' }).length).toBeGreaterThan(0);
     const executeMetadata = vi.fn(async () => { throw new Error('Legacy must not send metadata JSON.'); });
-    const receipt = { generation: 1, mediaMetadataV1: false, executeMetadata };
+    const receipt = { origin: 'https://synthetic.test', principal: 'reader', generation: 1, mediaMetadataV1: false, executeMetadata };
     act(() => { installMediaCacheConnection(receipt); }); await flush();
     expect(hostNode(renderer, 'artifact-image').props.source.uri).toBe('blob:legacy-recovered');
     expect(mocks.artifactImageSource).toHaveBeenCalledTimes(2); expect(executeMetadata).not.toHaveBeenCalled();

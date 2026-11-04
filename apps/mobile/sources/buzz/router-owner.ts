@@ -277,9 +277,9 @@ export async function routerOwnerNegotiated(offered: Omit<Negotiation,'families'
       executeRead: agentId => usage.dispatch(agentId, input => next.executeUsageCell!(input.agentId)) });
   }
   const media = mediaDemand;
-  if (next.mediaMetadataV1 && next.authorityFencesV1 && next.executeMetadata && media) {
+  if (next.mediaMetadataV1 && next.authorityFencesV1 && next.executeMetadata && media && readerOrigin && principal) {
     media.connected(next.generation);
-    installMediaCacheConnection({ generation: next.generation, mediaMetadataV1: true,
+    installMediaCacheConnection({ origin: readerOrigin, principal, generation: next.generation, mediaMetadataV1: true,
       joinedMetadata: objectId => media.satisfy('readMediaMetadata', objectId),
       executeMetadata: objectId => media.dispatch('readMediaMetadata', objectId, input => next.executeMetadata!(input.objectId)),
       ...(next.executeLink ? { executeLink: (objectId: string) => media.dispatch('readMediaLink', objectId, input => next.executeLink!(input.objectId)) } : {}),

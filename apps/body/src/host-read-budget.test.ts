@@ -1,19 +1,11 @@
-import { mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { DaemonApiClient } from './daemon-api-client.js';
-import { HostReadBudget } from './host-read-budget.js';
+import { HostReadBudget, ReadBudgetFullError } from './host-read-budget.js';
 
-const roots: string[] = [];
-afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-});
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe('host daemon read budget', () => {
   it('restarts fifteen agents against a six-connection pool without waiters or crashes', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'beeline-load-budget-'));
-    roots.push(root);
     const origin = 'http://127.0.0.1:41111';
     let busy = 0;
     let poolWaiters = 0;
@@ -26,9 +18,10 @@ describe('host daemon read budget', () => {
       busy -= 1;
       return Response.json({ workspaceIds: ['workspace'], rooms: [] });
     };
+    vi.stubGlobal('fetch', request);
     const agents = Array.from({ length: 15 }, (_, index) => {
       const id = String(index).padStart(64, 'a');
-      return new DaemonApiClient(origin, 'token', id, request, undefined, new HostReadBudget(origin, root));
+      return new DaemonApiClient(origin, 'token', id);
     });
     await Promise.all(agents.flatMap((agent) => [0, 1, 2].map(() =>
       agent.execute('getDaemonBootstrap', { agentId: agent.agentId }))));
@@ -40,9 +33,7 @@ describe('host daemon read budget', () => {
   }, 15_000);
 
   it('reserves capacity for an urgent command read during saturated background discovery', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'beeline-priority-budget-'));
-    roots.push(root);
-    const budget = new HostReadBudget('http://127.0.0.1:41112', root);
+    const budget = new HostReadBudget();
     const releases = await Promise.all(Array.from({ length: 4 }, () =>
       budget.acquire('background', Date.now() + 5_000)));
     try {
@@ -56,10 +47,8 @@ describe('host daemon read budget', () => {
   });
 
   it('admits bootstrap into reserved capacity so return traffic can bind on demand', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'beeline-bootstrap-budget-'));
-    roots.push(root);
     const origin = 'http://127.0.0.1:41113';
-    const budget = new HostReadBudget(origin, root);
+    const budget = new HostReadBudget();
     const releases = await Promise.all(Array.from({ length: 4 }, () =>
       budget.acquire('background', Date.now() + 5_000)));
     const agentId = 'a'.repeat(64);
@@ -76,4 +65,63 @@ describe('host daemon read budget', () => {
       await Promise.all(releases.map(release => release()));
     }
   });
+  it('keeps urgent reads ahead of queued background work and counts wait time', async () => {
+    vi.useFakeTimers();
+    const budget = new HostReadBudget();
+    const releases = await Promise.all(Array.from({ length: 6 }, () => budget.acquire('urgent', Date.now() + 1000)));
+    let backgroundStarted = false;
+    const background = budget.acquire('background', Date.now() + 1000).then(release => {
+      backgroundStarted = true;
+      return release;
+    });
+    const urgent = budget.acquire('urgent', Date.now() + 1000);
+    await vi.advanceTimersByTimeAsync(100);
+    await releases[0]!();
+    const releaseUrgent = await urgent;
+    expect(backgroundStarted).toBe(false);
+    expect(budget.metrics()).toEqual({ waiting: 1, active: 6, totalWaitMs: 100 });
+    await releaseUrgent();
+    await (await background)();
+    await Promise.all(releases.slice(1).map(release => release()));
+    expect(budget.metrics()).toEqual({ waiting: 0, active: 0, totalWaitMs: 200 });
+  });
+
+  it('expires and cancels queued reads without consuming a slot', async () => {
+    vi.useFakeTimers();
+    const budget = new HostReadBudget();
+    const releases = await Promise.all(Array.from({ length: 4 }, () => budget.acquire('background', Date.now() + 1000)));
+    const controller = new AbortController();
+    const cancelled = expect(budget.acquire('background', Date.now() + 1000, controller.signal)).rejects.toBeInstanceOf(ReadBudgetFullError);
+    controller.abort();
+    await cancelled;
+    const expired = expect(budget.acquire('background', Date.now() + 50)).rejects.toBeInstanceOf(ReadBudgetFullError);
+    await vi.advanceTimersByTimeAsync(50);
+    await expired;
+    await expect(budget.acquire('urgent', Date.now())).rejects.toBeInstanceOf(ReadBudgetFullError);
+    await expect(budget.acquire('urgent', Date.now() + 1000, controller.signal)).rejects.toBeInstanceOf(ReadBudgetFullError);
+    expect(budget.metrics()).toEqual({ waiting: 0, active: 4, totalWaitMs: 0 });
+    await Promise.all(releases.map(release => release()));
+    await (await budget.acquire('background', Date.now() + 1000))();
+    expect(budget.metrics().active).toBe(0);
+  });
+
+  it('returns the existing overload response once when the queue is full', async () => {
+    const budget = new HostReadBudget();
+    const releases = await Promise.all(Array.from({ length: 6 }, () => budget.acquire('urgent', Date.now() + 5000)));
+    const controller = new AbortController();
+    // Each read belongs to this test; no shared seeded clients or fixtures.
+    const queued = Array.from({ length: 256 }, () => budget.acquire('urgent', Date.now() + 5000, controller.signal).catch(error => error));
+    const request = vi.fn<typeof fetch>();
+    const api = new DaemonApiClient('http://127.0.0.1:41114', 'fixture', 'agent', request, undefined, budget);
+    await expect(api.execute('getDaemonBootstrap', { agentId: 'agent' })).rejects.toMatchObject({
+      status: 429, code: 'read_budget_full', retryable: true, retryAfterMs: 1000,
+    });
+    expect(request).not.toHaveBeenCalled();
+    expect(api.metrics().requests).toBe(1);
+    controller.abort();
+    await Promise.all(queued);
+    await Promise.all(releases.map(release => release()));
+    expect(budget.metrics()).toMatchObject({ waiting: 0, active: 0 });
+  });
+
 });

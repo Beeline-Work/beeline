@@ -1,0 +1,23 @@
+{
+  "ok": false,
+  "phase": "connect",
+  "error": "Cleanup connection does not identify its direct backend",
+  "statistics": {
+    "globalSamples": 0,
+    "maxObservedLockWaitMs": 0,
+    "maxObservedWaitingClients": 0,
+    "acknowledgedChanges": {},
+    "completedBatches": 0
+  },
+  "restorePoint": "audit-b1-20261104080017-pre-cleanup",
+  "restoreBranchId": "br-tiny-haze-b750qrut",
+  "restoreParentLsn": "A/900B8100",
+  "cleanupApplyStarted": false,
+  "deletedRows": 0,
+  "updatedRows": 0,
+  "maximumLockWait": "not measured; monitor did not start",
+  "dryRunCounts": "not collected; direct-backend preflight stopped before cleanup()",
+  "b8ContractApplied": false,
+  "nextAction": "Stopped per inbox 009; firstmate must resolve backend identity before any retry.",
+  "windowOpenedAt": "2026-11-04T08:00:00Z"
+}

@@ -181,3 +181,18 @@ mobile and scripts), full build, architecture (20 rules), 24 cleanup/architectur
 Node tests, 27 selector/rollout checks, workflow paths and shellcheck passed.
 Dead-code baseline holds with zero introduced findings. No production mutation
 was performed during integration; B1 remains held until 08:00Z.
+
+## B1 08:00Z preflight stop (firstmate inbox 009)
+
+Fresh restore branch `audit-b1-20261104080017-pre-cleanup` is ready at parent LSN
+`A/900B8100`; see `b1-low-traffic-restore-point.json`. The operator stopped before
+calling the dry-run cleanup because the SQL `pg_backend_pid()` did not equal
+`pg.Client.processID`. A monitor must identify the actual cleanup backend before
+its cancellation can be trusted. No retry or apply was made, per the instruction
+to stop on any anomaly.
+
+Rows deleted/updated: **0**. Maximum lock wait: **not measured** (monitor never
+started). No fresh row counts were collected because the connection guard stopped
+before `cleanup()`. `b1-low-traffic-preflight-stop.json` records the aggregate
+receipt. Both telemetry tables and all skill versions were untouched. B8 column
+drops remain staged and unapplied.

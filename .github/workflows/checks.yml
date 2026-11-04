@@ -86,6 +86,7 @@ on:
           - auth-image
           - mirror-ci-images
           - coverage-map
+          - ios-signin-capture
 
 permissions:
   contents: read
@@ -104,6 +105,12 @@ env:
   ZSTD_NBTHREADS: '1'
 
 jobs:
+  ios-signin-capture:
+    if: github.event_name == 'workflow_dispatch' && inputs.suite == 'ios-signin-capture'
+    uses: ./.github/workflows/ios-signin-capture.yml
+    with:
+      source_ref: main
+
   changes:
     name: Detect changes
     if: (github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'push')

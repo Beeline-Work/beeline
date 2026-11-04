@@ -7,7 +7,7 @@
     "source": "<ErrorBanner inline\n            title={sendState.text}\n            icon={<Ionicons name=\"alert-circle-outline\" size={13} color={styles.sendFailure.color} />}\n            secondaryAction={{ label: 'Dismiss', onPress: () => onDismiss(message.id) }}\n            testID={`outbox-delivery-failed-${message.id}`}\n          />",
     "ancestors": [
       "<View>",
-      "<NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>"
+      "<NewMessageMaterialize enabled={Boolean(message.isNew) && !message.isUser} messageId={message.id}>"
     ],
     "reason": "kept, already inset: delivery failure belongs to the ledger message content column."
   },

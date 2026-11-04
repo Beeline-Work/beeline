@@ -1,0 +1,22 @@
+{
+  "base": "e1fff40b56a68158cda3aa7580e75273fe64e1ff",
+  "files": [
+    {
+      "path": "navigation/font-startup.test.ts",
+      "sha256": "a96e2b31b37fde4529ebc8d2ea5499c9a72f04f35e6ddc54fb6f30031ae5ef46"
+    },
+    {
+      "path": "buzz/livekit-abort.test.ts",
+      "sha256": "2e424d92695e6fcc383f6c5369cf0986bccfe2604b6995658968d3c004268caf"
+    },
+    {
+      "path": "utils/lock.ts",
+      "sha256": "51d4bbddb641a577ff5842dba3bce63e2476de4f382efa06bb524de6fc20f467"
+    },
+    {
+      "path": "app/_layout.tsx",
+      "sha256": "1a1f002bed53106e31678c5a7e8f5f29b609f633169b38a246704059fc54c1ee"
+    }
+  ],
+  "result": "8 failed, 4 passed; 2 unhandled Event-is-not-defined rejections; identical to broad-run dependency failures"
+}

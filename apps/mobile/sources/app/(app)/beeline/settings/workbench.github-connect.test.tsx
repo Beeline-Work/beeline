@@ -37,7 +37,6 @@ vi.mock('@/components/buzz/PageHeader', () => ({ PageHeader: 'PageHeader' }));
 vi.mock('@/components/buzz/ServiceMark', () => ({ ServiceMark: 'ServiceMark' }));
 vi.mock('@/components/buzz/RoomListSectionHeader', () => ({ RoomListSectionHeader: 'RoomListSectionHeader' }));
 vi.mock('@/components/buzz/SurfaceGlyphLoader', () => ({ SurfaceGlyphLoader: 'SurfaceGlyphLoader' }));
-vi.mock('@/components/buzz/NetworkUnavailableState', () => ({ NetworkUnavailableState: 'NetworkUnavailableState' }));
 vi.mock('./workbench/connect-app', () => ({ ConnectorsSearchSheet: () => null }));
 
 import WorkbenchScreen from './workbench';

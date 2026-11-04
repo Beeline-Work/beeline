@@ -1,3 +1,5 @@
+import { PageHeader } from '@/components/buzz/PageHeader';
+import { EmptyState } from '@/components/buzz/EmptyState';
 import { appErrorCopy, connectionErrorDescription, connectionErrorTitle } from '@/buzz/app-error-copy';
 import { IndexRow } from '@/components/buzz/IndexRow';
 import { invalidatesWorkspaceList } from '@/buzz/workspace-list-invalidation';
@@ -10,7 +12,6 @@ import { useScopedCallbacks } from '@/buzz/use-stable';
 import {
   useNeedsYouCount,
 } from '@/buzz/needs-you-store';
-import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
@@ -51,11 +52,9 @@ import { ExitGlyph } from '@/components/buzz/ExitGlyph';
 import { MemberPickerSheet } from '@/components/buzz/MemberPickerSheet';
 import { Button } from '@/components/buzz/Button';
 import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
-import { RoomDeckUnavailableView } from '@/components/buzz/RoomDeckUnavailableView';
 import { reconnectNow } from '@/sync/transport/live-connection';
 import { clientResetGeneration } from '@/sync/client-reset';
 import { InlineRow } from '@/components/buzz/IndexRow';
-import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
 import {
   type RoomDeckComposeAction,
@@ -957,14 +956,23 @@ export default function BuzzChannels() {
   if (landing.kind === 'error') {
     if (error === connectionErrorTitle) {
       return (
-        <RoomDeckUnavailableView
-          style={{ paddingTop: insets.top, paddingBottom: insets.bottom }}
-          onReconnect={() => {
-            reconnectNow();
-            setError(null);
-            setRetryGeneration((value) => value + 1);
-          }}
-        />
+        <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]} testID="room-deck-unavailable">
+          <PageHeader eyebrow="Beeline" title="Rooms" prominent />
+          <View style={styles.failureInset}>
+            <IndexRow
+              inset="flush"
+              title="Beeline couldn’t connect"
+              description="Your Rooms can’t load right now. There are no saved messages on this device yet."
+              action="Reconnect"
+              onPress={() => {
+                reconnectNow();
+                setError(null);
+                setRetryGeneration((value) => value + 1);
+              }}
+              testID="room-deck-reconnect"
+            />
+          </View>
+        </View>
       );
     }
     return (
@@ -1184,12 +1192,21 @@ export default function BuzzChannels() {
               ListEmptyComponent={
                 messageSearch.status !== 'unavailable' ? null : filter === 'pinned' &&
                   !query.trim() ? (
-                  <PinnedConversationsEmpty onShowAll={() => setFilter('all')} />
+                  <EmptyState
+                    title="No pinned conversations yet"
+                    description="Long press a Room to pin it here."
+                    testID="pinned-empty"
+                    action={{ label: 'Show all conversations', onPress: () => setFilter('all'), testID: 'show-all-conversations' }}
+                  />
                 ) : query || filter !== 'all' ? (
-                  <NoMatchingConversationsEmpty
-                    onShowAll={() => {
-                      setQuery('');
-                      setFilter('all');
+                  <EmptyState
+                    title="No matching conversations"
+                    description="Try a different search or filter."
+                    testID="room-list-no-match"
+                    action={{
+                      label: 'Show all conversations',
+                      onPress: () => { setQuery(''); setFilter('all'); },
+                      testID: 'no-match-show-all-conversations',
                     }}
                   />
                 ) : (

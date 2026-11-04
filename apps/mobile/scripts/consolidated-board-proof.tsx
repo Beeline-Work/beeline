@@ -1,3 +1,4 @@
+import { EmptyState } from '@/components/buzz/EmptyState';
 import { MemberRosterRow } from '../sources/components/buzz/MemberRosterRow';
 import { PageHeader } from '../sources/components/buzz/PageHeader';
 import { HumanProfile } from '../sources/app/(app)/beeline/human-profile';
@@ -6,7 +7,6 @@ import React, { useState } from 'react';
 // @ts-expect-error Standalone proof uses installed react-dom.
 import { createRoot } from 'react-dom/client';
 import { View, Text } from 'react-native';
-import { PinnedConversationsEmpty } from '../sources/components/buzz/PinnedConversationsEmpty';
 import { AgentProfileView } from '../sources/components/buzz/AgentProfileView';
 import { ConversationRow } from '../sources/components/buzz/ConversationRow';
 import { CommunityRail } from '../sources/components/buzz/CommunityRail';
@@ -162,7 +162,7 @@ function App() {
         counts={{ all: 3, unread: unread ? 1 : 0, pinned: 0 }}
       />
       {filter === 'pinned' ? (
-        <PinnedConversationsEmpty onShowAll={() => setFilter('all')} desktop={desktop} />
+        <EmptyState title="No pinned conversations yet" description="Long press a Room to pin it here." testID="desktop-pinned-empty" action={{label:'Show all conversations',onPress:() => setFilter('all'),testID:'desktop-show-all-conversations'}} />
       ) : (
         ['beeline', 'trusty-squire', 'milo']
           .filter((id) => id.includes(query))

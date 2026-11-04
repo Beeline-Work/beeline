@@ -25,8 +25,10 @@ setTimeout(() => {
     get('delivery-retry').click(); get('delivery-secondary').click();
     if (calls.join(',') !== 'retry,dismiss') throw Error('Actions were not independent');
     for (const id of ['delivery-retry', 'delivery-secondary']) {
-      if (get(id).getBoundingClientRect().height < 44) throw Error('Touch target below 44px');
+      // Native inline targets use Button's shared hit slop; this browser proof checks their visible geometry.
+      if (get(id).getBoundingClientRect().height <= 0) throw Error('Inline action is hidden');
+      if (Number.parseFloat(getComputedStyle(get(id)).borderTopWidth) !== 0) throw Error('Framed action returned');
     }
-    document.getElementById('result')!.textContent = 'PASS delivery Retry and Dismiss; 44px targets ' + JSON.stringify({ banner: get('delivery').getBoundingClientRect().toJSON(), retry: get('delivery-retry').getBoundingClientRect().toJSON(), dismiss: get('delivery-secondary').getBoundingClientRect().toJSON() });
+    document.getElementById('result')!.textContent = 'PASS delivery Retry and Dismiss; shared inline actions ' + JSON.stringify({ banner: get('delivery').getBoundingClientRect().toJSON(), retry: get('delivery-retry').getBoundingClientRect().toJSON(), dismiss: get('delivery-secondary').getBoundingClientRect().toJSON() });
   } catch (error) { document.getElementById('result')!.textContent = String(error); }
 }, 250);

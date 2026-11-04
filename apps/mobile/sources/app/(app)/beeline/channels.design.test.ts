@@ -47,7 +47,8 @@ describe('Approved Room list layout', () => {
   it('retains authorized empty-state actions and a filter recovery action', () => {
     expect(source).toContain('canAddRoom={!viewerIsAgent && canManageWorkspace}');
     expect(source).toContain('canConnectAgent={!viewerIsAgent}');
-    expect(source).toContain('<NoMatchingConversationsEmpty');
+    expect(source).toContain('title="No matching conversations"');
+    expect(source).toContain('<EmptyState');
   });
   it('uses visible conversation counts for the phone toolbar and initial pin filter', () => {
     expect(source).toContain('roomListCounts(chatList?.chats ?? [], pinned)');

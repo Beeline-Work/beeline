@@ -1,3 +1,4 @@
+import { ErrorBanner } from './ErrorBanner';
 import { LedgerDisclosure, LedgerLogGroup } from './LedgerDisclosure';
 import { webhookCallerMessage } from '@/buzz/system-lines';
 import React, { useEffect, useLayoutEffect, useRef, useState } from 'react';
@@ -821,14 +822,10 @@ export function LedgerRoomUpdate({
 export function LedgerHistoryLine({ text, onPress }: { text: string; onPress?: () => void }) {
   const line = <Text style={styles.historyLineText}>{text}</Text>;
   return onPress ? (
-    <Pressable
-      accessibilityRole="button"
-      onPress={onPress}
-      style={styles.historyLine}
-      testID="transcript-history-retry"
-    >
-      {line}
-    </Pressable>
+    <View style={styles.historyFailure}>
+      <ErrorBanner inline title={text.replace(' · tap to retry', '')} onRetry={onPress}
+        retryTestID="transcript-history-retry" />
+    </View>
   ) : (
     <View style={styles.historyLine} testID="transcript-history-status">
       {line}
@@ -1398,6 +1395,7 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerGhost,
     textAlign: 'right',
   },
+  historyFailure: { paddingHorizontal: theme.buzz.roomList.edge },
   historyLine: {
     width: '100%',
     paddingVertical: theme.buzz.space.md,

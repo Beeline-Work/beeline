@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { checkNativeUpdate, reloadNativeUpdate } from '@/hooks/useUpdates';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { reportClientError } from '@/buzz/client-error-report';
@@ -700,10 +701,7 @@ export default function BuzzIdentitySettings() {
         ) : null}
 
         {error ? (
-          <View accessibilityRole="alert" style={styles.errorPanel}>
-            <Text style={styles.errorLabel}>! ERROR</Text>
-            <Text style={styles.errorText}>{error}</Text>
-          </View>
+          <ErrorBanner inline title={error} />
         ) : null}
 
         <View style={styles.foot} testID="ota-update-info">
@@ -775,13 +773,6 @@ const styles = StyleSheet.create((theme) => {
       gap: hull.space.md,
     },
     warningText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
-    errorPanel: {
-      padding: hull.space.md,
-      borderWidth: StyleSheet.hairlineWidth,
-      borderColor: hull.borderStrong,
-    },
-    errorLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.danger },
-    errorText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
     foot: {
       alignItems: 'center',
       gap: hull.space.sm,

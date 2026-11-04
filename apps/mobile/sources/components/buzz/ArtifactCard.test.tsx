@@ -58,7 +58,7 @@ vi.mock('react-native-unistyles', () => ({
     hairlineWidth: 1,
     create: (factory: (theme: unknown) => unknown) =>
       factory({
-        buzz: {
+        buzz: { roomList: { edge: 20 },
           border: '#333',
           bgBase: '#111',
           bgHighlight: '#222',
@@ -283,13 +283,43 @@ describe('bounded artifact previews', () => {
     act(() => renderer.unmount());
   });
 
-  it('keeps the existing placeholder when no bounded thumbnail exists', async () => {
+  it('shows passive shared feedback when no bounded thumbnail exists', async () => {
     mocks.artifactImageSource.mockRejectedValue(new Error('A bounded preview is unavailable.'));
     const renderer = render(<ArtifactCard attachment={artifactAttachment()} />);
     await flush();
-    expect(hostNodes(renderer, 'artifact-preview-loading')).toHaveLength(1);
+    expect(hostNodes(renderer, 'artifact-preview-loading')).toHaveLength(0);
+    expect(hostNodes(renderer, 'artifact-preview-failed')).toHaveLength(1);
+    const failure = renderer.root.findAll((node: any) => node.props.title === 'Preview unavailable')[0];
+    expect(failure.props.onPress).toBeUndefined();
+    expect(failure.props.action).toBeUndefined();
     expect(mocks.fetchArtifactBytes).not.toHaveBeenCalled();
     expect(webviewCreated).toHaveLength(0);
+    act(() => renderer.unmount());
+  });
+
+  it('explains a thumbnail decode failure without fetching the whole artifact', async () => {
+    const renderer = render(<ArtifactCard attachment={artifactAttachment()} />);
+    await flush();
+    const image = renderer.root.findAll((node: any) => node.type === 'Image')[0];
+    act(() => image.props.onError());
+    expect(hostNodes(renderer, 'artifact-preview-failed')).toHaveLength(1);
+    expect(mocks.artifactImageSource).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchArtifactBytes).not.toHaveBeenCalled();
+    act(() => renderer.unmount());
+  });
+
+  it('explains a failed Markdown read and clears the failure for a new attachment', async () => {
+    mocks.fetchArtifactText.mockRejectedValueOnce(new Error('offline'));
+    const first = artifactAttachment({ mimeType: 'text/markdown', name: 'notes.md' });
+    const renderer = render(<ArtifactCard attachment={first} />);
+    await flush();
+    expect(hostNodes(renderer, 'artifact-preview-failed')).toHaveLength(1);
+    mocks.fetchArtifactText.mockResolvedValueOnce('# Recovered');
+    act(() => renderer.update(<ArtifactCard attachment={{...first, url: first.url + '?revision=2'}} />));
+    await flush();
+    expect(hostNodes(renderer, 'artifact-preview-failed')).toHaveLength(0);
+    expect(hostNodes(renderer, 'artifact-preview-markdown')).toHaveLength(1);
+    expect(mocks.fetchArtifactBytes).not.toHaveBeenCalled();
     act(() => renderer.unmount());
   });
 

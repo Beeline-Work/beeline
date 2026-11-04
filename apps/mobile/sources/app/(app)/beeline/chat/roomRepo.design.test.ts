@@ -93,7 +93,7 @@ describe('Room→repo corner-open lazy prompt', () => {
       'corner-open repo prompt banner',
     );
     expect(banner).toContain('Ask a');
-    expect(banner).toContain('ACCESS TO THIS REPO WAS REVOKED');
+    expect(banner).toContain('Access to this repo was revoked');
     expect(banner).toContain('Add this repo to the Beeline installation');
   });
 });

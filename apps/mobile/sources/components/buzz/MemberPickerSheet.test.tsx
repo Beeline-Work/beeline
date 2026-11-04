@@ -339,7 +339,7 @@ describe('MemberPickerSheet', () => {
     );
     expect(
       renderer.root.findAllByProps({ testID: 'member-picker-error' }).at(-1)!.props.children,
-    ).toEqual(['! ', 'Could not add @Ox: nope']);
+    ).toBe('Could not add @Ox: nope');
     expect(has(renderer, 'room-member-picker-ask-manager')).toBe(true);
   });
 });

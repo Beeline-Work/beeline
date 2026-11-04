@@ -1,5 +1,7 @@
 # Uncached Room-deck recovery
 
+Historical proof: this presentation is superseded by the [approved unified failure grammar](../unified-error-surfaces/README.md).
+
 Approved treatment A applies when the initial Room-deck read fails because of the connection and there is no saved list to display. `RoomDeckUnavailableView` uses the shared page header, a centered explanation and one secondary Reconnect Button. Its action reconnects the socket and retries the failed bootstrap read. The existing in-app `ConnectionStatus` component is unchanged; saved Rooms continue to render with that banner. Server refusals retain their existing error row.
 
 These screenshots render the production React Native components through React Native Web at 390 × 844, in Bone and Obsidian. The before frame reproduces the original centered `ConnectionStatus` branch. Socket state and the action are inert proof adapters; these are component captures, not Android device captures.

@@ -1,3 +1,4 @@
+import { ErrorBanner } from './ErrorBanner';
 import React, { useState } from 'react';
 // @ts-expect-error react-test-renderer has no types in this workspace
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -136,7 +137,8 @@ describe('NewCornerDialog', () => {
   });
 
   it('keeps a server refusal visible in the dialog', () => {
-    const { host } = mount('only the creator can close this corner');
-    expect(host('create-corner-error').props.accessibilityRole).toBe('alert');
+    const { tree, host } = mount('only the creator can close this corner');
+    expect(host('create-corner-error').props.children).toBe('only the creator can close this corner');
+    expect(tree.root.findByType(ErrorBanner).findByProps({ accessibilityRole: 'alert' })).toBeTruthy();
   });
 });

@@ -13,6 +13,7 @@ function dmSheetBody() {
   const style = (name: string) => chat.match(new RegExp(`\\n    ${name}: (\\{[\\s\\S]*?\\n    \\}),`))?.[1];
   return `import React from 'react';
     import { View, Text } from 'react-native';
+    import { ErrorBanner } from '@/components/buzz/ErrorBanner';
     import { HullActionSheetRow, HullActionSheetCancel, HULL_SHEET_INSET } from '@/components/buzz/HullActionSheet';
     import { beelineThemes } from '@/buzz/groknight';
     import { Typography } from '@/constants/Typography';

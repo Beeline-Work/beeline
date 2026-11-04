@@ -1,3 +1,4 @@
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import React from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -63,9 +64,7 @@ export function NewCornerDialog({
           value={title}
         />
         {error ? (
-          <Text accessibilityRole="alert" style={styles.error} testID="create-corner-error">
-            {error}
-          </Text>
+          <ErrorBanner inline title={error} titleTestID="create-corner-error" />
         ) : null}
       </View>
     </HullDialog>
@@ -76,11 +75,5 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     titleField: { paddingBottom: hull.space.sm },
-    error: {
-      ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.dialogDanger,
-      marginTop: hull.space.sm,
-    },
   };
 });

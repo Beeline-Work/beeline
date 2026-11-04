@@ -1,7 +1,7 @@
 [
   {
     "file": "app/(app)/beeline/chat/_chat-surface.tsx",
-    "line": 7172,
+    "line": 7344,
     "rule": "6c",
     "detail": "dialog action row",
     "id": "32e028ced05af00e9fa5",
@@ -10,7 +10,7 @@
   },
   {
     "file": "app/(app)/beeline/chat/RoomMessageVariants.tsx",
-    "line": 930,
+    "line": 982,
     "rule": "6a",
     "detail": "raw text target",
     "id": "6eaa7d885df2100706b2",
@@ -19,7 +19,7 @@
   },
   {
     "file": "app/(app)/beeline/chat/RoomMessageVariants.tsx",
-    "line": 1612,
+    "line": 1679,
     "rule": "6a",
     "detail": "raw text target",
     "id": "2c0d44bf0a5d41251fab",
@@ -28,7 +28,7 @@
   },
   {
     "file": "app/(app)/beeline/human-profile.tsx",
-    "line": 330,
+    "line": 331,
     "rule": "6a",
     "detail": "raw text target",
     "id": "7e44db1620b3b7cac6e7",
@@ -37,7 +37,7 @@
   },
   {
     "file": "app/(app)/beeline/settings/identity.tsx",
-    "line": 668,
+    "line": 681,
     "rule": "6c",
     "detail": "dialog action row",
     "id": "764ad8e3878424eca3c4",
@@ -45,8 +45,26 @@
     "reason": "Real dialog or inline editor: cancel/confirm or cancel/save actions remain together."
   },
   {
+    "file": "app/(app)/beeline/settings/workbench/connect-signin.tsx",
+    "line": 209,
+    "rule": "6b",
+    "detail": "custom failure/reconnect notice with an action",
+    "id": "8625f0a4faeb18a2e6d3",
+    "control": "<View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}> <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label={observed.installMissing ? 'Go back' : 'Try again'} fullWidth onPress={observed.installMissing ? () => router.back() : () => void retry()} testID=\"signin-retry\" /> {!observed.installMissing && signIn.url ? <Button appearance={",
+    "reason": "Owner-locked Trusty Squire mock v3: the page footer holds its full-width Try again (and Open in browser) under the stopped step; the failure sentence sits in the step or centre copy."
+  },
+  {
+    "file": "app/(app)/beeline/settings/workbench/connect.tsx",
+    "line": 398,
+    "rule": "6b",
+    "detail": "custom failure/reconnect notice with an action",
+    "id": "a105e67b4c96c57e83ba",
+    "control": "<View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}> {failed ? ( <> <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label=\"Try again\" fullWidth onPress={retry} testID=\"connect-retry\" /> <Text style={styles.footNote}> {failedIndex <= 0 ? `Sign in unlocks once ${machineName} answers.` : 'Sign in unlocks when pairing finishes.'} </Tex",
+    "reason": "Owner-locked Trusty Squire mock v3: the page footer holds its full-width Try again (and Open in browser) under the stopped step; the failure sentence sits in the step or centre copy."
+  },
+  {
     "file": "app/(app)/beeline/settings/workbench/connection.tsx",
-    "line": 283,
+    "line": 287,
     "rule": "6c",
     "detail": "dialog action row",
     "id": "5deaa0833c32bd61c2f9",
@@ -55,7 +73,7 @@
   },
   {
     "file": "app/(app)/beeline/settings/workflows.tsx",
-    "line": 125,
+    "line": 130,
     "rule": "6a",
     "detail": "raw text target",
     "id": "e3f8da55c305b9a3148e",
@@ -64,7 +82,7 @@
   },
   {
     "file": "app/(app)/beeline/workflow-run.tsx",
-    "line": 185,
+    "line": 192,
     "rule": "6a",
     "detail": "raw text target",
     "id": "57be9515c1a856b9a0a5",
@@ -73,7 +91,7 @@
   },
   {
     "file": "app/(app)/beeline/workflow.tsx",
-    "line": 87,
+    "line": 81,
     "rule": "6a",
     "detail": "raw text target",
     "id": "af92b5b7b071f1653ff1",
@@ -91,7 +109,7 @@
   },
   {
     "file": "components/buzz/AgentProfileView.tsx",
-    "line": 241,
+    "line": 271,
     "rule": "6c",
     "detail": "dialog action row",
     "id": "6a413a96aee0ecc2ff94",
@@ -100,7 +118,7 @@
   },
   {
     "file": "components/buzz/AgentVoiceSection.tsx",
-    "line": 188,
+    "line": 187,
     "rule": "6c",
     "detail": "dialog action row",
     "id": "909ea0fad8a5328d0fe4",
@@ -109,7 +127,7 @@
   },
   {
     "file": "components/buzz/Button.tsx",
-    "line": 86,
+    "line": 106,
     "rule": "6a",
     "detail": "raw text target",
     "id": "d4ae43e70e947ecad25a",
@@ -127,7 +145,7 @@
   },
   {
     "file": "components/buzz/CodeBlock.tsx",
-    "line": 140,
+    "line": 148,
     "rule": "6a",
     "detail": "raw text target",
     "id": "9e5247ace700a3a0996c",
@@ -136,16 +154,16 @@
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 374,
+    "line": 378,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "7ebe302144058a61dc8f",
+    "id": "f21989672a6ed772c2e9",
     "control": "<View ref={containerRef as React.Ref<View>} {...containerProps} style={[styles.composer, focused && styles.composerFocused, ...(viewerPill ? [styles.viewerPill] : [])]} > {(reply || attachments.length > 0) && ( <View style={styles.adjuncts} testID={`${testIDPrefix}-composer-adjuncts`}> {reply && ( <View style={styles.reply} testID=\"reply-composer-banner\"> <View style={styles.replyCopy}> <Text numb",
-    "reason": "Attachment/composer layout, not a boxed failure notice: sibling attachment separators and file metadata remain intact; Retry already uses Button."
+    "reason": "Approved unified error-surface mock: shared inline feedback uses the existing caller content inset; no new control or retry action is introduced."
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 381,
+    "line": 385,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
     "id": "65340498e8e4de75db4e",
@@ -154,7 +172,7 @@
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 402,
+    "line": 406,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
     "id": "ff9f134c6fc92747909f",
@@ -163,7 +181,7 @@
   },
   {
     "file": "components/buzz/ConversationComposer.tsx",
-    "line": 699,
+    "line": 704,
     "rule": "6a",
     "detail": "raw text target",
     "id": "291e01e1d985c9135a8f",
@@ -181,7 +199,7 @@
   },
   {
     "file": "components/buzz/CornerObjectiveLine.tsx",
-    "line": 145,
+    "line": 149,
     "rule": "6a",
     "detail": "raw text target",
     "id": "28897d198c8d4c444f68",
@@ -199,7 +217,7 @@
   },
   {
     "file": "components/buzz/CreatePollSheet.tsx",
-    "line": 136,
+    "line": 138,
     "rule": "6a",
     "detail": "raw text target",
     "id": "4cdc8bbae6b92571cefc",
@@ -216,26 +234,8 @@
     "reason": "Shared icon action with hover tooltip; descendant text is the tooltip, not its button label."
   },
   {
-    "file": "components/buzz/ErrorBanner.tsx",
-    "line": 50,
-    "rule": "6b",
-    "detail": "custom failure/reconnect notice with an action",
-    "id": "816b57b963be3aac0d8b",
-    "control": "<View accessibilityLiveRegion=\"polite\" accessibilityRole=\"alert\" style={inline ? styles.inline : styles.banner} testID={testID} > {icon} <Text style={inline ? styles.inlineText : styles.title} testID={titleTestID}> {inline && description ? `${title} ${description}` : title} </Text> {!inline && description ? ( <Text style={inline ? styles.inlineText : styles.description}>{description}</Text> ) : nu",
-    "reason": "Shared ErrorBanner implementation owns boxed page failures and inline contextual recovery."
-  },
-  {
-    "file": "components/buzz/ErrorBanner.tsx",
-    "line": 64,
-    "rule": "6b",
-    "detail": "custom failure/reconnect notice with an action",
-    "id": "51ec48f7706c7dd7f1ae",
-    "control": "<View style={inline ? styles.inlineActions : secondaryAction ? styles.actions : styles.retry} > {onRetry ? ( <Button size={inline ? 'inline' : 'default'} label={retryLabel} destination={retryDestination} loading={retrying} onPress={onRetry} testID={retryTestID ?? (testID ? `${testID}-retry` : undefined)} variant={retryVariant} /> ) : null} {secondaryAction ? ( <Button size={inline ? 'inline' : 'de",
-    "reason": "Shared ErrorBanner implementation owns boxed page failures and inline contextual recovery."
-  },
-  {
     "file": "components/buzz/HullActionSheet.tsx",
-    "line": 140,
+    "line": 142,
     "rule": "6a",
     "detail": "raw text target",
     "id": "10822c269bd971741400",
@@ -253,7 +253,7 @@
   },
   {
     "file": "components/buzz/IndexRow.tsx",
-    "line": 416,
+    "line": 436,
     "rule": "6a",
     "detail": "raw text target",
     "id": "ddbce1efc8fd132d63ff",
@@ -271,16 +271,16 @@
   },
   {
     "file": "components/buzz/MemberPickerSheet.tsx",
-    "line": 115,
+    "line": 120,
     "rule": "6b",
     "detail": "custom failure/reconnect notice with an action",
-    "id": "d7d288afb88f747811df",
-    "control": "<View style={styles.footer}> {error && ( <Text accessibilityRole=\"alert\" style={styles.error} testID=\"member-picker-error\"> ! {error} </Text> )} {!agentConnectOnly && ( <View style={styles.addInset}> <Button disabled={chosen.length === 0} label={chosen.length > 0 ? `Add ${chosen.length}` : 'Add'} loading={busy} onPress={() => onAdd(chosen.map((candidate) => candidate.pubkey))} testID=\"member-picke",
-    "reason": "Real member-picker form footer; its error text and Add decision are not a retry notice."
+    "id": "67fb853716e1227c8f48",
+    "control": "<View style={styles.footer}> {error && ( <ErrorBanner inline title={error} titleTestID=\"member-picker-error\" /> )} {!agentConnectOnly && ( <View style={styles.addInset}> <Button disabled={chosen.length === 0} label={chosen.length > 0 ? `Add ${chosen.length}` : 'Add'} loading={busy} onPress={() => onAdd(chosen.map((candidate) => candidate.pubkey))} testID=\"member-picker-add\" /> </View> )} </View>",
+    "reason": "Approved unified error-surface mock: shared inline feedback uses the existing caller content inset; no new control or retry action is introduced."
   },
   {
     "file": "components/buzz/MemberPickerSheet.tsx",
-    "line": 190,
+    "line": 196,
     "rule": "6a",
     "detail": "raw text target",
     "id": "bcc382fb7326b4f1d0f2",
@@ -325,7 +325,7 @@
   },
   {
     "file": "components/buzz/MessageSearchResults.tsx",
-    "line": 95,
+    "line": 99,
     "rule": "6a",
     "detail": "raw text target",
     "id": "b34118d8d52ff79fefcf",
@@ -379,7 +379,7 @@
   },
   {
     "file": "components/buzz/RoomCornersList.tsx",
-    "line": 221,
+    "line": 214,
     "rule": "6a",
     "detail": "raw text target",
     "id": "bacab502deef0d4d764d",
@@ -388,7 +388,7 @@
   },
   {
     "file": "components/buzz/RoomCornersList.tsx",
-    "line": 259,
+    "line": 252,
     "rule": "6a",
     "detail": "raw text target",
     "id": "a4c71d54f99d0f346d3a",
@@ -397,7 +397,7 @@
   },
   {
     "file": "components/buzz/RoomCornersList.tsx",
-    "line": 296,
+    "line": 289,
     "rule": "6a",
     "detail": "raw text target",
     "id": "1f24bb8a70060de28d07",
@@ -469,7 +469,7 @@
   },
   {
     "file": "components/buzz/WorkflowRunLine.tsx",
-    "line": 344,
+    "line": 346,
     "rule": "6a",
     "detail": "raw text target",
     "id": "8d47d59668bed3dc5499",
@@ -478,7 +478,7 @@
   },
   {
     "file": "components/buzz/WorkspaceSettingsPanel.tsx",
-    "line": 515,
+    "line": 517,
     "rule": "6c",
     "detail": "dialog action row",
     "id": "e49d5cd143f112826bbb",
@@ -496,7 +496,7 @@
   },
   {
     "file": "components/SidebarView.tsx",
-    "line": 522,
+    "line": 518,
     "rule": "6a",
     "detail": "raw text target",
     "id": "6ddf2d7794f3bbee92e2",
@@ -505,29 +505,11 @@
   },
   {
     "file": "components/SidebarView.tsx",
-    "line": 657,
+    "line": 646,
     "rule": "6a",
     "detail": "raw text target",
     "id": "53eeaf196b24bda43973",
     "control": "<Pressable accessibilityLabel={ viewerIdentity?.name ? `${viewerIdentity.name} — Settings` : 'Settings' } accessibilityRole=\"button\" accessibilityState={{ selected: profileSettingsSelected }} onPress={() => router.push('/beeline/settings' as Href)} style={({ pressed }) => [ styles.settingsRow, (profileSettingsSelected || pressed) && styles.roomRowSelected, ]} testID=\"profile-settings-navigation\" >",
     "reason": "Workspace identity selector or account avatar navigation; composite content targets."
-  },
-  {
-    "file": "app/(app)/beeline/settings/workbench/connect-signin.tsx",
-    "line": 202,
-    "rule": "6b",
-    "detail": "custom failure/reconnect notice with an action",
-    "id": "8625f0a4faeb18a2e6d3",
-    "control": "<View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}> <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label={observed.installMissing ? 'Go back' : 'Try again'} fullWidth onPress={observed.installMissing ? () => router.back() : () => void retry()} testID=\"signin-retry\" /> {!observed.installMissing && signIn.url ? <Button appearance={",
-    "reason": "Owner-locked Trusty Squire mock v3: the page footer holds its full-width Try again (and Open in browser) under the stopped step; the failure sentence sits in the step or centre copy."
-  },
-  {
-    "file": "app/(app)/beeline/settings/workbench/connect.tsx",
-    "line": 393,
-    "rule": "6b",
-    "detail": "custom failure/reconnect notice with an action",
-    "id": "a105e67b4c96c57e83ba",
-    "control": "<View style={[styles.foot, { paddingBottom: theme.buzz.space.lg + insets.bottom }]}> {failed ? ( <> <Button appearance={{ control: styles.primaryButton, label: styles.primaryLabel }} label=\"Try again\" fullWidth onPress={retry} testID=\"connect-retry\" /> <Text style={styles.footNote}> {failedIndex <= 0 ? `Sign in unlocks once ${machineName} answers.` : 'Sign in unlocks when pairing finishes.'} </Tex",
-    "reason": "Owner-locked Trusty Squire mock v3: the page footer holds its full-width Try again (and Open in browser) under the stopped step; the failure sentence sits in the step or centre copy."
   }
 ]

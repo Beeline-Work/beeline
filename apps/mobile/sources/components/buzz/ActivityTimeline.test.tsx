@@ -1,3 +1,4 @@
+import { ErrorBanner } from './ErrorBanner';
 const toolReader=vi.hoisted(()=>vi.fn());
 vi.mock('@/buzz/router-owner',()=>({readRouterToolPage:toolReader}));
 import * as React from 'react';
@@ -912,4 +913,36 @@ it('F07: collapsed 200-step summary reads zero; disclosure and output presses ea
   expect(toolReader).toHaveBeenCalledTimes(2);expect(toolReader.mock.calls[1][0]).toEqual({roomId,anchor,messageId:anchor});
   expect(renderer.root.findByProps({testID:'tool-output-text'}).props.children).toBe('x'.repeat(32768));
   await act(async()=>renderer.unmount());
+});
+
+
+it.each(['rejected', 'missing', 'empty-detail'] as const)('uses shared passive feedback for %s tool output and clears it on the next open', async (failure) => {
+  toolReader.mockReset();
+  const roomId = '22222222-2222-4222-8222-222222222222';
+  const target = { roomId, anchor: 'd'.repeat(64), messageId: 'd'.repeat(64) };
+  if (failure === 'rejected') toolReader.mockRejectedValueOnce(new Error('offline'));
+  else toolReader.mockResolvedValueOnce({ roomId, messages: failure === 'missing' ? [] : [{
+    id: target.messageId, text: '', createdAt: 1, presentation: 'activity',
+    author: { pubkey: 'b'.repeat(64), kind: 'agent', name: 'Worker' },
+    activity: [{ kind: 'tool', title: 'Synthetic tool' }],
+  }] });
+  const remoteId = target.messageId + ':0';
+  const renderer = render(<TurnStepsLine items={[
+    { kind: 'tool', id: remoteId, title: 'Bash', command: 'remote', output: 'excerpt', toolOutput: target },
+    { kind: 'tool', id: 'local', title: 'Bash', command: 'local', output: 'Saved output' },
+  ]} />);
+  act(() => expandRun(renderer, remoteId));
+  await act(async () => renderer.root.findByProps({ testID: 'tool-ledger-line-' + remoteId }).props.onPress());
+  const feedback = renderer.root.findByType(ErrorBanner);
+  expect(feedback.props.title).toContain('Output unavailable.');
+  expect(feedback.props.onRetry).toBeUndefined();
+  expect(toolReader).toHaveBeenCalledTimes(1);
+  const copy = renderer.root.findByProps({ testID: 'tool-output-copy' });
+  await act(async () => copy.props.onPress());
+  expect(Clipboard.setStringAsync).toHaveBeenLastCalledWith(feedback.props.title);
+  act(() => renderer.root.findByProps({ testID: 'tool-ledger-line-local' }).props.onPress());
+  expect(renderer.root.findAllByType(ErrorBanner)).toHaveLength(0);
+  expect(renderer.root.findByProps({ testID: 'tool-output-text' }).props.children).toBe('Saved output');
+  expect(toolReader).toHaveBeenCalledTimes(1);
+  act(() => renderer.unmount());
 });

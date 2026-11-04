@@ -9,6 +9,8 @@
   // Explicit bundler boundaries: runtime loaders consume these exported interfaces.
   // Keep file reachability and production export enforcement enabled.
   "ignoreIssues": {
+    // The source-bound sweep emits this import into an esbuild-only before-frame module.
+    "apps/mobile/scripts/fixtures/historical-error-banner.tsx": ["exports"],
     // esbuild exposes start/submit through demo.js, which the static homepage lazy-loads.
     "web/marketing/demo-source.mjs": ["exports"],
     // CONNECT-RING-1 selects router/transport aliases and the temporary Metro adapter.
@@ -174,6 +176,10 @@
         "scripts/card-buttons-native-proof.tsx",
         // The Room deck recovery evidence builder selects this standalone renderer by path.
         "scripts/room-deck-unavailable-proof.tsx",
+        // The reviewed failure-evidence command is invoked by the mobile area guide.
+        "scripts/update-error-surface-evidence.mjs",
+        // The emitted before-frame module imports this archived snapshot by path.
+        "scripts/fixtures/historical-error-banner.tsx",
         // evidence/trusty-squire-connect/README.md selects this native entry and Metro adapter by path.
         "scripts/trusty-squire-native-proof.tsx",
         "scripts/proof-shims/*.{ts,tsx,cjs}",

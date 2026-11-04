@@ -13,6 +13,7 @@ vi.mock('@/sync/transport/live-connection', () => ({
 vi.mock('./BeelineMarkSpinner', () => ({ BeelineMarkSpinner: () => React.createElement('BeelineMarkSpinner') }));
 vi.mock('./Button', () => ({ Button: (p: any) => React.createElement('Button', p, p.label) }));
 vi.mock('@expo/vector-icons', () => ({ Ionicons: (p: any) => React.createElement('Ionicons', p) }));
+vi.mock('./IndexRow', () => ({ IndexRow: (p: any) => React.createElement('IndexRow', p), InlineRow: (p: any) => React.createElement('InlineRow', p, p.children) }));
 import { ConnectionStatus } from './ConnectionStatus';
 
 describe('ConnectionStatus', () => {
@@ -27,7 +28,12 @@ describe('ConnectionStatus', () => {
     state.value = 'disconnected';
     act(() => { view = create(<ConnectionStatus />); });
     expect(view.root.findByProps({ testID: 'connection-status-disconnected' })).toBeTruthy();
-    expect(view.root.findByProps({ testID: 'connection-status-disconnected-glyph' }).props.name).toBe('ban-outline');
+    const row = view.root.findByType('IndexRow');
+    expect(row.props.inset).toBe('flush');
+    expect(row.props.title).toBe('Beeline isn’t connected');
+    expect(row.props.description).toBe('Showing saved messages');
+    expect(row.props.action).toBe('Reconnect');
+    expect(view.root.findAllByProps({ testID: 'connection-status-disconnected-glyph' })).toHaveLength(0);
     act(() => view.root.findByProps({ testID: 'connection-status-reconnect' }).props.onPress());
     expect(state.reconnect).toHaveBeenCalledOnce();
   });

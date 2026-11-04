@@ -1,3 +1,4 @@
+import { IndexRow } from './IndexRow';
 vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 vi.mock('./Button', () => ({ Button: 'Button' }));
 import React from 'react';
@@ -23,7 +24,7 @@ vi.mock('react-native', () => ({
 vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     create: (fn: (theme: unknown) => unknown) =>
-      fn({ buzz: { space: { md: 16 }, type: { body: {} }, textSecondary: 'text' } }),
+      fn({ buzz: { roomList: { edge: 20 }, space: { md: 16 }, type: { body: {} }, textSecondary: 'text' } }),
   },
 }));
 vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: state.admit }));
@@ -100,7 +101,7 @@ describe('runnable viewer boundary', () => {
     expect(props.mediaCapturePermissionGrantType).toBe('deny');
     await act(async () => props.onRenderProcessGone());
     expect(tree.root.findAllByType('WebView')).toHaveLength(0);
-    expect(tree.root.findByType('Text').props.children).toContain('Stopped.');
+    expect(tree.root.findByType(IndexRow).props.description).toContain('Stopped.');
     await act(async () => tree.unmount());
   });
   it('a committed object removal tears down the running frame without minting or reloading', async () => {

@@ -1,3 +1,5 @@
+import { EmptyState } from '@/components/buzz/EmptyState';
+import { ErrorBanner } from '@/components/buzz/ErrorBanner';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import { desktopColumnWidths } from '@/buzz/desktop-layout-tokens';
@@ -121,7 +123,7 @@ function emptySection(
     <View style={styles.emptyBlock} testID={testID}>
     <Ionicons color={styles.emptyIcon.color} name={icon} size={22} />
     <Text style={styles.emptyTitle}>{title}</Text>
-    <Text style={styles.empty}>{detail}</Text>
+    <ErrorBanner inline title={detail} />
   </View>
   );
 }
@@ -920,23 +922,10 @@ export default function TrayScreen() {
     ) : desktop ? (
       <View style={styles.paneFallback} testID="tray-pane">
         {selectedBookmark && !selectedBookmark.available ? (
-          <View style={styles.emptyBlock}>
-            <Text style={styles.emptyTitle}>Source unavailable</Text>
-            <Text style={styles.empty}>This bookmark no longer exposes message content.</Text>
-            <Button
-              accessibilityLabel="Remove unavailable bookmark"
-              accessibilityRole="button"
-              onPress={() => void remove(selectedBookmark)}
-              label={'REMOVE'}
-              variant="quiet"
-              appearance={{ control: styles.remove, label: styles.removeText }}
-            />
-          </View>
+          <EmptyState title="Source unavailable" description="This bookmark no longer exposes message content."
+            action={{label:'Remove', accessibilityLabel:'Remove unavailable bookmark', onPress:() => void remove(selectedBookmark)}} />
         ) : selected && inspectError ? (
-          <View style={styles.emptyBlock}>
-            <Text style={styles.emptyTitle}>Could not open this corner</Text>
-            <Text style={styles.empty}>{inspectError}</Text>
-          </View>
+          <SettingsRow title="Could not open this corner" description={inspectError} />
         ) : selected ? (
           <View style={styles.loadingBlock} testID="tray-corner-loader">
             <SurfaceGlyphLoader />
@@ -1046,10 +1035,6 @@ const styles = StyleSheet.create((theme) => ({
   empty: {
     ...theme.buzz.type.meta, color: theme.buzz.textSecondary, marginTop: theme.buzz.space.sm,
   },
-  error: {
-    minHeight: 44, justifyContent: 'center', paddingHorizontal: 16, backgroundColor: theme.buzz.bgHighlight,
-  },
-  errorText: { ...theme.buzz.type.meta, color: theme.buzz.textSecondary },
   undo: {
     position: 'absolute', left: 16, right: 16, bottom: 16, minHeight: 48,
     flexDirection: 'row', alignItems: 'center', paddingHorizontal: theme.buzz.space.md,

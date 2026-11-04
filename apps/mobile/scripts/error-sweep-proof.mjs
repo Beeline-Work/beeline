@@ -120,7 +120,7 @@ export function changedSweepProofModule(mobile) {
       const stylesheet = styles;
       const snapshotError = ${side === 'Before' ? entry.fallback ? JSON.stringify(entry.fallback.replace(/\.$/, '') + ': Error: unknown') : 'String(error)' : `appErrorCopy(${entry.fallback ? "new Error('unknown')" : 'error'}${entry.fallback || entry.screenFallback ? ', ' + JSON.stringify(entry.fallback ?? entry.screenFallback) : ''})`};
       const rowTitle = ${JSON.stringify(entry.rowTitle ?? 'general')};
-      return ${fixtureJsx(snapshot, entry)};
+      return ${side === 'Before' ? fixtureJsx(snapshot, entry).replace(/<(\/?)ErrorBanner\b/g, '<$1BeforeErrorBanner') : fixtureJsx(snapshot, entry)};
     }`;
     return `{id:${JSON.stringify(entry.id)}, label:${JSON.stringify(entry.label)}, afterLine:${entry.after.sourceLine}, Before:(()=>{${body(entry.before, 'Before')} return Before;})(), After:(()=>{${body(after, 'After')} return After;})()}`;
   });
@@ -135,6 +135,7 @@ export function changedSweepProofModule(mobile) {
     import { SettingsRow } from '@/components/buzz/SettingsRow';
     import { IndexRow } from '@/components/buzz/IndexRow';
     import { ErrorBanner } from '@/components/buzz/ErrorBanner';
+    import { HistoricalErrorBanner as BeforeErrorBanner } from '${path.join(mobile, 'scripts/fixtures/historical-error-banner')}';
     import { appErrorCopy, connectionErrorTitle, connectionErrorDescription } from '@/buzz/app-error-copy';
     import { RoomViewHttpError } from '@beeline/buzz-client';
     const error = new RoomViewHttpError(504,'surface_request_timed_out');

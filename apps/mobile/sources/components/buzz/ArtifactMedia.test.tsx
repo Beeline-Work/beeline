@@ -1,3 +1,4 @@
+import { IndexRow } from './IndexRow';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -25,7 +26,7 @@ vi.mock('react-native-unistyles', () => ({
   StyleSheet: {
     create: (factory: (theme: unknown) => unknown) =>
       factory({
-        buzz: {
+        buzz: { roomList: { edge: 20 },
           textPrimary: '#eee',
           ledgerQuiet: '#777',
           space: { sm: 8, md: 12 },
@@ -173,7 +174,7 @@ describe('the raster artifact view', () => {
       hostNode(renderer, 'artifact-image').props.onError();
     });
     const failed = renderer.root.findByProps({ testID: 'artifact-image-failed' });
-    expect(failed.findByType('Text' as any).props.children).toContain('could not be loaded');
+    expect(failed.findByType(IndexRow).props.description).toContain('could not be loaded');
   });
 
   it('speaks a fetch that never arrives', async () => {
@@ -316,7 +317,7 @@ describe('the plain-text artifact view', () => {
       await Promise.resolve();
     });
     const failed = renderer.root.findByProps({ testID: 'artifact-text-failed' });
-    expect(failed.findByType('Text' as any).props.children).toContain('could not be loaded');
+    expect(failed.findByType(IndexRow).props.description).toContain('could not be loaded');
   });
 
   it('paints an empty file as an empty body, not as a stuck loading line', async () => {

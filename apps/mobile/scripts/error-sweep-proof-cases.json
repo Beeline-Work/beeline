@@ -29,7 +29,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 887
+        "sourceLine": 980
       }
     },
     {
@@ -58,7 +58,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 902
+        "sourceLine": 1063
       }
     },
     {
@@ -86,7 +86,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 1107
+        "sourceLine": 1115
       }
     },
     {
@@ -109,12 +109,12 @@
       "after": {
         "selectors": [
           {
-            "tag": "SettingsRow",
-            "hash": "6b4dad75fcc18a00c5319d212aed589c13b658c3ccc43e0de749278e74f99c0e",
+            "tag": "IndexRow",
+            "hash": "cb857f679bfc8b148c96523030cc733ab0dcddb7561a65a3b85bb28c78e0ffc3",
             "occurrence": 0
           }
         ],
-        "sourceLine": 6102
+        "sourceLine": 6238
       }
     },
     {
@@ -178,7 +178,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 178
+        "sourceLine": 177
       }
     },
     {
@@ -206,7 +206,7 @@
             "occurrence": 1
           }
         ],
-        "sourceLine": 212
+        "sourceLine": 211
       }
     },
     {
@@ -266,7 +266,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 56
+        "sourceLine": 55
       }
     },
     {
@@ -297,7 +297,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 1365
+        "sourceLine": 1379
       }
     },
     {
@@ -325,7 +325,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 1441
+        "sourceLine": 1447
       }
     },
     {
@@ -353,7 +353,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 592
+        "sourceLine": 632
       }
     },
     {
@@ -381,7 +381,7 @@
             "occurrence": 1
           }
         ],
-        "sourceLine": 622
+        "sourceLine": 662
       }
     },
     {
@@ -667,12 +667,12 @@
       "after": {
         "selectors": [
           {
-            "tag": "Text",
-            "hash": "d47a6a4e117c0b43df4cb1fb241a25491827c0acf499ead4b6aeade3d10c98b6",
+            "tag": "ErrorBanner",
+            "hash": "c8659ab1be6b1eafb6e4f20fe5ea0acd3c8fca0d070ac9413a87d37e6246bacc",
             "occurrence": 0
           }
         ],
-        "sourceLine": 185
+        "sourceLine": 192
       }
     },
     {
@@ -703,7 +703,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 129
+        "sourceLine": 137
       }
     },
     {
@@ -734,7 +734,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 170
+        "sourceLine": 179
       }
     },
     {
@@ -765,7 +765,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 172
+        "sourceLine": 181
       }
     },
     {
@@ -799,7 +799,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 69
+        "sourceLine": 72
       }
     },
     {
@@ -833,7 +833,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 70
+        "sourceLine": 73
       }
     },
     {
@@ -894,7 +894,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 958
+        "sourceLine": 942
       }
     },
     {
@@ -1048,7 +1048,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 243
+        "sourceLine": 252
       }
     },
     {
@@ -1078,7 +1078,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 543
+        "sourceLine": 552
       }
     },
     {
@@ -1111,7 +1111,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 547
+        "sourceLine": 556
       }
     },
     {
@@ -1135,7 +1135,7 @@
             "occurrence": 0
           }
         ],
-        "sourceLine": 19
+        "sourceLine": 18
       }
     },
     {

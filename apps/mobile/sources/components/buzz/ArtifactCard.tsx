@@ -1,5 +1,5 @@
 import { useArtifactRecoveryGeneration } from '@/buzz/use-artifact-recovery';
-import { ContentTarget, InlineRow } from './IndexRow';
+import { ContentTarget, IndexRow, InlineRow } from './IndexRow';
 import { Button } from '@/components/buzz/Button';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
@@ -303,18 +303,25 @@ export function ArtifactSandboxPreview({
 }) {
   const recovery = useArtifactRecoveryGeneration();
   const [source, setSource] = useState<Awaited<ReturnType<typeof artifactImageSource>> | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
+    setFailed(false); setSource(null);
     let live = true; let loaded: Awaited<ReturnType<typeof artifactImageSource>> | null = null;
     const controller = new AbortController();
-    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); releaseArtifactImageSource(loaded); setSource(null); });
+    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); releaseArtifactImageSource(loaded); setSource(null); setFailed(true); });
     // A server-produced bounded thumbnail is the only binary preview. Whole
     // HTML/SVG/PDF bytes belong to the existing explicit Open action.
     void artifactImageSource(attachment, { signal: controller.signal, preview: true, thumbnail: true }).then(value => {
       loaded = value; if (live && !controller.signal.aborted) setSource(value); else releaseArtifactImageSource(value);
-    }).catch(() => {});
+    }).catch(() => { if (live && !controller.signal.aborted) setFailed(true); });
     return () => { live = false; controller.abort(); stopPurge(); releaseArtifactImageSource(loaded); };
   }, [attachment, recovery]);
-  if (source) return <View style={styles.preview} testID="artifact-preview-snapshot"><Image source={source} resizeMode="cover" style={styles.previewImage} /></View>;
+  if (failed) return (
+    <View style={styles.failureInset} testID="artifact-preview-failed">
+      <IndexRow inset="flush" title="Preview unavailable" description="The page could not be loaded. Try again." />
+    </View>
+  );
+  if (source) return <View style={styles.preview} testID="artifact-preview-snapshot"><Image source={source} resizeMode="cover" onError={() => setFailed(true)} style={styles.previewImage} /></View>;
   return <View style={styles.previewPlaceholder} testID="artifact-preview-loading"><Text style={styles.docGlyph}>▧</Text></View>;
 }
 
@@ -322,19 +329,26 @@ export function ArtifactSandboxPreview({
 export function ArtifactMarkdownPreview({ attachment }: { attachment: AttachmentReference }) {
   const recovery = useArtifactRecoveryGeneration();
   const [markdown, setMarkdown] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   useEffect(() => {
+    setFailed(false); setMarkdown(null);
     let live = true;
     const controller = new AbortController();
-    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); setMarkdown(null); });
+    const stopPurge = subscribeArtifactBytesPurge(attachment, () => { controller.abort(); setMarkdown(null); setFailed(true); });
     void fetchArtifactText(attachment, { signal: controller.signal, preview: true })
       .then((text) => {
         if (live && !controller.signal.aborted) setMarkdown(text);
       })
-      .catch(() => undefined);
+      .catch(() => { if (live && !controller.signal.aborted) setFailed(true); });
     return () => {
       live = false; controller.abort(); stopPurge();
     };
   }, [attachment, recovery]);
+  if (failed) return (
+    <View style={styles.failureInset} testID="artifact-preview-failed">
+      <IndexRow inset="flush" title="Preview unavailable" description="The page could not be loaded. Try again." />
+    </View>
+  );
   if (markdown == null) {
     return (
       <View style={styles.previewPlaceholder} testID="artifact-preview-loading">
@@ -355,6 +369,7 @@ export function ArtifactMarkdownPreview({ attachment }: { attachment: Attachment
 }
 
 const styles = StyleSheet.create((theme) => ({
+  failureInset: { paddingHorizontal: theme.buzz.roomList.edge },
   // The TranscriptCard frame (DESIGN.md → Transcript cards), read from the
   // same tokens: radius 10, 1 px borderStrong, no fill of its own.
   card: {

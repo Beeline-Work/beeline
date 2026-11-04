@@ -641,7 +641,8 @@ describe('New sign-in workspace landing (SIGNUP-LANDING-1)', () => {
       'Your Rooms can’t load right now. There are no saved messages on this device yet.',
     );
     const reconnect = renderer.root.findByProps({ testID: 'room-deck-reconnect' });
-    expect(reconnect.props.variant).toBe('secondary');
+    expect(reconnect.props.action).toBe('Reconnect');
+    expect(reconnect.props.inset).toBe('flush');
     await act(async () => {
       reconnect.props.onPress();
     });

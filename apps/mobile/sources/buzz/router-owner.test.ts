@@ -17,7 +17,7 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
 }));
 vi.mock('./surface-storage', () => ({ routerLaneStorage: () => fixture.storage, routerAuthorityStorageReady: () => fixture.authorityReady,routerCommandStorageReady:()=>fixture.commandsReady }));
 import { resetClientState } from '@/sync/client-reset';
-import { acquireRouterLane, acquireRouterSavedContinuation, acquireRouterRosterQuery, acquireRouterRoomRoster, routerOwnerNegotiated, routerOwnerNavigation, routerOwnerDisconnected,
+import { acquireRouterForwardList, routerOwnerRefresh, acquireRouterLane, acquireRouterSavedContinuation, acquireRouterRosterQuery, acquireRouterRoomRoster, routerOwnerNegotiated, routerOwnerNavigation, routerOwnerDisconnected,
   readRouterToolPage, admitRouterTrayCommand, admitRouterTrayPaint, routerOwnerListPanel, routerOwnerCapabilities, routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport, routerOwnerUsageProfile } from './router-owner';
 const request = { family: 'needs-you-count' as const, workspaceId: 'w' };
 const hash = (value: unknown) => bytesToHex(sha256(utf8ToBytes(JSON.stringify(value))));
@@ -110,6 +110,33 @@ describe('real mobile router owner', () => {
     expect(picker.current().state).toBe('LIVE');expect(execute).toHaveBeenCalledTimes(2);picker.release();
     await routerOwnerNegotiated({generation:2,families:['room-head','workspace-roster'],authorityFencesV1:true,execute});await settle();
     expect(execute.mock.calls.map(([input])=>input.family)).toEqual(['room-head','workspace-roster','room-head']);room.release();
+  });
+
+  it('Forward reads a missing list only on its Room gesture and targeted refresh keeps the list intact', async () => {
+    const ws='11111111-1111-4111-8111-111111111111',id='22222222-2222-4222-8222-222222222222';
+    const person={pubkey:'a'.repeat(64),kind:'human' as const,name:'Reader'};
+    const list={workspace:{id:ws,name:'Workspace',role:'member' as const,updatedAt:1},chats:[],viewer:person,truncated:false,watchFilters:[]};
+    const execute=vi.fn(async(input:RouterSnapshotInput):Promise<RouterSnapshot>=>{
+      const room=input.family==='room-head',certScopes=[{authorityScope:`reader:ada:workspace:${ws}`,epoch:'1'},
+        {authorityScope:room?`room:${id}`:`reader:ada:workspace:${ws}:visibility`,epoch:'1'}];
+      return {...snapshot(),family:input.family,scope:room?id:ws,value:room?{room:{id,workspaceId:ws},messages:[]}:list,
+        cut:{...snapshot().cut,stream:`workspace:${ws}`},atomicGroup:room?`room-head:${id}:ada`:`room-list:${ws}:ada`,
+        authority:{scopes:certScopes,digest:hash(certScopes)}} as RouterSnapshot;
+    });
+    routerOwnerNavigation({routes:[{key:'room',name:'beeline/chat/[channelId]',params:{channelId:id,communityId:ws}}]});
+    const room=acquireRouterLane({family:'room-head',roomId:id,workspaceId:ws},()=>true,()=>{});
+    const observer=acquireRouterLane({family:'room-list',workspaceId:ws},()=>true,()=>{});
+    await routerOwnerNegotiated({generation:1,families:['room-head','room-list'],authorityFencesV1:true,execute});await settle();
+    expect(execute.mock.calls.map(([input])=>input.family)).toEqual(['room-head']);
+    expect(()=>acquireRouterForwardList('33333333-3333-4333-8333-333333333333',()=>true,()=>{})).toThrow('not held');
+    const picker=acquireRouterForwardList(ws,()=>true,()=>{});await settle();
+    expect(picker.current()).toMatchObject({state:'LIVE',value:list});
+    routerOwnerRefresh(id);await settle();
+    expect(execute.mock.calls.map(([input])=>input.family)).toEqual(['room-head','room-list','room-head']);
+    expect(picker.current()).toMatchObject({state:'LIVE',value:list});
+    picker.release();observer.release();
+    await routerOwnerNegotiated({generation:2,families:['room-head','room-list'],authorityFencesV1:true,execute});await settle();
+    expect(execute.mock.calls.map(([input])=>input.family)).toEqual(['room-head','room-list','room-head','room-head']);room.release();
   });
 
   it('refuses an additive family until its local assembly is implemented without minting a read',async()=>{

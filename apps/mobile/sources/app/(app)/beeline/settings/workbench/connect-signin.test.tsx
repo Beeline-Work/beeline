@@ -141,22 +141,26 @@ afterEach(() => {
 });
 
 describe('ConnectorSignInScreen', () => {
-  it('a slow sign-in read waits for its socket response without overlapping reads', async () => {
+  it('Reproduction squire-spinner: OAuth waits for its request owner, then offers Retry on the source refusal', async () => {
     vi.useFakeTimers();
     searchParams.connectorName = 'Trusty Squire';
     searchParams.url = '';
     const releases: Array<(value: null) => void> = [];
-    readInstallState.mockImplementation(() => new Promise(resolve => releases.push(resolve)));
+    let refuse!: (error: Error) => void;
+    readInstallState.mockImplementation(() => new Promise((resolve, reject) => { releases.push(resolve); refuse = reject; }));
     let renderer!: ReactTestRenderer;
     try {
       await act(async () => { renderer = create(<ConnectorSignInScreen />); });
-      await act(async () => { await vi.advanceTimersByTimeAsync(60_000); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_001); });
+      // OAuth has no streamed-page deadline; the live request owns refusal.
       expect(renderer.root.findAllByProps({ testID: 'signin-retry' })).toHaveLength(0);
-      expect(readInstallState).toHaveBeenCalledTimes(1);
-      await act(async () => releases[0]!(null));
+      expect(readInstallState).toHaveBeenCalledOnce();
+      await act(async () => refuse(new Error('Request deadline exceeded')));
       expect(renderer.root.findAllByProps({ testID: 'signin-retry' }).length).toBeGreaterThan(0);
       expect(renderer.root.findByType('PageHeader').props.title).toBe('Sign in to Google');
-      expect(JSON.stringify(renderer.toJSON())).toContain('Lost track of the install');
+      expect(JSON.stringify(renderer.toJSON())).toContain('Lost contact while installing');
+      await act(async () => { void renderer.root.findByProps({ testID: 'signin-retry' }).props.onPress(); });
+      expect(readInstallState).toHaveBeenCalledTimes(2);
     } finally { await act(async () => { renderer.unmount(); releases.forEach(resolve => resolve(null)); }); vi.useRealTimers(); }
   });
 

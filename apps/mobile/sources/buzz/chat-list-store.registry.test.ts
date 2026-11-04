@@ -4,8 +4,9 @@ import { isChatListView, type ChatListItem, type ChatListView } from '@beeline/b
 // These fixtures exercise the negotiated legacy compatibility path. The actual
 // router owner/negotiation path has independent integration coverage.
 vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => 'legacy', holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+
 vi.mock('@/buzz/router-owner', () => ({
+  subscribeRouterOwner: () => () => {},
   routerFamilyMode: () => 'legacy',
   acquireRouterLane: () => ({ current: () => ({ state: 'ABSENT', value: null, cut: null, error: null }), release: () => {},
     subscribe: () => () => {}, refreshVisibility: () => {} }),

@@ -63,15 +63,15 @@ describe('resource observers in the desktop web renderer', () => {
           output.recoveredTranscript = !!document.querySelector('[data-testid="desktop-work-corner-transcript"]');
           output.workflowReads = globalThis.__workflowReads;
           output.workflowText = document.querySelector('[data-testid="corner-objective-line-workflow-copy"]')?.textContent;
-          document.getElementById('result').textContent = JSON.stringify(output); }, 9000);`);
+          document.getElementById('result').textContent = JSON.stringify(output); }, 10000);`);
       const shims = { ...webProofShims(mobile), ...legacyRouterProofShims() };
       shims['react-native-unistyles'] = shims['react-native-unistyles'].replace('buzz: beelineThemes.obsidian', `buzz: beelineThemes.obsidian, colors: { groupped: { background: '#171717' }, divider: '#333', text: '#eee', textSecondary: '#aaa', surface: '#222' }`);
-      const result = await runBrowserProof({ entry, mobile, width: 1200, budgetMs: 10000, shims: {
+      const result = await runBrowserProof({ entry, mobile, width: 1200, budgetMs: 11000, shims: {
         ...shims,
         '@expo/vector-icons': `export const Ionicons = () => null; export const FontAwesome = () => null;`,
         'expo-web-browser': `export const openBrowserAsync = async () => undefined;`,
         'expo-router': `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]); export const useLocalSearchParams = () => ({ workspaceId: 'workspace', connectorId: 'install', connectorName: 'Squire', pairedConnectorId: 'install', offerId: 'offer', roomId: 'parent', url: 'https://example.test', method: 'oauth' }); export const router = { back() { globalThis.__backs = (globalThis.__backs ?? 0) + 1; }, replace() {}, push() {} }; export const useRouter = () => router;`,
-        '@/sync/transport/live-connection': `globalThis.__roomListeners = {}; export const sharedLiveConnection = () => ({ register: async (filters, listener) => { const id = filters[0]['#h'][0]; globalThis.__roomListeners[id] = listener; return () => { delete globalThis.__roomListeners[id]; }; }, whenSubscribed: async () => undefined });`,
+        '@/sync/transport/live-connection': `globalThis.__roomListeners = {}; export const sharedLiveConnection = () => ({ register: async (filters, listener) => { const id = filters[0]?.['#h']?.[0]; if (id) globalThis.__roomListeners[id] = listener; return () => { if (id) delete globalThis.__roomListeners[id]; }; }, whenSubscribed: async () => undefined });`,
         '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readInstallState: ({ connectorId }) => {
           globalThis.__installReads = (globalThis.__installReads ?? 0) + 1;
           if (connectorId === 'fresh-row') return Promise.resolve({ connectorId, connected: true, steps: [] });
@@ -102,8 +102,12 @@ describe('resource observers in the desktop web renderer', () => {
       expect(result.status, result.stderr).toBe(0);
       console.log('Reproductions R9a–R9c desktop web:', result.result);
       const proof = JSON.parse(result.result);
-      expect(proof).toMatchObject({ draftReady: true, pendingReads: 1, initialTranscript: true, staleTranscript: false, workflowReads: 1, recoveredTranscript: true, terminalReads: 1, stoppedReads: 1, retryReads: 2, returnedToInstaller: 1, sameTranscript: true, loaderDuringRefresh: false, sentBeforeRead: false, sentAfterRead: true, repaired: true, messageVisible: true, stoppedBeforeRead: false, stoppedAfterRead: true });
-      // A lost install cannot reload in place; its one action says where it goes.
+      expect(proof).toMatchObject({ draftReady: true, pendingReads: 1, initialTranscript: true, staleTranscript: false, workflowReads: 1, recoveredTranscript: true, returnedToInstaller: 1, sameTranscript: true, loaderDuringRefresh: false, sentBeforeRead: false, sentAfterRead: true, repaired: true, messageVisible: true, stoppedBeforeRead: false, stoppedAfterRead: true });
+      // Missing installs retry with backoff while the original request stays single-flight.
+      expect(proof.terminalReads).toBeGreaterThan(proof.pendingReads);
+      expect(proof.stoppedReads).toBeGreaterThanOrEqual(proof.terminalReads);
+      expect(proof.retryReads).toBeGreaterThan(proof.stoppedReads);
+      // A lost install still exposes its existing return action.
       expect(proof.signInError).toContain('Go back');
       expect(proof.installerError).toContain('Lost track');
       expect(proof.inspectorError).toContain('Selected corner unavailable');
@@ -152,13 +156,12 @@ describe('resource observers in the desktop web renderer', () => {
       console.log('Reproductions R9d and R9-OBS-01 desktop web:', result.result);
       expect(JSON.parse(result.result).status).toBe('Done');
       expect(JSON.parse(result.result).failureText).toContain('Couldn’t reach Beeline');
-      // The run page's "Also running in this corner" section reads the room's
-      // other live runs alongside the run itself, so each cycle (initial load,
-      // the postgres invalidate, and the reconnect) now fires two reads.
-      expect(JSON.parse(result.result).reads).toBe(6);
+      // The run and Room list each read initially, on invalidation, on the
+      // automatic recovery attempt, and on reconnect.
+      expect(JSON.parse(result.result).reads).toBe(8);
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
-  it('Reproductions R9-OBS-06 and R12k: workflow failures stay silent and recover on the next eligible event', async () => {
+  it('Reproductions R9-OBS-06 and R12k: backoff recovery stays silent and reconnect can recover immediately', async () => {
     const mobile = process.cwd();
     const directory = await createBrowserProofDirectory("observer-proof-");
     try {
@@ -199,7 +202,7 @@ describe('resource observers in the desktop web renderer', () => {
       } });
       expect(result.status, result.stderr).toBe(0);
       console.log('Reproductions R9-OBS-06 and R12k desktop web:', result.result);
-      expect(JSON.parse(result.result)).toMatchObject({ streakNotices: 0, noticesAfterSuccess: 0, reads: 4, clearedAfterSuccess: true, retryRecovered: true });
+      expect(JSON.parse(result.result)).toMatchObject({ streakNotices: 0, noticesAfterSuccess: 0, reads: 7, clearedAfterSuccess: true, retryRecovered: true });
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);
 

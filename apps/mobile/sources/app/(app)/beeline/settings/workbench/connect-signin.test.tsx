@@ -250,7 +250,7 @@ describe('ConnectorSignInScreen', () => {
     } finally { await act(async () => { renderer.unmount(); release(null); }); vi.useRealTimers(); }
   });
 
-  it.each(['missing', 'rejected'])('Reproduction R9b: %s reads end visibly and retry', async (kind) => {
+  it.each(['missing', 'rejected'])('Reproduction R9b: %s reads stay visible and retry automatically', async (kind) => {
     vi.useFakeTimers();
     if (kind === 'rejected') readInstallState.mockRejectedValue(new Error('offline'));
     let renderer!: ReactTestRenderer;
@@ -260,12 +260,13 @@ describe('ConnectorSignInScreen', () => {
       const retry = renderer.root.findByProps({ testID: 'signin-retry' });
       const calls = readInstallState.mock.calls.length;
       await act(async () => { await vi.advanceTimersByTimeAsync(15000); });
-      expect(readInstallState).toHaveBeenCalledTimes(calls);
+      expect(readInstallState.mock.calls.length).toBeGreaterThan(calls);
+      const automaticCalls = readInstallState.mock.calls.length;
       await act(async () => retry.props.onPress());
       if (kind === 'missing') {
         expect(router.back).toHaveBeenCalledTimes(1); // R12h
-        expect(readInstallState).toHaveBeenCalledTimes(calls);
-      } else expect(readInstallState.mock.calls.length).toBeGreaterThan(calls);
+        expect(readInstallState).toHaveBeenCalledTimes(automaticCalls);
+      } else expect(readInstallState.mock.calls.length).toBeGreaterThan(automaticCalls);
     } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
   });
 

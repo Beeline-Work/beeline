@@ -87,7 +87,7 @@ it('a corner and its run page share one workflow read, and prose never repeats i
   } finally { await act(async () => tree.unmount()); }
 });
 
-it('CR1: failed workflow reads wait for Retry; unrelated traffic and elapsed time cannot recover them', async () => {
+it('CR1: failed workflow reads recover on backoff while traffic coalesces and warnings stay bounded', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -99,7 +99,7 @@ it('CR1: failed workflow reads wait for Retry; unrelated traffic and elapsed tim
     await act(async () => { tree = create(<Corner />); });
     expect(current.error).toBe('Couldn’t reach Beeline');
     await act(async () => {
-      vi.advanceTimersByTime(300000);
+      vi.advanceTimersByTime(499);
       for (let n = 0; n < 1000; n++) {
         wire.listener({ monolithLive: { type: 'message-delta', roomId: 'corner-errors', message: { presentation: 'message' } } });
         wire.listener({ monolithLive: { type: 'invalidate', roomId: 'corner-errors' } });
@@ -108,7 +108,7 @@ it('CR1: failed workflow reads wait for Retry; unrelated traffic and elapsed tim
     expect(read).toHaveBeenCalledTimes(1);
     expect(warning).toHaveBeenCalledTimes(1);
     read.mockResolvedValue({ workflows: [] });
-    await act(async () => { await current.retry(); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(read).toHaveBeenCalledTimes(2);
     expect(current.error).toBeNull();
   } finally {

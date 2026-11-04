@@ -229,7 +229,7 @@ vi.mock('@/buzz/community-storage', () => ({
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspaces = workspaces;
-    chats = chats;
+    chats = (_authority: unknown, workspaceId: string) => chats(workspaceId);
     corners = corners;
   },
 }));

@@ -29,14 +29,16 @@ function dataShims(
       // Anchor before mount, so response timing cannot move the two-minute fixture
       // ahead of the clock the screen captured at the start of its read.
       ? `const fixtureNow = Math.floor(Date.now() / 1000);
-        export const monolithPhoneOperation = async (name) => name === 'readTray' ? { needs: { items: [] }, saved: { bookmarks: [{
+        export const readServerSurface=(_authority,...args)=>monolithPhoneOperation(...args);
+      export const monolithPhoneOperation = async (name) => name === 'readTray' ? { needs: { items: [] }, saved: { bookmarks: [{
           messageId: 'msg-1', workspaceId: 'workspace-1', roomId: 'corner-1',
           roomName: 'Fix fixture', roomKind: 'corner',
           messageCreatedAt: fixtureNow - 7200,
           bookmarkedAt: fixtureNow - 120,
           available: true, author: { name: 'Avery' }, text: 'The bookmarked line.'
         }] } } : { bookmarks: [] };`
-      : `export const monolithPhoneOperation = async (name) =>
+      : `export const readServerSurface=(_authority,...args)=>monolithPhoneOperation(...args);
+      export const monolithPhoneOperation = async (name) =>
           name === 'readTray' ? { needs: { items: [] }, saved: { bookmarks: [] } } : { bookmarks: [] };`,
     '@/sync/transport/room-view-client': `export class RoomViewClient {
       async workspaces() { return { workspaces: ${link === 'active' ? "[{ id: 'workspace-0' }, { id: 'workspace-1' }]" : '[]'} }; }

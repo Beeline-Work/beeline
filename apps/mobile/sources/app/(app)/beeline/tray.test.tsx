@@ -36,6 +36,7 @@ vi.mock('@/buzz/command-owner', () => ({
   }),
 }));
 vi.mock('@/buzz/router-owner', () => ({
+  subscribeRouterOwner: () => () => {},
   routerFamilyMode: () => trayProtocol.mode,
   acquireRouterSavedContinuation: (...args: unknown[]) => {
     trayProtocol.continuation(...args);
@@ -184,7 +185,7 @@ vi.mock('@/components/buzz/MonoHull', async () => {
   return { PixelLoader: (props: any) => ReactModule.createElement('PixelLoader', props) };
 });
 vi.mock('expo-haptics', () => ({ impactAsync: vi.fn(), ImpactFeedbackStyle: { Light: 'light' } }));
-vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation, readServerSurface: (_authority: unknown, ...args: unknown[]) => phoneOperation(...args) }));
 vi.mock('@/sync/transport/live-connection', () => ({
   sharedLiveConnection: () => ({
     register: async (_filters: unknown, listener: (event: unknown) => void) => {
@@ -232,6 +233,9 @@ import { ButtonRow } from '@/components/buzz/ButtonRow';
 import { resetClientState } from '@/sync/client-reset';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
+function applyNeedsYouLiveDelta(delta: unknown) {
+  for (const listener of liveRegistrations) listener({ monolithLive: { ...(delta as object), type: 'needs-you-delta' } });
+}
 const person = {
   pubkey: 'person-1',
   kind: 'human' as const,

@@ -46,7 +46,7 @@ vi.mock('@beeline/buzz-client', async (importOriginal) => ({
   ...await importOriginal<typeof import('@beeline/buzz-client')>(),
   RoomViewClient: class {
     workspace = roomViews.workspace;
-    chats = roomViews.chats;
+    chats = (_authority: unknown, workspaceId: string) => roomViews.chats(workspaceId);
     room = roomViews.room;
   },
   SurfaceRefreshScheduler: class<T> {
@@ -132,11 +132,11 @@ vi.mock('@/buzz/runtime-config', () => ({
 }));
 vi.mock('expo-clipboard', () => clipboard);
 vi.mock('@/modal', () => ({ Modal: modal }));
-vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation, readServerSurface: (_authority: unknown, ...args: unknown[]) => phoneOperation(...args) }));
 vi.mock('@/sync/transport/room-view-client', () => ({
   RoomViewClient: class {
     workspace = roomViews.workspace;
-    chats = roomViews.chats;
+    chats = (_authority: unknown, workspaceId: string) => roomViews.chats(workspaceId);
     room = roomViews.room;
   },
 }));

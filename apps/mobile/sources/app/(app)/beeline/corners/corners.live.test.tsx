@@ -240,8 +240,8 @@ const server = {
   emit(frame: unknown) {
     server.socket().onmessage?.({ data: JSON.stringify(frame) });
   },
-  subscribed(resumed = false, epoch = 'epoch') {
-    server.emit({ type: 'subscribed', roomId: 'room-a', epoch, cursor: 0, resumed });
+  subscribed(resumed = false, epoch = 'epoch', cursor = 0) {
+    server.emit({ type: 'subscribed', roomId: 'room-a', epoch, cursor, resumed });
   },
   status(sequence: number, rows: readonly CornerListItem[], nextOpen?: string) {
     server.emit({
@@ -478,6 +478,9 @@ describe('Corner list live path', () => {
 
   it('drops a frame older than one the lane already applied', async () => {
     const renderer = await mountList();
+    // The lane has committed through 4. Sequence 5 is contiguous; a later 4
+    // is stale, rather than an initial gap that requires a covering read.
+    server.subscribed(false, 'epoch', 4);
     server.status(5, [corner('corner-1', 'review')]);
     server.status(4, [corner('corner-1', 'working')]);
     await settle();

@@ -1,33 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import equal from 'fast-deep-equal';
-import { isChatListView, type ChatListView } from '@beeline/buzz-client';
-import { resetClientState } from '@/sync/client-reset';
+import type { ChatListView } from '@beeline/buzz-client';
 import { useRouterFamily } from './router-family';
-import { acquireRoutedChatList } from './router-chat-list';
-import { routerFamilyMode, routerLaneSnapshot } from './router-owner';
-
-export type ChatListKey = { readonly relayUrl: string; readonly viewerPubkey: string; readonly workspaceId: string };
-export type ChatListConsumer = { readonly visible: () => boolean; readonly onRead?: () => void; readonly onError?: (reason: unknown) => void };
-export interface ChatListHandle {
-  current(): ChatListView | null;
-  confirmed(): boolean;
-  subscribe(listener: () => void): () => void;
-  force(): void;
-  catchUp(): void;
-  release(): void;
-  remove(): Promise<void>;
-}
-
+import { acquireChatList, liveChatList } from './server-read-owner';
+import type { ChatListKey } from './server-read-owner';
+export { readChatList, acquireChatList, liveChatList, chatListSnapshot, resetChatListStoresForTest } from './server-read-owner';
+export type { ChatListKey, ChatListConsumer, ChatListHandle } from './server-read-owner';
 const idOf = (key: ChatListKey) => JSON.stringify([key.relayUrl, key.viewerPubkey, key.workspaceId]);
-export function acquireChatList(key: ChatListKey, consumer: ChatListConsumer): ChatListHandle {
-  return acquireRoutedChatList(key, consumer);
-}
-export function liveChatList(key: ChatListKey): ChatListView | null {
-  if (routerFamilyMode('room-list') !== 'router') return null;
-  const view = routerLaneSnapshot({ family: 'room-list', workspaceId: key.workspaceId });
-  return view.state === 'LIVE' && isChatListView(view.value) ? view.value : null;
-}
-export const chatListSnapshot = liveChatList;
 /** Transcript headers, mentions and forwarding do not display deck previews. */
 function sameTranscriptContext(before: ChatListView | null, after: ChatListView | null, roomId: string): boolean {
   if (before === after) return true;
@@ -51,7 +30,7 @@ export function useChatList(key: ChatListKey | null, options: UseChatListOptions
   const painted = useRef<ChatListView | null>(null);
   const optionsRef = useRef(options);
   optionsRef.current = options;
-  const id = key ? idOf(key) : null;
+  const id = key ? JSON.stringify([key.relayUrl, key.viewerPubkey, key.workspaceId]) : null;
   useEffect(() => {
     if (!key) { painted.current = null; setValue(null); return; }
     const handle = acquireChatList(key, {
@@ -75,4 +54,3 @@ export function useChatList(key: ChatListKey | null, options: UseChatListOptions
   if (mode !== 'router') return null;
   return options.transcriptRoomId ? value : key ? liveChatList(key) : null;
 }
-export const resetChatListStoresForTest = resetClientState;

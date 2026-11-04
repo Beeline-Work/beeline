@@ -28,7 +28,7 @@ export function canonicalRouterProofShims(families: readonly string[] = []): Rec
     imports.push(`import * as roomAuth from '@/auth/buzz-identity-storage'; import {RoomViewClient} from '@/sync/transport/room-view-client';`);
     loaders.push(`if(input.family==='room-list'||input.family==='room-head') {
       const client=new RoomViewClient({baseUrl:await roomAuth.getEffectiveRelayUrl(),identity:await roomAuth.loadBuzzIdentity()});
-      return input.family==='room-head'?client.room(input.roomId):client.chats(input.workspaceId);
+      return input.family==='room-head'?client.room(input.roomId):client.chats(undefined,input.workspaceId);
     }`);
   }
   const owner = `import {canonicalRouterFixture} from '@/test/canonical-router-fixture';
@@ -41,7 +41,7 @@ export function canonicalRouterProofShims(families: readonly string[] = []): Rec
     const forbidden=()=>{throw new Error('UI fixture cannot mint production authority');};
     export const routerOwnerCapabilities=()=>({families:[],authorityFencesV1:false,scheduledWorkCoverageV1:false});
     export const routerOwnerNegotiated=forbidden,routerOwnerReceive=forbidden,readRouterToolPage=forbidden,
-      acquireRouterRosterQuery=forbidden,acquireRouterRoomRoster=forbidden,acquireRouterSavedContinuation=forbidden,admitRouterScheduledStop=forbidden,admitRouterTrayCommand=forbidden,admitRouterTrayPaint=forbidden;`;
+      acquireRouterForwardList=forbidden,acquireRouterRosterQuery=forbidden,acquireRouterRoomRoster=forbidden,acquireRouterSavedContinuation=forbidden,admitRouterScheduledStop=forbidden,admitRouterTrayCommand=forbidden,admitRouterTrayPaint=forbidden;`;
   const family = `export const useRouterFamily=()=>'router'; export const holdRouterConnection=()=>()=>{};`;
   const result: Record<string,string> = {
     '@/buzz/router-owner':owner,'./router-owner':owner,

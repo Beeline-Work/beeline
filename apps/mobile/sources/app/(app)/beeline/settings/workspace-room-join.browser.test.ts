@@ -36,7 +36,8 @@ function shims(mobile: string): Record<string, string> {
       register: async () => () => undefined, whenSubscribed: async () => undefined,
       isViewing: () => false, reconnect: () => undefined,
     });`,
-    '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (name, input) => {
+    '@/sync/transport/monolith-operation': `export const readServerSurface=(_authority,...args)=>monolithPhoneOperation(...args);
+      export const monolithPhoneOperation = async (name, input) => {
       (globalThis.__inputs ??= []).push([name, input]);
       if (name === 'updateWorkspace') globalThis.__allowFixSweep = input.allowFixSweep;
       if (name === 'addRoomMember') return { joined: true };

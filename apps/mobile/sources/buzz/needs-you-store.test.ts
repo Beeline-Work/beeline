@@ -7,8 +7,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // router owner/negotiation path has independent integration coverage.
 const protocol = vi.hoisted(() => ({ mode: 'legacy' as 'legacy' | 'router' | 'pending',count:2,listeners:new Set<()=>void>(),acquire:vi.fn() }));
 vi.mock('@/buzz/router-family', () => ({ useRouterFamily: () => protocol.mode, holdRouterConnection: () => () => {} }));
-vi.mock('@/buzz/router-chat-list', () => ({ acquireRoutedChatList: (_key: unknown, _consumer: unknown, legacy: () => unknown) => legacy() }));
+
 vi.mock('@/buzz/router-owner', () => ({
+  subscribeRouterOwner: () => () => {},
   routerFamilyMode: () => protocol.mode,
   acquireRouterLane: (request:unknown,_visible:()=>boolean,listener:()=>void) => {
     protocol.acquire(request);protocol.listeners.add(listener);return {release:()=>protocol.listeners.delete(listener)};
@@ -39,6 +40,9 @@ vi.mock('@/buzz/surface-storage', () => ({
   },
 }));
 vi.mock('@/sync/transport/monolith-operation', () => ({
+  readServerSurface: (_authority: unknown, name: string) => name === 'readNeedsYou'
+    ? new Promise(resolve => { fixture.reads.push(items => resolve({ items })); })
+    : name === 'listMessageBookmarks' ? new Promise(resolve => { fixture.savedReads.push(bookmarks => resolve({ bookmarks })); }) : Promise.resolve(undefined),
   monolithPhoneOperation: (name: string) => name === 'readNeedsYou'
     ? new Promise((resolve) => { fixture.reads.push((items) => resolve({ items })); })
     : name === 'listMessageBookmarks'
@@ -58,6 +62,13 @@ vi.mock('@/sync/transport/live-connection', () => ({
 import { resetClientState } from '@/sync/client-reset';
 import { useNeedsYouCount } from './needs-you-store';
 
+// Committed deltas enter only through the live adapter, never a feature export.
+function applyNeedsYouLiveDelta(delta: unknown) {
+  for (const registration of fixture.registrations) registration.receive({ monolithLive: { ...(delta as object), type: 'needs-you-delta' } });
+}
+function applyBookmarkDelta(delta: unknown) {
+  for (const registration of fixture.registrations) registration.receive({ monolithLive: { ...(delta as object), type: 'bookmark-delta' } });
+}
 function need(messageId: string, roomId = 'room-1') {
   return { messageId, workspaceId: 'ws', roomId, roomName: 'Room', text: 'ask', createdAt: 1 };
 }

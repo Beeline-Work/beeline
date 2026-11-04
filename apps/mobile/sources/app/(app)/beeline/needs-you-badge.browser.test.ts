@@ -28,7 +28,8 @@ function shims(mobile: string): Record<string, string> {
       },
     };
     const mine = () => server.items[server.viewer];
-    export const monolithPhoneOperation = async (name, input) => {
+    export const readServerSurface=(_authority,...args)=>monolithPhoneOperation(...args);
+      export const monolithPhoneOperation = async (name, input) => {
       await new Promise((resolve) => setTimeout(resolve, 20));
       if (name === 'readNeedsYou') {
         const viewer = server.viewer;

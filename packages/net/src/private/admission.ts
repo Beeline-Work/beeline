@@ -327,14 +327,22 @@ export class AdmissionOwner {
     try{return handler(pass);}finally{lifetime.active=false;}
   }
 
-  /** Existing Room picker button only, bound to its held Room residency. */
+  /** Existing Room picker and Forward gestures share the held Room fence. */
   openRoster<T>(generation:number,roomId:string,workspaceId:string,
     handler:(pass:Pass<'phone.readRouterSnapshot'>)=>T):T{
+    return this.openRoomProjection(generation,roomId,workspaceId,'workspace-roster',handler);
+  }
+  openForwardList<T>(generation:number,roomId:string,workspaceId:string,
+    handler:(pass:Pass<'phone.readRouterSnapshot'>)=>T):T{
+    return this.openRoomProjection(generation,roomId,workspaceId,'room-list',handler);
+  }
+  private openRoomProjection<T>(generation:number,roomId:string,workspaceId:string,
+    family:'workspace-roster'|'room-list',handler:(pass:Pass<'phone.readRouterSnapshot'>)=>T):T{
     const residency=[...this.residencies.values()].find(value=>value.generation===generation&&value.screen==='Room'&&value.lifetime.active&&
       value.keys.some(key=>key===this.key({route:'phone.readRouterSnapshot',input:{family:'room-head',roomId,workspaceId}})||
         key===this.key({route:'phone.readRouterSnapshot',input:{family:'room-head',roomId}})));
     if(!this.foreground||!residency)return this.deny('inactive roster picker');
-    const request={route:'phone.readRouterSnapshot' as const,input:{family:'workspace-roster' as const,workspaceId}};
+    const request={route:'phone.readRouterSnapshot' as const,input:{family,workspaceId}};
     this.validateRequests([request]);const lifetime={active:true},pass=this.mint(request,lifetime);
     this.states.get(pass)!.completionLifetime=residency.lifetime;
     try{return handler(pass);}finally{lifetime.active=false;}

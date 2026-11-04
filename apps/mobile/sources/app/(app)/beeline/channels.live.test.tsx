@@ -272,7 +272,7 @@ vi.mock('@/buzz/surface-storage', () => {
 });
 vi.mock('@/buzz/room-open-prefetch', () => ({ dispatchRoomOpenTap: vi.fn() }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => false }));
-vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn() }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: vi.fn(), readServerSurface: vi.fn() }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {
     async ensureClient() {
@@ -359,7 +359,7 @@ vi.mock('@/sync/transport/room-view-client', async () => ({
         watchFilters: [],
       };
     }
-    async chats(workspaceId: string): Promise<ChatListView> {
+    async chats(_authority: unknown, workspaceId: string): Promise<ChatListView> {
       deck.chatsWorkspaces.push(workspaceId);
       deck.chatsReads += 1;
       return deck.chatsResponse as ChatListView;

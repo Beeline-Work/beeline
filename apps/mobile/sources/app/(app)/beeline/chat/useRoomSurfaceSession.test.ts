@@ -1561,7 +1561,7 @@ describe('canonical Room updates', () => {
 
 
 describe('Room session with the real canonical owner', () => {
-  it('keeps a sent row after unrelated stream progress and its canonical push', async () => {
+  it.each([false, true])('keeps a sent row across canonical push ordering (interval during opening=%s)', async duringOpening => {
     const { routerOwnerNavigation, routerOwnerNegotiated, routerOwnerReceive } = await import('@/buzz/router-owner');
     const { sha256 } = await import('@noble/hashes/sha2.js');
     const { bytesToHex, utf8ToBytes } = await import('@noble/hashes/utils.js');
@@ -1575,8 +1575,13 @@ describe('Room session with the real canonical owner', () => {
     const authority = { scopes, digest: hash(scopes) };
     const cut = (through: number) => ({ stream: `workspace:${workspaceId}`, epoch: 'stream', through, protocol: 1 as const });
     const atomicGroup = `room-head:${roomId}:viewer`;
-    const execute = vi.fn(async () => ({ kind: 'snapshot' as const, family: 'room-head' as const, scope: roomId,
-      value: initial, authority, atomicGroup, cut: cut(51) }));
+    let resolveOpening!: () => void;
+    const opening = new Promise<void>(resolve => { resolveOpening = resolve; });
+    const execute = vi.fn(async () => {
+      if (duringOpening) await opening;
+      return { kind: 'snapshot' as const, family: 'room-head' as const, scope: roomId,
+        value: initial, authority, atomicGroup, cut: cut(51) };
+    });
     routerOwnerNavigation({ routes: [{ key: 'room', name: 'beeline/chat/[channelId]', params: { channelId: roomId, communityId: workspaceId } }] });
     await routerOwnerNegotiated({ generation: 1, families: ['room-head'], authorityFencesV1: true,
       roomHeadContinuityV1: true, execute });
@@ -1585,7 +1590,8 @@ describe('Room session with the real canonical owner', () => {
     await act(async () => { tree = create(React.createElement(Harness, { channelId: roomId,
       capture: value => { current = value; } })); });
     await flushEffects();
-    expect(current.roomSurface?.messages).toEqual([]);
+    if (duringOpening) expect(current.roomSurface).toBeNull();
+    else expect(current.roomSurface?.messages).toEqual([]);
     const push = async (from: number, to: number, facts: unknown[]) => {
       const frame = { batchId: `batch-${to}`, from: cut(from), to: cut(to), partCount: 1, contentDigest: hash(facts) };
       await act(async () => {
@@ -1595,6 +1601,10 @@ describe('Room session with the real canonical owner', () => {
       });
     };
     await push(51, 52, []);
+    if (duringOpening) {
+      await act(async () => { resolveOpening(); for (let i = 0; i < 100; i++) await Promise.resolve(); });
+      expect(current.roomSurface?.messages).toEqual([]);
+    }
     const message = { id: '8d041263f5fc6a3e6c94fd8383a3aa62c710af505797a3b6494cf81fcaff2523',
       text: 'router90-send-repro', createdAt: 1793783245, author: initial.viewer.identity, presentation: 'message' as const };
     await act(async () => current.applyRoomMessageResult(message));

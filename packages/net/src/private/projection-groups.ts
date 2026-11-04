@@ -108,6 +108,7 @@ export class ProjectionGroups<T extends GroupCell>{
       }
       if(cell.flight){
         if(cell.request.workspaceId?batch.to.stream!==`workspace:${cell.request.workspaceId}`:
+          cell.request.family==='room-head'?!batch.to.stream.startsWith('workspace:'):
           !batch.facts.some(fact=>fact.payload.kind===REPLACE&&fact.payload.family===cell.request.family&&fact.payload.scope===scope(cell.request,this.reader)))continue;
         const related=new Set(batch.facts.filter(fact=>fact.payload.kind===REPLACE&&fact.payload.family===cell.request.family&&
           fact.payload.scope===scope(cell.request,this.reader)).map(fact=>fact.atomicGroup));if(held)related.add(held.atomicGroup);

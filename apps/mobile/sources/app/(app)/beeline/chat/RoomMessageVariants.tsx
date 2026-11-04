@@ -1034,9 +1034,6 @@ function SwipeToReply({
       onSwipeableWillOpen={commitSwipe}
       onSwipeableClose={hideSwipe}
       onSwipeableOpenStartDrag={showSwipe}
-      onSwipeableCloseStartDrag={showSwipe}
-      overshootLeft={false}
-      overshootRight={false}
       renderLeftActions={onSwipeCorner ? () => cornerAction() : undefined}
       renderRightActions={onReply ? () => (
         <View

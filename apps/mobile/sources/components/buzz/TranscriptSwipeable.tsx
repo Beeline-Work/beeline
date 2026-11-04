@@ -12,12 +12,9 @@ type Props = {
   dragOffsetFromRightEdge?: number;
   friction?: number;
   enabled?: boolean;
-  overshootLeft?: boolean;
-  overshootRight?: boolean;
   onSwipeableWillOpen?(direction: Direction): void;
   onSwipeableClose?(direction: Direction): void;
   onSwipeableOpenStartDrag?(): void;
-  onSwipeableCloseStartDrag?(): void;
   renderLeftActions?(): React.ReactNode;
   renderRightActions?(): React.ReactNode;
   testID?: string;

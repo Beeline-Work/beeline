@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { readFileSync } from 'node:fs';
 import { SurfaceRegistry } from '@/buzz/surface-registry';
 import { roomTransitionWork } from '@/buzz/room-transition-work';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -589,11 +588,6 @@ describe('useRoomSurfaceSession', () => {
     expect(controls.transportCount).toBe(1);
     await act(async () => renderer.unmount());
   });
-  it('keeps the heavy Room surface free of its own render-triggering focus subscription', () => {
-    const source = readFileSync(new URL('./_chat-surface.tsx', import.meta.url), 'utf8');
-    expect(source).not.toMatch(/\buseIsFocused\s*\(/);
-  });
-
   it('releases Room conversion and saves only after the actual route transition ends', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;

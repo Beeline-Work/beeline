@@ -100,7 +100,6 @@ export type {
   WorkspaceView,
 } from './room-view.js';
 export type { KnownMessageReference } from './reply-proof.js';
-export { SurfaceRefreshScheduler } from './surface-refresh.js';
 export { LiveOverlayDecoder, applyLiveOverlay, visibleLiveOverlays } from './live-overlay.js';
 export type { LiveOverlay } from './live-overlay.js';
 export { addRoomPage } from './room-response-partitions.js';

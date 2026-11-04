@@ -43,7 +43,7 @@ function deleteRow(): string {
 
 function handleDeleteMessage(): string {
   const start = chat.indexOf('const handleDeleteMessage = useCallback(');
-  const end = chat.indexOf('[canDeleteMessage, decodedId, refreshSignal]', start);
+  const end = chat.indexOf('[canDeleteMessage, decodedId, readRoom]', start);
   return chat.slice(start, end);
 }
 

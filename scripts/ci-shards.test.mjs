@@ -47,8 +47,7 @@ test('isolated latency and voice suites remain covered exactly once outside para
     return JSON.parse(result.stdout);
   });
   const isolated = ['src/production-corpus-width.test.ts', 'src/voice-room-runtime.test.ts',
-    'src/phone-service.read-room-latency.test.ts', 'src/daemon-service.completion-latency.test.ts',
-    'src/durable-live.integration.test.ts'];
+    'src/phone-service.read-room-latency.test.ts', 'src/daemon-service.completion-latency.test.ts'];
   isolated.forEach((file, index) => assert.deepEqual(shards[index].isolatedFiles, [file]));
   const files = shards.flatMap(shard => [...shard.files, ...shard.isolatedFiles]);
   assert.equal(new Set(files).size, files.length);

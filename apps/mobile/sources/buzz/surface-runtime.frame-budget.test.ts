@@ -3,7 +3,6 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
-  SurfaceRefreshScheduler,
   buildReplyCommand,
   createIdentity,
   type RoomView,
@@ -65,108 +64,7 @@ beforeAll(() => {
 afterAll(() => vi.restoreAllMocks());
 
 describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
-  it('keeps untouched rows and their reply proof stable through a live refetch', async () => {
-    vi.useFakeTimers();
-    const rootId = '1'.repeat(64);
-    const parentId = '2'.repeat(64);
-    const firstMessage: RoomViewMessage = {
-      id: parentId,
-      text: 'Agent reply',
-      createdAt: 2,
-      author: { pubkey: 'a'.repeat(64), kind: 'agent', name: 'Codex' },
-      presentation: 'message',
-      reply: { channelId: 'room', eventId: rootId, rootId },
-      reference: { channelId: 'room', eventId: parentId, rootId },
-    };
-    const view = (messages: readonly RoomViewMessage[]): RoomView => ({
-      room: {
-        id: 'room',
-        workspaceId: 'workspace',
-        name: 'Room',
-        archived: false,
-        createdAt: 1,
-        updatedAt: 2,
-      },
-      messages,
-      members: [],
-      viewer: {
-        identity: { pubkey: 'b'.repeat(64), kind: 'human', name: 'Captain' },
-        role: 'owner',
-        permissions: { send: true, manage: true },
-      },
-      watchFilters: [{ kinds: [9], '#h': ['room'] }],
-    });
-    const first = view([firstMessage]);
-    const second = view([
-      {
-        ...firstMessage,
-        id: '3'.repeat(64),
-        text: 'Live arrival',
-        createdAt: 3,
-        reference: {
-          channelId: 'room',
-          eventId: '3'.repeat(64),
-          rootId: '3'.repeat(64),
-        },
-        reply: undefined,
-      },
-      structuredClone(firstMessage),
-    ]);
-    const fetch = vi.fn().mockResolvedValueOnce(first).mockResolvedValueOnce(second);
-    const projector = createRoomMessageProjector();
-    const frames: ChatDisplayMessage[][] = [];
-    let selected: ChatDisplayMessage[] = [];
-    let renderer: ReactTestRenderer | undefined;
-    let previous: RoomView | null = null;
-    function Projection({ view: current }: { view: RoomView }) {
-      const [messages] = useRoomMessageRecords('scope', current.room.id, [current.messages]);
-      selected = projector.project(messages, current.viewer.identity.pubkey);
-      return null;
-    }
-    const show = (view: RoomView) => {
-      const stable = reconcileRoomView(previous, view);
-      previous = stable;
-      act(() => {
-        if (renderer) renderer.update(React.createElement(Projection, { view: stable }));
-        else renderer = create(React.createElement(Projection, { view: stable }));
-      });
-      frames.push(selected);
-    };
-    const scheduler = new SurfaceRefreshScheduler({
-      fetch,
-      apply: show,
-    });
 
-    await scheduler.startAfter(Promise.resolve());
-    await vi.runOnlyPendingTimersAsync();
-    const heldProof = frames[0]![0]!.reference;
-    scheduler.signal();
-    await vi.advanceTimersByTimeAsync(500);
-
-    expect(frames).toHaveLength(2);
-    const refetchedParent = frames[1]!.find((message) => message.id === parentId);
-    expect(refetchedParent).toBe(frames[0]![0]);
-    expect(refetchedParent!.reference).toBe(heldProof);
-    expect(
-      buildReplyCommand(createIdentity('refetch-reply'), 'Nested reply', heldProof!).tags,
-    ).toEqual([
-      ['h', 'room'],
-      ['e', rootId, '', 'root'],
-      ['e', parentId, '', 'reply'],
-    ]);
-
-    const edited = view([{ ...structuredClone(firstMessage), text: 'Agent reply edited' }]);
-    show(edited);
-    const changedProjection = selected[0]!;
-    expect(changedProjection).not.toBe(refetchedParent);
-    expect(changedProjection.text).toBe('Agent reply edited');
-
-    const otherViewerProjection = projector.project(edited.messages, 'c'.repeat(64))[0]!;
-    expect(otherViewerProjection).not.toBe(changedProjection);
-    projector.reset();
-    expect(projector.project(edited.messages, 'c'.repeat(64))[0]).not.toBe(otherViewerProjection);
-    act(() => renderer?.unmount());
-  });
 
   it('keeps an optimistic send in a constant-size partition until the screen merges it by time', () => {
     const durable = Array.from({ length: 1_000 }, (_, index) => ({
@@ -253,24 +151,5 @@ describe('FRAME-BUDGET gate — server-indexed Room surfaces', () => {
     act(() => renderer.unmount());
   });
 
-  it('collapses a 1,000-signal relay burst into one scheduled refresh without event work', async () => {
-    const scheduled: Array<() => void> = [];
-    const scheduler = new SurfaceRefreshScheduler({
-      fetch: vi.fn(async () => 1),
-      apply: vi.fn(),
-      now: () => 0,
-      setTimer: (callback) => {
-        scheduled.push(callback);
-        return scheduled.length as unknown as ReturnType<typeof setTimeout>;
-      },
-      clearTimer: vi.fn(),
-    });
 
-    await scheduler.startAfter(Promise.resolve());
-    for (let index = 0; index < 1_000; index += 1) scheduler.signal();
-
-    // Signals carry no payload and do no parsing, reducing, cache writes, or
-    // transcript iteration. The whole burst only preserves one dirty timer.
-    expect(scheduled).toHaveLength(1);
-  });
 });

@@ -45,9 +45,7 @@ export type LiveWireEvent = (
       /** A fallback for an earlier invalidation's delta that could not be read. */
       reconcilesDelivery?: string;
     }
-  | { type: 'subscribed'; roomId: string; epoch?: string; cursor?: number; resumed?: boolean }
-  | { type: 'cursor' | 'reload'; roomId: string }
-  | { type: 'workspace-cursor'; roomId: ''; workspaceId: string; sequence: number; epoch: string; reload: boolean }
+  | { type: 'subscribed'; roomId: string }
   | { type: 'sync-ok' }
   | { type: 'bookmark-delta'; roomId: ''; workspaceId: string; messageId: string;
       bookmark: MessageBookmarkView | null }
@@ -93,7 +91,6 @@ export type LiveWireEvent = (
       upperBoundMs: number;
     }
   | { type: 'draft' | 'thought'; roomId: string; agentId: string; turnId: string; text: string; revision?: number; latestChunk?: string }
-  | { type: 'draft-append' | 'thought-append'; roomId: string; agentId: string; turnId: string; revision: number; offset: number; chunk: string; latestChunk?: string }
   | { type: 'retract'; roomId: string; agentId: string; turnId: string; kind: 'draft' | 'thought' }
   | {
       type: 'presence';
@@ -104,7 +101,7 @@ export type LiveWireEvent = (
       /** A live helper connection holds this presence; it does not age out. */
       held?: boolean;
     }
-) & { sequence?: number; epoch?: string; workspaceId?: string };
+) & { workspaceId?: string };
 
 export type MonolithSurfaceEvent = {
   readonly monolithLive: LiveWireEvent;

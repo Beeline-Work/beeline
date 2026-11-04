@@ -1,17 +1,24 @@
-import { parseRouterCommandIdentity, type RouterCommandIdentity, type RouterCommandReceipt } from '@beeline/api-contract/router-command';
-import { PHONE_READ_OPERATIONS, type PhoneOperationMap } from '@beeline/api-contract/phone';
-import { MonolithRequestTimeoutError, MonolithSessionChangedError } from '@/auth/monolith-session';
-import { waitForRoomDraw } from '@/buzz/room-draw-barrier';
+import {
+  parseRouterCommandIdentity,
+  type RouterCommandIdentity,
+  type RouterCommandReceipt,
+} from '@beeline/api-contract/router-command';
+import {
+  PHONE_READ_OPERATIONS,
+  readSidebarPreview,
+  type PhoneOperationMap,
+} from '@beeline/api-contract/phone';
+import {
+  MonolithRequestTimeoutError,
+  MonolithSessionChangedError,
+  monolithSession,
+} from '@/auth/monolith-session';
 import { PhoneSocketError, PhoneSocketDisconnectedError } from './phone-socket-error';
-import { markRoomOpen } from '@/buzz/room-open-trace';
-import { readSidebarPreview } from '@beeline/api-contract/phone';
 import { useSyncExternalStore } from 'react';
-import { AppState, NativeModules, Platform } from 'react-native';
-import { monolithSession } from '@/auth/monolith-session';
+import { AppState } from 'react-native';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import type { NostrEvent } from '@beeline/nostr';
 import type { LiveWireEvent, MonolithSurfaceEvent } from './monolith-rig-transport';
-import { noteLiveFrame } from './live-frame-epoch';
 import {
   acceptCornerStatusFrame,
   noteCornerLaneReleased,
@@ -23,101 +30,46 @@ import { subscribeClientReset } from '@/sync/client-reset';
 import { setRequestDeadlineHandler } from './request-deadline';
 
 type MissedUpdates = { type: 'missed-updates'; roomIds: string[]; streams: string[]; workspace: boolean };
-
-type PendingRequest = {
-  frame: string;
-  read: boolean;
-  socket?: WebSocket;
-  awaitedSocket?: WebSocket;
-  slow?: boolean;
-  resolve: (value: unknown) => void;
-  reject: (error: unknown) => void;
-};
-
-type SocketRequestOptions = {
-  timeoutMs?: number;
-  signal?: AbortSignal;
-  afterRoomDraw?: boolean;
-};
-
 type SurfaceFilters = readonly {
   readonly '#h'?: readonly string[];
   readonly '#d'?: readonly string[];
 }[];
 type SurfaceListener = (event: NostrEvent | MonolithSurfaceEvent) => void;
-
-// Draft and thought share one wire member, so they narrow to the same type.
-type DraftEvent = Extract<LiveWireEvent, { type: 'draft' | 'thought' }>;
-type ThoughtEvent = DraftEvent;
-type PresenceEvent = Extract<LiveWireEvent, { type: 'presence' }>;
-
-type CachedOverlay<Event> = { readonly event: Event; readonly receivedAt: number };
-
-type RoomOverlayCache = {
-  drafts: Map<string, CachedOverlay<DraftEvent>>;
-  thoughts: Map<string, CachedOverlay<ThoughtEvent>>;
-  presence: Map<string, PresenceEvent>;
+type Registration = { roomIds: ReadonlySet<string>; listener: SurfaceListener; closed: boolean };
+type RequestOptions = { timeoutMs?: number; signal?: AbortSignal };
+type PendingRequest = {
+  frame: string;
+  read: boolean;
+  socket?: WebSocket;
+  resolve(value: unknown): void;
+  reject(reason: unknown): void;
 };
-
-type Registration = {
-  readonly id: number;
-  readonly filters: SurfaceFilters;
-  readonly listener: SurfaceListener;
-  readonly roomIds: ReadonlySet<string>;
-  /** A socket was open at some point while this registration held. */
-  sawOpen: boolean;
-  closed: boolean;
+type Dependencies = {
+  authorization(): Promise<string>;
+  invalidateAuthorization?(token: string): void;
+  liveUrl(): string;
+  subscribeIdentityChange(listener: () => void): () => void;
 };
-type RoomCursor = { epoch: string; base: number; seen: Set<number> };
-
-type LiveConnectionDeps = {
-  authorization: () => Promise<string>;
-  /** Discard only the access token rejected by an unopened socket. */
-  invalidateAuthorization?: (token: string) => void;
-  liveUrl: () => string;
-  /** Fires on an identity or relay change. */
-  subscribeIdentityChange: (listener: () => void) => () => void;
-  /** Optional native reachability event; absent on older OTA runtimes. */
-  subscribeNetworkChange?: (listener: () => void) => () => void;
-};
-
 export type ConnectionState = 'connecting' | 'connected' | 'disconnected';
-
 let connectionState: ConnectionState = 'disconnected';
-const connectionStateListeners = new Set<() => void>();
-
+const stateListeners = new Set<() => void>();
 function setConnectionState(next: ConnectionState): void {
   if (connectionState === next) return;
   connectionState = next;
-  for (const listener of connectionStateListeners) listener();
+  for (const listener of stateListeners) listener();
 }
-
-/** The shared socket's single liveness source for status UI and Retry. */
 export function useConnectionState(): ConnectionState {
   return useSyncExternalStore(
     (listener) => {
-      connectionStateListeners.add(listener);
-      return () => connectionStateListeners.delete(listener);
+      stateListeners.add(listener);
+      return () => stateListeners.delete(listener);
     },
     () => connectionState,
     () => 'disconnected',
   );
 }
-
-/** Message ids recently delivered by the socket, to judge a later push. */
-const HEARD_MESSAGE_LIMIT = 256;
-const HEALTH_CHALLENGE_DEADLINE_MS = 5_000;
-const FOREGROUND_IDLE_MS = 30_000;
-/** Parent-Room invalidations that name a corner change without its rows. */
-const CORNER_LIST_REASONS: ReadonlySet<string> = new Set(['corner-status', 'corner', 'resync']);
-/** The same window the server's own `liveDraftSnapshot` is gated on: past it a
- *  cached draft is no longer live text, so a late join must not paint it. A
- *  turn that ends `failed` or `cancelled` leaves no `retract` behind, so this
- *  and the terminal `turn-delta` eviction are what retire such a draft here. */
-const LIVE_OVERLAY_TTL_MS = 90_000;
-
-function roomIdsFromFilters(filters: SurfaceFilters): Set<string> {
-  return new Set(
+const roomIdsFromFilters = (filters: SurfaceFilters) =>
+  new Set(
     filters
       .flatMap((filter) => [
         ...(filter['#h'] ?? []),
@@ -125,1061 +77,476 @@ function roomIdsFromFilters(filters: SurfaceFilters): Set<string> {
       ])
       .filter(Boolean),
   );
-}
+const isOpen = (socket: WebSocket | undefined): socket is WebSocket => socket?.readyState === 1;
 
-function overlayKey(agentId: string, turnId: string): string {
-  return `${agentId}:${turnId}`;
-}
-
-function isSocketOpen(socket: WebSocket): boolean {
-  return socket.readyState === 1;
-}
-
-function dropExpiredOverlays(cache: RoomOverlayCache, now: number): void {
-  for (const [key, entry] of cache.drafts)
-    if (now - entry.receivedAt >= LIVE_OVERLAY_TTL_MS) cache.drafts.delete(key);
-  for (const [key, entry] of cache.thoughts)
-    if (now - entry.receivedAt >= LIVE_OVERLAY_TTL_MS) cache.thoughts.delete(key);
-}
-
-/**
- * One phone live socket for the app. `surfaceSubscribe` only registers;
- * rooms are refcounted over this connection and the socket outlives screens.
- */
+/** The only phone socket. Screens call request; push listeners call their same read. */
 export class LiveConnection {
-  private readonly registrations = new Map<number, Registration>();
-  private readonly refcount = new Map<string, number>();
-  private readonly seenSubscribed = new Set<string>();
-  private readonly pendingSubscribe = new Set<string>();
-  private readonly overlays = new Map<string, RoomOverlayCache>();
-  private readonly roomCursors = new Map<string, RoomCursor>();
-  private readonly workspaceCursors = new Map<string, RoomCursor>();
-  private readonly traceOwners = new Map<string, Registration>();
-  private readonly connectedListeners = new Set<() => void>();
-  private readonly disconnectedListeners = new Set<() => void>();
+  private socket?: WebSocket;
+  // One owner-held connection promise prevents parallel screens opening two sockets.
+  private connecting?: { promise: Promise<void>; reject(reason: unknown): void };
   private readonly requests = new Map<string, PendingRequest>();
-  private nextRequestId = 0;
-  private socket: WebSocket | undefined;
-  /** True only after this socket's `onopen`. A failed handshake stays false. */
-  private socketReachedOpen = false;
-  private recoverySpent = false;
-  private healthChallenge: { socket: WebSocket; timer: ReturnType<typeof setTimeout> } | undefined;
-  private socketEpoch = 0;
-  private idleHealthTimer?: ReturnType<typeof setTimeout>;
-  private appActive = AppState.currentState === 'active';
-  private commandDedupV1 = false;
-  private readonly commandCapabilityListeners = new Set<() => void>();
-  private connectInFlight: Promise<void> | undefined;
-  /** Rooms on screen, counted per holder; the server holds their pushes. */
+  private readonly registrations = new Set<Registration>();
+  private readonly roomReferences = new Map<string, number>();
   private readonly viewing = new Map<string, number>();
-  private readonly heardMessages = new Set<string>();
-  private readonly subscribeWaiters = new Set<() => void>();
-  private readonly unsubscribeAppState: () => void;
-  private readonly unsubscribeNetworkChange: () => void;
-  private nextRegistrationId = 1;
-  private generation = 0;
-  /** Bumped only by `dispose`; a held view survives an identity change. */
+  private readonly connected = new Set<() => void>();
+  private readonly disconnected = new Set<() => void>();
+  private readonly commandListeners = new Set<() => void>();
+  private readonly paintOwners = new Map<string, Registration>();
+  private requestId = 0;
+  private socketEpoch = 0;
+  // Identity protects against old authorization completing after sign-out.
+  private identity = 0;
+  // An old screen's release must not hide a new identity's view of the same Room.
   private viewEpoch = 0;
-  private readonly unsubscribeIdentity: () => void;
+  private disposed = false;
+  private heartbeat?: ReturnType<typeof setTimeout>;
+  private pongDeadline?: ReturnType<typeof setTimeout>;
+  private readonly stopAppState: () => void;
+  private readonly stopIdentity: () => void;
 
-  constructor(private readonly deps: LiveConnectionDeps) {
+  constructor(private readonly deps: Dependencies) {
     setRequestDeadlineHandler(() => this.reportRequestDeadlineMissed());
-    let previousAppState = AppState.currentState;
-    const appState = AppState.addEventListener('change', (state) => {
-      if (state === previousAppState) return;
-      previousAppState = state;
-      this.appActive = state === 'active';
-      if (this.appActive) this.handleForeground();
-      else { this.clearIdleHealthCheck(); this.clearHealthChallenge(); }
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') {
+        this.checkHealth();
+        this.refreshRoom();
+      } else this.clearHeartbeat();
     });
-    this.unsubscribeAppState = () => appState.remove();
-    this.unsubscribeIdentity = deps.subscribeIdentityChange(() => this.handleIdentityChanged());
-    this.unsubscribeNetworkChange =
-      deps.subscribeNetworkChange?.(() => this.handleNetworkChange()) ?? (() => undefined);
+    this.stopAppState = () => subscription.remove();
+    this.stopIdentity = deps.subscribeIdentityChange(() => {
+      this.identity++;
+      this.viewEpoch++;
+      this.viewing.clear();
+      this.dropConnection();
+      this.refreshRoom();
+    });
   }
 
   register(filters: SurfaceFilters, listener: SurfaceListener): Promise<() => void> {
-    const roomIds = roomIdsFromFilters(filters);
     const registration: Registration = {
-      id: this.nextRegistrationId++,
-      filters,
+      roomIds: roomIdsFromFilters(filters),
       listener,
-      roomIds,
-      sawOpen: Boolean(this.socket && isSocketOpen(this.socket)),
       closed: false,
     };
-    this.registrations.set(registration.id, registration);
-    const held: string[] = [];
-    const fresh: string[] = [];
-    for (const roomId of roomIds) {
-      const previous = this.refcount.get(roomId) ?? 0;
-      this.refcount.set(roomId, previous + 1);
-      if (this.seenSubscribed.has(roomId)) held.push(roomId);
-      else if (previous === 0 && !this.pendingSubscribe.has(roomId)) fresh.push(roomId);
-    }
-    if (fresh.length && this.socket && isSocketOpen(this.socket)) this.sendSubscribe(fresh);
-    if (!roomIds.size) this.sendWorkspaceSync();
-    for (const roomId of held) this.replayLateJoin(registration, roomId);
-    // Registration is complete before the socket authenticates. Initial
-    // Workspace/Room reads start after this promise, so a slow live handshake
-    // must not hold the deck on its loading view.
-    void this.ensureSocket();
-    return Promise.resolve(() => this.stop(registration));
-  }
-
-  /** Reads get three attempts; writes retain their single delivery. */
-  request<Name extends keyof PhoneOperationMap>(
-    op: Name, args: PhoneOperationMap[Name]['input'], options: SocketRequestOptions = {},
-  ): Promise<PhoneOperationMap[Name]['output']> {
-    const generation = this.generation;
-    const start = async () => {
-      if (generation !== this.generation) return Promise.reject(new MonolithSessionChangedError());
-      for (let attempt = 0; ; attempt++) {
-        try {
-          return await this.startRequest(op, args, options) as PhoneOperationMap[Name]['output'];
-        } catch (error) {
-          if (!(PHONE_READ_OPERATIONS as readonly string[]).includes(op) || attempt === 2 ||
-              options.signal?.aborted || generation !== this.generation) throw error;
-          // Let a failed authorization flight clear before starting its replacement.
-          await this.connectInFlight;
-          if (generation !== this.generation) throw new MonolithSessionChangedError();
-          // Concurrent failed reads share the replacement socket. Writes never replay.
-          this.reconnectNow(true);
+    this.registrations.add(registration);
+    for (const roomId of registration.roomIds)
+      this.roomReferences.set(roomId, (this.roomReferences.get(roomId) ?? 0) + 1);
+    // A joining screen asks the server for current pushed state, never a local stream cache.
+    if (isOpen(this.socket)) this.sendSubscribe([...registration.roomIds]);
+    else void this.ensureSocket().catch(() => undefined);
+    return Promise.resolve(() => {
+      if (registration.closed) return;
+      registration.closed = true;
+      this.registrations.delete(registration);
+      for (const roomId of registration.roomIds) {
+        const remaining = (this.roomReferences.get(roomId) ?? 1) - 1;
+        if (remaining > 0) this.roomReferences.set(roomId, remaining);
+        else {
+          this.roomReferences.delete(roomId);
+          noteCornerLaneReleased(roomId);
+          if (isOpen(this.socket))
+            this.socket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
         }
       }
-    };
-    const optional = ['readWorkspace', 'readChats', 'markRead', 'readStarPrompt', 'reportPageLoad', 'listRoomWorkflowRuns', 'readHistory'].includes(op);
-    const draw = (options.afterRoomDraw ?? optional) ? waitForRoomDraw(options.signal) : undefined;
-    return draw ? draw.then(start) : start();
-  }
-
-  commandState(): { generation: number; commandDedupV1: boolean; ready: boolean } {
-    return { generation: this.socketEpoch, commandDedupV1: this.commandDedupV1,
-      ready: Boolean(this.socket && isSocketOpen(this.socket)) };
-  }
-
-  subscribeCommandCapabilities(listener: () => void): () => void {
-    this.commandCapabilityListeners.add(listener);
-    return () => { this.commandCapabilityListeners.delete(listener); };
-  }
-
-  /** The prepared intent owner supplies immutable identity; transport never
-   * retries it, regenerates it or downgrades it to a legacy write. */
-  requestCommand(operation: string, args: unknown, command: RouterCommandIdentity,
-    options: SocketRequestOptions = {}): Promise<RouterCommandReceipt> {
-    const state = this.commandState();
-    if (!state.ready || !state.commandDedupV1) return Promise.reject(
-      new PhoneSocketError('command_unavailable', 'Durable commands are unavailable on this connection', false));
-    let identity: RouterCommandIdentity;
-    try { identity = parseRouterCommandIdentity(command); } catch (error) { return Promise.reject(error); }
-    return this.startRequest(operation, args, options, identity) as Promise<RouterCommandReceipt>;
-  }
-
-  private startRequest(op: string, args: unknown, options: SocketRequestOptions,
-    command?: RouterCommandIdentity): Promise<unknown> {
-    if (options.signal?.aborted) return Promise.reject(this.requestAbortError());
-    const id = `phone-${++this.nextRequestId}`;
-    let frame: string;
-    try {
-      frame = JSON.stringify({ t: 'req', id, op, args, ...(command ? { command } : {}) });
-    } catch (error) { return Promise.reject(error); }
-    const generation = this.generation;
-    return new Promise((resolve, reject) => {
-      const finish = () => {
-        clearTimeout(timer);
-        options.signal?.removeEventListener('abort', abort);
-        this.requests.delete(id);
-      };
-      const request: PendingRequest = { frame, read: (PHONE_READ_OPERATIONS as readonly string[]).includes(op), awaitedSocket: this.socket,
-        resolve: value => { finish(); resolve(value); },
-        reject: error => { finish(); reject(error); },
-      };
-      const abort = () => request.reject(this.requestAbortError());
-      const timer = setTimeout(() => {
-        if (request.read) { request.reject(new MonolithRequestTimeoutError()); return; }
-        request.slow = true;
-        const awaited = request.socket ?? request.awaitedSocket;
-        if (generation === this.generation && awaited && awaited === this.socket)
-          this.reportRequestDeadlineMissed();
-      }, options.timeoutMs ?? 20_000);
-      this.requests.set(id, request);
-      options.signal?.addEventListener('abort', abort, { once: true });
-      if (op === 'readRoom') markRoomOpen('wire-authorizing');
-      if (this.socket && isSocketOpen(this.socket)) this.sendRequests(this.socket);
-      else void this.ensureSocket();
     });
   }
 
-  private requestAbortError(): Error {
+  async request<Name extends keyof PhoneOperationMap>(
+    operation: Name,
+    args: PhoneOperationMap[Name]['input'],
+    options: RequestOptions = {},
+  ): Promise<PhoneOperationMap[Name]['output']> {
+    const identity = this.identity;
+    const read = (PHONE_READ_OPERATIONS as readonly string[]).includes(operation);
+    for (let attempt = 0; ; attempt++) {
+      if (identity !== this.identity) throw new MonolithSessionChangedError();
+      try {
+        return (await this.sendRequest(
+          operation,
+          args,
+          options,
+        )) as PhoneOperationMap[Name]['output'];
+      } catch (error) {
+        if (!read || attempt === 2 || options.signal?.aborted || identity !== this.identity)
+          throw error;
+      }
+    }
+  }
+
+  commandState(): { generation: number; commandDedupV1: boolean; ready: boolean } {
+    const ready = isOpen(this.socket);
+    return { generation: this.socketEpoch, commandDedupV1: ready, ready };
+  }
+  subscribeCommandCapabilities(listener: () => void): () => void {
+    this.commandListeners.add(listener);
+    return () => this.commandListeners.delete(listener);
+  }
+  requestCommand(
+    operation: string,
+    args: unknown,
+    command: RouterCommandIdentity,
+    options: RequestOptions = {},
+  ): Promise<RouterCommandReceipt> {
+    if (!isOpen(this.socket))
+      return Promise.reject(
+        new PhoneSocketError(
+          'command_unavailable',
+          'Durable commands are unavailable on this connection',
+          false,
+        ),
+      );
+    let identity: RouterCommandIdentity;
+    try {
+      identity = parseRouterCommandIdentity(command);
+    } catch (error) {
+      return Promise.reject(error);
+    }
+    return this.sendRequest(operation, args, options, identity) as Promise<RouterCommandReceipt>;
+  }
+
+  private sendRequest(
+    operation: string,
+    args: unknown,
+    options: RequestOptions,
+    command?: RouterCommandIdentity,
+  ): Promise<unknown> {
+    if (options.signal?.aborted) return Promise.reject(this.abortError());
+    const id = String(++this.requestId);
+    const read = (PHONE_READ_OPERATIONS as readonly string[]).includes(operation);
+    return new Promise((resolve, reject) => {
+      const finish = () => {
+        clearTimeout(deadline);
+        options.signal?.removeEventListener('abort', abort);
+        this.requests.delete(id);
+      };
+      const request: PendingRequest = {
+        frame: JSON.stringify({
+          t: 'req',
+          id,
+          op: operation,
+          args,
+          ...(command ? { command } : {}),
+        }),
+        read,
+        resolve: (value) => {
+          finish();
+          resolve(value);
+        },
+        reject: (error) => {
+          finish();
+          if (
+            read &&
+            !(error instanceof Error && error.name === 'AbortError') &&
+            (request.socket
+              ? this.socket === request.socket
+              : !this.socket && this.connecting !== undefined)
+          )
+            this.dropConnection();
+          reject(error);
+        },
+      };
+      const abort = () => request.reject(this.abortError());
+      const deadline = setTimeout(() => {
+        if (read) request.reject(new MonolithRequestTimeoutError());
+        else this.checkHealth();
+      }, options.timeoutMs ?? 20_000);
+      this.requests.set(id, request);
+      options.signal?.addEventListener('abort', abort, { once: true });
+      if (isOpen(this.socket)) this.sendPending(this.socket);
+      else void this.ensureSocket().catch((error) => request.reject(error));
+    });
+  }
+  private abortError(): Error {
     const error = new Error('The request was aborted.');
     error.name = 'AbortError';
     return error;
   }
-
-  private sendRequests(socket: WebSocket): void {
+  private sendPending(socket: WebSocket): void {
     for (const request of this.requests.values()) {
       if (request.socket) continue;
       request.socket = socket;
       try {
-        if (JSON.parse(request.frame).op === 'readRoom') markRoomOpen('wire-dispatch');
         socket.send(request.frame);
-        if (request.slow) this.reportRequestDeadlineMissed();
-      } catch (error) {
-        request.reject(error);
-        this.declareDead(socket);
+      } catch {
+        this.socketFailed(socket);
         return;
       }
     }
   }
 
-  private receiveReply(value: unknown, socket: WebSocket): boolean {
-    if (!value || typeof value !== 'object' || (value as { t?: unknown }).t !== 'res') return false;
-    const frame = value as { id?: unknown; ok?: unknown; result?: unknown;
-      error?: { code?: unknown; message?: unknown; retryable?: unknown } };
-    if (typeof frame.id !== 'string') return true;
-    const request = this.requests.get(frame.id);
-    if (!request || request.socket !== socket) return true;
-    if (frame.ok === true && Object.hasOwn(frame, 'result')) {
-      // An unrelated successful request does not prove every demanded lane
-      // caught up. Only a distinct external/user boundary resets this latch.
-      request.resolve(frame.result);
-    }
-    else if (frame.ok === false && typeof frame.error?.code === 'string' &&
-      typeof frame.error.message === 'string' && typeof frame.error.retryable === 'boolean')
-      request.reject(new PhoneSocketError(frame.error.code, frame.error.message, frame.error.retryable));
-    return true;
+  private ensureSocket(): Promise<void> {
+    if (isOpen(this.socket)) return Promise.resolve();
+    if (this.connecting) return this.connecting.promise;
+    if (this.disposed) return Promise.reject(new PhoneSocketDisconnectedError());
+    const identity = this.identity;
+    let resolve!: () => void;
+    let reject!: (reason: unknown) => void;
+    const promise = new Promise<void>((done, fail) => {
+      resolve = done;
+      reject = fail;
+    });
+    const connection = { promise, reject };
+    this.connecting = connection;
+    setConnectionState('connecting');
+    void this.deps
+      .authorization()
+      .then((token) => {
+        if (this.connecting !== connection || identity !== this.identity) return;
+        const socket = new WebSocket(this.deps.liveUrl(), [`bearer.${token}`]);
+        this.socket = socket;
+        this.socketEpoch++;
+        socket.onopen = () => {
+          if (this.socket !== socket) return;
+          this.connecting = undefined;
+          setConnectionState('connected');
+          this.sendSubscribe([...this.roomReferences.keys()]);
+          for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
+          this.sendPending(socket);
+          this.scheduleHeartbeat();
+          for (const listener of this.commandListeners) listener();
+          for (const listener of this.connected) listener();
+          resolve();
+        };
+        socket.onmessage = (event) => {
+          if (this.socket !== socket) return;
+          this.scheduleHeartbeat();
+          let frame: unknown;
+          try {
+            frame = JSON.parse(String(event.data));
+          } catch {
+            return;
+          }
+          if (!frame || typeof frame !== 'object') return;
+          const reply = frame as Record<string, unknown>;
+          if (reply.t === 'res' && typeof reply.id === 'string') {
+            const pending = this.requests.get(reply.id);
+            if (!pending || pending.socket !== socket) return;
+            if (reply.ok === true) pending.resolve(reply.result);
+            else {
+              const error = reply.error as { code: string; message: string; retryable: boolean };
+              pending.reject(new PhoneSocketError(error.code, error.message, error.retryable));
+            }
+            return;
+          }
+          this.dispatch(frame as LiveWireEvent | { type: 'pong' }, socket);
+        };
+        const failed = () => {
+          if (this.socket !== socket) return;
+          // A rejected opening invalidates only this access token; the next read
+          // attempt obtains the refreshed authorization through the same callback.
+          if (socket.readyState !== 1 && this.connecting === connection)
+            this.deps.invalidateAuthorization?.(token);
+          this.socketFailed(socket);
+        };
+        socket.onerror = failed;
+        socket.onclose = failed;
+      })
+      .catch((error) => {
+        if (this.connecting !== connection) return;
+        this.connecting = undefined;
+        setConnectionState('disconnected');
+        reject(error);
+      });
+    return promise;
   }
 
-  private rejectRequests(reason: unknown = new PhoneSocketDisconnectedError(), onlySent = false): void {
-    for (const request of this.requests.values()) if (!onlySent || request.socket) request.reject(reason);
-  }
-
-  /** Safe transport metadata for a recovery receipt; no URL or authorization. */
-  diagnostics(): { state: number | null; connecting: boolean } {
-    return { state: this.socket?.readyState ?? null, connecting: Boolean(this.connectInFlight) };
-  }
-
-  dispose(): void {
+  private socketFailed(socket: WebSocket): void {
+    if (this.socket !== socket) return;
+    const waitingRead = [...this.requests.values()].some((request) => request.read);
     this.dropConnection();
-    for (const registration of this.registrations.values()) registration.closed = true;
-    this.registrations.clear();
-    this.refcount.clear();
-    this.viewEpoch += 1;
-    this.viewing.clear();
-    this.unsubscribeIdentity();
-    this.unsubscribeNetworkChange();
-    this.unsubscribeAppState();
-    this.commandCapabilityListeners.clear();
-    setRequestDeadlineHandler(undefined);
+    // An in-flight read already owns its three attempts. An idle broken socket
+    // asks the open screens to invoke that same read, which reconnects as needed.
+    if (!waitingRead && AppState.currentState === 'active') this.refreshRoom();
+  }
+  private dropConnection(): void {
+    this.clearHeartbeat();
+    const socket = this.socket;
+    this.socket = undefined;
+    const connecting = this.connecting;
+    this.connecting = undefined;
+    connecting?.reject(new PhoneSocketDisconnectedError());
+    socket?.close();
+    for (const request of [...this.requests.values()])
+      request.reject(new PhoneSocketDisconnectedError());
+    this.paintOwners.clear();
+    noteCornerSocketDropped();
+    setConnectionState('disconnected');
+    for (const listener of this.commandListeners) listener();
+    for (const listener of this.disconnected) listener();
+  }
+  reconnectNow(): void {
+    if (!this.socket) void this.ensureSocket().catch(() => undefined);
+  }
+  reportRequestDeadlineMissed(): void {
+    this.checkHealth();
+  }
+  private checkHealth(): void {
+    if (AppState.currentState !== 'active' || this.pongDeadline) return;
+    if (!this.socket) return;
+    if (!isOpen(this.socket)) return;
+    const socket = this.socket;
+    this.pongDeadline = setTimeout(() => this.socketFailed(socket), 5_000);
+    try {
+      socket.send('{"type":"ping"}');
+    } catch {
+      this.socketFailed(socket);
+    }
+  }
+  private scheduleHeartbeat(): void {
+    clearTimeout(this.heartbeat);
+    if (AppState.currentState !== 'active') return;
+    this.heartbeat = setTimeout(() => this.checkHealth(), 30_000);
+  }
+  private clearHeartbeat(): void {
+    clearTimeout(this.heartbeat);
+    clearTimeout(this.pongDeadline);
+    this.heartbeat = undefined;
+    this.pongDeadline = undefined;
   }
 
-  /**
-   * Hold a Room's pushes while it is on screen. The server keeps the view
-   * until the returned release says it left, or the socket that carried it
-   * closes; a replacement socket carries every held view again on open.
-   */
   view(roomId: string): () => void {
     const epoch = this.viewEpoch;
-    const previous = this.viewing.get(roomId) ?? 0;
-    this.viewing.set(roomId, previous + 1);
-    if (previous === 0) this.sendViewing(roomId, true);
+    this.viewing.set(roomId, (this.viewing.get(roomId) ?? 0) + 1);
+    if (this.viewing.get(roomId) === 1) this.sendViewing(roomId, true);
     let released = false;
     return () => {
       if (released || epoch !== this.viewEpoch) return;
       released = true;
       const remaining = (this.viewing.get(roomId) ?? 1) - 1;
-      if (remaining > 0) {
-        this.viewing.set(roomId, remaining);
-        return;
+      if (remaining > 0) this.viewing.set(roomId, remaining);
+      else {
+        this.viewing.delete(roomId);
+        this.sendViewing(roomId, false);
       }
-      this.viewing.delete(roomId);
-      this.sendViewing(roomId, false);
     };
   }
-
-  /** Whether any screen holds this Room on view. */
   isViewing(roomId: string): boolean {
     return this.viewing.has(roomId);
   }
-
-  /** Current draft text for a Room. The socket overlay cache is its owner. */
-  liveDrafts(roomId: string): ReadonlyMap<string, string> {
-    const cache = this.overlays.get(roomId);
-    const texts = new Map<string, string>();
-    if (!cache) return texts;
-    dropExpiredOverlays(cache, Date.now());
-    for (const { event } of cache.drafts.values())
-      if (event.latestChunk?.trim())
-        texts.set(overlayKey(event.agentId, event.turnId), event.latestChunk);
-    return texts;
-  }
-
-  /**
-   * Settles once the server confirmed every Room these filters name, or after
-   * `timeoutMs`. A read started after that misses nothing the subscription
-   * would carry, so its surface needs no second, covering read.
-   */
-  whenSubscribed(filters: SurfaceFilters, timeoutMs: number): Promise<void> {
-    const roomIds = [...roomIdsFromFilters(filters)];
-    const confirmed = () => roomIds.every((roomId) => this.seenSubscribed.has(roomId));
-    if (confirmed()) return Promise.resolve();
-    return new Promise<void>((resolve) => {
-      const waiter = () => {
-        if (!confirmed()) return;
-        settle();
-      };
-      const timer = setTimeout(() => settle(), timeoutMs);
-      const settle = () => {
-        clearTimeout(timer);
-        this.subscribeWaiters.delete(waiter);
-        resolve();
-      };
-      this.subscribeWaiters.add(waiter);
-    });
-  }
-
-  /**
-   * A push for an unheard message asks only its Room for a covering read.
-   */
-  notePushedMessage(roomId: string, messageId: string): void {
-    if (!this.seenSubscribed.has(roomId) || this.heardMessages.has(messageId)) return;
-    this.refreshRoom(roomId);
-  }
-
-  /** Fires once per successful socket open, first connect and every
-   *  reconnect alike. A caller that keeps its own state in sync with the
-   *  server (rather than reading room/turn deltas off active registrations)
-   *  uses this as its one covering reconcile trigger instead of polling. */
-  subscribeConnected(listener: () => void): () => void {
-    this.connectedListeners.add(listener);
-    return () => this.connectedListeners.delete(listener);
-  }
-
-  /** Observe transport loss without owning the socket's recovery policy. */
-  subscribeDisconnected(listener: () => void): () => void {
-    this.disconnectedListeners.add(listener);
-    return () => this.disconnectedListeners.delete(listener);
-  }
-
-  /** Re-read data in place; data loss never replaces the transport. */
-  refreshRoom(roomId?: string): void {
-    if (roomId) {
-      this.roomCursors.delete(roomId);
-      this.overlays.delete(roomId);
-      noteCornerLaneSubscribed(roomId, false);
-    }
-    for (const registration of this.registrations.values()) {
-      if (registration.closed || (roomId ? !registration.roomIds.has(roomId) : registration.roomIds.size > 0)) continue;
-      registration.listener({ monolithLive: { type: 'invalidate', roomId: roomId ?? '', reason: roomId ? 'resync' : 'reconnect' } });
-    }
-  }
-
-  /** Explicit transport Retry only recovers an absent socket. */
-  reconnectNow(replace = false): void {
-    if (replace && this.socket && this.socket.readyState !== 0) {
-      const socket = this.socket;
-      this.forgetSocket();
-      socket.close();
-    }
-    if (!this.socket && this.hasDemand()) {
-      this.recoverySpent = false;
-      this.handshakeRecoveryUsed = false;
-      this.authorizationRecoveryUsed = false;
-      void this.ensureSocket();
-    }
-  }
-
-  /** The only transport death path: native close/error or unanswered ping. */
-  private declareDead(socket: WebSocket, rejectedToken?: string): void {
-    if (this.socket !== socket) return;
-    const reachedOpen = this.socketReachedOpen;
-    const reading = [...this.requests.values()].some(request => request.read);
-    this.forgetSocket();
-    if (!reachedOpen) this.rejectRequests();
-    socket.close();
-    if (reading) {
-      if (!reachedOpen && rejectedToken) this.deps.invalidateAuthorization?.(rejectedToken);
-      return; // The read loop owns its reconnect; no parallel recovery attempt.
-    }
-    if (reachedOpen) this.recoverOpenedSocket();
-    else if (rejectedToken) this.recoverRejectedHandshake(rejectedToken);
-  }
-
-  /** A slow request asks whether the socket is alive, then keeps waiting. */
-  reportRequestDeadlineMissed(): void {
-    this.checkBoundaryHealth();
-  }
-
-  private handleForeground(): void {
-    this.checkBoundaryHealth();
-  }
-
-  private checkBoundaryHealth(): void {
-    if (!this.appActive || this.healthChallenge) return;
-    const socket = this.socket;
-    if (!socket) { this.reconnectNow(); return; }
-    if (!isSocketOpen(socket)) return;
-    const timer = setTimeout(() => {
-      if (this.healthChallenge?.socket === socket) this.declareDead(socket);
-    }, HEALTH_CHALLENGE_DEADLINE_MS);
-    this.healthChallenge = { socket, timer };
-    try { socket.send(JSON.stringify({ type: 'ping' })); }
-    catch { this.declareDead(socket); }
-  }
-
-  private clearIdleHealthCheck(): void {
-    clearTimeout(this.idleHealthTimer);
-    this.idleHealthTimer = undefined;
-  }
-
-  /** Foreground inactivity only; every inbound frame starts a fresh clock. */
-  private scheduleIdleHealthCheck(): void {
-    this.clearIdleHealthCheck();
-    if (!this.appActive || !this.socket || !isSocketOpen(this.socket)) return;
-    this.idleHealthTimer = setTimeout(() => {
-      this.idleHealthTimer = undefined;
-      this.checkBoundaryHealth();
-    }, FOREGROUND_IDLE_MS);
-  }
-
-  private clearHealthChallenge(): void {
-    if (this.healthChallenge) clearTimeout(this.healthChallenge.timer);
-    this.healthChallenge = undefined;
-  }
-
-  private handleNetworkChange(): void {
-    if (AppState.currentState !== 'active') return;
-    this.reconnectNow();
-  }
-
-  /**
-   * Mounted screens stay registered across an identity or relay change. The
-   * next socket subscribes their Rooms without the old identity's cursors, so
-   * each hears a fresh `subscribed` (or a roomless reconnect signal) and reads
-   * again as the new identity.
-   */
-  private handleIdentityChanged(): void {
-    this.dropConnection();
-    this.refcount.clear();
-    for (const registration of this.registrations.values()) {
-      registration.sawOpen = true;
-      for (const roomId of registration.roomIds)
-        this.refcount.set(roomId, (this.refcount.get(roomId) ?? 0) + 1);
-    }
-    if (this.registrations.size) void this.ensureSocket();
-  }
-
-  private dropConnection(): void {
-    this.clearIdleHealthCheck();
-    this.clearHealthChallenge();
-    this.commandDedupV1 = false;
-    for (const listener of this.commandCapabilityListeners) listener();
-    this.authorizationRecoveryUsed = false;
-    this.handshakeRecoveryUsed = false;
-    this.authorizationAttempt += 1;
-    clearTimeout(this.authorizationDeadline);
-    this.authorizationDeadline = undefined;
-    this.rejectRequests();
-    setConnectionState('disconnected');
-    this.generation += 1;
-    this.connectInFlight = undefined;
-    const current = this.socket;
-    this.socket = undefined;
-    this.socketReachedOpen = false;
-    current?.close();
-    this.seenSubscribed.clear();
-    this.pendingSubscribe.clear();
-    this.overlays.clear();
-    this.roomCursors.clear();
-    this.workspaceCursors.clear();
-    this.traceOwners.clear();
-    this.heardMessages.clear();
-  }
-
-  private stop(registration: Registration): void {
-    if (registration.closed) return;
-    registration.closed = true;
-    this.registrations.delete(registration.id);
-    for (const [traceId, owner] of this.traceOwners) {
-      if (owner === registration) this.traceOwners.delete(traceId);
-    }
-    for (const roomId of registration.roomIds) {
-      const previous = this.refcount.get(roomId) ?? 0;
-      const next = previous - 1;
-      if (next > 0) this.refcount.set(roomId, next);
-      else {
-        this.refcount.delete(roomId);
-        const acknowledged = this.seenSubscribed.delete(roomId);
-        this.overlays.delete(roomId);
-        this.roomCursors.delete(roomId);
-        noteCornerLaneReleased(roomId);
-        if (acknowledged && this.socket && isSocketOpen(this.socket))
-          this.socket.send(JSON.stringify({ type: 'unsubscribe', roomId }));
-      }
-    }
-  }
-
-  private authorizationDeadline?: ReturnType<typeof setTimeout>;
-  private handshakeRecoveryUsed = false;
-  private authorizationRecoveryUsed = false;
-  private authorizationAttempt = 0;
-
-  private hasDemand(): boolean {
-    return this.registrations.size > 0 || this.requests.size > 0;
-  }
-
-  private recoverAuthorizationFailure(): boolean {
-    if ([...this.requests.values()].some(request => request.read)) return false;
-    if (this.authorizationRecoveryUsed || AppState.currentState !== 'active' || !this.hasDemand())
-      return false;
-    this.authorizationRecoveryUsed = true;
-    this.recoverOpenedSocket(false);
-    return true;
-  }
-
-  private ensureSocket(): Promise<void> {
-    if (this.socket) return Promise.resolve();
-    if (this.connectInFlight) return this.connectInFlight;
-    // A connect from before an identity change settles after the next one starts.
-    setConnectionState('connecting');
-    const attempt = ++this.authorizationAttempt;
-    let deadline: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<void>((resolve) => {
-      deadline = setTimeout(() => {
-        if (attempt === this.authorizationAttempt) {
-          this.authorizationAttempt += 1;
-          setConnectionState('disconnected');
-          if (!this.recoverAuthorizationFailure()) this.rejectRequests(new MonolithRequestTimeoutError());
-        }
-        resolve();
-      }, 15_000);
-      this.authorizationDeadline = deadline;
-    });
-    const flight: Promise<void> = Promise.race([this.connect(attempt), timeout]).finally(() => {
-      clearTimeout(deadline);
-      if (this.authorizationDeadline === deadline) this.authorizationDeadline = undefined;
-      if (this.connectInFlight === flight) this.connectInFlight = undefined;
-    });
-    this.connectInFlight = flight;
-    return flight;
-  }
-
-  /**
-   * Opens one socket. An opening handshake has no transport cutoff.
-   * A socket that had opened
-   * and then closes or errors starts one new attempt immediately, with no
-   * timer. Authorization failure and a rejected token each get one bounded
-   * immediate retry; an unsuccessful replacement never starts a retry loop.
-   */
-  private async connect(attempt: number): Promise<void> {
-    const generation = this.generation;
-    try {
-      const token = await this.deps.authorization();
-      if (generation !== this.generation || attempt !== this.authorizationAttempt) return;
-      if (this.registrations.size === 0 && this.requests.size === 0) {
-        setConnectionState('disconnected');
-        return;
-      }
-      const url = this.deps.liveUrl();
-      const next = new WebSocket(url, [`bearer.${token}`]);
-      this.socket = next;
-      for (const request of this.requests.values())
-        if (!request.socket && !request.awaitedSocket) request.awaitedSocket = next;
-      this.socketReachedOpen = false;
-      next.onopen = () => {
-        if (this.socket !== next) return;
-        this.socketReachedOpen = true;
-        this.recoverySpent = false;
-        this.handshakeRecoveryUsed = false;
-        this.authorizationRecoveryUsed = false;
-        setConnectionState('connected');
-        this.socketEpoch += 1;
-        this.commandDedupV1 = true;
-        for (const listener of this.commandCapabilityListeners) listener();
-        for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
-        this.sendSubscribe([...this.refcount.keys()]);
-        this.sendWorkspaceSync();
-        this.sendRequests(next);
-        if ([...this.registrations.values()].some(registration => registration.sawOpen))
-          for (const roomId of this.viewing.keys()) this.refreshRoom(roomId);
-        this.coverRoomlessRegistrations();
-        for (const listener of this.connectedListeners) listener();
-        this.scheduleIdleHealthCheck();
-      };
-      next.onmessage = (message) => {
-        if (this.socket !== next) return;
-        this.scheduleIdleHealthCheck();
-        let live: LiveWireEvent | { type: 'pong' } | MissedUpdates;
-        try {
-          live = JSON.parse(String(message.data)) as LiveWireEvent | { type: 'pong' } | MissedUpdates;
-        } catch {
-          if (this.viewing.size) for (const roomId of this.viewing.keys()) this.refreshRoom(roomId);
-          else this.refreshRoom();
-          return;
-        }
-        if (!live || typeof live !== 'object') return;
-        if (this.receiveReply(live, next)) return;
-        try { this.dispatch(live, next); }
-        catch {
-          if ('roomId' in live && typeof live.roomId === 'string') this.refreshRoom(live.roomId || undefined);
-        }
-      };
-      next.onclose = () => this.declareDead(next, token);
-      next.onerror = () => this.declareDead(next, token);
-    } catch (reason) {
-      if (generation !== this.generation || attempt !== this.authorizationAttempt) return;
-      setConnectionState('disconnected');
-      if (!this.recoverAuthorizationFailure()) this.rejectRequests(reason);
-    }
-  }
-
-  private recoverRejectedHandshake(token: string): void {
-    // Native WebSocket does not reliably expose the HTTP 401 status. Renew
-    // once after an unopened socket fails; persistent offline failures stop.
-    if (!this.deps.invalidateAuthorization) return;
-    this.deps.invalidateAuthorization(token);
-    if (this.handshakeRecoveryUsed || AppState.currentState !== 'active') return;
-    this.handshakeRecoveryUsed = true;
-    // Initial reads already failed on the rejected socket. Its first success
-    // must cover roomless Workspace discovery too, just like a reconnect.
-    for (const registration of this.registrations.values()) registration.sawOpen = true;
-    this.recoverOpenedSocket();
-  }
-
-  /** Drop ownership. The caller decides whether this close starts a new socket. */
-  private forgetSocket(): void {
-    this.socket = undefined;
-    this.socketReachedOpen = false;
-    this.dropSocketState();
-    setConnectionState('disconnected');
-  }
-
-  /**
-   * One replacement after a socket that had opened. Nothing is scheduled:
-   * a handshake that never opens or the last holder leaving does not start
-   * another. Unsent requests also hold the connection until their own deadline.
-   */
-  private recoverOpenedSocket(consumeSocketRecovery = true): void {
-    if (AppState.currentState !== 'active' || (consumeSocketRecovery && this.recoverySpent) || !this.hasDemand()) return;
-    if (consumeSocketRecovery) this.recoverySpent = true;
-    const generation = this.generation;
-    const flight = this.connectInFlight;
-    // Register resolves before its socket attempt finishes. A close in that
-    // gap must not reuse the attempt that just died.
-    if (!flight) {
-      void this.ensureSocket();
-      return;
-    }
-    void flight.finally(() => {
-      if (
-        generation !== this.generation ||
-        this.socket ||
-        this.connectInFlight ||
-        !this.hasDemand()
-      )
-        return;
-      void this.ensureSocket();
-    });
-  }
-
-  private dropSocketState(): void {
-    this.clearIdleHealthCheck();
-    this.clearHealthChallenge();
-    this.commandDedupV1 = false;
-    for (const listener of this.commandCapabilityListeners) listener();
-    // Unsent calls have no ambiguous server result and keep waiting to dispatch.
-    // Only a call dispatched on the dropped socket belongs to the outbox to retry.
-    this.rejectRequests(undefined, true);
-    this.seenSubscribed.clear();
-    this.pendingSubscribe.clear();
-    noteCornerSocketDropped();
-    for (const listener of this.disconnectedListeners) listener();
-    // Keep the last painted overlays and Room cursors across a transport
-    // reconnect. A resumed server lane only replays what changed.
-    this.traceOwners.clear();
-  }
-
-  /**
-   * A registration without Rooms hears only identity-wide invalidations, which
-   * a socket gap can drop. One that lived through a gap gets one covering
-   * signal per reopened socket instead of a timer; a new one already read.
-   */
-  private coverRoomlessRegistrations(): void {
-    for (const registration of this.registrations.values()) {
-      if (registration.closed) continue;
-      if (registration.roomIds.size === 0 && registration.sawOpen)
-        registration.listener({
-          monolithLive: { type: 'invalidate', roomId: '', reason: 'reconnect' },
-        });
-      registration.sawOpen = true;
-    }
-  }
-
   private sendViewing(roomId: string, viewing: boolean): void {
-    if (!this.socket || !isSocketOpen(this.socket)) return;
-    this.socket.send(JSON.stringify({ type: 'viewing', roomId, viewing }));
+    if (isOpen(this.socket)) this.socket.send(JSON.stringify({ type: 'viewing', roomId, viewing }));
   }
-
-  private hear(messageId: string | undefined): void {
-    if (!messageId) return;
-    this.heardMessages.delete(messageId);
-    this.heardMessages.add(messageId);
-    if (this.heardMessages.size > HEARD_MESSAGE_LIMIT) {
-      const oldest = this.heardMessages.values().next().value;
-      if (oldest !== undefined) this.heardMessages.delete(oldest);
-    }
-  }
-
   private sendSubscribe(roomIds: readonly string[]): void {
-    if (!this.socket || !isSocketOpen(this.socket) || roomIds.length === 0) return;
-    // The phone server accepts at most 32 Rooms in one subscribe frame.
-    for (let offset = 0; offset < roomIds.length; offset += 32) {
-      const batch = roomIds.slice(offset, offset + 32);
-      for (const roomId of batch) this.pendingSubscribe.add(roomId);
-      const cursors = Object.fromEntries(
-        batch.flatMap((roomId) => {
-          const cursor = this.roomCursors.get(roomId);
-          return cursor
-            ? [
-                [
-                  roomId,
-                  {
-                    epoch: cursor.epoch,
-                    base: cursor.base,
-                    seen: [...cursor.seen].sort((a, b) => a - b),
-                  },
-                ],
-              ]
-            : [];
-        }),
-      );
+    if (isOpen(this.socket) && roomIds.length)
       this.socket.send(
         JSON.stringify({
           type: 'subscribe',
+          roomIds,
           sidebarPreviews: true,
           roomStateProjections: true,
-          roomIds: batch,
-          ...(Object.keys(cursors).length ? { cursors } : {}),
         }),
       );
-    }
   }
-
-  private sendWorkspaceSync(): void {
-    if (!this.socket || !isSocketOpen(this.socket) ||
-        ![...this.registrations.values()].some(r => !r.closed && !r.roomIds.size)) return;
-    this.socket.send(JSON.stringify({ type: 'sync', workspaceCursors:
-      Object.fromEntries([...this.workspaceCursors].map(([id, cursor]) =>
-        [id, { epoch: cursor.epoch, base: cursor.base, seen: [...cursor.seen] }])) }));
+  subscribeConnected(listener: () => void): () => void {
+    this.connected.add(listener);
+    return () => this.connected.delete(listener);
   }
-
-  private replayLateJoin(registration: Registration, roomId: string): void {
-    const cursor = this.roomCursors.get(roomId);
-    registration.listener({
-      monolithLive: {
-        type: 'subscribed',
-        roomId,
-        ...(cursor ? { epoch: cursor.epoch, cursor: cursor.base, resumed: true } : {}),
-      },
-    });
-    const cache = this.overlays.get(roomId);
-    if (!cache) return;
-    dropExpiredOverlays(cache, Date.now());
-    for (const entry of cache.drafts.values()) registration.listener({ monolithLive: entry.event });
-    for (const entry of cache.thoughts.values())
-      registration.listener({ monolithLive: entry.event });
-    for (const event of cache.presence.values()) registration.listener({ monolithLive: event });
+  subscribeDisconnected(listener: () => void): () => void {
+    this.disconnected.add(listener);
+    return () => this.disconnected.delete(listener);
   }
-
-  private dispatch(live: LiveWireEvent | { type: 'pong' } | MissedUpdates, generation: WebSocket): void {
-    // Workspace replay and Room replay use the same ordinary event handlers.
-    if ('roomId' in live && live.roomId === '' && live.workspaceId &&
-        live.epoch && typeof live.sequence === 'number') {
-      const cursor = this.workspaceCursors.get(live.workspaceId);
-      if (cursor?.epoch === live.epoch && live.sequence <= cursor.base) return;
-      this.workspaceCursors.set(live.workspaceId, {
-        epoch: live.epoch, base: live.sequence, seen: new Set(),
+  notePushedMessage(roomId: string): void {
+    if (this.roomReferences.has(roomId)) this.refreshRoom(roomId);
+  }
+  refreshRoom(roomId?: string): void {
+    for (const registration of this.registrations) {
+      if (registration.closed || (roomId && !registration.roomIds.has(roomId))) continue;
+      registration.listener({
+        monolithLive: {
+          type: 'invalidate',
+          roomId: roomId ?? registration.roomIds.values().next().value ?? '',
+          reason: roomId ? 'resync' : 'reconnect',
+        },
       });
-      if (live.type === 'invalidate' && live.reason === 'workspace-replay')
-        live = { ...live, reason: 'reconnect' };
     }
-    // An event can race the replay that covers it. Its durable identity is
-    // the stream epoch and sequence, including draft append validation.
-    if ('roomId' in live && live.roomId && live.type !== 'subscribed' &&
-        live.type !== 'cursor' && live.type !== 'reload' &&
-        live.epoch && typeof live.sequence === 'number') {
-      const cursor = this.roomCursors.get(live.roomId);
-      if (cursor?.epoch === live.epoch &&
-          (live.sequence <= cursor.base || cursor.seen.has(live.sequence))) return;
-    }
+  }
+
+  private dispatch(live: LiveWireEvent | { type: 'pong' } | MissedUpdates, socket: WebSocket): void {
     switch (live.type) {
       case 'pong':
-        if (this.healthChallenge?.socket === generation) this.clearHealthChallenge();
+        clearTimeout(this.pongDeadline);
+        this.pongDeadline = undefined;
         return;
       case 'sync-ok':
         return;
       case 'missed-updates':
-        for (const roomId of live.roomIds) this.refreshRoom(roomId);
-        if (live.workspace) this.refreshRoom();
+        this.refreshRoom();
         return;
-      case 'workspace-cursor':
-        this.workspaceCursors.set(live.workspaceId, {
-          epoch: live.epoch, base: live.sequence, seen: new Set(),
-        });
-        if (!live.epoch) this.workspaceCursors.delete(live.workspaceId);
-        if (!live.reload) return;
-        live = { type: 'invalidate', roomId: '', reason: 'reconnect' };
-        break;
-      case 'cursor': {
-        const cursor = this.roomCursors.get(live.roomId);
-        if (cursor && cursor.epoch === live.epoch && Number.isSafeInteger(live.sequence) &&
-            live.sequence! >= cursor.base) {
-          cursor.base = live.sequence!;
-          for (const seen of cursor.seen) if (seen <= cursor.base) cursor.seen.delete(seen);
-        }
-        return;
-      }
-      case 'reload':
-        this.roomCursors.delete(live.roomId);
-        this.overlays.delete(live.roomId);
-        noteCornerLaneSubscribed(live.roomId, false);
-        if (live.epoch && Number.isSafeInteger(live.sequence))
-          this.roomCursors.set(live.roomId, { epoch: live.epoch, base: live.sequence!, seen: new Set() });
-        live = { type: 'invalidate', roomId: live.roomId, reason: 'resync' };
-        break;
-      case 'message-delta':
-        this.hear(live.message.id);
-        break;
       case 'sidebar-preview':
-        if (!readSidebarPreview(live)) { this.refreshRoom(live.roomId); return; }
-        this.hear(live.preview.id);
+        if (!readSidebarPreview(live)) {
+          this.refreshRoom(live.roomId);
+          return;
+        }
+        break;
+      case 'corner-status':
+        if (!acceptCornerStatusFrame(live)) return;
+        break;
+      case 'subscribed':
+        noteCornerLaneSubscribed(live.roomId);
         break;
       case 'invalidate':
-        this.hear(live.messageId);
+        if (['corner-status', 'corner', 'resync'].includes(live.reason))
+          noteRoomCornersChanged(live.roomId);
         break;
       case 'trace-painted': {
-        noteLiveFrame();
-        const owner = this.traceOwners.get(live.id);
-        this.traceOwners.delete(live.id);
+        const owner = this.paintOwners.get(live.id);
+        this.paintOwners.delete(live.id);
         if (owner && !owner.closed) owner.listener({ monolithLive: live });
         return;
       }
-      case 'draft-append':
-      case 'thought-append': {
-        const kind = live.type === 'draft-append' ? 'draft' : 'thought';
-        const cache = this.overlays.get(live.roomId);
-        const previous = (kind === 'draft' ? cache?.drafts : cache?.thoughts)?.get(
-          overlayKey(live.agentId, live.turnId),
-        )?.event;
-        if (!previous || previous.text.length !== live.offset ||
-            (previous.revision ?? 0) + 1 !== live.revision) {
-          this.refreshRoom(live.roomId);
-          return;
-        }
-        live = {
-          type: kind, roomId: live.roomId, agentId: live.agentId, turnId: live.turnId,
-          revision: live.revision, text: previous.text + live.chunk,
-          ...(live.sequence !== undefined ? { sequence: live.sequence } : {}),
-          ...(live.epoch !== undefined ? { epoch: live.epoch } : {}),
-          latestChunk: live.latestChunk ?? live.chunk,
-        };
-        break;
-      }
     }
-    noteLiveFrame();
     if (!('roomId' in live)) return;
-    if (
-      live.roomId === '' &&
-      (live.type === 'bookmark-delta' ||
-        live.type === 'needs-you-delta' ||
-        live.type === 'resource-change' ||
-        live.type === 'invalidate' ||
-        live.type === 'workspace-changed' ||
-        live.type === 'person-changed')
-    ) {
-      for (const registration of this.registrations.values()) {
-        if (!registration.closed && registration.roomIds.size === 0)
-          registration.listener({ monolithLive: live });
-      }
-      return;
-    }
-    if (!this.refcount.has(live.roomId)) {
-      if (live.type !== 'subscribed') return;
-      this.pendingSubscribe.delete(live.roomId);
-      if (this.socket === generation && isSocketOpen(generation))
-        generation.send(JSON.stringify({ type: 'unsubscribe', roomId: live.roomId }));
-      return;
-    }
-    if (live.type === 'subscribed') {
-      this.pendingSubscribe.delete(live.roomId);
-      this.seenSubscribed.add(live.roomId);
-      let resumed = Boolean(live.resumed);
-      if (typeof live.epoch === 'string' && Number.isSafeInteger(live.cursor)) {
-        const previous = this.roomCursors.get(live.roomId);
-        resumed = Boolean(live.resumed) && previous?.epoch === live.epoch;
-        if (!resumed) {
-          this.roomCursors.set(live.roomId, {
-            epoch: live.epoch,
-            base: live.cursor!,
-            seen: new Set(),
-          });
-          this.overlays.delete(live.roomId);
-        }
-      }
-      if (!resumed) this.overlays.delete(live.roomId);
-      noteCornerLaneSubscribed(live.roomId, resumed);
-      for (const waiter of [...this.subscribeWaiters]) waiter();
-    } else if (typeof live.sequence === 'number') {
-      let cursor = this.roomCursors.get(live.roomId);
-      if (live.epoch && cursor?.epoch !== live.epoch) {
-        // The server evicted this Room's history while the socket stayed open.
-        cursor = { epoch: live.epoch, base: 0, seen: new Set() };
-        this.roomCursors.set(live.roomId, cursor);
-        noteCornerLaneSubscribed(live.roomId, false);
-      }
-      if (cursor && live.sequence > cursor.base) {
-        if (live.sequence > cursor.base + 1) {
-          this.refreshRoom(live.roomId);
-          if (live.epoch) this.roomCursors.set(live.roomId, { epoch: live.epoch, base: live.sequence, seen: new Set() });
-          return;
-        }
-        cursor.seen.add(live.sequence);
-        while (cursor.seen.delete(cursor.base + 1)) cursor.base += 1;
-      }
-    }
-    if (live.type === 'corner-status' && !acceptCornerStatusFrame(live)) return;
-    if (live.type === 'invalidate' && !live.deliveryId && CORNER_LIST_REASONS.has(live.reason))
-      noteRoomCornersChanged(live.roomId);
-    this.rememberOverlay(live);
-    for (const registration of this.registrations.values()) {
-      if (registration.closed || !registration.roomIds.has(live.roomId)) continue;
+    for (const registration of this.registrations) {
+      if (
+        registration.closed ||
+        (live.roomId ? !registration.roomIds.has(live.roomId) : registration.roomIds.size !== 0)
+      )
+        continue;
       const trace = 'trace' in live ? live.trace : undefined;
       registration.listener({
         monolithLive: live,
         ...(typeof trace?.startedAt === 'number' || trace?.paintAck === 'database-clock'
           ? {
               acknowledgePaint: () => {
-                if (registration.closed || this.socket !== generation || !isSocketOpen(generation))
-                  return;
-                this.traceOwners.set(trace.id, registration);
-                generation.send(JSON.stringify({ type: 'trace-paint', id: trace.id }));
+                if (registration.closed || this.socket !== socket || !isOpen(socket)) return;
+                this.paintOwners.set(trace.id, registration);
+                socket.send(JSON.stringify({ type: 'trace-paint', id: trace.id }));
               },
             }
           : {}),
       });
     }
   }
-
-  private rememberOverlay(live: LiveWireEvent): void {
-    if (live.type === 'draft') {
-      const cache = this.overlayCache(live.roomId);
-      const key = overlayKey(live.agentId, live.turnId);
-      cache.drafts.delete(key);
-      cache.drafts.set(key, {
-        event: live,
-        receivedAt: Date.now(),
-      });
-      return;
-    }
-    if (live.type === 'thought') {
-      const cache = this.overlayCache(live.roomId);
-      cache.thoughts.set(overlayKey(live.agentId, live.turnId), {
-        event: live,
-        receivedAt: Date.now(),
-      });
-      return;
-    }
-    if (live.type === 'presence') {
-      const cache = this.overlayCache(live.roomId);
-      cache.presence.set(live.agentId, live);
-      return;
-    }
-    if (live.type === 'retract') {
-      const cache = this.overlays.get(live.roomId);
-      if (!cache) return;
-      const key = overlayKey(live.agentId, live.turnId);
-      if (live.kind === 'draft') cache.drafts.delete(key);
-      else cache.thoughts.delete(key);
-      return;
-    }
-    if (live.type === 'turn-delta') {
-      if (live.turn.status === 'working') return;
-      const cache = this.overlays.get(live.roomId);
-      if (!cache) return;
-      const key = overlayKey(live.turn.agentPubkey, live.turn.requestId);
-      cache.drafts.delete(key);
-      cache.thoughts.delete(key);
-    }
+  diagnostics(): { state: number | null; connecting: boolean } {
+    return { state: this.socket?.readyState ?? null, connecting: Boolean(this.connecting) };
   }
-
-  private overlayCache(roomId: string): RoomOverlayCache {
-    const existing = this.overlays.get(roomId);
-    if (existing) {
-      dropExpiredOverlays(existing, Date.now());
-      return existing;
-    }
-    const created: RoomOverlayCache = {
-      drafts: new Map(),
-      thoughts: new Map(),
-      presence: new Map(),
-    };
-    this.overlays.set(roomId, created);
-    return created;
+  dispose(): void {
+    this.disposed = true;
+    this.identity++;
+    this.dropConnection();
+    this.stopAppState();
+    this.stopIdentity();
+    this.registrations.clear();
+    this.roomReferences.clear();
+    this.viewing.clear();
   }
 }
-
 let shared: LiveConnection | undefined;
-
 export function sharedLiveConnection(): LiveConnection {
   shared ??= new LiveConnection({
     authorization: () => monolithSession.authorization(),
     invalidateAuthorization: (token) => monolithSession.invalidateAuthorization(token),
     liveUrl: () => `${getBuzzRuntimeConfig().monolithUrl.replace(/^http/, 'ws')}/v1/phone/live`,
     subscribeIdentityChange: subscribeClientReset,
-    subscribeNetworkChange: (listener) => {
-      // Metro reports native module initialization errors as fatal before an
-      // import rejection reaches .catch. Check the same capability NetInfo uses
-      // before evaluating it on older OTA runtimes. Web uses its own adapter.
-      if (Platform.OS !== 'web' && !NativeModules.RNCNetInfo) return () => undefined;
-      let disposed = false;
-      let unsubscribe: (() => void) | undefined;
-      void import('@react-native-community/netinfo')
-        .then(({ default: NetInfo }) => {
-          if (disposed) return;
-          // NetInfo otherwise falls back to recurring HTTP reachability probes
-          // when a native state does not include isInternetReachable. We only
-          // need native connectivity change events for socket recovery.
-          NetInfo.configure({ reachabilityShouldRun: () => false });
-          let previous: string | undefined;
-          unsubscribe = NetInfo.addEventListener(state => {
-            const details = state?.details;
-            const current = JSON.stringify([state?.type, state?.isConnected, state?.isInternetReachable,
-              details && 'ipAddress' in details ? details.ipAddress : null]);
-            const changed = previous !== undefined && previous !== current;
-            previous = current;
-            if (changed) listener();
-          });
-        })
-        .catch(() => undefined);
-      return () => {
-        disposed = true;
-        unsubscribe?.();
-      };
-    },
   });
   return shared;
 }
-
-/** Later request/reply code reports its own one-off deadline here. */
 export function reportRequestDeadlineMissed(): void {
   sharedLiveConnection().reportRequestDeadlineMissed();
 }
-
-/** Retry can revive the one shared socket without adding another channel. */
 export function reconnectNow(): void {
   sharedLiveConnection().reconnectNow();
 }
-
 export function resetSharedLiveConnection(): void {
   shared?.dispose();
   shared = undefined;

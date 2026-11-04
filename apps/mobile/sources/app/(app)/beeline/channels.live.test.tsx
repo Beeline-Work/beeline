@@ -1396,7 +1396,7 @@ describe('Room deck live path', () => {
     });
     await vi.waitFor(() => expect(() => roomWatch()).not.toThrow());
     await act(async () =>
-      roomWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a', resumed: true } }),
+      roomWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } }),
     );
     await act(() => new Promise((resolve) => setTimeout(resolve, 1_700)));
     await quiet();
@@ -1405,7 +1405,7 @@ describe('Room deck live path', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('reads once when the app returns to the foreground, and never on a timer', async () => {
+  it('reads once for the foreground invalidation, and never on a timer', async () => {
     const renderer = await mountDeck();
     const readsAtRest = deck.chatsReads;
 
@@ -1421,7 +1421,7 @@ describe('Room deck live path', () => {
     await quiet();
     expect(deck.chatsReads).toBe(readsAtRest);
     await act(async () =>
-      roomWatch().emit({ monolithLive: { type: 'subscribed', roomId: 'room-a' } }),
+      roomWatch().emit({ monolithLive: { type: 'invalidate', roomId: 'room-a', reason: 'reconnect' } }),
     );
     await quiet();
     expect(deck.chatsReads).toBe(readsAtRest + 1);

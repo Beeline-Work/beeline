@@ -32,7 +32,7 @@ describe('the chat surface read-mark contract', () => {
     );
     expect(sendBlock.length).toBeGreaterThan(0);
     expect(sendBlock).not.toContain('markRead(');
-    expect(sendBlock).not.toContain('refreshSignal.signal()');
+    expect(sendBlock).not.toContain('readRoom()');
   });
 
   it('advances the read mark from the viewport, not from the applied view', () => {

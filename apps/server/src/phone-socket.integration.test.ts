@@ -10,7 +10,6 @@ import type { TokenAuth } from './auth.js';
 import type { DaemonService } from './daemon-service.js';
 import { migrate, type SqlDatabase } from './database.js';
 import { LiveHub } from './live.js';
-import { DurableLiveReplay } from './durable-live.js';
 import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 import { PgliteDatabase } from './test-support.js';
@@ -80,7 +79,6 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
       phone,
       live,
       operationOutcomes: outcomes,
-      replay: new DurableLiveReplay(db, live),
       auth: { authenticatePhone } as unknown as TokenAuth,
       daemon: {} as DaemonService,
       mediaMaximumBytes: 1,

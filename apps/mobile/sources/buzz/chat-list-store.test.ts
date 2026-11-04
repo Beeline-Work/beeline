@@ -306,7 +306,7 @@ describe('app-level Room list store', () => {
     expect(chats).toHaveBeenCalledTimes(6);
     emit({ monolithLive: { type: 'subscribed', roomId: 'room-a', resumed: false } });
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(chats).toHaveBeenCalledTimes(7);
+    expect(chats).toHaveBeenCalledTimes(6);
     handle.release();
   });
 
@@ -369,7 +369,7 @@ describe('app-level Room list store', () => {
     expect(liveChatList(key)).toBeNull();
   });
 
-  it('Reproduction R1: a failed opening read runs again when the socket subscribes', async () => {
+  it('a failed opening waits on Retry without a connected/subscribed read starter', async () => {
     const chats = vi
       .fn()
       .mockRejectedValueOnce(new Error('offline'))
@@ -380,6 +380,9 @@ describe('app-level Room list store', () => {
     expect(handle.confirmed()).toBe(false);
     expect(handle.current()).toBeNull();
     for (const listener of live.connected) listener();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(chats).toHaveBeenCalledTimes(1);
+    handle.force();
     await vi.advanceTimersByTimeAsync(10);
     expect(chats).toHaveBeenCalledTimes(2);
     expect(handle.confirmed()).toBe(true);
@@ -408,7 +411,7 @@ describe('app-level Room list store', () => {
     handle.release();
   });
 
-  it('reads for a Room the watch gained after the last read, even when its lane resumes', async () => {
+  it('subscription acknowledgements never start a list read', async () => {
     const reads = [listOf([row('room-a', 10)]), listOf([row('room-a', 10), row('room-b', 5)])];
     const chats = vi.fn(async () => reads.shift() ?? listOf([row('room-a', 10), row('room-b', 5)]));
     const handle = join(chats, visible);
@@ -427,12 +430,12 @@ describe('app-level Room list store', () => {
     // room-b was not: this list heard none of its deltas since that read.
     emit({ monolithLive: { type: 'subscribed', roomId: 'room-b', resumed: true } });
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(chats).toHaveBeenCalledTimes(3);
+    expect(chats).toHaveBeenCalledTimes(2);
 
     // The read that ran with room-b watched covers it from then on.
     emit({ monolithLive: { type: 'subscribed', roomId: 'room-b', resumed: true } });
     await vi.advanceTimersByTimeAsync(2_000);
-    expect(chats).toHaveBeenCalledTimes(3);
+    expect(chats).toHaveBeenCalledTimes(2);
     handle.release();
   });
 

@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   RoomViewClient,
-  SurfaceRefreshScheduler,
   createIdentity,
   type ChatListItem,
   type ChatListView,
@@ -163,12 +162,12 @@ function paintTranscript(view: RoomView): number {
 
 /**
  * Monolith client cold/warm Room-deck and transcript paint budgets (audit F5).
- * Exercises RoomViewClient transport + guard, cache hydration, SurfaceRefreshScheduler
- * apply, and the same row/transcript projection the phone paints — not in-process
+ * Exercises RoomViewClient transport + validation, cache hydration,
+ * and the same row/transcript projection the phone paints — not in-process
  * PhoneService alone.
  */
 describe('monolith client paint projection microbench (not RN page-load)', () => {
-  it('in-process deck/transcript path stays under 450 ms and prints composed miss path as unmet', async () => {
+  it('in-process direct read and deck/transcript paint stay under 450 ms', async () => {
     const deck = deckView();
     const transcript = transcriptView();
     const identity = createIdentity('monolith-client-paint');
@@ -194,25 +193,7 @@ describe('monolith client paint projection microbench (not RN page-load)', () =>
     const paintDeckThroughClient = async () => {
       const fetched = await client.chats(WORKSPACE);
       const hydrated = hydrateFromCache(fetched);
-      let painted = 0;
-      await new Promise<void>((resolve, reject) => {
-        const scheduler = new SurfaceRefreshScheduler({
-          fetch: async () => hydrated,
-          apply: (value) => {
-            try {
-              painted = paintDeck(value);
-              resolve();
-            } catch (error) {
-              reject(error);
-            } finally {
-              scheduler.dispose();
-            }
-          },
-          onError: reject,
-          minimumIntervalMs: 0,
-        });
-        void scheduler.startAfter(Promise.resolve());
-      });
+      const painted = paintDeck(hydrated);
       expect(painted).toBeGreaterThan(0);
       expect(hydrated.chats.length).toBe(DECK_ROOM_COUNT);
     };
@@ -220,25 +201,7 @@ describe('monolith client paint projection microbench (not RN page-load)', () =>
     const paintTranscriptThroughClient = async () => {
       const fetched = await client.room(ROOM);
       const hydrated = hydrateFromCache(fetched);
-      let painted = 0;
-      await new Promise<void>((resolve, reject) => {
-        const scheduler = new SurfaceRefreshScheduler({
-          fetch: async () => hydrated,
-          apply: (value) => {
-            try {
-              painted = paintTranscript(value);
-              resolve();
-            } catch (error) {
-              reject(error);
-            } finally {
-              scheduler.dispose();
-            }
-          },
-          onError: reject,
-          minimumIntervalMs: 0,
-        });
-        void scheduler.startAfter(Promise.resolve());
-      });
+      const painted = paintTranscript(hydrated);
       expect(painted).toBeGreaterThan(0);
       expect(hydrated.messages.length).toBe(TRANSCRIPT_MESSAGE_COUNT);
     };
@@ -247,22 +210,6 @@ describe('monolith client paint projection microbench (not RN page-load)', () =>
     const warmDeck = await measure('client-deck-warm', paintDeckThroughClient);
     const coldTranscript = await measure('client-transcript-cold', paintTranscriptThroughClient);
     const warmTranscript = await measure('client-transcript-warm', paintTranscriptThroughClient);
-
-    // GET+paint only (scheduler floor excluded via minimumIntervalMs: 0) — the
-    // measured remainder the 150 ms miss-path must budget for separately from
-    // the pool-safe 500 ms SurfaceRefreshScheduler default.
-    const getPlusPaintMs = Math.max(coldDeck, warmDeck, coldTranscript, warmTranscript);
-    console.log(
-      JSON.stringify({
-        path: 'client-get-plus-paint',
-        getPlusPaintMs: Math.round(getPlusPaintMs * 100) / 100,
-        schedulerFloorMs: 500,
-        liveDeltaDeadlineMs: 150,
-        interactionTargetMs: 150,
-        composedMissPathMs: 150 + 500 + Math.round(getPlusPaintMs),
-        note: 'PARTIAL: composed miss path exceeds 150 ms interaction target with pool-safe scheduler; microbench is not RN page-load proof',
-      }),
-    );
 
     for (const [label, elapsedMs] of [
       ['cold deck', coldDeck],

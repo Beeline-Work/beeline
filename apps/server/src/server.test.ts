@@ -1391,99 +1391,12 @@ describe('phone committed-row live delivery', () => {
       project as PhoneService['liveChatCornerStatus']);
     const frame = nextSocketMessage(socket, 'corner-status');
     live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-    await expect(frame).resolves.toEqual({ type: 'corner-status', roomId, ...status, sequence: 1, epoch: expect.any(String) });
+    await expect(frame).resolves.toEqual({ type: 'corner-status', roomId, ...status });
     expect(project).toHaveBeenCalledWith(roomId, 'viewer');
     const noDuplicate = expectNoSocketMessage(socket);
     live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
     await noDuplicate;
     expect(project).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not send an old epoch projection that finishes after the new epoch', async () => {
-    let finishOld!: (value: unknown) => void;
-    const oldRead = new Promise((resolve) => { finishOld = resolve; });
-    const status = { cornerCount: 0, waitingCornerCount: 0, openCorners: [], agentState: null };
-    const project = vi.fn().mockReturnValueOnce(oldRead).mockResolvedValue(status);
-    const { live, roomId, socket } = await connect(
-      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false, undefined,
-      project as PhoneService['liveChatCornerStatus']);
-    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-    await vi.waitFor(() => expect(project).toHaveBeenCalledTimes(1));
-    for (let index = 0; index < 257; index++)
-      live.publish({ type: 'invalidate', roomId: `other-${index}`, reason: 'x' });
-    const frame = nextSocketMessage(socket, 'corner-status');
-    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-    await expect(frame).resolves.toMatchObject(status);
-    const noOldFrame = expectNoSocketMessage(socket);
-    finishOld({ ...status, cornerCount: 1 });
-    await noOldFrame;
-  });
-
-  it('Reproduction 5b25dbcb: resends unchanged corner status under a new live epoch', async () => {
-    const status = { cornerCount: 1, waitingCornerCount: 0, openCorners: [], agentState: null };
-    const project = vi.fn().mockResolvedValue(status);
-    const { live, roomId, socket } = await connect(
-      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false, undefined,
-      project as PhoneService['liveChatCornerStatus']);
-    let frame = nextSocketMessage(socket, 'corner-status');
-    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-    const first = await frame as { epoch: string };
-    for (let index = 0; index < 257; index++)
-      live.publish({ type: 'invalidate', roomId: `other-${index}`, reason: 'x' });
-    frame = nextSocketMessage(socket, 'corner-status');
-    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-    const second = await frame as { epoch: string };
-    expect(first.epoch).toEqual(expect.any(String));
-    expect(second).toMatchObject({ ...status, sequence: 1, epoch: expect.any(String) });
-    expect(second.epoch).not.toBe(first.epoch);
-  });
-
-  it('keeps sending corner status after the Room history restarts its sequence', async () => {
-    const status = (cornerCount: number) => ({ cornerCount, waitingCornerCount: 0,
-      openCorners: [], agentState: null });
-    const project = vi.fn()
-      .mockResolvedValueOnce(status(1))
-      .mockResolvedValueOnce(status(2))
-      .mockResolvedValueOnce(status(3));
-    const { live, roomId, socket } = await connect(
-      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false, undefined,
-      project as PhoneService['liveChatCornerStatus']);
-    let frame = nextSocketMessage(socket, 'corner-status');
-    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-    await expect(frame).resolves.toMatchObject({ cornerCount: 1, sequence: 1 });
-    frame = nextSocketMessage(socket, 'corner-status');
-    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-    await expect(frame).resolves.toMatchObject({ cornerCount: 2, sequence: 2 });
-    // Busier Rooms evict this Room's history; its next event starts at 1.
-    for (let index = 0; index < 257; index++)
-      live.publish({ type: 'invalidate', roomId: `other-${index}`, reason: 'x' });
-    frame = nextSocketMessage(socket, 'corner-status');
-    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-    await expect(frame).resolves.toMatchObject({ cornerCount: 3, sequence: 1 });
-  });
-
-  it('drops an older corner status after a newer unchanged one was suppressed', async () => {
-    const status = (cornerCount: number) => ({ cornerCount, waitingCornerCount: 0,
-      openCorners: [], agentState: null });
-    let releaseSecond!: () => void;
-    const secondRead = new Promise<void>((resolve) => { releaseSecond = resolve; });
-    // Sequence 2 reads B but finishes after sequence 3 reads A again.
-    const project = vi.fn()
-      .mockResolvedValueOnce(status(1))
-      .mockImplementationOnce(async () => { await secondRead; return status(2); })
-      .mockResolvedValueOnce(status(1));
-    const { live, roomId, socket } = await connect(
-      vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false, undefined,
-      project as PhoneService['liveChatCornerStatus']);
-    const frame = nextSocketMessage(socket, 'corner-status');
-    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-    await expect(frame).resolves.toMatchObject({ cornerCount: 1, sequence: 1 });
-    const nothingStale = expectNoSocketMessageOfType(socket, 'corner-status', 100);
-    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-    live.publish({ type: 'invalidate', roomId, reason: 'corner-status' });
-    await vi.waitFor(() => expect(project).toHaveBeenCalledTimes(3));
-    releaseSecond();
-    await nothingStale;
   });
 
   it('drops a message projection whose version is not newer than the one sent', async () => {
@@ -1759,66 +1672,6 @@ describe('phone committed-row live delivery', () => {
     expect(readNeeds).toHaveBeenCalledTimes(1);
   });
 
-  it('sends append frames and suppresses a duplicate Postgres draft', async () => {
-    const { live, roomId, socket } = await connect(vi.fn() as PhoneService['readLiveDelta']);
-    const frames = nextSocketMessages(socket, 3);
-    for (const text of ['a'.repeat(1_000), 'a'.repeat(2_000), 'a'.repeat(3_000)]) {
-      live.publish({ type: 'draft', roomId, agentId: 'agent', turnId: 'turn',
-        text, latestChunk: 'a'.repeat(1_000), localOrigin: true });
-      live.publish({ type: 'draft', roomId, agentId: 'agent', turnId: 'turn', text,
-        latestChunk: 'a'.repeat(1_000) });
-    }
-    const [snapshot, first, second] = await frames;
-    expect(snapshot).toMatchObject({ type: 'draft', revision: 0, text: 'a'.repeat(1_000), sequence: 1 });
-    expect(first).toMatchObject({ type: 'draft-append', revision: 1, offset: 1_000,
-      chunk: 'a'.repeat(1_000), sequence: 2 });
-    expect(second).toMatchObject({ type: 'draft-append', revision: 2, offset: 2_000,
-      chunk: 'a'.repeat(1_000), sequence: 3 });
-    expect(first).not.toHaveProperty('latestChunk');
-    expect(second).not.toHaveProperty('latestChunk');
-    const actual = [snapshot, first, second].reduce((sum, frame) =>
-      sum + Buffer.byteLength(JSON.stringify(frame)), 0);
-    const old = [1_000, 2_000, 3_000].reduce((sum, size) => sum +
-      Buffer.byteLength(JSON.stringify({ type: 'draft', roomId, agentId: 'agent',
-        turnId: 'turn', text: 'a'.repeat(size) })), 0);
-    expect(actual).toBeLessThan(old);
-    await expectNoSocketMessage(socket, 100);
-  });
-
-  it('resumes one Room with only missed deltas and no repeated snapshots', async () => {
-    const delta = { type: 'message-delta' as const, roomId: 'room-live',
-      message: { id: 'missed', text: 'after disconnect', createdAt: 1,
-        author: { pubkey: 'agent', kind: 'agent' as const, name: 'Agent' },
-        presentation: 'message' as const } };
-    const read = vi.fn().mockResolvedValue(delta);
-    const { live, roomId, socket, port, liveDraftSnapshot } = await connect(read as PhoneService['readLiveDelta']);
-    const first = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
-    sockets.push(first);
-    await new Promise<void>((resolve, reject) => { first.once('open', resolve); first.once('error', reject); });
-    const initial = nextSocketMessage(first, 'subscribed');
-    first.send(JSON.stringify({ type: 'subscribe', roomId }));
-    const acknowledged = await initial;
-    expect(acknowledged).toMatchObject({ resumed: false, cursor: 0, epoch: expect.any(String) });
-    expect(liveDraftSnapshot).toHaveBeenCalledTimes(2);
-    const originalClosed = new Promise<void>((resolve) => socket.once('close', () => resolve()));
-    const firstClosed = new Promise<void>((resolve) => first.once('close', () => resolve()));
-    socket.terminate();
-    first.terminate();
-    await Promise.all([originalClosed, firstClosed]);
-    live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages', messageId: 'missed' });
-    const resumed = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
-    sockets.push(resumed);
-    await new Promise<void>((resolve, reject) => { resumed.once('open', resolve); resumed.once('error', reject); });
-    const frames = nextSocketMessages(resumed, 2);
-    resumed.send(JSON.stringify({ type: 'subscribe', roomId,
-      cursors: { [roomId]: { epoch: acknowledged.epoch, base: 0, seen: [] } } }));
-    const [ack, replayed] = await frames;
-    expect(ack).toMatchObject({ type: 'subscribed', resumed: true, cursor: 0 });
-    expect(replayed).toMatchObject({ ...delta, sequence: 1 });
-    expect(liveDraftSnapshot).toHaveBeenCalledTimes(2);
-    await expectNoSocketMessage(resumed, 100);
-  });
-
   it('sends one fallback for a row that projects no delta', async () => {
     const { live, roomId, socket } = await connect(
       vi.fn().mockResolvedValue(null) as PhoneService['readLiveDelta'],
@@ -1897,7 +1750,7 @@ describe('phone committed-row live delivery', () => {
       messageId: 'posted-message',
     });
 
-    await expect(painted).resolves.toEqual({ ...delta, sequence: 1, epoch: expect.any(String) });
+    await expect(painted).resolves.toEqual({ ...delta });
     await expectNoSocketMessage(socket, 100);
     expect(read).toHaveBeenCalledWith(roomId, 'viewer', {
       type: 'message',
@@ -2044,7 +1897,7 @@ describe('phone committed-row live delivery', () => {
     const first = nextSocketMessage(socket, 'message-delta');
     live.publish({ type: 'invalidate', roomId, reason: 'message', messageId: delta.message.id,
       committedRow: { type: 'message', row: { room_id: roomId, id: delta.message.id } as never } });
-    await expect(first).resolves.toEqual({ ...delta, sequence: 1, epoch: expect.any(String) });
+    await expect(first).resolves.toEqual({ ...delta });
     live.publish({ type: 'invalidate', roomId, reason: 'postgres:messages',
       operation: 'INSERT', messageId: delta.message.id });
     await expectNoSocketMessage(socket, 100);
@@ -2099,7 +1952,7 @@ describe('phone committed-row live delivery', () => {
       },
     });
     const delivered = await publicMessage;
-    expect(delivered).toEqual({ ...delta, trace, sequence: 1, epoch: expect.any(String) });
+    expect(delivered).toEqual({ ...delta, trace });
     expect(JSON.stringify(delivered)).not.toContain(rawMarker);
     expect(delivered).not.toHaveProperty('committedRow');
     const otherSocket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
@@ -2202,35 +2055,6 @@ describe('phone committed-row live delivery', () => {
     expect(databaseQuery).toHaveBeenCalledOnce();
   });
 
-  it('a Room replay failure reloads only that Room and keeps other subscriptions and pong working', async () => {
-    const server = createBeelineServer({
-      database: { query: vi.fn(), transaction: vi.fn() },
-      auth: { authenticatePhone: vi.fn().mockResolvedValue('viewer') } as unknown as TokenAuth,
-      phone: { canReadRooms: vi.fn(async (ids: string[]) => new Set(ids)), liveDraftSnapshot: vi.fn(async () => []) } as unknown as PhoneService,
-      daemon: {} as DaemonService, live: new LiveHub(), mediaMaximumBytes: 1,
-      replay: { subscribe: vi.fn(async (_stream: string, roomId: string) => {
-        if (roomId === 'failed') throw new Error('replay unavailable');
-        return { release: () => {}, start: () => {}, resumed: false, epoch: 'e', sequence: 0, replay: [] };
-      }) } as unknown as ServerOptions['replay'],
-    });
-    servers.push(server);
-    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
-    const port = (server.address() as AddressInfo).port;
-    const socket = new WebSocket(`ws://127.0.0.1:${port}/v1/phone/live`, ['bearer.phone']);
-    sockets.push(socket);
-    await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
-    const frames: Record<string, unknown>[] = [];
-    socket.on('message', raw => frames.push(JSON.parse(raw.toString())));
-    const subscribed = nextSocketMessage(socket, 'subscribed');
-    socket.send(JSON.stringify({ type: 'subscribe', roomIds: ['failed', 'healthy'] }));
-    await expect(subscribed).resolves.toMatchObject({ roomId: 'healthy' });
-    expect(frames.filter(frame => frame.type === 'reload')).toEqual([{ type: 'reload', roomId: 'failed' }]);
-    const pong = nextSocketMessage(socket, 'pong');
-    socket.send(JSON.stringify({ type: 'ping' }));
-    await expect(pong).resolves.toEqual({ type: 'pong' });
-    expect(socket.readyState).toBe(WebSocket.OPEN);
-  });
-
   it('contains a failed paint-clock read and keeps serving HTTP', async () => {
     const query = vi.fn().mockRejectedValue(new Error('timeout exceeded when trying to connect'));
     const { live, roomId, socket, port } = await connect(
@@ -2331,7 +2155,7 @@ describe('phone committed-row live delivery', () => {
     });
 
     const delivered = await invalidation;
-    expect(delivered).toEqual({ type: 'invalidate', roomId, reason: 'message', sequence: 1, epoch: expect.any(String) });
+    expect(delivered).toEqual({ type: 'invalidate', roomId, reason: 'message' });
     expect(JSON.stringify(delivered)).not.toContain('raw-secret');
     expect(project).not.toHaveBeenCalled();
     expect(read).not.toHaveBeenCalled();

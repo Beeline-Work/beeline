@@ -3,7 +3,7 @@ import { Pool } from 'pg';
 import { describe, expect, it } from 'vitest';
 import { PostgresDatabase } from './database.js';
 import { TURN_OWNERSHIP_SCHEMA } from './turn-ownership.js';
-import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
+import { COMMITTED_JOURNAL_SCHEMA } from './committed-journal-schema.js';
 import { MEMBERSHIP_AUTHORITY_SCHEMA } from './membership-authority-schema.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
 import { parkOwnedModelTerminal } from './owned-model-parking.js';
@@ -33,7 +33,7 @@ async function fixture() {
         lease_expires_at timestamptz,created_at timestamptz DEFAULT now());
       CREATE TABLE agent_turns(room_id uuid,request_id text,agent_id text,status text,generation_id text);
       CREATE TABLE live_outputs(room_id uuid,agent_id text,turn_id text,kind text,body jsonb);`);
-    await left.query(DURABLE_LIVE_SCHEMA); await left.query(MEMBERSHIP_AUTHORITY_SCHEMA); await left.query(TURN_OWNERSHIP_SCHEMA);
+    await left.query(COMMITTED_JOURNAL_SCHEMA); await left.query(MEMBERSHIP_AUTHORITY_SCHEMA); await left.query(TURN_OWNERSHIP_SCHEMA);
     const seeded = await seedOwnedModelFixture(left);
     return { ...seeded, left, right, admin, close: async () => { await left.close(); await right.close(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); } };
   } catch (error) { await left.close(); await right.close(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end(); throw error; }

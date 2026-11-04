@@ -4,7 +4,7 @@ import { describe,expect,it } from 'vitest';
 import type { AgentUsage } from '@beeline/api-contract/daemon';
 import { canonicalUsageAccountSnapshot } from '@beeline/api-contract/helper-usage';
 import { PostgresDatabase,type SqlDatabase } from './database.js';
-import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
+import { COMMITTED_JOURNAL_SCHEMA } from './committed-journal-schema.js';
 import { HELPER_USAGE_SCHEMA,publishUsageAccount } from './helper-usage.js';
 const url=process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 if(url&&!['localhost','127.0.0.1','[::1]'].includes(new URL(url).hostname))throw new Error('Usage proofs require isolated loopback PostgreSQL');
@@ -28,7 +28,7 @@ describe.skipIf(!url)('usage real PostgreSQL publication and final owner content
         CREATE TABLE free_agent_usage(owner_id text,day date,tokens bigint);
         CREATE TABLE free_agent_budget(day date,usd numeric);
         CREATE TABLE free_agent_events(agent_id text,kind text,at timestamptz);`);
-      await left.query(DURABLE_LIVE_SCHEMA);await left.query(HELPER_USAGE_SCHEMA);
+      await left.query(COMMITTED_JOURNAL_SCHEMA);await left.query(HELPER_USAGE_SCHEMA);
       await left.query(`INSERT INTO identities(id,name) VALUES($1,'First'),($2,'Second')`,[first,second]);
       await left.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$3),($2,$3)',[first,second,owner]);
       await left.query(`INSERT INTO agent_connections VALUES($1,'first-source',1,NULL),($2,'second-source',1,NULL)`,[first,second]);

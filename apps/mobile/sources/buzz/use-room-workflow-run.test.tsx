@@ -87,7 +87,7 @@ it('a corner and its run page share one workflow read, and prose never repeats i
   } finally { await act(async () => tree.unmount()); }
 });
 
-it('CR1: failed workflow reads wait for Retry; unrelated traffic and elapsed time cannot recover them', async () => {
+it('CR1: unrelated prose and elapsed time do not read; a real invalidation and Retry do', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
   vi.useFakeTimers();
   const warning = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
@@ -102,14 +102,15 @@ it('CR1: failed workflow reads wait for Retry; unrelated traffic and elapsed tim
       vi.advanceTimersByTime(300000);
       for (let n = 0; n < 1000; n++) {
         wire.listener({ monolithLive: { type: 'message-delta', roomId: 'corner-errors', message: { presentation: 'message' } } });
-        wire.listener({ monolithLive: { type: 'invalidate', roomId: 'corner-errors' } });
       }
     });
     expect(read).toHaveBeenCalledTimes(1);
     expect(warning).toHaveBeenCalledTimes(1);
+    await act(async () => wire.listener({ monolithLive: { type: 'invalidate', roomId: 'corner-errors', reason: 'workflow-change' } }));
+    expect(read).toHaveBeenCalledTimes(2);
     read.mockResolvedValue({ workflows: [] });
     await act(async () => { await current.retry(); });
-    expect(read).toHaveBeenCalledTimes(2);
+    expect(read).toHaveBeenCalledTimes(3);
     expect(current.error).toBeNull();
   } finally {
     await act(async () => tree.unmount()); warning.mockRestore(); vi.useRealTimers();
@@ -150,7 +151,7 @@ it('re-reads a parent Room\'s runs when a corner handoff changes that corner\'s 
   function Parent() { useRoomWorkflowRuns('parent-room'); return null; }
   let tree: any;
   try {
-    store.noteCornerLaneSubscribed('parent-room', false);
+    store.noteCornerLaneSubscribed('parent-room');
     store.acceptCornerStatusFrame(frame(1, 'working'));
     await act(async () => { tree = create(<Parent />); });
     expect(read).toHaveBeenCalledTimes(1);
@@ -176,7 +177,7 @@ it('leaves no corner listener behind when the Room lane fails to register', asyn
   let tree: any;
   wire.fail = true;
   try {
-    store.noteCornerLaneSubscribed('failed-room', false);
+    store.noteCornerLaneSubscribed('failed-room');
     store.acceptCornerStatusFrame(frame(1, 'working'));
     await act(async () => { tree = create(<Parent />); });
     const reads = read.mock.calls.length;

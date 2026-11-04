@@ -23,7 +23,6 @@ import { router, useLocalSearchParams, useNavigation, type Href } from 'expo-rou
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   AGENT_NAME_MAX_LENGTH,
-  SurfaceRefreshScheduler,
   isAgentDetailView,
   isAllowedAgentModelConfigCategory,
   isReasonableAgentName,
@@ -314,7 +313,7 @@ export default function BuzzMembers({
   // Search selection is local; its ordered pages and rows live in the records.
   const [rosterQuery, setRosterQuery] = useState('');
   const [rosterLoading, setRosterLoading] = useState(false);
-  const schedulerRef = useRef<SurfaceRefreshScheduler<WorkspaceView | null> | null>(null);
+  const readWorkspaceRef = useRef<(() => Promise<void>) | null>(null);
   const agentRequestGenerationRef = useRef(0);
   const allowProfileNavigationRef = useRef(false);
   const requestedActionHandledRef = useRef(false);
@@ -465,7 +464,7 @@ export default function BuzzMembers({
     if (!focused || !workspaceId) return;
     let cancelled = false;
     let stopWatch: (() => void) | undefined;
-    let scheduler: SurfaceRefreshScheduler<WorkspaceView | null> | undefined;
+    let readWorkspace: (() => Promise<void>) | undefined;
     void (async () => {
       const [nextIdentity, nextRelayUrl] = await Promise.all([
         loadBuzzIdentity(),
@@ -510,29 +509,35 @@ export default function BuzzMembers({
       // paints the one shared entry; rows and totals read the shared records,
       // which hear every write of this entry.
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
-      scheduler = new SurfaceRefreshScheduler({
-        fetch: () => cancelled || !focusedRef.current ? Promise.resolve(null) :
-          mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
-        apply: (value) => {
+      readWorkspace = async () => {
+        if (cancelled) return;
+        try {
+          if (!focusedRef.current) return;
+          const value = await mobileSurfaceCache.fetch(address, isWorkspaceView, () =>
+            http.workspace(workspaceId),
+          );
+          if (cancelled) return;
+
           // Null: a newer write or an eviction overtook the read; the entry
           // listener already painted whatever is current.
           if (!value) return;
           setWorkspaceError(null);
-        },
-        onError: (reason) => setWorkspaceError(appErrorCopy(reason)),
-      });
-      schedulerRef.current = scheduler;
+        } catch (reason) {
+          if (!cancelled) setWorkspaceError(appErrorCopy(reason));
+        }
+      };
+      readWorkspaceRef.current = readWorkspace;
       const watch = watchWorkspace(
         nextIdentity,
         nextRelayUrl,
         workspaceId,
-        () => scheduler?.signal(),
+        () => void readWorkspace?.(),
         (reason) => setWorkspaceError(appErrorCopy(reason)),
       );
       stopWatch = watch.release;
       await watch.ready;
       if (cancelled) return;
-      if ((!profileAgentId)) await scheduler.startAfter(Promise.resolve());
+      if ((!profileAgentId)) await readWorkspace();
     })().catch((reason) => {
       if (!cancelled) setWorkspaceError(appErrorCopy(reason));
     });
@@ -540,8 +545,7 @@ export default function BuzzMembers({
       cancelled = true;
       agentRequestGenerationRef.current += 1;
       stopWatch?.();
-      scheduler?.dispose();
-      schedulerRef.current = null;
+      readWorkspaceRef.current = null;
       setRosterQuery('');
     };
   }, [focused, retryGeneration, workspaceId, profileAgentId]);
@@ -1077,7 +1081,7 @@ export default function BuzzMembers({
         onRetry={() => {
 
           setError(null);
-          if (workspaceError) schedulerRef.current?.force();
+          if (workspaceError) void readWorkspaceRef.current?.();
           setWorkspaceError(null);
           if (!identity || !relayUrl) setRetryGeneration((value) => value + 1);
           else setProfileRetryGeneration((value) => value + 1);
@@ -1431,7 +1435,7 @@ export default function BuzzMembers({
           titleTestID="members-title"
         />
         {!!displayedError && (
-          <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); schedulerRef.current?.force(); }} />
+          <SettingsRow title={displayedError!} description={connectionErrorDescription} action="Retry" onPress={() => { setError(null); void readWorkspaceRef.current?.(); }} />
         )}
         <KeyboardAwareScrollView
           bottomOffset={16}

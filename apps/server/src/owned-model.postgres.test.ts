@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool, type QueryResultRow } from 'pg';
 import { describe, expect, it, vi } from 'vitest';
 import { PostgresDatabase, type SqlDatabase } from './database.js';
-import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
+import { COMMITTED_JOURNAL_SCHEMA } from './committed-journal-schema.js';
 import { OwnedModelAttempts } from './owned-model-attempt.js';
 import { OwnedModelCredentials, OWNED_MODEL_UNKNOWN_GENERATION_MESSAGE } from './owned-model-credential.js';
 import { MODEL, MODEL_AGENT, MODEL_KEY, MODEL_ROOM, seedOwnedModelFixture } from './test-fixtures/owned-model.js';
@@ -60,7 +60,7 @@ async function fixture() {
       CREATE TABLE agent_turns(room_id uuid,request_id text,agent_id text,status text,generation_id text);`);
     // Install actual authority writer triggers and actual owned source/commit
     // predicates, rather than a fake lock in the proof's membership adapter.
-    await left.query(DURABLE_LIVE_SCHEMA); await left.query(MEMBERSHIP_AUTHORITY_SCHEMA); await left.query(TURN_OWNERSHIP_SCHEMA);
+    await left.query(COMMITTED_JOURNAL_SCHEMA); await left.query(MEMBERSHIP_AUTHORITY_SCHEMA); await left.query(TURN_OWNERSHIP_SCHEMA);
     const seeded = await seedOwnedModelFixture(left);
     return { ...seeded, left, right, admin, close: async () => {
       await left.close(); await right.close(); await admin.query(`DROP SCHEMA ${schema} CASCADE`); await admin.end();

@@ -73,7 +73,6 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { RoomViewClient, isRoomViewTimeoutError } from '@/sync/transport/room-view-client';
 import { useIsDesktop } from '@/utils/responsive';
 import {
-  SurfaceRefreshScheduler,
   isWorkspaceListView,
   isWorkspaceView,
   type ChatListItem,
@@ -235,7 +234,7 @@ export default function BuzzChannels() {
   const [repoPickerNotice, setRepoPickerNotice] = useState<string | null>(null);
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatStore = useRef<ChatListHandle | null>(null);
-  const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView | null> | null>(null);
+  const readWorkspaceRef = useRef<(() => Promise<void>) | null>(null);
   const deckFocusedRef = useRef(true);
   const deckVisible = useCallback(
     () => deckFocusedRef.current && AppState.currentState === 'active',
@@ -346,12 +345,12 @@ export default function BuzzChannels() {
   }, [isDesktop, requestedNewDirectMessage, viewerIsAgent]);
 
   const refreshNow = useCallback(() => {
-    workspaceScheduler.current?.force();
+    void readWorkspaceRef.current?.();
     chatStore.current?.force();
   }, [activeCommunityId]);
 
   const refreshMissed = useCallback(() => {
-    if (deckMissedRef.current.workspaces) workspaceScheduler.current?.force();
+    if (deckMissedRef.current.workspaces) void readWorkspaceRef.current?.();
     chatStore.current?.catchUp();
     deckMissedRef.current = { workspaces: false };
   }, []);
@@ -419,7 +418,7 @@ export default function BuzzChannels() {
     });
     let unsubscribeWorkspaces: (() => void) | undefined;
     let unsubscribeChats: (() => void) | undefined;
-    let workspaceRefresh: SurfaceRefreshScheduler<WorkspaceListView | null> | undefined;
+    let readWorkspace: (() => Promise<void>) | undefined;
     let releaseChats: (() => void) | undefined;
     void (async () => {
       setError(null);
@@ -465,14 +464,15 @@ export default function BuzzChannels() {
       const selectedId = deckWorkspaceId ?? cachedWorkspaces?.workspaces[0]?.id;
       let selectedWorkspaceRemoved = false;
 
-      workspaceRefresh = new SurfaceRefreshScheduler({
-        fetch: () => {
+      readWorkspace = async () => {
+        if (cancelled) return;
+        try {
           deckMissedRef.current.workspaces = false;
-          return mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () =>
+          const value = await mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () =>
             http.workspaces(),
           );
-        },
-        apply: (value) => {
+          if (cancelled) return;
+
           // Null: an eviction overtook the read; there is nothing to paint.
           if (!value) return;
           setConfirmedWorkspaceCount(value.workspaces.length);
@@ -498,12 +498,13 @@ export default function BuzzChannels() {
               } as never);
             }
           }
-        },
-        onError: (reason) => {
-          setError(appErrorCopy(reason));
-        },
-      });
-      workspaceScheduler.current = workspaceRefresh;
+        } catch (reason) {
+          if (!cancelled) {
+            setError(appErrorCopy(reason));
+          }
+        }
+      };
+      readWorkspaceRef.current = readWorkspace;
 
       // The app-level Room list owns its live watch, covering reads and disk
       // copy; the deck paints it and reports whether it is on view.
@@ -532,7 +533,7 @@ export default function BuzzChannels() {
                   reason instanceof RoomViewHttpError &&
                   (reason.status === 403 || reason.status === 404)
                 )
-                  workspaceRefresh?.force();
+                  void readWorkspace?.();
               },
             },
           )
@@ -567,7 +568,7 @@ export default function BuzzChannels() {
               !invalidatesWorkspaceList(event)
             )
               return;
-            if (deckVisible()) workspaceRefresh?.signal();
+            if (deckVisible()) void readWorkspace?.();
             else deckMissedRef.current.workspaces = true;
           },
         )
@@ -575,7 +576,8 @@ export default function BuzzChannels() {
           if (cancelled) stop();
           else unsubscribeWorkspaces = stop;
         });
-      await workspaceRefresh.startAfter(workspaceListenReady);
+      await workspaceListenReady;
+      await readWorkspace();
     })().catch((reason) => {
       if (!cancelled) setError(appErrorCopy(reason));
     });
@@ -584,9 +586,8 @@ export default function BuzzChannels() {
       activation.remove();
       unsubscribeWorkspaces?.();
       unsubscribeChats?.();
-      workspaceRefresh?.dispose();
       releaseChats?.();
-      workspaceScheduler.current = null;
+      readWorkspaceRef.current = null;
       chatStore.current = null;
     };
   }, [deckVisible, deckWorkspaceId, refreshMissed, retryGeneration]);

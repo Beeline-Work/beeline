@@ -63,6 +63,18 @@ test('a new WebSocket( outside the transport module fails the check', () => {
   assert.match(result.stderr, /new phone network call site \(websocket\) at apps\/mobile\/sources\/sync\/second-socket\.ts:1/);
 });
 
+test('a failed screen read cannot open a fetch or socket recovery door', () => {
+  const root = copyOfRepo('read-recovery-backdoor');
+  write(root, 'apps/mobile/sources/buzz/read-recovery-backdoor.ts', [
+    "export const readRoomElsewhere = (url: string) => fetch(url, { method: 'POST' });",
+    'export const reconnectElsewhere = (url: string) => new WebSocket(url);',
+  ].join('\n'));
+  const result = runCheck(root);
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /new phone network call site \(fetch\).*read-recovery-backdoor\.ts:1/);
+  assert.match(result.stderr, /new phone network call site \(websocket\).*read-recovery-backdoor\.ts:2/);
+});
+
 test('a socket or fetch reached through a qualified global fails the check', () => {
   const root = copyOfRepo('qualified-globals');
   write(root, 'apps/mobile/sources/sync/review-side-channel.ts', [

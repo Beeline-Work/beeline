@@ -78,34 +78,23 @@ describe('room corner store', () => {
   });
 
   it('keeps frame rows current only while the lane holds them', () => {
-    noteCornerLaneSubscribed(ROOM, false);
+    noteCornerLaneSubscribed(ROOM);
     expect(acceptCornerStatusFrame(frame(1, [row('a')]))).toBe(true);
     expect(getRoomCorners(ROOM).current).toBe(true);
     // A resumed lane on a new socket carried every change.
     noteCornerSocketDropped();
-    noteCornerLaneSubscribed(ROOM, true);
+    noteCornerLaneSubscribed(ROOM);
     expect(getRoomCorners(ROOM).current).toBe(true);
     // A fresh lane did not.
-    noteCornerLaneSubscribed(ROOM, false);
-    expect(getRoomCorners(ROOM)).toMatchObject({ current: false, wantsRead: true });
+    noteCornerLaneSubscribed(ROOM);
+    expect(getRoomCorners(ROOM).current).toBe(true);
     acceptCornerStatusFrame(frame(1, [row('a')]));
     noteCornerLaneReleased(ROOM);
     expect(getRoomCorners(ROOM).current).toBe(false);
   });
 
-  it('drops a frame whose sequence the lane already applied, until a fresh lane restarts it', () => {
-    noteCornerLaneSubscribed(ROOM, false);
-    acceptCornerStatusFrame(frame(5, [row('a', 'review')]));
-    expect(acceptCornerStatusFrame(frame(4, [row('a', 'working')]))).toBe(false);
-    expect(acceptCornerStatusFrame(frame(5, [row('a', 'working')]))).toBe(false);
-    expect(getRoomCorners(ROOM).rows?.[0]?.state).toBe('review');
-    noteCornerLaneSubscribed(ROOM, false);
-    expect(acceptCornerStatusFrame(frame(1, [row('a', 'working')]))).toBe(true);
-    expect(getRoomCorners(ROOM).rows?.[0]?.state).toBe('working');
-  });
-
   it('keeps a frame that landed during a read and takes only the header from the read', () => {
-    noteCornerLaneSubscribed(ROOM, false);
+    noteCornerLaneSubscribed(ROOM);
     const mark = cornerReadMark(ROOM);
     acceptCornerStatusFrame(frame(1, [row('new'), row('a')]));
     applyCornerListRead(ROOM, view([row('a')]), mark);
@@ -115,7 +104,7 @@ describe('room corner store', () => {
   });
 
   it('applies a read with no frame since it started, current only when the lane held across it', () => {
-    noteCornerLaneSubscribed(ROOM, false);
+    noteCornerLaneSubscribed(ROOM);
     applyCornerListRead(ROOM, view([row('a')]), cornerReadMark(ROOM));
     expect(getRoomCorners(ROOM).current).toBe(true);
     const mark = cornerReadMark(ROOM);
@@ -128,7 +117,7 @@ describe('room corner store', () => {
   it('never trusts a saved copy, and a frame replaces its rows', () => {
     hydrateRoomCorners(ROOM, view([row('old')]));
     expect(getRoomCorners(ROOM).current).toBe(false);
-    noteCornerLaneSubscribed(ROOM, false);
+    noteCornerLaneSubscribed(ROOM);
     acceptCornerStatusFrame(frame(1, [row('new')]));
     expect(ids()).toEqual(['new']);
     expect(getRoomCorners(ROOM)).toMatchObject({ current: true, wantsRead: false });
@@ -137,7 +126,7 @@ describe('room corner store', () => {
   });
 
   it('merges later open pages without repeating a row, and marks them for a re-read on a frame', () => {
-    noteCornerLaneSubscribed(ROOM, false);
+    noteCornerLaneSubscribed(ROOM);
     applyCornerListRead(ROOM, view([row('a')], 'cursor-1'), cornerReadMark(ROOM));
     applyOpenCornerPage(ROOM, [row('a'), row('b'), row('c')], undefined, cornerReadMark(ROOM));
     expect(ids()).toEqual(['a', 'b', 'c']);
@@ -150,7 +139,7 @@ describe('room corner store', () => {
   });
 
   it('marks loaded archived rows stale when a corner leaves the open list', () => {
-    noteCornerLaneSubscribed(ROOM, false);
+    noteCornerLaneSubscribed(ROOM);
     acceptCornerStatusFrame(frame(1, [row('a'), row('b')]));
     // Nothing loaded the archived rows yet, so nothing is stale.
     acceptCornerStatusFrame(frame(2, [row('a'), row('b'), row('c')]));
@@ -163,7 +152,7 @@ describe('room corner store', () => {
   });
 
   it('keeps an archived read stale when a corner closed while it ran', () => {
-    noteCornerLaneSubscribed(ROOM, false);
+    noteCornerLaneSubscribed(ROOM);
     acceptCornerStatusFrame(frame(1, [row('a'), row('b')]));
     const started = cornerReadMark(ROOM);
     acceptCornerStatusFrame(frame(2, [row('a')]));
@@ -174,7 +163,7 @@ describe('room corner store', () => {
   });
 
   it('asks for a read when the server names a change without rows', () => {
-    noteCornerLaneSubscribed(ROOM, false);
+    noteCornerLaneSubscribed(ROOM);
     acceptCornerStatusFrame(frame(1, [row('a')]));
     noteRoomCornersChanged(ROOM);
     expect(getRoomCorners(ROOM)).toMatchObject({ current: false, wantsRead: true });
@@ -186,7 +175,7 @@ describe('room corner store', () => {
     const listItem = (id: string, cornerCount = 1) => [{ room: { id: ROOM }, cornerCount,
       openCorners: [{ id, name: id, state: 'working' as const }] }] as never;
     const started = cornerReadMark(ROOM).clock;
-    noteCornerLaneSubscribed(ROOM, false);
+    noteCornerLaneSubscribed(ROOM);
     acceptCornerStatusFrame(frame(1, [row('framed')]));
     // A Room list read that started before the frame is older than it.
     applyChatListCorners(listItem('listed'), started);
@@ -306,7 +295,7 @@ describe('room corner store', () => {
   });
 
   it('3.3: keeps later open pages stale when a frame landed during their re-read', () => {
-    noteCornerLaneSubscribed(ROOM, false);
+    noteCornerLaneSubscribed(ROOM);
     applyCornerListRead(ROOM, view([row('a')], 'cursor-1'), cornerReadMark(ROOM));
     applyOpenCornerPage(ROOM, [row('b')], undefined, cornerReadMark(ROOM));
     acceptCornerStatusFrame(frame(1, [row('a', 'review')], 'cursor-1'));
@@ -320,7 +309,7 @@ describe('room corner store', () => {
   });
 
   it('drops every read that started before a store reset', () => {
-    noteCornerLaneSubscribed(ROOM, false);
+    noteCornerLaneSubscribed(ROOM);
     const mark = cornerReadMark(ROOM);
     resetRoomCornerStore();
     applyCornerListRead(ROOM, { ...view([row('old-account')]), summary: { cornerCount: 1,
@@ -336,10 +325,10 @@ describe('room corner store', () => {
 
 it('Reproduction 5b25dbcb: applies a corner change after 257 rooms evict the parent history', () => {
   const hub = new LiveHub();
-  noteCornerLaneSubscribed(ROOM, false);
+  noteCornerLaneSubscribed(ROOM);
   let state = 'working';
-  const lane = hub.subscribeReplay(ROOM, undefined, (_event, sequence, epoch) => {
-    acceptCornerStatusFrame({ roomId: ROOM, sequence, epoch, cornerCount: 1,
+  const lane = hub.subscribe(ROOM, () => {
+    acceptCornerStatusFrame({ roomId: ROOM, cornerCount: 1,
       openCorners: [], corners: [row('corner-a', state)] });
   });
   hub.publish({ type: 'invalidate', roomId: ROOM, reason: 'corner-status' });
@@ -350,5 +339,5 @@ it('Reproduction 5b25dbcb: applies a corner change after 257 rooms evict the par
   state = 'idle';
   hub.publish({ type: 'invalidate', roomId: ROOM, reason: 'corner-status' });
   expect(roomOpenCornerRows(getRoomCorners(ROOM))[0]?.state).toBe('idle');
-  lane.release();
+  lane();
 });

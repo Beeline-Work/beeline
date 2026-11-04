@@ -3255,6 +3255,7 @@ export async function migrate(
         'beeline_saved_window_capture',
         'beeline_saved_window_identity',
         'beeline_scheduled_work_authority',
+        'beeline_scheduled_work_row_source',
         'beeline_tray_clock_capture',
         'beeline_tray_clock_health_change',
         'beeline_tray_clock_room_move',

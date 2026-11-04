@@ -36,16 +36,11 @@ export function pickRoomWorkflowRun(
 function observeWorkflowRuns(roomId: string) {
   return async (invalidate: () => void, refresh: () => void,
     replace: (runs: readonly WorkflowRunSummaryView[]) => void, recover: () => void) => {
-    let subscribed = false;
     const stopLive = await sharedLiveConnection().register([{ '#h': [roomId] }], (event) => {
       if (AppState.currentState !== 'active' || !('monolithLive' in event)) return;
       const live = event.monolithLive;
       if (!('roomId' in live) || live.roomId !== roomId) return;
-      if (live.type === 'subscribed') {
-        if (subscribed && !live.resumed) refresh();
-        else recover();
-        subscribed = true;
-      } else if (live.type === 'message-delta' && live.workflowRuns) {
+      if (live.type === 'message-delta' && live.workflowRuns) {
         replace(live.workflowRuns);
       } else if (live.type === 'message-delta' && isSystemOrCardMessage(live.message)) {
         invalidate();
@@ -68,7 +63,6 @@ function useRoomWorkflowList(roomId: string | undefined) {
   const observed = useObservedResource<readonly WorkflowRunSummaryView[]>(
     (focused) && roomId ? `room-workflows:${roomId}` : undefined,
     {
-      retryOnChange: false,
       load: async () =>
         (await monolithPhoneOperation('listRoomWorkflowRuns', { roomId: roomId! })).workflows,
       onError: (cause) => {

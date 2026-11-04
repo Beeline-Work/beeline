@@ -108,7 +108,7 @@ describe('Room→repo write confirmation', () => {
     expect(apply).toContain('const published = await transport.roomRepositorySet');
     expect(apply).toContain('applyRoomRepositoryResult(published)');
     expect(apply).not.toContain('confirmRoomRepositoryLink');
-    expect(apply).not.toContain('refreshSignal.force()');
+    expect(apply).not.toContain('readRoom()');
     expect(apply.indexOf('setShowRoomRepoPicker(false)')).toBeGreaterThan(
       apply.indexOf('applyRoomRepositoryResult(published)'),
     );

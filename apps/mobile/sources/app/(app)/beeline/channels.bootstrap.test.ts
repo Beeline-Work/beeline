@@ -7,8 +7,8 @@ const source = readFileSync(path.join(__dirname, 'channels.tsx'), 'utf8');
 describe('Room deck bootstrap', () => {
   it('turns a fresh server Workspace response into the first chats request', () => {
     const workspaceApply = source.slice(
-      source.indexOf('workspaceRefresh = new SurfaceRefreshScheduler'),
-      source.indexOf('workspaceScheduler.current = workspaceRefresh'),
+      source.indexOf('readWorkspace = async'),
+      source.indexOf('readWorkspaceRef.current = readWorkspace'),
     );
     expect(workspaceApply).toContain('!value.workspaces.some');
     expect(workspaceApply).toContain("pathname: '/beeline/channels'");

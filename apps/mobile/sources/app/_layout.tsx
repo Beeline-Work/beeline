@@ -148,7 +148,7 @@ Notifications.addNotificationReceivedListener((notification) => {
         ? data.channelId
         : '';
   if (roomId && typeof data?.messageId === 'string' && data.messageId)
-    sharedLiveConnection().notePushedMessage(roomId, data.messageId);
+    sharedLiveConnection().notePushedMessage(roomId);
 });
 
 // Setup Android notification channels (required for Android 8.0+)

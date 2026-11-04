@@ -13,7 +13,6 @@ import WebSocket from 'ws';
 import * as candidateDatabase from '../apps/server/src/database.ts';
 import { PhoneService } from '../apps/server/src/phone-service.ts';
 import { LiveHub } from '../apps/server/src/live.ts';
-import { DurableLiveReplay } from '../apps/server/src/durable-live.ts';
 import { createBeelineServer } from '../apps/server/src/server.ts';
 
 const historicalRoot = process.argv[2];
@@ -35,8 +34,8 @@ for (const entry of sourceTree.split('\0').filter(Boolean)) {
   historicalFiles++;
 }
 const load = name => import(pathToFileURL(path.resolve(historicalRoot, `apps/server/src/${name}.ts`)).href);
-const [historicalDatabase, historicalPhone, historicalLive, historicalServer, historicalReplay] = await Promise.all([
-  load('database'), load('phone-service'), load('live'), load('server'), load('durable-live'),
+const [historicalDatabase, historicalPhone, historicalLive, historicalServer] = await Promise.all([
+  load('database'), load('phone-service'), load('live'), load('server'),
 ]);
 assert.equal(historicalDatabase.REQUIRED_SCHEMA_VERSION, 46);
 const schema = `router_expansion_${randomUUID().replaceAll('-', '')}`;
@@ -53,9 +52,8 @@ async function serve(old) {
   const Hub = old ? historicalLive.LiveHub : LiveHub;
   const Phone = old ? historicalPhone.PhoneService : PhoneService;
   const factory = old ? historicalServer.createBeelineServer : createBeelineServer;
-  const Replay = old ? historicalReplay.DurableLiveReplay : DurableLiveReplay;
   const live = new Hub(), phone = new Phone(database, 'https://synthetic.invalid', undefined, undefined, live);
-  const server = factory({ database, live, phone, replay: new Replay(database, live),
+  const server = factory({ database, live, phone,
     auth: { authenticatePhone: async token => token === 'synthetic' ? viewer : null }, daemon: {}, mediaMaximumBytes: 1,
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');

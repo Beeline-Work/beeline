@@ -1,7 +1,6 @@
 import { useEffect, useSyncExternalStore, useCallback } from 'react';
 import { AppState } from 'react-native';
 import {
-  SurfaceRefreshScheduler,
   isChatListView,
   type ChatListView,
   type SurfaceCacheAddress,
@@ -72,22 +71,17 @@ namespace ChatReads {
     private readonly address: SurfaceCacheAddress;
     private readonly consumers = new Set<ChatListConsumer>();
     private readonly subscriptions = new Set<() => void>();
-    private readonly scheduler: SurfaceRefreshScheduler<ChatListView>;
     private stopWatch?: () => void;
     private watchKey = '';
     private watchGeneration = 0;
     private watched = new Set<string>();
-    private covered = new Set<string>();
     private reading = false;
     private readStamp = 0;
     private deltasDuringRead: Parameters<typeof applyChatListDelta>[1][] = [];
     private missed = false;
     private confirmedRead = false;
-    /** The opening read failed. A later subscribe is a reconnect, not the open. */
-    private openingReadFailed = false;
     private closed = false;
     private durableTimer?: ReturnType<typeof setTimeout>;
-    private stopConnected?: () => void;
 
     constructor(
       readonly key: ChatListKey,
@@ -95,55 +89,45 @@ namespace ChatReads {
     ) {
       this.address = addressOf(key);
       this.restore(this.current());
-      this.scheduler = new SurfaceRefreshScheduler({
-        fetch: async () => {
-          this.missed = false;
-          this.reading = true;
-          this.readStamp = currentSurfaceStamp();
-          this.deltasDuringRead = [];
-          const cornerClock = cornerStoreClock();
-          try {
-            const identity = await loadBuzzIdentity();
-            if (!identity || identity.publicKey !== key.viewerPubkey)
-              throw new Error('The signed-in identity changed before the Room list was read.');
-            const read = await new RoomViewClient({ baseUrl: key.relayUrl, identity }).chats(
-              key.workspaceId,
-            );
-            if (!read.unavailable?.includes('corners'))
-              applyChatListCorners(read.chats, cornerClock);
-            return read;
-          } catch (error) {
-            this.openingReadFailed = true;
-            throw error;
-          } finally {
-            this.reading = false;
-          }
-        },
-        apply: (read) => {
-          if (this.closed) return;
-          const held = this.current();
-          const value = this.deltasDuringRead.reduce(
-            (view, delta) => applyChatListDelta(view, delta, deltaContext),
-            withoutCornerFacts(keepUnavailableChatFacts(held, read)),
-          );
-          this.openingReadFailed = false;
-          this.confirmedRead = true;
-          this.covered = new Set(this.watched);
-          mobileSurfaceCache.publish(this.address, value, isChatListView, this.readStamp);
-          void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);
-          for (const consumer of this.consumers) consumer.onRead?.();
-          if (chatWatchFiltersKey(value.watchFilters) !== this.watchKey)
-            void this.watch(value.watchFilters);
-        },
-        onError: (reason) => {
-          if (!this.closed) for (const consumer of this.consumers) consumer.onError?.(reason);
-        },
-      });
-      // Stubs that only register a watch omit this. The real socket always has it.
-      this.stopConnected = sharedLiveConnection().subscribeConnected?.(() => {
-        if (!this.closed && this.openingReadFailed) this.force();
-      });
+
       void this.open();
+    }
+
+    private async read(): Promise<void> {
+      if (this.closed) return;
+
+      this.missed = false;
+      this.reading = true;
+      this.readStamp = currentSurfaceStamp();
+      this.deltasDuringRead = [];
+      const cornerClock = cornerStoreClock();
+
+      try {
+        const identity = await loadBuzzIdentity();
+        if (!identity || identity.publicKey !== this.key.viewerPubkey)
+          throw new Error('The signed-in identity changed before the Room list was read.');
+        const read = await new RoomViewClient({ baseUrl: this.key.relayUrl, identity }).chats(
+          this.key.workspaceId,
+        );
+        if (!read.unavailable?.includes('corners')) applyChatListCorners(read.chats, cornerClock);
+
+        if (this.closed) return;
+        const held = this.current();
+        const value = this.deltasDuringRead.reduce(
+          (view, delta) => applyChatListDelta(view, delta, deltaContext),
+          withoutCornerFacts(keepUnavailableChatFacts(held, read)),
+        );
+        this.confirmedRead = true;
+        mobileSurfaceCache.publish(this.address, value, isChatListView, this.readStamp);
+        void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);
+        for (const consumer of this.consumers) consumer.onRead?.();
+        if (chatWatchFiltersKey(value.watchFilters) !== this.watchKey)
+          void this.watch(value.watchFilters);
+      } catch (reason) {
+        if (!this.closed) for (const consumer of this.consumers) consumer.onError?.(reason);
+      } finally {
+        this.reading = false;
+      }
     }
 
     current(): ChatListView | null {
@@ -169,7 +153,7 @@ namespace ChatReads {
     }
     force(): void {
       this.missed = false;
-      this.scheduler.force();
+      void this.read();
     }
     catchUp(): void {
       if (this.missed) this.force();
@@ -213,7 +197,7 @@ namespace ChatReads {
         AppState.currentState !== 'background' &&
         [...this.consumers].some((consumer) => consumer.visible())
       )
-        this.scheduler.signal();
+        void this.read();
       else this.missed = true;
     }
     private async open(): Promise<void> {
@@ -221,8 +205,7 @@ namespace ChatReads {
       if (this.closed) return;
       const filters = this.current()?.watchFilters ?? [];
       await this.watch(filters);
-      await sharedLiveConnection().whenSubscribed(filters, 1_500);
-      if (!this.closed) await this.scheduler.startAfter(Promise.resolve());
+      if (!this.closed) await this.read();
     }
     private async watch(filters: Filters): Promise<void> {
       const generation = ++this.watchGeneration;
@@ -295,18 +278,7 @@ namespace ChatReads {
         (live?.type === 'invalidate' && live.deliveryId)
       )
         return;
-      // The opening subscribe arrives before that read finishes. Ignore it.
-      // After the read fails, the next subscribe is the reconnect: read again
-      // so Retry is not the only way off the error screen.
-      if (live?.type === 'subscribed' && !this.confirmedRead && !this.openingReadFailed) return;
-      if (live?.type === 'subscribed' && !this.confirmedRead && this.reading) return;
-      if (
-        live?.type === 'subscribed' &&
-        this.confirmedRead &&
-        live.resumed &&
-        this.covered.has(live.roomId)
-      )
-        return;
+      if (live?.type === 'subscribed' || live?.type === 'sync-ok') return;
       this.requestRead();
     }
     private close(persist = true): void {
@@ -319,8 +291,6 @@ namespace ChatReads {
           void mobileSurfaceCache.persist(this.address, this.saved(value), isChatListView);
       }
       this.closed = true;
-      this.scheduler.dispose();
-      this.stopConnected?.();
       this.stopWatch?.();
       for (const stop of this.subscriptions) stop();
       this.subscriptions.clear();

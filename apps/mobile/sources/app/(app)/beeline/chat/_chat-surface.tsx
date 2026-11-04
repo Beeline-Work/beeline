@@ -818,7 +818,7 @@ export function BuzzChatSurface({
     hydrationFailed: transcriptHydrationFailed,
     hydrationError: transcriptHydrationError,
     retryHydration,
-    refreshSignal,
+    readRoom,
     outbox,
   } = session;
   useEffect(() => {
@@ -3448,7 +3448,7 @@ export function BuzzChatSurface({
         // A turn that settled while the press was in the air is the ordinary
         // race, not a failure worth a dialog: the line is already gone.
         if (err instanceof MonolithRequestTimeoutError) {
-          refreshSignal.force();
+          readRoom();
           Modal.alert('Stop result unknown', phoneOperationFailureReason(err));
         }
         console.warn('Stopping the turn failed:', err);
@@ -4457,7 +4457,7 @@ export function BuzzChatSurface({
         if (picked?.options.find(option => option.optionId === optionId)?.label === 'Something else') focusComposer();
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (err) {
-        refreshSignal.force();
+        readRoom();
         console.warn('Choice answer failed:', err);
         Modal.alert('Could not answer', phoneOperationFailureReason(err));
       } finally {
@@ -4748,7 +4748,7 @@ export function BuzzChatSurface({
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
         returnToRoomList();
       } catch (err) {
-        refreshSignal.force();
+        readRoom();
         setMembershipError(
           appErrorCopy(err, `Could not ${deleting ? 'delete' : 'leave'} ${ROOM_LABEL}.`),
         );
@@ -5213,12 +5213,12 @@ export function BuzzChatSurface({
       await transport.closeCorner(decodedId);
       handleBack();
     } catch (error) {
-      refreshSignal.force();
+      readRoom();
       Modal.alert('Could not close corner', appErrorCopy(error));
     } finally {
       closeCornerPending.current = false;
     }
-  }, [decodedId, handleBack, transport, refreshSignal]);
+  }, [decodedId, handleBack, transport, readRoom]);
 
   const handleCommunitySelect = useCallback((communityId: string | null) => {
     if (!communityId) return;
@@ -7402,9 +7402,9 @@ export function BuzzChatSurface({
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           handleBack();
         }}
-        onSaved={() => refreshSignal.force()}
+        onSaved={() => readRoom()}
         onError={(error) => {
-          refreshSignal.force();
+          readRoom();
           void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
           Modal.alert('Could not complete request', appErrorCopy(error));
         }}

@@ -35,7 +35,7 @@ beforeEach(() => {
 });
 
 it('keeps summary readers out of archived-page commits', () => {
-  noteCornerLaneSubscribed('parent', false);
+  noteCornerLaneSubscribed('parent');
   acceptCornerStatusFrame(frame(1, 'working'));
   let renders = 0;
   function Summary() {
@@ -71,7 +71,7 @@ it('gives every Room list reader the newest summary, and none after a client res
   });
   expect(seen).toBeUndefined();
   await act(async () => {
-    noteCornerLaneSubscribed('parent', false);
+    noteCornerLaneSubscribed('parent');
     acceptCornerStatusFrame(frame(1, 'working'));
   });
   expect(seen).toEqual([expect.objectContaining({ id: 'corner-a', state: 'working' })]);

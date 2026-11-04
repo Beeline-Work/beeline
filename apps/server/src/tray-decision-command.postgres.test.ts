@@ -3,7 +3,7 @@ import { CHOICE_CARD_TYPE } from '@beeline/api-contract/phone';
 import { Pool } from 'pg';
 import { describe, expect, it, vi } from 'vitest';
 import { PostgresDatabase, type SqlDatabase } from './database.js';
-import { DURABLE_LIVE_SCHEMA } from './durable-live.js';
+import { COMMITTED_JOURNAL_SCHEMA } from './committed-journal-schema.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { skipRoomChoice } from './room-choice.js';
@@ -51,7 +51,7 @@ async function rig(work: (reader: SqlDatabase, writer: SqlDatabase) => Promise<v
       CREATE TABLE connector_offers(id uuid PRIMARY KEY,workspace_id uuid,room_id uuid,message_id text,addressee_id text,connector_type text,status text);
       CREATE TABLE message_bookmarks(identity_id text,workspace_id uuid,room_id uuid,message_id text);
       CREATE TABLE needs_you_marks(identity_id text,workspace_id uuid,message_id text);`);
-    await reader.query(DURABLE_LIVE_SCHEMA);
+    await reader.query(COMMITTED_JOURNAL_SCHEMA);
     await reader.query(MEMBERSHIP_AUTHORITY_SCHEMA);
     await reader.query(ROUTER_COMMAND_SCHEMA);
     await reader.query(`INSERT INTO workspaces VALUES($1)`, [W]);

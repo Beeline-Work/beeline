@@ -84,7 +84,7 @@ it('names an opened corner from the parent Room record, and follows a rename', a
   // No row in the record yet: the run's saved name.
   expect(cornerName(tree)).toBe('Open corner saved-name');
   await act(async () => {
-    noteCornerLaneSubscribed('parent', false);
+    noteCornerLaneSubscribed('parent');
     acceptCornerStatusFrame(frame(1, 'first-name'));
   });
   expect(cornerName(tree)).toBe('Open corner first-name');

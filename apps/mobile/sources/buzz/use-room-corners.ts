@@ -29,7 +29,6 @@ import {
 } from '@/buzz/room-corner-store';
 
 /** A socket that never answers must not hold the first read. */
-const SUBSCRIBE_HANDSHAKE_TIMEOUT_MS = 2_000;
 
 type CornersClient = Pick<RoomViewClient, 'corners'>;
 
@@ -151,7 +150,6 @@ export function useRoomCorners(
           if (cancelled || generation !== cornerStoreGeneration()) return;
           if (saved) hydrateRoomCorners(roomId, saved);
         }
-        await live.whenSubscribed(filters, SUBSCRIBE_HANDSHAKE_TIMEOUT_MS);
         if (cancelled) return;
         readyRef.current = true;
         const now = getRoomCorners(roomId);

@@ -218,7 +218,7 @@ async function advance(ms: number) {
 
 describe('Reproduction R1: open Room whose live socket goes silent', () => {
   for (const failures of [0, 1]) {
-    it(`reply-hidden-until-next-send: reads once on replacement subscription with ${failures} failed catch-up reads`, async () => {
+    it(`reply-hidden-until-next-send: reads the committed resync push with ${failures} failed catch-up reads`, async () => {
       controls.working = true;
       let latest: UseRoomSurfaceSessionResult | undefined;
       let renderer!: ReactTestRenderer;
@@ -235,9 +235,10 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       await advance(30_000);
       expect(controls.roomReads).toBe(1);
       expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('m-2042');
-      await act(async () =>
-        controls.emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } }),
-      );
+      await act(async () => {
+        controls.emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } });
+        controls.emit({ monolithLive: { type: 'invalidate', roomId: 'experiments', reason: 'resync' } });
+      });
       await advance(1_100);
       if (failures > 0) {
         expect(controls.roomReads).toBe(2);
@@ -365,6 +366,7 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     controls.appState = 'active';
     await act(async () => {
       for (const listener of controls.appStateListeners) listener('active');
+      controls.emit({ monolithLive: { type: 'invalidate', roomId: 'experiments', reason: 'reconnect' } });
     });
     await advance(0);
     expect(controls.roomReads).toBe(2);
@@ -462,6 +464,7 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       controls.appState = 'active';
       await act(async () => {
         for (const listener of controls.appStateListeners) listener('active');
+      controls.emit({ monolithLive: { type: 'invalidate', roomId: 'experiments', reason: 'reconnect' } });
       });
       await advance(0);
       expect(controls.roomReads).toBe(2);
@@ -470,16 +473,13 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
         text: reply.text,
       });
       expect(controls.reconnects).toBe(0);
-      await act(async () => {
-        for (const listener of controls.appStateListeners) listener('active');
-      });
       await advance(180_000);
       expect(controls.roomReads).toBe(2);
       await act(async () => renderer.unmount());
     });
   }
 
-  it('retains complete background deltas without a covering read on activation', async () => {
+  it('retains complete background deltas and reads once on the foreground invalidation', async () => {
     let latest: UseRoomSurfaceSessionResult | undefined;
     let renderer!: ReactTestRenderer;
     await act(async () => {
@@ -505,10 +505,11 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     controls.appState = 'active';
     await act(async () => {
       for (const listener of controls.appStateListeners) listener('active');
+      controls.emit({ monolithLive: { type: 'invalidate', roomId: 'experiments', reason: 'reconnect' } });
     });
     await advance(1_000);
     expect(latest!.roomSurface!.messages.at(-1)).toMatchObject({ id: reply.id, text: reply.text });
-    expect(controls.roomReads).toBe(1);
+    expect(controls.roomReads).toBe(2);
     expect(controls.reconnects).toBe(0);
     await act(async () => renderer.unmount());
   });

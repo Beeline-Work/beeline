@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { backfillAgentHandles, migrate, migrateData, MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
-import { lockedTables, logLockHolders, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
+import { alreadySatisfied, lockedTables, logLockHolders, runMigrationStep, satisfiedCheck, splitMigrationStatements } from './migration-steps.js';
 
 const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
 if (postgresUrl && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgresUrl).hostname))
@@ -227,5 +227,32 @@ describe('lock holder diagnostic', () => {
       await admin.query(`DROP SCHEMA ${schema} CASCADE`);
       await admin.end();
     }
+  });
+});
+
+describe('already-satisfied idempotent DDL', () => {
+  it('reads back only plain IF NOT EXISTS creates', () => {
+    expect(satisfiedCheck('ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean NOT NULL DEFAULT false;'))
+      .toEqual({ relation: 'identities', columns: ['hidden_from_roster'] });
+    expect(satisfiedCheck(`-- note\nALTER TABLE t ADD COLUMN IF NOT EXISTS a text DEFAULT 'x,y', ADD COLUMN IF NOT EXISTS b numeric(10,2)`))
+      .toEqual({ relation: 't', columns: ['a', 'b'] });
+    expect(satisfiedCheck('CREATE TABLE IF NOT EXISTS rooms (id uuid PRIMARY KEY)')).toEqual({ relation: 'rooms', columns: [] });
+    expect(satisfiedCheck('CREATE UNIQUE INDEX IF NOT EXISTS rooms_slug ON rooms(slug)')).toEqual({ relation: 'rooms_slug', columns: [] });
+    expect(satisfiedCheck('CREATE INDEX CONCURRENTLY IF NOT EXISTS rooms_slug ON rooms(slug)')).toBeNull();
+    expect(satisfiedCheck('ALTER TABLE t ADD COLUMN IF NOT EXISTS a text, DROP COLUMN b')).toBeNull();
+    expect(satisfiedCheck('ALTER TABLE t ADD COLUMN a text')).toBeNull();
+    expect(satisfiedCheck('ALTER TABLE t ALTER COLUMN a SET NOT NULL')).toBeNull();
+    expect(satisfiedCheck('UPDATE t SET a = 1')).toBeNull();
+  });
+
+  it('skips only when every named object exists, without touching the table', async () => {
+    const query = vi.fn(async (_sql: string, values?: unknown[]) => ({
+      rows: [{ relation: true, columns: (values?.[1] as string[]).filter(c => c !== 'missing').length }],
+    }));
+    await expect(alreadySatisfied({ query }, 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a text')).resolves.toBe(true);
+    await expect(alreadySatisfied({ query }, 'ALTER TABLE t ADD COLUMN IF NOT EXISTS a text, ADD COLUMN IF NOT EXISTS missing text')).resolves.toBe(false);
+    await expect(alreadySatisfied({ query }, 'ALTER TABLE t DROP COLUMN IF EXISTS a')).resolves.toBe(false);
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(String(query.mock.calls[0]![0])).not.toMatch(/\bLOCK\b|\bALTER\b/i);
   });
 });

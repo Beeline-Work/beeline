@@ -9,6 +9,7 @@ import { PgliteDatabase, migratedDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
+import { ConnectionPresence } from './connection-presence.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import { CompanyMcpDiscovery } from './company-mcp-discovery.js';
 import { applyVaultList } from './workbench.js';
@@ -844,12 +845,26 @@ describe('connect_app', () => {
     expect(commands).toEqual([{ source_message_id: pending.id }]);
   });
 
-  it('posts one route-neutral Room card and resumes the original request after sign-in', async () => {
+  it.each([false, true])('posts one route-neutral Room card and resumes the original request after sign-in (owned=%s)', async owned => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const presence = owned ? new ConnectionPresence(database, new LiveHub()) : undefined;
+    const generationId = owned ? 'owned-provider-parity' : GENERATION;
+    if (presence) {
+      const epoch = await presence.claimConnection(HELPER, {connectionId:'owned-provider-parity'});
+      // A fresh binding leaves the fixture's historical legacy generation intact.
+      await database.query(`UPDATE agent_commands SET generation_id=$2,
+        turn_owner_connection_id=$3,turn_owner_epoch=$4,lease_expires_at=NULL WHERE id=$1`,
+        [COMMAND,generationId,'owned-provider-parity',epoch]);
+      await database.query(`UPDATE agent_turns SET generation_id=$3 WHERE room_id=$1 AND request_id=$2`,
+        [ROOM,REQUEST,generationId]);
+    }
+    const callTurn = {...turn,generationId};
+    try {
+
     const continuation = 'I will post the launch notes after sign-in.';
     const first = await daemon.execute('connectApp',
-      { ...turn, app: 'Slack', reason: 'post the launch notes', continuation }, HELPER);
+      { ...callTurn, app: 'Slack', reason: 'post the launch notes', continuation }, HELPER);
     expect(first).toMatchObject({ status: 'needs_sign_in', route: 'composio',
       transport: 'composio' });
     expect(first).not.toHaveProperty('authorizationUrl');
@@ -890,9 +905,9 @@ describe('connect_app', () => {
     expect(neverUsed).not.toHaveProperty('lastUsedAt');
     expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
       .toContainEqual(expect.objectContaining({ appId: first.appId, appKey: 'slack' }));
-    expect((await daemon.execute('listAppTools', { ...turn, appId: first.appId! }, HELPER)).tools)
+    expect((await daemon.execute('listAppTools', { ...callTurn, appId: first.appId! }, HELPER)).tools)
       .toHaveLength(1);
-    const used = await daemon.execute('executeAppTool', { ...turn, appId: first.appId!,
+    const used = await daemon.execute('executeAppTool', { ...callTurn, appId: first.appId!,
       tool: 'SLACK_POST_MESSAGE', arguments: { text: 'Launch notes' } }, HELPER);
     expect(used).toEqual({ status: 'executed', data: { ok: true } });
     expect(provider.execute).toHaveBeenCalledWith(expect.objectContaining({
@@ -904,6 +919,13 @@ describe('connect_app', () => {
     expect(afterUse).toMatchObject({ useCount: 1,
       lastUse: { agentId: HELPER, agentName: 'Bee', roomId: ROOM,
         roomName: 'Tools', usedAt: afterUse.lastUsedAt } });
+    if (presence) {
+      await presence.releaseConnection(HELPER, 'owned-provider-parity');
+      await expect(daemon.execute('executeAppTool', { ...callTurn, appId: first.appId!,
+        tool: 'SLACK_POST_MESSAGE', arguments: { text: 'must not dispatch after owner loss' } }, HELPER)).rejects.toThrow();
+      expect(provider.execute).toHaveBeenCalledTimes(1);
+    }
+    } finally { await presence?.stop(); }
   });
 
   it('RS-1: an unlisted app sign-in card stores its web domain so the card shows its mark', async () => {

@@ -21,7 +21,7 @@ const historicalRoot = process.argv[2];
 assert.ok(historicalRoot, 'Historical source root is required');
 const url = process.env.BEELINE_COMMAND_TEST_POSTGRES_URL;
 assert.ok(url && ['127.0.0.1', 'localhost', '[::1]'].includes(new URL(url).hostname), 'Isolated loopback PostgreSQL required');
-assert.notEqual(process.env.BEELINE_NETWORK_ROUTER_V1, '1', 'Expansion proof requires router off');
+assert.equal(process.env.BEELINE_NETWORK_ROUTER_V1, '0', 'Expansion proof requires explicit router off');
 const historicalRevision = 'f43bd3f86e4c7a30aa75378df82fcbda10027c72';
 // Verify the complete archived server source before loading it. Dependencies
 // intentionally come from this checkout and are separately labelled below.

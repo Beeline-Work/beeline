@@ -42,8 +42,8 @@ export class BackgroundEnqueueContractError extends Error {
   constructor() { super('Background enqueue must finish synchronously and return undefined'); this.name = 'BackgroundEnqueueContractError'; }
 }
 
-/** Schema export only. Production schema installation and per-job readiness
- * remain outside this unselected private core. No recurring scan or outbox. */
+/** Installed by the release migration. Job-specific composition supplies
+ * readiness outside this core. No recurring scan or outbox. */
 export const BACKGROUND_OWNERSHIP_SCHEMA = `
 CREATE TABLE IF NOT EXISTS background_leader_owners (
   name text PRIMARY KEY CHECK(name='background'),
@@ -227,9 +227,12 @@ export class BackgroundOwnership {
         [randomUUID(), request.job, request.effectId, request.sourceClaimId, request.sourceClaimVersion,
           request.provider, request.canonicalRequest, digest, this.instanceId, epoch.generation, state.nonce]);
         if (inserted.rows[0]) return { fresh: true, row: inserted.rows[0] };
-        const existing = (await db.query<AttemptRow>(`SELECT id,job_id,effect_id,state,outcome,request_digest
+        const existing = (await db.query<AttemptRow & { source_claim_id: string; source_claim_version: string; canonical_request: string }>(
+          `SELECT id,job_id,effect_id,state,outcome,request_digest,source_claim_id,source_claim_version,canonical_request
           FROM background_effect_attempts WHERE job_id=$1 AND effect_id=$2 FOR SHARE`, [request.job, request.effectId])).rows[0];
-        if (!existing || existing.request_digest !== digest) throw new BackgroundEffectConflict();
+        if (!existing || existing.request_digest !== digest || existing.source_claim_id !== request.sourceClaimId ||
+          existing.source_claim_version !== request.sourceClaimVersion || existing.canonical_request !== request.canonicalRequest)
+          throw new BackgroundEffectConflict();
         return { fresh: false, row: existing };
       });
       if (!result.fresh) return { kind: 'existing', receipt: receipt(result.row) };

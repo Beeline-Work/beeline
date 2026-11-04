@@ -118,6 +118,8 @@ export const ENRICHMENT_POOL_WAIT_TIMEOUT_MS = 500;
 export const HEALTH_STATEMENT_TIMEOUT_MS = 2_000;
 export const HEALTH_POOL_WAIT_TIMEOUT_MS = 1_000;
 export const MIGRATION_LOCK_TIMEOUT_MS = 1_000;
+/** Schema statements retry a busy table this many times (about 2 minutes). */
+export const MIGRATION_DDL_ATTEMPTS = 120;
 export const MIGRATION_STATEMENT_TIMEOUT_MS = 10 * 60_000;
 export const APP_TRANSACTION_DEADLINE_MS = 30_000;
 export const ENRICHMENT_TRANSACTION_DEADLINE_MS = 3_000;
@@ -3217,10 +3219,22 @@ export async function migrate(
   database: SqlDatabase,
   options: { deferData?: boolean } = {},
 ): Promise<void> {
-  const ddl = (name: string, sql: string) =>
-    runMigrationStep(name, async () => { await database.query(sql); }, {
-      onLockTimeout: () => logLockHolders(database, name, sql),
-    });
+  // A schema change needs its table to itself for an instant. On a live app
+  // that table is rarely idle for the whole lock timeout, so wait in line and
+  // try again rather than failing the release on the first busy moment.
+  const ddl = async (name: string, sql: string) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await runMigrationStep(name, async () => { await database.query(sql); }, {
+          onLockTimeout: attempt === 1 ? () => logLockHolders(database, name, sql) : undefined,
+        });
+      } catch (error) {
+        const code = (error as { code?: unknown } | null)?.code;
+        if ((code !== '55P03' && code !== '40P01') || attempt >= MIGRATION_DDL_ATTEMPTS) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 250 + Math.floor(Math.random() * 1250)));
+      }
+    }
+  };
   const ddlScript = async (name: string, sql: string) => {
     const statements = splitMigrationStatements(sql);
     for (let index = 0; index < statements.length; index++) {

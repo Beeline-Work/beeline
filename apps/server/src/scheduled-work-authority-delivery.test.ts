@@ -98,9 +98,9 @@ describe('complete Scheduled Work authority delivery source',()=>{
 describe('closed compact control packetization',()=>{
   const start={stream:`authority:${VIEWER}` as const,epoch:'source',segment:'segment',through:1,protocol:1 as const};
   it('partitions actual complete controls with a digest and final marker without truncation',()=>{
-    const fences=Array.from({length:256},(_,i)=>{const scope=`44444444-4444-4444-8444-${String(i).padStart(12,'0')}`,authorityScope=`scheduled-work-room:${scope}`;
+    const fences=Array.from({length:1900},(_,i)=>{const scope=`44444444-4444-4444-8444-${String(i).padStart(12,'0')}`,authorityScope=`scheduled-work-room:${scope}`;
       return {kind:'authority-fence' as const,scope,authorityScope,mode:'advance' as const,authority:routerAuthority([{authorityScope,epoch:'2'}])};});
-    const frames=encodeScheduledWorkAuthority(start,{...start,through:257},fences),parts=frames.filter(frame=>frame.kind==='scheduled-work-authority-part');
+    const frames=encodeScheduledWorkAuthority(start,{...start,through:1901},fences),parts=frames.filter(frame=>frame.kind==='scheduled-work-authority-part');
     expect(parts.length).toBeGreaterThan(1);expect(parts.flatMap(part=>part.fences)).toEqual(fences);expect(frames.at(-1)?.kind).toBe('scheduled-work-authority-commit');
     expect(frames.every(frame=>Buffer.byteLength(JSON.stringify(frame))<=64*1024)).toBe(true);
     expect(parts[0]!.contentDigest).toBe(createHash('sha256').update(JSON.stringify(fences)).digest('hex'));

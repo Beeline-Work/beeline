@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { backfillAgentHandles, migrate, migrateData, MIGRATION_LOCK_TIMEOUT_MS, PostgresDatabase } from './database.js';
-import { alreadyNoOp, alreadySatisfied, lockedTables, noOpCheck, logLockHolders, normalizeTriggerDefinition, runMigrationStep, satisfiedCheck, splitMigrationStatements, triggerAlreadyCurrent, triggerPair } from './migration-steps.js';
+import { alreadyNoOp, alreadySatisfied, normalizeDefault, lockedTables, noOpCheck, logLockHolders, normalizeTriggerDefinition, runMigrationStep, satisfiedCheck, splitMigrationStatements, triggerAlreadyCurrent, triggerPair } from './migration-steps.js';
 
 const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
 if (postgresUrl && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgresUrl).hostname))
@@ -310,5 +310,22 @@ describe('already-done drops and nullability', () => {
     await expect(alreadyNoOp({ query: catalog(false, []) }, 'ALTER TABLE t DROP COLUMN IF EXISTS a')).resolves.toBe(false);
     await expect(alreadyNoOp({ query: catalog(true, []) }, 'DROP TRIGGER IF EXISTS x ON messages')).resolves.toBe(true);
     await expect(alreadyNoOp({ query: catalog(true, [{ one: 1 }]) }, 'DROP TRIGGER IF EXISTS x ON messages')).resolves.toBe(false);
+  });
+});
+
+describe('already-current column defaults', () => {
+  it('normalizes', () => {
+    expect(normalizeDefault("'public'::text")).toBe(normalizeDefault("'public'"));
+    expect(normalizeDefault('now()')).toBe(normalizeDefault('now()'));
+    expect(normalizeDefault("'{\"type\": \"everyone\"}'::jsonb")).toBe(normalizeDefault(`'{"type":"everyone"}'::jsonb`));
+    expect(normalizeDefault("'live'::text")).not.toBe(normalizeDefault("'public'"));
+  });
+  it('skips only identical defaults', async () => {
+    const sql = "ALTER TABLE rooms ALTER COLUMN visibility SET DEFAULT 'public';";
+    expect(noOpCheck(sql)).toEqual({ kind:'alter', relation:'rooms', clauses:[{kind:'default',name:'visibility',expr:"'public'"}] });
+    const q = (expr: string|null) => vi.fn(async (s: string) => ({ rows: s.includes('present') ? [{present:true}] : expr===null ? [] : [{expr}] }));
+    await expect(alreadyNoOp({ query: q("'public'::text") }, sql)).resolves.toBe(true);
+    await expect(alreadyNoOp({ query: q("'private'::text") }, sql)).resolves.toBe(false);
+    await expect(alreadyNoOp({ query: q(null) }, sql)).resolves.toBe(false);
   });
 });

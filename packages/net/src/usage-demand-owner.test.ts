@@ -10,11 +10,21 @@ function fixture() {
   return { owner, admission, changed, navigate: (next: typeof current) => { current = next; owner.navigationChanged(); } };
 }
 describe('committed usage profile demand', () => {
-  it('automatically retries a safe usage read and cancels the wait when the profile closes', async () => {
+  it.each([401, 403, 404, 410])('preserves a terminal server authority denial (%s) without retrying', async status => {
+    vi.useFakeTimers();
+    const f = fixture(); f.owner.connected(1); f.owner.profile(agentId);
+    const error = Object.assign(new Error('authority removed'), { status });
+    const send = vi.fn().mockRejectedValue(error);
+    try {
+      await expect(f.owner.dispatch(agentId, send)).rejects.toBe(error);
+      await vi.advanceTimersByTimeAsync(60_000); expect(send).toHaveBeenCalledTimes(1);
+    } finally { f.owner.disconnected(); vi.useRealTimers(); }
+  });
+  it.each([429, 503])('automatically retries a safe usage read and cancels the wait when the profile closes (%s)', async status => {
     vi.useFakeTimers();
     try {
       const f = fixture(); f.owner.connected(1); f.owner.profile(agentId);
-      const send = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('current');
+      const send = vi.fn().mockRejectedValueOnce(Object.assign(new Error('temporary'), { status })).mockResolvedValue('current');
       const result = f.owner.dispatch(agentId, send);
       await vi.advanceTimersByTimeAsync(500); expect(await result).toBe('current');
       f.owner.profile(null); f.owner.profile(agentId);

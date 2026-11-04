@@ -10,11 +10,21 @@ function fixture(displays: () => readonly string[] = () => []) {
   return { admission, owner, invalidate, focus: (next: typeof focus) => { focus = next; owner.navigationChanged(); } };
 }
 describe('real private media demand ownership', () => {
-  it('automatically recovers a failed metadata read and cancels backoff on disconnect', async () => {
+  it.each([401, 403, 404, 410])('preserves a terminal server authority denial (%s) without retrying', async status => {
+    vi.useFakeTimers();
+    const f = fixture(); f.owner.connected(1); f.owner.viewport(room, [objectId]);
+    const error = Object.assign(new Error('authority removed'), { status });
+    const send = vi.fn().mockRejectedValue(error);
+    try {
+      await expect(f.owner.dispatch('readMediaMetadata', objectId, send)).rejects.toBe(error);
+      await vi.advanceTimersByTimeAsync(60_000); expect(send).toHaveBeenCalledTimes(1);
+    } finally { f.owner.disconnected(); vi.useRealTimers(); }
+  });
+  it.each([429, 503])('automatically recovers a failed metadata read and cancels backoff on disconnect (%s)', async status => {
     vi.useFakeTimers();
     try {
       const f = fixture(); f.owner.connected(1); f.owner.viewport(room, [objectId]);
-      const send = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValue('current');
+      const send = vi.fn().mockRejectedValueOnce(Object.assign(new Error('temporary'), { status })).mockResolvedValue('current');
       const result = f.owner.dispatch('readMediaMetadata', objectId, send);
       await vi.advanceTimersByTimeAsync(499); expect(send).toHaveBeenCalledTimes(1);
       await vi.advanceTimersByTimeAsync(1); expect(await result).toBe('current');

@@ -92,7 +92,9 @@ export class MediaDemandOwner {
           return result;
         });
       } catch (error) {
-        if (!permit.isCurrent()) throw error;
+        // Server identity/access removal is terminal even while this UI demand remains focused.
+        const status = error && typeof error === 'object' && 'status' in error ? error.status : undefined;
+        if (!permit.isCurrent() || status === 401 || status === 403 || status === 404 || status === 410) throw error;
         await this.pause(Math.min(30_000, 500 * 2 ** Math.min(failures, 6)));
       }
     }

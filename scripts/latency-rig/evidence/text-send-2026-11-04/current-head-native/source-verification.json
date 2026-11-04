@@ -1,0 +1,26 @@
+{
+  "head3a-export": {
+    "sha256": "e3657b2917c33e2183354f6c743e18fe5becba55a018eeaf15aad30171c9e70c",
+    "bytes": 13479436,
+    "exactSourceMatches": [
+      "/sources/app/(app)/beeline/chat/_chat-surface.tsx",
+      "/sources/buzz/message-outbox.ts"
+    ]
+  },
+  "fault3a-export": {
+    "sha256": "1905e2077959b7f7aa71739b62f2ffbcca39c0868c32f1677908690b6b426ff6",
+    "bytes": 13481064,
+    "exactSourceMatches": [
+      "/sources/app/(app)/beeline/chat/_chat-surface.tsx",
+      "/sources/buzz/message-outbox.ts"
+    ]
+  },
+  "current-baseline-export": {
+    "sha256": "aec6b15f3976c3d416342f736a568fa5e88f1871e02c38116354d5609b8dcc3f",
+    "bytes": 13473692,
+    "exactSourceMatches": [
+      "/sources/app/(app)/beeline/chat/_chat-surface.tsx",
+      "/sources/buzz/message-outbox.ts"
+    ]
+  }
+}

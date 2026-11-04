@@ -26,6 +26,24 @@ export default function BuzzChat() {
     notificationResponseId?: string;
   }>();
   const decodedId = channelId ? decodeURIComponent(channelId) : '';
+  // Expo can reuse this route when a deep link replaces only its parameters.
+  // The session refs, transcript window and composer must belong to one Room.
+  return (
+    <RoomVisit
+      key={decodedId}
+      channelId={decodedId}
+      notificationResponseId={notificationResponseId}
+    />
+  );
+}
+
+function RoomVisit({
+  channelId: decodedId,
+  notificationResponseId,
+}: {
+  channelId: string;
+  notificationResponseId?: string;
+}) {
   const isFocused = useIsFocused();
   const navigation = useNavigation<NativeStackNavigationProp<ParamListBase>>();
   useLayoutEffect(() => {
@@ -33,8 +51,15 @@ export default function BuzzChat() {
     const start = navigation.addListener('transitionStart', () => {
       finish ??= roomTransitionWork.begin();
     });
-    const end = navigation.addListener('transitionEnd', () => { finish?.(); finish = undefined; });
-    return () => { start(); end(); finish?.(); };
+    const end = navigation.addListener('transitionEnd', () => {
+      finish?.();
+      finish = undefined;
+    });
+    return () => {
+      start();
+      end();
+      finish?.();
+    };
   }, [navigation]);
   const bindingsRef = useRef<RoomSurfaceSessionBindings>({
     resetTranscript: () => undefined,

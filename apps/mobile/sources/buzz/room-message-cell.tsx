@@ -351,8 +351,12 @@ export function useRoomMessageRenderItem({
   arrivalFlashMessageId = null,
   sourceLandingFlashMessageId = null,
   presentationForMessage,
+  pendingContext,
 }: {
   render: RoomMessageRenderer;
+  pendingContext?: (
+    item: ChatDisplayMessage,
+  ) => Pick<RoomMessageRenderContext, 'continued' | 'immediatelyPrecedingMessage'>;
   continuedIds: ReadonlySet<string>;
   precedingMessageById: ReadonlyMap<string, ChatDisplayMessage>;
   messageById: ReadonlyMap<string, ChatDisplayMessage>;
@@ -377,26 +381,33 @@ export function useRoomMessageRenderItem({
     [],
   );
   return React.useCallback(
-    ({ item }: { item: ChatDisplayMessage }) => (
-      <TranscriptCardMotionBoundary
-        arriving={arrivingCardIds.has(item.id)}
-        cardId={item.id}
-        store={resolvedCardMotionStore}
-      >
-        <RoomMessageCell
-          {...presentationForMessage?.(item)}
-          item={item}
-          render={stableRender}
-          startsNewMessages={messageContainsBoundary(item, firstNewMessageId)}
-          continued={!messageContainsBoundary(item, firstNewMessageId) && continuedIds.has(item.id)}
-          immediatelyPrecedingMessage={precedingMessageById.get(item.id)}
-          referencedMessage={item.replyToId ? messageById.get(item.replyToId) : undefined}
-          arrivalFlashing={messageContainsBoundary(item, arrivalFlashMessageId)}
-          sourceLandingFlashing={messageContainsBoundary(item, sourceLandingFlashMessageId)}
-
-        />
-      </TranscriptCardMotionBoundary>
-    ),
+    ({ item }: { item: ChatDisplayMessage }) => {
+      const pending = !messageById.has(item.id) ? pendingContext?.(item) : undefined;
+      return (
+        <TranscriptCardMotionBoundary
+          arriving={arrivingCardIds.has(item.id)}
+          cardId={item.id}
+          store={resolvedCardMotionStore}
+        >
+          <RoomMessageCell
+            {...presentationForMessage?.(item)}
+            item={item}
+            render={stableRender}
+            startsNewMessages={messageContainsBoundary(item, firstNewMessageId)}
+            continued={
+              !messageContainsBoundary(item, firstNewMessageId) &&
+              (continuedIds.has(item.id) || Boolean(pending?.continued))
+            }
+            immediatelyPrecedingMessage={
+              precedingMessageById.get(item.id) ?? pending?.immediatelyPrecedingMessage
+            }
+            referencedMessage={item.replyToId ? messageById.get(item.replyToId) : undefined}
+            arrivalFlashing={messageContainsBoundary(item, arrivalFlashMessageId)}
+            sourceLandingFlashing={messageContainsBoundary(item, sourceLandingFlashMessageId)}
+          />
+        </TranscriptCardMotionBoundary>
+      );
+    },
     [
       arrivalFlashMessageId,
       arrivingCardIds,
@@ -405,6 +416,7 @@ export function useRoomMessageRenderItem({
       messageById,
       precedingMessageById,
       presentationForMessage,
+      pendingContext,
       resolvedCardMotionStore,
       stableRender,
       sourceLandingFlashMessageId,

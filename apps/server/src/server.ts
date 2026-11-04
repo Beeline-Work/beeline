@@ -2814,7 +2814,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     try { command = commandValue === undefined ? undefined : parseRouterCommandIdentity(commandValue); }
     catch { throw new PhoneOperationError(400, { error: 'invalid_command_identity' }); }
     await operation(name, input, undefined,
-      () => options.phone.execute(name as never, input as never, identityId!, undefined, phoneFamilies.get(request)), command);
+      () => options.phone.execute(name as never, input as never, identityId!, undefined, phoneFamilies.get(request), true), command);
     return;
   }
 

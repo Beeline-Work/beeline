@@ -389,6 +389,30 @@ describe('free starter agents', () => {
       .toEqual([{ event: 'returned_day_1' }, { event: 'returned_day_7' }]);
   });
 
+  it('retains onboarding milestones when the transport releases a committed send before observation', async () => {
+    const installId = '11111111-1111-4111-8111-111111111111';
+    const attemptId = '22222222-2222-4222-8222-222222222222';
+    await recordSigninFunnelEvent(db, { event: 'signed_in', installId, attemptId, provider: 'google',
+      platform: 'android', version: '0.2.22', environment: 'production', timestamp: new Date().toISOString() }, 'server', FRIEND);
+    await db.query(`INSERT INTO signin_funnel_events(install_id,attempt_id,event,platform,version,source,occurred_at)
+      VALUES($1,$2,'signup','android','0.2.22','server',now())`, [installId, attemptId]);
+    const workspace = await phone.execute('createWorkspace', { name: 'Tracked phone milestones' }, FRIEND);
+    await finishWelcome(workspace.roomId!, FRIEND);
+    await recordOnboardingEvent(db, FRIEND, 'welcome_shown');
+    const room = await phone.readRoom(workspace.roomId!, FRIEND);
+    const welcome = room!.messages.find(message => message.choice?.status === 'open')!.choice!;
+    await phone.execute('answerChoice', { choiceId: welcome.choiceId, optionId: 'C' }, FRIEND);
+    await db.query(`UPDATE signin_funnel_events SET occurred_at=now()-interval '8 days' WHERE event='welcome_shown'`);
+
+    await phone.execute('sendRoomMessage', { roomId: workspace.roomId!, text: 'A committed transport send' }, FRIEND,
+      undefined, undefined, true);
+    await db.backgroundWork.drain();
+    const events = (await db.query<{ event: string }>(`SELECT event FROM signin_funnel_events WHERE install_id=$1`, [installId]))
+      .rows.map(row => row.event);
+    for (const event of ['user_answered', 'task_question', 'returned_day_1', 'returned_day_7'])
+      expect(events.filter(value => value === event)).toHaveLength(1);
+  });
+
   // Lifecycle tests start after the owner's first actual request, not the server hello.
   const createWorkspace = async (name = 'Fresh', viewer = OWNER) => {
     const result = await phone.execute('createWorkspace', { name }, viewer) as { id: string; roomId: string };

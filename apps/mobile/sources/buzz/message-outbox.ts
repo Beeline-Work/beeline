@@ -33,8 +33,7 @@ export class MessageOutbox {
   snapshot = () => this.records;
   private publish() { for (const listener of this.listeners) listener(); }
   private save(): Promise<void> {
-    const records = this.records;
-    const write = this.writes.catch(() => undefined).then(() => this.deps.save(records));
+    const write = this.writes.catch(() => undefined).then(() => this.deps.save(this.records));
     this.writes = write;
     this.publish();
     this.scheduleCutoff();
@@ -59,9 +58,26 @@ export class MessageOutbox {
     await this.restore();
     const validator = new SignedEventOutbox({ load: async () => [], save: async () => undefined }, { acceptUnsignedEvent: isUnsignedMonolithMessage });
     await validator.enqueue(event, row);
-    if (this.get(event.id)) return;
-    this.records = [...this.records, { event, row, status: 'pending', attempts: 0, queuedAt: this.now(), ...(!this.connected ? { offlineSince: this.now() } : {}) }];
-    await this.save();
+    const write = this.writes
+      .catch(() => undefined)
+      .then(async () => {
+        if (this.get(event.id)) return;
+        const record: MessageOutboxRecord = {
+          event,
+          row,
+          status: 'pending',
+          attempts: 0,
+          queuedAt: this.now(),
+          ...(!this.connected ? { offlineSince: this.now() } : {}),
+        };
+        // Only durable records may be published, delivered, or included in later saves.
+        await this.deps.save([...this.records, record]);
+        this.records = [...this.records, record];
+        this.publish();
+        this.scheduleCutoff();
+      });
+    this.writes = write;
+    await write;
   }
   async remove(id: string) { this.records = this.records.filter(record => record.event.id !== id); await this.save(); }
   async reconcile(ids: ReadonlySet<string>) {

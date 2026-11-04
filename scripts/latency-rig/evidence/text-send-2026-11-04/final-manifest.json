@@ -1,0 +1,217 @@
+{
+  "runs": [
+    {
+      "kind": "old",
+      "label": "QA",
+      "n": 6,
+      "bundleSha256": "9eb5a13939c050ff9f3ccf256ce0d33d672151ba0713a556bc0bda9a87db413e",
+      "at": 1793767917.8925786,
+      "hostLoad": "23.95 25.22 27.15 11/6407 2040663"
+    },
+    {
+      "kind": "new",
+      "label": "RA",
+      "n": 6,
+      "bundleSha256": "7580643f9626ed07b3bfde0e8221de18714bcbb6a52ffa9802ce16d4ba60eb8c",
+      "at": 1793767943.686407,
+      "hostLoad": "26.10 25.72 27.26 6/6402 2053283"
+    },
+    {
+      "kind": "old",
+      "label": "QB",
+      "n": 6,
+      "bundleSha256": "9eb5a13939c050ff9f3ccf256ce0d33d672151ba0713a556bc0bda9a87db413e",
+      "at": 1793767967.2581604,
+      "hostLoad": "24.98 25.41 27.12 13/6318 2065224"
+    },
+    {
+      "kind": "new",
+      "label": "RB",
+      "n": 6,
+      "bundleSha256": "7580643f9626ed07b3bfde0e8221de18714bcbb6a52ffa9802ce16d4ba60eb8c",
+      "at": 1793767994.7558308,
+      "hostLoad": "24.64 25.28 27.02 13/6515 2073744"
+    },
+    {
+      "kind": "old",
+      "label": "QC",
+      "n": 6,
+      "bundleSha256": "9eb5a13939c050ff9f3ccf256ce0d33d672151ba0713a556bc0bda9a87db413e",
+      "at": 1793768020.4765966,
+      "hostLoad": "28.29 26.04 27.22 10/6273 2092098"
+    },
+    {
+      "kind": "new",
+      "label": "RC",
+      "n": 6,
+      "bundleSha256": "7580643f9626ed07b3bfde0e8221de18714bcbb6a52ffa9802ce16d4ba60eb8c",
+      "at": 1793768045.9632814,
+      "hostLoad": "25.41 25.51 27.01 10/6322 2104318"
+    },
+    {
+      "kind": "old",
+      "label": "QD",
+      "n": 6,
+      "bundleSha256": "9eb5a13939c050ff9f3ccf256ce0d33d672151ba0713a556bc0bda9a87db413e",
+      "at": 1793768071.2967854,
+      "hostLoad": "23.98 25.09 26.83 3/6237 2112734"
+    },
+    {
+      "kind": "new",
+      "label": "RD",
+      "n": 6,
+      "bundleSha256": "7580643f9626ed07b3bfde0e8221de18714bcbb6a52ffa9802ce16d4ba60eb8c",
+      "at": 1793768094.5583246,
+      "hostLoad": "25.27 25.27 26.84 2/6216 2116734"
+    }
+  ],
+  "definition": "Same-session alternating local old/new Hermes builds, unchanged native44, production142 server, same dedicated proof Room. Old local bundle includes initial sender-fade fix; new paints an independently subscribed newest-slot child with unchanged FlatList data and first-frame anchor suppression. Fixed composer/send coordinates from screenshots; full draft OCR and enabled gold arrow required before each tap. Empty draft required before typing next message. No UI dumps. Monotonic uptime bracket supplements wall-clock date.",
+  "originalRestored": true,
+  "rawVideoKeptInTaskWorktree": [
+    {
+      "path": ".beeline-proof/send-latency/QA.mp4",
+      "sha256": "a58fb7c4133e22d180b1aa75b1591e4f661aca5885a8a029d0b0811db15097a5"
+    },
+    {
+      "path": ".beeline-proof/send-latency/RA.mp4",
+      "sha256": "ae8d2208f6a93a8c8a1cf9bcb7ffbeac424d166f0fa81d9d792979d9f50a5497"
+    },
+    {
+      "path": ".beeline-proof/send-latency/QB.mp4",
+      "sha256": "8568995f9f243cecd289f2e70cb2e1790b4de267c5402d885ef74e5f55ef9985"
+    },
+    {
+      "path": ".beeline-proof/send-latency/RB.mp4",
+      "sha256": "54c0e5b9a24325c82fa8713189754eb1833305adc6cdec3f2243c2795ef5abdf"
+    },
+    {
+      "path": ".beeline-proof/send-latency/QC.mp4",
+      "sha256": "2657178f7be7394fd5434c86baaaa43a291440f9b9c9e5d1c24e929f963d228f"
+    },
+    {
+      "path": ".beeline-proof/send-latency/RC.mp4",
+      "sha256": "23ea8a0ee18f25f686edb9da5a49d0be2a71293b391d42f451ba96ad4a520da2"
+    },
+    {
+      "path": ".beeline-proof/send-latency/QD.mp4",
+      "sha256": "ab5170aa827ed49ebfc361b7ba079c8d2ec189c5d1fb6a6b5a39d1c243224c49"
+    },
+    {
+      "path": ".beeline-proof/send-latency/RD.mp4",
+      "sha256": "19a7236ec445b484121fff66409e631a005992e21afc9e5b6862afa889bd693f"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold01.mp4",
+      "sha256": "e7d56b495a0288d69871a5b590008939b5aab32ca57c0be4242f6f3c611d66d0"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold02.mp4",
+      "sha256": "5e0e92cbd22105cd597b5095e9f69fb7945e6694b4b0511a7b227130c38e3dee"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold03.mp4",
+      "sha256": "eefeabe72a34c2e162c29c65fc76b95699841d89bff2d998446c974fe35161b0"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold04.mp4",
+      "sha256": "55cd5f437d8777cc5599acc3b1336985ffa6d7ebb3f18376382fae710108337f"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold05.mp4",
+      "sha256": "2ba7fdcd7768a82aeea4e94c4baf95e634b909dbc4da3a9b7f4d230fe7c72187"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold06.mp4",
+      "sha256": "bf6c5647aab2a9361d299a0762333a7ad04376460ba34e1baf9633e6945378bb"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold07.mp4",
+      "sha256": "4f93bc3bc7f6ef08a4d697a1ee12feb4a08a8c87872c91410b503127bc2081c2"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold08.mp4",
+      "sha256": "41f1daddac2ee2738b1adc9b99f6eb6fe433d53ffb12982edab4b0bed5e31ca4"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold09.mp4",
+      "sha256": "a7edd6290ce7ae4a9ac54c3b9571ed8c67b9729d1e71499b4630c2547ee8687e"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold10.mp4",
+      "sha256": "69d68acce6acb7a27c21004a9c8b4305b6ead47e5ca5b047d8bb5270d3378ee7"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold11.mp4",
+      "sha256": "e1ec78e8d4b577c4da0376471aa56ddb7669b1f559a68565e0bc8ef183b11c8f"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold12.mp4",
+      "sha256": "7102d3a521313a26fb68dafdfde370d27ef760463649282fa4d4521f10ccb6c4"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold13.mp4",
+      "sha256": "a0774a6b9123609f5449864d070efe2c2d2a3541bc6bbe7e8e4c677d4e11e30d"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold14.mp4",
+      "sha256": "c19cec5a535025f12d81dd7cc62e8098311d7b0cae2fd491706c5d2c3c6fbf6d"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold15.mp4",
+      "sha256": "fb593313758284a75e2db29987b98fb28d116ccb3150730fc4adf18e4dae724a"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold16.mp4",
+      "sha256": "c6c9c44091c661b3336581053fc4e0791e4d431f2fceb93094c48c5bb98fb328"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold17.mp4",
+      "sha256": "48e197f6b376a2578d0caef5b0bb4ec6691d4c8cca8cae3cb8c3237b0ad54d83"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold18.mp4",
+      "sha256": "0789fe37b0c362c7c51c90622b5dc9633395e3530f2772f3c8e2833edf3c73ff"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold19.mp4",
+      "sha256": "faa9ac5674d97795510cf5d682a615eb79b75094884dd725c9f57a2321d94056"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold20.mp4",
+      "sha256": "20c2bfa12ae11f0b4b9e04d877909dd27cb86ec0d63d618661bc5696c8a02f8a"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold21.mp4",
+      "sha256": "4f8fc98952b4d1d87ba097a15c595f08b25032737448daa0cf975c89d47119e2"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold22.mp4",
+      "sha256": "2aeb7e1d50c5be588111044bcd962ee7afb50fdc8d38821e5ec07bbcfb7ff9f1"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold23.mp4",
+      "sha256": "de222e478a9c3ef199230a94324398e1a6338cab2466f49d1fc7e5e1051c3915"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold24.mp4",
+      "sha256": "1dc5af8f34f48ab351614bc22aee8ff78468a4334e16cfc4b24c2cda4e30ba14"
+    },
+    {
+      "path": ".beeline-proof/send-latency/cold-room-taps/cold25.mp4",
+      "sha256": "ebc4dedd4ebd7e060da9868008d0fc439ba5af476bbfa1eb85251d17a4ccfe9e"
+    }
+  ],
+  "serverAtFinish": {
+    "version": "v0.1.142",
+    "sourceSha": "98c2a49a4f3df909e8fd3fc32ae39129f6f8367b"
+  },
+  "canonicalDelivery": "48/48 exact expected payloads found in readRoom plus two history pages",
+  "limits": [
+    "New p95 still exceeds150ms; max300.915ms before command,240.915ms after command.",
+    "Cold Room25 p50/p951322.643/2250.898ms still exceeds450ms.",
+    "All final paired samples retained. Source bundles are local fixtures; no production deployment.",
+    "Actual input event lies inside a10ms-granularity command bracket; capture includes host/emulator/recorder scheduling.",
+    "Server exact isolated handling is a controlled25ms/query scenario; production after-deploy and native wire arrival/ack-to-canonical-React commit are unmeasured."
+  ],
+  "restoredProductionV142LaunchSha256": "0814b713dcfa6ed20048aae18d4ce2a3b22af36d1a888b564c5b1af0cc0d6f0c"
+}

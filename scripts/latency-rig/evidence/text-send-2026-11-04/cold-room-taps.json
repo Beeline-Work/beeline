@@ -1,0 +1,3885 @@
+{
+  "method": "Original native44 production142 cold Room DTO cache; process starts at Room list before each trial, fixed Room coordinate from screenshot. Tap bracketed with on-device date. First timestamped native screenrecord frame with at least three readable proof-message lines, excluding list preview. Sequential OCR, preceding/first frames retained.",
+  "n": 25,
+  "p50Ms": 1322.643397,
+  "p95Ms": 2250.897872,
+  "budgetMs": 450,
+  "samples": [
+    {
+      "sample": 1,
+      "file": "cold01.mp4",
+      "tapBeforeNs": 1793766736476864883,
+      "tapAfterNs": 1793766736530431020,
+      "hostLoad": "15.05 17.85 17.36 24/6987 1531990",
+      "videoSha256": "e7d56b495a0288d69871a5b590008939b5aab32ca57c0be4242f6f3c611d66d0",
+      "firstFrameNs": 1793766738156908264,
+      "visibleAfterTapBeforeMs": 1680.043381,
+      "visibleAfterTapAfterMs": 1626.477244,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -252.603619,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 89.778381,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 127.306381,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 302.306381,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 338.864381,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 377.433381,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 410.805381,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 438.076381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 460.390381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 503.160381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 525.259381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 583.987381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 608.173381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 644.174381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 676.954381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 713.828381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 772.206381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 790.419381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 862.066381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 882.451381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 922.967381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 961.404381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 1003.503381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 1040.855381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 1091.198381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 1103.403381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 1131.191381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 27,
+          "ms": 1170.339381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 28,
+          "ms": 1193.914381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 29,
+          "ms": 1233.452381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 30,
+          "ms": 1254.230381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 31,
+          "ms": 1295.185381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 32,
+          "ms": 1306.238381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 33,
+          "ms": 1373.538381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 34,
+          "ms": 1405.280381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 35,
+          "ms": 1427.497381,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 36,
+          "ms": 1680.043381,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 2,
+      "file": "cold02.mp4",
+      "tapBeforeNs": 1793766747092135387,
+      "tapAfterNs": 1793766747188788815,
+      "hostLoad": "21.62 19.16 17.79 67/6955 1538703",
+      "videoSha256": "5e0e92cbd22105cd597b5095e9f69fb7945e6694b4b0511a7b227130c38e3dee",
+      "firstFrameNs": 1793766749343033259,
+      "visibleAfterTapBeforeMs": 2250.897872,
+      "visibleAfterTapAfterMs": 2154.244444,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -89.031128,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 187.821872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 359.039872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 491.995872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 540.241872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 582.307872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 724.362872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 761.513872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 8,
+          "ms": 887.247872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 937.153872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 1022.819872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 1084.301872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 1171.537872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 1320.192872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 1389.849872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 1474.424872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 1502.622872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 1590.894872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 1679.310872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 1752.138872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 1769.727872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 2250.897872,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 3,
+      "file": "cold03.mp4",
+      "tapBeforeNs": 1793767064128176016,
+      "tapAfterNs": 1793767064194317151,
+      "hostLoad": "36.48 31.37 23.82 33/6878 1689792",
+      "videoSha256": "eefeabe72a34c2e162c29c65fc76b95699841d89bff2d998446c974fe35161b0",
+      "firstFrameNs": 1793767065998570265,
+      "visibleAfterTapBeforeMs": 1870.394249,
+      "visibleAfterTapAfterMs": 1804.253114,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -249.396751,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 158.953249,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 208.898249,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 379.298249,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 421.142249,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 501.328249,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 531.248249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 7,
+          "ms": 621.572249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 659.227249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 706.011249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 758.668249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 810.742249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 816.718249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 878.315249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 916.111249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 957.831249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 1016.976249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 1044.216249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 1119.870249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 1157.511249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 1215.961249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 1253.104249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 1314.024249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 1335.277249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 1356.656249,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 1870.394249,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 4,
+      "file": "cold04.mp4",
+      "tapBeforeNs": 1793767075514012154,
+      "tapAfterNs": 1793767075576584664,
+      "hostLoad": "36.20 31.56 24.01 30/7019 1701048",
+      "videoSha256": "55cd5f437d8777cc5599acc3b1336985ffa6d7ebb3f18376382fae710108337f",
+      "firstFrameNs": 1793767076774170256,
+      "visibleAfterTapBeforeMs": 1260.158102,
+      "visibleAfterTapAfterMs": 1197.585592,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -216.501898,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 109.664102,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 180.438102,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 339.071102,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 401.878102,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 454.322102,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 532.696102,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 581.161102,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 626.841102,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 663.750102,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 753.758102,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 775.098102,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 813.094102,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 1260.158102,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 5,
+      "file": "cold05.mp4",
+      "tapBeforeNs": 1793767086011703285,
+      "tapAfterNs": 1793767086059217332,
+      "hostLoad": "36.09 31.70 24.14 50/6978 1705613",
+      "videoSha256": "2ba7fdcd7768a82aeea4e94c4baf95e634b909dbc4da3a9b7f4d230fe7c72187",
+      "firstFrameNs": 1793767087273213277,
+      "visibleAfterTapBeforeMs": 1261.509992,
+      "visibleAfterTapAfterMs": 1213.995945,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -251.876008,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 72.849992,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 102.893992,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 257.147992,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 295.026992,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 383.786992,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 397.476992,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 467.270992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 515.645992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 558.666992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 572.369992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 661.170992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 713.872992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 765.154992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 790.078992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 843.341992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 931.987992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 966.772992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 984.414992,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 1261.509992,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 6,
+      "file": "cold06.mp4",
+      "tapBeforeNs": 1793767096782323856,
+      "tapAfterNs": 1793767096904101724,
+      "hostLoad": "36.94 32.03 24.32 16/6969 1711240",
+      "videoSha256": "bf6c5647aab2a9361d299a0762333a7ad04376460ba34e1baf9633e6945378bb",
+      "firstFrameNs": 1793767098009274251,
+      "visibleAfterTapBeforeMs": 1226.950395,
+      "visibleAfterTapAfterMs": 1105.172527,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -284.655605,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 158.606395,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 186.986395,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 400.840395,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 423.642395,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 494.626395,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 533.079395,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 568.249395,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 611.038395,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 642.408395,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 696.846395,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 731.695395,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 775.083395,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 799.372395,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 872.320395,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 920.653395,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 950.735395,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 1008.643395,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 1226.950395,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 7,
+      "file": "cold07.mp4",
+      "tapBeforeNs": 1793767106551174646,
+      "tapAfterNs": 1793767106580979766,
+      "hostLoad": "37.71 32.34 24.51 14/6826 1717146",
+      "videoSha256": "4f93bc3bc7f6ef08a4d697a1ee12feb4a08a8c87872c91410b503127bc2081c2",
+      "firstFrameNs": 1793767107924519259,
+      "visibleAfterTapBeforeMs": 1373.344613,
+      "visibleAfterTapAfterMs": 1343.539493,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -318.405387,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 54.144613,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 95.867613,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 230.135613,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 257.222613,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 279.021613,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 329.755613,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 364.623613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 389.514613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 412.479613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 432.630613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 469.607613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 492.943613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 507.800613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 534.578613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 557.358613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 603.623613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 622.665613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 642.753613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 665.831613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 693.703613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 722.630613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 754.847613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 794.653613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 825.371613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 862.635613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 874.477613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 27,
+          "ms": 910.738613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 28,
+          "ms": 945.402613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 29,
+          "ms": 981.005613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 30,
+          "ms": 993.158613,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 31,
+          "ms": 1373.344613,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 8,
+      "file": "cold08.mp4",
+      "tapBeforeNs": 1793767115737328384,
+      "tapAfterNs": 1793767115776410987,
+      "hostLoad": "34.99 31.95 24.46 19/6944 1718509",
+      "videoSha256": "41f1daddac2ee2738b1adc9b99f6eb6fe433d53ffb12982edab4b0bed5e31ca4",
+      "firstFrameNs": 1793767116776802256,
+      "visibleAfterTapBeforeMs": 1039.473872,
+      "visibleAfterTapAfterMs": 1000.391269,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -310.968128,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 65.286872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 159.460872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 222.952872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 234.833872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 264.718872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 281.705872,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 314.719872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 336.820872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 350.112872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 369.601872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 378.350872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 396.329872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 429.492872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 445.745872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 469.883872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 489.456872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 524.855872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 541.609872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 588.073872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 625.410872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 684.412872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 712.482872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 733.517872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 769.911872,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 1039.473872,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 9,
+      "file": "cold09.mp4",
+      "tapBeforeNs": 1793767125241126900,
+      "tapAfterNs": 1793767125288642982,
+      "hostLoad": "37.10 32.48 24.72 30/6885 1723081",
+      "videoSha256": "a7edd6290ce7ae4a9ac54c3b9571ed8c67b9729d1e71499b4630c2547ee8687e",
+      "firstFrameNs": 1793767126987109253,
+      "visibleAfterTapBeforeMs": 1745.982353,
+      "visibleAfterTapAfterMs": 1698.466271,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -311.706647,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 93.684353,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 114.954353,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 239.109353,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 280.647353,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 325.109353,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 365.341353,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 376.871353,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 8,
+          "ms": 415.636353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 449.287353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 504.497353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 542.645353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 598.220353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 631.953353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 653.849353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 687.957353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 738.448353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 763.601353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 803.495353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 869.049353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 881.726353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 909.398353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 944.803353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 968.063353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 999.934353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 1014.854353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 1060.364353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 27,
+          "ms": 1072.919353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 28,
+          "ms": 1110.103353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 29,
+          "ms": 1153.026353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 30,
+          "ms": 1174.275353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 31,
+          "ms": 1239.793353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 32,
+          "ms": 1264.437353,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 33,
+          "ms": 1745.982353,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 10,
+      "file": "cold10.mp4",
+      "tapBeforeNs": 1793767134136832865,
+      "tapAfterNs": 1793767134181750242,
+      "hostLoad": "36.61 32.46 24.75 17/7017 1727734",
+      "videoSha256": "69d68acce6acb7a27c21004a9c8b4305b6ead47e5ca5b047d8bb5270d3378ee7",
+      "firstFrameNs": 1793767135459476262,
+      "visibleAfterTapBeforeMs": 1322.643397,
+      "visibleAfterTapAfterMs": 1277.72602,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -266.944603,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 74.297397,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 90.428397,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 221.041397,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 238.878397,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 273.186397,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 295.164397,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 327.807397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 339.972397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 385.829397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 422.136397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 457.417397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 498.668397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 529.854397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 560.693397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 593.696397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 626.689397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 646.369397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 666.611397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 696.836397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 731.630397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 780.002397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 798.581397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 809.814397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 841.936397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 857.050397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 886.405397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 27,
+          "ms": 924.008397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 28,
+          "ms": 941.674397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 29,
+          "ms": 957.537397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 30,
+          "ms": 1322.643397,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 11,
+      "file": "cold11.mp4",
+      "tapBeforeNs": 1793767143658198192,
+      "tapAfterNs": 1793767143682898237,
+      "hostLoad": "35.94 32.47 24.84 16/6914 1730163",
+      "videoSha256": "e1ec78e8d4b577c4da0376471aa56ddb7669b1f559a68565e0bc8ef183b11c8f",
+      "firstFrameNs": 1793767145108114264,
+      "visibleAfterTapBeforeMs": 1449.916072,
+      "visibleAfterTapAfterMs": 1425.216027,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -295.359928,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 85.578072,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 234.275072,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 294.420072,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 321.350072,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 354.288072,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 393.753072,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 439.281072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 481.254072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 520.891072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 556.759072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 578.940072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 618.208072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 649.478072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 687.835072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 713.230072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 749.931072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 776.071072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 800.131072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 865.253072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 883.904072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 965.758072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 1002.997072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 1020.218072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 1088.385072,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 1449.916072,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 12,
+      "file": "cold12.mp4",
+      "tapBeforeNs": 1793767153462418429,
+      "tapAfterNs": 1793767153486226372,
+      "hostLoad": "35.96 32.60 24.96 19/6925 1732634",
+      "videoSha256": "7102d3a521313a26fb68dafdfde370d27ef760463649282fa4d4521f10ccb6c4",
+      "firstFrameNs": 1793767154583076266,
+      "visibleAfterTapBeforeMs": 1120.657837,
+      "visibleAfterTapAfterMs": 1096.849894,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -289.228163,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 84.382837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 187.999837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 239.041837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 269.289837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 332.230837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 357.045837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 391.910837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 417.631837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 476.547837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 491.958837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 519.122837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 549.229837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 583.741837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 637.760837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 671.146837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 700.954837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 732.448837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 773.949837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 814.439837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 833.431837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 890.468837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 1120.657837,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 13,
+      "file": "cold13.mp4",
+      "tapBeforeNs": 1793767165124372061,
+      "tapAfterNs": 1793767165163552157,
+      "hostLoad": "34.22 32.41 25.03 13/6912 1735780",
+      "videoSha256": "a0774a6b9123609f5449864d070efe2c2d2a3541bc6bbe7e8e4c677d4e11e30d",
+      "firstFrameNs": 1793767166212405250,
+      "visibleAfterTapBeforeMs": 1088.033189,
+      "visibleAfterTapAfterMs": 1048.853093,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -302.712811,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 69.239189,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 157.886189,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 210.849189,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 239.144189,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 253.861189,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 268.090189,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 294.975189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 321.277189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 347.028189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 355.133189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 372.205189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 406.241189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 428.785189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 446.051189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 455.587189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 479.527189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 500.921189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 526.868189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 544.506189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 556.968189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 571.242189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 606.466189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 621.926189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 641.865189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 656.171189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 672.362189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 27,
+          "ms": 686.248189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 28,
+          "ms": 706.115189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 29,
+          "ms": 715.938189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 30,
+          "ms": 736.400189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 31,
+          "ms": 754.895189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 32,
+          "ms": 770.022189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 33,
+          "ms": 790.186189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 34,
+          "ms": 804.441189,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 35,
+          "ms": 1088.033189,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 14,
+      "file": "cold14.mp4",
+      "tapBeforeNs": 1793767173923284077,
+      "tapAfterNs": 1793767173974474865,
+      "hostLoad": "31.72 31.93 24.91 20/6922 1737617",
+      "videoSha256": "c19cec5a535025f12d81dd7cc62e8098311d7b0cae2fd491706c5d2c3c6fbf6d",
+      "firstFrameNs": 1793767174976057269,
+      "visibleAfterTapBeforeMs": 1052.773192,
+      "visibleAfterTapAfterMs": 1001.582404,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -320.966808,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 51.114192,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 145.592192,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 175.828192,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 215.105192,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 249.761192,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 262.031192,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 272.936192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 316.313192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 330.378192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 346.983192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 357.032192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 392.446192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 425.731192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 435.169192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 475.208192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 496.885192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 513.380192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 547.124192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 569.707192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 596.976192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 618.946192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 648.037192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 655.100192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 674.671192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 705.592192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 735.127192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 27,
+          "ms": 752.200192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 28,
+          "ms": 783.115192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 29,
+          "ms": 927.150192,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 30,
+          "ms": 1052.773192,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 15,
+      "file": "cold15.mp4",
+      "tapBeforeNs": 1793767183272979563,
+      "tapAfterNs": 1793767183334483199,
+      "hostLoad": "31.60 31.91 24.98 9/6857 1739295",
+      "videoSha256": "fb593313758284a75e2db29987b98fb28d116ccb3150730fc4adf18e4dae724a",
+      "firstFrameNs": 1793767184384440272,
+      "visibleAfterTapBeforeMs": 1111.460709,
+      "visibleAfterTapAfterMs": 1049.957073,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -300.565291,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 84.987709,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 98.950709,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 201.365709,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 246.513709,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 272.970709,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 336.144709,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 362.766709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 383.215709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 422.156709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 433.821709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 485.905709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 510.907709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 526.177709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 558.292709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 605.548709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 622.896709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 639.964709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 677.246709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 697.275709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 706.160709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 748.392709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 770.216709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 797.382709,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 1111.460709,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 16,
+      "file": "cold16.mp4",
+      "tapBeforeNs": 1793767192948600759,
+      "tapAfterNs": 1793767193017647113,
+      "hostLoad": "30.42 31.66 24.97 7/7012 1746922",
+      "videoSha256": "c6c9c44091c661b3336581053fc4e0791e4d431f2fceb93094c48c5bb98fb328",
+      "firstFrameNs": 1793767194576206274,
+      "visibleAfterTapBeforeMs": 1627.605515,
+      "visibleAfterTapAfterMs": 1558.559161,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -272.881485,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 124.505515,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 172.556515,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 364.300515,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 467.425515,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 488.756515,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 693.859515,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 743.770515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 781.284515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 810.529515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 869.764515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 925.141515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 961.834515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 970.068515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 1040.991515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 1115.510515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 1137.981515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 1188.058515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 1243.436515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 1277.511515,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 1627.605515,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 17,
+      "file": "cold17.mp4",
+      "tapBeforeNs": 1793767202830440413,
+      "tapAfterNs": 1793767202870645858,
+      "hostLoad": "26.50 30.78 24.76 34/7035 1756234",
+      "videoSha256": "48e197f6b376a2578d0caef5b0bb4ec6691d4c8cca8cae3cb8c3237b0ad54d83",
+      "firstFrameNs": 1793767204188367250,
+      "visibleAfterTapBeforeMs": 1357.926837,
+      "visibleAfterTapAfterMs": 1317.721392,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -292.162163,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 101.438837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 243.930837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 279.457837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 294.844837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 347.377837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 390.875837,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 438.525837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 450.822837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 477.001837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 507.327837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 548.752837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 583.520837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 613.723837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 646.704837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 695.673837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 722.535837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 732.420837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 766.125837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 809.533837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 837.512837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 905.516837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 950.476837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 970.602837,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 1357.926837,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 18,
+      "file": "cold18.mp4",
+      "tapBeforeNs": 1793767211910198069,
+      "tapAfterNs": 1793767211958846389,
+      "hostLoad": "26.72 30.66 24.78 42/6915 1758374",
+      "videoSha256": "0789fe37b0c362c7c51c90622b5dc9633395e3530f2772f3c8e2833edf3c73ff",
+      "firstFrameNs": 1793767212875358250,
+      "visibleAfterTapBeforeMs": 965.160181,
+      "visibleAfterTapAfterMs": 916.511861,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -293.252819,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 64.541181,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 94.674181,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 189.168181,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 229.890181,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 262.785181,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 286.932181,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 309.218181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 331.920181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 365.115181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 389.523181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 402.362181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 426.169181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 432.383181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 471.120181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 485.771181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 514.652181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 538.103181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 562.649181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 571.341181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 617.136181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 649.519181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 672.659181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 720.509181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 740.714181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 760.108181,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 965.160181,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 19,
+      "file": "cold19.mp4",
+      "tapBeforeNs": 1793767220004875287,
+      "tapAfterNs": 1793767220176336985,
+      "hostLoad": "26.10 30.41 24.76 2/6977 1760920",
+      "videoSha256": "faa9ac5674d97795510cf5d682a615eb79b75094884dd725c9f57a2321d94056",
+      "firstFrameNs": 1793767222375239257,
+      "visibleAfterTapBeforeMs": 2370.36397,
+      "visibleAfterTapAfterMs": 2198.902272,
+      "recognition": [
+        {
+          "frame": 7,
+          "ms": -9.38503,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 8,
+          "ms": 11.93597,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 9,
+          "ms": 57.67197,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 10,
+          "ms": 77.13097,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 11,
+          "ms": 114.18797,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 12,
+          "ms": 171.26497,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 13,
+          "ms": 207.66597,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 14,
+          "ms": 222.43397,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 15,
+          "ms": 362.93297,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 16,
+          "ms": 370.90397,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 17,
+          "ms": 396.90197,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 18,
+          "ms": 423.25197,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 19,
+          "ms": 454.04997,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 471.60697,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 497.99697,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 521.36697,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 549.08097,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 560.64897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 593.01997,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 603.89397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 27,
+          "ms": 625.06497,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 28,
+          "ms": 642.04997,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 29,
+          "ms": 660.53297,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 30,
+          "ms": 669.16497,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 31,
+          "ms": 706.54097,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 32,
+          "ms": 730.65597,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 33,
+          "ms": 746.49797,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 34,
+          "ms": 759.95897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 35,
+          "ms": 781.02297,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 36,
+          "ms": 799.97897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 37,
+          "ms": 817.95897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 38,
+          "ms": 833.03897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 39,
+          "ms": 860.56897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 40,
+          "ms": 879.45997,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 41,
+          "ms": 900.48997,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 42,
+          "ms": 919.24597,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 43,
+          "ms": 926.36797,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 44,
+          "ms": 968.71797,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 45,
+          "ms": 975.87097,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 46,
+          "ms": 1010.48597,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 47,
+          "ms": 1031.38897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 48,
+          "ms": 1058.07697,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 49,
+          "ms": 1075.98097,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 50,
+          "ms": 1099.66897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 51,
+          "ms": 1111.56197,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 52,
+          "ms": 1137.20797,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 53,
+          "ms": 1165.86197,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 54,
+          "ms": 1183.31997,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 55,
+          "ms": 1210.57697,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 56,
+          "ms": 1243.59897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 57,
+          "ms": 1264.11997,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 58,
+          "ms": 1288.52197,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 59,
+          "ms": 1312.73397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 60,
+          "ms": 1336.18897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 61,
+          "ms": 1371.06897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 62,
+          "ms": 1388.10397,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 63,
+          "ms": 1417.23897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 64,
+          "ms": 1433.06897,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 65,
+          "ms": 1472.26597,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 66,
+          "ms": 1491.96697,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 67,
+          "ms": 1529.92297,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 68,
+          "ms": 1545.20997,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 69,
+          "ms": 1587.89597,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 70,
+          "ms": 1616.30197,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 71,
+          "ms": 1658.07797,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 72,
+          "ms": 1679.70197,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 73,
+          "ms": 1690.75997,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 74,
+          "ms": 1742.17597,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 75,
+          "ms": 1769.59797,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 76,
+          "ms": 1787.93497,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 77,
+          "ms": 1812.18697,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 78,
+          "ms": 1821.96597,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 79,
+          "ms": 1886.91797,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 80,
+          "ms": 1932.88297,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 81,
+          "ms": 1959.84497,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 82,
+          "ms": 1970.57697,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 83,
+          "ms": 2370.36397,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 20,
+      "file": "cold20.mp4",
+      "tapBeforeNs": 1793767229715616947,
+      "tapAfterNs": 1793767229754654740,
+      "hostLoad": "22.95 29.59 24.56 15/7004 1767009",
+      "videoSha256": "20c2bfa12ae11f0b4b9e04d877909dd27cb86ec0d63d618661bc5696c8a02f8a",
+      "firstFrameNs": 1793767230729479252,
+      "visibleAfterTapBeforeMs": 1013.862305,
+      "visibleAfterTapAfterMs": 974.824512,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -246.079695,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 58.616305,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 158.615305,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 187.567305,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 210.102305,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 239.944305,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 256.755305,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 285.111305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 303.043305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 324.887305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 346.452305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 374.103305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 391.182305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 405.516305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 431.222305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 459.109305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 493.800305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 504.505305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 541.104305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 554.526305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 591.727305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 617.315305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 645.868305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 663.264305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 687.172305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 701.568305,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 1013.862305,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 21,
+      "file": "cold21.mp4",
+      "tapBeforeNs": 1793767238662913106,
+      "tapAfterNs": 1793767238698470551,
+      "hostLoad": "23.20 29.53 24.56 2/7024 1771088",
+      "videoSha256": "4f8fc98952b4d1d87ba097a15c595f08b25032737448daa0cf975c89d47119e2",
+      "firstFrameNs": 1793767239960680250,
+      "visibleAfterTapBeforeMs": 1297.767144,
+      "visibleAfterTapAfterMs": 1262.209699,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -294.129856,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 99.741144,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 178.672144,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 207.392144,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 245.475144,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 269.718144,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 310.716144,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 317.479144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 362.185144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 383.912144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 411.116144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 434.008144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 474.096144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 501.950144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 511.022144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 545.768144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 585.531144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 608.491144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 618.314144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 656.059144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 693.245144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 715.314144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 750.867144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 777.335144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 814.175144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 837.802144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 867.485144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 27,
+          "ms": 893.871144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 28,
+          "ms": 912.228144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 29,
+          "ms": 935.077144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 30,
+          "ms": 954.364144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 31,
+          "ms": 992.605144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 32,
+          "ms": 1021.809144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 33,
+          "ms": 1037.998144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 34,
+          "ms": 1213.109144,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 35,
+          "ms": 1297.767144,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 22,
+      "file": "cold22.mp4",
+      "tapBeforeNs": 1793767246512930437,
+      "tapAfterNs": 1793767246560071726,
+      "hostLoad": "25.80 29.89 24.74 23/6887 1772591",
+      "videoSha256": "2aeb7e1d50c5be588111044bcd962ee7afb50fdc8d38821e5ec07bbcfb7ff9f1",
+      "firstFrameNs": 1793767247609620257,
+      "visibleAfterTapBeforeMs": 1096.68982,
+      "visibleAfterTapAfterMs": 1049.548531,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -289.94518,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 58.65882,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 84.41082,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 192.83082,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 248.28982,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 265.82082,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 308.27282,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 326.67182,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 349.33382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 364.32082,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 387.29282,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 407.12282,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 423.87882,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 448.54482,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 490.83182,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 517.64882,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 544.98582,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 576.68482,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 600.78782,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 622.08382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 663.67982,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 697.07382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 714.89582,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 768.19782,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 791.90882,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 927.74682,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 1096.68982,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 23,
+      "file": "cold23.mp4",
+      "tapBeforeNs": 1793767255961936506,
+      "tapAfterNs": 1793767256072555438,
+      "hostLoad": "28.47 30.32 24.93 42/7066 1774859",
+      "videoSha256": "de222e478a9c3ef199230a94324398e1a6338cab2466f49d1fc7e5e1051c3915",
+      "firstFrameNs": 1793767257627674251,
+      "visibleAfterTapBeforeMs": 1665.737745,
+      "visibleAfterTapAfterMs": 1555.118813,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -236.159255,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 130.899745,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 549.391745,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 629.806745,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 789.294745,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 824.978745,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 914.609745,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 7,
+          "ms": 978.494745,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 1024.573745,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 1105.850745,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 1193.026745,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 1665.737745,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 24,
+      "file": "cold24.mp4",
+      "tapBeforeNs": 1793767266856325252,
+      "tapAfterNs": 1793767266953807799,
+      "hostLoad": "30.65 30.74 25.13 55/7038 1778454",
+      "videoSha256": "1dc5af8f34f48ab351614bc22aee8ff78468a4334e16cfc4b24c2cda4e30ba14",
+      "firstFrameNs": 1793767268377298268,
+      "visibleAfterTapBeforeMs": 1520.973016,
+      "visibleAfterTapAfterMs": 1423.490469,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -236.780984,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 112.458016,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 146.296016,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 251.116016,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 296.860016,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 322.454016,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 371.916016,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 7,
+          "ms": 395.741016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 422.370016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 465.209016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 499.017016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 523.598016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 547.700016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 579.917016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 612.452016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 625.684016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 667.156016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 715.303016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 727.023016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 775.250016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 797.633016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 852.995016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 22,
+          "ms": 879.480016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 23,
+          "ms": 911.122016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 24,
+          "ms": 946.894016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 25,
+          "ms": 974.751016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 26,
+          "ms": 1007.326016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 27,
+          "ms": 1031.925016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 28,
+          "ms": 1073.227016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 29,
+          "ms": 1089.451016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 30,
+          "ms": 1135.386016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 31,
+          "ms": 1159.026016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 32,
+          "ms": 1194.196016,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 33,
+          "ms": 1520.973016,
+          "readableProofRows": 10
+        }
+      ]
+    },
+    {
+      "sample": 25,
+      "file": "cold25.mp4",
+      "tapBeforeNs": 1793767323974307882,
+      "tapAfterNs": 1793767324173701869,
+      "hostLoad": "37.34 32.67 26.12 73/6939 1810393",
+      "videoSha256": "ebc4dedd4ebd7e060da9868008d0fc439ba5af476bbfa1eb85251d17a4ccfe9e",
+      "firstFrameNs": 1793767325573960264,
+      "visibleAfterTapBeforeMs": 1599.652382,
+      "visibleAfterTapAfterMs": 1400.258395,
+      "recognition": [
+        {
+          "frame": 0,
+          "ms": -80.648618,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 1,
+          "ms": 200.658382,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 2,
+          "ms": 327.441382,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 3,
+          "ms": 588.132382,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 4,
+          "ms": 626.625382,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 5,
+          "ms": 729.814382,
+          "readableProofRows": 1
+        },
+        {
+          "frame": 6,
+          "ms": 754.757382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 7,
+          "ms": 803.965382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 8,
+          "ms": 821.418382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 9,
+          "ms": 900.661382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 10,
+          "ms": 909.687382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 11,
+          "ms": 957.293382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 12,
+          "ms": 1016.229382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 13,
+          "ms": 1035.992382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 14,
+          "ms": 1086.263382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 15,
+          "ms": 1107.854382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 16,
+          "ms": 1164.326382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 17,
+          "ms": 1196.828382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 18,
+          "ms": 1247.808382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 19,
+          "ms": 1276.216382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 20,
+          "ms": 1300.332382,
+          "readableProofRows": 0
+        },
+        {
+          "frame": 21,
+          "ms": 1599.652382,
+          "readableProofRows": 10
+        }
+      ]
+    }
+  ],
+  "targetLocation": "Samples1-2 located by UI dump before timing; samples3-24 fixed first-row screenshot coordinate(400,550); sample25 fixed second-row coordinate(400,725) after a proof-account message changed list order. No target-location work is inside the measured tap interval."
+}

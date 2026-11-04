@@ -1,14 +1,26 @@
 vi.mock('@/buzz/router-owner', () => ({ routerOwnerArtifactAction: vi.fn() }));
-vi.mock('@/components/buzz/ArtifactMedia', async () => { const R = await import('react'); return { ArtifactImage: (props: Record<string, unknown>) => R.createElement('Image', props) }; });
+vi.mock('@/components/buzz/ArtifactMedia', async () => {
+  const R = await import('react');
+  return { ArtifactImage: (props: Record<string, unknown>) => R.createElement('Image', props) };
+});
 vi.mock('@/auth/signin-funnel', () => ({ funnelOnboarding: vi.fn(async () => undefined) }));
 import { observeArtifactRows, setArtifactViewportActive } from '@/buzz/artifact-viewport';
 import { routerOwnerArtifactAction } from '@/buzz/router-owner';
 import { ledgerStamp } from '@/buzz/relative-time';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
-vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
-vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
-vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
+vi.mock('@expo/vector-icons', async () => {
+  const R = await import('react');
+  return { Ionicons: (props: any) => R.createElement('Ionicons', props) };
+});
+vi.mock('expo-haptics', () => ({
+  ImpactFeedbackStyle: { Light: 'Light' },
+  impactAsync: async () => undefined,
+}));
+vi.mock('react-native-keyboard-controller', async () => {
+  const R = await import('react');
+  return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) };
+});
 import * as React from 'react';
 import { readFileSync } from 'node:fs';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -18,7 +30,11 @@ import {
   conversationIdentityByPubkey,
   type ChatDisplayMessage,
 } from '@/buzz/room-view-presentation';
-import { archiveActionPresentation, liveCardPresentation, useRoomMessageRenderItem } from '@/buzz/room-message-cell';
+import {
+  archiveActionPresentation,
+  liveCardPresentation,
+  useRoomMessageRenderItem,
+} from '@/buzz/room-message-cell';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { formatForwardedMessage } from '@/buzz/message-forward';
 import { beginReplyTarget } from '@/buzz/message-reply';
@@ -82,7 +98,18 @@ vi.mock('react-native', async () => {
     Text: host('Animated.Text'),
     View: host('Animated.View'),
   };
-  return { StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
+  return {
+    StyleSheet: {
+      flatten: (style: any): any =>
+        Array.isArray(style)
+          ? Object.assign(
+              {},
+              ...style.map((part: any) =>
+                Array.isArray(part) ? Object.assign({}, ...part) : part,
+              ),
+            )
+          : style,
+    },
     Animated,
     AppState: {
       currentState: 'active',
@@ -114,11 +141,19 @@ vi.mock('@/components/buzz/TranscriptSwipeable', async () => {
 
 vi.mock('react-native-unistyles', async () => {
   const { beelineThemes } = await import('@/buzz/groknight');
-  const theme = { buzz: process.env.BEELINE_OUTBOX_TEST_THEME === 'bone' ? beelineThemes.bone : beelineThemes.obsidian };
+  const theme = {
+    buzz:
+      process.env.BEELINE_OUTBOX_TEST_THEME === 'bone'
+        ? beelineThemes.bone
+        : beelineThemes.obsidian,
+  };
   return {
     StyleSheet: {
-      create: (factory: (value: { buzz: typeof beelineThemes.obsidian | typeof beelineThemes.bone }) => unknown) =>
-        factory(theme),
+      create: (
+        factory: (value: {
+          buzz: typeof beelineThemes.obsidian | typeof beelineThemes.bone;
+        }) => unknown,
+      ) => factory(theme),
     },
     useUnistyles: () => ({ theme }),
   };
@@ -135,7 +170,10 @@ const openExternal = vi.hoisted(() => ({ openExternalUrl: vi.fn(async () => unde
 vi.mock('@/utils/open-external-url', () => openExternal);
 vi.mock('@/components/buzz/ArtifactCard', async () => {
   const ReactModule = await import('react');
-  return { ArtifactCard: (props: any) => ReactModule.createElement('ArtifactCard', props), openArtifactViewer: vi.fn() };
+  return {
+    ArtifactCard: (props: any) => ReactModule.createElement('ArtifactCard', props),
+    openArtifactViewer: vi.fn(),
+  };
 });
 vi.mock('@/components/buzz/ComputerSession', () => ({ openComputerSessionViewer: vi.fn() }));
 vi.mock('@/components/buzz/ArtifactViewer', async () => {
@@ -197,7 +235,9 @@ vi.mock('@/components/buzz/Ledger', async () => {
     LedgerSystemLine: (props: any) => ReactModule.createElement('LedgerSystemLine', props),
     LedgerSteer: (props: any) => ReactModule.createElement('LedgerSteer', props),
     withLedgerDayCaption: (node: unknown, label: string | null) =>
-      label ? ReactModule.createElement('day-caption-wrap', { label }, node as React.ReactNode) : node,
+      label
+        ? ReactModule.createElement('day-caption-wrap', { label }, node as React.ReactNode)
+        : node,
   };
 });
 
@@ -262,29 +302,78 @@ function render(element: React.ReactElement): ReactTestRenderer {
 }
 
 function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
-  return { id: 'message', text: 'hello', isUser: false, timestamp: 1,
-    ...(overrides.agentCommand ? {} : { reference: { channelId: 'room-proof', eventId: overrides.id ?? 'message', rootId: overrides.id ?? 'message' } }), ...overrides };
+  return {
+    id: 'message',
+    text: 'hello',
+    isUser: false,
+    timestamp: 1,
+    ...(overrides.agentCommand
+      ? {}
+      : {
+          reference: {
+            channelId: 'room-proof',
+            eventId: overrides.id ?? 'message',
+            rootId: overrides.id ?? 'message',
+          },
+        }),
+    ...overrides,
+  };
 }
 
 describe('Event disclosure v2', () => {
   it('starts collapsed, expands every event, opens its destinations and collapses again', () => {
-    const onOpenCorner = vi.fn(); const onOpenUrl = vi.fn();
-    const item = message({ notificationLifecycleRun: { subline: '', items: [
-      { id: 'merge', title: 'Readable transcript', state: 'Merged', kind: 'pull-request', kindLine: 'PR #42',
-        cornerId: 'corner-42', url: 'https://github.com/acme/repo/pull/42', actor: 'ruby', updatedBy: 'merge' },
-      { id: 'issue', title: 'Issue title', state: 'Filed', kind: 'issue', kindLine: 'Issue #5',
-        url: 'https://github.com/acme/repo/issues/5', actor: 'ruby', updatedBy: 'issue' },
-    ] } });
-    const renderer = render(<NotificationLifecycleCard message={item} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />);
+    const onOpenCorner = vi.fn();
+    const onOpenUrl = vi.fn();
+    const item = message({
+      notificationLifecycleRun: {
+        subline: '',
+        items: [
+          {
+            id: 'merge',
+            title: 'Readable transcript',
+            state: 'Merged',
+            kind: 'pull-request',
+            kindLine: 'PR #42',
+            cornerId: 'corner-42',
+            url: 'https://github.com/acme/repo/pull/42',
+            actor: 'ruby',
+            updatedBy: 'merge',
+          },
+          {
+            id: 'issue',
+            title: 'Issue title',
+            state: 'Filed',
+            kind: 'issue',
+            kindLine: 'Issue #5',
+            url: 'https://github.com/acme/repo/issues/5',
+            actor: 'ruby',
+            updatedBy: 'issue',
+          },
+        ],
+      },
+    });
+    const renderer = render(
+      <NotificationLifecycleCard
+        message={item}
+        onOpenCorner={onOpenCorner}
+        onOpenUrl={onOpenUrl}
+      />,
+    );
     const toggle = () => renderer.root.findByProps({ testID: 'notification-run-expand-message' });
     expect(toggle().props.accessibilityState).toEqual({ expanded: false });
     expect(toggle().props.accessibilityLabel).toBe('1 PR merged · 1 issue filed');
     expect(renderer.root.findAllByProps({ testID: 'notification-run-cell-merge' })).toHaveLength(0);
     act(() => toggle().props.onPress());
     expect(toggle().props.accessibilityState).toEqual({ expanded: true });
-    act(() => renderer.root.findByProps({ testID: 'notification-run-cell-corner-merge' }).props.onPress());
-    act(() => renderer.root.findByProps({ testID: 'notification-run-cell-url-merge' }).props.onPress());
-    act(() => renderer.root.findByProps({ testID: 'notification-run-cell-url-issue' }).props.onPress());
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-cell-corner-merge' }).props.onPress(),
+    );
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-cell-url-merge' }).props.onPress(),
+    );
+    act(() =>
+      renderer.root.findByProps({ testID: 'notification-run-cell-url-issue' }).props.onPress(),
+    );
     expect(onOpenCorner).toHaveBeenCalledWith('corner-42');
     expect(onOpenUrl.mock.calls).toEqual([['https://github.com/acme/repo/issues/5']]);
     expect(onOpenCorner).toHaveBeenCalledTimes(2);
@@ -330,64 +419,130 @@ describe('Workbench identities', () => {
 describe('Room message variant components', () => {
   it('renders the System author through the small line instead of a member byline', () => {
     const text = 'The request to reveal a key expired';
-    const renderer = render(<OrdinaryLedgerMessage
-      message={message({ id: 'notice-style-1', text, pubkey: SYSTEM_IDENTITY_PUBKEY,
-        authorIdentity: { pubkey: SYSTEM_IDENTITY_PUBKEY, kind: 'human', name: 'System' } })}
-      participantsHydrated viewerPubkey="viewer" speakerWorking={false} continued={false}
-      participantHandles={[]} channelIndex={{ rooms: [], corners: [] }} deliveryFailed={false}
-      onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()}
-      onRetry={vi.fn()} onDismiss={vi.fn()}
-    />);
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'notice-style-1',
+          text,
+          pubkey: SYSTEM_IDENTITY_PUBKEY,
+          authorIdentity: { pubkey: SYSTEM_IDENTITY_PUBKEY, kind: 'human', name: 'System' },
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
     expect(renderer.root.findByType('LedgerSystemLine' as never).props.text).toBe(text);
     expect(renderer.root.findAllByType('LedgerEntry' as never)).toHaveLength(0);
     expect(renderer.root.findAllByType('IdentityMark' as never)).toHaveLength(0);
   });
 
   it('renders a viewer send as prose plus an actionable viewing reference without duplicating its artifact card', () => {
-    const renderer = render(<OrdinaryLedgerMessage
-      message={message({
-        id: 'viewer-send', isUser: true,
-        text: '@moth Could we simplify this?\n\n[Viewing artifact: Checkout mock]',
-        attachments: [{ kind: 'artifact', url: 'https://example.test/artifact', name: 'mock.html',
-          mimeType: 'text/html', size: 120 }],
-      })}
-      participantsHydrated viewerPubkey="viewer" speakerWorking={false} continued={false}
-      participantHandles={[]} channelIndex={{ rooms: [], corners: [] }} deliveryFailed={false}
-      onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()}
-      onRetry={vi.fn()} onDismiss={vi.fn()}
-    />);
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'viewer-send',
+          isUser: true,
+          text: '@moth Could we simplify this?\n\n[Viewing artifact: Checkout mock]',
+          attachments: [
+            {
+              kind: 'artifact',
+              url: 'https://example.test/artifact',
+              name: 'mock.html',
+              mimeType: 'text/html',
+              size: 120,
+            },
+          ],
+        })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
     const steer = renderer.root.findByType('LedgerSteer' as never).props;
     expect(steer.bodyText).toBe('@moth Could we simplify this?');
     expect(steer.attachments).toEqual([null]);
-    const reference = render(steer.replyReference).root.findByProps({ testID: 'viewer-context-viewer-send', accessibilityRole: 'button' });
+    const reference = render(steer.replyReference).root.findByProps({
+      testID: 'viewer-context-viewer-send',
+      accessibilityRole: 'button',
+    });
     expect(reference.findByType('Text' as never).props.children).toBe('Viewing Checkout mock');
     act(() => reference.props.onPress());
-    expect(openArtifactViewer).toHaveBeenCalledWith(expect.objectContaining({ name: 'mock.html' }), false, undefined);
+    expect(openArtifactViewer).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'mock.html' }),
+      false,
+      undefined,
+    );
   });
 
   it('opens the browser session viewed at send time instead of a later session with the same title', () => {
-    const session = { id: 'original-browser', title: 'Checkout', status: 'live', url: 'https://example.test/browser' };
-    publishViewerConversation({ roomId: 'viewer-room', send: vi.fn(), messages: [
-      { createdAt: 10, computerSession: session },
-      { createdAt: 30, computerSession: { ...session, id: 'later-browser' } },
-    ] as any });
+    const session = {
+      id: 'original-browser',
+      title: 'Checkout',
+      status: 'live',
+      url: 'https://example.test/browser',
+    };
+    publishViewerConversation({
+      roomId: 'viewer-room',
+      send: vi.fn(),
+      messages: [
+        { createdAt: 10, computerSession: session },
+        { createdAt: 30, computerSession: { ...session, id: 'later-browser' } },
+      ] as any,
+    });
     try {
-      const renderer = render(<OrdinaryLedgerMessage
-        message={message({ id: 'browser-send', isUser: true, timestamp: 20,
-          text: 'Please review this\n\n[Viewing browser: Checkout]' })}
-        codeRoomId="viewer-room"
-        participantsHydrated viewerPubkey="viewer" speakerWorking={false} continued={false}
-        participantHandles={[]} channelIndex={{ rooms: [], corners: [] }} deliveryFailed={false}
-        onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()} onRetry={vi.fn()} onDismiss={vi.fn()}
-      />);
+      const renderer = render(
+        <OrdinaryLedgerMessage
+          message={message({
+            id: 'browser-send',
+            isUser: true,
+            timestamp: 20,
+            text: 'Please review this\n\n[Viewing browser: Checkout]',
+          })}
+          codeRoomId="viewer-room"
+          participantsHydrated
+          viewerPubkey="viewer"
+          speakerWorking={false}
+          continued={false}
+          participantHandles={[]}
+          channelIndex={{ rooms: [], corners: [] }}
+          deliveryFailed={false}
+          onChannelReference={vi.fn()}
+          onReply={vi.fn()}
+          onCopy={vi.fn()}
+          onRetry={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      );
       const steer = renderer.root.findByType('LedgerSteer' as never).props;
       const reference = render(steer.replyReference).root.findByProps({
-        testID: 'viewer-context-browser-send', accessibilityRole: 'button',
+        testID: 'viewer-context-browser-send',
+        accessibilityRole: 'button',
       });
       expect(reference.findByType('Text' as never).props.children).toBe('Viewing shared browser');
       act(() => reference.props.onPress());
       expect(openComputerSessionViewer).toHaveBeenCalledWith(session, false, 'viewer-room');
-    } finally { removeViewerConversation('viewer-room'); }
+    } finally {
+      removeViewerConversation('viewer-room');
+    }
   });
 
   it('replaces the AGENT label with the model, falling back when no model is known', () => {
@@ -467,7 +622,11 @@ describe('Room message variant components', () => {
     // Squire spending is the spending agent's owner's call alone: neither the
     // requester nor a Workspace owner or admin who is not its owner decides.
     const spending = message({
-      writePermission: { ...pending.writePermission!, purpose: 'squire-spending', ownerPubkey: 'agent-owner' },
+      writePermission: {
+        ...pending.writePermission!,
+        purpose: 'squire-spending',
+        ownerPubkey: 'agent-owner',
+      },
     });
     for (const [viewerPubkey, manage, allowed] of [
       ['agent-owner', false, true],
@@ -485,7 +644,9 @@ describe('Room message variant components', () => {
           onOpenCorner={onOpenCorner}
         />,
       );
-      expect(card.root.findAllByProps({ testID: 'write-permission-allow' }).length > 0).toBe(allowed);
+      expect(card.root.findAllByProps({ testID: 'write-permission-allow' }).length > 0).toBe(
+        allowed,
+      );
     }
 
     const allowed = render(
@@ -530,17 +691,19 @@ describe('Room message variant components', () => {
         agent: { pubkey: 'agent', kind: 'agent', name: 'Terra' },
         owner,
         requester: owner,
-        grants: [{
-          grantId: 'g-1',
-          kind: 'repository',
-          target: 'owner/repo',
-          reason: 'edit the repository',
-          status: 'pending',
-          requestedBy: owner,
-          roomId: '22222222-2222-4222-8222-222222222222',
-          createdAt: 1,
-          auto: false,
-        }],
+        grants: [
+          {
+            grantId: 'g-1',
+            kind: 'repository',
+            target: 'owner/repo',
+            reason: 'edit the repository',
+            status: 'pending',
+            requestedBy: owner,
+            roomId: '22222222-2222-4222-8222-222222222222',
+            createdAt: 1,
+            auto: false,
+          },
+        ],
       },
     });
     const rows = [kept, permission, grant];
@@ -583,17 +746,18 @@ describe('Room message variant components', () => {
           }
           return React.createElement('message-row', { id: item.id, text: item.text });
         },
-        presentationForMessage: (item) => liveCardPresentation(item, {
-          permissionActionId,
-          grantActionId,
-          choiceActionId: null,
-          connectorOfferActionId: null,
-          appSignInActionId: null,
-          targetBranchActionId: null,
-          targetBranchNotice: null,
-          canManageWorkspace,
-          viewerIsAgent: false,
-        }),
+        presentationForMessage: (item) =>
+          liveCardPresentation(item, {
+            permissionActionId,
+            grantActionId,
+            choiceActionId: null,
+            connectorOfferActionId: null,
+            appSignInActionId: null,
+            targetBranchActionId: null,
+            targetBranchNotice: null,
+            canManageWorkspace,
+            viewerIsAgent: false,
+          }),
         continuedIds: new Set(),
         precedingMessageById: new Map(),
         messageById: new Map(rows.map((row) => [row.id, row])),
@@ -733,7 +897,11 @@ describe('Room message variant components', () => {
       const renderer = render(
         <GitHubEventCard message={message({ githubEvent })} onOpenUrl={onOpenUrl} />,
       );
-      expect(renderer.root.findAllByType('Text').find((node: ReactTestInstance) => node.props.numberOfLines === 2)).toBeDefined();
+      expect(
+        renderer.root
+          .findAllByType('Text')
+          .find((node: ReactTestInstance) => node.props.numberOfLines === 2),
+      ).toBeDefined();
       act(() =>
         renderer.root
           .findByProps({
@@ -798,7 +966,9 @@ describe('Room message variant components', () => {
     const primaryAction = renderer.root.findByProps({
       testID: 'notification-run-cell-corner-message',
     });
-    expect(primaryAction.props.accessibilityLabel).toBe('Open corner Ship the archived transcript card');
+    expect(primaryAction.props.accessibilityLabel).toBe(
+      'Open corner Ship the archived transcript card',
+    );
     act(() => primaryAction.props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
     const secondaryAction = renderer.root.findByProps({
@@ -839,7 +1009,9 @@ describe('Room message variant components', () => {
     });
     expect(JSON.stringify(renderer.toJSON())).toContain('flaky auth');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('corner #');
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Fix the flaky auth test so the suite stops failing at random');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain(
+      'Fix the flaky auth test so the suite stops failing at random',
+    );
     act(() => card.props.onPress());
     expect(onOpenCorner).toHaveBeenCalledWith('80a5a6f1-fb5a-493b-93eb-f3db33f696e6');
   });
@@ -910,7 +1082,9 @@ describe('Room message variant components', () => {
     );
     expect(JSON.stringify(renderer.toJSON())).toContain('Fix the flaky');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('corner #');
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Fix the flaky auth test so the suite stops failing at random');
+    expect(JSON.stringify(renderer.toJSON())).not.toContain(
+      'Fix the flaky auth test so the suite stops failing at random',
+    );
   });
 
   it('memoizes ordinary rows across unrelated working changes and updates the affected speaker', () => {
@@ -1020,24 +1194,32 @@ describe('Room message variant components', () => {
       />,
     );
 
-    const copy = renderer.root.findAllByProps({ testID: 'copy-button-desktop-reply' }).find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
+    const copy = renderer.root
+      .findAllByProps({ testID: 'copy-button-desktop-reply' })
+      .find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
     expect(copy.props.accessibilityLabel).toBe('Copy message text');
     act(() => copy.props.onPress());
     expect(onCopy).toHaveBeenCalledWith(row.text);
 
-    const reply = renderer.root.findAllByProps({ testID: 'reply-button-desktop-reply' }).find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
+    const reply = renderer.root
+      .findAllByProps({ testID: 'reply-button-desktop-reply' })
+      .find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
     expect(reply.props.accessibilityLabel).toBe('Reply to message');
     act(() => reply.props.onPress());
     expect(onReply).toHaveBeenCalledWith(row);
 
-    const react = renderer.root.findAllByProps({ testID: 'react-button-desktop-reply' }).find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
+    const react = renderer.root
+      .findAllByProps({ testID: 'react-button-desktop-reply' })
+      .find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
     expect(react.props.accessibilityLabel).toBe('React to message');
     act(() => react.props.onPress());
     const laugh = renderer.root.findByProps({ testID: 'reaction-choice-desktop-reply-😂' });
     act(() => laugh.props.onPress());
     expect(onReact).toHaveBeenCalledWith(row, '😂');
 
-    const forward = renderer.root.findAllByProps({ testID: 'forward-button-desktop-reply' }).find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
+    const forward = renderer.root
+      .findAllByProps({ testID: 'forward-button-desktop-reply' })
+      .find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
     expect(forward.props.accessibilityLabel).toBe('Forward message');
     act(() => forward.props.onPress());
     expect(onForward).toHaveBeenCalledWith(row);
@@ -1064,55 +1246,69 @@ describe('Room message variant components', () => {
     } satisfies OrdinaryLedgerMessageProps;
     const renderer = render(<OrdinaryLedgerMessage {...props} onReportIssue={onReportIssue} />);
 
-    const report = renderer.root.findAllByProps({ testID: 'report-button-desktop-report' }).find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
+    const report = renderer.root
+      .findAllByProps({ testID: 'report-button-desktop-report' })
+      .find((node: ReactTestInstance) => node.props.accessibilityRole === 'button')!;
     expect(report.props.accessibilityLabel).toBe('Report an issue with this message');
     act(() => report.props.onPress());
     expect(onReportIssue).toHaveBeenCalledWith(row);
 
     act(() => renderer.update(<OrdinaryLedgerMessage {...props} />));
-    expect(
-      renderer.root.findAllByProps({ testID: 'report-button-desktop-report' }),
-    ).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'report-button-desktop-report' })).toHaveLength(
+      0,
+    );
   });
 
   it('replaces a cached Unknown label with the hydrated name, avatar, and role', () => {
     const props = {
-      participantsHydrated: true, viewerPubkey: 'viewer', speakerWorking: false,
-      continued: false, participantHandles: [] as [], channelIndex: { rooms: [], corners: [] },
-      deliveryFailed: false, onChannelReference: vi.fn(), onReply: vi.fn(), onCopy: vi.fn(),
-      onRetry: vi.fn(), onDismiss: vi.fn(),
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [] as [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
     };
     const person = message({ id: 'hydrated-person', pubkey: 'ada' });
     const renderer = render(<OrdinaryLedgerMessage {...props} message={person} />);
     expect(ledgerEntryRender.mock.lastCall?.[0].byline.name).not.toBe('Hydrated member');
-    act(() => renderer.update(
-      <OrdinaryLedgerMessage
-        {...props}
-        message={person}
-        personName="Hydrated member"
-        personAvatar="https://cdn.example/ada.png"
-        personFace="fox"
-      />,
-    ));
+    act(() =>
+      renderer.update(
+        <OrdinaryLedgerMessage
+          {...props}
+          message={person}
+          personName="Hydrated member"
+          personAvatar="https://cdn.example/ada.png"
+          personFace="fox"
+        />,
+      ),
+    );
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
       name: 'Hydrated member',
       mark: { avatarUrl: 'https://cdn.example/ada.png', face: 'fox', kind: 'human' },
     });
 
     const agent = message({ id: 'hydrated-agent', pubkey: 'agent', isAgentAuthor: true });
-    act(() => renderer.update(
-      <OrdinaryLedgerMessage
-        {...props}
-        message={agent}
-        agent={{
-          pubkey: 'agent',
-          displayName: 'Hydrated member',
-          avatar: 'https://cdn.example/agent.png',
-          face: 'fox',
-        }}
-        agentModel="Opus"
-      />,
-    ));
+    act(() =>
+      renderer.update(
+        <OrdinaryLedgerMessage
+          {...props}
+          message={agent}
+          agent={{
+            pubkey: 'agent',
+            displayName: 'Hydrated member',
+            avatar: 'https://cdn.example/agent.png',
+            face: 'fox',
+          }}
+          agentModel="Opus"
+        />,
+      ),
+    );
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
       name: 'Hydrated member',
       role: 'Opus',
@@ -1122,20 +1318,45 @@ describe('Room message variant components', () => {
 
   it('keeps a connector app in the model slot and groups continued human messages', () => {
     const props = {
-      participantsHydrated: true, viewerPubkey: 'viewer', speakerWorking: false,
-      continued: false, firstBylineOfDay: false, participantHandles: [],
-      channelIndex: { rooms: [], corners: [] }, deliveryFailed: false,
-      onChannelReference: vi.fn(), onReply: vi.fn(), onCopy: vi.fn(),
-      onRetry: vi.fn(), onDismiss: vi.fn(),
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      firstBylineOfDay: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
     };
     const sourceClient = { id: 'meta-muse', name: 'Meta Muse' };
-    const row = message({ id: 'muse', pubkey: 'muse', isAgentAuthor: true, sourceClient,
-      authorIdentity: { kind: 'agent', pubkey: 'muse', name: 'Muse' } });
-    const renderer = render(<OrdinaryLedgerMessage {...props} message={row} agentModel="Meta Muse" />);
-    expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({ name: 'Muse', role: 'Meta Muse' });
+    const row = message({
+      id: 'muse',
+      pubkey: 'muse',
+      isAgentAuthor: true,
+      sourceClient,
+      authorIdentity: { kind: 'agent', pubkey: 'muse', name: 'Muse' },
+    });
+    const renderer = render(
+      <OrdinaryLedgerMessage {...props} message={row} agentModel="Meta Muse" />,
+    );
+    expect(ledgerEntryRender.mock.lastCall?.[0].byline).toMatchObject({
+      name: 'Muse',
+      role: 'Meta Muse',
+    });
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).not.toHaveProperty('sourceClient');
-    act(() => renderer.update(<OrdinaryLedgerMessage {...props} continued
-      message={message({ id: 'continued', pubkey: 'alex', sourceClient })} />));
+    act(() =>
+      renderer.update(
+        <OrdinaryLedgerMessage
+          {...props}
+          continued
+          message={message({ id: 'continued', pubkey: 'alex', sourceClient })}
+        />,
+      ),
+    );
     expect(ledgerEntryRender.mock.lastCall?.[0].byline).toBeUndefined();
   });
 
@@ -1268,19 +1489,36 @@ describe('Room message variant components', () => {
 
   it('returns a committed reply swipe immediately and installs its quote', () => {
     vi.useFakeTimers();
-    swipeMotion.close.mockClear(); swipeMotion.reset.mockClear();
+    swipeMotion.close.mockClear();
+    swipeMotion.reset.mockClear();
     const row = message({ id: 'interrupted' });
     const targets: unknown[] = [];
     const props = {
-      message: row, participantsHydrated: true, viewerPubkey: 'viewer',
-      speakerWorking: false, continued: false, participantHandles: [],
-      channelIndex: { rooms: [], corners: [] }, deliveryFailed: false,
-      onChannelReference: vi.fn(), onCopy: vi.fn(), onRetry: vi.fn(), onDismiss: vi.fn(),
+      message: row,
+      participantsHydrated: true,
+      viewerPubkey: 'viewer',
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onCopy: vi.fn(),
+      onRetry: vi.fn(),
+      onDismiss: vi.fn(),
       codeRoomId: 'room-proof',
       onReply: (message: ChatDisplayMessage) => {
-        const target = beginReplyTarget(message, [message], {
-          messageId: message.id, authorName: 'Agent', isAgent: true, preview: message.text,
-        }, 'room-proof');
+        const target = beginReplyTarget(
+          message,
+          [message],
+          {
+            messageId: message.id,
+            authorName: 'Agent',
+            isAgent: true,
+            preview: message.text,
+          },
+          'room-proof',
+        );
         if (target) targets.push(target);
       },
     };
@@ -1292,7 +1530,9 @@ describe('Room message variant components', () => {
       expect(targets).toHaveLength(1);
       act(() => vi.advanceTimersByTime(0));
       expect(swipeMotion.close).toHaveBeenCalledOnce();
-      expect(targets).toEqual([expect.objectContaining({ preview: 'hello', reference: row.reference })]);
+      expect(targets).toEqual([
+        expect.objectContaining({ preview: 'hello', reference: row.reference }),
+      ]);
       // No retry timers remain: the return runs on the UI thread.
       act(() => vi.advanceTimersByTime(480));
       expect(swipeMotion.close).toHaveBeenCalledOnce();
@@ -1306,19 +1546,31 @@ describe('Room message variant components', () => {
         expect(renderer.root.findByType('Swipeable').props.renderRightActions).toBeUndefined();
       }
       expect(targets).toHaveLength(1);
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('leaves a settled reply swipe alone once its close spring finishes (Reproduction swipe-1)', () => {
     vi.useFakeTimers();
-    swipeMotion.close.mockClear(); swipeMotion.reset.mockClear();
+    swipeMotion.close.mockClear();
+    swipeMotion.reset.mockClear();
     try {
       const renderer = render(
         <OrdinaryLedgerMessage
-          message={message({ id: 'settled' })} participantsHydrated viewerPubkey="viewer"
-          speakerWorking={false} continued={false} participantHandles={[]}
-          channelIndex={{ rooms: [], corners: [] }} deliveryFailed={false}
-          onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()} onRetry={vi.fn()} onDismiss={vi.fn()}
+          message={message({ id: 'settled' })}
+          participantsHydrated
+          viewerPubkey="viewer"
+          speakerWorking={false}
+          continued={false}
+          participantHandles={[]}
+          channelIndex={{ rooms: [], corners: [] }}
+          deliveryFailed={false}
+          onChannelReference={vi.fn()}
+          onReply={vi.fn()}
+          onCopy={vi.fn()}
+          onRetry={vi.fn()}
+          onDismiss={vi.fn()}
         />,
       );
       const swipe = renderer.root.findByType('Swipeable');
@@ -1328,7 +1580,9 @@ describe('Room message variant components', () => {
       act(() => vi.advanceTimersByTime(1000));
       expect(swipeMotion.close).toHaveBeenCalledOnce();
       expect(swipeMotion.reset).not.toHaveBeenCalled();
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('uses the phone swipe interaction on compact web', () => {
@@ -1354,7 +1608,12 @@ describe('Room message variant components', () => {
     );
 
     const swipeable = renderer.root.findByType('Swipeable');
-    act(() => { vi.useFakeTimers(); swipeable.props.onSwipeableWillOpen('left'); vi.runAllTimers(); vi.useRealTimers(); });
+    act(() => {
+      vi.useFakeTimers();
+      swipeable.props.onSwipeableWillOpen('left');
+      vi.runAllTimers();
+      vi.useRealTimers();
+    });
     expect(onReply).toHaveBeenCalledWith(row);
     expect(renderer.root.findAllByProps({ testID: 'reply-button-compact-web-reply' })).toHaveLength(
       0,
@@ -1396,7 +1655,12 @@ describe('Room message variant components', () => {
     act(() => leftAction.update(swipeable.props.renderLeftActions()));
     const glyph = leftAction.root.findByType('CornerGlyph' as never);
     expect(glyph.props.color).toBe(beelineThemes.obsidian.accent);
-    act(() => { vi.useFakeTimers(); swipeable.props.onSwipeableWillOpen('right'); vi.runAllTimers(); vi.useRealTimers(); });
+    act(() => {
+      vi.useFakeTimers();
+      swipeable.props.onSwipeableWillOpen('right');
+      vi.runAllTimers();
+      vi.useRealTimers();
+    });
     expect(onForwardToNewCorner).toHaveBeenCalledWith(row);
     expect(onReply).not.toHaveBeenCalled();
   });
@@ -1408,18 +1672,30 @@ describe('Room message variant components', () => {
     try {
       const renderer = render(
         <OrdinaryLedgerMessage
-          message={message({ id: 'rest' })} desktopLayout={false} participantsHydrated viewerPubkey="viewer"
-          speakerWorking={false} continued={false} participantHandles={[]}
-          channelIndex={{ rooms: [], corners: [] }} deliveryFailed={false}
-          onChannelReference={vi.fn()} onReply={vi.fn()} onForwardToNewCorner={vi.fn()}
-          onCopy={vi.fn()} onRetry={vi.fn()} onDismiss={vi.fn()}
+          message={message({ id: 'rest' })}
+          desktopLayout={false}
+          participantsHydrated
+          viewerPubkey="viewer"
+          speakerWorking={false}
+          continued={false}
+          participantHandles={[]}
+          channelIndex={{ rooms: [], corners: [] }}
+          deliveryFailed={false}
+          onChannelReference={vi.fn()}
+          onReply={vi.fn()}
+          onForwardToNewCorner={vi.fn()}
+          onCopy={vi.fn()}
+          onRetry={vi.fn()}
+          onDismiss={vi.fn()}
         />,
       );
       const swipe = () => renderer.root.findByType('Swipeable');
       const flat = (style: unknown) =>
         Object.assign({}, ...[style].flat(Infinity).filter(Boolean)) as Record<string, number>;
       const panel = () =>
-        render(swipe().props.renderLeftActions()).root.findByProps({ testID: 'corner-swipe-action-rest' });
+        render(swipe().props.renderLeftActions()).root.findByProps({
+          testID: 'corner-swipe-action-rest',
+        });
       const painted = () => flat(panel().props.style).opacity !== 0;
       // Width stays reserved so Swipeable still measures the open distance.
       expect(flat(panel().props.style).width).toBe(78);
@@ -1437,7 +1713,9 @@ describe('Room message variant components', () => {
       expect(painted()).toBe(false);
       act(() => vi.advanceTimersByTime(1000));
       expect(painted()).toBe(false);
-    } finally { vi.useRealTimers(); }
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('leaves swipe right inert where no new corner can open', () => {
@@ -1462,7 +1740,12 @@ describe('Room message variant components', () => {
 
     const swipeable = renderer.root.findByType('Swipeable');
     expect(swipeable.props.renderLeftActions).toBeUndefined();
-    act(() => { vi.useFakeTimers(); swipeable.props.onSwipeableWillOpen('right'); vi.runAllTimers(); vi.useRealTimers(); });
+    act(() => {
+      vi.useFakeTimers();
+      swipeable.props.onSwipeableWillOpen('right');
+      vi.runAllTimers();
+      vi.useRealTimers();
+    });
   });
 
   it('asks a corner proposal as the lettered choice card without replacing reply swipe', () => {
@@ -1509,7 +1792,12 @@ describe('Room message variant components', () => {
     expect(onDecision).toHaveBeenCalledWith(proposal, 'cancel');
 
     const swipe = renderer.root.findByProps({ testID: 'swipe-reply-corner-proposal' });
-    act(() => { vi.useFakeTimers(); swipe.props.onSwipeableWillOpen('left'); vi.runAllTimers(); vi.useRealTimers(); });
+    act(() => {
+      vi.useFakeTimers();
+      swipe.props.onSwipeableWillOpen('left');
+      vi.runAllTimers();
+      vi.useRealTimers();
+    });
     expect(onReply).toHaveBeenCalledWith(proposal);
   });
 
@@ -1561,20 +1849,19 @@ describe('Room message variant components', () => {
               onCopy={() => undefined}
               onRetry={() => undefined}
               onDismiss={() => undefined}
-              {...(context.cornerSwipeEnabled
-                ? { onForwardToNewCorner: () => undefined }
-                : {})}
+              {...(context.cornerSwipeEnabled ? { onForwardToNewCorner: () => undefined } : {})}
               {...(context.cornerProposalEnabled
                 ? { onCornerProposalDecision: () => undefined }
                 : {})}
             />
           );
         },
-        presentationForMessage: (item) => archiveActionPresentation(item, {
-          roomArchived: archived,
-          cornerSwipeOffered: true,
-          cornerProposalOffered: true,
-        }),
+        presentationForMessage: (item) =>
+          archiveActionPresentation(item, {
+            roomArchived: archived,
+            cornerSwipeOffered: true,
+            cornerProposalOffered: true,
+          }),
         continuedIds: new Set(),
         precedingMessageById: new Map(),
         messageById: new Map(rows.map((row) => [row.id, row])),
@@ -1607,7 +1894,9 @@ describe('Room message variant components', () => {
     expect(choice('open').props.onPress).toBeUndefined();
     expect(choice('open').props.accessibilityState).toBeUndefined();
     expect(choice('cancel').props.onPress).toBeUndefined();
-    expect(shown.root.findByProps({ testID: 'corner-proposal-proposal' }).props.tier).toBe('record');
+    expect(shown.root.findByProps({ testID: 'corner-proposal-proposal' }).props.tier).toBe(
+      'record',
+    );
     expect(swipe('proposal').props.renderLeftActions).toBeUndefined();
     expect(swipe('swipe').props.renderLeftActions).toBeUndefined();
     expect(swipe('swipe').props.renderRightActions).toEqual(expect.any(Function));
@@ -1727,7 +2016,12 @@ describe('Room message variant components', () => {
     const narrationSwipe = narrationRow.root.findByProps({
       testID: 'swipe-reply-corner-narration',
     });
-    act(() => { vi.useFakeTimers(); narrationSwipe.props.onSwipeableWillOpen('left'); vi.runAllTimers(); vi.useRealTimers(); });
+    act(() => {
+      vi.useFakeTimers();
+      narrationSwipe.props.onSwipeableWillOpen('left');
+      vi.runAllTimers();
+      vi.useRealTimers();
+    });
     expect(onNarrationReply).toHaveBeenCalledWith(narration);
 
     const onToolReply = vi.fn();
@@ -1735,7 +2029,12 @@ describe('Room message variant components', () => {
       <OrdinaryLedgerMessage {...props} message={tool} onReply={onToolReply} />,
     );
     const toolSwipe = toolRow.root.findByProps({ testID: 'swipe-reply-corner-tool' });
-    act(() => { vi.useFakeTimers(); toolSwipe.props.onSwipeableWillOpen('left'); vi.runAllTimers(); vi.useRealTimers(); });
+    act(() => {
+      vi.useFakeTimers();
+      toolSwipe.props.onSwipeableWillOpen('left');
+      vi.runAllTimers();
+      vi.useRealTimers();
+    });
     expect(onToolReply).toHaveBeenCalledWith(tool);
   });
 
@@ -1782,7 +2081,10 @@ describe('Room message variant components', () => {
 
     const overscan = cards(false);
     expect(overscan.root.findAllByType('Image')).toHaveLength(0);
-    act(() => { observeArtifactRows('attachment-proof', ['with-file']); setArtifactViewportActive('attachment-proof', true); });
+    act(() => {
+      observeArtifactRows('attachment-proof', ['with-file']);
+      setArtifactViewportActive('attachment-proof', true);
+    });
     const live = cards(false);
     expect(live.root.findAllByProps({ testID: 'chat-attachment-receipt.png' })).not.toHaveLength(0);
     expect(live.root.findAllByType('Image')).not.toHaveLength(0);
@@ -1850,8 +2152,13 @@ describe('Room message variant components', () => {
       expect.objectContaining({ name: 'receipt.png' }),
     );
     act(() => open.props.onPress());
-    expect(routerOwnerArtifactAction).toHaveBeenCalledWith('OpenArtifact', '11111111-1111-4111-8111-111111111111');
-    expect(vi.mocked(routerOwnerArtifactAction).mock.invocationCallOrder[0]).toBeLessThan(modal.show.mock.invocationCallOrder[0]!);
+    expect(routerOwnerArtifactAction).toHaveBeenCalledWith(
+      'OpenArtifact',
+      '11111111-1111-4111-8111-111111111111',
+    );
+    expect(vi.mocked(routerOwnerArtifactAction).mock.invocationCallOrder[0]).toBeLessThan(
+      modal.show.mock.invocationCallOrder[0]!,
+    );
     expect(modal.show).toHaveBeenCalledWith({
       component: expect.any(Function),
       props: {
@@ -1910,8 +2217,13 @@ describe('Room message variant components', () => {
       expect.objectContaining({ name: 'receipt.png' }),
     );
     act(() => open.props.onPress());
-    expect(routerOwnerArtifactAction).toHaveBeenCalledWith('OpenArtifact', '11111111-1111-4111-8111-111111111111');
-    expect(vi.mocked(routerOwnerArtifactAction).mock.invocationCallOrder[0]).toBeLessThan(modal.show.mock.invocationCallOrder[0]!);
+    expect(routerOwnerArtifactAction).toHaveBeenCalledWith(
+      'OpenArtifact',
+      '11111111-1111-4111-8111-111111111111',
+    );
+    expect(vi.mocked(routerOwnerArtifactAction).mock.invocationCallOrder[0]).toBeLessThan(
+      modal.show.mock.invocationCallOrder[0]!,
+    );
     expect(modal.show).toHaveBeenCalledWith({
       component: expect.any(Function),
       props: {
@@ -2892,11 +3204,19 @@ describe('Room message variant components', () => {
     );
 
     expect(ledgerEntryRender.mock.lastCall?.[0].mentionHandles).toEqual(['candy', 'system']);
-    const { LedgerEntry: RenderedLedgerEntry } = await vi.importActual<typeof import('@/components/buzz/Ledger')>('@/components/buzz/Ledger');
-    const entry = render(React.createElement(RenderedLedgerEntry, ledgerEntryRender.mock.lastCall?.[0]));
-    const link = (handle: string) => entry.root.findAllByType('Text' as never).find(
-      (node: ReactTestInstance) => node.props.children === `@${handle}` && node.props.accessibilityRole === 'link',
+    const { LedgerEntry: RenderedLedgerEntry } = await vi.importActual<
+      typeof import('@/components/buzz/Ledger')
+    >('@/components/buzz/Ledger');
+    const entry = render(
+      React.createElement(RenderedLedgerEntry, ledgerEntryRender.mock.lastCall?.[0]),
     );
+    const link = (handle: string) =>
+      entry.root
+        .findAllByType('Text' as never)
+        .find(
+          (node: ReactTestInstance) =>
+            node.props.children === `@${handle}` && node.props.accessibilityRole === 'link',
+        );
     const candy = link('candy');
     const system = link('system');
     expect(candy?.props.style).toContainEqual({ color: beelineThemes.obsidian.accent });
@@ -2904,7 +3224,9 @@ describe('Room message variant components', () => {
     act(() => candy?.props.onPress());
     expect(onMention).toHaveBeenCalledWith('candy-id');
     act(() => system?.props.onPress());
-    expect(onMention).toHaveBeenCalledWith('972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248');
+    expect(onMention).toHaveBeenCalledWith(
+      '972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248',
+    );
   });
 
   it('highlights the viewing member while leaving their self-mention inert', () => {
@@ -3062,7 +3384,9 @@ describe('Room message variant components', () => {
     expect(settled.root.findByProps({ testID: 'grant-g-1-outcome' }).props.children).toBe(
       `Once · Allowed by you · ${ledgerStamp(1_756_900_060)}`,
     );
-    expect(settled.root.findByProps({ testID: 'grant-g-2-outcome' }).props.children).toBe(`Denied by you · ${ledgerStamp(1_756_900_061)}`);
+    expect(settled.root.findByProps({ testID: 'grant-g-2-outcome' }).props.children).toBe(
+      `Denied by you · ${ledgerStamp(1_756_900_061)}`,
+    );
   });
 
   it.each([
@@ -3171,34 +3495,70 @@ describe('Room message variant components', () => {
   });
 
   it('grant-src-1: View request loads the source row instead of missing', async () => {
-    const target = { id: 'source-message', text: 'Please run the checks', createdAt: 1,
-      presentation: 'message' as const, author: { pubkey: 'owner', kind: 'human' as const, name: 'Owner' } };
+    const target = {
+      id: 'source-message',
+      text: 'Please run the checks',
+      createdAt: 1,
+      presentation: 'message' as const,
+      author: { pubkey: 'owner', kind: 'human' as const, name: 'Owner' },
+    };
     const historyAround = vi.fn(async (roomId: string, id: string) => {
       expect(roomId).toBe('source-room');
       expect(id).toBe(target.id);
       return { roomId, messages: [target] };
     });
     let store!: ReturnType<typeof useRoomMessageStore>;
-    const card = message({ grantRequest: {
-      agent: { pubkey: 'agent', kind: 'agent', name: 'Bee' },
-      owner: { pubkey: 'owner', kind: 'human', name: 'Owner' },
-      requester: { pubkey: 'owner', kind: 'human', name: 'Owner' },
-      sourceRoomId: 'source-room', sourceMessageId: target.id,
-      grants: [{ grantId: 'jump-grant', kind: 'command', target: 'npm test', reason: 'Run checks',
-        status: 'pending', requestedBy: { pubkey: 'owner', kind: 'human', name: 'Owner' }, roomId: 'other-room', createdAt: 1, auto: false }],
-    } });
+    const card = message({
+      grantRequest: {
+        agent: { pubkey: 'agent', kind: 'agent', name: 'Bee' },
+        owner: { pubkey: 'owner', kind: 'human', name: 'Owner' },
+        requester: { pubkey: 'owner', kind: 'human', name: 'Owner' },
+        sourceRoomId: 'source-room',
+        sourceMessageId: target.id,
+        grants: [
+          {
+            grantId: 'jump-grant',
+            kind: 'command',
+            target: 'npm test',
+            reason: 'Run checks',
+            status: 'pending',
+            requestedBy: { pubkey: 'owner', kind: 'human', name: 'Owner' },
+            roomId: 'other-room',
+            createdAt: 1,
+            auto: false,
+          },
+        ],
+      },
+    });
     function Probe() {
-      store = useRoomMessageStore({ roomId: 'source-room', tailMessages: [],
-        roomClient: { historyAround, history: vi.fn() }, enabled: true, initialVisibleCount: 30 });
-      return <GrantRequestCard message={card} viewerIsAgent={false} viewerPubkey="owner"
-        actionId={null} onDecision={vi.fn()}
-        onOpenSource={(roomId, id) => { expect(roomId).toBe('source-room'); void store.jumpTo(id); }} />;
+      store = useRoomMessageStore({
+        roomId: 'source-room',
+        tailMessages: [],
+        roomClient: { historyAround, history: vi.fn() },
+        enabled: true,
+        initialVisibleCount: 30,
+      });
+      return (
+        <GrantRequestCard
+          message={card}
+          viewerIsAgent={false}
+          viewerPubkey="owner"
+          actionId={null}
+          onDecision={vi.fn()}
+          onOpenSource={(roomId, id) => {
+            expect(roomId).toBe('source-room');
+            void store.jumpTo(id);
+          }}
+        />
+      );
     }
     const renderer = render(<Probe />);
-    await act(async () => renderer.root.findByProps({ testID: 'grant-jump-grant-source' }).props.onPress());
+    await act(async () =>
+      renderer.root.findByProps({ testID: 'grant-jump-grant-source' }).props.onPress(),
+    );
     expect(historyAround).toHaveBeenCalledWith('source-room', target.id);
     expect(store.jump).toEqual({ messageId: target.id, status: 'ready' });
-    expect(store.rows.some(row => row.id === target.id)).toBe(true);
+    expect(store.rows.some((row) => row.id === target.id)).toBe(true);
   });
 
   it('opens a relayed Squire approval in Squire and preserves the source request link', () => {
@@ -3220,9 +3580,9 @@ describe('Room message variant components', () => {
     expect(
       view.root.findByProps({ testID: 'squire-approval-card-title' }).props.numberOfLines,
     ).toBeUndefined();
-    expect(view.root.findByProps({ testID: 'squire-approval-card-title' }).props.children).toContain(
-      'wants to buy Headphones',
-    );
+    expect(
+      view.root.findByProps({ testID: 'squire-approval-card-title' }).props.children,
+    ).toContain('wants to buy Headphones');
     act(() => view.root.findByProps({ testID: 'squire-approval-open' }).props.onPress());
     expect(openExternal.openExternalUrl).toHaveBeenCalledWith(
       'https://approve.trustysquire.test/approval/purchase-1',
@@ -3231,23 +3591,47 @@ describe('Room message variant components', () => {
     expect(onOpenSource).toHaveBeenCalledWith('source-room', 'source-message');
   });
 
-  it.each(['fetch_credential', 'Link'])('R-SQUIRE-CARD: uses the asking agent avatar and no footer note for %s', (tool) => {
-    const approval = message({ squireApproval: {
-      agent: { pubkey: 'agent', kind: 'agent', name: 'Terra', handle: 'terra' },
-      tool, title: 'Credential access approval', detail: 'Reveal a test credential',
-      approvalUrl: 'https://approve.example.test/test', approvalId: 'test', linkKind: 'approval',
-      sourceRoomId: 'source-room', sourceMessageId: 'source-message',
-    } });
-    const avatar = 'https://server.test/v1/agent-avatars/11111111-1111-4111-8111-111111111111';
-    const view = render(<SquireApprovalCard message={approval} agent={{ pubkey: 'agent', displayName: 'Terra', avatar }} onOpenSource={vi.fn()} />);
-    expect(view.root.findByType('IdentityMark' as never).props.avatarUrl).toBe(avatar);
-    expect(view.root.findByType('IdentityMark' as never).props.seed).toBe('agent');
-    expect(view.root.findByProps({ testID: 'squire-approval-card-title' }).props.children).toContain('@Terra wants to');
-    expect(view.root.findAll((node: ReactTestInstance) => node.type === 'Text' &&
-      typeof node.props.children === 'string' && node.props.children.startsWith('approval stays with'))).toHaveLength(0);
-    expect(view.root.findByProps({ testID: 'squire-approval-open' })).toBeDefined();
-    expect(view.root.findByProps({ testID: 'squire-approval-source' })).toBeDefined();
-  });
+  it.each(['fetch_credential', 'Link'])(
+    'R-SQUIRE-CARD: uses the asking agent avatar and no footer note for %s',
+    (tool) => {
+      const approval = message({
+        squireApproval: {
+          agent: { pubkey: 'agent', kind: 'agent', name: 'Terra', handle: 'terra' },
+          tool,
+          title: 'Credential access approval',
+          detail: 'Reveal a test credential',
+          approvalUrl: 'https://approve.example.test/test',
+          approvalId: 'test',
+          linkKind: 'approval',
+          sourceRoomId: 'source-room',
+          sourceMessageId: 'source-message',
+        },
+      });
+      const avatar = 'https://server.test/v1/agent-avatars/11111111-1111-4111-8111-111111111111';
+      const view = render(
+        <SquireApprovalCard
+          message={approval}
+          agent={{ pubkey: 'agent', displayName: 'Terra', avatar }}
+          onOpenSource={vi.fn()}
+        />,
+      );
+      expect(view.root.findByType('IdentityMark' as never).props.avatarUrl).toBe(avatar);
+      expect(view.root.findByType('IdentityMark' as never).props.seed).toBe('agent');
+      expect(
+        view.root.findByProps({ testID: 'squire-approval-card-title' }).props.children,
+      ).toContain('@Terra wants to');
+      expect(
+        view.root.findAll(
+          (node: ReactTestInstance) =>
+            node.type === 'Text' &&
+            typeof node.props.children === 'string' &&
+            node.props.children.startsWith('approval stays with'),
+        ),
+      ).toHaveLength(0);
+      expect(view.root.findByProps({ testID: 'squire-approval-open' })).toBeDefined();
+      expect(view.root.findByProps({ testID: 'squire-approval-source' })).toBeDefined();
+    },
+  );
 
   describe('connector-offer card (R5)', () => {
     const agent = { pubkey: 'otter', kind: 'agent' as const, name: 'Otter', handle: 'otter' };
@@ -3269,66 +3653,181 @@ describe('Room message variant components', () => {
       },
     });
 
-
     it('renders the route-neutral app card for its exact owner and waits for server settlement', () => {
       const onConnect = vi.fn();
-      const signIn = message({ appSignIn: { appId: 'app-slack', appKey: 'slack', name: 'Slack', ownerId: 'zeke', agentId: 'monarch', status: 'pending', continuation: 'Monarch posts the notes right after.' } });
-      const pendingCard = render(<AppSignInCard message={signIn} agentName="Monarch" canConnect onConnect={onConnect} busy={false} />);
+      const signIn = message({
+        appSignIn: {
+          appId: 'app-slack',
+          appKey: 'slack',
+          name: 'Slack',
+          ownerId: 'zeke',
+          agentId: 'monarch',
+          status: 'pending',
+          continuation: 'Monarch posts the notes right after.',
+        },
+      });
+      const pendingCard = render(
+        <AppSignInCard
+          message={signIn}
+          agentName="Monarch"
+          canConnect
+          onConnect={onConnect}
+          busy={false}
+        />,
+      );
       expect(JSON.stringify(pendingCard.toJSON())).toContain('Connect Slack');
       expect(JSON.stringify(pendingCard.toJSON())).toContain('posts the notes right after.');
-      const fallback = render(<AppSignInCard message={message({ appSignIn: { ...signIn.appSignIn!, continuation: undefined } })} agentName="Monarch" canConnect onConnect={onConnect} busy={false} />);
+      const fallback = render(
+        <AppSignInCard
+          message={message({ appSignIn: { ...signIn.appSignIn!, continuation: undefined } })}
+          agentName="Monarch"
+          canConnect
+          onConnect={onConnect}
+          busy={false}
+        />,
+      );
       expect(JSON.stringify(fallback.toJSON())).toContain('continues the request right after.');
-      act(() => pendingCard.root.findByProps({ testID: 'app-sign-in-slack-connect' }).props.onPress());
+      act(() =>
+        pendingCard.root.findByProps({ testID: 'app-sign-in-slack-connect' }).props.onPress(),
+      );
       expect(onConnect).toHaveBeenCalledTimes(1);
       // The lone Connect decision sits at the trailing edge, like every card's ButtonRow.
-      const connect = pendingCard.root.findAll((node: any) => node.props.testID === 'app-sign-in-slack-connect')[0]!;
-      expect([connect.props.style].flat(Infinity)).toContainEqual(expect.objectContaining({ alignSelf: 'flex-end' }));
-      const waiting = render(<AppSignInCard message={signIn} agentName="Monarch" canConnect={false} onConnect={onConnect} busy={false} />);
+      const connect = pendingCard.root.findAll(
+        (node: any) => node.props.testID === 'app-sign-in-slack-connect',
+      )[0]!;
+      expect([connect.props.style].flat(Infinity)).toContainEqual(
+        expect.objectContaining({ alignSelf: 'flex-end' }),
+      );
+      const waiting = render(
+        <AppSignInCard
+          message={signIn}
+          agentName="Monarch"
+          canConnect={false}
+          onConnect={onConnect}
+          busy={false}
+        />,
+      );
       expect(JSON.stringify(waiting.toJSON())).toContain('Waiting for the account owner');
-      const settled = render(<AppSignInCard message={message({ appSignIn: { ...signIn.appSignIn!, status: 'connected' } })} agentName="Monarch" canConnect={false} onConnect={onConnect} busy={false} />);
+      const settled = render(
+        <AppSignInCard
+          message={message({ appSignIn: { ...signIn.appSignIn!, status: 'connected' } })}
+          agentName="Monarch"
+          canConnect={false}
+          onConnect={onConnect}
+          busy={false}
+        />,
+      );
       expect(JSON.stringify(settled.toJSON())).toContain('SLACK');
       expect(JSON.stringify(settled.toJSON())).toContain('CONNECTED ·');
       expect(JSON.stringify(settled.toJSON())).toContain('MONARCH');
       expect(JSON.stringify(settled.toJSON())).not.toContain('Connect Slack');
-      const instagram = render(<AppSignInCard message={message({ appSignIn: {
-        ...signIn.appSignIn!, appKey: 'instagram', name: 'Instagram', status: 'failed',
-        errorMessage: 'Instagram account was rejected by Meta',
-      } })} agentName="Monarch" canConnect onConnect={onConnect} busy={false} />);
+      const instagram = render(
+        <AppSignInCard
+          message={message({
+            appSignIn: {
+              ...signIn.appSignIn!,
+              appKey: 'instagram',
+              name: 'Instagram',
+              status: 'failed',
+              errorMessage: 'Instagram account was rejected by Meta',
+            },
+          })}
+          agentName="Monarch"
+          canConnect
+          onConnect={onConnect}
+          busy={false}
+        />,
+      );
       const instagramCard = JSON.stringify(instagram.toJSON());
       expect(instagramCard).toContain('Business or Creator account linked to a Facebook Page');
       expect(instagramCard).toContain('Instagram account was rejected by Meta');
       expect(instagramCard).toContain('Retry Instagram');
     });
 
-    it.each(['Instagram', 'Figma'])('Reproduction CARD-1: renders the provider logo for %s and uses a local glyph on failure', (name) => {
-      const logo = `https://cdn.composio.dev/${name.toLowerCase()}.png`;
-      const card = render(<AppSignInCard message={message({ appSignIn: {
-        appId: 'app-proof', appKey: name.toLowerCase(), name, logo,
-        domain: `${name.toLowerCase()}.com`, ownerId: 'zeke', agentId: 'monarch', status: 'pending',
-      } })} agentName="Monarch" canConnect onConnect={vi.fn()} busy={false} />);
-      const image = () => card.root.findAllByType('Image').find((node: ReactTestInstance) =>
-        node.props.source?.uri === logo);
-      expect(image()).toBeDefined();
-      act(() => image()!.props.onError());
-      expect(card.root.findAllByType('Image')).toHaveLength(0);
-      expect(card.root.findAllByType('Svg').length).toBeGreaterThan(0);
-      expect(card.root.findAllByType('Text').some((node: ReactTestInstance) => node.props.children === name[0])).toBe(false);
-      if (process.env.BEELINE_SIGN_IN_PROOF === '1')
-        console.log(`CARD-1 ${name}: card renders provider logo; failed logo uses the local website glyph without a favicon request`);
-    });
+    it.each(['Instagram', 'Figma'])(
+      'Reproduction CARD-1: renders the provider logo for %s and uses a local glyph on failure',
+      (name) => {
+        const logo = `https://cdn.composio.dev/${name.toLowerCase()}.png`;
+        const card = render(
+          <AppSignInCard
+            message={message({
+              appSignIn: {
+                appId: 'app-proof',
+                appKey: name.toLowerCase(),
+                name,
+                logo,
+                domain: `${name.toLowerCase()}.com`,
+                ownerId: 'zeke',
+                agentId: 'monarch',
+                status: 'pending',
+              },
+            })}
+            agentName="Monarch"
+            canConnect
+            onConnect={vi.fn()}
+            busy={false}
+          />,
+        );
+        const image = () =>
+          card.root
+            .findAllByType('Image')
+            .find((node: ReactTestInstance) => node.props.source?.uri === logo);
+        expect(image()).toBeDefined();
+        act(() => image()!.props.onError());
+        expect(card.root.findAllByType('Image')).toHaveLength(0);
+        expect(card.root.findAllByType('Svg').length).toBeGreaterThan(0);
+        expect(
+          card.root
+            .findAllByType('Text')
+            .some((node: ReactTestInstance) => node.props.children === name[0]),
+        ).toBe(false);
+        if (process.env.BEELINE_SIGN_IN_PROOF === '1')
+          console.log(
+            `CARD-1 ${name}: card renders provider logo; failed logo uses the local website glyph without a favicon request`,
+          );
+      },
+    );
 
     it('Reproduction RS-1: a stored domain shows the app mark; no logo or domain keeps the letter', () => {
-      const base = { appId: 'app-whatsapp', appKey: 'whatsapp', name: 'WhatsApp',
-        ownerId: 'zeke', agentId: 'monarch', status: 'pending' as const };
-      const card = render(<AppSignInCard message={message({ appSignIn: { ...base, domain: 'whatsapp.com' } })}
-        agentName="Monarch" canConnect onConnect={vi.fn()} busy={false} />);
+      const base = {
+        appId: 'app-whatsapp',
+        appKey: 'whatsapp',
+        name: 'WhatsApp',
+        ownerId: 'zeke',
+        agentId: 'monarch',
+        status: 'pending' as const,
+      };
+      const card = render(
+        <AppSignInCard
+          message={message({ appSignIn: { ...base, domain: 'whatsapp.com' } })}
+          agentName="Monarch"
+          canConnect
+          onConnect={vi.fn()}
+          busy={false}
+        />,
+      );
       expect(card.root.findAllByType('Image')).toHaveLength(0);
       expect(card.root.findAllByType('Svg').length).toBeGreaterThan(0);
-      expect(card.root.findAllByType('Text').some((node: ReactTestInstance) => node.props.children === 'W')).toBe(false);
-      const letter = render(<AppSignInCard message={message({ appSignIn: base })}
-        agentName="Monarch" canConnect onConnect={vi.fn()} busy={false} />);
+      expect(
+        card.root
+          .findAllByType('Text')
+          .some((node: ReactTestInstance) => node.props.children === 'W'),
+      ).toBe(false);
+      const letter = render(
+        <AppSignInCard
+          message={message({ appSignIn: base })}
+          agentName="Monarch"
+          canConnect
+          onConnect={vi.fn()}
+          busy={false}
+        />,
+      );
       expect(letter.root.findAllByType('Image')).toHaveLength(0);
-      expect(letter.root.findAllByType('Text').some((node: ReactTestInstance) => node.props.children === 'W')).toBe(true);
+      expect(
+        letter.root
+          .findAllByType('Text')
+          .some((node: ReactTestInstance) => node.props.children === 'W'),
+      ).toBe(true);
     });
 
     it('keeps the Squire capability without a redundant audience or Changes row', () => {
@@ -3372,11 +3871,21 @@ describe('Room message variant components', () => {
       ['tailscale' as const, 'Tailscale', undefined],
       ['wallet' as const, 'Wallet', 'Sign transactions with your wallet'],
     ])('shows only the useful capability for %s', (connectorType, connectorName, capability) => {
-      const card = render(<ConnectorOfferCard
-        message={message({ connectorOffer: { ...pending.connectorOffer!, connectorType, connectorName } })}
-        viewerIsAgent={false} viewerPubkey="zeke" actionId={null}
-        onAccept={vi.fn()} onOpenWorkbench={vi.fn()} />);
-      const text = card.root.findAllByType('Text').map((node: ReactTestInstance) => node.props.children);
+      const card = render(
+        <ConnectorOfferCard
+          message={message({
+            connectorOffer: { ...pending.connectorOffer!, connectorType, connectorName },
+          })}
+          viewerIsAgent={false}
+          viewerPubkey="zeke"
+          actionId={null}
+          onAccept={vi.fn()}
+          onOpenWorkbench={vi.fn()}
+        />,
+      );
+      const text = card.root
+        .findAllByType('Text')
+        .map((node: ReactTestInstance) => node.props.children);
       expect(text).not.toContain('Changes');
       expect(text).not.toContain('Use the connected service');
       if (capability) {
@@ -3389,10 +3898,19 @@ describe('Room message variant components', () => {
     });
 
     it('keeps the other addressee under the title without the Connectors prefix', () => {
-      const card = render(<ConnectorOfferCard message={pending}
-        viewerIsAgent={false} viewerPubkey="bystander" actionId={null}
-        onAccept={vi.fn()} onOpenWorkbench={vi.fn()} />);
-      expect(card.root.findByProps({ testID: 'connector-offer-offer-1-line' }).props.children).toBe('for @zeke');
+      const card = render(
+        <ConnectorOfferCard
+          message={pending}
+          viewerIsAgent={false}
+          viewerPubkey="bystander"
+          actionId={null}
+          onAccept={vi.fn()}
+          onOpenWorkbench={vi.fn()}
+        />,
+      );
+      expect(card.root.findByProps({ testID: 'connector-offer-offer-1-line' }).props.children).toBe(
+        'for @zeke',
+      );
     });
 
     it('keeps an in-progress ceremony resumable without claiming the tool was added', () => {
@@ -3432,28 +3950,52 @@ describe('Room message variant components', () => {
 
     it('settles a failed install and offers Retry to the authorized person', () => {
       const onAccept = vi.fn();
-      const failed = render(<ConnectorOfferCard
-        message={message({ connectorOffer: { ...pending.connectorOffer!, status: 'failed' } })}
-        viewerIsAgent={false} viewerPubkey="zeke" actionId={null}
-        onAccept={onAccept} onContinue={vi.fn()} onOpenWorkbench={vi.fn()}
-      />);
+      const failed = render(
+        <ConnectorOfferCard
+          message={message({ connectorOffer: { ...pending.connectorOffer!, status: 'failed' } })}
+          viewerIsAgent={false}
+          viewerPubkey="zeke"
+          actionId={null}
+          onAccept={onAccept}
+          onContinue={vi.fn()}
+          onOpenWorkbench={vi.fn()}
+        />,
+      );
       expect(failed.root.findByProps({ testID: 'connector-offer-settled' })).toBeDefined();
-      expect(failed.root.findByProps({ testID: 'connector-offer-offer-1-outcome' }).props.children)
-        .toBe('Connection failed. Retry to continue.');
-      act(() => failed.root.findByProps({ testID: 'connector-offer-offer-1-accept' }).props.onPress());
+      expect(
+        failed.root.findByProps({ testID: 'connector-offer-offer-1-outcome' }).props.children,
+      ).toBe('Connection failed. Retry to continue.');
+      act(() =>
+        failed.root.findByProps({ testID: 'connector-offer-offer-1-accept' }).props.onPress(),
+      );
       expect(onAccept).toHaveBeenCalledWith('offer-1', 'trusty-squire');
-      expect(failed.root.findAllByProps({ testID: 'connector-offer-offer-1-continue' })).toHaveLength(0);
+      expect(
+        failed.root.findAllByProps({ testID: 'connector-offer-offer-1-continue' }),
+      ).toHaveLength(0);
     });
 
     it('retains the automatic reconnect note while sign-in is in progress', () => {
       const reconnecting = render(
         <ConnectorOfferCard
-          message={message({ connectorOffer: { ...pending.connectorOffer!, status: 'connecting', intent: 'reconnect' } })}
-          viewerIsAgent={false} viewerPubkey="zeke" actionId={null}
-          onAccept={vi.fn()} onContinue={vi.fn()} onOpenWorkbench={vi.fn()}
+          message={message({
+            connectorOffer: {
+              ...pending.connectorOffer!,
+              status: 'connecting',
+              intent: 'reconnect',
+            },
+          })}
+          viewerIsAgent={false}
+          viewerPubkey="zeke"
+          actionId={null}
+          onAccept={vi.fn()}
+          onContinue={vi.fn()}
+          onOpenWorkbench={vi.fn()}
         />,
       );
-      expect(reconnecting.root.findByProps({ testID: 'connector-offer-offer-1-connecting' }).props.children).toBe('Reconnecting…');
+      expect(
+        reconnecting.root.findByProps({ testID: 'connector-offer-offer-1-connecting' }).props
+          .children,
+      ).toBe('Reconnecting…');
     });
 
     it('renders a squire-login-wall reconnect card with no Add affordance, straight to Continue sign-in', () => {
@@ -3628,42 +4170,88 @@ describe('Room message variant components', () => {
     });
   });
 
-  it.each(['pending', 'once', 'approved', 'denied'] as const)('shows purpose, facts, folded script and %s outcome', (status) => {
-    const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
-    const purpose = 'Free disk space so the Android test build can finish.';
-    const card = render(<GrantRequestCard message={message({ grantRequest: {
-      agent: { pubkey: 'agent', kind: 'agent', name: 'Jellybean' }, owner, requester: owner,
-      grants: [{ grantId: 'purpose', kind: 'command', target: '/usr/bin/python3 /tmp/cleanup.py',
-        reason: 'cleanup', purpose, machine: 'squire', touches: 'Old build files', capabilities: 'Delete files',
-        status, requestedBy: owner, roomId: '22222222-2222-4222-8222-222222222222', createdAt: 1, auto: false,
-        ...(status !== 'pending' ? { decidedBy: owner, decidedAt: 1756900060 } : {}),
-        script: { path: '/tmp/cleanup.py', sha256: 'a'.repeat(64), bytes: 17, contents: 'print("cleanup")\n' },
-      }],
-    } })} viewerIsAgent={false} viewerPubkey="owner" viewerCanManageWorkspace actionId={null} onDecision={vi.fn()} />);
-    const texts = () => card.root.findAllByType('Text').map((node: { props: { children: unknown } }) => node.props.children);
-    expect(texts()).toContain(purpose);
-    expect(texts()).toContain('python3 cleanup.py');
-    expect(texts()).toContain('Old build files');
-    expect(texts()).toContain('Delete files');
-    expect(texts()).not.toContain('/tmp/cleanup.py');
-    expect(card.root.findByProps({ testID: 'grant-purpose-ask' }).props.children).toBe('@Jellybean wants to run a script');
-    expect(card.root.findAllByProps({ testID: 'grant-purpose-script' })).toHaveLength(0);
-    const toggle = () => card.root.findByProps({ testID: 'grant-purpose-script-toggle' });
-    expect(toggle().props.accessibilityState.expanded).toBe(false);
-    act(() => toggle().props.onPress());
-    expect(card.root.findByProps({ testID: 'grant-purpose-script' })).toBeDefined();
-    expect(texts()).toContain('print("cleanup")\n');
-    act(() => toggle().props.onPress());
-    expect(card.root.findAllByProps({ testID: 'grant-purpose-script' })).toHaveLength(0);
-    if (status === 'pending') {
-      expect(card.root.findByProps({ testID: 'grant-purpose-once' })).toBeDefined();
-    } else {
-      expect(card.root.findAllByProps({ testID: 'grant-purpose-once' })).toHaveLength(0);
-      expect(card.root.findByProps({ testID: 'grant-purpose-outcome' }).props.style).toEqual(expect.arrayContaining([expect.objectContaining({ textTransform: 'none' })]));
-      expect(card.root.findByProps({ testID: 'grant-purpose-outcome' }).props.children).toMatch(
-        status === 'denied' ? /^Denied by you · \d{2}:\d{2}$/ : status === 'once' ? /^Once · Allowed by you · \d{2}:\d{2}$/ : /^Always · Allowed by you · \d{2}:\d{2}$/);
-    }
-  });
+  it.each(['pending', 'once', 'approved', 'denied'] as const)(
+    'shows purpose, facts, folded script and %s outcome',
+    (status) => {
+      const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
+      const purpose = 'Free disk space so the Android test build can finish.';
+      const card = render(
+        <GrantRequestCard
+          message={message({
+            grantRequest: {
+              agent: { pubkey: 'agent', kind: 'agent', name: 'Jellybean' },
+              owner,
+              requester: owner,
+              grants: [
+                {
+                  grantId: 'purpose',
+                  kind: 'command',
+                  target: '/usr/bin/python3 /tmp/cleanup.py',
+                  reason: 'cleanup',
+                  purpose,
+                  machine: 'squire',
+                  touches: 'Old build files',
+                  capabilities: 'Delete files',
+                  status,
+                  requestedBy: owner,
+                  roomId: '22222222-2222-4222-8222-222222222222',
+                  createdAt: 1,
+                  auto: false,
+                  ...(status !== 'pending' ? { decidedBy: owner, decidedAt: 1756900060 } : {}),
+                  script: {
+                    path: '/tmp/cleanup.py',
+                    sha256: 'a'.repeat(64),
+                    bytes: 17,
+                    contents: 'print("cleanup")\n',
+                  },
+                },
+              ],
+            },
+          })}
+          viewerIsAgent={false}
+          viewerPubkey="owner"
+          viewerCanManageWorkspace
+          actionId={null}
+          onDecision={vi.fn()}
+        />,
+      );
+      const texts = () =>
+        card.root
+          .findAllByType('Text')
+          .map((node: { props: { children: unknown } }) => node.props.children);
+      expect(texts()).toContain(purpose);
+      expect(texts()).toContain('python3 cleanup.py');
+      expect(texts()).toContain('Old build files');
+      expect(texts()).toContain('Delete files');
+      expect(texts()).not.toContain('/tmp/cleanup.py');
+      expect(card.root.findByProps({ testID: 'grant-purpose-ask' }).props.children).toBe(
+        '@Jellybean wants to run a script',
+      );
+      expect(card.root.findAllByProps({ testID: 'grant-purpose-script' })).toHaveLength(0);
+      const toggle = () => card.root.findByProps({ testID: 'grant-purpose-script-toggle' });
+      expect(toggle().props.accessibilityState.expanded).toBe(false);
+      act(() => toggle().props.onPress());
+      expect(card.root.findByProps({ testID: 'grant-purpose-script' })).toBeDefined();
+      expect(texts()).toContain('print("cleanup")\n');
+      act(() => toggle().props.onPress());
+      expect(card.root.findAllByProps({ testID: 'grant-purpose-script' })).toHaveLength(0);
+      if (status === 'pending') {
+        expect(card.root.findByProps({ testID: 'grant-purpose-once' })).toBeDefined();
+      } else {
+        expect(card.root.findAllByProps({ testID: 'grant-purpose-once' })).toHaveLength(0);
+        expect(card.root.findByProps({ testID: 'grant-purpose-outcome' }).props.style).toEqual(
+          expect.arrayContaining([expect.objectContaining({ textTransform: 'none' })]),
+        );
+        expect(card.root.findByProps({ testID: 'grant-purpose-outcome' }).props.children).toMatch(
+          status === 'denied'
+            ? /^Denied by you · \d{2}:\d{2}$/
+            : status === 'once'
+              ? /^Once · Allowed by you · \d{2}:\d{2}$/
+              : /^Always · Allowed by you · \d{2}:\d{2}$/,
+        );
+      }
+    },
+  );
 
   it('shows the script an interpreter grant will run, because the command line does not (C94)', () => {
     const owner = { pubkey: 'owner', kind: 'human' as const, name: 'Charles' };
@@ -3759,34 +4347,37 @@ describe('Room message variant components', () => {
         text,
       },
     });
-    const transcript = agentCommandTranscriptMessage(row, [
-      { pubkey: 'ruby', handle: 'ruby' },
-    ]);
+    const transcript = agentCommandTranscriptMessage(row, [{ pubkey: 'ruby', handle: 'ruby' }]);
     expect(transcript.agentCommand).toEqual(row.agentCommand);
     expect(transcript.text).toBe(`@ruby ${text}`);
     const onMessageActions = vi.fn();
-    const renderer = render(<OrdinaryLedgerMessage
-      message={transcript}
-      participantsHydrated
-      viewerPubkey="viewer"
-      speakerWorking={false}
-      continued={false}
-      participantHandles={[{ pubkey: 'ruby', handle: 'ruby' }]}
-      channelIndex={{ rooms: [], corners: [] }}
-      deliveryFailed={false}
-      onChannelReference={vi.fn()}
-      onReply={vi.fn()}
-      onCopy={vi.fn()}
-      onMessageActions={onMessageActions}
-      onRetry={vi.fn()}
-      onDismiss={vi.fn()}
-    />);
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={transcript}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[{ pubkey: 'ruby', handle: 'ruby' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onMessageActions={onMessageActions}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
     const entry = ledgerEntryRender.mock.lastCall?.[0];
     expect(entry.byline.name).toBe('Jellybean');
     expect(entry.bodyText).toBe(`@ruby ${text}`);
     expect(entry.mentionHandles).toContain('ruby');
-    expect(renderer.root.findAll((node: ReactTestInstance) =>
-      String(node.props.testID ?? '').startsWith('agent-command'))).toHaveLength(0);
+    expect(
+      renderer.root.findAll((node: ReactTestInstance) =>
+        String(node.props.testID ?? '').startsWith('agent-command'),
+      ),
+    ).toHaveLength(0);
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Jellybean → Ruby');
     const longPress = renderer.root.findByProps({ testID: 'copy-message-agent-report' });
     act(() => longPress.props.onLongPress());
@@ -3807,30 +4398,33 @@ describe('Room message variant components', () => {
     ]);
     expect(transcript.text).toBe('@jellybean Use endpoint v2');
     expect(transcript.agentCommand).toEqual(row.agentCommand);
-    expect(
-      agentCommandTranscriptMessage(row, []).text,
-    ).toBe('@Jelly Bean Use endpoint v2');
-    const renderer = render(<OrdinaryLedgerMessage
-      message={transcript}
-      participantsHydrated
-      viewerPubkey="viewer"
-      speakerWorking={false}
-      continued={false}
-      participantHandles={[{ pubkey: 'jelly', handle: 'jellybean' }]}
-      channelIndex={{ rooms: [], corners: [] }}
-      deliveryFailed={false}
-      onChannelReference={vi.fn()}
-      onReply={vi.fn()}
-      onCopy={vi.fn()}
-      onRetry={vi.fn()}
-      onDismiss={vi.fn()}
-    />);
+    expect(agentCommandTranscriptMessage(row, []).text).toBe('@Jelly Bean Use endpoint v2');
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={transcript}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[{ pubkey: 'jelly', handle: 'jellybean' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
     const entry = ledgerEntryRender.mock.lastCall?.[0];
     expect(entry.byline.name).toBe('Ruby');
     expect(entry.bodyText).toBe('@jellybean Use endpoint v2');
     expect(entry.mentionHandles).toContain('jellybean');
-    expect(renderer.root.findAll((node: ReactTestInstance) =>
-      String(node.props.testID ?? '').startsWith('agent-command'))).toHaveLength(0);
+    expect(
+      renderer.root.findAll((node: ReactTestInstance) =>
+        String(node.props.testID ?? '').startsWith('agent-command'),
+      ),
+    ).toHaveLength(0);
     expect(conversationSource).toContain(
       'item = agentCommandTranscriptMessage(item, roomParticipants);',
     );
@@ -3853,32 +4447,44 @@ describe('Room message variant components', () => {
         },
       });
       const replyTargets: NonNullable<ReturnType<typeof beginReplyTarget>>[] = [];
-      const renderer = render(<OrdinaryLedgerMessage
-        message={record}
-        participantsHydrated
-        viewerPubkey="viewer"
-        speakerWorking={false}
-        continued={false}
-        participantHandles={[{ pubkey: 'ruby', handle: 'ruby' }]}
-        channelIndex={{ rooms: [], corners: [] }}
-        deliveryFailed={false}
-        onChannelReference={vi.fn()}
-        onReply={(chosen) => {
-          const target = beginReplyTarget(chosen, [], {
-            messageId: chosen.relayId ?? chosen.id,
-            authorName: chosen.authorIdentity!.name,
-            authorHandle: chosen.authorIdentity!.handle,
-            authorPubkey: chosen.pubkey,
-            isAgent: true,
-            preview: chosen.text,
-          }, 'corner-id');
-          if (target) replyTargets.push(target);
-        }}
-        onCopy={vi.fn()}
-        onRetry={vi.fn()}
-        onDismiss={vi.fn()}
-      />);
-      act(() => { vi.useFakeTimers(); renderer.root.findByType('Swipeable').props.onSwipeableWillOpen('left'); vi.runAllTimers(); vi.useRealTimers(); });
+      const renderer = render(
+        <OrdinaryLedgerMessage
+          message={record}
+          participantsHydrated
+          viewerPubkey="viewer"
+          speakerWorking={false}
+          continued={false}
+          participantHandles={[{ pubkey: 'ruby', handle: 'ruby' }]}
+          channelIndex={{ rooms: [], corners: [] }}
+          deliveryFailed={false}
+          onChannelReference={vi.fn()}
+          onReply={(chosen) => {
+            const target = beginReplyTarget(
+              chosen,
+              [],
+              {
+                messageId: chosen.relayId ?? chosen.id,
+                authorName: chosen.authorIdentity!.name,
+                authorHandle: chosen.authorIdentity!.handle,
+                authorPubkey: chosen.pubkey,
+                isAgent: true,
+                preview: chosen.text,
+              },
+              'corner-id',
+            );
+            if (target) replyTargets.push(target);
+          }}
+          onCopy={vi.fn()}
+          onRetry={vi.fn()}
+          onDismiss={vi.fn()}
+        />,
+      );
+      act(() => {
+        vi.useFakeTimers();
+        renderer.root.findByType('Swipeable').props.onSwipeableWillOpen('left');
+        vi.runAllTimers();
+        vi.useRealTimers();
+      });
       expect(replyTargets).toHaveLength(1);
       expect(replyTargets[0]).toEqual({
         messageId: `agent-${kind}`,
@@ -3946,19 +4552,61 @@ describe('Room message variant components', () => {
   });
 
   it('shows the job-card heading and current options', () => {
-    const renderer = render(<ChoiceCard message={message({ choice: {
-      starterOnboarding: 'welcome', choiceId: 'welcome', mode: 'question', status: 'open',
-      agent: { pubkey: 'beebee', kind: 'agent', name: 'Beebee' }, prompt: 'Pick a first job',
-      options: [
-        { optionId: 'A', letter: 'A', label: 'Write code in your repo', consequence: 'Write code in your repo' },
-        { optionId: 'B', letter: 'B', label: 'Post a video to your YouTube', consequence: 'Post a video to your YouTube' },
-        { optionId: 'C', letter: 'C', label: 'Something else', consequence: 'Something else' },
-      ], electorate: ['human'], votedCount: 0, electorateCount: 1, responses: [],
-    } })} viewerIsAgent={false} viewerPubkey="human" actionId={null} onAnswer={vi.fn()} onSkip={vi.fn()} />);
-    expect(renderer.root.findByProps({ testID: 'choice-welcome-title' }).props.children).toBe('Pick a first job');
-    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-A' }).props.onPress).toBeTypeOf('function');
-    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-B' }).props.onPress).toBeTypeOf('function');
-    expect(renderer.root.findByProps({ testID: 'transcript-card-choice-C' }).props.onPress).toBeTypeOf('function');
+    const renderer = render(
+      <ChoiceCard
+        message={message({
+          choice: {
+            starterOnboarding: 'welcome',
+            choiceId: 'welcome',
+            mode: 'question',
+            status: 'open',
+            agent: { pubkey: 'beebee', kind: 'agent', name: 'Beebee' },
+            prompt: 'Pick a first job',
+            options: [
+              {
+                optionId: 'A',
+                letter: 'A',
+                label: 'Write code in your repo',
+                consequence: 'Write code in your repo',
+              },
+              {
+                optionId: 'B',
+                letter: 'B',
+                label: 'Post a video to your YouTube',
+                consequence: 'Post a video to your YouTube',
+              },
+              {
+                optionId: 'C',
+                letter: 'C',
+                label: 'Something else',
+                consequence: 'Something else',
+              },
+            ],
+            electorate: ['human'],
+            votedCount: 0,
+            electorateCount: 1,
+            responses: [],
+          },
+        })}
+        viewerIsAgent={false}
+        viewerPubkey="human"
+        actionId={null}
+        onAnswer={vi.fn()}
+        onSkip={vi.fn()}
+      />,
+    );
+    expect(renderer.root.findByProps({ testID: 'choice-welcome-title' }).props.children).toBe(
+      'Pick a first job',
+    );
+    expect(
+      renderer.root.findByProps({ testID: 'transcript-card-choice-A' }).props.onPress,
+    ).toBeTypeOf('function');
+    expect(
+      renderer.root.findByProps({ testID: 'transcript-card-choice-B' }).props.onPress,
+    ).toBeTypeOf('function');
+    expect(
+      renderer.root.findByProps({ testID: 'transcript-card-choice-C' }).props.onPress,
+    ).toBeTypeOf('function');
   });
 
   it('offers a note only on a workflow gate and submits it with the pick', () => {
@@ -4453,7 +5101,9 @@ describe('Connector receipt cards', () => {
   it('preserves a working receipt card beside the System author fallback', () => {
     const renderer = renderReceipt('Deployment finished.\nreceipt: Vercel · deploy', true);
     expect(renderer.root.findByProps({ testID: 'connector-receipt-card' })).toBeDefined();
-    expect(renderer.root.findByType('LedgerSystemLine' as never).props.text).toBe('Deployment finished.');
+    expect(renderer.root.findByType('LedgerSystemLine' as never).props.text).toBe(
+      'Deployment finished.',
+    );
   });
 
   it('uses the connector identity logo in its receipt card', () => {
@@ -4486,6 +5136,28 @@ describe('Connector receipt cards', () => {
   });
 });
 
+it.each([true, false])(
+  'SEND-PAINT-1: new message entrance is disabled for the sender (%s)',
+  (isUser) => {
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'new-message', text: 'Hello Room', isNew: true, isUser })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        deliveryFailed={false}
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
+    expect(renderer.root.findByType('NewMessageMaterialize' as any).props.enabled).toBe(!isUser);
+  },
+);
 
 describe('private untagged message hint', () => {
   it.each([
@@ -4495,28 +5167,67 @@ describe('private untagged message hint', () => {
     ['failed send', 'viewer', true, true, undefined, 0],
     ['agent author', 'viewer', true, false, 'agent', 0],
   ] as const)('%s', (_, viewerPubkey, untaggedHint, deliveryFailed, kind, count) => {
-    const renderer = render(<OrdinaryLedgerMessage
-      message={message({ id: 'local-send', text: 'Hello Room', isUser: true, pubkey: 'viewer',
-        ...(kind ? { authorIdentity: { pubkey: 'viewer', kind, name: 'Agent' } } : {}) })}
-      participantsHydrated viewerPubkey={viewerPubkey} speakerWorking={false} continued={false}
-      participantHandles={[]} channelIndex={{ rooms: [], corners: [] }}
-      untaggedHint={untaggedHint} deliveryFailed={deliveryFailed}
-      onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()} onRetry={vi.fn()} onDismiss={vi.fn()}
-    />);
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({
+          id: 'local-send',
+          text: 'Hello Room',
+          isUser: true,
+          pubkey: 'viewer',
+          ...(kind ? { authorIdentity: { pubkey: 'viewer', kind, name: 'Agent' } } : {}),
+        })}
+        participantsHydrated
+        viewerPubkey={viewerPubkey}
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        untaggedHint={untaggedHint}
+        deliveryFailed={deliveryFailed}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
     expect(renderer.root.findAllByType('LedgerUntaggedHint' as any)).toHaveLength(count);
   });
 });
 
 it('links a corner-local PR notice to the current corner when the note has no corner field', () => {
   const onOpenCorner = vi.fn();
-  const item = message({ notificationLifecycleRun: { subline: '', items: [{
-    id: 'local-pr', title: 'Change', kind: 'pull-request', kindLine: 'PR #42', state: 'PR opened',
-    actor: 'ruby', updatedBy: 'local-pr', url: 'https://github.com/acme/repo/pull/42',
-  }] } });
-  const renderer = render(<NotificationLifecycleCard message={item} cornerId="current-corner"
-    onOpenCorner={onOpenCorner} onOpenUrl={() => undefined} />);
-  expect(renderer.root.findAllByProps({ testID: 'notification-run-expand-message' })).toHaveLength(0);
-  act(() => renderer.root.findByProps({ testID: 'notification-run-cell-corner-local-pr' }).props.onPress());
+  const item = message({
+    notificationLifecycleRun: {
+      subline: '',
+      items: [
+        {
+          id: 'local-pr',
+          title: 'Change',
+          kind: 'pull-request',
+          kindLine: 'PR #42',
+          state: 'PR opened',
+          actor: 'ruby',
+          updatedBy: 'local-pr',
+          url: 'https://github.com/acme/repo/pull/42',
+        },
+      ],
+    },
+  });
+  const renderer = render(
+    <NotificationLifecycleCard
+      message={item}
+      cornerId="current-corner"
+      onOpenCorner={onOpenCorner}
+      onOpenUrl={() => undefined}
+    />,
+  );
+  expect(renderer.root.findAllByProps({ testID: 'notification-run-expand-message' })).toHaveLength(
+    0,
+  );
+  act(() =>
+    renderer.root.findByProps({ testID: 'notification-run-cell-corner-local-pr' }).props.onPress(),
+  );
   expect(onOpenCorner).toHaveBeenCalledWith('current-corner');
 });
 
@@ -4524,31 +5235,65 @@ it('opens a corner check from its whole row without a corner link back to the sa
   const onOpenCorner = vi.fn();
   const onOpenUrl = vi.fn();
   const checks = ['PROMPT CASES', 'README PARITY'].map((title, index) => ({
-    id: `check-${index}`, title, kind: 'check' as const, kindLine: 'Check',
-    state: index ? 'Checks running' : 'Checks passed', actor: 'github', updatedBy: `check-${index}`,
+    id: `check-${index}`,
+    title,
+    kind: 'check' as const,
+    kindLine: 'Check',
+    state: index ? 'Checks running' : 'Checks passed',
+    actor: 'github',
+    updatedBy: `check-${index}`,
     url: `https://github.com/acme/repo/commit/${'b'.repeat(40)}/checks`,
     ...(index ? { cornerId: 'current-corner' } : {}),
   }));
   const item = message({ notificationLifecycleRun: { subline: '', items: checks } });
-  const renderer = render(<NotificationLifecycleCard message={item} cornerId="current-corner"
-    onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />);
-  act(() => renderer.root.findByProps({ testID: 'notification-run-expand-message' }).props.onPress());
+  const renderer = render(
+    <NotificationLifecycleCard
+      message={item}
+      cornerId="current-corner"
+      onOpenCorner={onOpenCorner}
+      onOpenUrl={onOpenUrl}
+    />,
+  );
+  act(() =>
+    renderer.root.findByProps({ testID: 'notification-run-expand-message' }).props.onPress(),
+  );
   const words = JSON.stringify(renderer.toJSON());
   expect(words).not.toContain('Corner →');
   expect(words).not.toContain('Check →');
-  expect(renderer.root.findAll((node: any) => String(node.props.testID).startsWith('notification-run-cell-corner-'))).toHaveLength(0);
-  act(() => renderer.root.findByProps({ testID: 'notification-run-cell-url-check-1' }).props.onPress());
+  expect(
+    renderer.root.findAll((node: any) =>
+      String(node.props.testID).startsWith('notification-run-cell-corner-'),
+    ),
+  ).toHaveLength(0);
+  act(() =>
+    renderer.root.findByProps({ testID: 'notification-run-cell-url-check-1' }).props.onPress(),
+  );
   expect(onOpenUrl).toHaveBeenCalledWith(checks[1].url);
   expect(onOpenCorner).not.toHaveBeenCalled();
 });
 
 it('opens a standalone corner PR event in its corner', () => {
-  const onOpenCorner = vi.fn(), onOpenUrl = vi.fn();
-  const renderer = render(<GitHubEventCard message={message({ githubEvent: {
-    type: 'pull-request', action: 'merged', actor: 'ruby', title: 'Work',
-    url: 'https://github.com/acme/repo/pull/42', cornerId: 'corner-42',
-  } })} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />);
-  act(() => renderer.root.findByProps({ testID: 'notification-run-cell-url-message' }).props.onPress());
+  const onOpenCorner = vi.fn(),
+    onOpenUrl = vi.fn();
+  const renderer = render(
+    <GitHubEventCard
+      message={message({
+        githubEvent: {
+          type: 'pull-request',
+          action: 'merged',
+          actor: 'ruby',
+          title: 'Work',
+          url: 'https://github.com/acme/repo/pull/42',
+          cornerId: 'corner-42',
+        },
+      })}
+      onOpenCorner={onOpenCorner}
+      onOpenUrl={onOpenUrl}
+    />,
+  );
+  act(() =>
+    renderer.root.findByProps({ testID: 'notification-run-cell-url-message' }).props.onPress(),
+  );
   expect(onOpenCorner).toHaveBeenCalledWith('corner-42');
   expect(onOpenUrl).not.toHaveBeenCalled();
 });
@@ -4557,21 +5302,61 @@ describe('Reproduction R2 rendered outbox path', () => {
   it('renders an offline send exactly like a sent message, then the one-off offline state, and sends once after reconnect', async () => {
     vi.useFakeTimers();
     const { MessageOutbox } = await import('@/buzz/message-outbox');
-    const e = { id: 'a'.repeat(64), pubkey: 'b'.repeat(64), created_at: 1, kind: 9, sig: '', content: 'Start with the server PR', tags: [['h', 'room-proof'], ['monolith-attachments', '[]'], ['monolith-mentions', '[]']] };
+    const e = {
+      id: 'a'.repeat(64),
+      pubkey: 'b'.repeat(64),
+      created_at: 1,
+      kind: 9,
+      sig: '',
+      content: 'Start with the server PR',
+      tags: [
+        ['h', 'room-proof'],
+        ['monolith-attachments', '[]'],
+        ['monolith-mentions', '[]'],
+      ],
+    };
     const send = vi.fn(async () => ({ messageId: e.id }));
-    const owner = new MessageOutbox({ load: async () => [], save: async () => undefined, send, rejection: () => undefined });
-    await owner.enqueue(e, { id: e.id, text: e.content, createdAt: 1, author: { pubkey: e.pubkey, kind: 'human', name: 'Kai' }, presentation: 'message' });
+    const owner = new MessageOutbox({
+      load: async () => [],
+      save: async () => undefined,
+      send,
+      rejection: () => undefined,
+    });
+    await owner.enqueue(e, {
+      id: e.id,
+      text: e.content,
+      createdAt: 1,
+      author: { pubkey: e.pubkey, kind: 'human', name: 'Kai' },
+      presentation: 'message',
+    });
     const props = {
       message: message({ id: e.id, text: e.content, isUser: true, pubkey: e.pubkey }),
-      participantsHydrated: true, viewerPubkey: e.pubkey, speakerWorking: false, continued: false,
-      participantHandles: [], channelIndex: { rooms: [], corners: [] }, deliveryFailed: false,
-      onChannelReference: vi.fn(), onReply: vi.fn(), onCopy: vi.fn(), onDismiss: vi.fn(),
+      participantsHydrated: true,
+      viewerPubkey: e.pubkey,
+      speakerWorking: false,
+      continued: false,
+      participantHandles: [],
+      channelIndex: { rooms: [], corners: [] },
+      deliveryFailed: false,
+      onChannelReference: vi.fn(),
+      onReply: vi.fn(),
+      onCopy: vi.fn(),
+      onDismiss: vi.fn(),
     } satisfies OrdinaryLedgerMessageProps;
     const sent = JSON.stringify(render(<OrdinaryLedgerMessage {...props} />).toJSON());
     expect(owner.state(e.id)?.kind).toBe('sending');
     const renderer = render(<OrdinaryLedgerMessage {...props} sendState={owner.state(e.id)} />);
-    const text = (value: any): string => Array.isArray(value) ? value.map(text).join('') : typeof value === 'string' ? value : value?.props ? text(value.props.children) : '';
-    expect(renderer.root.findAll((node: any) => String(node.props.testID).startsWith('outbox-'))).toHaveLength(0);
+    const text = (value: any): string =>
+      Array.isArray(value)
+        ? value.map(text).join('')
+        : typeof value === 'string'
+          ? value
+          : value?.props
+            ? text(value.props.children)
+            : '';
+    expect(
+      renderer.root.findAll((node: any) => String(node.props.testID).startsWith('outbox-')),
+    ).toHaveLength(0);
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Sending');
     // Same tree, same text style as a message the server already stored.
     expect(JSON.stringify(renderer.toJSON())).toBe(sent);
@@ -4579,31 +5364,48 @@ describe('Reproduction R2 rendered outbox path', () => {
     console.log('R2 rendered while offline: same as sent; no Sending line; no popup; no Retry');
     await vi.advanceTimersByTimeAsync(120_000);
     act(() => renderer.update(<OrdinaryLedgerMessage {...props} sendState={owner.state(e.id)} />));
-    expect(renderer.root.findAllByType('Text' as never).map((node: any) => text(node.props.children))).toContain('Not sent yet · no connection');
+    expect(
+      renderer.root.findAllByType('Text' as never).map((node: any) => text(node.props.children)),
+    ).toContain('Not sent yet · no connection');
     expect(renderer.root.findAllByProps({ label: 'Retry' })).toHaveLength(0);
     console.log('R2 rendered after offline cutoff: Not sent yet · no connection; Dismiss');
     await owner.connectionChanged(true);
     act(() => renderer.update(<OrdinaryLedgerMessage {...props} sendState={owner.state(e.id)} />));
-    expect(renderer.root.findAll((node: any) => String(node.props.testID).startsWith('outbox-'))).toHaveLength(0);
+    expect(
+      renderer.root.findAll((node: any) => String(node.props.testID).startsWith('outbox-')),
+    ).toHaveLength(0);
     expect(JSON.stringify(renderer.toJSON())).toBe(sent);
-    expect(send).toHaveBeenCalledTimes(1); expect(modal.alert).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(modal.alert).not.toHaveBeenCalled();
     console.log('R2 rendered after reconnect: sent; status removed; one publication');
     owner.dispose();
   });
 
   it('renders the server refusal and only Dismiss', () => {
-    const renderer = render(<OrdinaryLedgerMessage
-      message={message({ id: 'refused', text: 'Start with the server PR', isUser: true })}
-      participantsHydrated viewerPubkey="viewer" speakerWorking={false} continued={false}
-      participantHandles={[]} channelIndex={{ rooms: [], corners: [] }} deliveryFailed
-      sendState={{ kind: 'refused', text: 'Not sent · The relay did not allow this message.' }}
-      onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()} onDismiss={vi.fn()}
-    />);
+    const renderer = render(
+      <OrdinaryLedgerMessage
+        message={message({ id: 'refused', text: 'Start with the server PR', isUser: true })}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed
+        sendState={{ kind: 'refused', text: 'Not sent · The relay did not allow this message.' }}
+        onChannelReference={vi.fn()}
+        onReply={vi.fn()}
+        onCopy={vi.fn()}
+        onDismiss={vi.fn()}
+      />,
+    );
     const banner = renderer.root.findByProps({ testID: 'outbox-delivery-failed-refused' });
     expect(banner.props.title).toBe('Not sent · The relay did not allow this message.');
     expect(renderer.root.findAllByProps({ label: 'Retry' })).toHaveLength(0);
     expect(renderer.root.findAllByProps({ label: 'Dismiss' }).length).toBeGreaterThan(0);
     expect(modal.alert).not.toHaveBeenCalled();
-    console.log('R2 rendered refusal: Not sent · The relay did not allow this message.; Dismiss; no Retry; no popup');
+    console.log(
+      'R2 rendered refusal: Not sent · The relay did not allow this message.; Dismiss; no Retry; no popup',
+    );
   });
 });

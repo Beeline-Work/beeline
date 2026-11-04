@@ -1,12 +1,17 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { runInNewContext } from 'node:vm';
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { describe, expect, it, vi } from 'vitest';
+import ts from 'typescript';
 import type { RoomHistoryView, RoomViewMessage } from '@beeline/buzz-client';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
 import { messageJumpHref } from '@/buzz/corner-navigation';
+import { RoomSendPreview } from '@/buzz/room-send-list';
+
+vi.mock('react-native', () => ({ FlatList: 'FlatList', View: 'View' }));
 
 const message = (digit: string, createdAt: number): RoomViewMessage => ({
   id: digit.repeat(64),
@@ -98,12 +103,54 @@ describe('message-source landing', () => {
 
   it('measures a new window from scratch and lands again when the list measures a row', () => {
     expect(surface).toContain(
-      'const phoneRowKey = (rowId: string) => `${transcriptWindowIdRef.current}:${rowId}`;',
+      'const phoneRowKey = (rowId: string) => `${transcriptWindowIdRef.current}:${sendPreviewRef.current.key(rowId)}`;',
     );
     expect(surface).toContain('keyExtractor={(item: ChatDisplayMessage) => phoneRowKey(item.id)}');
     expect(surface).toContain('CellRendererComponent={PhoneTranscriptCell}');
     expect(surface).toContain(
       'if (scrollController.isLanding()) scrollController.observeLayout();',
     );
+  });
+
+  it('keeps signed sends on their provisional key and namespaces every row by window', () => {
+    // Execute the screen's actual key function with the real handoff owner.
+    const parsed = ts.createSourceFile(
+      'chat.tsx',
+      surface,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
+    );
+    let initializer = '';
+    function visit(node: ts.Node) {
+      if (ts.isVariableDeclaration(node) && node.name.getText(parsed) === 'phoneRowKey') {
+        initializer = node.initializer?.getText(parsed) ?? '';
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(parsed);
+    if (!initializer) throw new Error('The screen has no phoneRowKey function');
+    const executable = ts.transpileModule(`(${initializer})`, {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+    }).outputText;
+    const preview = new RoomSendPreview();
+    const window = { current: 7 };
+    const key = runInNewContext(executable, {
+      transcriptWindowIdRef: window,
+      sendPreviewRef: { current: preview },
+    }) as (rowId: string) => string;
+    try {
+      void preview.show({ id: 'provisional', text: 'Outgoing', timestamp: 1, isUser: true });
+      const provisionalKey = key('provisional');
+      expect(provisionalKey).toBe('7:provisional');
+      preview.reconcile('provisional', 'signed');
+      expect(key('signed')).toBe(provisionalKey);
+      expect(key('ordinary')).toBe('7:ordinary');
+      window.current = 8;
+      expect(key('signed')).toBe('8:provisional');
+      expect(key('ordinary')).toBe('8:ordinary');
+    } finally {
+      preview.dispose();
+    }
   });
 });

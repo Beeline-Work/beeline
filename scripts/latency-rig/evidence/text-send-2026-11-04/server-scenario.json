@@ -1,0 +1,288 @@
+{
+  "method": "Real local phone live-socket dispatcher and isolated PGlite; injected25ms latency per database query; exact PhoneService.execute duration independently recorded. A controlled scenario, not production after-deploy timing.",
+  "delayMs": 25,
+  "runs": [
+    {
+      "label": "before",
+      "n": 25,
+      "summary": {
+        "ackMs": {
+          "p50": 189.83017100000143,
+          "p95": 228.1181120000001
+        },
+        "serverProcessingMs": {
+          "p50": 188.7422430000006,
+          "p95": 226.84021100000064
+        }
+      },
+      "samples": [
+        {
+          "sample": 1,
+          "ackMs": 226.19254,
+          "serverProcessingMs": 217.08035399999972
+        },
+        {
+          "sample": 2,
+          "ackMs": 163.0442579999999,
+          "serverProcessingMs": 161.70115799999985
+        },
+        {
+          "sample": 3,
+          "ackMs": 293.5945469999988,
+          "serverProcessingMs": 292.42580500000076
+        },
+        {
+          "sample": 4,
+          "ackMs": 225.01884000000064,
+          "serverProcessingMs": 216.9164579999997
+        },
+        {
+          "sample": 5,
+          "ackMs": 205.03489999999874,
+          "serverProcessingMs": 203.90060300000005
+        },
+        {
+          "sample": 6,
+          "ackMs": 228.1181120000001,
+          "serverProcessingMs": 226.84021100000064
+        },
+        {
+          "sample": 7,
+          "ackMs": 201.1033669999997,
+          "serverProcessingMs": 199.93346799999927
+        },
+        {
+          "sample": 8,
+          "ackMs": 200.25160200000028,
+          "serverProcessingMs": 199.17788199999995
+        },
+        {
+          "sample": 9,
+          "ackMs": 189.83017100000143,
+          "serverProcessingMs": 188.7422430000006
+        },
+        {
+          "sample": 10,
+          "ackMs": 173.44216099999903,
+          "serverProcessingMs": 172.24441900000056
+        },
+        {
+          "sample": 11,
+          "ackMs": 197.70219799999904,
+          "serverProcessingMs": 196.6773890000004
+        },
+        {
+          "sample": 12,
+          "ackMs": 186.06697600000007,
+          "serverProcessingMs": 185.09179100000074
+        },
+        {
+          "sample": 13,
+          "ackMs": 171.01886600000034,
+          "serverProcessingMs": 170.01809999999932
+        },
+        {
+          "sample": 14,
+          "ackMs": 168.9836779999987,
+          "serverProcessingMs": 167.96497299999828
+        },
+        {
+          "sample": 15,
+          "ackMs": 168.19510300000002,
+          "serverProcessingMs": 167.19028500000059
+        },
+        {
+          "sample": 16,
+          "ackMs": 196.18727600000057,
+          "serverProcessingMs": 193.93759000000136
+        },
+        {
+          "sample": 17,
+          "ackMs": 179.0206419999995,
+          "serverProcessingMs": 178.25432900000123
+        },
+        {
+          "sample": 18,
+          "ackMs": 187.3430989999997,
+          "serverProcessingMs": 186.18227000000115
+        },
+        {
+          "sample": 19,
+          "ackMs": 187.0309699999998,
+          "serverProcessingMs": 185.47587399999975
+        },
+        {
+          "sample": 20,
+          "ackMs": 192.057146000001,
+          "serverProcessingMs": 190.70883800000047
+        },
+        {
+          "sample": 21,
+          "ackMs": 198.00838599999952,
+          "serverProcessingMs": 196.9762780000001
+        },
+        {
+          "sample": 22,
+          "ackMs": 187.04714400000012,
+          "serverProcessingMs": 186.07038499999908
+        },
+        {
+          "sample": 23,
+          "ackMs": 193.06209099999978,
+          "serverProcessingMs": 191.5406409999996
+        },
+        {
+          "sample": 24,
+          "ackMs": 185.1028409999999,
+          "serverProcessingMs": 183.98849000000155
+        },
+        {
+          "sample": 25,
+          "ackMs": 163.14385000000038,
+          "serverProcessingMs": 162.17602499999884
+        }
+      ]
+    },
+    {
+      "label": "after",
+      "n": 25,
+      "summary": {
+        "ackMs": {
+          "p50": 137.65886500000124,
+          "p95": 160.44346099999893
+        },
+        "serverProcessingMs": {
+          "p50": 84.98505500000101,
+          "p95": 108.90382099999988
+        }
+      },
+      "samples": [
+        {
+          "sample": 1,
+          "ackMs": 147.11097999999947,
+          "serverProcessingMs": 145.93578799999887
+        },
+        {
+          "sample": 2,
+          "ackMs": 167.48627899999883,
+          "serverProcessingMs": 100.93056799999977
+        },
+        {
+          "sample": 3,
+          "ackMs": 143.77109299999938,
+          "serverProcessingMs": 99.64110999999866
+        },
+        {
+          "sample": 4,
+          "ackMs": 152.29837300000145,
+          "serverProcessingMs": 100.11906100000124
+        },
+        {
+          "sample": 5,
+          "ackMs": 160.44346099999893,
+          "serverProcessingMs": 108.90382099999988
+        },
+        {
+          "sample": 6,
+          "ackMs": 156.1008929999989,
+          "serverProcessingMs": 104.81924900000013
+        },
+        {
+          "sample": 7,
+          "ackMs": 130.43783299999996,
+          "serverProcessingMs": 84.47575999999754
+        },
+        {
+          "sample": 8,
+          "ackMs": 158.98487300000124,
+          "serverProcessingMs": 107.11071399999855
+        },
+        {
+          "sample": 9,
+          "ackMs": 124.7033709999996,
+          "serverProcessingMs": 84.98505500000101
+        },
+        {
+          "sample": 10,
+          "ackMs": 115.09516999999687,
+          "serverProcessingMs": 78.97765799999979
+        },
+        {
+          "sample": 11,
+          "ackMs": 99.44540599999891,
+          "serverProcessingMs": 71.00656399999934
+        },
+        {
+          "sample": 12,
+          "ackMs": 126.66579300000012,
+          "serverProcessingMs": 81.13700099999915
+        },
+        {
+          "sample": 13,
+          "ackMs": 138.395704999999,
+          "serverProcessingMs": 84.48863500000152
+        },
+        {
+          "sample": 14,
+          "ackMs": 137.65886500000124,
+          "serverProcessingMs": 87.70744899999772
+        },
+        {
+          "sample": 15,
+          "ackMs": 132.66218699999808,
+          "serverProcessingMs": 81.60930500000177
+        },
+        {
+          "sample": 16,
+          "ackMs": 133.1225949999971,
+          "serverProcessingMs": 83.57704000000012
+        },
+        {
+          "sample": 17,
+          "ackMs": 139.2629519999973,
+          "serverProcessingMs": 88.11757500000022
+        },
+        {
+          "sample": 18,
+          "ackMs": 132.77436899999884,
+          "serverProcessingMs": 84.60275499999989
+        },
+        {
+          "sample": 19,
+          "ackMs": 144.80311500000244,
+          "serverProcessingMs": 92.55815299999813
+        },
+        {
+          "sample": 20,
+          "ackMs": 143.48473599999852,
+          "serverProcessingMs": 94.25559400000202
+        },
+        {
+          "sample": 21,
+          "ackMs": 136.39357999999993,
+          "serverProcessingMs": 83.02640600000086
+        },
+        {
+          "sample": 22,
+          "ackMs": 112.03267200000118,
+          "serverProcessingMs": 75.75949899999978
+        },
+        {
+          "sample": 23,
+          "ackMs": 110.96998900000108,
+          "serverProcessingMs": 74.16528599999947
+        },
+        {
+          "sample": 24,
+          "ackMs": 137.9581610000023,
+          "serverProcessingMs": 86.83648600000015
+        },
+        {
+          "sample": 25,
+          "ackMs": 130.82671899999696,
+          "serverProcessingMs": 84.19272700000147
+        }
+      ]
+    }
+  ]
+}

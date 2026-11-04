@@ -1,22 +1,24 @@
 # Network router implementation decisions
 
+Historical implementation and proof record: disabled-capability, rollout and policy-switch statements below describe their recorded checkpoints. Current routing is owned by [router ownership](../../docs/network-router-ownership.md); evidence gaps here do not reinstate removed rollout gates.
+
 The engineering specification and audit closure ledger remain authoritative. A passing foundation or shadow proof does not close a whole audit finding. Decisions below preserve legacy/native-runtime40 behavior until the corresponding negotiated family is proven.
 
-| ID | Decision | Reason / authority | Evidence or remaining gate |
-| --- | --- | --- | --- |
-| D001 | Declare `uploadMedia` as the existing file-bytes HTTP exception; derive no JSON input codec for its binary body. Map void results explicitly to null. | Firstmate instruction 005; existing media manifest entry and socket dispatcher `result ?? null`. | Codec regressions and negative transport/null type fixtures. |
-| D002 | M1 observation at the existing socket owner is local-only and never blocks, changes, retries or replaces legacy requests. Do not mint passes from an arbitrary request callback. | Spec M1 shadow migration and real owner event requirement; no server family is ready to negotiate yet. | Exact-frame and 24-hour-idle socket regression; real pass-owner/protocol integration remains a separate gate. |
-| D003 | Generate a phone-input-only view from the same operation contracts for M1, rather than importing all daemon and response schemas on the phone. | Conservative compatible choice: retain one schema authority while avoiding irrelevant payload/code work. | Browser bundle reduced from 196,952 to 25,762 minified bytes (5,511 gzip); dependency/bundle test prevents full-schema regressions. |
-| D004 | Never advertise a projection or command capability until its required capture, authority, transaction and compatibility proofs pass. | Spec server-first migration and ledger-preserving rollback floor. | Track actual P1–P12 proofs; disabled capability is not audit closure. |
-| D005 | Use a conservative shared/exclusive advisory authority fence before splitting locks by scope. | A complete revoke-versus-enqueue fence is required before concurrency tuning. | Real PostgreSQL contention proof and authority writer coverage remain rollout gates. |
-| D006 | Foreground and network events retain an open socket; an actual request deadline permits one replacement. Brief open/close flaps do not reset that allowance. | Firstmate instruction 001 supersedes resume challenges; no heartbeat or observation timer. | Transport regressions cover lazy recovery, 24-hour idle, preserved cursors and explicit Retry. |
-| D007 | Legacy commands without explicit metadata keep their original dispatcher semantics. Opt-in DB-only commands use atomic identity/digest fences; unsupported provider effects are rejected or remain UNKNOWN without redispatch. | Runtime40 compatibility and no invented exactly-once provider guarantee. | Ledger and dispatcher proofs; actual two-pool PostgreSQL contention proof passes. Capability stays disabled pending complete enforcement and replay authorization. |
-| D008 | Command result payloads expire after 30 days; identity/digest tombstones are permanent. The protocol rollback floor is distinct from native runtime and database schema versions. | Never repeat an expired effect; preserve downgrade safety. | Expired-result/tombstone tests; actual release rollback-floor proof remains open. |
-| D009 | Completion waits reuse committed ID-only notifications and subscribe before the initial status read. | F26 requires one initial read, no periodic observation, and recovery after listener loss. | Real PGlite committed trigger, pre-listen completion and rollback tests pass. |
-| D010 | Room-head deep links may omit Workspace; the server resolves it inside the snapshot transaction. | Avoid a preliminary Room fetch solely to discover the snapshot key. | Runtime contract codecs regenerated; authorization remains server-derived. |
-| D011 | Unknown app marks use the existing local glyph; remove Google's favicon fallback and its manifest entry. | Spec F23 requires zero phone favicon-service calls; no new UI is introduced. | AppMark/ServiceMark regressions pass; manifest shrinks 56→55. Shared file-byte caching remains open. |
-| D012 | New web durable command intents remain legacy until cross-tab atomic adoption is proven; persisted uncertainty never downgrades. Upload-dependent arguments also retain legacy until immutable identity can be prepared before yielding. | Avoid overwriting another tab's intents or extending a tap lifetime across upload work. | Native prepared-message/outbox integration passes; these cohorts remain explicit command-migration gates. |
-| D013 | Use only existing controls for Retry and prepared actions. Do not add mockups or new UI. | Firstmate instructions 008 and superseding 010. | Existing Room/Channels/composer controls are reused. |
+| ID   | Decision                                                                                                                                                                                                                                 | Reason / authority                                                                                       | Evidence or remaining gate                                                                                                                                         |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| D001 | Declare `uploadMedia` as the existing file-bytes HTTP exception; derive no JSON input codec for its binary body. Map void results explicitly to null.                                                                                    | Firstmate instruction 005; existing media manifest entry and socket dispatcher `result ?? null`.         | Codec regressions and negative transport/null type fixtures.                                                                                                       |
+| D002 | M1 observation at the existing socket owner is local-only and never blocks, changes, retries or replaces legacy requests. Do not mint passes from an arbitrary request callback.                                                         | Spec M1 shadow migration and real owner event requirement; no server family is ready to negotiate yet.   | Exact-frame and 24-hour-idle socket regression; real pass-owner/protocol integration remains a separate gate.                                                      |
+| D003 | Generate a phone-input-only view from the same operation contracts for M1, rather than importing all daemon and response schemas on the phone.                                                                                           | Conservative compatible choice: retain one schema authority while avoiding irrelevant payload/code work. | Browser bundle reduced from 196,952 to 25,762 minified bytes (5,511 gzip); dependency/bundle test prevents full-schema regressions.                                |
+| D004 | Never advertise a projection or command capability until its required capture, authority, transaction and compatibility proofs pass.                                                                                                     | Spec server-first migration and ledger-preserving rollback floor.                                        | Track actual P1–P12 proofs; disabled capability is not audit closure.                                                                                              |
+| D005 | Use a conservative shared/exclusive advisory authority fence before splitting locks by scope.                                                                                                                                            | A complete revoke-versus-enqueue fence is required before concurrency tuning.                            | Real PostgreSQL contention proof and authority writer coverage remain rollout gates.                                                                               |
+| D006 | Foreground and network events retain an open socket; an actual request deadline permits one replacement. Brief open/close flaps do not reset that allowance.                                                                             | Firstmate instruction 001 supersedes resume challenges; no heartbeat or observation timer.               | Transport regressions cover lazy recovery, 24-hour idle, preserved cursors and explicit Retry.                                                                     |
+| D007 | Legacy commands without explicit metadata keep their original dispatcher semantics. Opt-in DB-only commands use atomic identity/digest fences; unsupported provider effects are rejected or remain UNKNOWN without redispatch.           | Runtime40 compatibility and no invented exactly-once provider guarantee.                                 | Ledger and dispatcher proofs; actual two-pool PostgreSQL contention proof passes. Capability stays disabled pending complete enforcement and replay authorization. |
+| D008 | Command result payloads expire after 30 days; identity/digest tombstones are permanent. The protocol rollback floor is distinct from native runtime and database schema versions.                                                        | Never repeat an expired effect; preserve downgrade safety.                                               | Expired-result/tombstone tests; actual release rollback-floor proof remains open.                                                                                  |
+| D009 | Completion waits reuse committed ID-only notifications and subscribe before the initial status read.                                                                                                                                     | F26 requires one initial read, no periodic observation, and recovery after listener loss.                | Real PGlite committed trigger, pre-listen completion and rollback tests pass.                                                                                      |
+| D010 | Room-head deep links may omit Workspace; the server resolves it inside the snapshot transaction.                                                                                                                                         | Avoid a preliminary Room fetch solely to discover the snapshot key.                                      | Runtime contract codecs regenerated; authorization remains server-derived.                                                                                         |
+| D011 | Unknown app marks use the existing local glyph; remove Google's favicon fallback and its manifest entry.                                                                                                                                 | Spec F23 requires zero phone favicon-service calls; no new UI is introduced.                             | AppMark/ServiceMark regressions pass; manifest shrinks 56→55. Shared file-byte caching remains open.                                                               |
+| D012 | New web durable command intents remain legacy until cross-tab atomic adoption is proven; persisted uncertainty never downgrades. Upload-dependent arguments also retain legacy until immutable identity can be prepared before yielding. | Avoid overwriting another tab's intents or extending a tap lifetime across upload work.                  | Native prepared-message/outbox integration passes; these cohorts remain explicit command-migration gates.                                                          |
+| D013 | Use only existing controls for Retry and prepared actions. Do not add mockups or new UI.                                                                                                                                                 | Firstmate instructions 008 and superseding 010.                                                          | Existing Room/Channels/composer controls are reused.                                                                                                               |
 
 | D014 | Remove legacy observer waste immediately while the remaining per-family server facts are built; retain legacy compatibility for relevant durable changes. | Server-first staged migration. Filtering and focus fixes alone do not close F03/F05/F09. | Transient-event, hidden-consumer, parent-detail and focus regression suites; full negotiated-lane closure remains required. |
 
@@ -95,7 +97,6 @@ The phone owner validates a generated projection of its actual closed policy rou
 
 | D046 | Independently gate owned turns on the actual helper registration/epoch and immutable command-generation binding. The existing aggregate server lease replaces per-turn freshness only after a successful owned claim; legacy rows/claims retain their adapter. Actual owned DB effects hold current authority and register one ephemeral deferred-commit fence per transaction/source. A lease expiring during admitted work rolls the effect back; socket enqueue checks current time again. Lifecycle-bearing receipts and archival writers use lifecycle→authority→source/command order; ordinary activity takes no lifecycle lock. Owned errors never inherit legacy timed deadlock redispatch. Initial subscription recovery requires actual demanded pages, with ephemeral request correlation and negotiated command-only inbox omission. | Receipt timestamps cannot certify live execution, a successful control frame cannot certify catch-up, and source ownership cannot confer current membership/grants. Generation tombstones survive requeue and server rollback; the protocol floor is independent of native runtime. Account deletion discovers its lifecycle scope without row locks and refuses expansion before erasure. Unsupported owned provider/model paths fail closed rather than borrowing another generation or replaying an uncertain effect. | Ownership5/actual socket3/real PostgreSQL1, owned-no-retry1, actual effect/final-enqueue/lifecycle/close PostgreSQL1 and account-deletion16 pass. Recovery unit6/actual socket3/client23/helper-turn6/refusal6 pass; strict overlay7/real PostgreSQL1 also pass. Terminal-requeue confirmation2, selected legacy corner18 and GitHub12 pass (other cases filtered, not a full-suite claim). Capability remains OFF; command-bound model transport, specific external authority/UNKNOWN adapters, released-helper/native cohorts and full equal-workload DB/WAL/CPU proof remain OPEN. |
 
-
 | D050 | Preserve required old-server/native40 wire compatibility while integrating the architecture guard. Keep the notification sink in its exact dependency-free Live fanout module and register durable state with real owners/reasons. | The original independent settings are superseded by D051. Under the updated owner policy, relaxed rules stay red for manual owner merge; no approval review or guard bypass is requested. | The repair passes full types/dead-code, all21 failing mobile suites361 tests, server fixtures6, notifier/storage/catalog28 and the latest-main migration/Room-deck checks. Activation remains off; full router closure remains open. |
 
 | D051 | Collapse the five helper/MCP environment switches into the one default-off `BEELINE_NETWORK_ROUTER_V1` setting; preserve per-protocol capability negotiation, with no selected-path fallback. Build a separate router-only removal change, then sweep server/helper/phone/shared network boundaries until every retained physical adapter has its declared router owner or documented exception. | Owner instruction029 requires one path, not a permanent migration fork. Supported old wire/native40 behavior must enter the same router; it cannot justify another executor. The final removal deletes this setting and the migration adapters, with architecture settings/compatibility counts at the original baseline or lower. | Unified-switch enabled/disabled protocol suites7 and current-main Body46 pass, as do full typecheck, dead-code (zero introduced), architecture tree17, codec and phone-network72 gates. Do not enable the setting before complete family/source/cohort and workload proofs; an empty textual search alone is not an SDK or runtime proof. |
@@ -126,20 +127,17 @@ Instruction 034 supersedes the historical phone-budget failures above: the owner
 
 | D065 | Saved previews fetch at most256 Unicode characters from SQL and encode at most1024 JSON bytes including the visible ellipsis. A server-owned `textTruncated` marker preserves explicit source expansion through the existing Room/message target; head and exact-row facts share the same projection. | A large message must not make the entire Saved head unavailable, and counting characters alone misses JSON escaping. No new UI/control or network call is introduced; legacy reads retain their full text. | The old builder reproduced `saved_window_budget`. Window19/source13/core11 and real PostgreSQL window4/source3 pass, including Unicode/control bytes, unchanged legacy text, marker clearing and revocation privacy. Types/codegen/bundle pass. Whole F07/P8 and cohort closure remain OPEN. |
 
-
 ## D066 — Squire relay connection loss is a bounded event, not a retry clock
 
 The connect-only facade now fails an initial refused connection immediately. An established connection loss admits one immediate replacement for that facade; failed replacement or a second loss stops it, even after successful MCP initialization. There is no backoff, timer, elapsed-time reset or tool-call replay. Written requests report an unknown outcome; queued and late requests report not-sent. Old socket data cannot affect a replacement. Only initialization state is replayed, preserving the existing MCP session protocol.
 
 Proof: `apps/body/src/squire-broker-link.test.ts` reproduced 14 initial attempts before the fix and now covers 24 idle hours with no further attempt, failed and successful replacement, no tool replay and stale socket delivery. The existing `squire-host.test.ts` uses isolated fake brokers and real facade child processes to prove connect-only behavior without touching a live broker. This is partial R11/F18 progress; registry ownership, remaining local probes and SDK/transport coverage are still open.
 
-
 ## D067 — Select the existing blocking leader without changing business job admission
 
 Use the proven `background-leader.ts` at the production entry point and delete the duplicate try-lock/SELECT-1 polling owner. The advisory key is unchanged, so a polling old server and blocking new server cannot both own it. Existing business jobs keep their current scheduling until each source/deadline migration is complete; Tray schema/runner/availability activation remains a separate gate. This changes no phone/helper wire contract and introduces no rollout setting.
 
 A new regression exposed a third connection when the first replacement died during its initial business cycle. Replacement allowance now renews only after that cycle finishes on the current connection or a distinct database recovery. Duplicate error/end events cannot create another attempt. Dedicated checkout also belongs to its caller's one-attempt policy rather than an internal backoff. Legacy tests asserting health-query polling are replaced by the focused event/idle-day/real PostgreSQL ownership proofs; shutdown and Needs-you expiry tests exercise the selected implementation.
-
 
 ## D068 — SQL failure is an outcome, not admission to repeat the statement
 
@@ -149,13 +147,11 @@ Remove the generic 100/300/700ms query and transaction-start retry wrapper and t
 
 Proofs are in `database.test.ts`, `database-one-attempt.postgres.test.ts` and the existing server/background/operator delivery suites. The PostgreSQL proof drops replies after real INSERT/COMMIT success and observes exactly one effect from another pool without a uniqueness-based dedupe shortcut. Both this proof and old/new leader overlap are included in the serialized isolated-PostgreSQL CI step. Remaining higher-level/SDK retries and full F18 closure remain open.
 
-
 ## D069 — Release and GitHub contention return to their existing owners
 
 Delete `retryOnDeadlock` and the timer/attempt policy from migration helpers. `migration-steps.ts` now runs a named release step once and preserves the existing bounded lock-holder diagnostic on timeout. Completed migration steps and the final schema marker retain their existing semantics. A contended release stops before promotion; another explicitly authorized release can resume idempotent steps. No production release is performed for this proof.
 
 GitHub check refresh, confirmed-merge reconciliation and installation synchronization now propagate a contended transaction/statement once. An explicit new event may reread its current provider/head/authority evidence; the failed event cannot replay autonomously. Tests preserve rollback, no partial wakes, current head/fetch fencing, and one committed wake across repeated admitted events. This removes SQL contention retries only; provider read retries and recurring GitHub discovery remain open.
-
 
 ## D070 — GitHub check reads return the first provider failure
 
@@ -257,7 +253,6 @@ An active call no longer recounts participants and rereads command reports for e
 
 Voice integration30 and server types pass. The exact-source proof asserts zero participant/work refresh for read marks, bookmarks, push devices and another Room, while call-card and command changes reach their owners. This removes broad invalidation work but does not retire startup/minute voice discovery or complete voice ownership/accounting/cohort gates.
 
-
 ## D087 — MCP delivery deadlines belong to persisted queue rows
 
 MCP webhook delivery leaves the maintenance sweep. An independent instance-local owner drains at startup, committed delivery notification, LISTEN resynchronization or actual database recovery. Atomic per-delivery claims retain rolling-version concurrency protection. Only a pending row's due time or abandoned claim expiry arms a timeout; an empty or failed queue parks. Receiver latency does not block aggregate leader jobs. Shutdown detaches wakes, prevents further claims and drains the active request before pool closure.
@@ -266,20 +261,17 @@ The existing finite signed-delivery attempts and stable event identity remain, a
 
 MCP delivery24, worker11, shutdown9 and server types pass. A real isolated PostgreSQL proof with 10,000 pending rows per queue in a non-UTC session uses both due indexes, no sequential scan/sort and fewer than 20 shared blocks. Empty/failed owners stay silent over an idle day; shutdown leaves the next delivery unclaimed. These proofs do not close the full background, route, provider or cohort findings.
 
-
 ## D088 — An ambiguous invitation receipt does not authorize replay
 
 `monolithPhoneOperation` no longer repeats invite redemption after a lost socket or request deadline. It retains the existing unconfirmed-join message; a separate explicit Join action can submit the same token. Known refusals and operation deadlines remain intact.
 
 Operation8 and mobile types pass. Lost-socket/deadline cases assert one dispatch, no dispatch over an idle day, then a separately admitted successful action. Complete durable join command ownership and released-cohort gates remain open.
 
-
 ## D089 — Enforce zero replay inside the pinned LiveKit adapter
 
 Both initial and incident-replacement joins explicitly select `maxRetries: 0`. The version-checked postinstall patch gives that option complete initial-admission semantics in LiveKit 2.22.4 source, ESM and CommonJS: no speculative cloud-region fetch, regional fallback, backoff wait or service-not-found protocol replay. SDK defaults for other callers are unchanged. A refused protocol/region is returned to the existing call owner; no new UI or native API is introduced.
 
 Private byte copies of both distributed entrypoints pass eight tests, including retained region state, unavailable/service-not-found signal failures and an idle day with no extra dispatch. The patch validates every replacement before writing and is idempotent. Voice hook25, mobile types and phone scanner pass. Installed dependencies were not modified in place. This resolves D085's named initial SDK fallback gap; actual released-runtime/provider compatibility, full voice route/usage ownership and final dependency/native capture remain open.
-
 
 ## D090 — Calendar obligations own scheduler deadlines
 
@@ -291,13 +283,11 @@ Production firing and remaining-delay calculation use PostgreSQL time. Workflow 
 
 Schedule23, workflow-view31 plus focused microsecond1, workflow-schedule25, live-listener42, isolated PostgreSQL clock/index1, database59, server types, workspace build8 and dead-code pass. The clock proof sets host time to2099 while PostgreSQL still owns a future deadline; 10,000 parked rows are skipped through the partial index within40 shared blocks. The migrated fixture proves idle-day silence and separate edited recovery, while the query-plan fixture deliberately uses minimal tables and does not claim whole-schema rollout. Whole scheduler ownership generations, equal-workload/cost and released-cohort gates remain open.
 
-
 ## D091 — Align incident and attachment integration proofs with single attempts
 
 Published CI found two attachment fixtures and two real-PostgreSQL incident proofs still expecting the retired automatic retries. The attachment fixtures now fail one fetch, retain successful files and verify a separately admitted delivery. The incident harness still creates actual PostgreSQL deadlocks: each victim returns40P01 after one transaction, rolled-back brief state stays unchanged, and a separate action/event commits the intended result without duplicate notices or commands.
 
 Room-turn attachment9, historical MCP attachment6 and isolated PostgreSQL incident2 pass. No production retry was restored and no gate was removed. These update D080/D083's integration evidence; full CI on the new head and T7 remain open.
-
 
 ## D092 — Pending attachment retention follows stored deadlines
 
@@ -307,13 +297,11 @@ The next-candidate query waits for its writer rather than spinning on a skipped 
 
 Validation: cleanup7, live listener43 plus the extended focused command-source case, isolated PostgreSQL1, shutdown10, server types, workspace build8, dead-code (five existing/zero new), phone scanner72 and workflow paths118 pass. No whole finding is newly closed.
 
-
 ## D093 — Keep overlay PostgreSQL fixture current and expose host-test failures
 
 The isolated overlay proof installs the production live schema prefix, which now also installs the corner cache UPDATE trigger. Its minimal fixture lacked that relation. Adding the unused fixture table preserves the actual listener, UTF8 generation, missed revision, viewer demand and terminal resurrection assertions; isolated PostgreSQL1 passes.
 
 The published shared suite also returned exit2 from the nightly-host fixture's first mocked run without surfacing stderr. The assertion now includes stderr. All11 isolated mocked host cases pass locally; the CI-only cause is not established and this diagnostic change is not claimed as a fix. No real emulator, host lifecycle or production operation was invoked. Full CI on the next head remains required.
-
 
 ## D094 — Connector-offer expiry follows the stored ceremony deadline
 
@@ -325,7 +313,6 @@ Whole background ownership, complete provider/ceremony migration and released-co
 
 Validation: connector source/idle/failure3, real HTTP/card/command integration4, isolated PostgreSQL clock/index1, shutdown10, server types, workspace build8, dead-code (five existing/zero new), router inventory158 and workflow paths119 pass. No whole finding is newly closed.
 
-
 ## D095 — Pending-command renudge requires a helper event
 
 The minute repair loop no longer rediscovers and rewrites stranded pending commands. The helper-specific entry point now requires an agent ID; its unscoped30/90-second age/retry mode is removed. Actual connection/reconnect and the existing one-shot pickup transition still admit bounded hints for that helper. Busy same-Room commands remain excluded; other Rooms can progress. Committed command release already publishes the recipient's wake, and `CommanderWakeDeadlines` retains actual stored wake/startup deadlines.
@@ -333,7 +320,6 @@ The minute repair loop no longer rediscovers and rewrites stranded pending comma
 Daemon bootstrap independently enumerates every pending member Room, so its recovery does not rely on the100-row hint batch. This slice does not establish full route/owner generations, complete deadline source cost or all-cohort delivery. Those gates remain open.
 
 Validation so far: focused command/bootstrap4, focused connection/reconnect1, server types, workspace build8, dead-code (five existing/zero new) and router boundary inventory pass. Full connection-presence validation stalled twice; verbose output stops after six passing cases, at the21,630-message history fixture. Both runs were interrupted; full-suite success is not claimed. Per the repeated-obstacle handoff rule, this slice is committed locally but not pushed, pending firstmate resolution. Logs: `.beeline-proof/network-ops/renudge-presence.log` and `renudge-presence-verbose.log` in the task root.
-
 
 ## D096 — Pre-existing presence history fixture stall
 
@@ -345,7 +331,6 @@ The tiny fix restores historical rows with user triggers disabled only during fi
 
 Full clean-main presence28 passes in44.01s, and full router-branch presence30 passes in46.62s. The history case itself takes3.686s/3.723s. Logs remain under task-root `.beeline-proof/network-ops/`: `presence-origin-main.log`, `presence-main-seed-plan.log`, `presence-main-seed-plan-5000.log`, `presence-main-fixture-fixed.log`, `presence-branch-fixture-fixed.log`. This resolves D095's validation block. Production source-write performance and whole-router workload/cohort gates remain open; fixture loading is not an ingestion benchmark.
 
-
 ## D097 — Sentry batching follows stored deadlines and committed eligibility
 
 The Sentry owner no longer runs a minute reconciliation sweep. It returns only the remaining database-clock batching duration; empty, unauthorized and failed observations park without another timer or query. Signed arrivals, exact recipient membership/kind changes, triage authority and blocking-report changes, and actual database/listener recovery admit another observation. Command insertion and digest acknowledgement remain atomic. Shutdown detaches the new subscriptions before draining leadership.
@@ -353,7 +338,6 @@ The Sentry owner no longer runs a minute reconciliation sweep. It returns only t
 The eligibility fixture waits for both subscription recovery hints before counting committed writes. Renames, unrelated membership, rollback and an empty queue do not wake it. The clock-skew assertion runs only against separate loopback PostgreSQL because PGlite shares JavaScript's clock; the isolated CI lane explicitly runs that assertion and deadline tests. No production Workspace or provider was used.
 
 Validation: local Sentry13, isolated PostgreSQL deadline/clock3, committed eligibility1, the other listener43, shutdown10, server types, workspace build8, dead-code (five existing/zero introduced), router inventory158, phone inventory72 and workflow paths120 pass. Full route ownership/generations, bounded digest ingestion, source costs and released-cohort gates remain open. No whole finding is newly closed.
-
 
 ## D098 — Legacy display expiry has no recurring discovery
 
@@ -363,13 +347,11 @@ The existing legacy notices and takeover semantics are preserved. This is not se
 
 Validation: listener45 plus corrected focused source/idle2, shutdown10, server types, build8, dead-code (five existing/zero introduced), router158/phone72 inventories and workflow paths120 pass. The first source fixture omitted required workspace_id; it was corrected without changing production constraints. No whole finding is newly closed.
 
-
 ## D099 — Reviewer repair cannot observe GitHub
 
 Removed the optional provider-refresh callback from configured-reviewer reconciliation and its minute job caller. Repair uses already committed exact-head facts. Verified GitHub events and explicit helper commands retain their existing head-refresh paths, including before claim. A missed provider event does not authorize periodic discovery.
 
 The full reviewer suite93 and server types pass; the actual job wiring regression requires the database-only call. Lost-wake repair, explicit-wait release, delivered/stale verdict suppression, head changes and existing explicit command refresh remain covered. The periodic database repair itself still needs event scoping and is not claimed closed. No whole finding is newly closed.
-
 
 ## D100 — Native40 artifact lookup and current scoped launch
 

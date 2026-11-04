@@ -1,12 +1,14 @@
-# Universal router activation
+# Universal router activation evidence
 
-2026-11-04. Implements firstmate instruction 061: enable the router for every production phone/helper/server path, retaining compatibility and rollback code. No identity/Workspace cohort or staged activation step is introduced. This activation does not relabel the audit closure ledger or claim live/device proofs.
+Historical activation checkpoint (2026-11-04), superseded by [router ownership](../../docs/network-router-ownership.md). The switch and rollback instructions below describe that checkpoint, not current configuration.
 
-`BEELINE_NETWORK_ROUTER_V1` now defaults on; explicit `0` retains rollback. Protocol negotiation, durable local authority/command storage, object storage and current authority remain actual capability requirements. Installed clients that do not negotiate the router retain their existing protocol.
+Implemented firstmate instruction 061: enable the router for every production phone/helper/server path, retaining compatibility and rollback code. No identity/Workspace cohort or staged activation step is introduced. This activation does not relabel the audit closure ledger or claim live/device proofs.
+
+At this checkpoint, `BEELINE_NETWORK_ROUTER_V1` defaulted on and explicit `0` retained rollback. Protocol negotiation, durable local authority/command storage, object storage and current authority remain actual capability requirements. Installed clients that do not negotiate the router retain their existing protocol.
 
 Production previously supplied neither `routerProjections` nor media capability to the server. `network-router-runtime.ts` now composes all families, command deduplication, Room continuity, Scheduled Work authority, media metadata and one shared build coordinator. Mobile advertises the implemented roster, Tray and saved-page adapters. Helper activation, overlays, usage, turn ownership and MCP delivery share the enabled default.
 
-The release migration installs the existing background ownership, Tray source/readiness, commit-fence and private work-stream schemas, then publishes router schema marker **62**. The historical base marker remains **46**. `index.ts` supplies the existing background lock backend, committed listener and aggregate lease to Tray work. Only returned source deadlines and committed wakes admit work; there is no new timer, connection, retry loop or client inventory. The legacy choice-expiry adapter remains available when explicitly disabled. Rollback uses the same schema-capable image with `BEELINE_NETWORK_ROUTER_V1=0`; preserve source-ownership columns and fences.
+The release migration installs the existing background ownership, Tray source/readiness, commit-fence and private work-stream schemas, then publishes router schema marker **62**. The historical base marker remains **46**. `index.ts` supplies the existing background lock backend, committed listener and aggregate lease to Tray work. Only returned source deadlines and committed wakes admit work; there is no new timer, connection, retry loop or client inventory. The checkpoint retained a disabled-router choice-expiry adapter and policy-off image rollback; current recovery constraints are in [T7 compatibility](t7-compatibility.md#recovery-constraints).
 
 ## Local validation
 

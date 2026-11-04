@@ -123,7 +123,7 @@ async function lockDecision(database: SqlDatabase, operation: TrayDecisionOperat
       FROM room_choices WHERE id::text=$1 AND status='open' AND ($2::boolean OR mode='question') FOR UPDATE NOWAIT`, [input.choiceId, operation === 'answerChoice'])).rows[0];
     if (!choice?.current) throw new CommandRefusalError('Choice is no longer open for a decision', 409);
     // The source lock is the action-versus-expiry linearization. A worker
-    // cannot settle this same choice while the admitted skip is in flight.
+    // cannot settle this same choice while the admitted decision is in flight.
     await database.query('SELECT id FROM messages WHERE id=$1 FOR UPDATE NOWAIT', [planned.message_id]);
     if (planned.run_id) await database.query(`SELECT id FROM messages WHERE room_id=$1 AND card->>'runId'=$2
       ORDER BY id FOR UPDATE NOWAIT`, [planned.room_id, planned.run_id]);

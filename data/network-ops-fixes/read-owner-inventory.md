@@ -1,5 +1,7 @@
 # Finding 4 inventory (pre-change e298d6c9c; audit reference e1fff40b5)
 
+This is a historical pre-change inventory, including its former adapter and browser-storage constraints. Current ownership is documented in [server-indexed surfaces](../../docs/agent-server-surfaces.md); retained local checks and installed-client compatibility are documented in [router ownership](../../docs/network-router-ownership.md).
+
 - apps/mobile/sources/buzz/needs-you-store.ts:19-27,62-96,145-260: independent committed response journal, sorting, live reducers and direct read dispatch. Remove feature ownership; server responses and committed deltas belong behind one read owner. Concurrent reads must remain ordered.
 - apps/mobile/sources/buzz/needs-you-store.ts:262-304,306-308: optimistic removal/restore and held UI intent. Keep intent only, separated from persisted DTOs; no reason to persist a speculative edit.
 - apps/mobile/sources/buzz/needs-you-store.ts:389-420: seen receipts synthesize updated committed rows. Move receipt application/read into the owner.
@@ -13,10 +15,6 @@
 - apps/mobile/sources/buzz/surface-boundary.test.ts:23-55: retired route root and retired names only. Replace with real source roots and authority checks, zero alternate writers/read dispatch in scope. Extend existing router scanner; plant negative fixtures, including aliases/reexports.
 
 - apps/mobile/sources/buzz/router-tray.ts:49-75: saved-page cut checks, deduplication and ordering are retained as nonpersistent rendering of coherent server-authored windows/cursors. The lane owner still admits and commits every page.
-
-The integrated cleanup keeps `apps/mobile/sources/buzz/server-read-owner.ts` as the single list/count observation and Forward gesture boundary. Its implementation uses only canonical router lanes. The legacy Chat/Tray journals, reducers, direct readers and capability-selection paths described in this pre-change inventory are removed rather than retained alongside the router. Browser Tray uses durable cross-tab command persistence, including transition-only writes and monotonic sent state. Server wire compatibility for installed clients remains in its existing adapters.
-
-`monolithPhoneOperation` and `MonolithRigTransport.operation` exclude the selected reads; `RoomViewClient.chats` requires a capability that current feature consumers cannot construct. Forward's missing-list case enters the existing admission owner and read lane through its actual gesture with the held Room-to-Workspace fence. Canonical lanes retain committed delta ordering, continuity and authority checks.
 
 The existing router boundary scanner enforces these capabilities without a count allowance. The mobile boundary test scans `apps/mobile/sources`, including the actual `beeline` routes. Negative source fixtures and `read-authority.typecheck.ts` plant forbidden dispatch, cache writes, exports and capability construction; ordinary production callers cannot typecheck those adapters. No unrelated gate was added.
 

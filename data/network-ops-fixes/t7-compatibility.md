@@ -1,6 +1,6 @@
 # T7 compatibility evidence and remaining gates
 
-The router remains capability-off. Only F26 is closed in the [closure ledger](closure-ledger.md).
+Historical compatibility checkpoint: the router was capability-off and only F26 was closed in the [closure ledger](closure-ledger.md). Current routing is owned by [router ownership](../../docs/network-router-ownership.md).
 These proofs exercise current source, isolated historical/current server images
 and retained historical native evidence;
 they do not authorize activation or establish a deployed rollback image.
@@ -120,15 +120,7 @@ reaction writes; it was corrected to assert revision2 before repeated migration
 and compare that exact current DTO afterwards. No production behavior/assertion
 budget was changed to obtain the passing result.
 
-Reproduce from this checkout with an isolated loopback URL in
-`BEELINE_COMMAND_TEST_POSTGRES_URL`:
-
-```sh
-mkdir -p .beeline-proof/historical-server46
-git archive f43bd3f86e4c7a30aa75378df82fcbda10027c72 apps/server package.json tsconfig.base.json | tar -x -C .beeline-proof/historical-server46
-ln -s "$PWD/node_modules" .beeline-proof/historical-server46/node_modules
-NODE_OPTIONS=--max-old-space-size=4096 node --import tsx scripts/prove-router-expansion-source.mjs .beeline-proof/historical-server46
-```
+The expansion-source script was removed by router cleanup; the linked result artifact preserves this historical run.
 
 The same source smoke now also runs the actual bundled mobile `LiveConnection`
 against a selected current server and the historical source server with its
@@ -198,71 +190,22 @@ ledger-aware recovery floor; no router-selected command exists in this image
 smoke. The earlier selected-command/source/mobile proofs remain separate
 evidence. Full old-operation/native/provider coverage is still open.
 
-Reproduce after building both exact source archives with their own
-`apps/server/Dockerfile`, the recorded release SHA build argument and
-`DOCKER_BUILDKIT=0 docker build --memory=4g --memory-swap=4g --cpu-period=100000 --cpu-quota=200000`:
+The expansion-image and canary proof scripts were removed by router cleanup. Their recorded artifacts above remain historical evidence, not runnable commands in this checkout.
 
-```sh
-NODE_OPTIONS=--max-old-space-size=4096 \
-BEELINE_COMMAND_TEST_POSTGRES_URL=postgres://USER@127.0.0.1:PORT/postgres \
-node scripts/prove-router-image-expansion.mjs \
-  "$HISTORICAL_IMAGE" "$CANDIDATE_IMAGE" "$TASK_POSTGRES_SOCKET"
-```
+### Recovery constraints
 
-The socket must belong to the disposable trust-authenticated cluster at the
-given loopback URL. The script owns and removes its random database and named
-containers. It neither builds/pushes images nor contacts Fly.
+Current routing is documented in [router ownership](../../docs/network-router-ownership.md), and release authority remains in [release policy](../../docs/release-pipeline.md). The former router-off expansion/switch/removal sequence is superseded.
 
-### Required release sequence
-
-1. **Expansion release, router off.** Cut the prerequisite release from the
-   supported main image with additive router schema plus boot and durable-outcome
-   compatibility code. Preserve old tables, columns, write defaults, endpoint
-   formats and the base marker 46. Install new tables/nullable or defaulted
-   columns, backfills and compatible source capture without removing old paths.
-   Runtime behavior outside that prerequisite scope stays at the supported
-   release. Do not deploy the entire combined draft as a schema-only release.
-   Run the old application's read/write corpus against the expanded database,
-   including writes interleaved with migration statements; build both exact
-   images and prove restart/boot plus the real canary auto-revert path in an
-   isolated environment. The original image remains a valid rollback target
-   during this release because no router-selected commands exist yet.
-2. **Establish the image floor.** Complete the normal two-machine canary sequence
-   with the expansion image and router still off. Record its immutable image
-   reference and release record as the supported recovery floor. Both machines
-   must interpret retained command identities, pending/unknown/expired outcomes,
-   generation ownership and legacy wire before any router activation. Merely
-   retaining tables or passing the old boot check is insufficient. This is an
-   owner-operated release prerequisite; no production state was inspected or
-   changed by these proofs.
-3. **Switch release.** Only after the pre-rollout code, compatibility and budget
-   gates pass and the owner authorizes the staged rollout, select the unified
-   router using the existing rollout setting. Record the exact post-switch cohort
-   measurements in [readiness](rollout-readiness.md) before claiming whole-finding
-   closure; enabling the switch does not itself close F01–F26.
-   Its migration must leave the expansion image's base and router markers valid;
-   no destructive DDL or old-wire removal belongs here. The release planner
-   already remembers each machine's prior image: canary auto-revert now targets
-   the ledger-aware expansion image, not the pre-router source. Prove selected
-   command/unknown outcomes, both serving machines and old/new clients through
-   that actual image transition without duplicate effects or blanket reads.
-4. **Removal follows stability.** Delete obsolete implementations only after
-   supported wire ingress, runtime40 and mixed-cohort proofs pass. Preserve the
-   expansion recovery floor and durable outcomes throughout the rollback window.
-   Any eventual contraction needs its own compatibility boundary; it is not
-   bundled into the switch migration.
+Retain installed-client wire compatibility, source-ownership columns and fences, schema markers, command identities, pending/UNKNOWN/expired outcomes and generation ownership. A recovery image must interpret those durable outcomes; boot success and retained tables alone do not establish a safe recovery floor. Schema contraction requires a separate compatibility boundary.
 
 `planServerCanaryDeployment` in `scripts/unified-release.mjs` runs migration
 before replacing the first machine. Its auto-revert and the manual
-`.github/workflows/server-rollback.yml` change images only. They must remain
-usable with the sequence above; neither performs a destructive database rewind.
+`.github/workflows/server-rollback.yml` change images only. Neither performs a destructive database rewind.
 A pre-migration backup restore would lose newer writes and does not satisfy
 retained-outcome rollback. The historical image remains a boot-compatible
 **expansion** fallback, not a safe **post-switch** recovery floor: its dispatcher
 has no router ledger interpretation. The local full-image smoke above proves
-the tested policy-off image swap. The separate expansion release, deployed
-recovery floor, real Fly execution and full old-application corpus remain
-unproved.
+the tested policy-off image swap. That smoke does not establish the deployed recovery floor, real Fly execution or full old-application corpus.
 
 ## Native runtime 40
 
@@ -281,12 +224,12 @@ full-family integration, physical-phone latency, iOS or Tauri proofs.
 head `73a6c477d`, manifest hashes and hashes of every bundled input after the
 group draft integration. Bundle inputs differ from the earlier staged snapshot.
 
-| Measurement | Observed | Hard limit / meaning |
-| --- | --- | --- |
-| Complete private phone owner | 83,222 raw / 23,714 gzip bytes | 90,112 / 24,576; passes |
-| Phone shadow input entry | 27,388 raw / 5,872 gzip bytes | 32,768 / 8,192; passes |
-| Router boundary inventory | 158 keys / 218 occurrences | All declared, but still legacy migration debt |
-| Phone channel inventory | 72 keys / 89 occurrences | Matches the existing manifest; zero scanner errors |
+| Measurement                  | Observed                       | Hard limit / meaning                               |
+| ---------------------------- | ------------------------------ | -------------------------------------------------- |
+| Complete private phone owner | 83,222 raw / 23,714 gzip bytes | 90,112 / 24,576; passes                            |
+| Phone shadow input entry     | 27,388 raw / 5,872 gzip bytes  | 32,768 / 8,192; passes                             |
+| Router boundary inventory    | 158 keys / 218 occurrences     | All declared, but still legacy migration debt      |
+| Phone channel inventory      | 72 keys / 89 occurrences       | Matches the existing manifest; zero scanner errors |
 
 Bundle measurements use esbuild with browser/ESM/bundle/minify and gzip defaults,
 matching `scripts/network-codec-bundle.test.mjs`. These are shared consumer

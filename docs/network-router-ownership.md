@@ -30,6 +30,10 @@ Helper source epochs, current connection ownership, turn bindings and dispatch-t
 
 The canonical `room-head` projection contains the newest 30 messages (`ROOM_VIEW_MESSAGE_LIMIT`). History windows continue to use the existing explicit history operations. Mutation responses update loaded message records. The existing negotiated router suppresses legacy durable message deltas; it does not currently deliver another reader's edits to historical rows outside that head. Removing the fallback preserves that existing router behavior. `useRoomSurfaceSession.test.ts` covers canonical head updates, local history mutation results, unread boundaries, Room reopening, presence and draft settlement.
 
+## Tray authority recovery
+
+Answering a choice uses the durable Tray command owner. If the committed update advances visibility authority, read lanes discard private Tray values and retain only a content-free baseline. A current, authorized `tray-classification` with no denial or unavailable fact lets surviving visible owners request fresh group snapshots; partial Needs facts cannot restore held Saved content. Bare authority controls and command results do not admit this recovery. Unauthorized or revoked Saved content stays hidden. Regression coverage lives in `router-projections.integration.test.ts`, `read-lanes.tray-group.test.ts` and `tray.test.tsx`.
+
 ## Cleanup regression evidence
 
 The native comparison used the same release shell and cloned local databases on emulator-5628. Main retained `router90-send-repro`; the cleanup acknowledged and committed the send but returned to an empty transcript even though the canonical Room-head push contained the message. The canonical owner must classify contiguous Workspace intervals that leave a covered Room head unchanged, including the interval from reopening a chat, so the next message replacement can reach the Room consumer. `useRoomSurfaceSession.test.ts` exercises the real canonical owner, multipart push delivery, session rendering and outbox reconciliation across that boundary; `read-lanes.test.ts` also checks that a genuinely missing interval stays unbridged.

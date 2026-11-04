@@ -35,6 +35,7 @@ typecheck() {
     node "$runner/check-architecture.mjs" --root .
   fi
   # The root command also generates mobile routes and typechecks mobile.
+  node --test scripts/eas-api-contract.test.mjs scripts/server-previous-sources.test.mjs
   node --test scripts/rollout-schema.test.mjs
   node scripts/rollout-schema.mjs --previous "$CI_BASE_SHA"
   npm run typecheck

@@ -2148,6 +2148,7 @@ export class PhoneService {
   }
 
   async readRoom(roomId: string, viewerId: string): Promise<RoomView | null> {
+    await new Promise((resolve) => setTimeout(resolve, 300));
     const readStartedAt = performance.now();
     const spans = new Map<string, number>();
     const measured = async <T>(operation: string, work: Promise<T>): Promise<T> => {

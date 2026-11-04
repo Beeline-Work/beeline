@@ -62,13 +62,18 @@ exports.recoverFailures = async ({ github, context, run = context.payload.workfl
   const issues = await github.paginate(github.rest.issues.listForRepo, {
     ...context.repo, state: 'open', labels: 'release-failure', per_page: 100,
   });
-  const jobs = preflight ? [] : await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+  const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
     ...context.repo, run_id: run.id, filter: 'latest', per_page: 100,
   });
   for (const issue of issues) {
     if (issue.pull_request || issue.state !== 'open' || !(Date.parse(issue.created_at) < Date.parse(run.run_started_at))) continue;
     if (preflight) {
       if (!issue.title.startsWith('Release preflight:')) continue;
+      // A successful subset must not close a failure on an untested platform.
+      const record = issue.body?.match(/<!-- release-failed-jobs:(.*?) -->/);
+      const failedJobs = record ? JSON.parse(record[1])
+        : [...exports.runnerMatrix().map(({ label }) => `Runner probe ${label}`), 'native'];
+      if (!failedJobs.length || !failedJobs.every(name => jobs.some(job => job.name === name && job.conclusion === 'success'))) continue;
     } else {
       // The dispatch attribution is the unified workflow's run name in newer issues.
       if (!issue.title.startsWith('Unified production release:') && !issue.title.startsWith('Production release ·')) continue;

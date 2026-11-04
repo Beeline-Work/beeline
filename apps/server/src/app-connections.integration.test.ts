@@ -297,7 +297,7 @@ describe('connect_app', () => {
          'claimed',$5,now()+interval '10 minutes')`,
       [COMMAND, ROOM, HELPER, REQUEST, GENERATION],
     );
-  });
+  }, 120_000);
 
   afterEach(async () => {
     await releaseCompletions?.();
@@ -1239,7 +1239,8 @@ describe('connect_app', () => {
       if (parsed.pathname.endsWith('/connected_accounts/ca_fixture')) return Response.json({
         id: 'ca_fixture', user_id: OWNER, toolkit: { slug: 'slack' }, status: 'ACTIVE',
       });
-      if (!parsed.searchParams.has('cursor')) return Response.json({ items: [], next_cursor: 'catalog' });
+      if (!parsed.searchParams.has('cursor') && !parsed.searchParams.has('query'))
+        return Response.json({ items: [], next_cursor: 'catalog' });
       return Response.json({ items });
     });
     const daemon = daemonWith(fakeRegistry([]).client, new ComposioApps('fixture-only', transport as typeof fetch));

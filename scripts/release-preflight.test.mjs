@@ -142,6 +142,8 @@ function recoveryFixture() {
 test('successful preflight closes all earlier preflight issues with recovery links, leaving release failures open', async () => {
   const f = recoveryFixture();
   f.run.path = '.github/workflows/release-preflight.yml';
+  f.jobs.splice(0, f.jobs.length, ...['Runner probe production', 'Runner probe android', 'Runner probe ios', 'native']
+    .map(name => ({ name, conclusion: 'success' })));
   f.add('Release preflight: failure (run 100)');
   f.add('Release preflight: cancelled (run 101)');
   f.add('Unified production release: failure (run 102)', ['server']);
@@ -150,6 +152,18 @@ test('successful preflight closes all earlier preflight issues with recovery lin
   assert.equal(f.comments.length, 2);
   assert.ok(f.comments.every(comment => comment.body.includes(f.run.html_url)));
   assert.ok(f.updates.every(update => update.state_reason === 'completed'));
+});
+
+test('a successful platform subset closes only failures it actually retested', async () => {
+  const f = recoveryFixture();
+  f.run.path = '.github/workflows/release-preflight.yml';
+  f.jobs.splice(0, f.jobs.length, { name: 'Runner probe production', conclusion: 'success' },
+    { name: 'native', conclusion: 'skipped' });
+  f.add('Release preflight: failure (run 100)', ['Runner probe production']);
+  f.add('Release preflight: failure (run 101)', ['Runner probe ios']);
+  f.add('Release preflight: failure (run 102)');
+  await recoverFailures(f);
+  assert.deepEqual(f.issues.map(issue => issue.state), ['closed', 'open', 'open']);
 });
 
 test('unified recovery requires every recorded failed job to succeed; skipped or absent jobs keep issues open', async () => {

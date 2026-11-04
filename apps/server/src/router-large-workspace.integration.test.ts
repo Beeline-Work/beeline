@@ -1,5 +1,5 @@
 import { beforeAll, afterAll, afterEach, expect, it } from 'vitest';
-import { phoneRouterHost } from './test-fixtures/phone-router-host.js';
+import { phoneRouterHost } from './test-fixtures/test-support-phone-router-host.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { routerSocketProtocol } from './router-socket.js';

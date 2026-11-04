@@ -1,13 +1,14 @@
+import type { ReadAuthority } from './read-authority';
 import { voiceCallHumanNames } from './voice-call-members';
 import { describe, expect, it } from 'vitest';
 import type { ChatListItem, ChatListView, RoomViewMessage } from '@beeline/buzz-client';
 import {
-  applyChatListDelta,
-  chatListDeltaNeedsRead,
+  applyChatListDelta as applyChatListDeltaOwned,
+  chatListDeltaNeedsRead as chatListDeltaNeedsReadOwned,
   chatWatchFiltersKey,
-  keepUnavailableChatFacts,
-  withCornerFacts,
-  withoutCornerFacts,
+  keepUnavailableChatFacts as keepUnavailableChatFactsOwned,
+  withCornerFacts as withCornerFactsOwned,
+  withoutCornerFacts as withoutCornerFactsOwned,
 } from './chat-list-delta';
 
 const agent = { pubkey: 'agent', kind: 'agent' as const, name: 'Greeter' };
@@ -325,3 +326,13 @@ it('replaces the shared header and deck roster with the committed leave roster',
   expect(voiceCallHumanNames(left.chats[0]!.voiceCall!,viewer.pubkey)).toBe('Sam');
   expect(left.chats[0]!.latestMessage).toEqual(view.chats[0]!.latestMessage);
 });
+
+function withoutCornerFacts(...args: Parameters<typeof withoutCornerFactsOwned> extends [ReadAuthority, ...infer Args] ? Args : never) { return withoutCornerFactsOwned({} as ReadAuthority, ...args); }
+
+function withCornerFacts(...args: Parameters<typeof withCornerFactsOwned> extends [ReadAuthority, ...infer Args] ? Args : never) { return withCornerFactsOwned({} as ReadAuthority, ...args); }
+
+function applyChatListDelta(...args: Parameters<typeof applyChatListDeltaOwned> extends [ReadAuthority, ...infer Args] ? Args : never) { return applyChatListDeltaOwned({} as ReadAuthority, ...args); }
+
+function chatListDeltaNeedsRead(...args: Parameters<typeof chatListDeltaNeedsReadOwned> extends [ReadAuthority, ...infer Args] ? Args : never) { return chatListDeltaNeedsReadOwned({} as ReadAuthority, ...args); }
+
+function keepUnavailableChatFacts(...args: Parameters<typeof keepUnavailableChatFactsOwned> extends [ReadAuthority, ...infer Args] ? Args : never) { return keepUnavailableChatFactsOwned({} as ReadAuthority, ...args); }

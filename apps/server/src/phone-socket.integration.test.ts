@@ -144,6 +144,18 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     });
   }
 
+  it('a failed Room request leaves another request and the socket usable', async () => {
+    const read = vi.spyOn(phone, 'readRoom').mockRejectedValueOnce(new Error('Room read unavailable'));
+    const socket = await open();
+    const failed = await request(socket, 'readRoom', { roomId: ROOM });
+    expect(failed).toMatchObject({ ok: false, error: { code: 'unavailable', retryable: true } });
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    const healthy = await request(socket, 'readWorkspaces', {});
+    expect(healthy).toMatchObject({ ok: true });
+    expect(read).toHaveBeenCalledOnce();
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+  });
+
   it('P10: legacy clients remain usable across selected-policy upgrade and policy rollback', async () => {
     async function restart(selected: boolean) {
       for (const socket of sockets.splice(0)) socket.terminate();
@@ -743,18 +755,12 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     ).toHaveLength(0);
   });
 
-  it('closes oversized frames at the existing frame limit', async () => {
-    const socket = await open(),
-      closed = once(socket, 'close');
-    socket.send(
-      JSON.stringify({
-        t: 'req',
-        id: 'large',
-        op: 'readWorkspaces',
-        args: { padding: 'x'.repeat(PHONE_SOCKET_MAX_FRAME_BYTES) },
-      }),
-    );
-    expect((await closed)[0]).toBe(1009);
+  it('a frame beyond the former limit does not hang up on the phone', async () => {
+    const socket = await open();
+    const reply = await request(socket, 'readWorkspaces', { padding: 'x'.repeat(PHONE_SOCKET_MAX_FRAME_BYTES) });
+    expect(reply).toMatchObject({ ok: true });
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+    expect(await request(socket, 'readRoom', { roomId: ROOM })).toMatchObject({ ok: true });
   });
 
   it('refuses vault secret submissions with a typed error and does not read or write the database', async () => {

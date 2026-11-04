@@ -23,7 +23,7 @@ The seed is the existing `R-PUSH-SCAN-LOCK` statement: 50,000 messages with `rep
 
 Initial profiles used archived source and fresh schemas. An existing migration checks live-trigger names database-wide, so leftover test schemas can suppress installation in a new schema. The historical seed excludes live fanout on both sides; the full regression and final reproducible profile use a clean synthetic database to retain the intended fresh-message proof.
 
-The final activation run completed with less backend CPU than the repeated main run consumed before cancellation. It did not beat the initial 64.593-second main wall-time sample, so these shared-host runs establish reduced report-query work, not a stable wall-time speedup. The full unchanged gate remains decisive.
+The final activation run completed with less backend CPU than the repeated main run consumed before cancellation. It did not beat the initial 64.593-second main wall-time sample, so these shared-host runs establish reduced report-query work, not a stable wall-time speedup. The full unchanged gate subsequently passed in **112.304 seconds**, including all 300 deliveries and 20 exclusive-lock acquisitions (maximum handoff **18 ms**), with all plan assertions intact.
 
 ## Reproduction and validation
 

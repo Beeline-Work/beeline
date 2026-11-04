@@ -13,7 +13,9 @@
         "x": 981,
         "y": 1438
       },
-      "canonicalIds": ["38b7104d9b2be1e2f487478258a7a426e643bd2e3e507ebe773d1f3fb235c3c9"],
+      "canonicalIds": [
+        "38b7104d9b2be1e2f487478258a7a426e643bd2e3e507ebe773d1f3fb235c3c9"
+      ],
       "passed": true
     },
     {
@@ -28,7 +30,9 @@
         "x": 981,
         "y": 1438
       },
-      "canonicalIds": ["eb40d5365e228dc4b2cec2d7333641cefb4ceabf96406ab4b4418f65825f9c52"],
+      "canonicalIds": [
+        "eb40d5365e228dc4b2cec2d7333641cefb4ceabf96406ab4b4418f65825f9c52"
+      ],
       "passed": true
     },
     {
@@ -47,7 +51,9 @@
         "navigateBeforeElapsedNs": 150455190000000,
         "navigateAfterElapsedNs": 150455250000000
       },
-      "sourceCanonicalIds": ["1895166a82359c172eec5d412d01932af13b1fd708f15c6984cd50e57d7da70b"],
+      "sourceCanonicalIds": [
+        "1895166a82359c172eec5d412d01932af13b1fd708f15c6984cd50e57d7da70b"
+      ],
       "targetMessages": 0,
       "passed": true
     }

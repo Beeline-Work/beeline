@@ -2,113 +2,113 @@
 name: Beeline
 description: Obsidian Refined — agent work logged across one dark slab, with Bone as its light counterpart.
 colors:
-  brass: '#b08a4a'
-  brand-mark: '#E5A645'
-  obsidian-canvas: '#14091A'
-  obsidian-raised: '#190e21'
-  obsidian-unread: '#1a1220'
-  obsidian-highlight: '#1e1326'
-  obsidian-hover: '#21162a'
-  obsidian-pressed: '#271c31'
-  obsidian-border: '#291e33'
-  obsidian-border-strong: '#3b3048'
-  obsidian-text-primary: '#f0f0f3'
-  obsidian-text-secondary: '#c9c9d1'
-  obsidian-ledger-quiet: '#90909B'
-  obsidian-text-muted: '#83838d'
-  obsidian-ledger-ghost: '#6c6c76'
-  bone-brass: '#8a6323'
-  bone-canvas: '#F3EEE4'
-  bone-raised: '#ECE4D5'
-  bone-unread: '#EFE8DA'
-  bone-highlight: '#E4D9C4'
-  bone-border: '#DED2BC'
-  bone-border-strong: '#C9BBA0'
-  bone-text-primary: '#171310'
-  bone-text-secondary: '#4A4038'
-  bone-ledger-quiet: '#6F6455'
-  bone-text-muted: '#8B7F6E'
-  bone-ledger-ghost: '#A79C89'
-  diff-added-obsidian: '#3FB950'
-  diff-removed-obsidian: '#F85149'
-  diff-added-bone: '#1a7f37'
-  diff-removed-bone: '#cf222e'
-  syntax-name-obsidian: '#a58ec6'
-  syntax-value-obsidian: '#a8cde8'
-  syntax-name-bone: '#6b5a83'
-  syntax-value-bone: '#1e4460'
-  dialog-danger: '#c4544d'
+  brass: "#b08a4a"
+  brand-mark: "#E5A645"
+  obsidian-canvas: "#14091A"
+  obsidian-raised: "#190e21"
+  obsidian-unread: "#1a1220"
+  obsidian-highlight: "#1e1326"
+  obsidian-hover: "#21162a"
+  obsidian-pressed: "#271c31"
+  obsidian-border: "#291e33"
+  obsidian-border-strong: "#3b3048"
+  obsidian-text-primary: "#f0f0f3"
+  obsidian-text-secondary: "#c9c9d1"
+  obsidian-ledger-quiet: "#90909B"
+  obsidian-text-muted: "#83838d"
+  obsidian-ledger-ghost: "#6c6c76"
+  bone-brass: "#8a6323"
+  bone-canvas: "#F3EEE4"
+  bone-raised: "#ECE4D5"
+  bone-unread: "#EFE8DA"
+  bone-highlight: "#E4D9C4"
+  bone-border: "#DED2BC"
+  bone-border-strong: "#C9BBA0"
+  bone-text-primary: "#171310"
+  bone-text-secondary: "#4A4038"
+  bone-ledger-quiet: "#6F6455"
+  bone-text-muted: "#8B7F6E"
+  bone-ledger-ghost: "#A79C89"
+  diff-added-obsidian: "#3FB950"
+  diff-removed-obsidian: "#F85149"
+  diff-added-bone: "#1a7f37"
+  diff-removed-bone: "#cf222e"
+  syntax-name-obsidian: "#a58ec6"
+  syntax-value-obsidian: "#a8cde8"
+  syntax-name-bone: "#6b5a83"
+  syntax-value-bone: "#1e4460"
+  dialog-danger: "#c4544d"
 typography:
   hero:
-    fontFamily: 'SpaceGrotesk-Medium'
-    fontSize: '22px'
-    lineHeight: '32px'
-    letterSpacing: '-0.3px'
+    fontFamily: "SpaceGrotesk-Medium"
+    fontSize: "22px"
+    lineHeight: "32px"
+    letterSpacing: "-0.3px"
   body:
-    fontFamily: 'SpaceGrotesk-Regular'
-    fontSize: '16px'
-    lineHeight: '23px'
-    letterSpacing: '0'
+    fontFamily: "SpaceGrotesk-Regular"
+    fontSize: "16px"
+    lineHeight: "23px"
+    letterSpacing: "0"
   bodyStrong:
-    fontFamily: 'SpaceGrotesk-SemiBold'
-    fontSize: '16px'
-    lineHeight: '23px'
-    letterSpacing: '0'
+    fontFamily: "SpaceGrotesk-SemiBold"
+    fontSize: "16px"
+    lineHeight: "23px"
+    letterSpacing: "0"
   meta:
-    fontFamily: 'SpaceGrotesk-Regular'
-    fontSize: '13px'
-    lineHeight: '19px'
-    letterSpacing: '0'
+    fontFamily: "SpaceGrotesk-Regular"
+    fontSize: "13px"
+    lineHeight: "19px"
+    letterSpacing: "0"
   sectionHead:
-    fontFamily: 'SpaceGrotesk-Medium'
-    fontSize: '10px'
-    lineHeight: '15px'
-    letterSpacing: '2px'
+    fontFamily: "SpaceGrotesk-Medium"
+    fontSize: "10px"
+    lineHeight: "15px"
+    letterSpacing: "2px"
   sectionLabel:
-    fontFamily: 'SpaceGrotesk-Medium'
-    fontSize: '13px'
-    lineHeight: '19px'
-    letterSpacing: '2px'
+    fontFamily: "SpaceGrotesk-Medium"
+    fontSize: "13px"
+    lineHeight: "19px"
+    letterSpacing: "2px"
   sectionCount:
-    fontFamily: 'SpaceGrotesk-Regular'
-    fontSize: '15px'
-    lineHeight: '22px'
-    letterSpacing: '0'
+    fontFamily: "SpaceGrotesk-Regular"
+    fontSize: "15px"
+    lineHeight: "22px"
+    letterSpacing: "0"
   machine:
-    fontFamily: 'IBMPlexMono-Regular'
-    fontSize: '13px'
-    lineHeight: '19px'
-    letterSpacing: '0'
+    fontFamily: "IBMPlexMono-Regular"
+    fontSize: "13px"
+    lineHeight: "19px"
+    letterSpacing: "0"
   prose:
-    fontFamily: 'SpaceGrotesk-Regular'
-    fontSize: '16px'
-    lineHeight: '23px'
+    fontFamily: "SpaceGrotesk-Regular"
+    fontSize: "16px"
+    lineHeight: "23px"
 rounded:
-  house: '3px'
-  code: '8px'
-  transcript-card: '10px'
-  room-card: '14px'
+  house: "3px"
+  code: "8px"
+  transcript-card: "10px"
+  room-card: "14px"
 spacing:
-  xs: '4px'
-  sm: '8px'
-  md: '16px'
-  lg: '24px'
-  xl: '32px'
-  xxl: '48px'
+  xs: "4px"
+  sm: "8px"
+  md: "16px"
+  lg: "24px"
+  xl: "32px"
+  xxl: "48px"
 components:
   button:
-    rounded: '{rounded.house}'
-    height: '44px'
-    typography: '{typography.body}'
+    rounded: "{rounded.house}"
+    height: "44px"
+    typography: "{typography.body}"
   transcript-card:
-    backgroundColor: '{colors.obsidian-raised}'
-    rounded: '{rounded.transcript-card}'
+    backgroundColor: "{colors.obsidian-raised}"
+    rounded: "{rounded.transcript-card}"
   room-card:
-    rounded: '{rounded.room-card}'
+    rounded: "{rounded.room-card}"
   poll-option:
-    rounded: '{rounded.house}'
+    rounded: "{rounded.house}"
   conversation-row-selected:
-    backgroundColor: '{colors.obsidian-highlight}'
+    backgroundColor: "{colors.obsidian-highlight}"
 ---
 
 # Design System: Beeline
@@ -119,14 +119,13 @@ Source of truth for tokens: `apps/mobile/sources/buzz/groknight.ts` (`beelineThe
 
 **Creative North Star: "Obsidian Refined — the slab"**
 
-The phone is a single slab of obsidian, and Beeline's output is logged across it. The interface recedes so the agents' work _is_ the screen. There are no chat bubbles or per-message frames. Structured records and asks use the one `TranscriptCard` anatomy; everything else sits directly on the slab.
+The phone is a single slab of obsidian, and Beeline's output is logged across it. The interface recedes so the agents' work *is* the screen. There are no chat bubbles or per-message frames. Structured records and asks use the one `TranscriptCard` anatomy; everything else sits directly on the slab.
 
 It reads like a focused technical conversation, not a chat app. The governing readability rule: **content near-white, chrome dim, never the reverse.** Prose hierarchy comes from weight and brightness at one size. Chrome (Room-list header, transcript header, Workspace rail) has no plate of its own; it is the same canvas as the content, held apart by one hairline and by type weight.
 
 Bone is the same language run in reverse for light mode: content near-black, chrome mid, on a warm bone canvas. Settings → Appearance picks the theme; it follows the system until chosen.
 
 **Key Characteristics:**
-
 - One canvas, edge to edge; press and hover are the only luminance steps above it.
 - One accent (brass), always redundant with shape, glyph, or copy.
 - Five type sizes plus one mono role, held by a lint.
@@ -138,12 +137,10 @@ Bone is the same language run in reverse for light mode: content near-black, chr
 A near-monochrome aubergine-black (or warm bone) ladder with one brass accent and four named exceptions.
 
 ### Primary
-
 - **Brass** (`accent`, Obsidian `#b08a4a`, Bone `#8a6323`): the viewer's own byline name, `@handle` mentions in prose, live work (a working agent's ring, the corners door, a Room with a live corner), owner role, unread dots, attention rings, and the action you take on agent work. Bone darkens it because the Obsidian brass is too light on bone. `brassWash` / `brassWashStrong` (18% / 28% alpha) are its only tints.
 - **Brand mark gold** (`brandMark`, `#E5A645`, from `buzz/brand.json`): the Beeline mark and a live workflow glyph only.
 
 ### Neutral
-
 - **Canvas** (`bgBase` / `bgVoid` / `appCanvas`): Obsidian `#14091A` (Speakeasy's aubergine), Bone `#F3EEE4`.
 - **Elevation ladder**: `bgRaised`/`bgCode` → `bgUnread` → `bgHighlight` (selection) → `bgHover` → `bgPressed` → `bgTexturePeak`. Each stop keeps the same relative offset in both themes.
 - **Content inks**: `textPrimary` (narration, human messages, names), `textSecondary` (body under a lead line, previews).
@@ -153,11 +150,9 @@ A near-monochrome aubergine-black (or warm bone) ladder with one brass accent an
 - **Borders**: `border` (hairlines), `borderStrong` (rules, connectors, pending rings).
 
 ### Appearance
-
 Obsidian Refined is the default. Bone is its only counterpart (the older Editorial Ink and Ledger sets are retired). Both share `radius`, type roles, and spacing; only colour values differ. `unistyles.ts` registers each at three text sizes.
 
 ### Color exceptions
-
 Stated so no one re-litigates them. Each is redundant with a non-colour signal, and none licenses a fifth.
 
 1. **Brass** is the one accent (see Primary). It never fills an identity plate: an agent's plate carries its own hue and brass only rings it. A closed poll's still brass wash is pigment for magnitude, not "winner"; the leader is also the longest bar and `bodyStrong`.
@@ -176,19 +171,18 @@ Stated so no one re-litigates them. Each is redundant with a non-colour signal, 
 **Character:** a technical grotesk for everything a person reads, and a plex mono reserved for strings a machine produced.
 
 ### Type
-
 Five sizes, one mono role, held by a lint. The roles live in `typeRoles` (on every theme as `theme.buzz.type`). Each carries family, size, line height (1.45×, rounded) and tracking. A screen spreads a role; it never sets a raw size.
 
-| role           | face                   | size | line | use                                                                       |
-| -------------- | ---------------------- | ---- | ---- | ------------------------------------------------------------------------- |
-| `hero`         | Space Grotesk Medium   | 22   | 32   | a screen's one big line (tracking −0.3)                                   |
-| `body`         | Space Grotesk Regular  | 16   | 23   | body text, row titles and names, buttons (sentence case)                  |
-| `bodyStrong`   | Space Grotesk SemiBold | 16   | 23   | emphasised `body`; page titles                                            |
-| `meta`         | Space Grotesk Regular  | 13   | 19   | previews, captions, stamps, counts, eyebrows                              |
-| `sectionHead`  | Space Grotesk Medium   | 10   | 15   | section heads only (tracking 2, uppercase)                                |
-| `sectionLabel` | Space Grotesk Medium   | 13   | 19   | shared section labels (tracking 2, uppercase; rendered on the count line) |
-| `sectionCount` | Space Grotesk Regular  | 15   | 22   | shared section counts                                                     |
-| `machine`      | IBM Plex Mono          | 13   | 19   | commands, paths, hashes, code, tool rows, byline tags and stamps          |
+| role          | face                   | size | line | use                                                              |
+| ------------- | ---------------------- | ---- | ---- | ---------------------------------------------------------------- |
+| `hero`        | Space Grotesk Medium   | 22   | 32   | a screen's one big line (tracking −0.3)                          |
+| `body`        | Space Grotesk Regular  | 16   | 23   | body text, row titles and names, buttons (sentence case)         |
+| `bodyStrong`  | Space Grotesk SemiBold | 16   | 23   | emphasised `body`; page titles                                   |
+| `meta`        | Space Grotesk Regular  | 13   | 19   | previews, captions, stamps, counts, eyebrows                     |
+| `sectionHead` | Space Grotesk Medium   | 10   | 15   | section heads only (tracking 2, uppercase)                       |
+| `sectionLabel` | Space Grotesk Medium | 13 | 19 | shared section labels (tracking 2, uppercase; rendered on the count line) |
+| `sectionCount` | Space Grotesk Regular | 15 | 22 | shared section counts |
+| `machine`     | IBM Plex Mono          | 13   | 19   | commands, paths, hashes, code, tool rows, byline tags and stamps |
 
 Transcript prose uses `proseSize` 16 on `proseLineHeight` 23, the `body` role's own leading. Transcript cards use the same 16/23 body, with `machine`-size (13) kinds and paths (`transcriptCard`).
 
@@ -220,7 +214,6 @@ Flat by default. Depth is tonal: the elevation ladder in Colors, one hairline, a
 ## Shapes
 
 ### Shape
-
 - **House radius** `radius = 3`: inputs, buttons, poll plates, reference chips, identity plates.
 - **Transcript card family:** radius 10 on a 1 px border, matching the composer. Code blocks inside a card use 8.
 - **Phone Room-list cards:** radius 14 (`roomCard.cornerRadius`).
@@ -235,7 +228,6 @@ A **rule** is one edge, no fill, no radius. Hairlines divide an index (Room list
 ## Components
 
 ### The ledger
-
 Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`, fed by one branch in `app/(app)/beeline/chat/_chat-surface.tsx`. A shape only one surface needs is a design fork, not a quiet second implementation.
 
 - **One size.** Every message is Space Grotesk 16/23. A long agent turn's first line takes Medium at `textPrimary`; following paragraphs take Regular one step down. A human message is plain body text, never bolded or enlarged.
@@ -257,7 +249,6 @@ Approval cards lead with the agent’s plain-language purpose, then available Ru
 `TranscriptCard` is the one structured-card anatomy (grant, permission, merge summary, choice, notification): head with identity, title, subline and stamp; rows; code block; footer verbs. Record tier for facts and settled asks, ask tier (raised fill) only while a response is needed. Radius 10, 1 px border, 16 side padding, 26 px identity.
 
 ### Buttons
-
 - Labelled actions use `Button`; cards use `ButtonRow` for a wrapping set of actions. `HullDialogActions` is reserved for real dialogs and inline editors. The `danger` Button variant retains normal text contrast inside a danger-coloured outline. Failure notices use `ErrorBanner`, with an optional shared secondary action for dismissal. `sources/buzz/shared-controls.guard.test.ts` inventories raw text controls, retry notices and dialog-action rows; each retained structural control has an exact fingerprint and a reason in `design/shared-control-allowlist.json`.
 - When migrating an existing approved control, `Button.appearance` preserves its exact control, label and pressed styles; it must not introduce new visual treatment. `iconPosition` preserves the original glyph order.
 - **`Button`** (`components/buzz/Button.tsx`) is the one button: house radius, 44 tall, `body` label in Space Grotesk Medium, sentence case, a pressed state. Variants: `primary` (filled `buttonPrimaryFill`), `secondary` (1 px `borderStrong`), `brass` (1 px `accent`, brass label), `quiet` (unboxed dismissals: Later, Skip, Dismiss, Not now), `destructive` (unboxed `dialogDanger` explicit verb). `HullDialogActions` owns the trailing, wrapping decision row: Cancel/reject first, confirm last, gap 8. Retry uses a secondary Button beside separately readable error copy; dismissal uses `HullActionSheetCancel`.
@@ -268,7 +259,6 @@ Approval cards lead with the agent’s plain-language purpose, then available Ru
 - **Busy:** `PixelLoader` (four frames, ~7.5 fps) appears only inside a labelled control.
 
 ### Index rows
-
 - **`ConversationRow.tsx`** is shared by phone and desktop. Names use `body` (SemiBold when unread); previews are one `meta` line in `textSecondary` (`textPrimary` when unread) with `@author · ` inline. Room names carry a brass `#`. A trailing brass dot means new messages; it gains a ring only while the Room needs the viewer (an approval waiting or an unread mention, `roomRowAttentionReason`). Long press toggles a device-local pin.
 - **Desktop selection** is `bgHighlight` plus a 1 px brass left rule. The phone has no selected state.
 - **Corner toggle.** A Room row shows the brass `CornerGlyph` toggle only when the viewer has at least one open corner there (`Expand N corners`); long-pressing the toggle opens a new corner (humans only).
@@ -279,7 +269,6 @@ Approval cards lead with the agent’s plain-language purpose, then available Ru
 - **Workspace rail.** The drawer marks selection with an edge bar, the mark's heavier frame, and receding tone for the others. The desktop strip uses framed avatars, an icon-only Add, and the account avatar at the bottom.
 
 ### Workflows
-
 - **`WorkflowGlyph`** is one filled polygon in the corner's 24 viewBox: the corner mark turned 135° with a stem rising from the elbow. Brand-mark gold while a run is live, the theme's `ledgerGhost` when idle; inline at `CORNER_META_SIZE` (13).
 - **Run page** (`app/(app)/beeline/workflow-run.tsx`, `WorkflowRunLine`, data from `buzz/workflow-graph.ts` `workflowRunLine`): a `hero` status line (`Running`/`Waiting on you`/terminal name, never the raw state), a `meta` line of who/when/how long, the saved ≤140-character `summary` (absent on legacy revisions) against the same 2 pt `humanRail` rail + `meta`/`textSecondary` copy as a corner's own objective line (`CornerObjectiveLine`), then a `Steps` section head and one vertical line read like a GitHub Actions run — no step counter. Below the rail, every run page shows the same "Also running in this corner" section alike (symmetric) whenever the corner has another live saved-workflow run — any workflow, not only this one — one compact row each: `<workflow name> · <step>`, holder, elapsed. A tap `router.replace`s this page with that run's, so Back from any run page always lands on the corner, never on a previous run; the "All runs" link (this workflow's own history) stays separate. `workflowRunLine` draws every reached visit in execution order (every repeated loop visit its own row), then the contract's predicted path onward from a live current step — each state's first declared outcome, stopping at the first predicted terminal — so the rail always shows upcoming steps too, dimmed, never only what has already run.
 - **Steps** are 20 pt circles, never colour alone: done (brass disc + check), current (brass ring + dot under a 32 pt breathing halo), pending (hollow `textMuted` ring), skipped (dashed ghost ring with a slash), failed (`textSecondary` ring with an x). Connectors are 2 pt: brass where the run went, dashed ghost beside a skip, `borderStrong` ahead of or between pending steps. A pending or skipped row's whole copy (name, `does`, assignee, duration) sits at 45% opacity. Each row is a flat, non-expandable read: its saved ≤140-character `does` sentence (legacy steps with none keep just their name), then — for the step in progress — the agent's latest output chunk in the same provisional tone a live draft already reads in elsewhere (`provisionalProseStyle`, `components/buzz/Ledger.tsx`), replaced as new chunks arrive; for a finished handoff or gate, its committed final reply in the same settled agent-prose tone (`settledAgentProseStyle`); for a gate, one line naming who it waits on or the answer and who gave it. No entered/left timestamps, outcome arrows, or delivered-field dumps. Gates are records, never controls; answering stays in the corner. A step's opened corners are plain links directly under it.
@@ -287,7 +276,6 @@ Approval cards lead with the agent’s plain-language purpose, then available Ru
 - **Step assignee.** Each step with a role shows who holds or held it at the row's right, beside the duration: a 20 pt `IdentityMark` and the `@handle` in `meta`, in the identity's hue, brass when it is the viewer (`workflowStepAssignee`). The current step is the run's holder (the viewer when it waits on them), a reached visit whoever left it (the person who answered a gate), a pending step its bound role holder. Steps with no role carry no mark. Role names never appear on the page. A reached step's elapsed duration sums server entry/exit times and ticks while current; the terminal that ends the run reads by the clock it was reached instead.
 
 ### Identity
-
 `components/buzz/IdentityMark.tsx` is the one identity component (a test bans any other `*Avatar*`). Faces come from `buzz/faces/`, hues from `buzz/identity-mark.ts`.
 
 1. **Species is the face.** People and agents are one of Speakeasy's twelve creatures (fox, owl, pigeon, hare, stag, whale, moth, octopus, heron, bear, cat, bat). People can choose in Settings → Identity; the server assigns an agent's, together with its name. Without either, `defaultFaceForSeed` (FNV-1a) picks the same animal on every device.
@@ -303,7 +291,6 @@ Approval cards lead with the agent’s plain-language purpose, then available Ru
 **Names and vocabulary.** An agent's name comes from its registered `displayName` via `resolveAgentDisplayIdentity`; the soul shapes personality and art, never the name. "Room," never "Channel." `Members` names the surface (`MEMBERS_LABEL`); its sections are `People N` and `Agents N`. Room and corner names carry the `#` mark wherever they are exposed (`displayRoomIndexTitle`, `displayCornerTitle`), added at render only. Room and corner state is the drawn `StateCircle`, never a typed diamond.
 
 ### Motion
-
 Primitives live in `components/buzz/MonoHull.tsx` with `motionTokens`: reveal 176 ms (`PixelGateReveal`), confirm 240 ms, loader frame 133 ms, new-message 140 ms fade+rise (`NewMessageMaterialize`), demote dip 90 ms, and one live clock `liveCycle` 1120 ms. All respect `ReduceMotion.System`; continuous ones stop when the app backgrounds. Nothing but the continuous loops exceeds ~240 ms.
 
 - **Live breathes, never travels.** `HullLivePulse` (one opacity breath) is the only motion "live" may have. It is mounted only where something is genuinely live, so mount it conditionally, never `active={false}`. No sweeping bands, progress bars, or marching dashes for turns, corners or checks.
@@ -312,13 +299,11 @@ Primitives live in `components/buzz/MonoHull.tsx` with `motionTokens`: reveal 17
 - **Exceptions:** the sender's own message appears without an entrance fade, including its optimistic-to-signed replacement; the provisional settle cross-fade (220 ms); a closed poll's still brass wash (magnitude, not progress).
 
 ### Agent and human profiles
-
 Profiles reuse Settings typography, spacing and `SettingsRow`. Bylines open profiles; mentions and Message open DMs. Phone pushes a page; desktop opens an adjacent pane. Human profiles show identity, Workspace role (with explicit Edit/Save/Cancel when authorized) and the read-only grant ledger. Agent profiles show the mark or generated portrait, model, effort, owner, expandable soul and merged work. See [agent profiles](docs/agent-profiles.md).
 
 ## Do's and Don'ts
 
 ### Do:
-
 - **Do** read colours, type, radius and spacing from `theme.buzz` so Obsidian and Bone both work.
 - **Do** spread a type role (`...theme.buzz.type.meta`); never set a raw `fontSize`.
 - **Do** encode every state redundantly: glyph, word, or shape alongside colour.
@@ -327,7 +312,6 @@ Profiles reuse Settings typography, spacing and `SettingsRow`. Bylines open prof
 - **Do** mount live motion only where something is live.
 
 ### Don't:
-
 - **Don't** add a second accent hue or let brass fill an identity plate.
 - **Don't** box ordinary messages, attachments or avatars, or add speaker rails.
 - **Don't** style a human message differently from body text.

@@ -119,10 +119,12 @@ change does not fix cold page loading.
   on navigation. Failed enqueue removes it while retaining the draft.
 - `OrdinaryLedgerMessage` skips its 140 ms entrance for own sends. Incoming
   motion is unchanged. No new UI, connection or polling path is added.
-- After durable server commit, onboarding observation runs through the physical
+- After durable server commit, phone-transport onboarding observation runs through the physical
   database's tracked background work. The receipt queues before observation
   requests another DB connection; shutdown drains it. Analytics failure cannot
   reject a committed message or reply.
+  Direct service execution still completes its onboarding milestones before returning;
+  the transport opts into the tracked observation path explicitly.
 
 Behavior coverage: `room-send-list.test.tsx` verifies unchanged parent/history
 and existing row bodies, one visible copy, stable handoff key, layout/frame

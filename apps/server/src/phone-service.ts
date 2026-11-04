@@ -1,35 +1,19 @@
-import {
-  ROOM_ROUTER_CTES,
-  ROOM_ROUTER_HEAD_JOIN,
-  roomRouterColumnsSql,
-  roomMessageTagsSql,
-} from './room-router-read.js';
-import { projectRoomToolSummaries, type RoomToolSummaryRow } from './room-tool-projection.js';
+import { ROOM_ROUTER_CTES,ROOM_ROUTER_HEAD_JOIN,roomRouterColumnsSql,roomMessageTagsSql } from './room-router-read.js';
+import { projectRoomToolSummaries,type RoomToolSummaryRow } from './room-tool-projection.js';
 import { buildTrayProjection, readMessageBookmarks } from './tray-projection.js';
 import { readTraySavedWindow } from './tray-saved-window.js';
 import { buildTraySavedFacts, type TraySavedTarget } from './tray-saved-projection.js';
 import { workingTurnFreshSql } from './turn-ownership.js';
 import { readHelperOverlayFrame } from '@beeline/api-contract/helper-overlay';
-import {
-  buildRouterSnapshot,
-  RouterProjectionUnavailable,
-  routerAuthority,
-  routerAtomicGroup,
-} from './router-projections.js';
+import { buildRouterSnapshot,RouterProjectionUnavailable,routerAuthority,routerAtomicGroup } from './router-projections.js';
 import { profileDomain } from './router-profile-source.js';
-import { ownerFamily, buildOwnerSnapshot } from './router-owner-projections.js';
-import { readWalletProjection } from './wallet.js';
-import { projectWorkbenchDisplay } from '@beeline/api-contract/workbench';
+import {ownerFamily,buildOwnerSnapshot} from './router-owner-projections.js';
+import {readWalletProjection} from './wallet.js';
+import {projectWorkbenchDisplay} from '@beeline/api-contract/workbench';
 import { CommandScopedDatabase } from './command-scoped-database.js';
 import type { TrayDecisionOperation } from './tray-decision-command.js';
-import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
-import type {
-  RouterSnapshotInput,
-  RouterValues,
-  RouterFamily,
-  RouterSnapshot,
-  RouterAuthorityCertificate,
-} from '@beeline/api-contract/router-protocol';
+import {ROUTER_AUTHORITY_LOCK} from './router-authority-lock.js';
+import type { RouterSnapshotInput, RouterValues, RouterFamily,RouterSnapshot,RouterAuthorityCertificate } from '@beeline/api-contract/router-protocol';
 import { createWorkspace } from './workspace-creation.js';
 import { withdrawMergeApprovalsBy } from './corner-merge-approval.js';
 import { systemMessage } from '@beeline/api-contract/system-message-catalog';
@@ -48,11 +32,7 @@ import { disconnectMcp, MCP_SCOPES } from './rooms-mcp-connections.js';
 import { ConnectorDiscoveryCache } from './connector-discovery-cache.js';
 import { StarterOnboardingService } from './starter-onboarding-run.js';
 import { postStarterInviteOffer } from './starter-invite.js';
-import {
-  recordOnboardingEvent,
-  observeOnboardingMessage,
-  observeOnboardingInvite,
-} from './signin-funnel.js';
+import { recordOnboardingEvent, observeOnboardingMessage, observeOnboardingInvite } from './signin-funnel.js';
 import { waitForConnection } from './connection-wait.js';
 import { registryServerAppKey, registryServerDomain } from '@beeline/api-contract/workbench';
 import { companyForMcp } from './company-mcp-discovery.js';
@@ -62,40 +42,16 @@ import { scheduleDisplayTitle } from './schedule-title.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { modelChoiceLabel, readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
 import { CommandRefusalError } from './command-refusal.js';
-import {
-  agentUsageColumns,
-  projectAgentUsage,
-  requestUsageRefresh,
-  type AgentUsageRow,
-} from './agent-usage.js';
+import { agentUsageColumns, projectAgentUsage, requestUsageRefresh, type AgentUsageRow } from './agent-usage.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { companyHost } from './company-registry.js';
-import {
-  companyPopularity,
-  companySearchResults,
-  projectWorkbenchCompanies,
-} from './workbench-companies.js';
-import {
-  recordAgentConnectedAfterNudge,
-  recordFreeAgentGuideStarted,
-} from './free-agent-warning.js';
+import { companyPopularity, companySearchResults, projectWorkbenchCompanies } from './workbench-companies.js';
+import { recordAgentConnectedAfterNudge, recordFreeAgentGuideStarted } from './free-agent-warning.js';
 import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
-import {
-  machineSquireReport,
-  queueSquireWork,
-  queueOwnerSquireWork,
-  squireMachineAddress,
-  squireMachineId,
-  squireWorkStatus,
-} from './squire-machine.js';
-import {
-  webhookDetails,
-  webhookToken,
-  requireWebhookAdmin,
-  requireScheduledWorkManager,
-} from './subscription-webhooks.js';
-import { buildRoomSchedulesProjection } from './room-schedules-projection.js';
+import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
+import { webhookDetails, webhookToken, requireWebhookAdmin, requireScheduledWorkManager } from './subscription-webhooks.js';
+import {buildRoomSchedulesProjection} from './room-schedules-projection.js';
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
 import {
   beginAgentSignInCards,
@@ -104,11 +60,7 @@ import {
 } from './agent-sign-in.js';
 import { settleWorkflowGate, startWorkflow } from './workflow-runs.js';
 import { humanRoomAdmin, humanRoomMember } from './workflow-admin.js';
-import {
-  releaseArchivedCornerHolds,
-  setCornerHold,
-  collapseTombstonedCornerHolds,
-} from './corner-holds.js';
+import { releaseArchivedCornerHolds, setCornerHold, collapseTombstonedCornerHolds } from './corner-holds.js';
 import {
   createAgentCommand,
   dropQueuedOrdersForStop,
@@ -121,11 +73,7 @@ import {
   type CommandRow,
 } from './agent-command.js';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
-import {
-  computerViewToken,
-  endComputerSessionByViewer,
-  handBackComputerSession,
-} from './computer-session.js';
+import { computerViewToken, endComputerSessionByViewer, handBackComputerSession } from './computer-session.js';
 import { composioToolkitForApp, type ComposioApps } from './composio-apps.js';
 import { appIdentity } from '@beeline/api-contract/workbench';
 import { beginComposioAppSignIn, completeComposioSignIn } from './app-connections.js';
@@ -226,15 +174,7 @@ import {
 } from './message-mentions.js';
 import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import {
-  clearNeedsYouQuestions,
-  countNeedsYouItems,
-  countNeedsYouProjection,
-  readNeedsYouCountSnapshot,
-  readNeedsYouOrder,
-  needsYouItems,
-  markNeedsYouSeen,
-} from './needs-you.js';
+import { clearNeedsYouQuestions, countNeedsYouItems, countNeedsYouProjection, readNeedsYouCountSnapshot, readNeedsYouOrder, needsYouItems, markNeedsYouSeen } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyAgentConfigRoom,
@@ -246,13 +186,7 @@ import type { CommittedMessageLiveRow, LiveEvent, LiveHub } from './live.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from './permission-cards.js';
-import {
-  advanceCorner,
-  createCornerFacts,
-  lockCornerLifecycle,
-  setCornerLockedFact,
-  clearCornerReviewers,
-} from './corner-lifecycle.js';
+import { advanceCorner, createCornerFacts, lockCornerLifecycle, setCornerLockedFact, clearCornerReviewers } from './corner-lifecycle.js';
 import {
   chatCornerCounts,
   cornerFactsSql,
@@ -309,13 +243,12 @@ import {
   systemLine,
 } from './system-line.js';
 export { directMessageRoomId } from './system-line.js';
-import { answerRoomChoice, postRoomChoice, skipRoomChoice } from './room-choice.js';
 import {
-  unreadMessageSql,
-  visibleMessageSql,
-  visibleChatMessageSql,
-  viewerReadCursorSql,
-} from './read-cursor.js';
+  answerRoomChoice,
+  postRoomChoice,
+  skipRoomChoice,
+} from './room-choice.js';
+import { unreadMessageSql, visibleMessageSql, visibleChatMessageSql, viewerReadCursorSql } from './read-cursor.js';
 import {
   connectorCatalog,
   connectorDisplayName,
@@ -362,12 +295,7 @@ import {
 } from './wallet.js';
 import { ARTIFACT_TTL_HOURS, mediaIdFromUrl, mediaTtlHours } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
-import {
-  closeCornerPullRequestBestEffort,
-  closeCornerState,
-  lockCornerArchivalAuthority,
-  markOwnedCornersAbandoned,
-} from './corner-close.js';
+import { closeCornerPullRequestBestEffort, closeCornerState, lockCornerArchivalAuthority, markOwnedCornersAbandoned } from './corner-close.js';
 import { completeWalletConnectorOffer } from './connector-offer-completion.js';
 import { writeCornerTitle } from './corner-title.js';
 import { listRoomWorkflowRuns, readWorkflowRun } from './workflow-run-views.js';
@@ -564,58 +492,44 @@ function mcpClientIdentitySql(agentId: string): string {
 }
 
 /** A roster agent row with the configuration its Members row shows. */
-type RosterAgentRow = MemberRow &
-  AgentUsageRow & {
-    mcp_client: McpClientIdentity | null;
-    selected_model: string | null;
-    model_catalog: AgentDetailView['catalog'] | null;
-    owner_id: string | null;
-    owner_name: string | null;
-    owner_handle: string | null;
-  };
+type RosterAgentRow = MemberRow & AgentUsageRow & {
+  mcp_client: McpClientIdentity | null;
+  selected_model: string | null;
+  model_catalog: AgentDetailView['catalog'] | null;
+  owner_id: string | null;
+  owner_name: string | null;
+  owner_handle: string | null;
+};
 interface AgentGrantRow {
-  id: string;
-  kind: AgentGrantView['kind'];
-  target: string;
-  reason: string;
-  status: AgentGrantStatus;
-  room_id: string;
-  auto: boolean;
-  created_at: Date;
-  decided_at: Date | null;
-  expires_at: Date | null;
-  requester: IdentityRow;
-  decider: IdentityRow | null;
-  script: unknown;
+  id: string; kind: AgentGrantView['kind']; target: string; reason: string;
+  status: AgentGrantStatus; room_id: string; auto: boolean;
+  created_at: Date; decided_at: Date | null; expires_at: Date | null;
+  requester: IdentityRow; decider: IdentityRow | null; script: unknown;
 }
-type RoomHeaderRow = Pick<
-  RoomRow,
-  'id' | 'workspace_id' | (typeof CORNER_ROW_ROOM_COLUMNS)[number]
->;
-type CornerRow = RoomHeaderRow &
-  OpenCornerFactsRow & {
-    objective: string | null;
-    initiator_id: string | null;
-    initiator_name: string | null;
-    initiator_handle: string | null;
-    initiator_avatar: string | null;
-    initiator_face: string | null;
-    latest_id: string | null;
-    latest_text: string | null;
-    latest_author_id: string | null;
-    latest_author_kind: 'human' | 'agent' | null;
-    latest_author_name: string | null;
-    /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
-    archived_us: string | null;
-    created_us: string;
-    agent_id: string | null;
-    agent_name: string | null;
-    agent_handle: string | null;
-    agent_avatar: string | null;
-    latest_turn_created_at: Date | null;
-    /** The corner's latest brief revision; null when it has no brief. */
-    brief_revision: number | null;
-  };
+type RoomHeaderRow = Pick<RoomRow, 'id' | 'workspace_id' | (typeof CORNER_ROW_ROOM_COLUMNS)[number]>;
+type CornerRow = RoomHeaderRow & OpenCornerFactsRow & {
+  objective: string | null;
+  initiator_id: string | null;
+  initiator_name: string | null;
+  initiator_handle: string | null;
+  initiator_avatar: string | null;
+  initiator_face: string | null;
+  latest_id: string | null;
+  latest_text: string | null;
+  latest_author_id: string | null;
+  latest_author_kind: 'human' | 'agent' | null;
+  latest_author_name: string | null;
+  /** `archived_at` in whole microseconds, exact, for the archived page cursor. */
+  archived_us: string | null;
+  created_us: string;
+  agent_id: string | null;
+  agent_name: string | null;
+  agent_handle: string | null;
+  agent_avatar: string | null;
+  latest_turn_created_at: Date | null;
+  /** The corner's latest brief revision; null when it has no brief. */
+  brief_revision: number | null;
+};
 /** The parent Room row's corner facts, read with its corner list. */
 interface DeckCornerFacts {
   needs_you: boolean;
@@ -626,23 +540,13 @@ interface DeckCornerFacts {
 
 /** The parent Room row's corner summary from its corner facts. */
 function deckCornerSummary(roomId: string, deck: DeckCornerFacts): ChatCornerSummary {
-  return (
-    chatCornerCounts(
-      deck.corner_rows.map((corner) => reviveDates(corner, ['archived_at', 'latest_created_at'])),
-    ).get(roomId) ?? {
-      cornerCount: 0,
-      waitingCornerCount: 0,
-      mineCornerCount: 0,
-      openCorners: [],
-    }
-  );
+  return chatCornerCounts(deck.corner_rows.map((corner) =>
+    reviveDates(corner, ['archived_at', 'latest_created_at']))).get(roomId) ?? {
+    cornerCount: 0, waitingCornerCount: 0, mineCornerCount: 0, openCorners: [],
+  };
 }
 interface RoomReadEnrichment {
-  presence: Array<{
-    id: string;
-    presence_body: MemberRow['presence_body'];
-    presence_updated_at: Date | null;
-  }>;
+  presence: Array<{ id: string; presence_body: MemberRow['presence_body']; presence_updated_at: Date | null }>;
   tags: Array<{ id: string; tagged_ids: string[] }>;
   bookmarks: Array<{ message_id: string }>;
   reports: Array<{ trigger_message_id: string }>;
@@ -651,13 +555,9 @@ interface RoomReadEnrichment {
   allow_auto_merge: boolean | null;
 }
 interface RoomReadRow {
-  router_metadata?: {
-    epoch: string | null;
-    sequence: string | null;
-    scopes: RouterAuthorityCertificate['scopes'];
-  };
-  router_tools?: RoomToolSummaryRow[];
-  router_enrichment?: RoomReadEnrichment;
+  router_metadata?:{epoch:string|null;sequence:string|null;scopes:RouterAuthorityCertificate['scopes']};
+  router_tools?:RoomToolSummaryRow[];
+  router_enrichment?:RoomReadEnrichment;
   starter_onboarding_pending: boolean;
   room: RoomRow & {
     viewer_push_muted: boolean;
@@ -921,7 +821,7 @@ function projectedMessage(
     text: row.deleted_at
       ? row.system_event
         ? formatSystemLine(row.system_event)
-        : systemMessage('phone-service.message-deleted')
+        : systemMessage("phone-service.message-deleted")
       : row.text,
     createdAt: unix(row.created_at),
     createdAtMs: row.created_at.getTime(),
@@ -1133,11 +1033,7 @@ function roomSchedule(row: RoomScheduleRow): RoomScheduleView {
     roomId: row.room_id,
     agentId: row.agent_id,
     creatorId: row.creator_id,
-    title: scheduleDisplayTitle({
-      title: row.title,
-      workflow: row.workflow_slug,
-      prompt: row.message,
-    }),
+    title: scheduleDisplayTitle({ title: row.title, workflow: row.workflow_slug, prompt: row.message }),
     ...(row.max_runs != null ? { maxRuns: row.max_runs } : {}),
     cadence: row.cadence,
     message: row.message,
@@ -1182,17 +1078,12 @@ export class PhoneService {
   private readonly outlineCache?: HistoryOutlineCache;
 
   private pureProjection = false;
-  private routerRoomRows?: RoomReadRow;
-  private expectedRouterWorkspace?: string;
+  private routerRoomRows?:RoomReadRow;
+  private expectedRouterWorkspace?:string;
   private starterOnboarding?: StarterOnboardingService;
-  setStarterOnboarding(service: StarterOnboardingService): void {
-    this.starterOnboarding = service;
-  }
+  setStarterOnboarding(service: StarterOnboardingService): void { this.starterOnboarding = service; }
 
-  private freeAgents?: Pick<
-    FreeAgentService,
-    'createInWorkspace' | 'kick' | 'remove' | 'cleanupRemoved'
-  >;
+  private freeAgents?: Pick<FreeAgentService, 'createInWorkspace' | 'kick' | 'remove' | 'cleanupRemoved'>;
 
   /** Give every newly created Workspace a free starter agent. */
   setFreeAgents(
@@ -1263,239 +1154,114 @@ export class PhoneService {
   /** Only the closed durable decision adapter installs this transaction and
    * owns the postcommit notification queue. Legacy callers keep their result
    * and immediate-after-own-transaction notification behavior. */
-  async applyTrayDecisionCommand(
-    operation: TrayDecisionOperation,
-    input: PhoneOperationMap[TrayDecisionOperation]['input'],
-    viewerId: string,
-    defer: (notification: () => void) => void,
-  ): Promise<void> {
-    if (!(this.database as CommandScopedDatabase).active)
-      throw new Error('Tray decision requires its durable command transaction');
-    if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(operation))
-      throw new Error(REVIEW_IDENTITY_MESSAGE);
-    if (operation === 'decideAgentGrant')
-      await this.decideAgentGrant(input as Input<'decideAgentGrant'>, viewerId, defer);
-    else if (operation === 'decideWritePermission')
-      await this.execute(operation, input as Input<'decideWritePermission'>, viewerId);
-    else if (operation === 'skipChoice')
-      await this.execute(operation, input as Input<'skipChoice'>, viewerId);
+  async applyTrayDecisionCommand(operation: TrayDecisionOperation,
+    input: PhoneOperationMap[TrayDecisionOperation]['input'], viewerId: string,
+    defer: (notification: () => void) => void): Promise<void> {
+    if (!(this.database as CommandScopedDatabase).active) throw new Error('Tray decision requires its durable command transaction');
+    if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(operation)) throw new Error(REVIEW_IDENTITY_MESSAGE);
+    if (operation === 'decideAgentGrant') await this.decideAgentGrant(input as Input<'decideAgentGrant'>, viewerId, defer);
+    else if (operation === 'decideWritePermission') await this.execute(operation, input as Input<'decideWritePermission'>, viewerId);
+    else if (operation === 'skipChoice') await this.execute(operation, input as Input<'skipChoice'>, viewerId);
     else throw new Error('Unsupported Tray decision command');
   }
 
   /** New durable stop intents are idempotent desired state. Legacy operations
    * keep their exact not-found response. Provider cleanup never holds the DB
    * connection or authority fence and cannot be automatically replayed. */
-  async stopScheduledWorkCommand(
-    operation: 'deleteRoomSchedule' | 'deleteRoomSubscription',
-    input: { roomId: string; scheduleId?: string; subscriptionId?: string },
-    viewer: string,
-  ): Promise<void> {
-    const authorize = async (db: SqlDatabase) => {
-      await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))', [
-        ROUTER_AUTHORITY_LOCK,
-      ]);
-      await requireScheduledWorkManager(db, input.roomId, viewer);
-      if (
-        (
-          await db.query(
-            `SELECT 1 FROM memberships member WHERE member.identity_id=$1 AND member.room_id IS NULL
-        AND member.removed_at IS NULL AND member.role='spectator' AND member.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)`,
-            [viewer, input.roomId],
-          )
-        ).rowCount
-      )
+  async stopScheduledWorkCommand(operation:'deleteRoomSchedule'|'deleteRoomSubscription',
+    input:{roomId:string;scheduleId?:string;subscriptionId?:string},viewer:string):Promise<void>{
+    const authorize=async(db:SqlDatabase)=>{
+      await db.query('SELECT pg_advisory_xact_lock_shared(hashtextextended($1,0))',[ROUTER_AUTHORITY_LOCK]);
+      await requireScheduledWorkManager(db,input.roomId,viewer);
+      if((await db.query(`SELECT 1 FROM memberships member WHERE member.identity_id=$1 AND member.room_id IS NULL
+        AND member.removed_at IS NULL AND member.role='spectator' AND member.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$2)`,[viewer,input.roomId])).rowCount)
         throw new Error('spectator access is read-only (access denied)');
     };
-    if (operation === 'deleteRoomSchedule') {
-      if (!(this.database as CommandScopedDatabase).active)
-        throw new Error('Scheduled stop requires its durable command transaction');
+    if(operation==='deleteRoomSchedule'){
+      if(!(this.database as CommandScopedDatabase).active)throw new Error('Scheduled stop requires its durable command transaction');
       await authorize(this.database);
-      await this.database.query(
-        `DELETE FROM agent_schedules schedule USING rooms surface WHERE schedule.id=$1
-        AND surface.id=schedule.room_id AND(surface.id=$2 OR surface.parent_id=$2) AND schedule.workflow_run IS NULL`,
-        [input.scheduleId, input.roomId],
-      );
+      await this.database.query(`DELETE FROM agent_schedules schedule USING rooms surface WHERE schedule.id=$1
+        AND surface.id=schedule.room_id AND(surface.id=$2 OR surface.parent_id=$2) AND schedule.workflow_run IS NULL`,[input.scheduleId,input.roomId]);
       return;
     }
-    const trigger = await this.database.transaction(async (db) => {
+    const trigger=await this.database.transaction(async db=>{
       await authorize(db);
-      const row = (
-        await db.query<{ trigger_id: string | null }>(
-          `SELECT subscription.trigger_id FROM agent_subscriptions subscription JOIN rooms surface ON surface.id=subscription.room_id
-        WHERE subscription.id::text=$1 AND(surface.id=$2 OR surface.parent_id=$2)`,
-          [input.subscriptionId, input.roomId],
-        )
-      ).rows[0];
-      try {
-        await deleteRoomSubscription(db, input.roomId, input.subscriptionId!, undefined);
-      } catch (error) {
-        if (!(error instanceof Error) || error.message !== 'subscription not found') throw error;
-      }
-      if (!row?.trigger_id || /^[0-9a-f-]{36}$/.test(row.trigger_id)) return;
-      if (
-        (
-          await db.query(`SELECT 1 FROM agent_subscriptions WHERE trigger_id=$1 LIMIT 1`, [
-            row.trigger_id,
-          ])
-        ).rowCount
-      )
-        return;
+      const row=(await db.query<{trigger_id:string|null}>(`SELECT subscription.trigger_id FROM agent_subscriptions subscription JOIN rooms surface ON surface.id=subscription.room_id
+        WHERE subscription.id::text=$1 AND(surface.id=$2 OR surface.parent_id=$2)`,[input.subscriptionId,input.roomId])).rows[0];
+      try{await deleteRoomSubscription(db,input.roomId,input.subscriptionId!,undefined);}
+      catch(error){if(!(error instanceof Error)||error.message!=='subscription not found')throw error;}
+      if(!row?.trigger_id||/^[0-9a-f-]{36}$/.test(row.trigger_id))return;
+      if((await db.query(`SELECT 1 FROM agent_subscriptions WHERE trigger_id=$1 LIMIT 1`,[row.trigger_id])).rowCount)return;
       return row.trigger_id;
     });
-    if (trigger && this.composio) await this.composio.deleteWebhookTrigger(trigger);
+    if(trigger&&this.composio)await this.composio.deleteWebhookTrigger(trigger);
   }
 
-  readRouterSnapshot(
-    input: RouterSnapshotInput,
-    viewerId: string,
-    options?: { readonly trayClock?: true },
-  ) {
-    if (ownerFamily(input.family))
-      return this.database.transaction(async (db) => {
-        await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-        return buildOwnerSnapshot(db, this, input, viewerId);
-      });
-    if (input.family === 'room-head')
-      return this.readRoomRouterSnapshot({ ...input, family: 'room-head' }, viewerId);
-    if (input.family === 'needs-you-count')
-      return readNeedsYouCountSnapshot(
-        this.database,
-        input.workspaceId,
-        viewerId,
-        options?.trayClock ? 'committed' : 'wall',
-      );
-    return buildRouterSnapshot(
-      this.database,
-      input,
-      viewerId,
-      (db, args, viewer) => this.buildRouterValue(db, args, viewer, options),
-      options,
-    );
+  readRouterSnapshot(input: RouterSnapshotInput, viewerId: string,options?:{readonly trayClock?:true}) {
+    if(ownerFamily(input.family))return this.database.transaction(async db=>{
+      await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      return buildOwnerSnapshot(db,this,input,viewerId);
+    });
+    if(input.family==='room-head')return this.readRoomRouterSnapshot({...input,family:'room-head'},viewerId);
+    if (input.family === 'needs-you-count') return readNeedsYouCountSnapshot(this.database,input.workspaceId,viewerId,options?.trayClock?'committed':'wall');
+    return buildRouterSnapshot(this.database, input, viewerId, (db, args, viewer) => this.buildRouterValue(db, args, viewer,options),options);
   }
 
   /** Pure router builders bind both core and enrichment to the caller's
    * repeatable-read handle. No providers, live cache, onboarding or seen marks. */
-  async buildRouterValue(
-    database: SqlDatabase,
-    input: RouterSnapshotInput,
-    viewerId: string,
-    options?: { readonly trayClock?: true },
-  ): Promise<RouterValues[RouterFamily] | null> {
+  async buildRouterValue(database: SqlDatabase, input: RouterSnapshotInput,
+    viewerId: string,options?:{readonly trayClock?:true}): Promise<RouterValues[RouterFamily] | null> {
     const reader = new PhoneService(database, this.publicOrigin);
     reader.pureProjection = true;
-    if (input.family === 'owner-workbench')
-      return projectWorkbenchDisplay(
-        await reader.readWorkbench({ workspaceId: '' }, viewerId),
-        viewerId,
-      );
-    if (input.family === 'owner-wallet') return readWalletProjection(database, viewerId);
-    if (input.family === 'agent-profile') {
-      const value = await reader.readAgent(input.workspaceId, input.agentId, viewerId);
-      if (!value) return null;
-      const { usage: _usage, configVersion: _version, ...stable } = value;
-      const revision = (
-        await database.query<{ epoch: string }>(
-          'SELECT epoch::text FROM router_authority WHERE scope=$1',
-          [profileDomain(input.workspaceId, input.agentId)],
-        )
-      ).rows[0]?.epoch;
-      if (!revision) throw new RouterProjectionUnavailable('authority');
-      const metadata = (
-        await database.query<{ role: string; chosen_voices: unknown }>(
-          `SELECT member.role,agent.chosen_voices
+    if(input.family==='owner-workbench')return projectWorkbenchDisplay(await reader.readWorkbench({workspaceId:''},viewerId),viewerId);
+    if(input.family==='owner-wallet')return readWalletProjection(database,viewerId);
+    if(input.family==='agent-profile'){
+      const value=await reader.readAgent(input.workspaceId,input.agentId,viewerId);
+      if(!value)return null;
+      const {usage:_usage,configVersion:_version,...stable}=value;
+      const revision=(await database.query<{epoch:string}>('SELECT epoch::text FROM router_authority WHERE scope=$1',
+        [profileDomain(input.workspaceId,input.agentId)])).rows[0]?.epoch;
+      if(!revision)throw new RouterProjectionUnavailable('authority');
+      const metadata=(await database.query<{role:string;chosen_voices:unknown}>(`SELECT member.role,agent.chosen_voices
         FROM memberships member LEFT JOIN agents agent ON agent.agent_id=$3
         WHERE member.workspace_id=$1 AND member.room_id IS NULL AND member.identity_id=$2 AND member.removed_at IS NULL`,
-          [input.workspaceId, viewerId, input.agentId],
-        )
-      ).rows[0];
-      const canRemove =
-        value.access?.owner?.id === viewerId ||
-        metadata?.role === 'owner' ||
-        metadata?.role === 'admin';
-      const voiceRevision = hash(
-        JSON.stringify({
-          voices: metadata?.chosen_voices ?? {},
-          soul: value.soul?.instructions ?? '',
-          name: value.agent.identity.name,
-          handle: value.agent.identity.handle,
-          owner: value.access?.owner?.id,
-          role: metadata?.role,
-        }),
-      );
-      const result = { ...stable, configVersion: revision, canRemove, voiceRevision };
-      if (Buffer.byteLength(JSON.stringify(result)) > 32 * 1024)
-        throw new RouterProjectionUnavailable('budget');
+        [input.workspaceId,viewerId,input.agentId])).rows[0];
+      const canRemove=value.access?.owner?.id===viewerId||metadata?.role==='owner'||metadata?.role==='admin';
+      const voiceRevision=hash(JSON.stringify({voices:metadata?.chosen_voices??{},soul:value.soul?.instructions??'',
+        name:value.agent.identity.name,handle:value.agent.identity.handle,owner:value.access?.owner?.id,role:metadata?.role}));
+      const result={...stable,configVersion:revision,canRemove,voiceRevision};
+      if(Buffer.byteLength(JSON.stringify(result))>32*1024)throw new RouterProjectionUnavailable('budget');
       return result;
     }
     if (input.family === 'room-workflows') {
-      const value = await reader.listRoomWorkflowRuns(input.roomId, viewerId);
-      if (value.workflows.length > 30 || Buffer.byteLength(JSON.stringify(value)) > 64 * 1024)
-        throw new RouterProjectionUnavailable('budget');
+      const value=await reader.listRoomWorkflowRuns(input.roomId, viewerId);
+      if(value.workflows.length>30||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
       return value;
     }
     if (input.family === 'workspace-roster') {
-      const revision = (
-        await database.query<{ epoch: string }>(
-          'SELECT epoch::text FROM router_authority WHERE scope=$1',
-          [`roster:${input.workspaceId}`],
-        )
-      ).rows[0]?.epoch;
-      if (!revision) throw new RouterProjectionUnavailable('dependency');
-      if (input.query && input.query.revision !== revision)
-        throw new RouterProjectionUnavailable('dependency');
-      const value = await reader.readWorkspace(input.workspaceId, viewerId, input.query);
-      if (
-        value &&
-        (value.members.length + value.agents.length > 100 ||
-          Buffer.byteLength(JSON.stringify(value)) > 64 * 1024)
-      )
-        throw new RouterProjectionUnavailable('budget');
-      return value ? { ...value, revision } : null;
+      const revision=(await database.query<{epoch:string}>('SELECT epoch::text FROM router_authority WHERE scope=$1',
+        [`roster:${input.workspaceId}`])).rows[0]?.epoch;
+      if(!revision)throw new RouterProjectionUnavailable('dependency');
+      if(input.query&&input.query.revision!==revision)throw new RouterProjectionUnavailable('dependency');
+      const value = await reader.readWorkspace(input.workspaceId, viewerId,input.query);
+      if (value && (value.members.length + value.agents.length > 100 ||
+          Buffer.byteLength(JSON.stringify(value)) > 64 * 1024)) throw new RouterProjectionUnavailable('budget');
+      return value?{...value,revision}:null;
     }
     if (input.family === 'room-list') return reader.readChats(input.workspaceId, viewerId);
     if (input.family === 'room-head') {
       if (!input.roomId) throw new Error('roomId is required for room-head');
-      reader.expectedRouterWorkspace = input.workspaceId;
-      return reader.readRoom(input.roomId, viewerId);
+      reader.expectedRouterWorkspace=input.workspaceId;
+      return reader.readRoom(input.roomId,viewerId);
     }
-    if (input.family === 'room-scheduled-work')
-      return buildRoomSchedulesProjection(
-        reader.database,
-        input.roomId,
-        viewerId,
-        this.publicOrigin,
-      );
-    if (input.family === 'needs-you-tray')
-      return buildTrayProjection(
-        reader.database,
-        input.workspaceId,
-        viewerId,
-        (row) => identity(row, reader.publicOrigin),
-        options?.trayClock ? 'committed' : 'wall',
-      );
-    if (input.family === 'needs-you-saved-page')
-      return readTraySavedWindow(reader.database, input, viewerId, (row) =>
-        identity(row, reader.publicOrigin),
-      );
-    if (input.family === 'needs-you-count')
-      return {
-        count: await countNeedsYouProjection(
-          reader.database,
-          input.workspaceId,
-          viewerId,
-          options?.trayClock ? 'committed' : 'wall',
-        ),
-      };
-    if (input.family !== 'needs-you') throw new Error('Unsupported router projection family');
+    if(input.family==='room-scheduled-work')return buildRoomSchedulesProjection(reader.database,input.roomId,viewerId,this.publicOrigin);
+    if(input.family==='needs-you-tray')return buildTrayProjection(reader.database,input.workspaceId,viewerId,row=>identity(row,reader.publicOrigin),options?.trayClock?'committed':'wall');
+    if(input.family==='needs-you-saved-page')return readTraySavedWindow(reader.database,input,viewerId,row=>identity(row,reader.publicOrigin));
+    if(input.family==='needs-you-count')return {count:await countNeedsYouProjection(reader.database,input.workspaceId,viewerId,options?.trayClock?'committed':'wall')};
+    if(input.family!=='needs-you')throw new Error('Unsupported router projection family');
     await reader.requireWorkspaceMember(input.workspaceId, viewerId);
-    const { items } = await needsYouItems(
-      reader.database,
-      input.workspaceId,
-      viewerId,
-      (row) => identity(row, reader.publicOrigin),
-      false,
-      options?.trayClock ? 'committed' : 'wall',
-    );
+    const { items } = await needsYouItems(reader.database, input.workspaceId, viewerId,
+      (row) => identity(row, reader.publicOrigin), false,options?.trayClock?'committed':'wall');
     return { count: items.length, items };
   }
 
@@ -1506,122 +1272,55 @@ export class PhoneService {
     input: { family: 'room-head'; roomId: string; workspaceId?: string },
     viewer: string,
   ): Promise<RouterSnapshot> {
-    return this.database.transaction(async (db) => {
+    return this.database.transaction(async db => {
       await db.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
       const reader = new PhoneService(db, this.publicOrigin);
       reader.pureProjection = true;
       reader.expectedRouterWorkspace = input.workspaceId;
       const value = await reader.readRoom(input.roomId, viewer);
-      const rows = reader.routerRoomRows,
-        meta = rows?.router_metadata;
-      if (
-        !value ||
-        !rows ||
-        !meta ||
-        (input.workspaceId && input.workspaceId !== rows.room.workspace_id)
-      )
+      const rows = reader.routerRoomRows, meta = rows?.router_metadata;
+      if (!value || !rows || !meta || (input.workspaceId && input.workspaceId !== rows.room.workspace_id))
         throw new RouterProjectionUnavailable('authority');
       const domains = [
-        `reader:${viewer}:workspace:${rows.room.workspace_id}`,
-        `room:${input.roomId}`,
+        `reader:${viewer}:workspace:${rows.room.workspace_id}`, `room:${input.roomId}`,
         ...(rows.room.parent_id ? [`room:${rows.room.parent_id}`] : []),
       ];
-      if (
-        meta.scopes.length !== domains.length ||
-        domains.some(
-          (domain) =>
-            !meta.scopes.some(
-              (scope) => scope.authorityScope === domain && /^[1-9][0-9]*$/.test(scope.epoch ?? ''),
-            ),
-        )
-      )
+      if (meta.scopes.length !== domains.length || domains.some(domain => !meta.scopes.some(
+        scope => scope.authorityScope === domain && /^[1-9][0-9]*$/.test(scope.epoch ?? ''),
+      )))
         throw new RouterProjectionUnavailable('authority');
       const through = Number(meta.sequence);
       if (!meta.epoch || meta.sequence === null || !Number.isSafeInteger(through) || through < 0)
         throw new RouterProjectionUnavailable('dependency');
       const result: RouterSnapshot = {
-        kind: 'snapshot',
-        family: 'room-head',
-        scope: input.roomId,
-        value,
-        cut: {
-          stream: `workspace:${rows.room.workspace_id}`,
-          epoch: meta.epoch,
-          through,
-          protocol: 1,
-        },
-        authority: routerAuthority(
-          meta.scopes.map((scope) => ({
-            authorityScope: scope.authorityScope,
-            epoch: scope.epoch,
-          })),
-        ),
+        kind: 'snapshot', family: 'room-head', scope: input.roomId, value,
+        cut: { stream: `workspace:${rows.room.workspace_id}`, epoch: meta.epoch, through, protocol: 1 },
+        authority: routerAuthority(meta.scopes.map(scope => ({ authorityScope: scope.authorityScope, epoch: scope.epoch }))),
         atomicGroup: routerAtomicGroup(input, viewer),
       };
-      if (Buffer.byteLength(JSON.stringify(result)) > 64 * 1024)
-        throw new RouterProjectionUnavailable('budget');
+      if (Buffer.byteLength(JSON.stringify(result)) > 64 * 1024) throw new RouterProjectionUnavailable('budget');
       return result;
     });
   }
 
   /** Source-key row facts, never a window/top-N reread or a cache inventory. */
-  buildRouterSavedFacts(
-    database: SqlDatabase,
-    workspaceId: string,
-    viewerId: string,
-    targets: readonly TraySavedTarget[],
-  ) {
-    return buildTraySavedFacts(database, workspaceId, viewerId, targets, (row) =>
-      identity(row, this.publicOrigin),
-    );
+  buildRouterSavedFacts(database:SqlDatabase,workspaceId:string,viewerId:string,targets:readonly TraySavedTarget[]){
+    return buildTraySavedFacts(database,workspaceId,viewerId,targets,row=>identity(row,this.publicOrigin));
   }
 
-  async buildRouterNeedsHead(database: SqlDatabase, workspaceId: string, viewerId: string) {
-    const value = await needsYouItems(
-      database,
-      workspaceId,
-      viewerId,
-      (row) => identity(row, this.publicOrigin),
-      false,
-      'committed',
-    );
-    if (value.items.length > 30 || Buffer.byteLength(JSON.stringify(value)) > 64 * 1024)
-      throw new RouterProjectionUnavailable('budget');
+  async buildRouterNeedsHead(database:SqlDatabase,workspaceId:string,viewerId:string){
+    const value=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,'committed');
+    if(value.items.length>30||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
     return value;
   }
 
-  async buildRouterNeedsRooms(
-    database: SqlDatabase,
-    workspaceId: string,
-    viewerId: string,
-    rooms: readonly string[],
-  ) {
-    if (rooms.length > 128) throw new RouterProjectionUnavailable('budget');
-    const order = await readNeedsYouOrder(database, workspaceId, viewerId);
-    const { items } = await needsYouItems(
-      database,
-      workspaceId,
-      viewerId,
-      (row) => identity(row, this.publicOrigin),
-      false,
-      'wall',
-      rooms,
-    );
-    const value = {
-      kind: 'needs-you-rooms-replace' as const,
-      scope: workspaceId,
-      ...order,
-      rooms: rooms.map((roomId) => ({
-        roomId,
-        items: items.filter((item) => item.roomId === roomId),
-      })),
-    };
-    if (
-      items.length > 30 ||
-      order.order.length > 500 ||
-      Buffer.byteLength(JSON.stringify(value)) > 64 * 1024
-    )
-      throw new RouterProjectionUnavailable('budget');
+  async buildRouterNeedsRooms(database:SqlDatabase,workspaceId:string,viewerId:string,rooms:readonly string[]){
+    if(rooms.length>128)throw new RouterProjectionUnavailable('budget');
+    const order=await readNeedsYouOrder(database,workspaceId,viewerId);
+    const {items}=await needsYouItems(database,workspaceId,viewerId,row=>identity(row,this.publicOrigin),false,'wall',rooms);
+    const value={kind:'needs-you-rooms-replace' as const,scope:workspaceId,...order,
+      rooms:rooms.map(roomId=>({roomId,items:items.filter(item=>item.roomId===roomId)}))};
+    if(items.length>30||order.order.length>500||Buffer.byteLength(JSON.stringify(value))>64*1024)throw new RouterProjectionUnavailable('budget');
     return value;
   }
 
@@ -1659,16 +1358,11 @@ export class PhoneService {
     viewerId?: string,
   ): Promise<RoomLiveDelta | null> {
     if (committed.row.room_id !== roomId) return null;
-    if (
-      committed.row.card_type === 'repository-onboarding' &&
-      (!viewerId || readRepositoryOnboardingCard(committed.row.card)?.requesterId !== viewerId)
-    )
-      return null;
-    const message = (
-      await this.decorateCornerOpenCards(roomId, [
-        projectedMessage(committed.row, this.publicOrigin, viewerId),
-      ])
-    )[0]!;
+    if (committed.row.card_type === 'repository-onboarding' && (!viewerId ||
+      readRepositoryOnboardingCard(committed.row.card)?.requesterId !== viewerId)) return null;
+    const message = (await this.decorateCornerOpenCards(roomId, [
+      projectedMessage(committed.row, this.publicOrigin, viewerId),
+    ]))[0]!;
     let facts = this.committedAttachmentFacts.get(committed.row);
     if (!facts) {
       facts = this.attachmentFacts([message]);
@@ -1681,10 +1375,8 @@ export class PhoneService {
       ...(typeof committed.row.version === 'number' ? { version: committed.row.version } : {}),
     };
   }
-  private readonly committedAttachmentFacts = new WeakMap<
-    CommittedMessageLiveRow,
-    Promise<AttachmentFacts>
-  >();
+  private readonly committedAttachmentFacts =
+    new WeakMap<CommittedMessageLiveRow, Promise<AttachmentFacts>>();
 
   /** One committed row for the live paint path, behind the same two membership
    * bounds as a full Room read. A missing/hidden row falls back to the ordinary
@@ -1715,14 +1407,12 @@ export class PhoneService {
     if (!viewers.length) return deltas;
     if (target.type === 'turn') {
       const row = (
-        await database.query<
-          AgentTurnRow & {
-            authorized_viewers: string[];
-            deck_needs_you: boolean;
-            deck_attention_actor: string | null;
-            deck_working: boolean;
-          }
-        >(
+        await database.query<AgentTurnRow & {
+          authorized_viewers: string[];
+          deck_needs_you: boolean;
+          deck_attention_actor: string | null;
+          deck_working: boolean;
+        }>(
           `WITH authorized AS (
              SELECT member.identity_id FROM rooms room
              JOIN memberships member ON member.room_id=room.id
@@ -1751,39 +1441,29 @@ export class PhoneService {
       ).rows[0];
       if (!row || row.request_id !== target.requestId) return deltas;
       const delta: RoomLiveDelta = {
-        type: 'turn-delta',
-        roomId,
-        turn: this.projectAgentTurns([row])[0]!,
+        type: 'turn-delta', roomId, turn: this.projectAgentTurns([row])[0]!,
         agentState: row.deck_needs_you ? 'needs-you' : row.deck_working ? 'working' : null,
-        ...(row.deck_needs_you
-          ? {
-              attentionReason: {
-                kind: 'approval' as const,
-                ...(row.deck_attention_actor ? { actor: row.deck_attention_actor } : {}),
-              },
-            }
-          : {}),
+        ...(row.deck_needs_you ? { attentionReason: { kind: 'approval' as const,
+          ...(row.deck_attention_actor ? { actor: row.deck_attention_actor } : {}) } } : {}),
       };
       for (const viewer of row.authorized_viewers) deltas.set(viewer, delta);
       return deltas;
     }
     const row = (
-      await database.query<
-        MessageRow & {
-          authorized_viewers: string[];
-          deck_latest_id: string | null;
-          deck_latest_text: string | null;
-          deck_latest_attachments: MessageRow['attachments'] | null;
-          deck_latest_created_at: Date | null;
-          deck_latest_author_id: string | null;
-          deck_latest_author_kind: 'human' | 'agent' | null;
-          deck_latest_author_name: string | null;
-          deck_latest_author_handle: string | null;
-          deck_latest_author_avatar: string | null;
-          deck_latest_author_face: string | null;
-          deck_latest_tagged_ids: string[] | null;
-        }
-      >(
+      await database.query<MessageRow & {
+        authorized_viewers: string[];
+        deck_latest_id: string | null;
+        deck_latest_text: string | null;
+        deck_latest_attachments: MessageRow['attachments'] | null;
+        deck_latest_created_at: Date | null;
+        deck_latest_author_id: string | null;
+        deck_latest_author_kind: 'human' | 'agent' | null;
+        deck_latest_author_name: string | null;
+        deck_latest_author_handle: string | null;
+        deck_latest_author_avatar: string | null;
+        deck_latest_author_face: string | null;
+        deck_latest_tagged_ids: string[] | null;
+      }>(
         `WITH authorized AS (
            SELECT member.identity_id FROM rooms room
            JOIN memberships member ON member.room_id=room.id
@@ -1840,78 +1520,49 @@ export class PhoneService {
       )
     ).rows[0];
     if (!row) return deltas;
-    const base = (
-      await this.decorateCornerOpenCards(roomId, [projectedMessage(row, this.publicOrigin)])
-    )[0]!;
+    const base = (await this.decorateCornerOpenCards(roomId, [
+      projectedMessage(row, this.publicOrigin),
+    ]))[0]!;
     const facts = await this.attachmentFacts([base]);
     const preview: ChatListItem['latestMessage'] | null =
-      row.deck_latest_id &&
-      row.deck_latest_created_at &&
-      row.deck_latest_author_id &&
-      row.deck_latest_author_kind &&
-      row.deck_latest_author_name
+      row.deck_latest_id && row.deck_latest_created_at && row.deck_latest_author_id &&
+      row.deck_latest_author_kind && row.deck_latest_author_name
         ? {
             id: row.deck_latest_id,
             text: row.deck_latest_text ?? '',
             createdAt: unix(row.deck_latest_created_at),
-            author: identity(
-              {
-                id: row.deck_latest_author_id,
-                kind: row.deck_latest_author_kind,
-                name: row.deck_latest_author_name,
-                handle: row.deck_latest_author_handle,
-                avatar: row.deck_latest_author_avatar,
-                face_id: row.deck_latest_author_face,
-              },
-              this.publicOrigin,
-            ),
-            ...(row.deck_latest_attachments?.length
-              ? {
-                  attachments: (
-                    row.deck_latest_attachments as NonNullable<RoomViewMessage['attachments']>
-                  ).map((attachment) => ({
-                    ...attachment,
-                    url: attachment.url.startsWith('/')
-                      ? `${this.publicOrigin}${attachment.url}`
-                      : attachment.url,
-                    ...(attachment.previewUrl?.startsWith('/')
-                      ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` }
-                      : {}),
-                    ...(attachment.thumbnailUrl?.startsWith('/')
-                      ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` }
-                      : {}),
-                  })),
-                }
-              : {}),
+            author: identity({
+              id: row.deck_latest_author_id, kind: row.deck_latest_author_kind,
+              name: row.deck_latest_author_name, handle: row.deck_latest_author_handle,
+              avatar: row.deck_latest_author_avatar, face_id: row.deck_latest_author_face,
+            }, this.publicOrigin),
+            ...(row.deck_latest_attachments?.length ? {
+              attachments: (row.deck_latest_attachments as NonNullable<RoomViewMessage['attachments']>)
+                .map((attachment) => ({
+                ...attachment,
+                url: attachment.url.startsWith('/')
+                  ? `${this.publicOrigin}${attachment.url}` : attachment.url,
+                ...(attachment.previewUrl?.startsWith('/')
+                  ? { previewUrl: `${this.publicOrigin}${attachment.previewUrl}` } : {}),
+                ...(attachment.thumbnailUrl?.startsWith('/')
+                  ? { thumbnailUrl: `${this.publicOrigin}${attachment.thumbnailUrl}` } : {}),
+                })),
+            } : {}),
           }
         : null;
     for (const viewer of row.authorized_viewers) {
-      if (
-        row.card_type === 'repository-onboarding' &&
-        readRepositoryOnboardingCard(row.card)?.requesterId !== viewer
-      )
-        continue;
-      const message = {
-        ...projectedMessage(row, this.publicOrigin, viewer),
-        ...(base.daemonFact ? { daemonFact: base.daemonFact } : {}),
-      };
+      if (row.card_type === 'repository-onboarding' &&
+        (readRepositoryOnboardingCard(row.card)?.requesterId !== viewer)) continue;
+      const message = { ...projectedMessage(row, this.publicOrigin, viewer),
+        ...(base.daemonFact ? { daemonFact: base.daemonFact } : {}) };
       deltas.set(viewer, {
-        type: 'message-delta',
-        roomId,
+        type: 'message-delta', roomId,
         message: decorateAttachments([message], facts)[0]!,
         ...(typeof row.version === 'number' ? { version: row.version } : {}),
-        ...(row.deleted_at
-          ? {
-              deckPreview: preview
-                ? {
-                    ...preview,
-                    ...(row.deck_latest_tagged_ids?.includes(viewer)
-                      ? { mentionsViewer: true as const }
-                      : {}),
-                  }
-                : null,
-            }
-          : {}),
+        ...(row.deleted_at ? { deckPreview: preview ? {
+          ...preview,
+          ...(row.deck_latest_tagged_ids?.includes(viewer) ? { mentionsViewer: true as const } : {}),
+        } : null } : {}),
       });
     }
     return deltas;
@@ -1921,25 +1572,14 @@ export class PhoneService {
    * Room membership can only remove fields from the result, never expose a
    * message the viewer can no longer read. */
   async readLiveBookmark(messageId: string, viewerId: string): Promise<MessageBookmarkView | null> {
-    const row = (
-      await this.database.query<{
-        message_id: string;
-        workspace_id: string;
-        room_id: string;
-        room_name: string;
-        room_kind: 'room' | 'corner';
-        message_created_at: Date;
-        bookmarked_at: Date;
-        available: boolean;
-        text: string | null;
-        author_id: string | null;
-        author_kind: 'human' | 'agent' | null;
-        author_name: string | null;
-        author_handle: string | null;
-        author_avatar: string | null;
-        author_face: string | null;
-      }>(
-        `SELECT bookmark.message_id,bookmark.workspace_id,bookmark.room_id,
+    const row = (await this.database.query<{
+      message_id: string; workspace_id: string; room_id: string;
+      room_name: string; room_kind: 'room' | 'corner';
+      message_created_at: Date; bookmarked_at: Date; available: boolean;
+      text: string | null; author_id: string | null;
+      author_kind: 'human' | 'agent' | null; author_name: string | null;
+      author_handle: string | null; author_avatar: string | null; author_face: string | null;
+    }>(`SELECT bookmark.message_id,bookmark.workspace_id,bookmark.room_id,
          COALESCE(room.name,bookmark.source_room_name) room_name,
          bookmark.source_room_kind room_kind,
          bookmark.message_created_at,bookmark.created_at bookmarked_at,
@@ -1961,34 +1601,18 @@ export class PhoneService {
        LEFT JOIN messages message ON message.id=bookmark.message_id AND message.room_id=room.id
        LEFT JOIN identities author ON author.id=message.author_id
        WHERE bookmark.message_id=$1 AND bookmark.identity_id=$2`,
-        [messageId, viewerId],
-      )
-    ).rows[0];
+    [messageId, viewerId])).rows[0];
     if (!row) return null;
     return {
-      messageId: row.message_id,
-      workspaceId: row.workspace_id,
-      roomId: row.room_id,
-      roomName: row.room_name,
-      roomKind: row.room_kind,
-      messageCreatedAt: unix(row.message_created_at),
-      bookmarkedAt: unix(row.bookmarked_at),
+      messageId: row.message_id, workspaceId: row.workspace_id, roomId: row.room_id,
+      roomName: row.room_name, roomKind: row.room_kind,
+      messageCreatedAt: unix(row.message_created_at), bookmarkedAt: unix(row.bookmarked_at),
       available: row.available,
       ...(row.available && row.text !== null ? { text: row.text } : {}),
       ...(row.available && row.author_id && row.author_kind && row.author_name
-        ? {
-            author: identity(
-              {
-                id: row.author_id,
-                kind: row.author_kind,
-                name: row.author_name,
-                handle: row.author_handle,
-                avatar: row.author_avatar,
-                face_id: row.author_face,
-              },
-              this.publicOrigin,
-            ),
-          }
+        ? { author: identity({ id: row.author_id, kind: row.author_kind,
+            name: row.author_name, handle: row.author_handle,
+            avatar: row.author_avatar, face_id: row.author_face }, this.publicOrigin) }
         : {}),
     };
   }
@@ -1999,30 +1623,21 @@ export class PhoneService {
     workspace: { id: string; name: string; avatar?: string };
     viewers: ReadonlySet<string>;
   } | null> {
-    const rows = (
-      await this.database.query<{
-        id: string;
-        name: string;
-        avatar: string | null;
-        viewer: string | null;
-      }>(
-        `SELECT workspace.id,workspace.name,workspace.avatar,member.identity_id viewer
+    const rows = (await this.database.query<{
+      id: string; name: string; avatar: string | null; viewer: string | null;
+    }>(`SELECT workspace.id,workspace.name,workspace.avatar,member.identity_id viewer
         FROM workspaces workspace
         LEFT JOIN memberships member ON member.workspace_id=workspace.id
           AND member.room_id IS NULL AND member.removed_at IS NULL
-        WHERE workspace.id=$1`,
-        [workspaceId],
-      )
-    ).rows;
+        WHERE workspace.id=$1`, [workspaceId])).rows;
     const row = rows[0];
     if (!row) return null;
     return {
       workspace: {
-        id: row.id,
-        name: row.name,
+        id: row.id, name: row.name,
         ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
       },
-      viewers: new Set(rows.flatMap((candidate) => (candidate.viewer ? [candidate.viewer] : []))),
+      viewers: new Set(rows.flatMap((candidate) => candidate.viewer ? [candidate.viewer] : [])),
     };
   }
 
@@ -2034,12 +1649,10 @@ export class PhoneService {
     pushLevel?: PushLevel;
     viewers: ReadonlySet<string>;
   } | null> {
-    const row = (
-      await this.database.query<IdentityRow & { push_level: string }>(
-        `SELECT id,kind,name,handle,avatar,face_id,push_level FROM identities WHERE id=$1`,
-        [personId],
-      )
-    ).rows[0];
+    const row = (await this.database.query<IdentityRow & { push_level: string }>(
+      `SELECT id,kind,name,handle,avatar,face_id,push_level FROM identities WHERE id=$1`,
+      [personId],
+    )).rows[0];
     if (!row) return null;
     const viewers = await this.database.query<{ id: string }>(
       `SELECT other.identity_id id FROM memberships mine
@@ -2061,48 +1674,30 @@ export class PhoneService {
 
   /** Current count plus only the changed Room's cells. This is a peek: the
    * 24-hour first-seen clock starts only on explicit seen commands or legacy tray reads. */
-  async liveNeedsYou(
-    roomId: string,
-    viewerId: string,
-  ): Promise<{
-    workspaceId: string;
-    count: number;
-    items: readonly NeedsYouItemView[];
+  async liveNeedsYou(roomId: string, viewerId: string): Promise<{
+    workspaceId: string; count: number; items: readonly NeedsYouItemView[];
   } | null> {
-    return this.database.transaction(async (database) => {
-      await database.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      const scope = (
-        await database.query<{ workspace_id: string }>(
-          `SELECT room.workspace_id FROM rooms room
+    return this.database.transaction(async database=>{
+    await database.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+    const scope = (await database.query<{ workspace_id: string }>(
+      `SELECT room.workspace_id FROM rooms room
        JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
          AND workspace_member.removed_at IS NULL
        JOIN memberships room_member ON room_member.room_id=room.id
          AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
-       WHERE room.id=$1`,
-          [roomId, viewerId],
-        )
-      ).rows[0];
-      if (!scope) return null;
-      const order = await readNeedsYouOrder(database, scope.workspace_id, viewerId, 'wall', false);
-      // This snapshot proves there are no cells to project. Legacy replay still
-      // sends the empty delta, without repeating the expensive cell query.
-      if (order.count === 0) return { workspaceId: scope.workspace_id, count: 0, items: [] };
-      const { items } = await needsYouItems(
-        database,
-        scope.workspace_id,
-        viewerId,
-        (row) => identity(row, this.publicOrigin),
-        false,
-        'wall',
-        [roomId],
-      );
-      const selected = new Map(items.map((item) => [item.messageId, item]));
-      return {
-        workspaceId: scope.workspace_id,
-        count: order.count,
-        items: order.order.flatMap((id) => (selected.has(id) ? [selected.get(id)!] : [])),
-      };
+       WHERE room.id=$1`, [roomId, viewerId],
+    )).rows[0];
+    if (!scope) return null;
+    const order=await readNeedsYouOrder(database,scope.workspace_id,viewerId,'wall',false);
+    // This snapshot proves there are no cells to project. Legacy replay still
+    // sends the empty delta, without repeating the expensive cell query.
+    if(order.count===0)return {workspaceId:scope.workspace_id,count:0,items:[]};
+    const { items } = await needsYouItems(database, scope.workspace_id, viewerId,
+      (row) => identity(row, this.publicOrigin), false,'wall',[roomId]);
+    const selected=new Map(items.map(item=>[item.messageId,item]));
+    return { workspaceId: scope.workspace_id, count: order.count,
+      items: order.order.flatMap(id=>selected.has(id)?[selected.get(id)!]:[]) };
     });
   }
 
@@ -2127,7 +1722,7 @@ export class PhoneService {
     const rows = await this.database.query<{
       agent_id: string;
       turn_id: string;
-      body: { text?: unknown; latestChunk?: unknown; overlayV1?: unknown } | null;
+      body: { text?: unknown; latestChunk?: unknown; overlayV1?:unknown } | null;
     }>(
       `SELECT o.agent_id, o.turn_id, o.body FROM live_outputs o
        JOIN rooms r ON r.id=o.room_id AND r.parent_id IS NOT NULL
@@ -2139,16 +1734,9 @@ export class PhoneService {
     );
     return rows.rows.flatMap((row) => {
       const text = typeof row.body?.text === 'string' ? row.body.text : '';
-      const overlayV1 = readHelperOverlayFrame(row.body?.overlayV1);
-      if (
-        row.body?.overlayV1 !== undefined &&
-        (!overlayV1 ||
-          overlayV1.roomId !== roomId ||
-          overlayV1.agentId !== row.agent_id ||
-          overlayV1.turnId !== row.turn_id ||
-          overlayV1.kind !== 'draft')
-      )
-        return [];
+      const overlayV1=readHelperOverlayFrame(row.body?.overlayV1);
+      if(row.body?.overlayV1!==undefined && (!overlayV1 || overlayV1.roomId!==roomId ||
+          overlayV1.agentId!==row.agent_id || overlayV1.turnId!==row.turn_id || overlayV1.kind!=='draft'))return [];
       return text
         ? [
             {
@@ -2157,7 +1745,7 @@ export class PhoneService {
               agentId: row.agent_id,
               turnId: row.turn_id,
               text,
-              ...(overlayV1 ? { overlayV1 } : {}),
+              ...(overlayV1?{overlayV1}:{}),
               ...(typeof row.body?.latestChunk === 'string'
                 ? { latestChunk: row.body.latestChunk }
                 : {}),
@@ -2168,10 +1756,7 @@ export class PhoneService {
   }
 
   async readWelcomeCards(viewerId: string): Promise<WelcomeCardsView> {
-    const result = await this.database.query(
-      `SELECT 1 FROM identities WHERE id=$1 AND kind='human'`,
-      [viewerId],
-    );
+    const result = await this.database.query(`SELECT 1 FROM identities WHERE id=$1 AND kind='human'`, [viewerId]);
     if (!result.rows[0]) throw new Error('human identity required');
     // Compatibility for older clients: the welcome deck is retired for everyone.
     return { due: false };
@@ -2255,17 +1840,10 @@ export class PhoneService {
         roomCount: Number(row.room_count),
         attention: Boolean(row.attention),
       })),
-      viewer: identity(
-        {
-          id: viewer.viewer_id,
-          kind: viewer.viewer_kind,
-          name: viewer.viewer_name,
-          handle: viewer.viewer_handle,
-          avatar: viewer.viewer_avatar,
-          face_id: viewer.viewer_face_id,
-        },
-        this.publicOrigin,
-      ),
+      viewer: identity({
+        id: viewer.viewer_id,kind: viewer.viewer_kind,name: viewer.viewer_name,
+        handle: viewer.viewer_handle,avatar: viewer.viewer_avatar,face_id: viewer.viewer_face_id,
+      }, this.publicOrigin),
       truncated: workspaces.length > 50,
       watchFilters: [],
       ...(viewer.deleted_notices?.length ? { deletedNotices: viewer.deleted_notices } : {}),
@@ -2276,48 +1854,30 @@ export class PhoneService {
     const roster = await this.workspaceRoster(workspaceId, viewerId,query);
     if (!roster) return null;
     const row = roster.workspaceRow;
-    const managedRooms =
-      row.role === 'owner' || row.role === 'admin'
-        ? roster.managedRoomRows.slice(0, ROOM_VIEW_CHAT_LIMIT).map((room) => ({
-            id: room.id,
-            name: room.name,
-            visibility: room.visibility,
-            createdAt: unix(room.created_at),
-          }))
-        : undefined;
+    const managedRooms = row.role === 'owner' || row.role === 'admin'
+      ? roster.managedRoomRows.slice(0, ROOM_VIEW_CHAT_LIMIT).map((room) => ({
+          id: room.id,name: room.name,visibility: room.visibility,
+          createdAt: unix(room.created_at),
+        }))
+      : undefined;
     return {
       workspace: {
-        id: row.id,
-        name: row.name,
+        id: row.id,name: row.name,
         ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
-        visibility: row.visibility,
-        role: row.role,
-        updatedAt: unix(row.updated_at),
+        visibility: row.visibility,role: row.role,updatedAt: unix(row.updated_at),
         createdAt: unix(row.created_at),
       },
-      ...(managedRooms
-        ? {
-            managerSettings: {
-              visibility: row.visibility,
-              allowFixSweep: row.allow_fix_sweep,
-              rooms: managedRooms,
-              roomsTruncated: roster.managedRoomRows.length > ROOM_VIEW_CHAT_LIMIT,
-            },
-          }
-        : {}),
-      members: roster.members,
-      agents: roster.agents,
-      peopleTotal: roster.peopleTotal,
-      agentTotal: roster.agentTotal,
-      membersTruncated: roster.membersTruncated,
-      agentsTruncated: roster.agentsTruncated,
+      ...(managedRooms ? { managerSettings: {
+        visibility: row.visibility,allowFixSweep: row.allow_fix_sweep,rooms: managedRooms,
+        roomsTruncated: roster.managedRoomRows.length > ROOM_VIEW_CHAT_LIMIT,
+      } } : {}),
+      members: roster.members,agents: roster.agents,
+      peopleTotal: roster.peopleTotal,agentTotal: roster.agentTotal,
+      membersTruncated: roster.membersTruncated,agentsTruncated: roster.agentsTruncated,
       viewer: {
-        identity: roster.viewerIdentity,
-        role: row.role,
-        permissions: {
-          send: row.role !== 'spectator',
-          manage: row.role === 'owner' || row.role === 'admin',
-        },
+        identity: roster.viewerIdentity,role: row.role,
+        permissions: { send: row.role !== 'spectator',
+          manage: row.role === 'owner' || row.role === 'admin' },
       },
       watchFilters: [],
     };
@@ -2332,12 +1892,9 @@ export class PhoneService {
       const roster = await this.workspaceRoster(workspaceId, viewerId, query);
       if (!roster) return null;
       return {
-        members: roster.members,
-        agents: roster.agents,
-        peopleTotal: roster.peopleTotal,
-        agentTotal: roster.agentTotal,
-        membersTruncated: roster.membersTruncated,
-        agentsTruncated: roster.agentsTruncated,
+        members: roster.members,agents: roster.agents,
+        peopleTotal: roster.peopleTotal,agentTotal: roster.agentTotal,
+        membersTruncated: roster.membersTruncated,agentsTruncated: roster.agentsTruncated,
       };
     }
     // One profile read: the person, their grants and the agents they own.
@@ -2348,8 +1905,7 @@ export class PhoneService {
       grant_rows: MemberGrantRow[];
       owned_rows: RosterAgentRow[];
       owned_total: string;
-    }>(
-      `WITH authorized AS (
+    }>(`WITH authorized AS (
         SELECT role FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
           AND identity_id=$2 AND removed_at IS NULL
       ), member_row AS (
@@ -2396,28 +1952,19 @@ export class PhoneService {
           ORDER BY g.created_at DESC,g.id LIMIT $4
         ) grant_row),'[]'::jsonb) grant_rows
       FROM authorized JOIN identities viewer ON viewer.id=$2`,
-      [workspaceId, viewerId, query.memberId, PROFILE_GRANT_LIMIT, WORKSPACE_MEMBER_PAGE_SIZE + 1],
-    );
+      [workspaceId, viewerId, query.memberId, PROFILE_GRANT_LIMIT, WORKSPACE_MEMBER_PAGE_SIZE + 1]);
     const row = detail.rows[0];
     if (!row) return null;
     const member = row.member_row ? reviveDates(row.member_row, ['presence_updated_at']) : null;
     const ownedRows = row.owned_rows.slice(0, WORKSPACE_MEMBER_PAGE_SIZE);
     const presenceRows: MemberRow[] = [...(member ? [member] : []), ...ownedRows];
     if (presenceRows.length) {
-      const presence = await this.optionalEnrichment(
-        'member-presence',
-        this.enrichmentDatabase.query<{
-          id: string;
-          presence_body: MemberRow['presence_body'];
-          presence_updated_at: Date;
-        }>(
-          `SELECT DISTINCT ON (agent_id) agent_id id,body presence_body,
+      const presence = await this.optionalEnrichment('member-presence',
+        this.enrichmentDatabase.query<{ id: string; presence_body: MemberRow['presence_body'];
+          presence_updated_at: Date }>(`SELECT DISTINCT ON (agent_id) agent_id id,body presence_body,
             updated_at presence_updated_at
           FROM live_outputs WHERE agent_id=ANY($1::text[]) AND kind='presence'
-          ORDER BY agent_id,updated_at DESC`,
-          [presenceRows.map((entry) => entry.id)],
-        ),
-      );
+          ORDER BY agent_id,updated_at DESC`, [presenceRows.map((entry) => entry.id)]));
       const byId = new Map(presence?.rows.map((entry) => [entry.id, entry]) ?? []);
       for (const entry of presenceRows) {
         entry.presence_body = byId.get(entry.id)?.presence_body ?? null;
@@ -2426,21 +1973,14 @@ export class PhoneService {
     }
     const role = row.role;
     return {
-      viewer: {
-        identity: identity(row.viewer_row, this.publicOrigin),
-        role,
-        permissions: { send: role !== 'spectator', manage: role === 'owner' || role === 'admin' },
-      },
+      viewer: { identity: identity(row.viewer_row, this.publicOrigin), role,
+        permissions: { send: role !== 'spectator', manage: role === 'owner' || role === 'admin' } },
       members: member ? this.projectMembers([member], null) : [],
       agents: this.projectWorkspaceAgents(ownedRows, ownedRows),
-      grants: this.projectMemberGrantRows(
-        row.grant_rows.map((grant) =>
-          reviveDates(grant, ['created_at', 'decided_at', 'expires_at']),
-        ),
-      ),
+      grants: this.projectMemberGrantRows(row.grant_rows.map((grant) =>
+        reviveDates(grant, ['created_at', 'decided_at', 'expires_at']))),
       agentTotal: Number(row.owned_total),
-      membersTruncated: false,
-      agentsTruncated: row.owned_rows.length > WORKSPACE_MEMBER_PAGE_SIZE,
+      membersTruncated: false,agentsTruncated: row.owned_rows.length > WORKSPACE_MEMBER_PAGE_SIZE,
     };
   }
 
@@ -2461,17 +2001,10 @@ export class PhoneService {
     const loaded = await this.loadCorners(parentRoomId, viewerId, { deck: true });
     if (!loaded?.deck) return null;
     const { view, deck } = loaded;
-    return {
-      ...deckCornerSummary(parentRoomId, deck),
+    return { ...deckCornerSummary(parentRoomId, deck),
       agentState: deck.needs_you ? 'needs-you' : deck.working ? 'working' : null,
-      ...(deck.needs_you
-        ? {
-            attentionReason: {
-              kind: 'approval' as const,
-              ...(deck.attention_actor ? { actor: deck.attention_actor } : {}),
-            },
-          }
-        : {}),
+      ...(deck.needs_you ? { attentionReason: { kind: 'approval' as const,
+        ...(deck.attention_actor ? { actor: deck.attention_actor } : {}) } } : {}),
       corners: view.corners,
       ...(view.nextOpen ? { nextOpen: view.nextOpen } : {}),
     };
@@ -2586,33 +2119,18 @@ export class PhoneService {
     const current = result.rows[0]?.workspace;
     if (!current) return null;
     reviveDates(current, ['updated_at']);
-    const rooms = {
-      rows: result.rows[0]!.room_rows.map((row) =>
-        reviveDates(row, [
-          'created_at',
-          'updated_at',
-          'archived_at',
-          'latest_created_at',
-          'peer_presence_updated_at',
-          'peer_activity_at',
-        ]),
-      ),
-    };
+    const rooms = { rows: result.rows[0]!.room_rows.map((row) =>
+      reviveDates(row, ['created_at', 'updated_at', 'archived_at', 'latest_created_at',
+        'peer_presence_updated_at', 'peer_activity_at'])) };
     const roomIds = rooms.rows.map((room) => room.id);
     const enrichment = await this.optionalEnrichment(
       'chat-enrichment',
       this.enrichmentDatabase.query<{
-        presence: Array<{
-          room_id: string;
-          peer_presence_body: Record<string, unknown> | null;
-          peer_presence_updated_at: Date | null;
-          peer_activity_at: Date | null;
-          agents_offline: boolean;
-        }>;
+        presence: Array<{ room_id: string; peer_presence_body: Record<string, unknown> | null;
+          peer_presence_updated_at: Date | null; peer_activity_at: Date | null; agents_offline: boolean }>;
         cursors: Array<{ room_id: string; unread: boolean }>;
         corner_rows: OpenCornerFactsRow[];
-      }>(
-        `WITH presence AS (
+      }>(`WITH presence AS (
           SELECT room.id room_id,presence.body peer_presence_body,
             presence.updated_at peer_presence_updated_at,
             GREATEST(
@@ -2673,23 +2191,15 @@ export class PhoneService {
       ),
     );
     const enrichmentRow = enrichment?.rows[0];
-    const presence = enrichmentRow
-      ? {
-          rows: enrichmentRow.presence.map((row) =>
-            reviveDates(row, ['peer_presence_updated_at', 'peer_activity_at']),
-          ),
-        }
-      : undefined;
+    const presence = enrichmentRow ? { rows: enrichmentRow.presence.map((row) =>
+      reviveDates(row, ['peer_presence_updated_at', 'peer_activity_at'])) } : undefined;
     const cursors = enrichmentRow ? { rows: enrichmentRow.cursors } : undefined;
     const cornerRows = enrichmentRow?.corner_rows;
     // A timed-out enrichment is unknown, not empty. Omitting its fields (and
     // naming unread, which old phones require) lets the phone keep what it
     // last knew instead of painting no corners and no unread dot.
-    const countsByRoom = cornerRows
-      ? chatCornerCounts(
-          cornerRows.map((corner) => reviveDates(corner, ['archived_at', 'latest_created_at'])),
-        )
-      : undefined;
+    const countsByRoom = cornerRows ? chatCornerCounts(cornerRows.map((corner) =>
+      reviveDates(corner, ['archived_at', 'latest_created_at']))) : undefined;
     const unavailable = [
       ...(cursors ? [] : ['unread' as const]),
       ...(cornerRows ? [] : ['corners' as const]),
@@ -2726,11 +2236,7 @@ export class PhoneService {
           ...(row.closed ? { closed: true } : {}),
           memberCount: Number(row.member_count),
           ...(countsByRoom
-            ? (countsByRoom.get(row.id) ?? {
-                cornerCount: 0,
-                waitingCornerCount: 0,
-                mineCornerCount: 0,
-              })
+            ? (countsByRoom.get(row.id) ?? { cornerCount: 0, waitingCornerCount: 0, mineCornerCount: 0 })
             : {}),
           ...(row.latest_id &&
           row.latest_created_at &&
@@ -2875,8 +2381,7 @@ export class PhoneService {
     };
     const rows = await measured('data', this.roomRows(roomId, viewerId));
     if (!rows) return null;
-    if (!this.pureProjection && rows.starter_onboarding_pending)
-      this.starterOnboarding?.open(roomId, viewerId);
+    if (!this.pureProjection && rows.starter_onboarding_pending) this.starterOnboarding?.open(roomId, viewerId);
     const room = rows.room;
     const corner = rows.corner;
     const parent = corner?.parent ?? undefined;
@@ -2902,14 +2407,12 @@ export class PhoneService {
       Boolean(corner),
       viewerId,
     );
-    const enrichment = rows.router_enrichment
-      ? this.projectRoomEnrichment(rows.router_enrichment)
-      : corner
-        ? await measured(
-            'enrichment',
-            this.cornerRoomEnrichment(room, rows, initialMessageResult, viewerId),
-          )
-        : undefined;
+    const enrichment = rows.router_enrichment?this.projectRoomEnrichment(rows.router_enrichment):corner
+      ? await measured(
+          'enrichment',
+          this.cornerRoomEnrichment(room, rows, initialMessageResult, viewerId),
+        )
+      : undefined;
     if (enrichment) {
       const presenceByMember = new Map(enrichment.presence.map((item) => [item.id, item]));
       for (const member of rows.members) {
@@ -2948,14 +2451,11 @@ export class PhoneService {
     const { messages, toolRows } = messageResult;
     const plan = facts?.plan;
     const paintedRoom = roomHeader(room, this.publicOrigin);
-    const briefing = await this.decorateCornerOpenCards(
-      room.parent_id ?? roomId,
-      collapsePermissionCards(
-        briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
-      ),
-    );
+    const briefing = await this.decorateCornerOpenCards(room.parent_id ?? roomId, collapsePermissionCards(
+      briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
+    ));
     const [attachmentFacts, appMessages] = await Promise.all([
-      corner || this.pureProjection
+      corner||this.pureProjection
         ? Promise.resolve(
             enrichment?.attachmentFacts ?? { expired: new Set<string>(), artifacts: new Map() },
           )
@@ -3004,7 +2504,9 @@ export class PhoneService {
       ...(cornerBrief
         ? {
             cornerBrief: {
-              ...(briefAuthorHandle ? { authorHandle: briefAuthorHandle } : {}),
+              ...(briefAuthorHandle
+                ? { authorHandle: briefAuthorHandle }
+                : {}),
               revision: cornerBrief.revision,
               spec: cornerBrief.spec,
               ...(cornerBrief.approval
@@ -3050,14 +2552,12 @@ export class PhoneService {
       ...(room.parent_id ? { cornerLocked: facts?.locked === true } : {}),
       ...(cornerLifecycle ? { cornerLifecycle: cornerLifecycle.lifecycle } : {}),
       ...(cornerLifecycle?.owed !== undefined ? { cornerOwed: cornerLifecycle.owed } : {}),
-      watchFilters: room.archived_at
-        ? []
-        : roomFilters(
-            roomId,
-            room.workspace_id,
-            room.parent_id ? [room.parent_id] : [],
-            allMembers,
-          ),
+      watchFilters: room.archived_at ? [] : roomFilters(
+        roomId,
+        room.workspace_id,
+        room.parent_id ? [room.parent_id] : [],
+        allMembers,
+      ),
     };
     spans.set('projection', performance.now() - projectionStartedAt);
     const durationMs = performance.now() - readStartedAt;
@@ -3075,14 +2575,7 @@ export class PhoneService {
         }),
       );
     }
-    if (this.pureProjection)
-      return {
-        ...view,
-        toolRows: undefined,
-        messages: [...view.messages, ...projectRoomToolSummaries(rows.router_tools ?? [], roomId)]
-          .sort(messageOrder)
-          .slice(-30),
-      };
+    if(this.pureProjection)return {...view,toolRows:undefined,messages:[...view.messages,...projectRoomToolSummaries(rows.router_tools??[],roomId)].sort(messageOrder).slice(-30)};
     return view;
   }
 
@@ -3238,11 +2731,11 @@ export class PhoneService {
        )
        SELECT COALESCE((SELECT jsonb_agg(to_jsonb(page) ORDER BY page.created_at,page.id)
          FROM page),'[]'::jsonb) rows FROM authorized`,
-      [roomId, viewerId, targetId, SYSTEM_IDENTITY_ID],
+      [roomId,viewerId,targetId,SYSTEM_IDENTITY_ID],
     );
     const loaded = result.rows[0];
     if (!loaded) return null;
-    const rows = loaded.rows.map((row) => reviveDates(row, ['created_at', 'deleted_at']));
+    const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
     const appMessages = await this.decorateMessageCards(roomId, messages, viewerId);
@@ -3282,11 +2775,11 @@ export class PhoneService {
         FROM page),'[]'::jsonb) rows,
         EXISTS(SELECT 1 FROM messages WHERE room_id=$1 AND id=$3) cursor_exists
       FROM authorized`,
-      [roomId, viewerId, afterId, SYSTEM_IDENTITY_ID],
+      [roomId,viewerId,afterId,SYSTEM_IDENTITY_ID],
     );
     const loaded = result.rows[0];
     if (!loaded || !loaded.cursor_exists) return null;
-    const rows = loaded.rows.map((row) => reviveDates(row, ['created_at', 'deleted_at']));
+    const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
     const appMessages = await this.decorateMessageCards(roomId, messages, viewerId);
@@ -3325,11 +2818,11 @@ export class PhoneService {
       )
       SELECT COALESCE((SELECT jsonb_agg(to_jsonb(page) ORDER BY page.created_at DESC,page.id DESC)
         FROM page),'[]'::jsonb) rows FROM authorized`,
-      [roomId, viewerId, before?.id ?? null, SYSTEM_IDENTITY_ID],
+      [roomId,viewerId,before?.id ?? null,SYSTEM_IDENTITY_ID],
     );
     const loaded = result.rows[0];
     if (!loaded) return null;
-    const rows = loaded.rows.map((row) => reviveDates(row, ['created_at', 'deleted_at']));
+    const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const page = rows.slice(0, 30);
     const attachmentFacts = await this.enrichHistoryRows(page, viewerId);
     const tail = page.at(-1);
@@ -3369,7 +2862,7 @@ export class PhoneService {
          WHERE workspace_member.workspace_id=room.workspace_id
            AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
            AND workspace_member.removed_at IS NULL))`,
-      [roomId, viewerId, SYSTEM_IDENTITY_ID],
+      [roomId,viewerId,SYSTEM_IDENTITY_ID],
     );
     if (!newest.rows[0]) return null;
     if (!this.outlineCache) return this.countHistoryOutline(roomId, timeZone);
@@ -3418,9 +2911,7 @@ export class PhoneService {
       roomId,
       timeZone,
       total: days.reduce((sum, day) => sum + day.count, 0),
-      ...(newest
-        ? { newest: { id: newest.newest_id, createdAt: unix(newest.newest_created_at) } }
-        : {}),
+      ...(newest ? { newest: { id: newest.newest_id, createdAt: unix(newest.newest_created_at) } } : {}),
       days,
     };
   }
@@ -3445,10 +2936,7 @@ export class PhoneService {
     // snapshot, so a reader replaces its summary whole.
     const firstPage = !archived && !archivedBefore && !openBefore;
     const loaded = await this.loadCorners(roomId, viewerId, {
-      roomViewFamilyOrder,
-      archived,
-      before: archivedBefore ?? openBefore,
-      deck: firstPage,
+      roomViewFamilyOrder, archived, before: archivedBefore ?? openBefore, deck: firstPage,
     });
     if (!loaded) return null;
     return loaded.deck
@@ -3485,8 +2973,7 @@ export class PhoneService {
       corner_rows: CornerRow[];
       viewer_row: IdentityRow;
       deck: DeckCornerFacts | null;
-    }>(
-      `WITH authorized AS (
+    }>(`WITH authorized AS (
         SELECT r.*,workspace_member.role workspace_role
         FROM rooms r JOIN memberships m ON m.room_id=r.id
         JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
@@ -3495,15 +2982,12 @@ export class PhoneService {
         WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
       ), selected_corners AS (${cornerQuery})
       SELECT to_jsonb(authorized) room_row,
-        COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY ${
-          archived ? 'c.archived_at DESC,c.id DESC' : 'c.created_at DESC,c.id DESC'
-        })
+        COALESCE((SELECT jsonb_agg(to_jsonb(c) ORDER BY ${archived
+          ? 'c.archived_at DESC,c.id DESC' : 'c.created_at DESC,c.id DESC'})
           FROM selected_corners c),'[]'::jsonb) corner_rows,
         jsonb_build_object('id',viewer.id,'kind',viewer.kind,'name',viewer.name,
           'handle',viewer.handle,'avatar',viewer.avatar,'face_id',viewer.face_id) viewer_row,
-        ${
-          deck
-            ? `CASE WHEN authorized.parent_id IS NULL AND authorized.archived_at IS NULL
+        ${deck ? `CASE WHEN authorized.parent_id IS NULL AND authorized.archived_at IS NULL
           THEN jsonb_build_object(
             'needs_you',${roomNeedsYouSql('authorized')},
             'working',${roomWorkingSql('authorized')},
@@ -3511,30 +2995,17 @@ export class PhoneService {
             'corner_rows',COALESCE((SELECT jsonb_agg(to_jsonb(deck_corner)
               ORDER BY deck_corner.created_at DESC,deck_corner.id DESC)
               FROM (${openCornerFactsSql('=authorized.id', '$2')}) deck_corner),'[]'::jsonb))
-          END`
-            : 'NULL::jsonb'
-        } deck
+          END` : 'NULL::jsonb'} deck
       FROM authorized JOIN identities viewer ON viewer.id=$2`,
       before ? [roomId, viewerId, before.micros, before.id] : [roomId, viewerId],
     );
     const loaded = result.rows[0];
     if (!loaded) return null;
-    const room = reviveDates(loaded.room_row, [
-      'created_at',
-      'updated_at',
-      'archived_at',
-      'repository_updated_at',
-    ]);
-    const fetched = loaded.corner_rows.map((row) =>
-      reviveDates(row, [
-        'created_at',
-        'updated_at',
-        'archived_at',
-        'repository_updated_at',
-        'latest_created_at',
-        'latest_turn_created_at',
-      ]),
-    );
+    const room = reviveDates(loaded.room_row,
+      ['created_at','updated_at','archived_at','repository_updated_at']);
+    const fetched = loaded.corner_rows.map((row) => reviveDates(row,
+      ['created_at','updated_at','archived_at','repository_updated_at',
+        'latest_created_at','latest_turn_created_at']));
     const viewerIdentity = identity(loaded.viewer_row, this.publicOrigin);
     // The archived read asks for one row past the page; its presence is what
     // says another page exists.
@@ -3545,12 +3016,8 @@ export class PhoneService {
     const view: CornerListView = {
       room: roomHeader(room, this.publicOrigin),
       corners: this.projectCorners(rows),
-      ...(archived && more && last?.archived_us
-        ? { nextArchived: `${last.archived_us},${last.id}` }
-        : {}),
-      ...(!archived && more && last?.created_us
-        ? { nextOpen: `${last.created_us},${last.id}` }
-        : {}),
+      ...(archived && more && last?.archived_us ? { nextArchived: `${last.archived_us},${last.id}` } : {}),
+      ...(!archived && more && last?.created_us ? { nextOpen: `${last.created_us},${last.id}` } : {}),
       viewer: {
         identity: viewerIdentity,
         // The Workspace role: a Room, corner or DM role grants nothing.
@@ -3568,7 +3035,7 @@ export class PhoneService {
   /** Bound each authorized message window before identity/reaction decoration.
    * The author foreign key preserves the original inner-join membership. */
   private async roomRows(roomId: string, viewerId: string): Promise<RoomReadRow | undefined> {
-    if (this.pureProjection) this.routerRoomRows = undefined;
+    if(this.pureProjection)this.routerRoomRows=undefined;
     const row = (
       await this.database.query<RoomReadRow>(
         `WITH authorized_room AS (
@@ -3587,14 +3054,14 @@ export class PhoneService {
                WHERE other_room.room_id=COALESCE(room.parent_id,room.id) AND other_room.removed_at IS NULL
                  AND other_room.identity_id<>$2
              )) leave_deletes_room,
-             ${this.pureProjection ? `CASE WHEN room.parent_id IS NULL THEN ${viewerReadCursorSql()} END` : 'NULL::jsonb'} read_cursor
+             ${this.pureProjection?`CASE WHEN room.parent_id IS NULL THEN ${viewerReadCursorSql()} END`:'NULL::jsonb'} read_cursor
            FROM rooms room
            JOIN memberships membership ON membership.room_id=COALESCE(room.parent_id,room.id)
              AND membership.identity_id=$2 AND membership.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
              AND workspace_member.removed_at IS NULL
-           WHERE room.id=$1 ${this.pureProjection ? 'AND ($3::uuid IS NULL OR room.workspace_id=$3)' : ''}
+           WHERE room.id=$1 ${this.pureProjection?'AND ($3::uuid IS NULL OR room.workspace_id=$3)':''}
          ), member_rows AS (
            SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,
              COALESCE(roster_workspace.role,roster_member.role) role,NULL::jsonb presence_body,
@@ -3698,7 +3165,7 @@ export class PhoneService {
            ) m ON true
            JOIN identities i ON i.id=m.author_id
          )
-         ${this.pureProjection ? ROOM_ROUTER_CTES : ''}
+         ${this.pureProjection?ROOM_ROUTER_CTES:''}
          SELECT
            EXISTS(SELECT 1 FROM starter_onboarding_runs onboarding
              WHERE onboarding.room_id=authorized_room.id AND onboarding.user_id=$2
@@ -3737,16 +3204,14 @@ export class PhoneService {
                ORDER BY corner_tool_rows.created_at DESC,corner_tool_rows.id DESC)
                FROM corner_tool_rows),'[]'::jsonb)
            ) END corner
-           ${this.pureProjection ? roomRouterColumnsSql() : ''}
-         FROM authorized_room ${this.pureProjection ? ROOM_ROUTER_HEAD_JOIN : ''}`,
-        this.pureProjection
-          ? [roomId, viewerId, this.expectedRouterWorkspace ?? null]
-          : [roomId, viewerId],
+           ${this.pureProjection?roomRouterColumnsSql():''}
+         FROM authorized_room ${this.pureProjection?ROOM_ROUTER_HEAD_JOIN:''}`,
+        this.pureProjection?[roomId,viewerId,this.expectedRouterWorkspace??null]:[roomId, viewerId],
       )
     ).rows[0];
     if (!row) return undefined;
-    if (this.pureProjection) this.routerRoomRows = row;
-    if (row.corner || this.pureProjection) {
+    if(this.pureProjection)this.routerRoomRows=row;
+    if (row.corner||this.pureProjection) {
       reviveDates(row.room, ['archived_at', 'repository_updated_at', 'created_at', 'updated_at']);
       if (row.corner?.parent)
         reviveDates(row.corner.parent, [
@@ -3759,8 +3224,8 @@ export class PhoneService {
       for (const message of [
         ...row.transcript,
         ...row.activity,
-        ...(row.corner?.briefing ?? []),
-        ...(row.corner?.tools ?? []),
+        ...(row.corner?.briefing??[]),
+        ...(row.corner?.tools??[]),
       ])
         reviveDates(message, ['created_at']);
       return row;
@@ -3933,7 +3398,7 @@ export class PhoneService {
     return this.projectRoomEnrichment(value);
   }
 
-  private projectRoomEnrichment(value: RoomReadEnrichment) {
+  private projectRoomEnrichment(value:RoomReadEnrichment){
     for (const member of value.presence) reviveDates(member, ['presence_updated_at']);
     return {
       ...value,
@@ -3972,9 +3437,8 @@ export class PhoneService {
     // microseconds, so no row is skipped or repeated between pages.
     const archivedMicros = '(extract(epoch FROM c.archived_at)*1000000)::bigint';
     const createdMicros = '(extract(epoch FROM c.created_at)*1000000)::bigint';
-    const keyset = before
-      ? `AND (${archived ? archivedMicros : createdMicros},c.id) < ($3::bigint,$4::uuid)`
-      : '';
+    const keyset =
+      before ? `AND (${archived ? archivedMicros : createdMicros},c.id) < ($3::bigint,$4::uuid)` : '';
     const limit = `LIMIT ${(archived ? ARCHIVED_CORNER_PAGE : OPEN_CORNER_PAGE) + 1}`;
     const facts = cornerFactsSql('$2');
     return `
@@ -4086,52 +3550,33 @@ export class PhoneService {
     if (workCursor) {
       try {
         const value: unknown = JSON.parse(workCursor);
-        if (
-          !Array.isArray(value) ||
-          value.length !== 2 ||
-          !value.every((part) => typeof part === 'string' && part.length <= 2048)
-        )
+        if (!Array.isArray(value) || value.length !== 2 ||
+          !value.every((part) => typeof part === 'string' && part.length <= 2048))
           throw new Error('invalid cursor');
         cursor = value as [string, string];
       } catch {
         throw new Error('invalid recent work cursor');
       }
     }
-    const core = await this.database.query<
-      {
-        member_id: string;
-        member_name: string;
-        member_handle: string | null;
-        member_avatar: string | null;
-        member_face: string | null;
-        member_role: MemberRow['role'];
-        config_version: string | null;
-        soul: AgentDetailView['soul'] | null;
-        model_catalog: AgentDetailView['catalog'] | null;
-        commands: AgentDetailView['commands'] | null;
-        selected_model: string | null;
-        selected_effort: string | null;
-        fast_mode: boolean | null;
-        model_unavailable: 'model' | 'effort' | 'selection' | null;
-        yolo_mode: boolean;
-        yolo_forced_off: boolean;
-        yolo_set_by_name: string | null;
-        yolo_set_at: Date | null;
-        avatar_generation_id: string | null;
-        avatar_generation_pending: boolean;
-        can_change_yolo: boolean;
-        can_manage_grants: boolean;
-        harness: string | null;
-        access_policy: unknown;
-        owner_id: string | null;
-        owner_name: string | null;
-        owner_handle: string | null;
-        recent_work: Array<{ title: string; url: string; merged_at: string }>;
-        grants: AgentGrantRow[];
-        mcp_client: McpClientIdentity | null;
-      } & AgentUsageRow
-    >(
-      `SELECT agent_identity.id member_id,
+    const core = await this.database.query<{
+      member_id: string; member_name: string; member_handle: string | null;
+      member_avatar: string | null; member_face: string | null;
+      member_role: MemberRow['role'];
+      config_version: string | null;
+      soul: AgentDetailView['soul'] | null;
+      model_catalog: AgentDetailView['catalog'] | null;
+      commands: AgentDetailView['commands'] | null;
+      selected_model: string | null; selected_effort: string | null;
+      fast_mode: boolean | null; model_unavailable: 'model' | 'effort' | 'selection' | null;
+      yolo_mode: boolean; yolo_forced_off: boolean; yolo_set_by_name: string | null;
+      yolo_set_at: Date | null; avatar_generation_id: string | null;
+      avatar_generation_pending: boolean; can_change_yolo: boolean;
+      can_manage_grants: boolean; harness: string | null; access_policy: unknown;
+      owner_id: string | null; owner_name: string | null; owner_handle: string | null;
+      recent_work: Array<{ title: string; url: string; merged_at: string }>;
+      grants: AgentGrantRow[];
+      mcp_client: McpClientIdentity | null;
+    } & AgentUsageRow>(`SELECT agent_identity.id member_id,
         ${mcpClientIdentitySql('a.agent_id')} mcp_client,agent_identity.name member_name,
         agent_identity.handle member_handle,agent_identity.avatar member_avatar,
         agent_identity.face_id member_face,agent_membership.role member_role,
@@ -4186,65 +3631,36 @@ export class PhoneService {
       LEFT JOIN identities owner ON owner.id=a.owner_id
       WHERE agent_membership.identity_id=$1 AND agent_membership.workspace_id=$2
         AND agent_membership.room_id IS NULL AND agent_membership.removed_at IS NULL`,
-      [
-        agentId,
-        workspaceId,
-        viewerId,
-        cursor?.[0] ?? null,
-        cursor?.[1] ?? null,
-        PROFILE_GRANT_LIMIT,
-      ],
+      [agentId, workspaceId, viewerId, cursor?.[0] ?? null,cursor?.[1] ?? null,
+        PROFILE_GRANT_LIMIT],
     );
     const config = core.rows[0];
     if (!config) return null;
-    const presence = this.pureProjection
-      ? undefined
-      : await this.optionalEnrichment(
-          'member-presence',
-          this.enrichmentDatabase.query<{
-            presence_body: MemberRow['presence_body'];
-            presence_updated_at: Date | null;
-          }>(
-            `SELECT live.body presence_body,live.updated_at presence_updated_at
+    const presence = this.pureProjection?undefined:await this.optionalEnrichment('member-presence',
+      this.enrichmentDatabase.query<{
+        presence_body: MemberRow['presence_body']; presence_updated_at: Date | null;
+      }>(`SELECT live.body presence_body,live.updated_at presence_updated_at
         FROM live_outputs live WHERE live.agent_id=$1 AND live.kind='presence'
-        ORDER BY live.updated_at DESC LIMIT 1`,
-            [agentId],
-          ),
-        );
+        ORDER BY live.updated_at DESC LIMIT 1`, [agentId]));
     const presenceRow = presence?.rows[0];
     // An AI-client member's instructions live in its own app, so its profile
     // names that app instead of a made-up animal soul.
     const mcpClient = config.mcp_client
-      ? mcpClientName(config.mcp_client.name, config.mcp_client.redirects)
-      : undefined;
-    const wake =
-      mcpClient && config.owner_id === viewerId
-        ? (
-            await this.database.query<{ url: string | null; keySet: boolean }>(
-              `SELECT NULLIF(COALESCE(member.callback_url,client.callback_url),'') url,
+      ? mcpClientName(config.mcp_client.name, config.mcp_client.redirects) : undefined;
+    const wake = mcpClient && config.owner_id === viewerId
+      ? (await this.database.query<{ url: string | null; keySet: boolean }>(
+        `SELECT NULLIF(COALESCE(member.callback_url,client.callback_url),'') url,
           member.callback_secret IS NOT NULL "keySet"
          FROM rooms_mcp_members member JOIN rooms_mcp_clients client ON client.id=member.client_id
-         WHERE member.member_id=$1`,
-              [agentId],
-            )
-          ).rows[0]
-        : undefined;
-    const member = this.projectMembers(
-      [
-        {
-          id: config.member_id,
-          kind: 'agent',
-          name: config.member_name,
-          handle: config.member_handle,
-          avatar: config.member_avatar,
-          face_id: config.member_face,
-          role: config.member_role,
-          presence_body: presenceRow?.presence_body ?? null,
-          presence_updated_at: presenceRow?.presence_updated_at ?? null,
-        },
-      ],
-      null,
-    )[0]!;
+         WHERE member.member_id=$1`, [agentId])).rows[0]
+      : undefined;
+    const member = this.projectMembers([{
+      id: config.member_id,kind: 'agent',name: config.member_name,
+      handle: config.member_handle,avatar: config.member_avatar,
+      face_id: config.member_face,role: config.member_role,
+      presence_body: presenceRow?.presence_body ?? null,
+      presence_updated_at: presenceRow?.presence_updated_at ?? null,
+    }], null)[0]!;
     const recentWork = config.recent_work;
     const grants = this.projectAgentGrants(config.grants);
     const workPage = recentWork.slice(0, 5);
@@ -4306,9 +3722,7 @@ export class PhoneService {
       ...(mcpClient || config?.selected_model || config?.selected_effort
         ? {
             selected: {
-              ...(mcpClient || config.selected_model
-                ? { model: mcpClient ?? config.selected_model! }
-                : {}),
+              ...(mcpClient || config.selected_model ? { model: mcpClient ?? config.selected_model! } : {}),
               ...(config.selected_effort ? { effort: config.selected_effort } : {}),
             },
           }
@@ -4344,7 +3758,7 @@ export class PhoneService {
   }
   /** Project the bounded ledger returned with the authorized profile core. */
   private projectAgentGrants(rows: AgentGrantRow[]): AgentGrantView[] {
-    for (const row of rows) reviveDates(row, ['created_at', 'decided_at', 'expires_at']);
+    for (const row of rows) reviveDates(row, ['created_at','decided_at','expires_at']);
     return rows.map((row) => ({
       grantId: row.id,
       kind: row.kind,
@@ -4508,11 +3922,7 @@ export class PhoneService {
           `UPDATE agent_pairing_codes SET claimed_by=$2,claimed_at=now() WHERE code_hash=$1`,
           [hash(code), agentId],
         );
-      const workspaceMembership = await ensureInvitedWorkspaceMembership(database, [
-        pairing.workspace_id,
-        agentId,
-        pairing.created_by,
-      ]);
+      const workspaceMembership = await ensureInvitedWorkspaceMembership(database, [pairing.workspace_id, agentId, pairing.created_by]);
       const rooms = await joinRooms(database, {
         workspaceId: pairing.workspace_id,
         identityId: agentId,
@@ -4682,16 +4092,11 @@ export class PhoneService {
     | { status: 'not_found' | 'expired' | 'already_claimed' }
   > {
     return this.database.transaction(async (database) => {
-      const candidate = (
-        await database.query<{ workspace_id: string; created_by: string }>(
-          `SELECT workspace_id,created_by FROM agent_pairing_codes WHERE code_hash=$1`,
-          [hash(input.code)],
-        )
-      ).rows[0];
+      const candidate = (await database.query<{ workspace_id: string; created_by: string }>(
+        `SELECT workspace_id,created_by FROM agent_pairing_codes WHERE code_hash=$1`, [hash(input.code)],
+      )).rows[0];
       if (!candidate) return { status: 'not_found' };
-      const lockedWorkspaces = lockIdentityHandleWorkspaces(database, input.agentPubkey, [
-        candidate.workspace_id,
-      ]);
+      const lockedWorkspaces = lockIdentityHandleWorkspaces(database, input.agentPubkey, [candidate.workspace_id]);
       await lockedWorkspaces;
       if (!(await this.lockPairingIssuer(database, candidate.workspace_id, candidate.created_by)))
         return { status: 'not_found' };
@@ -4770,11 +4175,7 @@ export class PhoneService {
         `UPDATE agent_pairing_codes SET claimed_by=$2,claimed_at=now() WHERE code_hash=$1`,
         [hash(input.code), input.agentPubkey],
       );
-      const workspaceMembership = await restorePairedWorkspaceMembership(database, [
-        pairing.workspace_id,
-        input.agentPubkey,
-        pairing.created_by,
-      ]);
+      const workspaceMembership = await restorePairedWorkspaceMembership(database, [pairing.workspace_id, input.agentPubkey, pairing.created_by]);
       // A deferring CLI joins Rooms itself through `finishAgentConnectPairing`
       // once its rename decision settles — a system line is a fact written
       // once, never rewritten by a later rename, so it must not be written
@@ -4793,11 +4194,7 @@ export class PhoneService {
           isServerEventKind,
         );
         if (subscriptions.length && joined.roomIds.length) {
-          await writeIdentityRoomsEventSubscriptions(database, [
-            input.agentPubkey,
-            joined.roomIds,
-            JSON.stringify(subscriptions),
-          ]);
+          await writeIdentityRoomsEventSubscriptions(database, [input.agentPubkey, joined.roomIds, JSON.stringify(subscriptions)]);
         }
       }
       const machineId = input.machineId || input.agentPubkey;
@@ -4811,18 +4208,11 @@ export class PhoneService {
       );
       if (squireOnMachine?.status === 'connected' || squireInstalling.rowCount) {
         await grantSquireToOwnerMachineAgents(database, {
-          workspaceId: pairing.workspace_id,
-          ownerIdentityId: pairing.created_by,
-          machineId,
-          agentId: input.agentPubkey,
+          workspaceId: pairing.workspace_id, ownerIdentityId: pairing.created_by,
+          machineId, agentId: input.agentPubkey,
         });
       }
-      await recordAgentConnectedAfterNudge(
-        database,
-        pairing.created_by,
-        pairing.workspace_id,
-        input.agentPubkey,
-      );
+      await recordAgentConnectedAfterNudge(database, pairing.created_by, pairing.workspace_id, input.agentPubkey);
       const exchange = createDaemonExchange
         ? await createDaemonExchange(input.agentPubkey, database)
         : undefined;
@@ -4928,11 +4318,7 @@ export class PhoneService {
       // --subscribe joined` is what a greeter is set up with.
       const subscriptions = [...new Set(input.eventSubscriptions ?? [])].filter(isServerEventKind);
       if (subscriptions.length && joined.roomIds.length) {
-        await writeIdentityRoomsEventSubscriptions(database, [
-          pairing.claimed_by,
-          joined.roomIds,
-          JSON.stringify(subscriptions),
-        ]);
+        await writeIdentityRoomsEventSubscriptions(database, [pairing.claimed_by, joined.roomIds, JSON.stringify(subscriptions)]);
       }
       return { status: 'finished' };
     });
@@ -4945,33 +4331,22 @@ export class PhoneService {
     sourceClient?: { id: string; name: string },
     /** Sign-in family of this device session. Absent when the caller is not one. */
     familyId?: string,
+    /** Transport receipts may precede tracked observation; direct callers retain full completion. */
+    deferPostCommitObservation = false,
   ): Promise<Output<Name>> {
     if (viewerId === REVIEW_IDENTITY_ID && REVIEW_LOCKED_OPERATIONS.has(name))
       throw new Error(REVIEW_IDENTITY_MESSAGE);
     if (name === 'openComputerSession') {
-      const access = await computerViewToken(
-        this.database,
-        (input as Input<'openComputerSession'>).id,
-        viewerId,
-      );
+      const access = await computerViewToken(this.database, (input as Input<'openComputerSession'>).id, viewerId);
       if (!access) throw new Error('computer session access denied');
       return { access } as Output<Name>;
     }
     if (name === 'handbackComputerSession') {
-      await handBackComputerSession(
-        this.database,
-        (input as Input<'handbackComputerSession'>).id,
-        viewerId,
-      );
+      await handBackComputerSession(this.database, (input as Input<'handbackComputerSession'>).id, viewerId);
       return undefined as Output<Name>;
     }
     if (name === 'endComputerSession') {
-      await endComputerSessionByViewer(
-        this.database,
-        this.live,
-        (input as Input<'endComputerSession'>).id,
-        viewerId,
-      );
+      await endComputerSessionByViewer(this.database, this.live, (input as Input<'endComputerSession'>).id, viewerId);
       return undefined as Output<Name>;
     }
     const scope = input as { workspaceId?: string; roomId?: string };
@@ -4984,11 +4359,7 @@ export class PhoneService {
       )
     )
       throw new Error('valid Workspace ID required');
-    if (
-      (scope.workspaceId || scope.roomId) &&
-      !SPECTATOR_READ_OPERATIONS.has(name) &&
-      name !== 'sendRoomMessage'
-    ) {
+    if ((scope.workspaceId || scope.roomId) && !SPECTATOR_READ_OPERATIONS.has(name) && name !== 'sendRoomMessage') {
       const spectator = await this.database.query(
         `SELECT 1 FROM memberships m WHERE m.identity_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL
          AND m.role='spectator' AND (m.workspace_id=$2::uuid OR m.workspace_id=(SELECT workspace_id FROM rooms WHERE id=$3::uuid))`,
@@ -5000,31 +4371,22 @@ export class PhoneService {
       case 'revealWebhookToken':
       case 'rotateWebhookToken': {
         const i = input as Input<'revealWebhookToken'>;
-        return (await webhookToken(
-          this.database,
-          i.roomId,
-          i.subscriptionId,
-          viewerId,
-          name === 'rotateWebhookToken',
-        )) as Output<Name>;
+        return await webhookToken(this.database, i.roomId, i.subscriptionId, viewerId,
+          name === 'rotateWebhookToken') as Output<Name>;
       }
       case 'listRoomSubscriptions': {
         const roomId = (input as Input<'listRoomSubscriptions'>).roomId;
         await requireScheduledWorkManager(this.database, roomId, viewerId);
-        return (await listRoomSubscriptions(this.database, roomId)) as Output<Name>;
+        return await listRoomSubscriptions(this.database, roomId) as Output<Name>;
       }
       case 'readScheduledWork':
         return (await this.readScheduledWork(
-          (input as Input<'readScheduledWork'>).roomId,
-          viewerId,
+          (input as Input<'readScheduledWork'>).roomId, viewerId,
         )) as Output<Name>;
       case 'deleteRoomSubscription': {
         const i = input as Input<'deleteRoomSubscription'>;
         await requireScheduledWorkManager(this.database, i.roomId, viewerId);
-        const webhook = await this.database.query(
-          `SELECT 1 FROM agent_subscriptions WHERE id::text=$1 AND source='webhook'`,
-          [i.subscriptionId],
-        );
+        const webhook = await this.database.query(`SELECT 1 FROM agent_subscriptions WHERE id::text=$1 AND source='webhook'`, [i.subscriptionId]);
         if (webhook.rowCount) await requireWebhookAdmin(this.database, i.roomId, viewerId);
         await deleteRoomSubscription(this.database, i.roomId, i.subscriptionId, this.composio);
         return undefined as Output<Name>;
@@ -5043,38 +4405,22 @@ export class PhoneService {
           this.github,
         )) as Output<Name>;
       case 'sendRoomMessage': {
-        const sent = await this.sendMessage(
-          input as Input<'sendRoomMessage'>,
-          viewerId,
-          sourceClient,
-          familyId,
-        );
+        const sent = await this.sendMessage(input as Input<'sendRoomMessage'>, viewerId, sourceClient, familyId);
         this.beginAgentSignIn(input as Input<'sendRoomMessage'>, sent.messageId);
-        await this.observeSentMessage((input as Input<'sendRoomMessage'>).roomId, viewerId);
+        await this.observeSentMessage((input as Input<'sendRoomMessage'>).roomId, viewerId, deferPostCommitObservation);
         return sent as Output<Name>;
       }
       case 'sendRoomReply': {
         await prepareMentionReplyInput(this.database, viewerId, input as Input<'sendRoomReply'>);
-        const sent = await this.sendReply(
-          input as Input<'sendRoomReply'>,
-          viewerId,
-          sourceClient,
-          familyId,
-        );
+        const sent = await this.sendReply(input as Input<'sendRoomReply'>, viewerId, sourceClient, familyId);
         this.beginAgentSignIn(input as Input<'sendRoomReply'>, sent.messageId);
-        await this.observeSentMessage((input as Input<'sendRoomReply'>).roomId, viewerId);
+        await this.observeSentMessage((input as Input<'sendRoomReply'>).roomId, viewerId, deferPostCommitObservation);
         return sent as Output<Name>;
       }
       case 'reactToMessage':
-        return (await this.reactToMessage(
-          input as Input<'reactToMessage'>,
-          viewerId,
-        )) as Output<Name>;
+        return (await this.reactToMessage(input as Input<'reactToMessage'>, viewerId)) as Output<Name>;
       case 'deleteRoomMessage':
-        return (await this.deleteRoomMessage(
-          input as Input<'deleteRoomMessage'>,
-          viewerId,
-        )) as Output<Name>;
+        return (await this.deleteRoomMessage(input as Input<'deleteRoomMessage'>, viewerId)) as Output<Name>;
       case 'reportMessageIssue':
         return (await reportMessageIssue(
           this.database,
@@ -5107,12 +4453,7 @@ export class PhoneService {
         )) as Output<Name>;
       case 'markNeedsYouSeen': {
         const request = input as Input<'markNeedsYouSeen'>;
-        return (await markNeedsYouSeen(
-          this.database,
-          request.workspaceId,
-          viewerId,
-          request.messageIds,
-        )) as Output<Name>;
+        return await markNeedsYouSeen(this.database, request.workspaceId, viewerId, request.messageIds) as Output<Name>;
       }
       case 'clearNeedsYou':
         await this.clearNeedsYou(input as Input<'clearNeedsYou'>, viewerId);
@@ -5200,7 +4541,7 @@ export class PhoneService {
         )) as Output<Name>;
       case 'setCornerHold': {
         const hold = input as Input<'setCornerHold'>;
-        const result = await this.database.transaction((db) => setCornerHold(db, hold, viewerId));
+        const result = await this.database.transaction(db => setCornerHold(db, hold, viewerId));
         await this.github?.reconcileQueuedCorners(hold.cornerId);
         return result as Output<Name>;
       }
@@ -5214,10 +4555,7 @@ export class PhoneService {
         await this.requestCornerClose((input as Input<'requestCornerClose'>).roomId, viewerId);
         return undefined as Output<Name>;
       case 'decideApprovalCard':
-        return (await this.decideApprovalCard(
-          input as Input<'decideApprovalCard'>,
-          viewerId,
-        )) as Output<Name>;
+        return await this.decideApprovalCard(input as Input<'decideApprovalCard'>, viewerId) as Output<Name>;
       case 'decideWritePermission':
         return (await this.decidePermission(
           input as Input<'decideWritePermission'>,
@@ -5244,10 +4582,7 @@ export class PhoneService {
           viewerId,
         )) as Output<Name>;
       case 'actOnRepositoryCard':
-        return (await this.actOnRepositoryCard(
-          input as Input<'actOnRepositoryCard'>,
-          viewerId,
-        )) as Output<Name>;
+        return await this.actOnRepositoryCard(input as Input<'actOnRepositoryCard'>, viewerId) as Output<Name>;
       case 'answerChoice':
         return (await this.answerChoice(input as Input<'answerChoice'>, viewerId)) as Output<Name>;
       case 'skipChoice':
@@ -5328,26 +4663,16 @@ export class PhoneService {
       }
       case 'updateAgentSoul':
         await this.updateAgentSoul(input as Input<'updateAgentSoul'>, viewerId);
-        return (await this.readAgent(
-          (input as Input<'updateAgentSoul'>).workspaceId,
-          (input as Input<'updateAgentSoul'>).agentId,
-          viewerId,
-        )) as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentSoul'>).workspaceId,
+          (input as Input<'updateAgentSoul'>).agentId, viewerId)) as Output<Name>;
       case 'updateAgentModelSelection':
         await this.updateAgentModel(input as Input<'updateAgentModelSelection'>, viewerId);
-        return (await this.readAgent(
-          (input as Input<'updateAgentModelSelection'>).workspaceId,
-          (input as Input<'updateAgentModelSelection'>).agentId,
-          viewerId,
-        )) as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentModelSelection'>).workspaceId,
+          (input as Input<'updateAgentModelSelection'>).agentId, viewerId)) as Output<Name>;
       case 'refreshAgentUsage': {
         const request = input as Input<'refreshAgentUsage'>;
         await this.requireWorkspaceAgent(request.workspaceId, request.agentId, viewerId);
-        return (await requestUsageRefresh(
-          this.database,
-          this.live,
-          request.agentId,
-        )) as Output<Name>;
+        return (await requestUsageRefresh(this.database, this.live, request.agentId)) as Output<Name>;
       }
       case 'refreshAgentModelCatalog':
         await this.refreshAgentModelCatalog(input as Input<'refreshAgentModelCatalog'>, viewerId);
@@ -5359,61 +4684,38 @@ export class PhoneService {
         )) as Output<Name>;
       case 'updateAgentYolo':
         await this.updateAgentYolo(input as Input<'updateAgentYolo'>, viewerId);
-        return (await this.readAgent(
-          (input as Input<'updateAgentYolo'>).workspaceId,
-          (input as Input<'updateAgentYolo'>).agentId,
-          viewerId,
-        )) as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentYolo'>).workspaceId,
+          (input as Input<'updateAgentYolo'>).agentId, viewerId)) as Output<Name>;
       case 'updateAgentWake': {
         const request = input as Input<'updateAgentWake'>;
         await this.requireWorkspaceMember(request.workspaceId, viewerId);
-        const member = (
-          await this.database.query<{ owner_id: string }>(
-            `SELECT m.owner_id FROM rooms_mcp_members m JOIN memberships membership
+        const member = (await this.database.query<{ owner_id: string }>(
+          `SELECT m.owner_id FROM rooms_mcp_members m JOIN memberships membership
            ON membership.identity_id=m.member_id AND membership.workspace_id=$2
            AND membership.room_id IS NULL AND membership.removed_at IS NULL
-           WHERE m.member_id=$1`,
-            [request.agentId, request.workspaceId],
-          )
-        ).rows[0];
+           WHERE m.member_id=$1`, [request.agentId, request.workspaceId])).rows[0];
         if (!member) throw new Error('AI-client member not found');
         if (member.owner_id !== viewerId) throw new Error(AGENT_OWNER_AUTHORITY_MESSAGE);
         if (typeof request.url !== 'string') throw new Error('Webhook URL is invalid');
         try {
-          await this.database.transaction(async (tx) => {
-            await setMcpMemberWebhook(tx, request.agentId, {
-              url: request.url,
-              secret: request.key,
-            });
-            await tx.query('UPDATE agents SET updated_at=now() WHERE agent_id=$1', [
-              request.agentId,
-            ]);
+          await this.database.transaction(async tx => {
+            await setMcpMemberWebhook(tx, request.agentId, { url: request.url, secret: request.key });
+            await tx.query('UPDATE agents SET updated_at=now() WHERE agent_id=$1', [request.agentId]);
           });
         } catch (error) {
           if (error instanceof McpToolError) {
             if (error.message.includes('not enabled'))
-              throw new Error(
-                'Auth tokens are not enabled on this server. Ask the operator to configure BEELINE_MCP_WEBHOOK_KEY.',
-              );
-            throw new Error(
-              'Webhook setup is invalid. Use a public HTTPS URL and an auth token without internal spaces or control characters.',
-            );
+              throw new Error('Auth tokens are not enabled on this server. Ask the operator to configure BEELINE_MCP_WEBHOOK_KEY.');
+            throw new Error('Webhook setup is invalid. Use a public HTTPS URL and an auth token without internal spaces or control characters.');
           }
           throw error;
         }
-        return (await this.readAgent(
-          request.workspaceId,
-          request.agentId,
-          viewerId,
-        )) as Output<Name>;
+        return (await this.readAgent(request.workspaceId, request.agentId, viewerId)) as Output<Name>;
       }
       case 'updateAgentAccessPolicy':
         await this.updateAgentAccessPolicy(input as Input<'updateAgentAccessPolicy'>, viewerId);
-        return (await this.readAgent(
-          (input as Input<'updateAgentAccessPolicy'>).workspaceId,
-          (input as Input<'updateAgentAccessPolicy'>).agentId,
-          viewerId,
-        )) as Output<Name>;
+        return (await this.readAgent((input as Input<'updateAgentAccessPolicy'>).workspaceId,
+          (input as Input<'updateAgentAccessPolicy'>).agentId, viewerId)) as Output<Name>;
       case 'removeAgent':
         await this.removeAgent(input as Input<'removeAgent'>, viewerId);
         return undefined as Output<Name>;
@@ -5434,11 +4736,9 @@ export class PhoneService {
         const { speakingSpeed } = input as Input<'updateIdentitySpeakingSpeed'>;
         if (![1.15, 1.3, 1.5].includes(speakingSpeed)) throw new Error('invalid speaking speed');
         const updated = await this.database.query(
-          `UPDATE identities SET speaking_speed=$2,updated_at=now() WHERE id=$1 AND kind='human'`,
-          [viewerId, speakingSpeed],
-        );
+          `UPDATE identities SET speaking_speed=$2,updated_at=now() WHERE id=$1 AND kind='human'`, [viewerId, speakingSpeed]);
         if (!updated.rowCount) throw new Error('identity not found');
-        return (await this.managedIdentity(viewerId)) as Output<Name>;
+        return await this.managedIdentity(viewerId) as Output<Name>;
       }
       case 'updateIdentityPushLevel':
         return (await this.updatePushLevel(
@@ -5489,22 +4789,14 @@ export class PhoneService {
         return (await this.managedIdentity(viewerId)) as Output<Name>;
       case 'readIdentitySettings': {
         const [identity, workspaces] = await Promise.all([
-          this.managedIdentity(viewerId),
-          this.readWorkspaces(viewerId),
+          this.managedIdentity(viewerId), this.readWorkspaces(viewerId),
         ]);
         const requested = (input as Input<'readIdentitySettings'>).workspaceId;
-        const selected =
-          workspaces.workspaces.find((item) => item.id === requested) ?? workspaces.workspaces[0];
+        const selected = workspaces.workspaces.find((item) => item.id === requested) ?? workspaces.workspaces[0];
         return {
-          identity,
-          workspaces,
-          ...(selected
-            ? {
-                workbench: await this.readWorkbench({ workspaceId: selected.id }, viewerId).catch(
-                  () => undefined,
-                ),
-              }
-            : {}),
+          identity, workspaces,
+          ...(selected ? { workbench: await this.readWorkbench({ workspaceId: selected.id }, viewerId)
+            .catch(() => undefined) } : {}),
         } as Output<Name>;
       }
       case 'readAgentProfile': {
@@ -5563,8 +4855,7 @@ export class PhoneService {
         return undefined as Output<Name>;
       case 'disconnectAiClient': {
         const clientId = (input as Input<'disconnectAiClient'>).clientId;
-        if (typeof clientId !== 'string' || !clientId || clientId.length > 100)
-          throw new Error('Invalid client');
+        if (typeof clientId !== 'string' || !clientId || clientId.length > 100) throw new Error('Invalid client');
         await disconnectMcp(this.database, viewerId, clientId);
         return undefined as Output<Name>;
       }
@@ -5575,16 +4866,10 @@ export class PhoneService {
         )) as Output<Name>;
       case 'readConnectApp': {
         const workbench = await this.readWorkbench(input as Input<'readConnectApp'>, viewerId);
-        return {
-          workbench,
-          suggestions: workbench.companies!.suggestions.map((item) => ({
-            appKey: item.appKey,
-            name: item.name,
-            domain: item.domain,
-            description: item.purpose,
-            logo: item.logo.kind === 'image' ? item.logo.uri : undefined,
-          })),
-        } as Output<Name>;
+        return { workbench, suggestions: workbench.companies!.suggestions.map(item => ({
+          appKey: item.appKey, name: item.name, domain: item.domain, description: item.purpose,
+          logo: item.logo.kind === 'image' ? item.logo.uri : undefined,
+        })) } as Output<Name>;
       }
       case 'searchWorkbenchApps':
         return (await this.searchWorkbenchApps(
@@ -5661,10 +4946,7 @@ export class PhoneService {
                   ).rows[0];
             const signIn = status && ('sign_in' in status ? status.sign_in : status.signIn);
             if (!signIn?.url)
-              throw new CommandRefusalError(
-                'This sign-in is no longer pending. Reconnect to retry.',
-                409,
-              );
+              throw new CommandRefusalError('This sign-in is no longer pending. Reconnect to retry.', 409);
             if (card.connectKind === 'registry-mcp') {
               await this.database.transaction((database) =>
                 recordOwnerGitHubSelection(
@@ -5709,18 +4991,16 @@ export class PhoneService {
           viewerId,
           await this.viewerWorkbenchWorkspace(viewerId),
         )) as Output<Name>;
-      case 'refreshWallet': {
-        const binding = (
-          await this.database.query<{ workspace_id: string }>(
-            'SELECT workspace_id FROM wallet_bindings WHERE identity_id=$1',
-            [viewerId],
-          )
-        ).rows[0];
-        if (!binding) throw new Error('wallet not created');
-        return (await readWallet(this.database, viewerId, binding.workspace_id)) as Output<Name>;
+      case 'refreshWallet':{
+        const binding=(await this.database.query<{workspace_id:string}>('SELECT workspace_id FROM wallet_bindings WHERE identity_id=$1',[viewerId])).rows[0];
+        if(!binding)throw new Error('wallet not created');
+        return await readWallet(this.database,viewerId,binding.workspace_id) as Output<Name>;
       }
       case 'sendFromWallet':
-        await this.requireWorkspaceMember((input as Input<'sendFromWallet'>).workspaceId, viewerId);
+        await this.requireWorkspaceMember(
+          (input as Input<'sendFromWallet'>).workspaceId,
+          viewerId,
+        );
         return (await sendFromWallet(
           this.database,
           viewerId,
@@ -5821,25 +5101,18 @@ export class PhoneService {
   /** Narrow, authorized projections for committed read/queue changes. */
   async liveReadState(roomId: string, viewerId: string) {
     if (!(await this.canReadRooms([roomId], viewerId)).has(roomId)) return null;
-    const row = (
-      await this.database.query<{
-        read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
-      }>(`SELECT ${viewerReadCursorSql()} read_cursor FROM rooms room WHERE room.id=$1`, [
-        roomId,
-        viewerId,
-      ])
-    ).rows[0];
+    const row = (await this.database.query<{
+      read_cursor: NonNullable<RoomView['viewer']['readCursor']>;
+    }>(`SELECT ${viewerReadCursorSql()} read_cursor FROM rooms room WHERE room.id=$1`,
+      [roomId, viewerId])).rows[0];
     return row?.read_cursor ?? null;
   }
 
   async liveRoomCommands(roomId: string, viewerId: string) {
     if (!(await this.canReadRooms([roomId], viewerId)).has(roomId)) return null;
     const rows = await this.database.query<{
-      agent_id: string;
-      turn_request_id: string;
-      created_at: Date;
-    }>(
-      `SELECT DISTINCT ON(command.agent_id)
+      agent_id: string; turn_request_id: string; created_at: Date;
+    }>(`SELECT DISTINCT ON(command.agent_id)
         command.agent_id,command.turn_request_id,command.created_at
       FROM agent_commands command
       JOIN messages source ON source.id=command.source_message_id AND source.room_id=command.room_id
@@ -5847,16 +5120,13 @@ export class PhoneService {
       WHERE command.room_id=$1 AND command.state='pending' AND command.action='input'
         AND command.reason IN ('human_tag','direct_message')
       ORDER BY command.agent_id,command.created_at ASC,command.id ASC
-      LIMIT ${ROOM_VIEW_AGENT_LIMIT}`,
-      [roomId],
-    );
+      LIMIT ${ROOM_VIEW_AGENT_LIMIT}`, [roomId]);
     return this.projectPendingAgentCommands(rows.rows);
   }
 
   async markRead(roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
-    const result = (
-      await this.database.query<{ eligible: boolean; changed: boolean }>(
-        `WITH eligible AS (
+    const result = (await this.database.query<{ eligible: boolean; changed: boolean }>(
+      `WITH eligible AS (
          SELECT message.id,message.created_at FROM messages message
          JOIN rooms room ON room.id=message.room_id
          JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
@@ -5876,9 +5146,8 @@ export class PhoneService {
          RETURNING message_id
        ) SELECT EXISTS(SELECT 1 FROM eligible) eligible,
            EXISTS(SELECT 1 FROM written) changed`,
-        [roomId, viewerId, messageIdValue],
-      )
-    ).rows[0];
+      [roomId, viewerId, messageIdValue],
+    )).rows[0];
     if (!result?.eligible) throw new Error('message not found');
     // The committed row's PostgreSQL notification reconciles every reader
     // device, including those on this server. Publishing here duplicates it.
@@ -5899,9 +5168,8 @@ export class PhoneService {
    * drew a NEW MESSAGES divider at the chosen row (review 2026-09-22).
    */
   async markUnread(roomId: string, messageIdValue: string, viewerId: string): Promise<void> {
-    const result = (
-      await this.database.query<{ accessible: boolean; countable: boolean }>(
-        `WITH accessible AS (
+    const result = (await this.database.query<{ accessible: boolean; countable: boolean }>(
+      `WITH accessible AS (
          SELECT message.* FROM messages message
          JOIN rooms room ON room.id=message.room_id
          JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
@@ -5932,9 +5200,8 @@ export class PhoneService {
          RETURNING message_id
        ) SELECT EXISTS(SELECT 1 FROM accessible) accessible,
            EXISTS(SELECT 1 FROM target) countable`,
-        [messageIdValue, viewerId, roomId],
-      )
-    ).rows[0];
+      [messageIdValue, viewerId, roomId],
+    )).rows[0];
     if (!result?.accessible) throw new Error('message not found');
     // 'invalid' is what the router reads as a 400 — the row is real and
     // readable, it is simply not something this viewer can hold unread.
@@ -5965,14 +5232,14 @@ export class PhoneService {
     };
   }
 
-  /** Defer analytics after commit when the physical database tracks background work. */
-  private async observeSentMessage(roomId: string, viewerId: string): Promise<void> {
+  /** Only transport receipts defer observation; service completion still includes its milestones. */
+  private async observeSentMessage(roomId: string, viewerId: string, defer: boolean): Promise<void> {
     const work = () =>
       observeOnboardingMessage(this.database, roomId, viewerId).catch((error) =>
         console.error('[onboarding]', error),
       );
     const backgroundWork = CornerAccessDatabase.physical(this.database).backgroundWork;
-    if (backgroundWork)
+    if (defer && backgroundWork)
       backgroundWork.run(async () => {
         // Queue the response before analytics competes for a database connection.
         await new Promise<void>((resolve) => setImmediate(resolve));
@@ -6001,18 +5268,17 @@ export class PhoneService {
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
     return this.database.transaction(async (database) => {
-      const write = (
-        await database.query<{
-          inserted: boolean;
-          retry: boolean;
-          writable: boolean;
-          system_dm: boolean;
-          direct: boolean;
-          corner: boolean;
-          author_kind: 'human' | 'agent';
-          solo_agent: boolean;
-        }>(
-          `WITH access AS (
+      const write = (await database.query<{
+        inserted: boolean;
+        retry: boolean;
+        writable: boolean;
+        system_dm: boolean;
+        direct: boolean;
+        corner: boolean;
+        author_kind: 'human' | 'agent';
+        solo_agent: boolean;
+      }>(
+        `WITH access AS (
            SELECT room.id,room.parent_id,room.direct_participants,identity.kind author_kind,
              ${soloRoomAgentSql('room', 'identity.id')} IS NOT NULL solo_agent,
              COALESCE(room.direct_participants ? $6,false) system_dm,
@@ -6054,24 +5320,13 @@ export class PhoneService {
            access.direct_participants IS NOT NULL direct,
            access.parent_id IS NOT NULL corner,access.author_kind,access.solo_agent
          FROM access`,
-          [
-            id,
-            input.roomId,
-            author,
-            input.text,
-            attachments,
-            SYSTEM_IDENTITY_ID,
-            sourceClient ? JSON.stringify(sourceClient) : null,
-          ],
-        )
-      ).rows[0];
+        [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID, sourceClient ? JSON.stringify(sourceClient) : null],
+      )).rows[0];
       if (!write) throw new Error('room access denied');
       database = new CornerAccessDatabase(database);
       if (!write.writable) throw new Error('spectator access is read-only (access denied)');
       if (author !== SYSTEM_IDENTITY_ID && write.system_dm)
-        throw new Error(
-          'this is a read-only system thread; only @system may post here (access denied)',
-        );
+        throw new Error('this is a read-only system thread; only @system may post here (access denied)');
       const mayRoute = write.direct || write.corner || write.solo_agent || input.text.includes('@');
       if (!write.inserted) {
         if (!write.retry) throw new Error('messageId is invalid');
@@ -6079,15 +5334,13 @@ export class PhoneService {
           messageId: id,
           activeSteerAgentIds: mayRoute ? await this.activeSteerAgentIds(database, id) : [],
           pendingAgentCommands: mayRoute
-            ? await this.pendingAgentCommandsForMessage(database, input.roomId, id)
-            : [],
+            ? await this.pendingAgentCommandsForMessage(database, input.roomId, id) : [],
           ...(await this.receiptMessage(input.roomId, author, id, database)),
         };
       }
-      const noticeAgentIds =
-        write.author_kind === 'human' && mayRoute
-          ? await this.unansweredMentionTargets(input.roomId, author, input.text)
-          : [];
+      const noticeAgentIds = write.author_kind === 'human' && mayRoute
+        ? await this.unansweredMentionTargets(input.roomId, author, input.text)
+        : [];
       const lifecycleCommand = mayRoute ? await routeHumanMessage(database, id) : undefined;
       if (!lifecycleCommand)
         await this.noteUnansweredMentions(input.roomId, author, noticeAgentIds, id);
@@ -6103,8 +5356,7 @@ export class PhoneService {
         messageId: id,
         activeSteerAgentIds: mayRoute ? await this.activeSteerAgentIds(database, id) : [],
         pendingAgentCommands: mayRoute
-          ? await this.pendingAgentCommandsForMessage(database, input.roomId, id)
-          : [],
+          ? await this.pendingAgentCommandsForMessage(database, input.roomId, id) : [],
         ...(await this.receiptMessage(input.roomId, author, id, database)),
       };
     });
@@ -6125,57 +5377,28 @@ export class PhoneService {
     );
     return { schedules: schedules.rows.map(roomSchedule) };
   }
-  private async readScheduledWork(
-    roomId: string,
-    viewerId: string,
-  ): Promise<Output<'readScheduledWork'>> {
+  private async readScheduledWork(roomId: string, viewerId: string): Promise<Output<'readScheduledWork'>> {
     await requireScheduledWorkManager(this.database, roomId, viewerId);
     const [room, schedules, subscriptions] = await Promise.all([
-      this.database.query<{
-        name: string | null;
-        direct_participants: string[] | null;
-        agent_id: string;
-        agent_name: string;
-      }>(
+      this.database.query<{ name: string | null; direct_participants: string[] | null; agent_id: string; agent_name: string }>(
         `SELECT room.name, room.direct_participants, agent.id agent_id, agent.name agent_name
          FROM rooms room
          LEFT JOIN memberships member ON member.room_id=room.id AND member.removed_at IS NULL
          LEFT JOIN identities agent ON agent.id=member.identity_id AND agent.kind='agent'
-         WHERE room.id=$1`,
-        [roomId],
-      ),
+         WHERE room.id=$1`, [roomId]),
       this.listRoomSchedules(roomId, viewerId),
       listRoomSubscriptions(this.database, roomId),
     ]);
     let webhookAdmin = false;
-    try {
-      await requireWebhookAdmin(this.database, roomId, viewerId);
-      webhookAdmin = true;
-    } catch {
-      /* No secret metadata for non-admins. */
-    }
-    const projectedSubscriptions = await Promise.all(
-      subscriptions.subscriptions.map(async (subscription) =>
-        subscription.source === 'webhook' && webhookAdmin
-          ? {
-              ...subscription,
-              ...(await webhookDetails(
-                this.database,
-                roomId,
-                subscription.id,
-                viewerId,
-                this.publicOrigin,
-              )),
-            }
-          : subscription,
-      ),
-    );
+    try { await requireWebhookAdmin(this.database, roomId, viewerId); webhookAdmin = true; } catch { /* No secret metadata for non-admins. */ }
+    const projectedSubscriptions = await Promise.all(subscriptions.subscriptions.map(async (subscription) =>
+      subscription.source === 'webhook' && webhookAdmin
+        ? { ...subscription, ...await webhookDetails(this.database, roomId, subscription.id, viewerId, this.publicOrigin) }
+        : subscription));
     return {
       roomName: room.rows[0]?.name ?? null,
       isDirectMessage: Boolean(room.rows[0]?.direct_participants),
-      agentNames: room.rows
-        .filter((row) => row.agent_id)
-        .map((row) => [row.agent_id, row.agent_name]),
+      agentNames: room.rows.filter((row) => row.agent_id).map((row) => [row.agent_id, row.agent_name]),
       schedules: schedules.schedules,
       subscriptions: projectedSubscriptions,
     };
@@ -6280,11 +5503,7 @@ export class PhoneService {
         return {
           messageId: id,
           activeSteerAgentIds: await this.activeSteerAgentIds(database, id),
-          pendingAgentCommands: await this.pendingAgentCommandsForMessage(
-            database,
-            input.roomId,
-            id,
-          ),
+          pendingAgentCommands: await this.pendingAgentCommandsForMessage(database, input.roomId, id),
           ...(await this.receiptMessage(input.roomId, author, id, database)),
         };
       }
@@ -6309,17 +5528,10 @@ export class PhoneService {
   }
 
   async liveStarPrompt(viewerId: string) {
-    return readStarPrompt(
-      this.database,
-      viewerId,
-      (this.database as CommandScopedDatabase).active ? undefined : this.github,
-    );
+    return readStarPrompt(this.database, viewerId, (this.database as CommandScopedDatabase).active ? undefined : this.github);
   }
 
-  private async reactToMessage(
-    input: Input<'reactToMessage'>,
-    viewerId: string,
-  ): Promise<Output<'reactToMessage'>> {
+  private async reactToMessage(input: Input<'reactToMessage'>, viewerId: string): Promise<Output<'reactToMessage'>> {
     if (!MESSAGE_REACTION_EMOJIS.includes(input.emoji)) throw new Error('reaction is invalid');
     await this.database.transaction(async (database) => {
       const row = (
@@ -6351,8 +5563,7 @@ export class PhoneService {
       ]);
     });
     const delta = await this.readLiveDelta(input.roomId, viewerId, {
-      type: 'message',
-      messageId: input.messageId,
+      type: 'message', messageId: input.messageId,
     });
     if (delta?.type !== 'message-delta') return null;
     const prompt = await this.liveStarPrompt(viewerId).catch(() => undefined);
@@ -6403,8 +5614,7 @@ export class PhoneService {
       ]);
     });
     const delta = await this.readLiveDelta(input.roomId, viewerId, {
-      type: 'message',
-      messageId: input.messageId,
+      type: 'message', messageId: input.messageId,
     });
     return delta?.type === 'message-delta' ? delta.message : null;
   }
@@ -6564,9 +5774,7 @@ export class PhoneService {
     input: Input<'listMessageBookmarks'>,
     viewerId: string,
   ): Promise<Output<'listMessageBookmarks'>> {
-    return readMessageBookmarks(this.database, input, viewerId, (row) =>
-      identity(row, this.publicOrigin),
-    );
+    return readMessageBookmarks(this.database, input, viewerId, row => identity(row, this.publicOrigin));
   }
 
   /**
@@ -6574,21 +5782,10 @@ export class PhoneService {
    * in one transaction, so the phone can distinguish a server-accepted steer
    * from text that merely looked addressed locally.
    */
-  private async receiptMessage(
-    roomId: string,
-    viewerId: string,
-    messageIdValue: string,
-    database: SqlDatabase,
-  ) {
-    const delta = await this.readLiveDelta(
-      roomId,
-      viewerId,
-      {
-        type: 'message',
-        messageId: messageIdValue,
-      },
-      database,
-    );
+  private async receiptMessage(roomId: string, viewerId: string, messageIdValue: string, database: SqlDatabase) {
+    const delta = await this.readLiveDelta(roomId, viewerId, {
+      type: 'message', messageId: messageIdValue,
+    }, database);
     return delta?.type === 'message-delta' ? { message: delta.message } : {};
   }
 
@@ -6704,12 +5901,7 @@ export class PhoneService {
          LEFT JOIN identities owner ON owner.id=a.owner_id
          WHERE identity.id=ANY($1::text[]) AND identity.kind='agent'
            AND NOT EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=identity.id)`,
-        [
-          [...agentIds],
-          roomId,
-          AGENT_REACHABLE_HORIZON_MS,
-          systemMessage('system-line.agent-name'),
-        ],
+        [[...agentIds], roomId, AGENT_REACHABLE_HORIZON_MS, systemMessage("system-line.agent-name")],
       );
       const bucket = accessNoticeBucket(Date.now());
       for (const agent of agents.rows) {
@@ -6858,7 +6050,7 @@ export class PhoneService {
          JOIN messages source ON source.id=d.source_message_id AND source.deleted_at IS NULL
          WHERE d.notified_at IS NULL AND d.due_at <= $1
            AND NOT EXISTS(SELECT 1 FROM rooms_mcp_members WHERE member_id=d.agent_id)`,
-        [new Date(now), AGENT_REACHABLE_HORIZON_MS, systemMessage('system-line.agent-name')],
+        [new Date(now), AGENT_REACHABLE_HORIZON_MS, systemMessage("system-line.agent-name")],
       );
       if (!due.rows.length) return 0;
       const bucket = accessNoticeBucket(now);
@@ -6956,8 +6148,8 @@ export class PhoneService {
       return agent.corner
         ? {
             reason: 'not-a-member',
-            verb: systemMessage('phone-service.could-not-be-reached'),
-            consequence: systemMessage('phone-service.not-a-member-of-this-corner'),
+            verb: systemMessage("phone-service.could-not-be-reached"),
+            consequence: systemMessage("phone-service.not-a-member-of-this-corner"),
           }
         : undefined;
     }
@@ -6984,21 +6176,17 @@ export class PhoneService {
     if (!permitted) {
       return {
         reason: 'refused',
-        verb: systemMessage('phone-service.did-not-answer'),
+        verb: systemMessage("phone-service.did-not-answer"),
         ...(object ? { object } : {}),
-        consequence: systemMessage(
-          'phone-service.only-may-address-ask-the-user-for-permission-to-access-the-agent',
-          personMention(agent.owner_handle) ?? systemMessage('phone-service.the-owner'),
-          agentMention,
-        ),
+        consequence: systemMessage("phone-service.only-may-address-ask-the-user-for-permission-to-access-the-agent", personMention(agent.owner_handle) ?? systemMessage("phone-service.the-owner"), agentMention),
       };
     }
     if (agent.reachable) return undefined;
     return {
       reason: 'unreachable',
-      verb: systemMessage('phone-service.did-not-answer'),
+      verb: systemMessage("phone-service.did-not-answer"),
       ...(object ? { object } : {}),
-      consequence: systemMessage('phone-service.its-helper-is-offline'),
+      consequence: systemMessage("phone-service.its-helper-is-offline"),
     };
   }
   /**
@@ -7128,17 +6316,14 @@ export class PhoneService {
       await lockAgentCommandQueue(database, input.roomId, input.agentId);
       // Resolve folded Stop handles and validate the running turn under the
       // claim queue lock, held through cancellation.
-      const folded = (
-        await database.query<{ turn_request_id: string }>(
-          `SELECT head.turn_request_id FROM agent_commands source
+      const folded = (await database.query<{ turn_request_id: string }>(
+        `SELECT head.turn_request_id FROM agent_commands source
          JOIN agent_commands head ON source.cancellation_reason='coalesced_into:'||head.id
            AND head.room_id=source.room_id AND head.agent_id=source.agent_id
          WHERE source.room_id=$1 AND source.agent_id=$2 AND source.turn_request_id=$3
            AND source.reason IN ('human_tag','direct_message') AND source.state='cancelled'
            AND head.state='claimed' ORDER BY head.created_at DESC LIMIT 1`,
-          [input.roomId, input.agentId, input.requestId],
-        )
-      ).rows[0];
+        [input.roomId, input.agentId, input.requestId])).rows[0];
       if (folded) input = { ...input, requestId: folded.turn_request_id };
       const running = (
         await database.query<{ author_id: string }>(
@@ -7168,27 +6353,14 @@ export class PhoneService {
       // there is nothing left to stop. Nothing is written, so no line claims a
       // stop that never happened.
       if (!stopped.rowCount) throw new Error('running turn not found');
-      const dropped = commands.rows[0]
-        ? await dropQueuedOrdersForStop(database, commands.rows[0])
-        : 0;
+      const dropped = commands.rows[0] ? await dropQueuedOrdersForStop(database, commands.rows[0]) : 0;
       await systemLine(database, {
         roomId: input.roomId,
         authorId: viewerId,
         subject: identitySubject({ id: stopper.pubkey, kind: stopper.kind, name: stopper.name }),
-        verb: systemMessage('phone-service.stopped'),
+        verb: systemMessage("phone-service.stopped"),
         object: { text: agent.name, id: agent.pubkey },
-        consequence: systemMessage(
-          'phone-service.turn-cancelled',
-          dropped
-            ? systemMessage(
-                'phone-service.queued-dropped',
-                dropped,
-                dropped === 1
-                  ? systemMessage('phone-service.order')
-                  : systemMessage('phone-service.orders'),
-              )
-            : '',
-        ),
+        consequence: systemMessage("phone-service.turn-cancelled", dropped ? systemMessage("phone-service.queued-dropped", dropped, dropped === 1 ? systemMessage("phone-service.order") : systemMessage("phone-service.orders")) : ''),
         kind: 'turn-cancelled',
         wakes: [input.agentId],
         requestId: input.requestId,
@@ -7241,12 +6413,9 @@ export class PhoneService {
     };
     await this.database.transaction(authorize);
     if (locked === undefined)
-      await closeCornerPullRequestBestEffort(
-        this.database,
-        roomId,
-        this.github ? (id) => this.github!.closeCornerPullRequest(id) : undefined,
-      );
-    const archived = await this.database.transaction(async (database) => {
+      await closeCornerPullRequestBestEffort(this.database, roomId,
+        this.github ? id => this.github!.closeCornerPullRequest(id) : undefined);
+    const archived = await this.database.transaction(async database => {
       await authorize(database);
       if (locked !== undefined) {
         await setCornerLockedFact(database, roomId, locked);
@@ -7254,25 +6423,17 @@ export class PhoneService {
         return (await closeCornerState(database, roomId)).archived;
       }
     });
-    if (archived)
-      await deleteCornerBranchBestEffort(
-        roomId,
-        this.github ? (id) => this.github!.deleteCornerBranch(id) : undefined,
-      );
+    if (archived) await deleteCornerBranchBestEffort(roomId, this.github ? id => this.github!.deleteCornerBranch(id) : undefined);
   }
   /** Decline a connector or settle a target-branch proposal under its existing authority. */
   private async decideApprovalCard(input: Input<'decideApprovalCard'>, viewerId: string) {
-    if (!['allow', 'deny'].includes(input.decision))
-      throw new Error('approval decision is invalid');
+    if (!['allow', 'deny'].includes(input.decision)) throw new Error('approval decision is invalid');
     const decider = await this.requireIdentity(viewerId);
     if (decider.kind !== 'human') throw new Error('a person must decide');
-    await this.database.transaction(async (database) => {
-      const row = (
-        await database.query<{ card_type: string; card: Record<string, any> }>(
-          `SELECT card_type,card FROM messages WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL FOR UPDATE`,
-          [input.messageId, input.roomId],
-        )
-      ).rows[0];
+    await this.database.transaction(async database => {
+      const row = (await database.query<{ card_type: string; card: Record<string, any> }>(
+        `SELECT card_type,card FROM messages WHERE id=$1 AND room_id=$2 AND deleted_at IS NULL FOR UPDATE`, [input.messageId, input.roomId],
+      )).rows[0];
       if (!row) throw new Error('approval not found');
       const card = row.card;
       const status = input.decision === 'deny' ? 'denied' : 'allowed';
@@ -7280,62 +6441,27 @@ export class PhoneService {
         await this.requireRoomWorkspaceManager(input.roomId, viewerId, database);
         if (card.status) throw new Error('approval already decided');
         if (input.decision === 'allow') {
-          const room = (
-            await database.query<{ repository_target_branch: string }>(
-              `SELECT repository_target_branch FROM rooms WHERE id=$1`,
-              [input.roomId],
-            )
-          ).rows[0];
-          if (room?.repository_target_branch !== card.to)
-            throw new Error('confirm the target branch before settling its card');
+          const room = (await database.query<{ repository_target_branch: string }>(`SELECT repository_target_branch FROM rooms WHERE id=$1`, [input.roomId])).rows[0];
+          if (room?.repository_target_branch !== card.to) throw new Error('confirm the target branch before settling its card');
         }
       } else if (row.card_type === 'connector-offer' && input.decision === 'deny') {
-        const offer = (
-          await database.query<{
-            addressee_id: string;
-            connector_type: string;
-            workspace_id: string;
-            agent_id: string;
-            command_id: string | null;
-          }>(
-            `SELECT addressee_id,connector_type,workspace_id,agent_id,command_id FROM connector_offers WHERE id::text=$1 AND room_id=$2 AND status='pending' FOR UPDATE`,
-            [card.offerId, input.roomId],
-          )
-        ).rows[0];
+        const offer = (await database.query<{ addressee_id: string; connector_type: string; workspace_id: string; agent_id: string; command_id: string | null }>(
+          `SELECT addressee_id,connector_type,workspace_id,agent_id,command_id FROM connector_offers WHERE id::text=$1 AND room_id=$2 AND status='pending' FOR UPDATE`, [card.offerId, input.roomId],
+        )).rows[0];
         if (!offer) throw new Error('connector offer not pending');
         await this.requireWorkspaceMember(offer.workspace_id, viewerId, database);
         if (offer.addressee_id !== viewerId) {
-          if (offer.connector_type === 'wallet')
-            throw new Error('only the wallet owner can decide');
+          if (offer.connector_type === 'wallet') throw new Error('only the wallet owner can decide');
           await this.requireRoomWorkspaceManager(input.roomId, viewerId, database);
         }
-        await database.query(
-          `UPDATE connector_offers SET status='denied',accepted_by=$2,accepted_at=now() WHERE id::text=$1`,
-          [card.offerId, viewerId],
-        );
-        await systemLine(database, {
-          roomId: input.roomId,
-          subject: identitySubject({ id: viewerId, kind: 'human', name: decider.name }),
-          verb: systemMessage('phone-service.declined'),
-          object: card.connectorName,
-          kind: 'connector-offer-decided',
-          wakes: [offer.agent_id],
-          ...(offer.command_id ? { commandId: offer.command_id } : {}),
-          cardType: 'connector-offer-decision',
-          card: { offerId: card.offerId, status: 'denied' },
-        });
+        await database.query(`UPDATE connector_offers SET status='denied',accepted_by=$2,accepted_at=now() WHERE id::text=$1`, [card.offerId, viewerId]);
+        await systemLine(database, { roomId: input.roomId, subject: identitySubject({ id: viewerId, kind: 'human', name: decider.name }),
+          verb: systemMessage("phone-service.declined"), object: card.connectorName, kind: 'connector-offer-decided', wakes: [offer.agent_id],
+          ...(offer.command_id ? { commandId: offer.command_id } : {}), cardType: 'connector-offer-decision', card: { offerId: card.offerId, status: 'denied' } });
       } else throw new Error('approval kind cannot be decided here');
-      await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`, [
-        input.messageId,
-        JSON.stringify({
-          status,
-          decidedBy: decider,
-          decidedAt: Math.floor(Date.now() / 1000),
-          ...(row.card_type === 'connector-offer'
-            ? { acceptedBy: decider, acceptedAt: Math.floor(Date.now() / 1000) }
-            : {}),
-        }),
-      ]);
+      await database.query(`UPDATE messages SET card=card || $2::jsonb WHERE id=$1`, [input.messageId,
+        JSON.stringify({ status, decidedBy: decider, decidedAt: Math.floor(Date.now()/1000),
+          ...(row.card_type === 'connector-offer' ? { acceptedBy: decider, acceptedAt: Math.floor(Date.now()/1000) } : {}) })]);
     });
     return { messageId: input.messageId };
   }
@@ -7404,28 +6530,20 @@ export class PhoneService {
         [input.permissionId, status, input.roomId],
       );
       if (!updated.rowCount) throw new Error('permission not found');
-      const tool =
-        typeof card?.tool === 'string' ? card.tool : systemMessage('phone-service.edit-files');
+      const tool = typeof card?.tool === 'string' ? card.tool : systemMessage("phone-service.edit-files");
       await systemLine(database, {
         id,
         roomId: input.roomId,
         authorId: viewerId,
         subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),
-        verb:
-          input.decision === 'allow'
-            ? systemMessage('phone-service.allowed')
-            : systemMessage('phone-service.denied'),
+        verb: input.decision === 'allow' ? systemMessage("phone-service.allowed") : systemMessage("phone-service.denied"),
         object: {
-          text: systemMessage(
-            'phone-service.to',
-            systemIdentityMention({
-              id: agent.pubkey,
-              kind: agent.kind,
-              name: agent.name,
-              handle: agent.handle ?? null,
-            }),
-            tool,
-          ),
+          text: systemMessage("phone-service.to", systemIdentityMention({
+            id: agent.pubkey,
+            kind: agent.kind,
+            name: agent.name,
+            handle: agent.handle ?? null,
+          }), tool),
           id: agent.pubkey,
         },
         presentation: 'card',
@@ -7436,7 +6554,7 @@ export class PhoneService {
           agent,
           requester,
           decider,
-          decidedAt: Math.floor(Date.now() / 1000),
+          decidedAt: Math.floor(Date.now()/1000),
           ...(typeof card?.reason === 'string' ? { reason: card.reason } : {}),
           tool,
           repository: input.repository,
@@ -7454,12 +6572,9 @@ export class PhoneService {
    * that returns the same Room.
    */
   private async createWorkspace(input: Input<'createWorkspace'>, viewerId: string) {
-    const { id, roomId } = await this.database.transaction((db) =>
-      createWorkspace(db, input, viewerId, this.freeAgents),
-    );
-    void this.starterOnboarding
-      ?.prepare(roomId)
-      .catch((error) => console.error('[onboarding] prepare failed', error));
+    const { id, roomId } = await this.database.transaction(db =>
+      createWorkspace(db, input, viewerId, this.freeAgents));
+    void this.starterOnboarding?.prepare(roomId).catch(error => console.error('[onboarding] prepare failed', error));
     return { id, roomId };
   }
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
@@ -7488,13 +6603,7 @@ export class PhoneService {
             );
       await database.query(
         `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),allow_fix_sweep=COALESCE($5,allow_fix_sweep),updated_at=now() WHERE id=$1`,
-        [
-          input.workspaceId,
-          input.name ?? null,
-          avatar,
-          input.visibility ?? null,
-          input.allowFixSweep ?? null,
-        ],
+        [input.workspaceId, input.name ?? null, avatar, input.visibility ?? null, input.allowFixSweep ?? null],
       );
     });
   }
@@ -7653,12 +6762,10 @@ export class PhoneService {
         ],
       );
       await joinRoomCreator(db, [input.workspaceId, id, viewerId]);
-      if (repository)
-        await db.query(
-          `INSERT INTO repository_link_successes(identity_id,workspace_id) VALUES($1,$2)
-         ON CONFLICT DO NOTHING`,
-          [viewerId, input.workspaceId],
-        );
+      if (repository) await db.query(
+        `INSERT INTO repository_link_successes(identity_id,workspace_id) VALUES($1,$2)
+         ON CONFLICT DO NOTHING`, [viewerId, input.workspaceId],
+      );
       await joinWorkspaceMembersToPublicRoom(db, input.workspaceId, id);
     });
     return { id };
@@ -7718,7 +6825,7 @@ export class PhoneService {
       await systemLine(database, {
         roomId: input.roomId,
         subject: identitySubject({ id: viewerId, kind: 'human', name: parent.viewer_name }),
-        verb: systemMessage('phone-service.opened-a-corner'),
+        verb: systemMessage("phone-service.opened-a-corner"),
         object: { text: title, id },
         presentation: 'card',
         cardType: 'daemon-fact',
@@ -7767,7 +6874,10 @@ export class PhoneService {
     ).rows[0];
     if (!existing) throw new Error('room not found');
     if (existing.parent_id) {
-      if (input.visibility !== undefined || input.reviewerAgentId !== undefined) {
+      if (
+        input.visibility !== undefined ||
+        input.reviewerAgentId !== undefined
+      ) {
         throw new Error('room lifecycle cannot target a corner');
       }
       await this.renameCorner(input.roomId, input.name, viewerId);
@@ -7817,22 +6927,20 @@ export class PhoneService {
       if (reviewerAgentId !== undefined && reviewerAgentId !== current?.reviewer_agent_id) {
         if (current?.reviewer_agent_id)
           await unsubscribeRoomReviewer(database, [input.roomId, current.reviewer_agent_id]);
-        if (reviewerAgentId) await subscribeRoomReviewer(database, [input.roomId, reviewerAgentId]);
-        if (current?.reviewer_agent_id)
-          await database.query(
-            `UPDATE corner_person_state state SET event_subscriptions=state.event_subscriptions-'check-passed'
+        if (reviewerAgentId)
+          await subscribeRoomReviewer(database, [input.roomId, reviewerAgentId]);
+        if (current?.reviewer_agent_id) await database.query(
+          `UPDATE corner_person_state state SET event_subscriptions=state.event_subscriptions-'check-passed'
            FROM rooms corner WHERE corner.id=state.corner_id AND corner.parent_id=$1
              AND state.identity_id=$2 AND state.event_subscriptions ? 'check-passed'`,
-            [input.roomId, current.reviewer_agent_id],
-          );
-        if (reviewerAgentId)
-          await database.query(
-            `UPDATE corner_person_state state SET event_subscriptions=state.event_subscriptions||'["check-passed"]'::jsonb
+          [input.roomId,current.reviewer_agent_id],
+        );
+        if (reviewerAgentId) await database.query(
+          `UPDATE corner_person_state state SET event_subscriptions=state.event_subscriptions||'["check-passed"]'::jsonb
            FROM rooms corner WHERE corner.id=state.corner_id AND corner.parent_id=$1
              AND state.identity_id=$2 AND state.event_subscriptions IS NOT NULL
-             AND NOT state.event_subscriptions ? 'check-passed'`,
-            [input.roomId, reviewerAgentId],
-          );
+             AND NOT state.event_subscriptions ? 'check-passed'`, [input.roomId,reviewerAgentId],
+        );
       }
       if (reviewerAgentId !== undefined)
         await reconcileConfiguredCornerReviewers(database, input.roomId);
@@ -7843,7 +6951,7 @@ export class PhoneService {
         await systemLine(database, {
           roomId: input.roomId,
           subject: identitySubject({ id: actor.pubkey, kind: actor.kind, name: actor.name }),
-          verb: systemMessage('phone-service.changed-room-visibility-to'),
+          verb: systemMessage("phone-service.changed-room-visibility-to"),
           object: input.visibility,
           cardType: 'room-visibility',
           card: { visibility: input.visibility },
@@ -7904,7 +7012,7 @@ export class PhoneService {
       await systemLine(database, {
         roomId,
         subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),
-        verb: systemMessage('phone-service.left'),
+        verb: systemMessage("phone-service.left"),
         cardType: 'member-left',
         card: { identityId: viewerId },
       });
@@ -7975,8 +7083,7 @@ export class PhoneService {
       [input.roomId, input.memberId],
     );
     if (!target.rowCount) throw new Error('room membership required');
-    if (input.memberId === viewerId)
-      throw new Error('access denied: you cannot remove yourself from a Room; leave it instead');
+    if (input.memberId === viewerId) throw new Error('access denied: you cannot remove yourself from a Room; leave it instead');
     const remover = await this.requireIdentity(viewerId);
     const removed = await this.requireIdentity(input.memberId);
     await this.database.transaction(async (database) => {
@@ -7984,7 +7091,7 @@ export class PhoneService {
       await systemLine(database, {
         roomId: input.roomId,
         subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
-        verb: systemMessage('phone-service.removed'),
+        verb: systemMessage("phone-service.removed"),
         object: { text: removed.name, id: removed.pubkey },
         cardType: 'member-removed',
         card: { identityId: input.memberId },
@@ -8048,12 +7155,7 @@ export class PhoneService {
         ]);
       }
       if (target) {
-        await restoreWorkspaceMembershipRole(database, [
-          input.workspaceId,
-          input.memberId,
-          input.role,
-          viewerId,
-        ]);
+        await restoreWorkspaceMembershipRole(database, [input.workspaceId, input.memberId, input.role, viewerId]);
         await syncTopLevelSharedRoomRoles(database, input.workspaceId, input.memberId);
         if (target.removed_at)
           await joinRooms(database, {
@@ -8065,12 +7167,7 @@ export class PhoneService {
           });
         return { joined: target.removed_at !== null };
       }
-      const inserted = await ensureWorkspaceMembershipRole(database, [
-        input.workspaceId,
-        input.memberId,
-        input.role,
-        viewerId,
-      ]);
+      const inserted = await ensureWorkspaceMembershipRole(database, [input.workspaceId, input.memberId, input.role, viewerId]);
       if (inserted.rowCount)
         await joinRooms(database, {
           workspaceId: input.workspaceId,
@@ -8165,7 +7262,9 @@ export class PhoneService {
   }
   private async createInvite(input: Input<'createInvite'>, viewerId: string) {
     return this.database.transaction(async (database) => {
-      await database.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [input.workspaceId]);
+      await database.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [
+        input.workspaceId,
+      ]);
       await this.requireWorkspaceManager(input.workspaceId, viewerId, database);
       const workspace = await database.query<{ visibility: string }>(
         `SELECT visibility FROM workspaces WHERE id=$1`,
@@ -8177,7 +7276,8 @@ export class PhoneService {
           `SELECT public_token FROM invites WHERE workspace_id=$1 AND public_token IS NOT NULL`,
           [input.workspaceId],
         );
-        if (existing.rows[0]) return { token: existing.rows[0].public_token, expiresAt: 0 };
+        if (existing.rows[0])
+          return { token: existing.rows[0].public_token, expiresAt: 0 };
       }
       const value = createCommunityInviteToken(randomBytes(32));
       const expiresAt = isPublic ? null : new Date(Date.now() + 7 * 86400_000);
@@ -8233,36 +7333,15 @@ export class PhoneService {
       );
       if (!current.rows[0]) throw new Error('invite not found');
       if (current.rows[0].already_joined) {
-        const invitedRoom = (
-          await database.query<{ onboarding_room_id: string | null }>(
-            `SELECT onboarding_room_id FROM invites WHERE token_hash=$1`,
-            [hash(input.token)],
-          )
-        ).rows[0]?.onboarding_room_id;
+        const invitedRoom = (await database.query<{ onboarding_room_id: string | null }>(`SELECT onboarding_room_id FROM invites WHERE token_hash=$1`, [hash(input.token)])).rows[0]?.onboarding_room_id;
         if (invitedRoom && !current.rows[0].consumed_at) {
-          await joinRooms(database, {
-            workspaceId: row.workspace_id,
-            identityId: viewerId,
-            invitedById: row.created_by,
-            rooms: { type: 'rooms', roomIds: [invitedRoom] },
-            workspaceJoined: false,
-          });
-          await database.query(`UPDATE invites SET consumed_at=now() WHERE token_hash=$1`, [
-            hash(input.token),
-          ]);
+          await joinRooms(database, { workspaceId: row.workspace_id, identityId: viewerId, invitedById: row.created_by,
+            rooms: { type: 'rooms', roomIds: [invitedRoom] }, workspaceJoined: false });
+          await database.query(`UPDATE invites SET consumed_at=now() WHERE token_hash=$1`, [hash(input.token)]);
           await observeOnboardingInvite(database, hash(input.token), viewerId, true);
         }
-        const accessible =
-          invitedRoom &&
-          (
-            await database.query(
-              `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
-              [invitedRoom, viewerId],
-            )
-          ).rowCount > 0;
-        const roomId = accessible
-          ? invitedRoom
-          : await firstAccessibleRoomId(database, row.workspace_id, viewerId);
+        const accessible = invitedRoom && (await database.query(`SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`, [invitedRoom, viewerId])).rowCount > 0;
+        const roomId = accessible ? invitedRoom : await firstAccessibleRoomId(database, row.workspace_id, viewerId);
         return { joined: false, workspaceId: row.workspace_id, ...(roomId ? { roomId } : {}) };
       }
       if (current.rows[0].consumed_at) throw new Error('invite not found');
@@ -8278,11 +7357,7 @@ export class PhoneService {
       ).rows[0];
       if (!identity) throw new Error('identity not found');
       await reassignCollidingAgentHandles(database, viewerId, identity.handle, workspaceIds);
-      const joined = await redeemWorkspaceMembership(database, [
-        row.workspace_id,
-        viewerId,
-        row.created_by,
-      ]);
+      const joined = await redeemWorkspaceMembership(database, [row.workspace_id, viewerId, row.created_by]);
       await joinRooms(database, {
         workspaceId: row.workspace_id,
         identityId: viewerId,
@@ -8290,37 +7365,15 @@ export class PhoneService {
         rooms: { type: 'all-live-top-level' },
         workspaceJoined: joined.rowCount > 0,
       });
-      const invitedRoom = (
-        await database.query<{ onboarding_room_id: string | null }>(
-          `SELECT onboarding_room_id FROM invites WHERE token_hash=$1`,
-          [hash(input.token)],
-        )
-      ).rows[0]?.onboarding_room_id;
-      if (invitedRoom)
-        await joinRooms(database, {
-          workspaceId: row.workspace_id,
-          identityId: viewerId,
-          invitedById: row.created_by,
-          rooms: { type: 'rooms', roomIds: [invitedRoom] },
-          workspaceJoined: false,
-        });
-      const roomId =
-        invitedRoom ?? (await firstAccessibleRoomId(database, row.workspace_id, viewerId));
+      const invitedRoom = (await database.query<{ onboarding_room_id: string | null }>(`SELECT onboarding_room_id FROM invites WHERE token_hash=$1`, [hash(input.token)])).rows[0]?.onboarding_room_id;
+      if (invitedRoom) await joinRooms(database, { workspaceId: row.workspace_id, identityId: viewerId, invitedById: row.created_by,
+        rooms: { type: 'rooms', roomIds: [invitedRoom] }, workspaceJoined: false });
+      const roomId = invitedRoom ?? await firstAccessibleRoomId(database, row.workspace_id, viewerId);
       await observeOnboardingInvite(database, hash(input.token), viewerId, joined.rowCount > 0);
       if (roomId && joined.rowCount > 0) {
-        if (
-          this.freeAgents &&
-          !(
-            await database.query(`SELECT 1 FROM free_agents WHERE workspace_id=$1`, [
-              row.workspace_id,
-            ])
-          ).rowCount
-        ) {
-          await this.freeAgents.createInWorkspace(database, {
-            workspaceId: row.workspace_id,
-            creatorId: viewerId,
-            roomId,
-          });
+        if (this.freeAgents && !(await database.query(
+          `SELECT 1 FROM free_agents WHERE workspace_id=$1`, [row.workspace_id])).rowCount) {
+          await this.freeAgents.createInWorkspace(database, { workspaceId: row.workspace_id, creatorId: viewerId, roomId });
         }
       }
       return {
@@ -8527,11 +7580,8 @@ export class PhoneService {
    * decision settles the card in place and posts one system line mentioning
    * the agent so its daemon wakes and resumes the paused turn.
    */
-  private async decideAgentGrant(
-    input: Input<'decideAgentGrant'>,
-    viewerId: string,
-    defer?: (notification: () => void) => void,
-  ) {
+  private async decideAgentGrant(input: Input<'decideAgentGrant'>, viewerId: string,
+    defer?: (notification: () => void) => void) {
     const decision: AgentGrantDecision | undefined =
       input.decision === 'always' || input.decision === 'once' || input.decision === 'deny'
         ? input.decision
@@ -8543,9 +7593,10 @@ export class PhoneService {
     if (grant.status !== 'pending') throw new Error('grant decision conflict: already decided');
     // Existing pending Squire cards may still live in the source Room. Find
     // the card by its exact grant id so an upgrade settles either placement.
-    const cardRoomIds = (
-      await this.database.query<{ room_id: string }>(
-        `SELECT message.room_id FROM messages message
+    const cardRoomIds =
+      (
+        await this.database.query<{ room_id: string }>(
+          `SELECT message.room_id FROM messages message
          JOIN rooms room ON room.id=message.room_id
          WHERE room.workspace_id=$2 AND message.card_type='grant-request'
            AND EXISTS (
@@ -8553,9 +7604,9 @@ export class PhoneService {
              WHERE entry->>'grantId'=$1
            )
          ORDER BY message.created_at DESC,message.id DESC`,
-        [input.grantId, grant.workspace_id],
-      )
-    ).rows.map((row) => row.room_id);
+          [input.grantId, grant.workspace_id],
+        )
+      ).rows.map((row) => row.room_id);
     if (!cardRoomIds.length) cardRoomIds.push(grant.room_id);
     const status: AgentGrantStatus =
       decision === 'always' ? 'approved' : decision === 'once' ? 'once' : 'denied';
@@ -8567,17 +7618,10 @@ export class PhoneService {
         [input.grantId, status, viewerId],
       );
       const decidedAt = updated.rows[0]?.decided_at;
-      if (!decidedAt)
-        throw new Error(
-          'grant decision conflict: already decided or superseded; open the current card',
-        );
+      if (!decidedAt) throw new Error('grant decision conflict: already decided or superseded; open the current card');
       for (const roomId of new Set(cardRoomIds))
         await settleGrantCard(database, {
-          roomId,
-          grantId: input.grantId,
-          status,
-          decidedBy: decider,
-          decidedAt,
+          roomId, grantId: input.grantId, status, decidedBy: decider, decidedAt,
         });
       // The text this composes is exactly `formatGrantDecisionLine`'s shape
       // (`<decider> approved command npm test`): the daemon recognises the
@@ -8593,11 +7637,7 @@ export class PhoneService {
         authorId: viewerId,
         subject: identitySubject({ id: decider.pubkey, kind: decider.kind, name: decider.name }),
         verb:
-          decision === 'always'
-            ? systemMessage('phone-service.approved')
-            : decision === 'once'
-              ? systemMessage('phone-service.approved-once')
-              : systemMessage('phone-service.declined'),
+          decision === 'always' ? systemMessage("phone-service.approved") : decision === 'once' ? systemMessage("phone-service.approved-once") : systemMessage("phone-service.declined"),
         // A resume kind: it answers a turn already paused on the ask, and must
         // never start a second one (`RESUME_KINDS`).
         kind: 'grant-decided',
@@ -8607,7 +7647,7 @@ export class PhoneService {
             [input.grantId],
           )
         ).rows[0]?.command_id,
-        object: systemMessage('phone-service.grant-target', grant.kind, grant.target),
+        object: systemMessage("phone-service.grant-target", grant.kind, grant.target),
         wakes: [grant.agent_id],
         cardType: 'grant-decision',
         card: { grantId: input.grantId, status },
@@ -8616,8 +7656,7 @@ export class PhoneService {
     for (const roomId of new Set(cardRoomIds)) {
       if (roomId === grant.room_id) continue;
       const notify = () => this.live?.publish({ type: 'invalidate', roomId, reason: 'grant' });
-      if (defer) defer(notify);
-      else notify();
+      if (defer) defer(notify); else notify();
     }
     return { grantId: input.grantId, status, roomId: grant.room_id };
   }
@@ -8658,301 +7697,146 @@ export class PhoneService {
       };
     });
   }
-  private async actOnRepositoryCard(
-    input: Input<'actOnRepositoryCard'>,
-    viewerId: string,
-  ): Promise<Output<'actOnRepositoryCard'>> {
-    if (['create', 'link', 'install', 'organization'].includes(input.action))
-      await this.requireRoomWorkspaceManager(input.roomId, viewerId);
+  private async actOnRepositoryCard(input: Input<'actOnRepositoryCard'>, viewerId: string): Promise<Output<'actOnRepositoryCard'>> {
+    if (['create', 'link', 'install', 'organization'].includes(input.action)) await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     else {
-      if (!(await this.hasRoomAccess(input.roomId, viewerId)))
-        throw new Error('room access denied');
+      if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
       await this.requireTopLevelChatMember(input.roomId, viewerId);
     }
-    let followup:
-      | { roomId: string; agentId: string; requesterId: string; kind: 'repository' | 'starters' }
-      | undefined;
+    let followup: { roomId: string; agentId: string; requesterId: string; kind: 'repository' | 'starters' } | undefined;
     // Serialize taps and make a retried response return the committed selection.
-    const result = await this.database.transaction(async (database) => {
-      const row = (
-        await database.query<{ card: unknown }>(
-          `SELECT card FROM messages WHERE id=$1 AND room_id=$2 AND card_type='repository-onboarding' FOR UPDATE`,
-          [input.cardId, input.roomId],
-        )
-      ).rows[0];
+    const result = await this.database.transaction(async database => {
+      const row = (await database.query<{ card: unknown }>(
+        `SELECT card FROM messages WHERE id=$1 AND room_id=$2 AND card_type='repository-onboarding' FOR UPDATE`,
+        [input.cardId, input.roomId])).rows[0];
       const card = readRepositoryOnboardingCard(row?.card);
       if (!card || card.requesterId !== viewerId) throw new Error('repository card access denied');
-      if (['create', 'link', 'refresh'].includes(input.action))
-        followup = {
-          roomId: input.roomId,
-          agentId: card.agentId,
-          requesterId: viewerId,
-          kind: input.action === 'refresh' ? 'repository' : 'starters',
-        };
-      if (card.status === 'settled') {
-        followup = undefined;
-        return { selected: card.selected };
-      }
-      const requestedSelection =
-        input.action === 'create' ? card.defaultName : String(input.repositoryId);
-      if (
-        ['create', 'link'].includes(input.action) &&
-        card.selected &&
-        card.selected !== requestedSelection
-      )
-        throw new Error(
-          'This card already linked a repository. Retry the same option or ask for a new card.',
-        );
+      if (['create', 'link', 'refresh'].includes(input.action)) followup = { roomId: input.roomId, agentId: card.agentId, requesterId: viewerId, kind: input.action === 'refresh' ? 'repository' : 'starters' };
+      if (card.status === 'settled') { followup = undefined; return { selected: card.selected }; }
+      const requestedSelection = input.action === 'create' ? card.defaultName : String(input.repositoryId);
+      if (['create', 'link'].includes(input.action) && card.selected && card.selected !== requestedSelection)
+        throw new Error('This card already linked a repository. Retry the same option or ask for a new card.');
       if (input.action === 'refresh') {
         await this.requireGitHub().refresh(viewerId);
         return {};
       }
-      const service = new PhoneService(
-        database,
-        this.publicOrigin,
-        this.github,
-        this.sendPushTest,
-        this.live,
-        true,
-      );
+      const service = new PhoneService(database, this.publicOrigin, this.github, this.sendPushTest, this.live, true);
       if (input.action === 'install' || input.action === 'organization') {
         if (!input.redirectUri) throw new Error('installation return is required');
         if (input.action === 'install') {
           await this.requireGitHub().refresh(viewerId);
-          const covered =
-            (
-              await database.query(
-                `SELECT installation_id FROM github_installations WHERE owner_id=$1 AND status='active' LIMIT 1`,
-                [viewerId],
-              )
-            ).rows.length > 0;
+          const covered = (await database.query(
+            `SELECT installation_id FROM github_installations WHERE owner_id=$1 AND status='active' LIMIT 1`,
+            [viewerId],
+          )).rows.length > 0;
           if (covered) {
-            followup = {
-              roomId: input.roomId,
-              agentId: card.agentId,
-              requesterId: viewerId,
-              kind: 'repository',
-            };
+            followup = { roomId: input.roomId, agentId: card.agentId, requesterId: viewerId, kind: 'repository' };
             return { openPicker: true };
           }
         }
         return this.requireGitHub().beginInstallation(viewerId, {
-          redirectUri: input.redirectUri,
-          selectTarget: input.action === 'organization',
+          redirectUri: input.redirectUri, selectTarget: input.action === 'organization',
         });
       }
       if (input.action === 'starter') {
         if (card.kind !== 'starters') throw new Error('this card does not offer starter tasks');
-        const starter = card.starters.find((s) => s.id === input.starterId);
+        const starter = card.starters.find(s => s.id === input.starterId);
         if (!starter) throw new Error('starter not found');
-        const current = (
-          await database.query<{ repository_name: string }>(
-            `SELECT repository_name FROM rooms WHERE id=$1`,
-            [input.roomId],
-          )
-        ).rows[0];
-        if (current?.repository_name !== card.repository)
-          throw new Error('Repository changed. Ask for fresh starters.');
-        const agent = (
-          await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [
-            card.agentId,
-          ])
-        ).rows[0];
+        const current = (await database.query<{ repository_name: string }>(
+          `SELECT repository_name FROM rooms WHERE id=$1`, [input.roomId])).rows[0];
+        if (current?.repository_name !== card.repository) throw new Error('Repository changed. Ask for fresh starters.');
+        const agent = (await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [card.agentId])).rows[0];
         if (!agent?.handle) throw new Error('The offering agent is no longer available');
-        await service.sendMessage(
-          {
-            roomId: input.roomId,
-            text: `@${agent.handle} ${starter.title}\n${starter.task}\nStart this task now in a repository corner with a complete brief. Use this selection as approval. Keep the normal checks, independent review and merge gate.`,
-            mentions: [card.agentId],
-          },
-          viewerId,
-        );
+        await service.sendMessage({ roomId: input.roomId,
+          text: `@${agent.handle} ${starter.title}\n${starter.task}\nStart this task now in a repository corner with a complete brief. Use this selection as approval. Keep the normal checks, independent review and merge gate.`,
+          mentions: [card.agentId] }, viewerId);
       } else {
-        if (card.kind !== 'repository' || !['create', 'link'].includes(input.action))
-          throw new Error('invalid repository action');
+        if (card.kind !== 'repository' || !['create', 'link'].includes(input.action)) throw new Error('invalid repository action');
         let repository;
         if (input.action === 'create') {
-          if (!card.installationId)
-            throw new Error('Install Beeline on all personal repositories first');
+          if (!card.installationId) throw new Error('Install Beeline on all personal repositories first');
           // The per-card name lets a retry recover a repository created before a lost response.
           await this.requireGitHub().refresh(viewerId);
           const available = await service.listRepositories(viewerId);
-          repository = available.repositories.find(
-            (r) =>
-              r.installationId === card.installationId &&
-              r.fullName.split('/')[1] === card.defaultName,
-          );
-          repository ??= await this.requireGitHub().createRepository(
-            viewerId,
-            {
-              installationId: card.installationId,
-              name: card.defaultName,
-              private: true,
-            },
-            database,
-          );
-        } else repository = card.repositories.find((r) => r.id === input.repositoryId);
+          repository = available.repositories.find(r => r.installationId === card.installationId && r.fullName.split('/')[1] === card.defaultName);
+          repository ??= await this.requireGitHub().createRepository(viewerId, {
+            installationId: card.installationId, name: card.defaultName, private: true,
+          }, database);
+        } else repository = card.repositories.find(r => r.id === input.repositoryId);
         if (!repository) throw new Error('repository not found');
-        await service.setRepository(
-          {
-            roomId: input.roomId,
-            key: `github:${repository.id}`,
-            name: repository.fullName,
-            remote: `git://github.com/${repository.fullName}`,
-            targetBranch: repository.defaultBranch,
-            githubInstallationId: repository.installationId,
-          },
-          viewerId,
-        );
+        await service.setRepository({ roomId: input.roomId, key: `github:${repository.id}`, name: repository.fullName,
+          remote: `git://github.com/${repository.fullName}`, targetBranch: repository.defaultBranch,
+          githubInstallationId: repository.installationId }, viewerId);
       }
-      const selected =
-        input.action === 'starter'
-          ? input.starterId!
-          : input.action === 'create'
-            ? card.defaultName
-            : String(input.repositoryId);
-      await database.query(
-        `UPDATE messages SET card=card || $2::jsonb,version=version+1 WHERE id=$1`,
-        [input.cardId, JSON.stringify({ status: followup ? 'open' : 'settled', selected })],
-      );
+      const selected = input.action === 'starter' ? input.starterId! : input.action === 'create' ? card.defaultName : String(input.repositoryId);
+      await database.query(`UPDATE messages SET card=card || $2::jsonb,version=version+1 WHERE id=$1`,
+        [input.cardId, JSON.stringify({ status: followup ? 'open' : 'settled', selected })]);
       return { selected };
     });
     if (followup) {
-      await this.database.transaction((db) => postRepositoryOnboarding(db, this.github, followup!));
-      if (followup.kind === 'starters')
-        await this.database.query(
-          `UPDATE messages SET card=jsonb_set(card,'{status}','"settled"') WHERE id=$1`,
-          [input.cardId],
-        );
+      await this.database.transaction(db => postRepositoryOnboarding(db, this.github, followup!));
+      if (followup.kind === 'starters') await this.database.query(`UPDATE messages SET card=jsonb_set(card,'{status}','"settled"') WHERE id=$1`, [input.cardId]);
     }
     this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message' });
     return result;
   }
 
   private async answerChoice(input: Input<'answerChoice'>, viewerId: string) {
-    return this.database.transaction(async (database) => {
-      const starter = (
-        await database.query<{
-          room_id: string;
-          agent_id: string;
-          stage: string;
-          first_label: string;
-        }>(
-          `SELECT c.room_id,c.agent_id,c.options->0->>'label' first_label,m.card->>'starterOnboarding' stage
+    return this.database.transaction(async database => {
+      const starter = (await database.query<{ room_id: string; agent_id: string; stage: string; first_label: string }>(
+        `SELECT c.room_id,c.agent_id,c.options->0->>'label' first_label,m.card->>'starterOnboarding' stage
          FROM room_choices c JOIN messages m ON m.id=c.message_id
-         WHERE c.id=$1 AND m.card->>'starterOnboarding' IN ('welcome','next')`,
-          [input.choiceId],
-        )
-      ).rows[0];
+         WHERE c.id=$1 AND m.card->>'starterOnboarding' IN ('welcome','next')`, [input.choiceId],
+      )).rows[0];
       if (starter) {
-        if (
-          starter.stage === 'welcome' &&
-          starter.first_label !== 'Make a welcome video and post it to my YouTube'
-        )
-          throw new Error(
-            'This welcome has changed. Ask Beebee to run onboarding again for the current job choices.',
-          );
-        const result = await answerRoomChoice(
-          database,
-          {
-            choiceId: input.choiceId,
-            optionId: input.optionId,
-            viewerId,
-            note: input.note,
-          },
-          {
-            wake:
-              (starter.stage === 'next' && input.optionId === 'B') ||
-              (starter.stage === 'welcome' && input.optionId === 'C'),
-          },
-        );
+        if (starter.stage === 'welcome' && starter.first_label !== 'Make a welcome video and post it to my YouTube')
+          throw new Error('This welcome has changed. Ask Beebee to run onboarding again for the current job choices.');
+        const result = await answerRoomChoice(database, {
+          choiceId: input.choiceId, optionId: input.optionId, viewerId, note: input.note,
+        }, { wake: (starter.stage === 'next' && input.optionId === 'B') || (starter.stage === 'welcome' && input.optionId === 'C') });
         if (starter.stage === 'next') {
-          if (input.optionId === 'A')
-            await postStarterInviteOffer(
-              database,
-              starter.room_id,
-              starter.agent_id,
-              viewerId,
-              this.publicOrigin,
-            );
+          if (input.optionId === 'A') await postStarterInviteOffer(database, starter.room_id, starter.agent_id, viewerId, this.publicOrigin);
           return result;
         }
-        await recordOnboardingEvent(database, viewerId, 'option_picked', {
-          option: input.optionId as 'A' | 'B' | 'C',
-          roomId: starter.room_id,
-        });
+        await recordOnboardingEvent(database, viewerId, 'option_picked', { option: input.optionId as 'A' | 'B' | 'C', roomId: starter.room_id });
         if (input.optionId === 'A') {
-          await recordOnboardingEvent(database, viewerId, 'youtube_job_chosen', {
-            roomId: starter.room_id,
-          });
-          const team = (
-            await database.query<{ agent_id: string; starter_role: string }>(
-              `SELECT f.agent_id,f.starter_role FROM free_agents f JOIN memberships m ON m.identity_id=f.agent_id
+          await recordOnboardingEvent(database, viewerId, 'youtube_job_chosen', { roomId: starter.room_id });
+          const team = (await database.query<{ agent_id: string; starter_role: string }>(
+            `SELECT f.agent_id,f.starter_role FROM free_agents f JOIN memberships m ON m.identity_id=f.agent_id
              WHERE m.room_id=$1 AND m.removed_at IS NULL AND f.owner_id=$2 AND f.removed_at IS NULL`,
-              [starter.room_id, viewerId],
-            )
-          ).rows;
-          const beebee = team.find((agent) => agent.starter_role === 'beebee')?.agent_id;
-          const luna = team.find((agent) => agent.starter_role === 'luna')?.agent_id;
+            [starter.room_id, viewerId])).rows;
+          const beebee = team.find(agent => agent.starter_role === 'beebee')?.agent_id;
+          const luna = team.find(agent => agent.starter_role === 'luna')?.agent_id;
           if (!beebee || !luna) throw new Error('Your starter team is no longer in this Room');
-          await startWorkflow(
-            database,
-            { room_id: starter.room_id, agent_id: viewerId },
-            {
-              name: WELCOME_VIDEO_SLUG,
-              roleBindings: {
-                writer: [beebee, luna],
-                maker: [beebee, luna],
-                checker: [luna, beebee],
-                owner: [beebee, luna],
-              },
-            },
-          );
+          await startWorkflow(database, { room_id: starter.room_id, agent_id: viewerId }, {
+            name: WELCOME_VIDEO_SLUG, roleBindings: { writer: [beebee, luna], maker: [beebee, luna], checker: [luna, beebee], owner: [beebee, luna] },
+          });
         } else if (input.optionId === 'B') {
           await postStarterGame(database, this.objects, starter.room_id, viewerId);
         } else {
-          await recordOnboardingEvent(database, viewerId, 'other_job_chosen', {
-            roomId: starter.room_id,
-          });
+          await recordOnboardingEvent(database, viewerId, 'other_job_chosen', { roomId: starter.room_id });
         }
         return result;
       }
-      return (
-        (await settleWorkflowGate(database, {
-          choiceId: input.choiceId,
-          optionId: input.optionId,
-          viewerId,
-          note: input.note,
-        })) ??
-        answerRoomChoice(database, {
-          choiceId: input.choiceId,
-          optionId: input.optionId,
-          viewerId,
-          note: input.note,
-        })
-      );
+      return (await settleWorkflowGate(database, {
+        choiceId: input.choiceId, optionId: input.optionId, viewerId, note: input.note,
+      })) ?? answerRoomChoice(database, { choiceId: input.choiceId, optionId: input.optionId, viewerId, note: input.note });
     });
   }
   private async skipChoice(input: Input<'skipChoice'>, viewerId: string) {
-    return this.database.transaction(async (database) => {
-      const starter = (
-        await database.query<{ stage: string; room_id: string }>(
+    return this.database.transaction(
+      async (database) => {
+        const starter = (await database.query<{ stage: string; room_id: string }>(
           `SELECT c.room_id,m.card->>'starterOnboarding' stage FROM room_choices c JOIN messages m ON m.id=c.message_id
-           WHERE c.id=$1 AND m.card->>'starterOnboarding' IN ('welcome','next')`,
-          [input.choiceId],
-        )
-      ).rows[0];
-      const result = await ((await settleWorkflowGate(database, {
-        choiceId: input.choiceId,
-        viewerId,
-        skip: true,
-      })) ?? skipRoomChoice(database, { choiceId: input.choiceId, viewerId }, { wake: !starter }));
-      if (starter?.stage === 'welcome')
-        await recordOnboardingEvent(database, viewerId, 'welcome_skipped', {
-          roomId: starter.room_id,
-        });
-      return result;
-    });
+           WHERE c.id=$1 AND m.card->>'starterOnboarding' IN ('welcome','next')`, [input.choiceId],
+        )).rows[0];
+        const result = await (
+        (await settleWorkflowGate(database, { choiceId: input.choiceId, viewerId, skip: true })) ??
+        skipRoomChoice(database, { choiceId: input.choiceId, viewerId }, { wake: !starter }));
+        if (starter?.stage === 'welcome') await recordOnboardingEvent(database, viewerId, 'welcome_skipped', { roomId: starter.room_id });
+        return result;
+      },
+    );
   }
   private async requireGrantAuthority(grantId: unknown, viewerId: string) {
     if (typeof grantId !== 'string' || !grantId) throw new Error('grantId is required');
@@ -8976,10 +7860,8 @@ export class PhoneService {
       )
     ).rows[0];
     if (!grant) throw new Error('grant not found');
-    if (
-      grant.target.startsWith('app:') ||
-      (grant.kind === 'mcp' && grant.target.startsWith('connection-install:') && grant.app_owner_id)
-    ) {
+    if (grant.target.startsWith('app:') ||
+      (grant.kind === 'mcp' && grant.target.startsWith('connection-install:') && grant.app_owner_id)) {
       if (!grant.app_owner_id || grant.app_owner_id !== viewerId)
         throw new Error('app approval access denied: requires the connected person');
       const member = await this.database.query(
@@ -8998,9 +7880,7 @@ export class PhoneService {
         [grant.workspace_id, viewerId, grant.owner_id],
       );
       if (!member.rowCount)
-        throw new Error(
-          'shared asset approval access denied: requires a Workspace manager or the agent owner',
-        );
+        throw new Error('shared asset approval access denied: requires a Workspace manager or the agent owner');
       return grant;
     }
     if (grant.kind !== 'repository') {
@@ -9078,11 +7958,7 @@ export class PhoneService {
     }
     // The addressee decides only while they are still in the Workspace.
     await this.requireWorkspaceMember(offer.workspace_id, viewerId);
-    if (
-      offer.status === 'connecting' &&
-      offer.accepted_by !== viewerId &&
-      offer.intent !== 'reconnect'
-    )
+    if (offer.status === 'connecting' && offer.accepted_by !== viewerId && offer.intent !== 'reconnect')
       throw new Error('connector offer conflict: sign-in is already in progress');
     // The helper is the offering agent's machine; it must still be here to install.
     const helper = await this.database.query(
@@ -9095,54 +7971,28 @@ export class PhoneService {
     if (!helper.rowCount)
       throw new Error('connector offer conflict: the offering agent has left this Workspace');
     const acceptor = await this.requireIdentity(viewerId);
-    if (
-      offer.intent === 'reconnect' &&
-      offer.status === 'connecting' &&
-      connectorType === 'trusty-squire'
-    ) {
+    if (offer.intent === 'reconnect' && offer.status === 'connecting' && connectorType === 'trusty-squire') {
       if (offer.addressee_id !== viewerId) throw new Error(CONNECTOR_OFFER_AUTHORITY_MESSAGE);
-      await this.database.transaction(async (database) => {
-        const claimed = await database.query(
-          `UPDATE connector_offers SET accepted_by=$2,accepted_at=COALESCE(accepted_at,now())
-          WHERE id::text=$1 AND status='connecting' RETURNING id`,
-          [input.offerId, viewerId],
-        );
+      await this.database.transaction(async database => {
+        const claimed = await database.query(`UPDATE connector_offers SET accepted_by=$2,accepted_at=COALESCE(accepted_at,now())
+          WHERE id::text=$1 AND status='connecting' RETURNING id`, [input.offerId, viewerId]);
         if (!claimed.rowCount) throw new Error('connector offer conflict: already completed');
         const work = await squireWorkStatus(database, offer.agent_id);
-        if (work.status === 'error')
-          await queueSquireWork(database, offer.agent_id, {
-            install: true,
-            forceReloginProvider: 'google',
-          });
-        await this.markConnectorOfferConnecting(database, {
-          roomId: offer.room_id,
-          offerId: input.offerId,
-          acceptedBy: acceptor,
-          acceptedAt: offer.accepted_at ?? new Date(),
-          connectorId: squireMachineAddress(offer.machine_id),
-        });
+        if (work.status === 'error') await queueSquireWork(database, offer.agent_id,
+          { install: true, forceReloginProvider: 'google' });
+        await this.markConnectorOfferConnecting(database, { roomId: offer.room_id,
+          offerId: input.offerId, acceptedBy: acceptor, acceptedAt: offer.accepted_at ?? new Date(),
+          connectorId: squireMachineAddress(offer.machine_id) });
       });
-      return {
-        offerId: input.offerId,
-        status: 'connecting',
-        roomId: offer.room_id,
-        connectorId: squireMachineAddress(offer.machine_id),
-      };
+      return { offerId: input.offerId, status: 'connecting', roomId: offer.room_id,
+        connectorId: squireMachineAddress(offer.machine_id) };
     }
     const paired = await this.database.transaction(async (database) => {
-      await database.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-        `connector-offer:${offer.room_id}:${connectorType}`,
-      ]);
-      if (
-        offer.status === 'failed' &&
-        (
-          await database.query(
-            `SELECT 1 FROM connector_offers
+      await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
+        [`connector-offer:${offer.room_id}:${connectorType}`]);
+      if (offer.status === 'failed' && (await database.query(`SELECT 1 FROM connector_offers
         WHERE room_id=$1 AND connector_type=$2 AND id::text<>$3 AND status IN ('pending','connecting')`,
-            [offer.room_id, connectorType, input.offerId],
-          )
-        ).rowCount
-      )
+        [offer.room_id, connectorType, input.offerId])).rowCount)
         throw new Error('connector offer conflict: use the newer connection card');
       const updated = await database.query<{ accepted_at: Date }>(
         `UPDATE connector_offers SET status='connecting',accepted_by=$2,
@@ -9151,10 +8001,7 @@ export class PhoneService {
         [input.offerId, viewerId],
       );
       const acceptedAt = updated.rows[0]?.accepted_at ?? offer.accepted_at;
-      if (
-        !acceptedAt ||
-        (offer.status !== 'pending' && offer.status !== 'connecting' && offer.status !== 'failed')
-      )
+      if (!acceptedAt || (offer.status !== 'pending' && offer.status !== 'connecting' && offer.status !== 'failed'))
         throw new Error('connector offer conflict: already accepted');
       const pairing = await this.armConnectorPairing(database, {
         workspaceId: offer.workspace_id,
@@ -9166,10 +8013,7 @@ export class PhoneService {
       // The helper reads its assignment only after this transaction commits,
       // so it sees the forced provider on the same install.
       if (offer.intent === 'switch' && offer.provider && connectorType === 'trusty-squire') {
-        await queueSquireWork(database, offer.agent_id, {
-          install: true,
-          forceReloginProvider: offer.provider,
-        });
+        await queueSquireWork(database, offer.agent_id, { install: true, forceReloginProvider: offer.provider });
       } else if (offer.intent === 'switch' && offer.provider)
         await database.query(
           `UPDATE workspace_connectors SET force_relogin_provider=$2 WHERE id=$1::uuid`,
@@ -9333,13 +8177,11 @@ export class PhoneService {
         await systemLine(database, {
           roomId: room.room_id,
           subject: { kind: 'person', id: viewerId, name: agent.viewer_name },
-          verb: input.enabled
-            ? systemMessage('phone-service.turned-yolo-on-for')
-            : systemMessage('phone-service.turned-yolo-off-for'),
+          verb: input.enabled ? systemMessage("phone-service.turned-yolo-on-for") : systemMessage("phone-service.turned-yolo-off-for"),
           object: { text: agent.agent_name, id: input.agentId },
           consequence: input.enabled
-            ? systemMessage('phone-service.grant-requests-are-now-approved-automatically')
-            : systemMessage('phone-service.grant-requests-now-ask-before-running'),
+            ? systemMessage("phone-service.grant-requests-are-now-approved-automatically")
+            : systemMessage("phone-service.grant-requests-now-ask-before-running"),
           cardType: 'agent-yolo',
           card: { agentId: input.agentId, enabled: input.enabled },
         });
@@ -9524,8 +8366,7 @@ export class PhoneService {
          AND (fly_machine_id IS NOT NULL OR $2::boolean)`,
       [freeAgentIds, Boolean(this.freeAgents)],
     );
-    if (machinesLeft.rowCount)
-      throw new Error('Agent machines are still stopping; try again shortly');
+    if (machinesLeft.rowCount) throw new Error('Agent machines are still stopping; try again shortly');
     await this.database.transaction(async (database) => {
       const owned = await database.query<{ agent_id: string }>(
         `SELECT agent_id FROM agents WHERE owner_id=$1
@@ -9534,38 +8375,28 @@ export class PhoneService {
       );
       // Everything erased by this deletion: the person and each agent it owned.
       const gone = [viewerId, ...owned.rows.map((row) => row.agent_id)];
-      const plannedCorners = await database.query<{ id: string }>(
+      const plannedCorners = await database.query<{id:string}>(
         `SELECT c.id FROM rooms c WHERE c.parent_id IS NOT NULL AND c.archived_at IS NULL
-           AND ${cornerOwnerSql('c.id')}=ANY($1) ORDER BY c.id`,
-        [gone],
-      );
+           AND ${cornerOwnerSql('c.id')}=ANY($1) ORDER BY c.id`, [gone]);
       for (const corner of plannedCorners.rows) await lockCornerLifecycle(database, corner.id);
       await lockCornerArchivalAuthority(database);
       // Discovery takes no row locks. A newly acquired agent/corner changes
       // the deletion scope and requires a new explicit attempt, rather than
       // taking another lifecycle lock while holding authority in reverse order.
-      const currentOwned = await database.query<{ agent_id: string }>(
+      const currentOwned = await database.query<{agent_id:string}>(
         `SELECT agent_id FROM agents WHERE owner_id=$1
-         UNION SELECT agent_id FROM free_agents WHERE owner_id=$1`,
-        [viewerId],
-      );
-      const plannedAgents = new Set(owned.rows.map((row) => row.agent_id));
-      if (
-        currentOwned.rows.length !== plannedAgents.size ||
-        currentOwned.rows.some((row) => !plannedAgents.has(row.agent_id))
-      )
+         UNION SELECT agent_id FROM free_agents WHERE owner_id=$1`, [viewerId]);
+      const plannedAgents = new Set(owned.rows.map(row => row.agent_id));
+      if (currentOwned.rows.length !== plannedAgents.size || currentOwned.rows.some(row => !plannedAgents.has(row.agent_id)))
         throw new Error('Account changed while deletion was being prepared; try again');
       const closingCorners = await database.query<{ id: string }>(
         `SELECT c.id FROM rooms c WHERE c.parent_id IS NOT NULL AND c.archived_at IS NULL
-           AND ${cornerOwnerSql('c.id')}=ANY($1) ORDER BY c.id FOR KEY SHARE OF c`,
-        [gone],
-      );
-      const plannedIds = new Set(plannedCorners.rows.map((row) => row.id));
-      if (closingCorners.rows.some((row) => !plannedIds.has(row.id)))
+           AND ${cornerOwnerSql('c.id')}=ANY($1) ORDER BY c.id FOR KEY SHARE OF c`, [gone]);
+      const plannedIds = new Set(plannedCorners.rows.map(row => row.id));
+      if (closingCorners.rows.some(row => !plannedIds.has(row.id)))
         throw new Error('Account changed while deletion was being prepared; try again');
       await database.query(`SELECT 1 FROM identities WHERE id=$1 FOR UPDATE`, [viewerId]);
-      if (!(await database.query(`SELECT 1 FROM identities WHERE id=$1`, [viewerId])).rowCount)
-        return;
+      if (!(await database.query(`SELECT 1 FROM identities WHERE id=$1`, [viewerId])).rowCount) return;
 
       // The agents are removed, not re-owned: tokens, schedules and grants die
       // with them, and their corners archive as removeAgent archives them.
@@ -9608,10 +8439,10 @@ export class PhoneService {
       ]);
       // Workspace deletion audits outlive both the workspace and its actor.
       // Preserve the event while anonymising attribution like shared messages.
-      await database.query(
-        `UPDATE workspace_deletions SET deleted_by=$2 WHERE deleted_by=ANY($1)`,
-        [gone, DELETED_ACCOUNT_IDENTITY_ID],
-      );
+      await database.query(`UPDATE workspace_deletions SET deleted_by=$2 WHERE deleted_by=ANY($1)`, [
+        gone,
+        DELETED_ACCOUNT_IDENTITY_ID,
+      ]);
       // Active merge holds stay active under the tombstone holder. A corner
       // keeps one active hold per holder, so when several holds on one corner
       // now share the tombstone, only the hardest to release stays. Any member
@@ -9633,14 +8464,7 @@ export class PhoneService {
         ['corner_merge_holds', 'released_by'],
         ['corner_merge_holds', 'set_by_agent_id'],
       ])
-        if (
-          (
-            await database.query<{ present: boolean }>(
-              `SELECT to_regclass($1) IS NOT NULL present`,
-              [table],
-            )
-          ).rows[0]!.present
-        )
+        if ((await database.query<{ present: boolean }>(`SELECT to_regclass($1) IS NOT NULL present`, [table])).rows[0]!.present)
           await database.query(`UPDATE ${table} SET ${column}=$2 WHERE ${column}=ANY($1)`, [
             gone,
             DELETED_ACCOUNT_IDENTITY_ID,
@@ -9682,10 +8506,7 @@ export class PhoneService {
         `UPDATE agent_commands SET agent_id=$2 WHERE agent_id=ANY($1) AND reason='corner_objective'`,
         [gone, DELETED_ACCOUNT_IDENTITY_ID],
       );
-      await database.query(
-        `DELETE FROM agent_commands WHERE agent_id=ANY($1) AND reason<>'corner_objective'`,
-        [gone],
-      );
+      await database.query(`DELETE FROM agent_commands WHERE agent_id=ANY($1) AND reason<>'corner_objective'`, [gone]);
       await database.query(`DELETE FROM agent_turn_traces WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_turns WHERE agent_id=ANY($1)`, [gone]);
       await database.query(`DELETE FROM agent_turn_traces WHERE agent_id=ANY($1)`, [gone]);
@@ -9826,11 +8647,7 @@ export class PhoneService {
     )
       throw new Error('invalid push state');
     return this.database.transaction(async (database) => {
-      const updated = await writeSurfacePushState<{ push_muted: boolean }>(database, [
-        input.roomId,
-        viewerId,
-        input.muted ?? null,
-      ]);
+      const updated = await writeSurfacePushState<{ push_muted: boolean }>(database, [input.roomId, viewerId, input.muted ?? null]);
       if (!updated.rows[0]) throw new Error('room not found');
       if (input.viewing === true)
         await database.query(
@@ -9940,34 +8757,24 @@ export class PhoneService {
   private async setTargetBranch(input: Input<'setRoomTargetBranch'>, viewerId: string) {
     await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     const decider = await this.requireIdentity(viewerId);
-    await this.database.transaction(async (database) => {
+    await this.database.transaction(async database => {
       const updated = await database.query(
         `UPDATE rooms SET repository_target_branch=$2,repository_updated_at=now(),updated_at=now() WHERE id=$1 AND repository_key IS NOT NULL AND repository_remote IS NOT NULL`,
         [input.roomId, input.targetBranch],
       );
       if (!updated.rowCount) throw new Error('room repository not configured');
-      await database.query(
-        `UPDATE messages SET card=card || $3::jsonb WHERE room_id=$1 AND card_type='target-branch' AND card->>'to'=$2 AND card->>'status' IS NULL`,
-        [
-          input.roomId,
-          input.targetBranch,
-          JSON.stringify({
-            status: 'allowed',
-            decidedBy: decider,
-            decidedAt: Math.floor(Date.now() / 1000),
-          }),
-        ],
-      );
+      await database.query(`UPDATE messages SET card=card || $3::jsonb WHERE room_id=$1 AND card_type='target-branch' AND card->>'to'=$2 AND card->>'status' IS NULL`,
+        [input.roomId, input.targetBranch, JSON.stringify({ status: 'allowed', decidedBy: decider, decidedAt: Math.floor(Date.now()/1000) })]);
     });
     return this.roomRepository(input.roomId);
   }
   private async managedIdentity(viewerId: string) {
     const id = await this.requireIdentity(viewerId);
     const preferences = (
-      await this.database.query<{
-        push_level: import('@beeline/api-contract/phone').PushLevel;
-        speaking_speed: number;
-      }>(`SELECT push_level,speaking_speed FROM identities WHERE id=$1`, [viewerId])
+      await this.database.query<{ push_level: import('@beeline/api-contract/phone').PushLevel; speaking_speed: number }>(
+        `SELECT push_level,speaking_speed FROM identities WHERE id=$1`,
+        [viewerId],
+      )
     ).rows[0];
     const links = await this.database.query<{
       provider: 'google' | 'github';
@@ -9993,12 +8800,7 @@ export class PhoneService {
       ...(id.avatar ? { avatar: id.avatar } : {}),
       ...(id.face ? { face: id.face } : {}),
       pushLevel: preferences?.push_level ?? 'attention',
-      speakingSpeed:
-        preferences?.speaking_speed === 1.3
-          ? (1.3 as const)
-          : preferences?.speaking_speed === 1.5
-            ? (1.5 as const)
-            : (1.15 as const),
+      speakingSpeed: preferences?.speaking_speed === 1.3 ? 1.3 as const : preferences?.speaking_speed === 1.5 ? 1.5 as const : 1.15 as const,
     };
   }
   private async claimManagedHandle(viewerId: string, handle: string) {
@@ -10130,11 +8932,7 @@ export class PhoneService {
     });
     return { accepted: true };
   }
-  private async reportUpdate(
-    input: Input<'reportRunningUpdate'>,
-    viewerId: string,
-    familyId?: string,
-  ) {
+  private async reportUpdate(input: Input<'reportRunningUpdate'>, viewerId: string, familyId?: string) {
     if (input.platform && !['ios', 'android', 'macos', 'windows', 'linux'].includes(input.platform))
       throw new Error('invalid platform');
     if (typeof input.deviceId !== 'string') throw new Error('invalid device');
@@ -10146,10 +8944,7 @@ export class PhoneService {
     );
     // Remember this installation on the sign-in family that reported it.
     // A browser session never reaches here, so it cannot inherit the receipt.
-    if (
-      familyId &&
-      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(familyId)
-    ) {
+    if (familyId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(familyId)) {
       await this.database.query(
         `INSERT INTO phone_update_devices(family_id,identity_id,device_id)
          VALUES($1::uuid,$2,$3)
@@ -10212,11 +9007,7 @@ export class PhoneService {
     )
       throw new Error('agent removal access denied');
   }
-  private async requireWorkspaceMember(
-    workspaceId: string,
-    identityId: string,
-    database = this.database,
-  ) {
+  private async requireWorkspaceMember(workspaceId: string, identityId: string, database = this.database) {
     const row = await database.query(
       `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
        AND identity_id=$2 AND removed_at IS NULL`,
@@ -10321,15 +9112,7 @@ export class PhoneService {
     if (query.length > 80) throw new Error('App search is too long');
     if (!query) {
       const view = await this.readWorkbench({ workspaceId: '' }, viewerId);
-      return view.companies!.suggestions.map((item) => ({
-        appKey: item.appKey,
-        name: item.name,
-        domain: item.domain,
-        description: item.purpose,
-        company: item,
-        mark: item.logo,
-        logo: item.logo.kind === 'image' ? item.logo.uri : undefined,
-      }));
+      return view.companies!.suggestions.map(item => ({ appKey: item.appKey, name: item.name, domain: item.domain, description: item.purpose, company: item, mark: item.logo, logo: item.logo.kind === 'image' ? item.logo.uri : undefined }));
     }
     const company = companyForMcp(query);
     const companyKey = company ? `company:${company.id}` : undefined;
@@ -10341,46 +9124,25 @@ export class PhoneService {
     ]);
     this.connectorDiscovery.warm(searchKey, viewerId, cached.get(searchKey));
     if (companyKey) this.connectorDiscovery.warm(companyKey, viewerId, cached.get(companyKey));
-    const hosted = companyKey ? (cached.get(companyKey)?.manifests ?? []) : [];
+    const hosted = companyKey ? cached.get(companyKey)?.manifests ?? [] : [];
     const listed = cached.get(searchKey)?.manifests ?? [];
     const manifests = [...hosted, ...listed];
-    const official =
-      company &&
-      manifests.some(
-        (manifest) =>
-          registryServerAppKey(manifest.name) === appIdentity(company.domain!)?.key &&
-          company.hosts.includes(registryServerDomain(manifest.name) ?? '') &&
-          manifest.remotes.some((remote) => remote.type === 'streamable-http') &&
-          !manifest.secretInputNames.length,
-      );
-    const registryResults = manifests.flatMap((manifest) => {
-      if (official && registryServerAppKey(manifest.name) !== appIdentity(company.domain!)?.key)
-        return [];
+    const official = company && manifests.some(manifest =>
+      registryServerAppKey(manifest.name) === appIdentity(company.domain!)?.key
+      && company.hosts.includes(registryServerDomain(manifest.name) ?? '')
+      && manifest.remotes.some(remote => remote.type === 'streamable-http') && !manifest.secretInputNames.length);
+    const registryResults = manifests.flatMap(manifest => {
+      if (official && registryServerAppKey(manifest.name) !== appIdentity(company.domain!)?.key) return [];
       const appKey = registryServerAppKey(manifest.name);
       const domain = registryServerDomain(manifest.name);
-      if (
-        !appKey ||
-        !domain ||
-        manifest.secretInputNames.length ||
-        !manifest.remotes.some((remote) => remote.type === 'streamable-http')
-      )
-        return [];
+      if (!appKey || !domain || manifest.secretInputNames.length ||
+          !manifest.remotes.some(remote => remote.type === 'streamable-http')) return [];
       // Namespace ownership, never title/website text, identifies the publisher.
-      const known = COMPANY_REGISTRY.find(
-        (company) => appIdentity(company.domain ?? '')?.key === appKey,
-      );
+      const known = COMPANY_REGISTRY.find(company => appIdentity(company.domain ?? '')?.key === appKey);
       if (known && !known.hosts.includes(domain)) return [];
       const publisher = companyForMcp(domain);
-      return [
-        {
-          appKey,
-          name: publisher?.name ?? domain,
-          domain,
-          description: manifest.description,
-          registryServerName: manifest.name,
-          registryVersion: manifest.version,
-        },
-      ];
+      return [{ appKey, name: publisher?.name ?? domain, domain,
+        description: manifest.description, registryServerName: manifest.name, registryVersion: manifest.version }];
     });
     const composioResults = rows.flatMap((row) => {
       const identity = appIdentity(row.name);
@@ -10397,69 +9159,39 @@ export class PhoneService {
       ];
     });
     const baseline = companySearchResults(view, composioResults, query, this.publicOrigin);
-    const enriched = companySearchResults(
-      view,
-      [...registryResults, ...composioResults],
-      query,
-      this.publicOrigin,
-    );
-    const rowKey = (row: (typeof enriched)[number]) =>
-      row.companyId ?? row.company?.providerId ?? row.appKey;
+    const enriched = companySearchResults(view, [...registryResults, ...composioResults], query, this.publicOrigin);
+    const rowKey = (row: typeof enriched[number]) => row.companyId ?? row.company?.providerId ?? row.appKey;
     const base = new Map(baseline.map((row, index) => [rowKey(row), { row, index }]));
     // Keep existing positions and visible copy; only the hidden connection choice changes.
-    return enriched
-      .map((row) => {
-        const original = base.get(rowKey(row))?.row;
-        return original && !row.company?.registryServerName
-          ? { ...row, name: original.name, description: original.description, mark: original.mark }
-          : row;
-      })
-      .sort(
-        (a, b) =>
-          (base.get(rowKey(a))?.index ?? baseline.length + (a.registryServerName ? 0 : 1)) -
-          (base.get(rowKey(b))?.index ?? baseline.length + (b.registryServerName ? 0 : 1)),
-      );
+    return enriched.map(row => {
+      const original = base.get(rowKey(row))?.row;
+      return original && !row.company?.registryServerName ? { ...row, name: original.name, description: original.description, mark: original.mark } : row;
+    }).sort((a, b) => (base.get(rowKey(a))?.index ?? baseline.length + (a.registryServerName ? 0 : 1))
+      - (base.get(rowKey(b))?.index ?? baseline.length + (b.registryServerName ? 0 : 1)));
   }
 
   /** Project the end cause without changing the stored System card or its wording. */
-  private async decorateVoiceCallReasons(
-    roomId: string,
-    messages: RoomViewMessage[],
-  ): Promise<RoomViewMessage[]> {
-    const ids = messages.flatMap((message) =>
-      message.voiceCall?.endedAt ? [message.voiceCall.id] : [],
-    );
+  private async decorateVoiceCallReasons(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+    const ids = messages.flatMap(message => message.voiceCall?.endedAt ? [message.voiceCall.id] : []);
     if (!ids.length) return messages;
     const rows = await this.database.query<{ id: string; end_reason: string | null }>(
-      `SELECT id,end_reason FROM voice_calls WHERE room_id=$1 AND id=ANY($2::uuid[]) AND ended_at IS NOT NULL`,
-      [roomId, ids],
-    );
-    const silent = new Set(
-      rows.rows.filter((row) => row.end_reason === 'silence').map((row) => row.id),
-    );
-    return messages.map((message) =>
-      message.voiceCall && silent.has(message.voiceCall.id)
-        ? { ...message, voiceCall: { ...message.voiceCall, endReason: 'silence' as const } }
-        : message,
-    );
+      `SELECT id,end_reason FROM voice_calls WHERE room_id=$1 AND id=ANY($2::uuid[]) AND ended_at IS NOT NULL`, [roomId, ids]);
+    const silent = new Set(rows.rows.filter(row => row.end_reason === 'silence').map(row => row.id));
+    return messages.map(message => message.voiceCall && silent.has(message.voiceCall.id)
+      ? { ...message, voiceCall: { ...message.voiceCall, endReason: 'silence' as const } } : message);
   }
 
   private async decorateApprovalSources(messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
-    const ids = [
-      ...new Set(
-        messages.flatMap((message) => {
-          const card = message.grantRequest ?? message.squireApproval;
-          return card?.sourceMessageId ? [card.sourceMessageId] : [];
-        }),
-      ),
-    ];
+    const ids = [...new Set(messages.flatMap(message => {
+      const card = message.grantRequest ?? message.squireApproval;
+      return card?.sourceMessageId ? [card.sourceMessageId] : [];
+    }))];
     if (!ids.length) return messages;
     const rows = await this.database.query<{ id: string; room_id: string }>(
-      `SELECT id,room_id FROM messages WHERE id=ANY($1::text[]) AND deleted_at IS NULL`,
-      [ids],
+      `SELECT id,room_id FROM messages WHERE id=ANY($1::text[]) AND deleted_at IS NULL`, [ids],
     );
-    const rooms = new Map(rows.rows.map((row) => [row.id, row.room_id]));
-    return messages.map((message) => {
+    const rooms = new Map(rows.rows.map(row => [row.id, row.room_id]));
+    return messages.map(message => {
       const card = message.grantRequest ?? message.squireApproval;
       const sourceRoomId = card?.sourceMessageId ? rooms.get(card.sourceMessageId) : undefined;
       if (!sourceRoomId || sourceRoomId === card?.sourceRoomId) return message;
@@ -10471,37 +9203,24 @@ export class PhoneService {
   }
 
   /** Project historical Room openings without private objectives or lifecycle outcomes. */
-  private async decorateCornerOpenCards(
-    roomId: string,
-    messages: RoomViewMessage[],
-  ): Promise<RoomViewMessage[]> {
+  private async decorateCornerOpenCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
     messages = await this.decorateApprovalIdentities(messages);
     messages = await this.decorateApprovalSources(messages);
     messages = await this.decorateVoiceCallReasons(roomId, messages);
-    const cornerIds = [
-      ...new Set(
-        messages.flatMap((message) => {
-          const card = message.daemonFact;
-          return card &&
-            ['corner-open', 'corner-complete'].includes(card.type) &&
-            UUID_PATTERN.test(card.cornerId)
-            ? [card.cornerId]
-            : [];
-        }),
-      ),
-    ];
+    const cornerIds = [...new Set(messages.flatMap((message) => {
+      const card = message.daemonFact;
+      return card && ['corner-open', 'corner-complete'].includes(card.type) && UUID_PATTERN.test(card.cornerId)
+        ? [card.cornerId] : [];
+    }))];
     if (!cornerIds.length) return messages;
     const rows = await this.database.query<{
-      id: string;
-      name: string;
-      message_id: string;
-      opening_name: string | null;
+      id: string; name: string; message_id: string; opening_name: string | null;
     }>(
       `SELECT corner.id,corner.name,message.id message_id,message.card->>'name' opening_name
        FROM rooms corner JOIN messages message
          ON message.room_id=$2 AND message.card->>'cornerId'=corner.id::text
        WHERE corner.id=ANY($1::uuid[]) AND corner.parent_id=$2 AND message.id=ANY($3::text[])`,
-      [cornerIds, roomId, messages.map((message) => message.id)],
+      [cornerIds, roomId, messages.map(message => message.id)],
     );
     const current = new Map(rows.rows.map((row) => [row.message_id, row]));
     return messages.map((message) => {
@@ -10510,49 +9229,25 @@ export class PhoneService {
       if (!corner || !card) return message;
       // The Room's opening record is historical. Older servers settled it in
       // storage; project its original opening state without rewriting the row.
-      if (
-        card.type !== 'corner-open' &&
-        message.systemEvent?.kind !== 'corner-opened' &&
-        !card.sourceMessageId
-      )
-        return message;
+      if (card.type !== 'corner-open' && message.systemEvent?.kind !== 'corner-opened' && !card.sourceMessageId) return message;
       const { outcome: _outcome, pullRequest: _pullRequest, ...opening } = card;
-      return {
-        ...message,
-        daemonFact: {
-          ...opening,
-          name: corner.opening_name ?? corner.name,
-          objective: corner.opening_name ?? corner.name,
-          type: 'corner-open' as const,
-        },
-      };
+      return { ...message, daemonFact: { ...opening, name: corner.opening_name ?? corner.name, objective: corner.opening_name ?? corner.name, type: 'corner-open' as const } };
     });
   }
 
-  private async decorateMessageCards(
-    roomId: string,
-    messages: RoomViewMessage[],
-    viewerId: string,
-  ): Promise<RoomViewMessage[]> {
-    messages = messages.filter(
-      (message) => !message.onboarding || message.onboarding.requesterId === viewerId,
-    );
+  private async decorateMessageCards(roomId: string, messages: RoomViewMessage[], viewerId: string): Promise<RoomViewMessage[]> {
+    messages = messages.filter(message => !message.onboarding || message.onboarding.requesterId === viewerId);
     return this.decorateCornerOpenCards(roomId, await this.decorateAppSignInCards(messages));
   }
 
   /** Approval snapshots can outlive an avatar. Resolve all their identities in one read. */
-  private async decorateApprovalIdentities(
-    messages: RoomViewMessage[],
-  ): Promise<RoomViewMessage[]> {
+  private async decorateApprovalIdentities(messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
     const ids = new Set<string>();
     for (const message of messages) {
       const card = message.grantRequest ?? message.squireApproval;
       if (!card) continue;
-      for (const person of [
-        card.agent,
-        card.owner,
-        ...('requester' in card ? [card.requester] : []),
-      ]) {
+      for (const person of [card.agent, card.owner,
+        ...('requester' in card ? [card.requester] : [])]) {
         if (person?.pubkey) ids.add(person.pubkey);
       }
     }
@@ -10561,37 +9256,25 @@ export class PhoneService {
       `SELECT id,kind,name,handle,avatar,face_id FROM identities WHERE id=ANY($1::text[])`,
       [[...ids]],
     );
-    const current = new Map(rows.rows.map((row) => [row.id, identity(row, this.publicOrigin)]));
+    const current = new Map(rows.rows.map(row => [row.id, identity(row, this.publicOrigin)]));
     const resolve = (person: RoomViewIdentity): RoomViewIdentity =>
-      !person
-        ? person
-        : (current.get(person.pubkey) ?? {
-            ...person,
-            ...(person.avatar ? { avatar: assetUrl(person.avatar, this.publicOrigin) } : {}),
-          });
-    return messages.map((message) => ({
+      !person ? person : current.get(person.pubkey) ?? {
+        ...person,
+        ...(person.avatar ? { avatar: assetUrl(person.avatar, this.publicOrigin) } : {}),
+      };
+    return messages.map(message => ({
       ...message,
-      ...(message.grantRequest
-        ? {
-            grantRequest: {
-              ...message.grantRequest,
-              agent: resolve(message.grantRequest.agent),
-              owner: resolve(message.grantRequest.owner),
-              requester: resolve(message.grantRequest.requester),
-            },
-          }
-        : {}),
-      ...(message.squireApproval
-        ? {
-            squireApproval: {
-              ...message.squireApproval,
-              agent: resolve(message.squireApproval.agent),
-              ...(message.squireApproval.owner
-                ? { owner: resolve(message.squireApproval.owner) }
-                : {}),
-            },
-          }
-        : {}),
+      ...(message.grantRequest ? { grantRequest: {
+        ...message.grantRequest,
+        agent: resolve(message.grantRequest.agent),
+        owner: resolve(message.grantRequest.owner),
+        requester: resolve(message.grantRequest.requester),
+      } } : {}),
+      ...(message.squireApproval ? { squireApproval: {
+        ...message.squireApproval,
+        agent: resolve(message.squireApproval.agent),
+        ...(message.squireApproval.owner ? { owner: resolve(message.squireApproval.owner) } : {}),
+      } } : {}),
     }));
   }
 
@@ -10624,14 +9307,12 @@ export class PhoneService {
   ): Promise<Output<'readConnectorInstall'>> {
     if (input.connectorId === 'trusty-squire' || squireMachineId(input.connectorId)) {
       const machineId = squireMachineId(input.connectorId);
-      const agent = (
-        await this.database.query<{ agent_id: string }>(
-          `SELECT agent_id FROM agents WHERE owner_id=$1
+      const agent = (await this.database.query<{ agent_id: string }>(
+        `SELECT agent_id FROM agents WHERE owner_id=$1
           AND ($2::text IS NULL OR COALESCE(machine_id,agent_id)=$2)
         ORDER BY (squire_work->>'install') DESC NULLS LAST,updated_at DESC LIMIT 1`,
-          [viewerId, machineId ?? null],
-        )
-      ).rows[0];
+        [viewerId, machineId ?? null],
+      )).rows[0];
       if (!agent) {
         if (machineId) throw new Error('Squire machine not found (access denied)');
         return null;
@@ -10687,25 +9368,15 @@ export class PhoneService {
     input: Input<'readWorkbench'>,
     viewerId: string,
   ): Promise<Output<'readWorkbench'>> {
-    const linkAccount = this.pureProjection
-      ? (
-          await this.database.query<{ connected: boolean; pending: boolean; ineligible: boolean }>(
-            `SELECT sealed_grant IS NOT NULL connected,(state IS NOT NULL AND attempt_expires_at>now()) pending,ineligible
-       FROM link_oauth_accounts WHERE owner_identity_id=$1`,
-            [viewerId],
-          )
-        ).rows[0]
-      : await this.linkWallet?.status(viewerId);
-    if (input.refreshVault && !this.pureProjection) {
-      const machines = (
-        await this.database.query<{ machine_id: string }>(
-          `SELECT DISTINCT COALESCE(machine_id,agent_id) machine_id FROM agents WHERE owner_id=$1`,
-          [viewerId],
-        )
-      ).rows;
+    const linkAccount = this.pureProjection?(await this.database.query<{connected:boolean;pending:boolean;ineligible:boolean}>(
+      `SELECT sealed_grant IS NOT NULL connected,(state IS NOT NULL AND attempt_expires_at>now()) pending,ineligible
+       FROM link_oauth_accounts WHERE owner_identity_id=$1`,[viewerId])).rows[0]:await this.linkWallet?.status(viewerId);
+    if (input.refreshVault&&!this.pureProjection) {
+      const machines = (await this.database.query<{ machine_id: string }>(
+        `SELECT DISTINCT COALESCE(machine_id,agent_id) machine_id FROM agents WHERE owner_id=$1`, [viewerId],
+      )).rows;
       await this.database.transaction(async (db) => {
-        for (const machine of machines)
-          await queueOwnerSquireWork(db, viewerId, machine.machine_id, 'sync');
+        for (const machine of machines) await queueOwnerSquireWork(db, viewerId, machine.machine_id, 'sync');
       });
     }
     const connectors = (
@@ -10831,9 +9502,8 @@ export class PhoneService {
 
     // Squire API rows point at vault credentials. They remain installed for
     // agent use, but the person's Connectors page presents them under Keys.
-    const apps = (
-      await readOwnerApps(this.database, viewerId, this.composio, { pure: this.pureProjection })
-    ).filter((app) => app.transport !== 'squire-api' && app.hasConnected);
+    const apps = (await readOwnerApps(this.database, viewerId, this.composio,{pure:this.pureProjection}))
+      .filter((app) => app.transport !== 'squire-api' && app.hasConnected);
     const catalogKeys = new Set([
       'gmail',
       'googlecalendar',
@@ -10851,7 +9521,7 @@ export class PhoneService {
         .filter((app) => app.transport === 'composio')
         .map((app) => composioToolkitForApp(app.appKey)),
     ]);
-    const appCatalog = this.pureProjection ? [] : await this.readAppCatalog(catalogKeys);
+    const appCatalog = this.pureProjection?[]:await this.readAppCatalog(catalogKeys);
     const appMetadata = new Map(appCatalog.map((item) => [item.appKey, item]));
     const uniqueConnections = uniqueVaultConnections(connections);
     const walletRow = (
@@ -10860,38 +9530,22 @@ export class PhoneService {
         delegation_expires_at: Date | null;
         delegation_standing: boolean;
       }>(
-        this.pureProjection
-          ? `SELECT to_timestamp((value->>'createdAt')::double precision) created_at,
+        this.pureProjection?`SELECT to_timestamp((value->>'createdAt')::double precision) created_at,
           to_timestamp((value->>'expiresAt')::double precision) delegation_expires_at,(value->>'standing')::boolean delegation_standing
-          FROM owner_projection_cells WHERE owner_id=$1 AND cell='wallet-summary'`
-          : `SELECT created_at,delegation_expires_at,delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
+          FROM owner_projection_cells WHERE owner_id=$1 AND cell='wallet-summary'`:
+          `SELECT created_at,delegation_expires_at,delegation_standing FROM wallet_bindings WHERE identity_id=$1`,
         [viewerId],
       )
     ).rows[0];
-    const aiClients = (
-      await this.database.query<{
-        client_id: string;
-        name: string;
-        logo: string | null;
-        connected_at: Date;
-        last_used_at: Date | null;
-      }>(
-        `SELECT c.client_id,app.name,app.logo,c.connected_at,c.last_used_at FROM rooms_mcp_connections c
+    const aiClients = (await this.database.query<{
+      client_id: string; name: string; logo: string | null; connected_at: Date; last_used_at: Date | null;
+    }>(`SELECT c.client_id,app.name,app.logo,c.connected_at,c.last_used_at FROM rooms_mcp_connections c
       JOIN rooms_mcp_clients app ON app.id=c.client_id WHERE c.identity_id=$1 AND c.revoked_at IS NULL
       AND EXISTS(SELECT 1 FROM rooms_mcp_families f WHERE f.client_id=c.client_id AND f.identity_id=c.identity_id AND f.revoked_at IS NULL)
-      ORDER BY c.connected_at DESC LIMIT 100`,
-        [viewerId],
-      )
-    ).rows;
+      ORDER BY c.connected_at DESC LIMIT 100`, [viewerId])).rows;
     const view: Output<'readWorkbench'> = {
-      aiClients: aiClients.map((c) => ({
-        clientId: c.client_id,
-        name: c.name,
-        ...(c.logo ? { logo: c.logo } : {}),
-        scopes: [...MCP_SCOPES],
-        connectedAt: seconds(c.connected_at),
-        lastUsedAt: c.last_used_at ? seconds(c.last_used_at) : null,
-      })),
+      aiClients: aiClients.map(c => ({ clientId: c.client_id, name: c.name, ...(c.logo ? { logo: c.logo } : {}), scopes: [...MCP_SCOPES],
+        connectedAt: seconds(c.connected_at), lastUsedAt: c.last_used_at ? seconds(c.last_used_at) : null })),
       workspaceId: input.workspaceId,
       ...(linkAccount ? { linkAccount } : {}),
       catalog: connectorCatalog(),
@@ -10914,19 +9568,12 @@ export class PhoneService {
         name: row.name,
         online: row.online,
         squireEligible: true,
-        ...(row.squire_report || row.reconnecting || row.google_session_expired || row.squire_error
-          ? {
-              squire: {
-                ...(row.squire_report ?? { status: 'not-added' as const, reportedAt: 0 }),
-                ...(row.squire_error
-                  ? { status: 'error' as const, errorMessage: row.squire_error }
-                  : {}),
-                reconnecting: row.reconnecting,
-                googleSessionExpired: row.google_session_expired ?? false,
-                ...(row.signed_in_as ? { signedInAs: row.signed_in_as } : {}),
-              },
-            }
-          : {}),
+        ...(row.squire_report || row.reconnecting || row.google_session_expired || row.squire_error ? {
+          squire: { ...(row.squire_report ?? { status: 'not-added' as const, reportedAt: 0 }),
+            ...(row.squire_error ? { status: 'error' as const, errorMessage: row.squire_error } : {}),
+            reconnecting: row.reconnecting, googleSessionExpired: row.google_session_expired ?? false,
+            ...(row.signed_in_as ? { signedInAs: row.signed_in_as } : {}) },
+        } : {}),
       })),
       apps: apps.map((app) => {
         const metadata = appMetadata.get(composioToolkitForApp(app.appKey));
@@ -10976,27 +9623,11 @@ export class PhoneService {
               (field): field is string => typeof field === 'string',
             )
           : [],
-        loginHosts: Array.isArray(row.connection_metadata.loginHosts)
-          ? row.connection_metadata.loginHosts.filter((h): h is string => typeof h === 'string')
-          : [],
-        keyName:
-          typeof row.connection_metadata.keyName === 'string'
-            ? row.connection_metadata.keyName
-            : undefined,
-        credentialKind:
-          typeof row.connection_metadata.credentialKind === 'string'
-            ? row.connection_metadata.credentialKind
-            : undefined,
-        expiresAt:
-          typeof row.connection_metadata.expiresAt === 'number'
-            ? row.connection_metadata.expiresAt
-            : undefined,
-        faviconDomain:
-          companyHost(
-            typeof row.connection_metadata.faviconDomain === 'string'
-              ? row.connection_metadata.faviconDomain
-              : undefined,
-          ) ?? faviconDomain(row.hosts ?? []),
+        loginHosts: Array.isArray(row.connection_metadata.loginHosts) ? row.connection_metadata.loginHosts.filter((h): h is string => typeof h === 'string') : [],
+        keyName: typeof row.connection_metadata.keyName === 'string' ? row.connection_metadata.keyName : undefined,
+        credentialKind: typeof row.connection_metadata.credentialKind === 'string' ? row.connection_metadata.credentialKind : undefined,
+        expiresAt: typeof row.connection_metadata.expiresAt === 'number' ? row.connection_metadata.expiresAt : undefined,
+        faviconDomain: companyHost(typeof row.connection_metadata.faviconDomain === 'string' ? row.connection_metadata.faviconDomain : undefined) ?? faviconDomain(row.hosts ?? []),
         state: row.state,
         ...(row.last_synced_at
           ? {
@@ -11012,73 +9643,36 @@ export class PhoneService {
             : seconds(row.created_at),
       })),
     };
-    const ownedCompanies = new Set([
-      ...view.connections.map((key) => resolveCompany(key).id),
-      ...(view.apps ?? [])
-        .filter((app) => app.transport === 'squire-api')
-        .map((app) => resolveCompany(app).id),
-    ]);
+    const ownedCompanies = new Set([...view.connections.map(key => resolveCompany(key).id),
+      ...(view.apps ?? []).filter(app => app.transport === 'squire-api').map(app => resolveCompany(app).id)]);
     const oauthApps = new Set<string>();
-    if (!this.pureProjection && this.composio)
-      await Promise.all(
-        COMPANY_APPS.filter((app) =>
-          ownedCompanies.has(resolveCompany({ domain: app.domain }).id),
-        ).map(async (app) => {
-          try {
-            if (await this.composio!.supportsOAuth(composioToolkitForApp(app.appKey)))
-              oauthApps.add(app.appKey);
-          } catch {
-            /* Keep existing routes available when provider discovery is unavailable. */
-          }
-        }),
-      );
-    const companies = projectWorkbenchCompanies(
-      view,
-      this.publicOrigin,
-      this.pureProjection ? new Map<string, number>() : await companyPopularity(this.database),
-      undefined,
-      oauthApps,
-    );
-    const keys = companies.rows.flatMap((company) => {
+    if (!this.pureProjection&&this.composio) await Promise.all(COMPANY_APPS.filter(app => ownedCompanies.has(resolveCompany({ domain: app.domain }).id))
+      .map(async app => {
+        try {
+          if (await this.composio!.supportsOAuth(composioToolkitForApp(app.appKey))) oauthApps.add(app.appKey);
+        } catch { /* Keep existing routes available when provider discovery is unavailable. */ }
+      }));
+    const companies = projectWorkbenchCompanies(view, this.publicOrigin, this.pureProjection?new Map<string,number>():await companyPopularity(this.database), undefined, oauthApps);
+    const keys = companies.rows.flatMap(company => {
       const known = companyForMcp(company.domain ?? company.id);
       return known ? [`company:${known.id}`, `search:${known.id}`] : [];
     });
-    const cached = await this.connectorDiscovery.read(this.pureProjection ? [] : keys);
-    const rows = companies.rows.map((company) => {
-      if (company.kind !== 'company' || company.items.some((item) => item.kind === 'connection'))
-        return company;
+    const cached = await this.connectorDiscovery.read(this.pureProjection?[]:keys);
+    const rows = companies.rows.map(company => {
+      if (company.kind !== 'company' || company.items.some(item => item.kind === 'connection')) return company;
       const known = companyForMcp(company.domain ?? company.id);
       if (!known) return company;
       const cacheKey = `company:${known.id}`;
-      if (!this.pureProjection)
-        this.connectorDiscovery.warm(cacheKey, viewerId, cached.get(cacheKey));
-      const manifest = [
-        ...(cached.get(cacheKey)?.manifests ?? []),
-        ...(cached.get(`search:${known.id}`)?.manifests ?? []),
-      ].find(
-        (manifest) =>
-          registryServerAppKey(manifest.name) === appIdentity(known.domain!)?.key &&
-          known.hosts.includes(registryServerDomain(manifest.name) ?? '') &&
-          !manifest.secretInputNames.length &&
-          manifest.remotes.some((remote) => remote.type === 'streamable-http'),
-      );
+      if(!this.pureProjection)this.connectorDiscovery.warm(cacheKey, viewerId, cached.get(cacheKey));
+      const manifest = [...cached.get(cacheKey)?.manifests ?? [], ...cached.get(`search:${known.id}`)?.manifests ?? []]
+        .find(manifest => registryServerAppKey(manifest.name) === appIdentity(known.domain!)?.key
+          && known.hosts.includes(registryServerDomain(manifest.name) ?? '') && !manifest.secretInputNames.length
+          && manifest.remotes.some(remote => remote.type === 'streamable-http'));
       if (!manifest) return company;
-      return {
-        ...company,
-        mcp: {
-          appKey: registryServerAppKey(manifest.name)!,
-          appName: company.name,
-          name: company.name,
-          purpose: manifest.description ?? '',
-          providerId: company.id,
-          providerName: company.name,
-          domain: company.domain,
-          logo: company.logo,
-          registryServerName: manifest.name,
-          registryVersion: manifest.version,
-          flow: 'app' as const,
-        },
-      };
+      return { ...company, mcp: { appKey: registryServerAppKey(manifest.name)!, appName: company.name,
+        name: company.name, purpose: manifest.description ?? '', providerId: company.id, providerName: company.name,
+        domain: company.domain, logo: company.logo, registryServerName: manifest.name,
+        registryVersion: manifest.version, flow: 'app' as const } };
     });
     return { ...view, companies: { ...companies, rows } };
   }
@@ -11165,56 +9759,35 @@ export class PhoneService {
     // official sign-in to new connections, but it must not migrate an
     // existing Composio or Squire connection implicitly.
     const hasRoute = await hasExistingAppRoute(this.database, viewerId, identity.key);
-    const existingRoute = (
-      await this.database.query<{ transport: string }>(
-        `SELECT transport FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2 AND state='active'`,
-        [viewerId, identity.key],
-      )
-    ).rows[0];
-    if (
-      (input.registryServerName || input.registryVersion) &&
-      (!hasRoute || !existingRoute || existingRoute.transport === 'squire-api')
-    ) {
-      if (
-        !input.registryServerName ||
-        !input.registryVersion ||
-        registryServerAppKey(input.registryServerName) !== identity.key
-      )
+    const existingRoute = (await this.database.query<{ transport: string }>(
+      `SELECT transport FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2 AND state='active'`,
+      [viewerId, identity.key],
+    )).rows[0];
+    if ((input.registryServerName || input.registryVersion) &&
+        (!hasRoute || !existingRoute || existingRoute.transport === 'squire-api')) {
+      if (!input.registryServerName || !input.registryVersion ||
+          registryServerAppKey(input.registryServerName) !== identity.key)
         throw new Error('Select the official sign-in from search results');
-      if (!isAppRegistryPublisher(input.registryServerName, app))
-        throw new Error('Select the official sign-in from search results');
-      const manifest = await this.mcpRegistry.selected(
-        input.registryServerName,
-        input.registryVersion,
-      );
-      if (
-        !manifest ||
-        !manifest.remotes.some((remote) => remote.type === 'streamable-http') ||
-        manifest.secretInputNames.length > 0
-      )
+      if (!isAppRegistryPublisher(input.registryServerName, app)) throw new Error('Select the official sign-in from search results');
+      const manifest = await this.mcpRegistry.selected(input.registryServerName, input.registryVersion);
+      if (!manifest || !manifest.remotes.some((remote) => remote.type === 'streamable-http') ||
+          manifest.secretInputNames.length > 0)
         throw new Error('The official sign-in is unavailable');
       const { matched, machineId, ws } = await this.resolveViewerHelper(
-        input.helperAgentId,
-        viewerId,
+        input.helperAgentId, viewerId,
       );
       const dm = await this.resolveDirectMessage(
-        { workspaceId: ws.workspace_id, participantId: matched.agent_id },
-        viewerId,
+        { workspaceId: ws.workspace_id, participantId: matched.agent_id }, viewerId,
       );
       const row = await this.database.transaction(async (database) => {
         // Serialize with automatic route selection; only this person's explicit
         // verified MCP choice may replace a Squire API app. Keys are untouched.
-        await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
-          `app:${viewerId}:${identity.key}`,
-        ]);
-        const current = (
-          await database.query<{ transport: string }>(
-            `SELECT transport FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2 AND state='active' FOR UPDATE`,
-            [viewerId, identity.key],
-          )
-        ).rows[0];
-        if (current && current.transport !== 'squire-api')
-          throw new Error('This app already has a connection');
+        await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`app:${viewerId}:${identity.key}`]);
+        const current = (await database.query<{ transport: string }>(
+          `SELECT transport FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2 AND state='active' FOR UPDATE`,
+          [viewerId, identity.key],
+        )).rows[0];
+        if (current && current.transport !== 'squire-api') throw new Error('This app already has a connection');
         const connector = await armRegistryConnector(database, {
           workspaceId: ws.workspace_id,
           ownerId: viewerId,
@@ -11224,75 +9797,43 @@ export class PhoneService {
           installRoomId: dm.id,
           installCommandId: null,
         });
-        if (connector.versionConflict)
-          throw new Error('This sign-in needs an update before reconnecting');
+        if (connector.versionConflict) throw new Error('This sign-in needs an update before reconnecting');
         await database.query(
           `UPDATE workspace_apps SET transport='registry-mcp',route='registry-mcp',connector_id=$3::uuid,
              machine_id=$4,display_name=$5,domain=$6,state='active',updated_at=now()
            WHERE owner_identity_id=$1 AND app_key=$2 AND transport='squire-api'`,
-          [
-            viewerId,
-            identity.key,
-            connector.id,
-            machineId,
-            manifest.title ?? identity.key,
-            registryServerDomain(manifest.name) ?? null,
-          ],
+          [viewerId, identity.key, connector.id, machineId, manifest.title ?? identity.key,
+            registryServerDomain(manifest.name) ?? null],
         );
-        const app = (
-          await database.query<{ id: string }>(
-            `SELECT id FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2`,
-            [viewerId, identity.key],
-          )
-        ).rows[0];
-        if (app)
-          await database.query(
-            `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
+        const app = (await database.query<{ id: string }>(
+          `SELECT id FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2`, [viewerId, identity.key],
+        )).rows[0];
+        if (app) await database.query(
+          `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
            VALUES ($1,$2,'registry-mcp','registry-mcp','person selected verified company MCP',$3)`,
-            [randomUUID(), app.id, viewerId],
-          );
+          [randomUUID(), app.id, viewerId],
+        );
         return connector;
       });
       if (row.versionConflict) throw new Error('This sign-in needs an update before reconnecting');
       await backfillRegistryApps(this.database, row.id);
       if (row.created) await notifyConnectorHelper(this.database, row.id);
-      const installed = (
-        await this.database.query<{ id: string }>(
-          `SELECT id FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2
+      const installed = (await this.database.query<{ id: string }>(
+        `SELECT id FROM workspace_apps WHERE owner_identity_id=$1 AND app_key=$2
            AND transport='registry-mcp' AND connector_id=$3::uuid`,
-          [viewerId, identity.key, row.id],
-        )
-      ).rows[0];
+        [viewerId, identity.key, row.id],
+      )).rows[0];
       if (!installed) throw new Error('The official sign-in could not be attached');
       // Wait outside the transaction for the helper's existing OAuth ceremony.
       // The phone keeps one request open; it never polls connector state.
-      const ready =
-        row.sign_in?.url || row.status === 'connected'
-          ? row
-          : await waitForConnection(
-              async () => {
-                const current = (
-                  await this.database.query<{
-                    status: string;
-                    sign_in: ConnectorStatus['signIn'] | null;
-                    status_error: string | null;
-                  }>(
-                    `SELECT status,sign_in,status_error FROM workspace_connectors WHERE id=$1::uuid AND owner_identity_id=$2`,
-                    [row.id, viewerId],
-                  )
-                ).rows[0];
-                return current &&
-                  (current.sign_in?.url ||
-                    current.status === 'connected' ||
-                    current.status === 'error')
-                  ? current
-                  : undefined;
-              },
-              15_000,
-              { principal: 'connector', operation: 'status', commandId: row.id },
-            );
-      if (ready?.status === 'error')
-        throw new Error('The MCP connection could not start. Reconnect to retry.');
+      const ready = row.sign_in?.url || row.status === 'connected' ? row : await waitForConnection(async () => {
+        const current = (await this.database.query<{ status: string; sign_in: ConnectorStatus['signIn'] | null; status_error: string | null }>(
+          `SELECT status,sign_in,status_error FROM workspace_connectors WHERE id=$1::uuid AND owner_identity_id=$2`,
+          [row.id, viewerId],
+        )).rows[0];
+        return current && (current.sign_in?.url || current.status === 'connected' || current.status === 'error') ? current : undefined;
+      }, 15_000, { principal: 'connector', operation: 'status', commandId: row.id });
+      if (ready?.status === 'error') throw new Error('The MCP connection could not start. Reconnect to retry.');
       return {
         appId: installed.id,
         status: ready?.status === 'connected' ? 'connected' : 'connecting',
@@ -11398,14 +9939,10 @@ export class PhoneService {
         for (const card of cards) {
           const source = await settleSystemCard(database, card.id, {
             authorId: viewerId,
-            subject: {
-              kind: 'person',
-              id: viewerId,
-              name: systemMessage('phone-service.a-member'),
-            },
-            verb: systemMessage('phone-service.connected'),
+            subject: { kind: 'person', id: viewerId, name: systemMessage("phone-service.a-member") },
+            verb: systemMessage("phone-service.connected"),
             object: card.card.name,
-            consequence: systemMessage('phone-service.the-request-can-continue'),
+            consequence: systemMessage("phone-service.the-request-can-continue"),
           });
           const parent = card.card.commandId
             ? (
@@ -11500,11 +10037,8 @@ export class PhoneService {
     }
     if (input.connectorType === 'trusty-squire') {
       await queueSquireWork(database, input.helperAgentId, { install: true });
-      await grantSquireToOwnerMachineAgents(database, {
-        workspaceId: input.workspaceId,
-        ownerIdentityId: input.ownerIdentityId,
-        machineId: input.machineId,
-      });
+      await grantSquireToOwnerMachineAgents(database, { workspaceId: input.workspaceId,
+        ownerIdentityId: input.ownerIdentityId, machineId: input.machineId });
       const status = await squireWorkStatus(database, input.helperAgentId);
       return { connectorId: squireMachineAddress(input.machineId), status };
     }
@@ -11618,28 +10152,20 @@ export class PhoneService {
         throw new Error('Squire machine not found (access denied)');
       });
       await this.database.transaction(async (db) => {
-        await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [
-          `squire-vault:${viewerId}:${squireMachine}`,
-        ]);
-        await db.query(
-          `DELETE FROM workspace_connections WHERE owner_identity_id=$1 AND machine_id=$2`,
-          [viewerId, squireMachine],
-        );
-        const agents = await db.query<{ agent_id: string }>(
-          `UPDATE agents
+        await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',
+          [`squire-vault:${viewerId}:${squireMachine}`]);
+        await db.query(`DELETE FROM workspace_connections WHERE owner_identity_id=$1 AND machine_id=$2`,
+          [viewerId, squireMachine]);
+        const agents = await db.query<{ agent_id: string }>(`UPDATE agents
           SET squire_work=jsonb_build_object('generation',COALESCE((squire_work->>'generation')::int,0)+1,
             'disconnected',true),
             squire_report=jsonb_build_object('status','not-added','reportedAt',extract(epoch from now()))
           WHERE owner_id=$1 AND COALESCE(machine_id,agent_id)=$2 RETURNING agent_id`,
-          [viewerId, squireMachine],
-        );
-        await db.query(
-          `UPDATE agent_grants SET status='revoked'
+          [viewerId, squireMachine]);
+        await db.query(`UPDATE agent_grants SET status='revoked'
           WHERE kind='mcp' AND target=$3 AND status IN ('approved','once')
             AND agent_id IN (SELECT agent_id FROM agents WHERE owner_id=$1
-              AND COALESCE(machine_id,agent_id)=$2)`,
-          [viewerId, squireMachine, SQUIRE_MCP_TARGET],
-        );
+              AND COALESCE(machine_id,agent_id)=$2)`, [viewerId, squireMachine, SQUIRE_MCP_TARGET]);
         for (const agent of agents.rows) await notifyAgentConfigChange(db, agent.agent_id);
       });
       return;
@@ -11690,9 +10216,8 @@ export class PhoneService {
     // poll only catches a wake that reached no socket.
     if (isMetadataStale(connection.last_synced_at)) {
       if (squireMachineId(connection.connector_id)) {
-        await this.database.transaction((db) =>
-          queueOwnerSquireWork(db, viewerId, squireMachineId(connection.connector_id)!, 'sync'),
-        );
+        await this.database.transaction((db) => queueOwnerSquireWork(db, viewerId,
+          squireMachineId(connection.connector_id)!, 'sync'));
       } else {
         await this.database.query(
           `UPDATE workspace_connectors
@@ -11809,14 +10334,8 @@ export class PhoneService {
     );
     if (live.length) {
       if (squireMachineId(connection.connector_id)) {
-        await this.database.transaction((db) =>
-          queueOwnerSquireWork(
-            db,
-            viewerId,
-            squireMachineId(connection.connector_id)!,
-            `revoke-grants:${connection.reference}`,
-          ),
-        );
+        await this.database.transaction((db) => queueOwnerSquireWork(db, viewerId,
+          squireMachineId(connection.connector_id)!, `revoke-grants:${connection.reference}`));
       } else {
         await this.database.query(
           `UPDATE workspace_connectors
@@ -11844,11 +10363,7 @@ export class PhoneService {
       );
     }
   }
-  private async requireRoomWorkspaceManager(
-    roomId: string,
-    identityId: string,
-    database = this.database,
-  ) {
+  private async requireRoomWorkspaceManager(roomId: string, identityId: string, database = this.database) {
     const row = await database.query(
       `SELECT 1 FROM rooms room
        JOIN memberships membership ON membership.workspace_id=room.workspace_id
@@ -11939,56 +10454,36 @@ export class PhoneService {
     workspaceId: string,
     viewerId: string,
     query: WorkspaceMemberListQuery = {},
-  ): Promise<
-    | (WorkspaceMemberListView & {
-        workspaceRow: {
-          id: string;
-          name: string;
-          avatar: string | null;
-          visibility: 'public' | 'invite-only';
-          allow_fix_sweep: boolean;
-          created_at: Date;
-          updated_at: Date;
-          role: 'owner' | 'admin' | 'member' | 'spectator';
-        };
-        viewerIdentity: RoomViewIdentity;
-        managedRoomRows: Array<{
-          id: string;
-          name: string;
-          visibility: 'public' | 'invite-only';
-          created_at: Date;
-        }>;
-      })
-    | null
-  > {
+  ): Promise<(WorkspaceMemberListView & {
+    workspaceRow: {
+      id: string; name: string; avatar: string | null;
+      visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
+      role: 'owner' | 'admin' | 'member' | 'spectator';
+    };
+    viewerIdentity: RoomViewIdentity;
+    managedRoomRows: Array<{
+      id: string; name: string; visibility: 'public' | 'invite-only'; created_at: Date;
+    }>;
+  }) | null> {
     const needle = this.rosterSearchNeedle(query.q);
-    const offset =
-      Number.isSafeInteger(query.offset) && (query.offset ?? 0) > 0 ? query.offset! : 0;
+    const offset = Number.isSafeInteger(query.offset) && (query.offset ?? 0) > 0
+      ? query.offset! : 0;
     const kind = query.kind === 'human' || query.kind === 'agent' ? query.kind : undefined;
     const result = await this.database.query<{
       workspace_row: {
-        id: string;
-        name: string;
-        avatar: string | null;
-        visibility: 'public' | 'invite-only';
-        allow_fix_sweep: boolean;
-        created_at: Date;
-        updated_at: Date;
+        id: string; name: string; avatar: string | null;
+        visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
         role: 'owner' | 'admin' | 'member' | 'spectator';
       };
       viewer_row: IdentityRow;
       managed_room_rows: Array<{
-        id: string;
-        name: string;
-        visibility: 'public' | 'invite-only';
-        created_at: Date;
+        id: string; name: string; visibility: 'public' | 'invite-only'; created_at: Date;
       }>;
       people_rows: MemberRow[];
       agent_rows: RosterAgentRow[];
       people_total: string;
       agent_total: string;
-    }>(
-      `WITH visible_workspace AS (
+    }>(`WITH visible_workspace AS (
         SELECT w.id,w.name,w.avatar,w.visibility,w.allow_fix_sweep,w.created_at,w.updated_at,wm.role
         FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
         WHERE w.id=$1 AND wm.identity_id=$7 AND wm.removed_at IS NULL
@@ -12039,16 +10534,8 @@ export class PhoneService {
           LIMIT $6 OFFSET CASE WHEN $4='agent' THEN $3 ELSE 0 END
         ) page),'[]'::jsonb) agent_rows
       FROM visible_workspace JOIN viewer_row ON true`,
-      [
-        workspaceId,
-        needle,
-        offset,
-        kind ?? null,
-        query.ownerId ?? null,
-        WORKSPACE_MEMBER_PAGE_SIZE + 1,
-        viewerId,
-        ROOM_VIEW_CHAT_LIMIT + 1,
-      ],
+      [workspaceId, needle, offset, kind ?? null, query.ownerId ?? null,
+        WORKSPACE_MEMBER_PAGE_SIZE + 1, viewerId, ROOM_VIEW_CHAT_LIMIT + 1],
     );
     const data = result.rows[0];
     if (!data) return null;
@@ -12064,11 +10551,8 @@ export class PhoneService {
       const presence = await this.optionalEnrichment(
         'member-presence',
         this.enrichmentDatabase.query<{
-          id: string;
-          presence_body: MemberRow['presence_body'];
-          presence_updated_at: Date;
-        }>(
-          `SELECT member.identity_id id,presence.body presence_body,
+          id: string; presence_body: MemberRow['presence_body']; presence_updated_at: Date;
+        }>(`SELECT member.identity_id id,presence.body presence_body,
             presence.updated_at presence_updated_at
           FROM memberships member
           JOIN LATERAL(
@@ -12088,56 +10572,36 @@ export class PhoneService {
         row.presence_updated_at = found?.presence_updated_at ?? null;
       }
     }
-    const people = this.projectMembers(
-      pageRows.filter((row) => row.kind === 'human'),
-      null,
-    );
-    const agents = this.projectWorkspaceAgents(
-      pageRows.filter((row) => row.kind === 'agent'),
-      agentPage,
-    );
+    const people = this.projectMembers(pageRows.filter((row) => row.kind === 'human'), null);
+    const agents = this.projectWorkspaceAgents(pageRows.filter((row) => row.kind === 'agent'), agentPage);
     return {
       workspaceRow: reviveDates(data.workspace_row, ['created_at', 'updated_at']),
       viewerIdentity: identity(data.viewer_row, this.publicOrigin),
       managedRoomRows: data.managed_room_rows.map((row) => reviveDates(row, ['created_at'])),
-      members: people,
-      agents,
-      peopleTotal: Number(data.people_total),
-      agentTotal: Number(data.agent_total),
-      membersTruncated: peopleTruncated,
-      agentsTruncated,
+      members: people,agents,
+      peopleTotal: Number(data.people_total),agentTotal: Number(data.agent_total),
+      membersTruncated: peopleTruncated,agentsTruncated,
     };
   }
 
   /** Roster agent rows with their selected model and owner, as every roster read shows them. */
-  private projectWorkspaceAgents(
-    rows: MemberRow[],
-    configs: RosterAgentRow[],
-  ): WorkspaceAgentView[] {
+  private projectWorkspaceAgents(rows: MemberRow[], configs: RosterAgentRow[]): WorkspaceAgentView[] {
     const agentConfig = new Map(configs.map((row) => [row.id, row]));
     return this.projectMembers(rows, null).map((member) => {
       const config = agentConfig.get(member.identity.pubkey);
       const model = config?.mcp_client
         ? mcpClientName(config.mcp_client.name, config.mcp_client.redirects)
-        : config
-          ? selectedModelLabel(config.selected_model, config.model_catalog ?? [])
-          : undefined;
+        : config ? selectedModelLabel(config.selected_model, config.model_catalog ?? []) : undefined;
       // Usage columns are owner-filtered in SQL; other viewers' rows carry nulls.
       const usage = config&&!this.pureProjection ? projectAgentUsage(config) : undefined;
       return {
         ...member,
         ...(model ? { model } : {}),
         ...(usage ? { usage } : {}),
-        ...(config?.owner_id && config.owner_name
-          ? {
-              owner: {
-                pubkey: config.owner_id,
-                kind: 'human' as const,
-                name: config.owner_name,
-                ...(config.owner_handle ? { handle: config.owner_handle } : {}),
-              },
-            }
-          : {}),
+        ...(config?.owner_id && config.owner_name ? { owner: {
+          pubkey: config.owner_id,kind: 'human' as const,name: config.owner_name,
+          ...(config.owner_handle ? { handle: config.owner_handle } : {}),
+        } } : {}),
       };
     });
   }
@@ -12255,25 +10719,19 @@ export class PhoneService {
   private async enrichHistoryRows(rows: MessageRow[], viewerId: string): Promise<AttachmentFacts> {
     if (!rows.length) return { expired: new Set(), artifacts: new Map() };
     const mediaIds = new Set<string>();
-    for (const row of rows)
-      for (const attachment of Array.isArray(row.attachments) ? row.attachments : []) {
-        const url = (attachment as { url?: unknown } | null)?.url;
-        const id = typeof url === 'string' ? mediaIdFromUrl(url) : null;
-        if (id) mediaIds.add(id);
-      }
-    const result = await this.optionalEnrichment(
-      'history-decoration',
+    for (const row of rows) for (const attachment of
+      (Array.isArray(row.attachments) ? row.attachments : [])) {
+      const url = (attachment as { url?: unknown } | null)?.url;
+      const id = typeof url === 'string' ? mediaIdFromUrl(url) : null;
+      if (id) mediaIds.add(id);
+    }
+    const result = await this.optionalEnrichment('history-decoration',
       this.enrichmentDatabase.query<{
-        decorations: Array<{
-          id: string;
-          tagged_ids: string[];
-          bookmarked: boolean;
-          feedback_reported: boolean;
-        }>;
+        decorations: Array<{ id: string; tagged_ids: string[];
+          bookmarked: boolean; feedback_reported: boolean }>;
         expired: string[];
         artifacts: Array<{ id: string; title: string; mime: string; size: string; author: string }>;
-      }>(
-        `SELECT
+      }>(`SELECT
           COALESCE((SELECT jsonb_agg(jsonb_build_object('id',m.id,
             'tagged_ids',${taggedIdentityIdsSql('m')},
             'bookmarked',EXISTS(SELECT 1 FROM message_bookmarks bookmark
@@ -12288,11 +10746,11 @@ export class PhoneService {
             'size',object.size::text,'author',COALESCE(author.handle,author.name)))
             FROM objects object JOIN identities author ON author.id=object.owner_id
             WHERE object.state='ready' AND object.id=ANY($3::uuid[])),'[]'::jsonb) artifacts`,
-        [rows.map((row) => row.id), viewerId, [...mediaIds]],
+        [rows.map((row) => row.id),viewerId,[...mediaIds]],
       ),
     );
     const data = result?.rows[0];
-    const byId = new Map(data?.decorations.map((row) => [row.id, row]) ?? []);
+    const byId = new Map(data?.decorations.map((row) => [row.id,row]) ?? []);
     for (const row of rows) {
       const decorated = byId.get(row.id);
       row.tagged_ids = decorated?.tagged_ids ?? [];
@@ -12301,18 +10759,10 @@ export class PhoneService {
     }
     return {
       expired: new Set(data?.expired ?? []),
-      artifacts: new Map(
-        (data?.artifacts ?? []).map((row) => [
-          row.id,
-          {
-            kind: 'artifact' as const,
-            title: row.title,
-            mimeType: row.mime,
-            size: Number(row.size),
-            author: row.author,
-          },
-        ]),
-      ),
+      artifacts: new Map((data?.artifacts ?? []).map((row) => [row.id,{
+        kind: 'artifact' as const,title: row.title,mimeType: row.mime,
+        size: Number(row.size),author: row.author,
+      }])),
     };
   }
 
@@ -12355,10 +10805,8 @@ export class PhoneService {
         agentPubkey: command.agent_id,
         createdAt: unix(new Date(command.created_at)),
       }))
-      .sort(
-        (left, right) =>
-          left.createdAt - right.createdAt || left.agentPubkey.localeCompare(right.agentPubkey),
-      );
+      .sort((left, right) => left.createdAt - right.createdAt ||
+        left.agentPubkey.localeCompare(right.agentPubkey));
   }
   private async enrichMessageBookmarks(
     rows: readonly MessageRow[],
@@ -12445,7 +10893,7 @@ export class PhoneService {
  */
 function personMention(handle: string | null | undefined): string | undefined {
   const trimmed = handle?.trim().replace(/^@/, '');
-  return trimmed ? systemMessage('phone-service.person-mention', trimmed) : undefined;
+  return trimmed ? systemMessage("phone-service.person-mention", trimmed) : undefined;
 }
 
 /** Grant decisions retain the owner-or-Workspace-manager authority axis. */

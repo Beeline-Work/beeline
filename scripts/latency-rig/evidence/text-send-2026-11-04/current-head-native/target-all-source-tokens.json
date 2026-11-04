@@ -1,5 +1,9 @@
 {
-  "sourceTokens": ["emptyproofGamma", "doubleproofGamma", "navproofGamma"],
+  "sourceTokens": [
+    "emptyproofGamma",
+    "doubleproofGamma",
+    "navproofGamma"
+  ],
   "targetFrames": [
     {
       "frame": 27,

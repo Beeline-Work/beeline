@@ -208,7 +208,8 @@ export function archiveActionPresentation(
   item: ChatDisplayMessage,
   inputs: ArchiveActionInputs,
 ): RoomMessagePresentation {
-  const swipe = inputs.cornerSwipeOffered && !item.isAgentDraft && !skipsArchiveActions(item);
+  const swipe =
+    inputs.cornerSwipeOffered && !item.isAgentDraft && !skipsArchiveActions(item);
   const proposal = inputs.cornerProposalOffered && isCornerProposalRow(item);
   if (!swipe && !proposal) return {};
   const enabled = !inputs.roomArchived;
@@ -269,7 +270,8 @@ function mentionHandleKey(
     .filter(
       (participant) =>
         wanted.has(participant.pubkey) ||
-        (participant.handle !== '' && text.includes(`@${participant.handle.toLocaleLowerCase()}`)),
+        (participant.handle !== '' &&
+          text.includes(`@${participant.handle.toLocaleLowerCase()}`)),
     )
     .map((participant) => `${participant.pubkey}\0${participant.handle}`)
     .sort()
@@ -291,7 +293,8 @@ export function messageRosterPresentation(
   const author = item.pubkey;
   const person = author ? roster.personByPubkey.get(author) : undefined;
   const agentPubkey =
-    cardAgentPubkey(item) ?? (author && roster.agentByPubkey.has(author) ? author : undefined);
+    cardAgentPubkey(item) ??
+    (author && roster.agentByPubkey.has(author) ? author : undefined);
   const agent = agentPubkey ? roster.agentByPubkey.get(agentPubkey) : undefined;
   const agentModel =
     (agentPubkey ? roster.agentModelByPubkey.get(agentPubkey) : undefined) ??
@@ -299,8 +302,12 @@ export function messageRosterPresentation(
   const speakerRole =
     (author ? roster.roleByPubkey.get(author) : undefined) ??
     (agentPubkey ? roster.roleByPubkey.get(agentPubkey) : undefined);
-  const replyPerson = referenced?.pubkey ? roster.personByPubkey.get(referenced.pubkey) : undefined;
-  const replyAgent = referenced?.pubkey ? roster.agentByPubkey.get(referenced.pubkey) : undefined;
+  const replyPerson = referenced?.pubkey
+    ? roster.personByPubkey.get(referenced.pubkey)
+    : undefined;
+  const replyAgent = referenced?.pubkey
+    ? roster.agentByPubkey.get(referenced.pubkey)
+    : undefined;
   return {
     participantsHydrated: roster.participantsHydrated,
     personName: person?.name,

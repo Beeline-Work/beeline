@@ -256,7 +256,7 @@ export function createPhoneOperationDispatcher(
         return;
       }
       default: return invokeLegacy ? invokeLegacy()
-        : legacyOperation.call(phone, name as never, input as never, viewerId, undefined, familyId);
+        : legacyOperation.call(phone, name as never, input as never, viewerId, undefined, familyId, true);
     }
   };
 

@@ -41,8 +41,15 @@
   ],
   "hostEvidence": {
     "logicalCpus": 20,
-    "loadAverageAt2253Eastern": [38.84, 28.87, 23.43],
+    "loadAverageAt2253Eastern": [
+      38.84,
+      28.87,
+      23.43
+    ],
     "cpuPressureSomeAvg60Percent": 26.65,
-    "vmstatIdlePercent": [16, 16]
+    "vmstatIdlePercent": [
+      16,
+      16
+    ]
   }
 }

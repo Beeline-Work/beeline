@@ -567,10 +567,13 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
     expect(view.messages.filter((message) => message.text === 'Retry me')).toHaveLength(2);
   });
 
-  it.each(['sendRoomMessage', 'sendRoomReply'] as const)(
-    'SEND-ACK-1: %s acknowledges the committed write while onboarding observation is blocked',
-    async (op) => {
-      const socket = await open();
+  it.each([
+    ['socket', 'sendRoomMessage'], ['socket', 'sendRoomReply'],
+    ['http', 'sendRoomMessage'], ['http', 'sendRoomReply'],
+  ] as const)(
+    'SEND-ACK-1: %s %s acknowledges the committed write while onboarding observation is blocked',
+    async (transport, op) => {
+      const socket = transport === 'socket' ? await open() : undefined;
       const observing = deferred(),
         releaseObservation = deferred();
       const query = db.query.bind(db);
@@ -582,12 +585,16 @@ describe('SOCKET-OPS-1 phone request/reply', () => {
         return query(sql, values);
       });
       const id = 'd'.repeat(64);
-      const reply = request(socket, op, {
+      const input = {
         roomId: ROOM,
         messageId: id,
         text: 'Acknowledgement precedes analytics',
         ...(op === 'sendRoomReply' ? { parentMessageId: MESSAGE } : {}),
-      });
+      };
+      const reply = transport === 'socket' ? request(socket!, op, input)
+        : http(`/v1/phone/operations/${op}`, input).then(async response => ({
+            ok: response.status === 200, result: await response.json(),
+          }));
       let acknowledgedWhileBlocked = false;
       try {
         await observing.promise;

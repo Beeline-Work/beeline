@@ -9,7 +9,12 @@
       "hits": [
         {
           "word": "emptyproofGamma",
-          "box": [12, 490, 195, 19],
+          "box": [
+            12,
+            490,
+            195,
+            19
+          ],
           "inkP5": 26.0,
           "inkMin": 7
         }
@@ -18,7 +23,12 @@
     "settledHits": [
       {
         "word": "emptyproofGamma",
-        "box": [12, 490, 195, 19],
+        "box": [
+          12,
+          490,
+          195,
+          19
+        ],
         "inkP5": 19.0,
         "inkMin": 15
       }
@@ -37,7 +47,12 @@
       "hits": [
         {
           "word": "doubleproofGamma",
-          "box": [12, 490, 199, 19],
+          "box": [
+            12,
+            490,
+            199,
+            19
+          ],
           "inkP5": 24.0,
           "inkMin": 10
         }
@@ -46,7 +61,12 @@
     "settledHits": [
       {
         "word": "doubleproofGamma",
-        "box": [12, 490, 199, 19],
+        "box": [
+          12,
+          490,
+          199,
+          19
+        ],
         "inkP5": 19.0,
         "inkMin": 16
       }
@@ -65,7 +85,12 @@
       "hits": [
         {
           "word": "navproofGamma",
-          "box": [13, 490, 164, 19],
+          "box": [
+            13,
+            490,
+            164,
+            19
+          ],
           "inkP5": 25.0,
           "inkMin": 7
         }
@@ -74,7 +99,12 @@
     "settledHits": [
       {
         "word": "navproofGamma",
-        "box": [13, 490, 164, 19],
+        "box": [
+          13,
+          490,
+          164,
+          19
+        ],
         "inkP5": 19.0,
         "inkMin": 14
       }

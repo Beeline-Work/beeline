@@ -373,12 +373,19 @@ export default function TrayScreen() {
   );
 
   /** Undo the newest held clear; an older one still in its window shows next. */
-  const undoClear = useCallback(() => {
+  const undoClear = useCallback(async () => {
     const clear = pendingRef.current.at(-1);
-    if (clear?.prepared) void clear.prepared.cancel().catch(cause => setError(appErrorCopy(cause)));
-    pendingRef.current = pendingRef.current.slice(0, -1);
-    setPending(pendingRef.current);
-    AccessibilityInfo.announceForAccessibility('Restored');
+    if (!clear) return;
+    const generation = clientResetGeneration();
+    try {
+      await clear.prepared?.cancel();
+      if (generation !== clientResetGeneration()) return;
+      pendingRef.current = pendingRef.current.filter(held => held !== clear);
+      setPending(pendingRef.current);
+      AccessibilityInfo.announceForAccessibility('Restored');
+    } catch (cause) {
+      if (generation === clientResetGeneration()) setError(appErrorCopy(cause));
+    }
   }, []);
 
   const remove = useCallback(async (bookmark: MessageBookmarkView) => {

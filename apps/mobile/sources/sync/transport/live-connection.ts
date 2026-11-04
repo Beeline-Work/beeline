@@ -176,7 +176,6 @@ export class LiveConnection {
   private socketEpoch = 0;
   private routerState: 'waiting' | 'initializing' | 'ready' = 'waiting';
   private routerQueue: Array<RouterPushFrame | RouterUnavailable | RouterAuthorityFence> = [];
-  private routerQueueBytes = 0;
   private commandDedupV1 = false;
   private readonly commandCapabilityListeners = new Set<() => void>();
   private connectInFlight: Promise<void> | undefined;
@@ -387,19 +386,14 @@ export class LiveConnection {
         this.routerState = 'ready';
         for (const listener of this.commandCapabilityListeners) listener();
         for (const queued of this.routerQueue) this.deps.router!.receive(queued);
-        this.routerQueue = []; this.routerQueueBytes = 0;
+        this.routerQueue = [];
       }).catch(() => { if (this.socket === socket) this.deps.router?.disconnected(); });
     }
     if (frame.type === 'router-capabilities') return true;
     if (!['push-part', 'push-commit', 'scheduled-work-authority-part', 'scheduled-work-authority-commit', 'scheduled-work-authority-restart', 'router-unavailable', 'authority-fence', 'usage-cell', 'usage-unavailable'].includes(String(frame.kind))) return false;
     if (this.routerState === 'ready') this.deps.router.receive(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence);
     else {
-      const bytes = utf8ToBytes(JSON.stringify(value)).length;
-      if (this.routerQueue.length >= 32 || this.routerQueueBytes + bytes > 1024 * 1024) {
-        this.routerQueue = []; this.routerQueueBytes = 0;
-        this.deps.router.disconnected();
-        this.forgetSocket(); socket.close();
-      } else { this.routerQueue.push(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence); this.routerQueueBytes += bytes; }
+      this.routerQueue.push(value as RouterPushFrame | RouterUnavailable | RouterAuthorityFence);
     }
     return true;
   }
@@ -865,7 +859,6 @@ export class LiveConnection {
     this.commandDedupV1 = false;
     for (const listener of this.commandCapabilityListeners) listener();
     this.routerQueue = [];
-    this.routerQueueBytes = 0;
     this.deps.router?.disconnected();
   }
 

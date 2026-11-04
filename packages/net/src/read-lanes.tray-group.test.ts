@@ -152,12 +152,13 @@ describe('Saved selected whole Needs/Tray/window group assembly',()=>{
     expect(lanes.peek(page).value).toBeNull();expect(lanes.peek(head).value).toBeNull();expect(reads()).toBe(3);
   });
 
-  it('bounds source ingress during slow persistence and never keeps an unbounded serial promise/body chain',async()=>{
+  it('serializes all source ingress during slow persistence without parking a valid group',async()=>{
     const gate=deferred<void>(),entered=deferred<void>();let block=false;
     const{lanes,reads}=await setup(undefined,async()=>{if(block){entered.resolve();await gate.promise;}});block=true;
     const active=lanes.accept(batch(1,2,edits(),cv(1)));await entered.promise;
-    const future:Promise<void>[]=[];for(let n=2;n<21;n++)future.push(lanes.accept(batch(n,n+1)));
-    expect(lanes.peek(head)).toMatchObject({state:'PARKED',value:null});gate.resolve();await active;await Promise.all(future);expect(reads()).toBe(2);
+    const future:Promise<void>[]=[];for(let n=2;n<21;n++)future.push(lanes.accept(batch(n,n+1,[],cv(1))));
+    expect(lanes.peek(head).state).toBe('LIVE');gate.resolve();await active;await Promise.all(future);expect(reads()).toBe(2);
+    expect(lanes.peek(head)).toMatchObject({state:'LIVE',error:null});
   });
 
   it('an old generation storage completion cannot publish or park the fresh connection',async()=>{

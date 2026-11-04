@@ -397,6 +397,27 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('retains every large router frame while the phone owner finishes negotiation', async () => {
+    let ready!: () => void;
+    const router = { negotiated: vi.fn(() => new Promise<void>(resolve => { ready = resolve; })),
+      disconnected: vi.fn(), receive: vi.fn() };
+    const connection = new LiveConnection({ authorization: async () => 'token',
+      liveUrl: () => 'wss://server.example/v1/phone/live', subscribeIdentityChange: () => () => {}, router });
+    try {
+      await connection.register([], () => {}); sockets[0]!.open();
+      sockets[0]!.emit({ type: 'router-capabilities', protocol: 1, families: ['room-list'] });
+      const frames = Array.from({ length: 40 }, (_, index) => ({ kind: 'push-part', batchId: 'large-workspace',
+        partIndex: index, facts: [{ text: 'x'.repeat(40 * 1024) }] }));
+      for (const frame of frames) sockets[0]!.emit(frame);
+      expect(sockets[0]!.closed).toBe(false);
+      expect(router.disconnected).not.toHaveBeenCalled();
+      expect(router.receive).not.toHaveBeenCalled();
+      ready(); await Promise.resolve();
+      expect(router.receive.mock.calls).toEqual(frames.map(frame => [frame]));
+      expect(sockets).toHaveLength(1);
+    } finally { connection.dispose(); }
+  });
+
   it('does not let a Workspace reply downgrade an in-flight router negotiation', async () => {
     const router = { negotiated: vi.fn(async (_next: unknown) => {}), disconnected: vi.fn(), receive: vi.fn() };
     const connection = new LiveConnection({ authorization: async () => 'token',

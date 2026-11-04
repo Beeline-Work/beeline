@@ -5,8 +5,8 @@ committed production change, made after
 https://github.com/Beeline-Work/beeline/pull/3447 existed. The four schedule rows
 remain stored; `l1-stop-and-readback.json` records the independent read-back.
 B1's first attempt was cancelled and fully rolled back after lock contention.
-The corrected monitored apply is held until 2026-11-04 08:00Z; see the execution
-plan and rollback evidence below. Dry-run counts are in `b1-dry-run.json` and
+The post-window operator stopped before any cleanup write; the current local
+correction and stop evidence are recorded below. Dry-run counts are in `b1-dry-run.json` and
 `b1-before-apply.json`.
 
 | Decision | Implementation |
@@ -211,3 +211,26 @@ Deleted/updated rows across both attempts: **0**. Maximum lock wait remains
 counts were not collected. `b1-direct-preflight-stop.json` records this result.
 All skill versions and both excluded telemetry tables remain untouched; B8 drops
 remain unapplied.
+
+## B1 SQL cancellation proof and skill-key preflight stop (inbox 011)
+
+Firstmate authorized SQL `pg_backend_pid()` as the authoritative identity,
+SQL cancellation from the monitor, and termination fallback. A harmless
+`pg_sleep(30)` was observed and cancelled with SQLSTATE 57014 in **4 ms** in
+both the dry-run session and the intended apply session (limit 2,000 ms). No
+protocol BackendKeyData comparison or protocol cancellation was used.
+
+The fresh dry run is `b1-low-traffic-before.json`: 63,964 dead ledger rows,
+192,016 note cards with removable keys, all 228 skill versions and 18 job links;
+telemetry cohorts retained at 55,862 MCP-audit and 11,700 turn-trace rows.
+
+The intended apply stopped before `monitoredApply`: the operator's additional
+original-version preflight incorrectly queried an `id` column. The actual primary
+key is `(skill_id,version)` in `apps/server/src/database.ts`. The operator now
+uses that composite key. Its local PGlite regression passes, including the case
+where a deleted original key is masked by a replacement at unchanged total count.
+
+`b1-sql-preflight-stop.json` records the stop. Deleted/updated rows remain **0**;
+maximum lock wait is **not measured** because the lock monitor never started.
+No further production retry was made after this anomaly. The ready 08:00Z restore
+point remains available. B8 remains staged and unapplied.

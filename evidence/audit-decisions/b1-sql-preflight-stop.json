@@ -1,0 +1,36 @@
+{
+  "ok": false,
+  "phase": "dry-run",
+  "error": "column \"id\" does not exist",
+  "connection": {
+    "directEndpoint": true,
+    "pidAuthority": "SQL pg_backend_pid()",
+    "monitoringPid": 881025
+  },
+  "statistics": {
+    "globalSamples": 0,
+    "maxObservedLockWaitMs": 0,
+    "maxObservedWaitingClients": 0,
+    "acknowledgedChanges": {},
+    "completedBatches": 0,
+    "cancelRequests": 1,
+    "cancelProof": {
+      "observedSleep": true,
+      "cancelled": true,
+      "errorCode": "57014",
+      "receivedWithinMs": 4,
+      "limitMs": 2000
+    }
+  },
+  "recordedAt": "2026-11-04T08:14:28.300417+00:00",
+  "cleanupApplyStarted": false,
+  "failureStep": "operator original-skill-key SELECT before monitoredApply; queried nonexistent id column",
+  "deletedRows": 0,
+  "updatedRows": 0,
+  "maximumLockWait": "not measured; lock monitor never started",
+  "restorePoint": "audit-b1-20261104080017-pre-cleanup",
+  "dryRunCountsArtifact": "b1-low-traffic-before.json",
+  "localCorrection": "Use actual composite PRIMARY KEY(skill_id,version), from apps/server/src/database.ts",
+  "regression": "PGlite query preserves actual composite keys and detects replacement even at unchanged total count; passed",
+  "nextAction": "Stopped on anomaly per inbox 009; corrected operator ready for firstmate direction; B8 untouched"
+}

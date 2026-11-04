@@ -14,14 +14,17 @@ import {
 } from './room-corner-store';
 import { resetClientState } from '@/sync/client-reset';
 
-const row = (state: string) => ({
-  corner: { id: 'corner-a', name: 'a' },
-  lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
-  state,
-}) as unknown as CornerListItem;
+const row = (state: string) =>
+  ({
+    corner: { id: 'corner-a', name: 'a' },
+    lifecycle: { lifecycle: 'unknown', checks: 'unknown' },
+    state,
+  }) as unknown as CornerListItem;
 
 const frame = (sequence: number, state: string) => ({
-  roomId: 'parent', sequence, cornerCount: 1,
+  roomId: 'parent',
+  sequence,
+  cornerCount: 1,
   openCorners: [{ id: 'corner-a', name: 'a', state: state as 'working', mine: true as const }],
   corners: [row(state)],
 });
@@ -35,11 +38,19 @@ it('keeps summary readers out of archived-page commits', () => {
   noteCornerLaneSubscribed('parent', false);
   acceptCornerStatusFrame(frame(1, 'working'));
   let renders = 0;
-  function Summary() { useRoomCornerSummary('parent'); renders++; return null; }
+  function Summary() {
+    useRoomCornerSummary('parent');
+    renders++;
+    return null;
+  }
   let tree: any;
-  act(() => { tree = create(<Summary />); });
+  act(() => {
+    tree = create(<Summary />);
+  });
   const mounted = renders;
-  act(() => applyArchivedCorners('parent', [row('done')], undefined, false, cornerReadMark('parent')));
+  act(() =>
+    applyArchivedCorners('parent', [row('done')], undefined, false, cornerReadMark('parent')),
+  );
   expect(renders).toBe(mounted);
   act(() => acceptCornerStatusFrame(frame(2, 'waiting')));
   expect(renders).toBe(mounted + 1);
@@ -55,7 +66,9 @@ it('gives every Room list reader the newest summary, and none after a client res
     return null;
   }
   let tree: any;
-  await act(async () => { tree = create(<Dropdown />); });
+  await act(async () => {
+    tree = create(<Dropdown />);
+  });
   expect(seen).toBeUndefined();
   await act(async () => {
     noteCornerLaneSubscribed('parent', false);

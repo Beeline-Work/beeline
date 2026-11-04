@@ -62,7 +62,11 @@ vi.mock('react-native-reanimated', async () => {
 });
 
 import { RoomUnreadControls } from '@/components/buzz/RoomUnreadControls';
-import { TurnBandSlot, TurnProgressLine, TurnSettledLine } from '@/components/buzz/TurnProgressLine';
+import {
+  TurnBandSlot,
+  TurnProgressLine,
+  TurnSettledLine,
+} from '@/components/buzz/TurnProgressLine';
 import { beelineThemes, groknight } from './groknight';
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
 import { phoneTranscriptTailPadding } from './room-scroll-follow';
@@ -179,30 +183,41 @@ function newestMessageToComposerGap({ lineShown }: { lineShown: boolean }): numb
 }
 
 describe('the Room turn line paints the transcript margin', () => {
-  it.each(['working', 'settled'] as const)('paints the whole %s band through the composer join', (state) => {
-    const line = state === 'working'
-      ? React.createElement(TurnProgressLine, { label: 'Ruby working…' })
-      : React.createElement(TurnSettledLine, { line: 'Ruby finished' });
-    let renderer!: ReactTestRenderer;
-    act(() => { renderer = create(React.createElement(TurnBandSlot, { testID: 'slot' }, line)); });
-    expect(Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style)).backgroundColor).toBeTruthy();
-    const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
-    const translation = style.transform?.[0]?.translateY ?? 0;
-    const paintedHeight = TURN_LINE_BOX_HEIGHT + px(style.paddingTop) + px(style.paddingBottom);
-    // The canvas starts at the full 42px band's top and ends INSIDE the
-    // composer, so no shared-edge pixel or outer air can expose the list.
-    expect(paintedHeight - translation).toBe(newestMessageToComposerGap({ lineShown: true }));
-    expect(translation).toBe(TURN_CHROME_COMPOSER_OVERLAP);
-    expect(translation).toBeGreaterThan(1);
-    // Extra bottom padding and translation cancel: the ink does not move.
-    expect(style.paddingBottom - translation).toBe(0);
-    expect(style.position).toBe('absolute');
-    act(() => renderer.unmount());
-  });
+  it.each(['working', 'settled'] as const)(
+    'paints the whole %s band through the composer join',
+    (state) => {
+      const line =
+        state === 'working'
+          ? React.createElement(TurnProgressLine, { label: 'Ruby working…' })
+          : React.createElement(TurnSettledLine, { line: 'Ruby finished' });
+      let renderer!: ReactTestRenderer;
+      act(() => {
+        renderer = create(React.createElement(TurnBandSlot, { testID: 'slot' }, line));
+      });
+      expect(
+        Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style))
+          .backgroundColor,
+      ).toBeTruthy();
+      const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
+      const translation = style.transform?.[0]?.translateY ?? 0;
+      const paintedHeight = TURN_LINE_BOX_HEIGHT + px(style.paddingTop) + px(style.paddingBottom);
+      // The canvas starts at the full 42px band's top and ends INSIDE the
+      // composer, so no shared-edge pixel or outer air can expose the list.
+      expect(paintedHeight - translation).toBe(newestMessageToComposerGap({ lineShown: true }));
+      expect(translation).toBe(TURN_CHROME_COMPOSER_OVERLAP);
+      expect(translation).toBeGreaterThan(1);
+      // Extra bottom padding and translation cancel: the ink does not move.
+      expect(style.paddingBottom - translation).toBe(0);
+      expect(style.position).toBe('absolute');
+      act(() => renderer.unmount());
+    },
+  );
 
   it('paints no extra strip when the slot has no lines (including empty mapped waits)', () => {
     let renderer!: ReactTestRenderer;
-    act(() => { renderer = create(React.createElement(TurnBandSlot, { testID: 'slot' }, [[], null])); });
+    act(() => {
+      renderer = create(React.createElement(TurnBandSlot, { testID: 'slot' }, [[], null]));
+    });
     const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
     expect(style.backgroundColor).toBeUndefined();
     expect(style.paddingTop).toBeUndefined();
@@ -213,11 +228,21 @@ describe('the Room turn line paints the transcript margin', () => {
 
   it('keeps the canvas behind the settled line, then drops it once the line is gone', () => {
     let renderer!: ReactTestRenderer;
-    const tree = (state: 'thinking' | 'settled' | 'idle') => React.createElement(TurnBandSlot, { testID: 'slot' },
-      state === 'thinking' ? React.createElement(TurnProgressLine, { label: 'Ruby thinking…' })
-        : state === 'settled' ? React.createElement(TurnSettledLine, { line: 'Ruby finished' }) : null);
-    const slotStyle = () => Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
-    act(() => { renderer = create(tree('thinking')); });
+    const tree = (state: 'thinking' | 'settled' | 'idle') =>
+      React.createElement(
+        TurnBandSlot,
+        { testID: 'slot' },
+        state === 'thinking'
+          ? React.createElement(TurnProgressLine, { label: 'Ruby thinking…' })
+          : state === 'settled'
+            ? React.createElement(TurnSettledLine, { line: 'Ruby finished' })
+            : null,
+      );
+    const slotStyle = () =>
+      Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'slot').props.style));
+    act(() => {
+      renderer = create(tree('thinking'));
+    });
     const thinking = slotStyle();
     expect(thinking.backgroundColor).toBeTruthy();
     // Scrolled transcript text must never show under a settled line.
@@ -233,21 +258,24 @@ describe('the Room turn line paints the transcript margin', () => {
     act(() => renderer.unmount());
   });
 
-  it.each(['obsidian', 'bone'] as const)('joins the line and composer on one opaque %s surface', (name) => {
-    const theme = beelineThemes[name];
-    const styles = roomBottomChromeStyles(theme);
-    expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopWidth');
-    expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopColor');
-    expect(styles.hangingTurnChrome).not.toHaveProperty('backgroundColor');
-    expect(styles.turnChromeCoverage.backgroundColor).toBe(theme.bgTerminal);
-    expect(styles.stack).toMatchObject({ backgroundColor: theme.bgTerminal, zIndex: 1 });
-    expect(styles.composerRow.backgroundColor).toBe(theme.bgTerminal);
-    // The edge is canvas-colored, preserving the Room-open reserve and the
-    // spacing scale without drawing a separator or moving the newest row.
-    expect(styles.composerRow.borderTopWidth).toBe(1);
-    expect(styles.composerRow.borderTopColor).toBe(theme.bgTerminal);
-    expect(styles.composerRow.paddingTop).toBe(8);
-  });
+  it.each(['obsidian', 'bone'] as const)(
+    'joins the line and composer on one opaque %s surface',
+    (name) => {
+      const theme = beelineThemes[name];
+      const styles = roomBottomChromeStyles(theme);
+      expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopWidth');
+      expect(styles.hangingTurnChrome).not.toHaveProperty('borderTopColor');
+      expect(styles.hangingTurnChrome).not.toHaveProperty('backgroundColor');
+      expect(styles.turnChromeCoverage.backgroundColor).toBe(theme.bgTerminal);
+      expect(styles.stack).toMatchObject({ backgroundColor: theme.bgTerminal, zIndex: 1 });
+      expect(styles.composerRow.backgroundColor).toBe(theme.bgTerminal);
+      // The edge is canvas-colored, preserving the Room-open reserve and the
+      // spacing scale without drawing a separator or moving the newest row.
+      expect(styles.composerRow.borderTopWidth).toBe(1);
+      expect(styles.composerRow.borderTopColor).toBe(theme.bgTerminal);
+      expect(styles.composerRow.paddingTop).toBe(8);
+    },
+  );
 
   it('takes no in-flow height, so the newest message does not move', () => {
     // The regression this file exists for: an in-flow band took its own height
@@ -314,33 +342,56 @@ describe('the Room turn line paints the transcript margin', () => {
   });
 });
 
-
 describe('jump disc follows native status measurements', () => {
   it('keeps a full hit target above taller status paint and returns when the line disappears', () => {
     const jumped = vi.fn();
-    function Scene({line}: {line: boolean}) {
+    function Scene({ line }: { line: boolean }) {
       const [inset, setInset] = React.useState(0);
-      return React.createElement(React.Fragment, null,
-        React.createElement(RoomUnreadControls, {corner: false, badgeCount: 0,
-          discVisible: true, bottomInset: inset, onJumpToNewest: jumped}),
-        React.createElement(TurnBandSlot, {testID: 'measured-slot', onTopInset: setInset},
-          line ? React.createElement(TurnProgressLine, {label: 'Ruby Mulling…'}) : null));
+      return React.createElement(
+        React.Fragment,
+        null,
+        React.createElement(RoomUnreadControls, {
+          corner: false,
+          badgeCount: 0,
+          discVisible: true,
+          bottomInset: inset,
+          onJumpToNewest: jumped,
+        }),
+        React.createElement(
+          TurnBandSlot,
+          { testID: 'measured-slot', onTopInset: setInset },
+          line ? React.createElement(TurnProgressLine, { label: 'Ruby Mulling…' }) : null,
+        ),
+      );
     }
     let renderer!: ReactTestRenderer;
-    act(() => { renderer = create(React.createElement(Scene, {line: true})); });
+    act(() => {
+      renderer = create(React.createElement(Scene, { line: true }));
+    });
     for (const height of [50, 85, 62]) {
-      act(() => hostByTestID(renderer, 'measured-slot').props.onLayout({nativeEvent: {layout: {height}}}));
+      act(() =>
+        hostByTestID(renderer, 'measured-slot').props.onLayout({
+          nativeEvent: { layout: { height } },
+        }),
+      );
       const disc = hostByTestID(renderer, 'newest-jump-disc');
-      const style = Object.assign({}, ...flattenStyle(disc.props.style({pressed: false})));
+      const style = Object.assign({}, ...flattenStyle(disc.props.style({ pressed: false })));
       expect(style.bottom).toBe(height - TURN_CHROME_COMPOSER_OVERLAP + 4);
       expect(style.width).toBe(44);
       expect(style.height).toBe(44);
       act(() => disc.props.onPress());
     }
     expect(jumped).toHaveBeenCalledTimes(3);
-    act(() => renderer.update(React.createElement(Scene, {line: false})));
-    act(() => hostByTestID(renderer, 'measured-slot').props.onLayout({nativeEvent: {layout: {height: 0}}}));
-    const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'newest-jump-disc').props.style({pressed: false})));
+    act(() => renderer.update(React.createElement(Scene, { line: false })));
+    act(() =>
+      hostByTestID(renderer, 'measured-slot').props.onLayout({
+        nativeEvent: { layout: { height: 0 } },
+      }),
+    );
+    const style = Object.assign(
+      {},
+      ...flattenStyle(hostByTestID(renderer, 'newest-jump-disc').props.style({ pressed: false })),
+    );
     expect(style.bottom).toBe(4);
     act(() => renderer.unmount());
   });
@@ -352,9 +403,18 @@ it('commits the working counter only when its displayed second changes', () => {
   let commits = 0;
   let tree: ReactTestRenderer | undefined;
   try {
-    act(() => { tree = create(<React.Profiler id="working" onRender={() => { commits++; }}>
-      <TurnProgressLine label="Thinking" startedAt={90} testID="clock-render-budget" />
-    </React.Profiler>); });
+    act(() => {
+      tree = create(
+        <React.Profiler
+          id="working"
+          onRender={() => {
+            commits++;
+          }}
+        >
+          <TurnProgressLine label="Thinking" startedAt={90} testID="clock-render-budget" />
+        </React.Profiler>,
+      );
+    });
     const mounted = commits;
     for (let tick = 0; tick < 7; tick++) act(() => vi.advanceTimersByTime(125));
     expect(commits).toBe(mounted);
@@ -372,11 +432,20 @@ it('keeps streaming parent renders outside the working line and uses the latest 
   vi.setSystemTime(100_000);
   const render = vi.spyOn(turnClock, 'formatWorkingCounter');
   const stop = vi.fn();
-  const scene = (tick: number, stopping = false) => <TurnProgressLine label="Thinking"
-    startedAt={90} stopping={stopping} onStop={() => stop(tick)} testID="stream-clock" />;
+  const scene = (tick: number, stopping = false) => (
+    <TurnProgressLine
+      label="Thinking"
+      startedAt={90}
+      stopping={stopping}
+      onStop={() => stop(tick)}
+      testID="stream-clock"
+    />
+  );
   let tree: ReactTestRenderer | undefined;
   try {
-    act(() => { tree = create(scene(0)); });
+    act(() => {
+      tree = create(scene(0));
+    });
     render.mockClear();
     for (let tick = 1; tick <= 20; tick++) act(() => tree!.update(scene(tick)));
     expect(render).not.toHaveBeenCalled();
@@ -395,19 +464,38 @@ it('keeps Stop on the committed turn while a streaming transition suspends', asy
   const stop = vi.fn();
   let ready = false;
   let resume!: () => void;
-  const pending = new Promise<void>(resolve => { resume = resolve; });
-  function Gate({ wait }: { wait: boolean }) { if (wait && !ready) throw pending; return null; }
-  const scene = (turn: number, wait: boolean) => <React.Suspense fallback={null}>
-    <TurnProgressLine label="Thinking" startedAt={90} onStop={() => stop(turn)} testID="committed-clock" />
-    <Gate wait={wait} />
-  </React.Suspense>;
+  const pending = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  function Gate({ wait }: { wait: boolean }) {
+    if (wait && !ready) throw pending;
+    return null;
+  }
+  const scene = (turn: number, wait: boolean) => (
+    <React.Suspense fallback={null}>
+      <TurnProgressLine
+        label="Thinking"
+        startedAt={90}
+        onStop={() => stop(turn)}
+        testID="committed-clock"
+      />
+      <Gate wait={wait} />
+    </React.Suspense>
+  );
   let tree: ReactTestRenderer | undefined;
   try {
-    await act(async () => { tree = create(scene(1, false), { unstable_isConcurrent: true }); });
-    await act(async () => { React.startTransition(() => tree!.update(scene(2, true))); });
+    await act(async () => {
+      tree = create(scene(1, false), { unstable_isConcurrent: true });
+    });
+    await act(async () => {
+      React.startTransition(() => tree!.update(scene(2, true)));
+    });
     act(() => hostByTestID(tree!, 'committed-clock-stop').props.onPress());
     expect(stop).toHaveBeenLastCalledWith(1);
-    await act(async () => { ready = true; resume(); });
+    await act(async () => {
+      ready = true;
+      resume();
+    });
     act(() => hostByTestID(tree!, 'committed-clock-stop').props.onPress());
     expect(stop).toHaveBeenLastCalledWith(2);
   } finally {

@@ -1,6 +1,9 @@
 vi.mock('@/components/buzz/Button', async () => {
   const React = await import('react');
-  return { Button: (props: any) => React.createElement('Button', props, React.createElement('Text', null, props.label)) };
+  return {
+    Button: (props: any) =>
+      React.createElement('Button', props, React.createElement('Text', null, props.label)),
+  };
 });
 import React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -34,7 +37,9 @@ vi.mock('react-native-unistyles', () => ({
           layout: { row: 64 },
           space: { sm: 8, md: 12 },
           textMuted: '#777',
-          accent: 'brass', dialogDanger: 'danger', textSecondary: 'secondary',
+          accent: 'brass',
+          dialogDanger: 'danger',
+          textSecondary: 'secondary',
           textPrimary: '#fff',
           type: { body: {}, meta: {} },
         },
@@ -61,24 +66,45 @@ describe('MemberRosterRow', () => {
   it('reuses unchanged roster DTOs and keeps identity actions current', () => {
     let renderer!: ReactTestRenderer;
     const press = vi.fn();
-    const rows = (changed: boolean, onPress = press) => ['one', 'two'].map((pubkey) => (
-      <MemberRosterRow key={pubkey} kind="agent" divider="bottom" pubkey={pubkey}
-        name={changed && pubkey === 'two' ? 'Renamed' : pubkey} handle={pubkey}
-        usage={{ windows: [], updatedAt: 1 }} onPress={onPress} testID={pubkey} />
-    ));
-    act(() => { renderer = create(<>{rows(false)}</>); });
+    const rows = (changed: boolean, onPress = press) =>
+      ['one', 'two'].map((pubkey) => (
+        <MemberRosterRow
+          key={pubkey}
+          kind="agent"
+          divider="bottom"
+          pubkey={pubkey}
+          name={changed && pubkey === 'two' ? 'Renamed' : pubkey}
+          handle={pubkey}
+          usage={{ windows: [], updatedAt: 1 }}
+          onPress={onPress}
+          testID={pubkey}
+        />
+      ));
+    act(() => {
+      renderer = create(<>{rows(false)}</>);
+    });
     rowRender.mockClear();
-    act(() => { renderer.update(<>{rows(true)}</>); });
+    act(() => {
+      renderer.update(<>{rows(true)}</>);
+    });
     expect(rowRender.mock.calls.map(([id]) => id)).toEqual(['two']);
-    act(() => { renderer.root.findAllByType(IndexRow)[0].props.onPress(); });
+    act(() => {
+      renderer.root.findAllByType(IndexRow)[0].props.onPress();
+    });
     expect(press).toHaveBeenCalledWith('one');
     const latest = vi.fn();
     rowRender.mockClear();
-    act(() => { renderer.update(<>{rows(true, latest)}</>); });
+    act(() => {
+      renderer.update(<>{rows(true, latest)}</>);
+    });
     expect(rowRender).toHaveBeenCalledTimes(2);
-    act(() => { renderer.root.findAllByType(IndexRow)[1].props.onPress(); });
+    act(() => {
+      renderer.root.findAllByType(IndexRow)[1].props.onPress();
+    });
     expect(latest).toHaveBeenCalledWith('two');
-    act(() => { renderer.unmount(); });
+    act(() => {
+      renderer.unmount();
+    });
   });
 
   it('formats a human with only the role under the single handle title', () => {
@@ -156,17 +182,42 @@ describe('MemberRosterRow', () => {
 
 it('appends usage only at 80% or more, or when stopped or paused', () => {
   const now = Date.now() / 1000;
-  const win = (t: string, u: number) => ({ rateLimitType: t, status: 'allowed' as const, utilization: u, updatedAt: now });
-  let renderer!: ReactTestRenderer;
-  const render = (value: import('@beeline/api-contract/phone').AgentUsage) => act(() => {
-    renderer = create(<MemberRosterRow kind="agent" divider="bottom" name="Agent" pubkey="agent" testID="usage" ownerHandle="owner" usage={value} />);
+  const win = (t: string, u: number) => ({
+    rateLimitType: t,
+    status: 'allowed' as const,
+    utilization: u,
+    updatedAt: now,
   });
-  const texts = () => renderer.root.findAllByType('Text' as any)
-    .filter((node: any) => typeof node.props.children === 'string');
+  let renderer!: ReactTestRenderer;
+  const render = (value: import('@beeline/api-contract/phone').AgentUsage) =>
+    act(() => {
+      renderer = create(
+        <MemberRosterRow
+          kind="agent"
+          divider="bottom"
+          name="Agent"
+          pubkey="agent"
+          testID="usage"
+          ownerHandle="owner"
+          usage={value}
+        />,
+      );
+    });
+  const texts = () =>
+    renderer.root
+      .findAllByType('Text' as any)
+      .filter((node: any) => typeof node.props.children === 'string');
   const strings = (node: any): string[] =>
-    typeof node === 'string' ? [node] : Array.isArray(node) ? node.flatMap(strings) : node?.children ? strings(node.children) : [];
+    typeof node === 'string'
+      ? [node]
+      : Array.isArray(node)
+        ? node.flatMap(strings)
+        : node?.children
+          ? strings(node.children)
+          : [];
   const text = () => strings(renderer.toJSON()).join('');
-  const colorOf = (part: string) => texts().find((node: any) => node.props.children.includes(part))?.props.style.color;
+  const colorOf = (part: string) =>
+    texts().find((node: any) => node.props.children.includes(part))?.props.style.color;
 
   render({ updatedAt: now, windows: [win('five_hour', 0.42), win('seven_day', 0.83)] });
   expect(text()).toContain('@owner');
@@ -177,20 +228,41 @@ it('appends usage only at 80% or more, or when stopped or paused', () => {
   render({ updatedAt: now, windows: [win('five_hour', 0.42)] });
   expect(text()).not.toContain(' · ');
 
-  render({ updatedAt: now, windows: [{ rateLimitType: 'five_hour', status: 'rejected', updatedAt: now, resetsAt: now + 3600 }] });
+  render({
+    updatedAt: now,
+    windows: [
+      { rateLimitType: 'five_hour', status: 'rejected', updatedAt: now, resetsAt: now + 3600 },
+    ],
+  });
   expect(text()).toContain('limit reached · back');
   expect(colorOf('limit reached')).toBe('danger');
 
-  render({ updatedAt: now, windows: [], free: { used: 840_000, limit: 1_000_000, resetsAt: now + 3600 } });
+  render({
+    updatedAt: now,
+    windows: [],
+    free: { used: 840_000, limit: 1_000_000, resetsAt: now + 3600 },
+  });
   expect(text()).toContain(' · 840K of 1M today');
   expect(text()).not.toContain('$');
-  render({ updatedAt: now, windows: [], free: { used: 10, limit: 1_000_000, resetsAt: now + 3600, paused: true } });
+  render({
+    updatedAt: now,
+    windows: [],
+    free: { used: 10, limit: 1_000_000, resetsAt: now + 3600, paused: true },
+  });
   expect(text()).toContain('paused · back');
   expect(text()).not.toContain('$');
 
-  render({ updatedAt: now, windows: [], spend: { today: 9.75, week: 16.4, limit: 20, remaining: 3.6 } });
+  render({
+    updatedAt: now,
+    windows: [],
+    spend: { today: 9.75, week: 16.4, limit: 20, remaining: 3.6 },
+  });
   expect(text()).toContain(' · $3.60 of $20 left');
-  render({ updatedAt: now, windows: [], spend: { today: 11.2, week: 20, limit: 20, remaining: 0, rejected: true } });
+  render({
+    updatedAt: now,
+    windows: [],
+    spend: { today: 11.2, week: 20, limit: 20, remaining: 0, rejected: true },
+  });
   expect(text()).toContain(' · key limit reached');
   render({ updatedAt: now, windows: [], spend: { rejected: true } });
   expect(text()).toContain(' · key limit reached');

@@ -81,9 +81,8 @@ export class RouterBuildCoordinator{
         const snapshot={kind:'snapshot' as const,family:ticket.input.family,scope:ticket.input.agentId??ticket.input.roomId??ticket.input.workspaceId,
           value,cut:ticket.cut,authority:ticket.authority,atomicGroup:routerAtomicGroup(ticket.input,ticket.reader),
           ...(ticket.trayClockVersion?{clockVersion:ticket.trayClockVersion}:{})};
-        const encoded=JSON.stringify(snapshot),wireBytes=Buffer.byteLength(encoded),bytes=wireBytes+Buffer.byteLength(key);
-        const maximum=ticket.input.family==='agent-profile'?32*1024:ticket.input.family==='needs-you-count'?1024:['room-head','room-scheduled-work','needs-you-tray','needs-you-saved-page','workspace-roster','room-workflows'].includes(ticket.input.family)?64*1024:256*1024;
-        if(wireBytes>maximum||bytes>this.limits.bytes)throw new RouterProjectionUnavailable('budget');
+        const encoded=JSON.stringify(snapshot),bytes=Buffer.byteLength(encoded)+Buffer.byteLength(key);
+        if(bytes>this.limits.bytes)throw new RouterProjectionUnavailable('budget');
         if(generation===this.generation&&this.flights.get(key)?.cacheable)this.remember(key,{encoded,bytes,authority:ticket.authority});
         return encoded;
       });

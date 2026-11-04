@@ -39,12 +39,13 @@ describe('server-indexed mobile data boundary', () => {
     );
   });
 
+  // Parsing every production route needs more time on shared CI runners.
   it('confines current routes, stores and transport adapters to the one read owner', () => {
     const files = productionFiles(resolve(REPO, 'apps/mobile/sources'));
     expect(files.some(file => file.includes('/app/(app)/beeline/'))).toBe(true);
     const failures = files.flatMap(file => inspectSurfaceReadAuthority(file.slice(REPO.length + 1), readFileSync(file, 'utf8')));
     expect(failures).toEqual([]);
-  });
+  }, 20_000);
 
   it.each([
     "import {mobileSurfaceCache as cache} from '@/buzz/surface-storage'; import {isChatListView as guard} from '@beeline/buzz-client'; cache['publish'](address, changed, guard);",

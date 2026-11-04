@@ -41,6 +41,13 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.3'
+      - name: Install CocoaPods for the Simulator build
+        run: |
+          gem install cocoapods --version 1.16.2 --no-document
+          pod --version
       - name: Record provenance and install mobile dependencies
         working-directory: source/apps/mobile
         run: |

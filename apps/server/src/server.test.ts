@@ -1356,7 +1356,10 @@ describe('phone committed-row live delivery', () => {
 
   it('keeps viewed Room messages complete after opting into sidebar previews', async () => {
     const roomId = '00000000-0000-4000-8000-000000000123';
-    const query = vi.fn().mockResolvedValue({ rowCount: 1, rows: [] });
+    // This is the legacy message/sidebar wire path. Viewing still publishes
+    // an aggregate overlay revision when the server router is enabled.
+    const query = vi.fn().mockImplementation(async (sql: string) => ({ rowCount: 1,
+      rows: sql.includes('FROM helper_overlay_demand') ? [{ revision: '1', viewing: true }] : [] }));
     const read = vi.fn().mockImplementation(async () => ({ type: 'message-delta', roomId,
       message: { id: 'viewed', text: 'V'.repeat(128 * 1024), createdAt: 1,
         presentation: 'message', author: { pubkey: 'a'.repeat(64), kind: 'agent', name: 'Agent' } } }));

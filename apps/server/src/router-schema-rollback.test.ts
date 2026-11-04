@@ -39,7 +39,7 @@ it('keeps historical boot valid through additive readiness while requiring compl
     await expect(assertSchemaCurrent(database)).resolves.toBeUndefined();
     await expect(old.assertSchemaCurrent(database)).resolves.toBeUndefined();
     expect((await database.query('SELECT version FROM beeline_schema_state')).rows).toEqual([{ version: 46 }]);
-    expect((await database.query('SELECT version FROM beeline_router_schema_state')).rows).toEqual([{ version: 61 }]);
+    expect((await database.query('SELECT version FROM beeline_router_schema_state')).rows).toEqual([{ version: 62 }]);
 
     // A historical migration can still mark its baseline without deleting the
     // additive marker. This does not claim it understands router commands.
@@ -48,10 +48,10 @@ it('keeps historical boot valid through additive readiness while requiring compl
     await expect(assertSchemaCurrent(database)).resolves.toBeUndefined();
 
     await database.query('UPDATE beeline_router_schema_state SET version=60');
-    await expect(assertSchemaCurrent(database)).rejects.toThrow('expected router schema version 61, found 60');
+    await expect(assertSchemaCurrent(database)).rejects.toThrow('expected router schema version 62, found 60');
     await expect(old.assertSchemaCurrent(database)).resolves.toBeUndefined();
     await database.query('DELETE FROM beeline_router_schema_state');
-    await expect(assertSchemaCurrent(database)).rejects.toThrow('expected router schema version 61, found no marker');
+    await expect(assertSchemaCurrent(database)).rejects.toThrow('expected router schema version 62, found no marker');
     await markSchemaCurrent(database);
     await database.query('UPDATE beeline_schema_state SET version=45');
     await expect(assertSchemaCurrent(database)).rejects.toThrow('expected schema version 46, found 45');

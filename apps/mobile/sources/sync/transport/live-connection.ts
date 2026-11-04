@@ -354,11 +354,13 @@ export class LiveConnection {
   private receiveRouterFrame(value: unknown, socket: WebSocket): boolean {
     if (!this.deps.router || !value || typeof value !== 'object') return false;
     const frame = value as Record<string, unknown>;
+    // Ordinary RPC replies race negotiation on capable servers. Only the
+    // ordered sync/subscription barrier can establish an old-server epoch.
     if (this.routerState === 'waiting' && (frame.type === 'router-capabilities' ||
-      frame.type === 'sync-ok' || frame.type === 'subscribed' || frame.t === 'res')) {
+      frame.type === 'sync-ok' || frame.type === 'subscribed')) {
       const families: RouterFamily[] = frame.type === 'router-capabilities' && frame.protocol === 1 && Array.isArray(frame.families)
-        ? ['room-list', 'needs-you-count', 'room-head','room-scheduled-work','workspace-roster','room-workflows','agent-profile','owner-workbench','owner-wallet'].filter(f => (frame.families as unknown[]).includes(f)&&
-          (f!=='room-scheduled-work'||frame.commandDedupV1===true&&frame.authorityFencesV1===true)) as RouterFamily[] : [];
+        ? ['room-list', 'needs-you-count','needs-you-tray','needs-you-saved-page', 'room-head','room-scheduled-work','workspace-roster','room-workflows','agent-profile','owner-workbench','owner-wallet'].filter(f => (frame.families as unknown[]).includes(f)&&
+          (!['room-scheduled-work','needs-you-tray','needs-you-saved-page'].includes(f)||frame.commandDedupV1===true&&frame.authorityFencesV1===true)) as RouterFamily[] : [];
       this.commandDedupV1 = frame.type === 'router-capabilities' && frame.protocol === 1 && frame.commandDedupV1 === true;
       this.routerState = 'initializing';
       // A negotiated executor belongs to this physical connection. Retained

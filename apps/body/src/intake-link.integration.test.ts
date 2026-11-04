@@ -1,7 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { TokenAuth } from '../../server/src/auth.js';
@@ -14,8 +14,12 @@ import { createBeelineServer } from '../../server/src/server.js';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 
+// These cases exercise the legacy application-checkpoint adapter. Selected
+// turn ownership deliberately retires those checkpoints (turn-ownership-socket.test.ts).
+afterEach(() => vi.unstubAllEnvs());
 it.each(['registration', 'subscription', 'commands'] as const)(
   'parks stalled %s despite transport pings, then claims queued work on an explicit recovery boundary', async stage => {
+    vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', '0');
     const agentId = 'a'.repeat(64);
     const roomId = 'room';
     const live = new LiveHub();

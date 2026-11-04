@@ -1,4 +1,5 @@
-vi.mock('@/buzz/router-resource',()=>({useRoutedResource:()=>({mode:'legacy',value:null,error:null,loading:false,retry:()=>{}})}));
+vi.mock('@/buzz/router-resource',()=>({useRoutedResource:(family:string)=>({mode:'router',value:family==='workspace-roster'?workspace:null,error:null,loading:false,retry:()=>{}})}));
+vi.mock('@/buzz/router-owner',()=>({acquireRouterRosterQuery:vi.fn()}));
 vi.mock('@/utils/responsive', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/responsive')>()), useIsDesktop: () => false }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
@@ -311,16 +312,11 @@ beforeEach(() => {
 });
 
 describe('Members agent invitation flow', () => {
-  it('subscribes to the server-authored agent presence filters, never the Workspace id as a Room', async () => {
+  it('uses canonical presence without a second Workspace watch', async () => {
     const renderer = await render();
 
     expect(renderer.root.findByProps({ testID: 'workspace-members-surface' })).toBeDefined();
-    expect(client.surfaceSubscribe).toHaveBeenCalledTimes(2);
-    expect(client.surfaceSubscribe).toHaveBeenCalledWith([], expect.any(Function));
-    expect(client.surfaceSubscribe).toHaveBeenCalledWith(
-      workspace.watchFilters,
-      expect.any(Function),
-    );
+    expect(client.surfaceSubscribe).not.toHaveBeenCalled();
   });
 
   it('mints a fresh code and hands the exact one-command connect flow to the one picker sheet', async () => {

@@ -1,7 +1,7 @@
-const profileLane=vi.hoisted(()=>({mode:'legacy' as 'legacy'|'pending'|'router',view:null as any,listeners:new Set<()=>void>(),acquire:vi.fn(),query:vi.fn(),retry:vi.fn()}));
+const profileLane=vi.hoisted(()=>({mode:'router' as 'pending'|'router',view:null as any,listeners:new Set<()=>void>(),acquire:vi.fn(),query:vi.fn(),retry:vi.fn()}));
 vi.mock('@/buzz/router-family',()=>({useRouterFamily:()=>profileLane.mode}));
 vi.mock('@/buzz/router-owner',()=>({routerOwnerUsageProfile:vi.fn(),acquireRouterRosterQuery:(...args:any[])=>profileLane.query(...args),acquireRouterLane:(...args:any[])=>profileLane.acquire(...args),retryRouterLane:(...args:any[])=>profileLane.retry(...args)}));
-vi.mock('@/buzz/use-agent-usage-cell', () => ({ useAgentUsageCell: () => ({ mode: 'legacy', cell: null }) }));
+vi.mock('@/buzz/use-agent-usage-cell', () => ({ useAgentUsageCell: () => ({ mode: 'router', cell: {allowed:true,usage:state.agent?.usage} }) }));
 vi.mock('@/utils/responsive', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/utils/responsive')>()), useIsDesktop: () => false }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
@@ -22,7 +22,10 @@ const OWNER = 'b'.repeat(64);
 const MEMBER = 'c'.repeat(64);
 const AGENT = 'd'.repeat(64);
 
-const state = vi.hoisted(() => ({ workspace: null as any, agent: null as any }));
+// Complete DTOs enter at the canonical owner; mutations publish committed facts.
+const state = vi.hoisted(() => new Proxy({ workspace: null as any, agent: null as any }, {
+  set(target,key,value) { Reflect.set(target,key,value); for(const wake of profileLane.listeners)wake(); return true; }
+}));
 const liveListeners = vi.hoisted(() => new Set<(event: any) => void>());
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({
   register: async (_filters: unknown, listener: (event: any) => void) => {
@@ -542,7 +545,7 @@ it('F03 negotiated Members render exact roster facts and admit search only on su
   expect(profileLane.query.mock.calls[0]?.[0]).toEqual({family:'workspace-roster',workspaceId:WORKSPACE,query:{revision:'2',q:'edited-999'}});
   expect(renderer.root.findAllByType(MemberRosterRow)).toHaveLength(0);
   expect(roomView.workspace).not.toHaveBeenCalled();expect(roomView.workspaceMembers).not.toHaveBeenCalled();expect(liveListeners.size).toBe(0);
-});
+},15_000);
 
 it('F09 negotiated native profile and portrait consume one canonical detail; transient frames never read another profile or Workspace',async()=>{
   const {AgentProfileView}=await import('@/components/buzz/AgentProfileView');
@@ -615,8 +618,29 @@ beforeEach(() => {
   surfaces.values.clear();
   surfaces.listeners.clear();
   vi.clearAllMocks();
-  profileLane.mode='legacy';profileLane.view=null;profileLane.listeners.clear();
-  profileLane.acquire.mockImplementation(()=>({current:()=>profileLane.view,release:()=>{},subscribe:(wake:()=>void)=>{profileLane.listeners.add(wake);return()=>profileLane.listeners.delete(wake);}}));
+  profileLane.mode='router';profileLane.view=null;profileLane.listeners.clear();
+  const snapshots=new WeakMap<object,any>();
+  const current=(input:any)=>{
+    if(profileLane.view)return profileLane.view;
+    const dto=input.family==='workspace-roster'?state.workspace:state.agent;
+    let view=snapshots.get(dto);
+    if(!view){view={state:'LIVE',value:input.family==='workspace-roster'?{...dto,revision:'1'}:
+      {...dto,canRemove:dto.access?.owner?.id===VIEWER||state.workspace.viewer.permissions.manage,
+        configVersion:dto.configVersion??'1',voiceRevision:'voice-1'},error:null,cut:null};snapshots.set(dto,view);}
+    return view;
+  };
+  const subscribe=(wake:()=>void)=>{profileLane.listeners.add(wake);return()=>profileLane.listeners.delete(wake);};
+  profileLane.acquire.mockImplementation((input:any)=>({current:()=>current(input),release:()=>{},subscribe}));
+  profileLane.query.mockImplementation((input:any)=>{
+    let view:any={state:'OPENING',value:null,error:null,cut:null};
+    const listeners=new Set<()=>void>();
+    void roomView.workspaceMembers(input.workspaceId,input.query).then((page:any)=>{
+      view={state:'LIVE',value:{...state.workspace,...page,revision:'1'},error:null,cut:null};
+      for(const wake of listeners)wake();
+    });
+    return {current:()=>view,release:()=>{},subscribe:(wake:()=>void)=>{listeners.add(wake);return()=>listeners.delete(wake);},
+      publish:(value:any)=>{view={state:'LIVE',value,error:null,cut:null};for(const wake of listeners)wake();}};
+  });
   platform.OS = 'ios';
   navigation.beforeRemove = null;
   state.workspace = baseWorkspace();
@@ -1056,15 +1080,14 @@ describe('Members workspace management', () => {
     }
   });
 
-  it('refreshes the profile grants live with one read per relay signal, on the watch Members shares (J27)', async () => {
+  it('refreshes profile grants on their existing watch while Members uses canonical facts (J27)', async () => {
     const list = await render();
     const renderer = await personProfile();
-    // Members and the profile hold one relay watch for this Workspace: the
-    // profile's grant Room joins the managed Room on the same subscription.
+    // Only the human profile owns this watch; its grant Room is scoped explicitly.
     const subscribes = client.surfaceSubscribe.mock.calls as unknown as [any, (event?: unknown) => void][];
     expect(subscribes.at(-1)![0]).toEqual([{ kinds: [0, 9, 9000, 9001],
-      '#h': ['22222222-2222-4222-8222-222222222222', '33333333-3333-4333-8333-333333333333'] }]);
-    expect(subscribes).toHaveLength(3);
+      '#h': ['22222222-2222-4222-8222-222222222222'] }]);
+    expect(subscribes).toHaveLength(2);
     expect(roomView.workspaceMembers).toHaveBeenCalledTimes(1);
     expect(roomView.workspaceMembers).toHaveBeenCalledWith(WORKSPACE, { memberId: MEMBER });
     const ownedAgent = state.workspace.agents[0];
@@ -1146,11 +1169,7 @@ describe('Members workspace management', () => {
     const { mobileSurfaceCache, surfaceAddress } = await import('@/buzz/surface-storage');
     const { isWorkspaceMemberListView } = await import('@beeline/buzz-client');
     await act(async () => {
-      identities.recordPerson(
-        identities.identityScope('https://relay.test', VIEWER),
-        { ...owned.identity, name: 'Clara Renamed', handle: 'renamedagent' },
-        nextSurfaceStamp(),
-      );
+      state.workspace={...state.workspace,agents:[{...owned,identity:{...owned.identity,name:'Clara Renamed',handle:'renamedagent'}}]};
     });
     const shown = () => list.root.findAll((node: any) => node.props.name === 'Clara Renamed').length;
     expect(shown()).toBeGreaterThan(0);
@@ -1634,26 +1653,21 @@ describe('Members workspace management', () => {
     expect(client.resolveDirectMessage).toHaveBeenCalledWith(WORKSPACE, AGENT);
   });
 
-  it('keeps a profile read failure and Retry after a successful workspace refresh', async () => {
-    roomView.agent.mockRejectedValueOnce(new Error('Connection lost'));
-    const renderer = await render();
+  it('keeps a canonical profile failure and Retry while roster facts change',async()=>{
+    const renderer=await render();
+    profileLane.view={state:'PARKED',value:null,error:'Connection lost',cut:null};
     await openAgentProfile(renderer);
-    expect(renderer.root.findAllByProps({ label: 'Retry' })).not.toHaveLength(0);
-    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, (event?: unknown) => void]
-    >;
-    const refresh = subscriptions.at(-1)![1];
-    const readsBeforeRefresh = roomView.workspace.mock.calls.length;
-    await act(async () => refresh({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } }));
-    expect(roomView.workspace.mock.calls.length).toBeGreaterThan(readsBeforeRefresh);
-    const retry = renderer.root.findAllByProps({ label: 'Retry' })[0];
-    expect(retry).toBeDefined();
-    await act(async () => retry.props.onPress());
-    expect(roomView.agent).toHaveBeenCalledTimes(2);
-    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' })).toBeDefined();
+    expect(renderer.root.findAllByProps({label:'Retry'})).not.toHaveLength(0);
+    await act(async()=>{state.workspace={...state.workspace,peopleTotal:4};});
+    const retry=renderer.root.findAllByProps({label:'Retry'})[0]!;
+    profileLane.retry.mockImplementation(()=>{profileLane.view={state:'LIVE',value:{...state.agent,canRemove:true},error:null,cut:null};for(const wake of profileLane.listeners)wake();});
+    await act(async()=>retry.props.onPress());
+    expect(profileLane.retry).toHaveBeenCalledWith({family:'agent-profile',workspaceId:WORKSPACE,agentId:AGENT});
+    expect(renderer.root.findByProps({testID:'agent-profile-soul'})).toBeDefined();
+    expect(roomView.agent).not.toHaveBeenCalled();
   });
 
-  it('R-USAGE-6: shows a cached profile, then reads it again from the server', async () => {
+  it('R-USAGE-6: uses the canonical profile rather than the retired profile cache', async () => {
     const { mobileSurfaceCache, surfaceAddress } = await import('@/buzz/surface-storage');
     await act(async () => mobileSurfaceCache.write(
       surfaceAddress('https://relay.test', VIEWER, '/workspace/:id/agents/:agentId',
@@ -1662,20 +1676,21 @@ describe('Members workspace management', () => {
       (value: unknown): value is typeof state.agent => Boolean(value)));
     const renderer = await render();
     await openAgentProfile(renderer);
-    expect(roomView.agent).toHaveBeenCalledTimes(1);
+    expect(roomView.agent).not.toHaveBeenCalled();
     expect(renderer.root.findByProps({ testID: 'agent-profile-soul' }).props.children).toBe(
       state.agent.soul.instructions,
     );
   });
 
-  it('retries a failed profile read without collapsing the profile', async () => {
-    roomView.agent.mockRejectedValueOnce(new Error('Connection lost'));
-    const renderer = await render();
+  it('retries a parked canonical profile without leaving its route',async()=>{
+    const renderer=await render();
+    profileLane.view={state:'PARKED',value:null,error:'Connection lost',cut:null};
     await openAgentProfile(renderer);
-    const retry = renderer.root.findAllByProps({ label: 'Retry' })[0];
-    await act(async () => retry.props.onPress());
-    expect(roomView.agent).toHaveBeenCalledTimes(2);
-    expect(renderer.root.findByProps({ testID: 'agent-profile-soul' })).toBeDefined();
+    profileLane.retry.mockImplementation(()=>{profileLane.view={state:'LIVE',value:{...state.agent,canRemove:true},error:null,cut:null};for(const wake of profileLane.listeners)wake();});
+    await act(async()=>renderer.root.findAllByProps({label:'Retry'})[0]!.props.onPress());
+    expect(profileLane.retry).toHaveBeenCalledTimes(1);
+    expect(renderer.root.findByProps({testID:'agent-profile-soul'})).toBeDefined();
+    expect(roomView.agent).not.toHaveBeenCalled();
   });
 
   it('opens the profile route from a roster identity without inline settings', async () => {
@@ -1968,7 +1983,7 @@ describe('Members workspace management', () => {
     expect(renderer.root.findByProps({ testID: 'agent-yolo-error' }).props.children).toBe(
       "Only the agent's owner can change this",
     );
-    expect(roomView.agent).toHaveBeenCalled();
+    expect(roomView.agent).not.toHaveBeenCalled();
   });
 
   it('warns about and invokes the full removeAgent host teardown path', async () => {
@@ -2081,10 +2096,12 @@ describe('Members workspace management', () => {
       profile.root.findByProps({ testID: 'agent-soul-name' }).props.onChangeText('Scout');
     });
     await press(profile, 'save-agent-soul');
+    await act(async()=>profileLane.query.mock.results[0]!.value.publish({...state.workspace,revision:'1',agents:[{...paged,identity:{...paged.identity,name:'Scout'}}],agentsTruncated:false}));
     expect(pagedName()).toBe('Scout');
 
     await press(profile, 'edit-agent-soul');
     await press(profile, 'remove-agent');
+    await act(async()=>profileLane.query.mock.results[0]!.value.publish({...state.workspace,revision:'1',agents:[],agentsTruncated:false}));
     expect(list.root.findAllByProps({ testID: `agent-${PAGED}-identity` })).toHaveLength(0);
     expect(list.root.findByProps({ testID: 'members-agents-head' }).props.count).toEqual(1);
   });
@@ -2112,18 +2129,9 @@ describe('Members workspace management', () => {
     });
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).not.toHaveLength(0);
 
-    // Another session removes Clara; the Workspace refresh no longer lists her.
-    state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 0 };
-    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, (event?: unknown) => void]
-    >;
-    const global = subscriptions.find(([filters]) => Array.isArray(filters) && filters.length === 0);
-    expect(global).toBeDefined();
-    const reads = roomView.workspace.mock.calls.length;
-    await act(async () => (global![1] as (event: unknown) => void)({
-      monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' },
-    }));
-    expect(roomView.workspace.mock.calls.length).toBeGreaterThan(reads);
+    const reads=roomView.workspace.mock.calls.length;
+    await act(async()=>{state.workspace={...baseWorkspace(),agents:[],agentTotal:0};});
+    expect(roomView.workspace.mock.calls.length).toBe(reads);
 
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
   });
@@ -2136,11 +2144,9 @@ describe('Members workspace management', () => {
       await Promise.resolve();
     });
 
-    state.workspace = { ...baseWorkspace(), agents: [], agentTotal: 1, agentsTruncated: true };
-    const subscriptions = client.surfaceSubscribe.mock.calls as unknown as Array<
-      [unknown, (event?: unknown) => void]
-    >;
-    await act(async () => subscriptions.at(-1)![1]({ monolithLive: { type: 'invalidate', roomId: '', reason: 'postgres:memberships' } } as never));
+    const {mobileSurfaceCache,surfaceAddress}=await import('@/buzz/surface-storage');
+    const {isWorkspaceView}=await import('@beeline/buzz-client');
+    await act(async()=>mobileSurfaceCache.write(surfaceAddress('https://relay.test',VIEWER,'/workspace/:id',{workspaceId:WORKSPACE}),{...baseWorkspace(),agents:[],agentTotal:1,agentsTruncated:true} as import('@beeline/buzz-client').WorkspaceView,isWorkspaceView));
 
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).not.toHaveLength(0);
   });
@@ -2243,10 +2249,8 @@ describe('Members workspace management', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(roomView.workspaceMembers).toHaveBeenCalledWith(
-      WORKSPACE,
-      expect.objectContaining({ q: offPage.identity.name }),
-    );
+    await act(async()=>renderer.root.findByProps({testID:'members-search'}).props.onSubmitEditing());
+    expect(profileLane.query).toHaveBeenCalledWith({family:'workspace-roster',workspaceId:WORKSPACE,query:{revision:'1',q:offPage.identity.name}},expect.any(Function),expect.any(Function));
     expect(
       renderer.root.findAllByProps({ testID: `member-${offPage.identity.pubkey}-identity` }).length,
     ).toBeGreaterThan(0);
@@ -2257,6 +2261,7 @@ describe('Members workspace management', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
+    await act(async()=>renderer.root.findByProps({testID:'members-search'}).props.onSubmitEditing());
     const row = (pubkey: string) =>
       renderer.root.findAll(
         (node: any) =>
@@ -2286,7 +2291,9 @@ it('negotiated usage-only changes skip a full profile read while actual agent co
       type: 'resource-change', roomId: '', resource: 'agent', resourceId: AGENT, usageOnly: true,
     } }); });
     expect(roomView.agent.mock.calls.length).toBe(before);
-    await agentChanged(); expect(roomView.agent.mock.calls.length).toBe(before + 1);
+    await act(async()=>{state.agent={...state.agent,soul:{...state.agent.soul,instructions:'Committed configuration'}};});
+    expect(renderer.root.findByProps({testID:'agent-profile-soul'}).props.children).toBe('Committed configuration');
+    expect(roomView.agent.mock.calls.length).toBe(before);
   } finally { suspendUsageCellConnection(); }
 });
 

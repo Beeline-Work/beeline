@@ -76,7 +76,10 @@ describe('real mobile router owner', () => {
     expect(execute.mock.calls.map(([input])=>input.family)).toEqual(['room-head']);
     expect(()=>acquireRouterRoomRoster('33333333-3333-4333-8333-333333333333',()=>true,()=>{})).toThrow('not held');
     const picker=acquireRouterRoomRoster(ws,()=>true,()=>{});await settle();
-    expect(picker.current().state).toBe('LIVE');expect(execute).toHaveBeenCalledTimes(2);picker.release();
+    expect(picker.current().state).toBe('LIVE');expect(execute).toHaveBeenCalledTimes(2);
+    const second=acquireRouterRoomRoster(ws,()=>true,()=>{});await settle();
+    expect(second.current().state).toBe('LIVE');expect(execute).toHaveBeenCalledTimes(2);
+    picker.release();expect(second.current().state).toBe('LIVE');second.release();
     await routerOwnerNegotiated({generation:2,families:['room-head','workspace-roster'],authorityFencesV1:true,execute});await settle();
     expect(execute.mock.calls.map(([input])=>input.family)).toEqual(['room-head','workspace-roster','room-head']);room.release();
   });

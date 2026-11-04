@@ -18,7 +18,7 @@ import { resourceCallFacts } from './resource-mcp-facade.js';
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -32,9 +32,7 @@ import {
   prepareWorkspaceAvdBase,
   workspaceAssetPaths,
   workspaceCacheEnv,
-  isolatedSharedAssetCategories,
 } from './workspace-assets.js';
-import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
 import { admitSharedAssets, SharedAssetCapacityError } from './shared-asset-capacity.js';
 import {
   androidLeaseShellBindings,
@@ -69,7 +67,6 @@ import {
   writeBackRoomClaudeLogin,
 } from './agent-home.js';
 import {
-  claimGrantedHostRoutes,
   grantedHostRouteWires,
   grantedSquireHostRoute,
   ungatedHostServers,
@@ -98,7 +95,7 @@ import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registr
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { installPiTurnBudget } from './pi-turn-budget.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
-import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
+import { beelineAgentMcpServer, readOnlyMcpServer, sessionGrantedResources, writeSessionResourceAuth, recordSessionModelFallback, tracedSessionLifecycle } from './room-session.js';
 import { allocatedDirectoryBytes, scratchBudgetMessage, scratchGrowthExceedsBudget } from './scratch-lifecycle.js';
 import { awaitInstitutionalContext, startInstitutionalContextFetch } from './institutional-context.js';
 import {
@@ -108,7 +105,6 @@ import {
 } from './codegraph.js';
 import {
   credentialMaskPaths,
-  grantedSandboxDevices,
   harnessHomeStateDirs,
   siblingAgentMaskPaths,
   wrapAgentCommand,
@@ -140,7 +136,6 @@ import {
   filterAllowedModelConfigOptions,
   parseAdvertisedConfigOptions,
 } from './model-config.js';
-import type { AgentModelConfigOption } from './model-types.js';
 import type { AgentRuntimeRecord } from './runtime.js';
 import { runtimeDirectory, runtimeIdentity } from './runtime.js';
 import {
@@ -976,34 +971,14 @@ export class MonolithCornerTurnLoop {
     });
   }
 
-  private async grantedResources(): Promise<{ hostRoutes: string[]; devices: string[]; isolatedCategories: SharedAssetCategory[] }> {
-    try {
-      const activation=await this.commandActivation();
-      const grants = activation?activation.grants:await this.options.api.execute('listAgentGrants', {
+  private async grantedResources() {
+    return sessionGrantedResources(this.options.config, async () => {
+      const activation = await this.commandActivation();
+      return activation ? activation.grants : this.options.api.execute('listAgentGrants', {
         agentId: this.agent.publicKey,
         roomId: this.options.cornerId,
       });
-      const approved = await claimGrantedHostRoutes(grants);
-      // Discovery is safe to mount; the transport gate authorizes every use.
-      // This also lets an owner use a yolo resource without an activation prompt.
-      return {
-        hostRoutes: [
-          ...new Set([
-            ...approved,
-            ...Object.keys(
-              hostImportedMcpDeclarations({
-                operatorHome: this.options.config.operatorHome,
-                agentKind: this.options.config.agentKind,
-              }),
-            ),
-          ]),
-        ],
-        devices: grantedSandboxDevices(grants),
-        isolatedCategories: isolatedSharedAssetCategories(grants),
-      };
-    } catch {
-      return { hostRoutes: [], devices: [], isolatedCategories: [] };
-    }
+    });
   }
 
   private async activate(trace?: TurnTrace): Promise<string> {
@@ -1096,16 +1071,7 @@ export class MonolithCornerTurnLoop {
         ? { relay: await this.squireRelay.listen() }
         : {}),
     };
-    const resourceAuthFile = `${this.commandContext.path}.resource-auth.json`;
-    await mkdir(dirname(resourceAuthFile), { recursive: true, mode: 0o700 });
-    await writeFile(
-      resourceAuthFile,
-      JSON.stringify({
-        ...this.options.api.connection(),
-        turnContextPath: this.commandContext.path,
-      }),
-      { mode: 0o600 },
-    );
+    const resourceAuthFile = await writeSessionResourceAuth(this.options.api, this.commandContext.path);
     const homeOverlay = this.options.config.agentHomeRoot
       ? await prepareRoomAgentHome({
           root: this.options.config.agentHomeRoot,
@@ -1586,39 +1552,12 @@ export class MonolithCornerTurnLoop {
       const applied = await applyAgentModelSelection(this.client, opened.sessionId, options, selection);
       appliedModel = applied.appliedSelection.model;
       if (selection.model && appliedModel && appliedModel !== selection.model) {
-        this.recordModelFallback(applied.appliedSelection, applied.options);
+        recordSessionModelFallback(this.options.api, this.agent.publicKey, this.options.workspaceId,
+          applied.appliedSelection, applied.options, `corner ${this.options.cornerId}`);
       }
     }
     this.sessionModel = appliedModel ?? selection?.model ?? null;
     return opened.sessionId;
-  }
-
-  /**
-   * A vanished model id was just substituted for a same-family replacement
-   * (`resolveModelFamilyFallback`) so THIS turn could proceed instead of
-   * failing it. Persist the correction so the phone stops offering the dead
-   * id and the durable `model_unavailable` flag stays clear, and let the
-   * server (`daemon-service.ts`'s `modelCatalog`) name the change in the
-   * agent's DM — fire-and-forget: a slow or failed report must never hold up
-   * or fail a turn that already succeeded with the fallback model applied.
-   */
-  private recordModelFallback(
-    appliedSelection: { model?: string; effort?: string },
-    options: AgentModelConfigOption[],
-  ): void {
-    this.options.api
-      .execute('postAgentModelCatalog', {
-        agentId: this.agent.publicKey,
-        workspaceId: this.options.workspaceId,
-        options: options as DaemonOperationMap['postAgentModelCatalog']['input']['options'],
-        selection: appliedSelection,
-      })
-      .catch((error) =>
-        console.error(
-          `[thin-core] failed to persist automatic model fallback for corner ${this.options.cornerId}:`,
-          error,
-        ),
-      );
   }
 
   /**
@@ -1683,19 +1622,7 @@ export class MonolithCornerTurnLoop {
   /** The scheduler seam: `queue-wait` closes when a slot buys a session. */
   private lifecycle(trace?: TurnTrace): SessionLifecycle {
     return {
-      activate: async () => {
-        trace?.end('queue-wait');
-        // `cold` is noted inside activate(): see MonolithRoomTurnLoop.
-        return trace ? trace.measure('activation', () => this.activate(trace)) : this.activate();
-      },
-      isCurrent: () => {
-        trace?.end('queue-wait');
-        const check = () => this.sessionIsCurrent();
-        return trace ? trace.measure('activation', check) : check();
-      },
-      onStateChange: (state) => {
-        if (state === 'waiting-for-slot') trace?.noteCapacityWait();
-      },
+      ...tracedSessionLifecycle(() => this.activate(trace), () => this.sessionIsCurrent(), trace),
       hasBackgroundWork: () => Boolean(this.client?.hasBackgroundTools || this.retiredClients.size),
       suspend: () => this.discardSession(true),
     };

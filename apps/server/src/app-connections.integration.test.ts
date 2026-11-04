@@ -331,7 +331,7 @@ describe('connect_app', () => {
       'chatgpt', 'openai chatgpt', 'claude', 'cursor', 'mcp', 'beeline connector']) {
       const result = await daemon.execute('connect', { ...turn, service, reason: 'Join my Room' }, HELPER);
       expect(result).toMatchObject({ status: 'ready', app: 'Beeline Rooms' });
-      expect(result.next).toContain('https://server.usebeeline.app/mcp');
+      expect(result.next).toContain('https://join.usebeeline.app');
       expect(result.next).toContain('Members sheet > +');
       expect(result.next).toContain('Muse directory listing is still pending');
     }

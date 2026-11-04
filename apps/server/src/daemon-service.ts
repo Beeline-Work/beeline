@@ -7624,7 +7624,7 @@ export class DaemonService {
     if (['grok', 'xai', 'x ai', 'grok bot', 'muse', 'meta muse', 'meta ai',
       'chatgpt', 'openai chatgpt', 'claude', 'cursor', 'mcp', 'beeline connector'].includes(assistant))
       return { status: 'ready', app: 'Beeline Rooms',
-        next: 'In your AI assistant, add a custom connector with URL https://server.usebeeline.app/mcp, sign in with your Beeline account, tap Allow, then add the new member to a Room via its Members sheet > +. If the assistant has no custom-connector option yet, it cannot connect yet; the Muse directory listing is still pending.' };
+        next: 'In your AI assistant, add a custom connector with URL https://join.usebeeline.app, sign in with your Beeline account, tap Allow, then add the new member to a Room via its Members sheet > +. If the assistant has no custom-connector option yet, it cannot connect yet; the Muse directory listing is still pending.' };
     // Remove an entry when its provider approves Beeline sign-in.
     const pendingProviderApproval = new Set(['tiktok']);
     if (pendingProviderApproval.has(appIdentity(service)?.key ?? assistant))

@@ -87,8 +87,10 @@ describe('shared DB-derived canonical projection builds',()=>{
     await expect(coordinator.build(other,async()=>({count:0}))).rejects.toMatchObject({reason:'budget'});
     blocked.resolve({count:1});await Promise.all([first,joined]);expect(builds).toBe(1);
   });
-  it('rejects a noncoherent transaction and serves oversized snapshots without caching',async()=>{
+  it('rejects a noncoherent transaction',async()=>{
     await expect(ticket(new ReadSnapshot(1,'1','epoch','read committed'))).rejects.toMatchObject({reason:'dependency'});
+  });
+  it('serves oversized snapshots without caching',async()=>{
     const coordinator=new RouterBuildCoordinator({bytes:1024});
     await expect(coordinator.build(await ticket(),async()=>({count:1,padding:'x'.repeat(1024)}))).resolves.toMatchObject({value:{count:1}});
     expect(coordinator.stats()).toMatchObject({entries:0,flights:0});

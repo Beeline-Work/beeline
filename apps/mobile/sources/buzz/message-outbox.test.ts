@@ -3,14 +3,100 @@ import type { NostrEvent } from '@beeline/nostr';
 import { MessageOutbox, type MessageOutboxRecord } from './message-outbox';
 const event = (id = 'a'.repeat(64), room = 'room-a'): NostrEvent => ({ id, pubkey: 'c'.repeat(64), created_at: 1, kind: 9, sig: '', content: 'Start with the server PR', tags: [['h', room], ['monolith-attachments', '[]'], ['monolith-mentions', '[]']] });
 const row = (e: NostrEvent) => ({ id: e.id, text: e.content, createdAt: e.created_at, author: { pubkey: 'c'.repeat(64), kind: 'human' as const, name: 'Kai' }, presentation: 'message' as const });
-function rig() {
+function rig(beforeSave?: (records: readonly MessageOutboxRecord[]) => Promise<void>) {
   let disk: readonly MessageOutboxRecord[] = [];
   const send = vi.fn(async (e: NostrEvent) => ({ messageId: e.id }));
-  const owner = () => new MessageOutbox({ load: async () => JSON.parse(JSON.stringify(disk)), save: async records => { disk = JSON.parse(JSON.stringify(records)); }, send, rejection: error => (error as { reason?: string }).reason });
+  const owner = () => new MessageOutbox({ load: async () => JSON.parse(JSON.stringify(disk)), save: async records => { await beforeSave?.(records); disk = JSON.parse(JSON.stringify(records)); }, send, rejection: error => (error as { reason?: string }).reason });
   return { owner, send, disk: () => disk };
 }
 afterEach(() => vi.useRealTimers());
 describe('R2 app-wide message outbox', () => {
+  it('never persists or replays a rejected enqueue after retry and restart', async () => {
+    const failed = event(); const retry = event('b'.repeat(64));
+    let rejectOnce = true;
+    const r = rig(async records => {
+      if (rejectOnce && records.some(record => record.event.id === failed.id)) {
+        rejectOnce = false;
+        throw new Error('Storage unavailable');
+      }
+    });
+    const owner = r.owner();
+    try {
+      await expect(owner.enqueue(failed, row(failed))).rejects.toThrow('Storage unavailable');
+      expect(owner.get(failed.id)).toBeUndefined();
+      expect(owner.snapshot()).toEqual([]);
+      await owner.enqueue(retry, row(retry));
+      expect(r.disk().map(record => record.event.id)).toEqual([retry.id]);
+      await owner.connectionChanged(true);
+      expect(r.send.mock.calls.map(([sent]) => sent.id)).toEqual([retry.id]);
+    } finally { owner.dispose(); }
+    const restarted = r.owner();
+    try {
+      await restarted.connectionChanged(true);
+      expect(restarted.list()).toEqual([]);
+      expect(r.send.mock.calls.map(([sent]) => sent.id)).toEqual([retry.id]);
+    } finally { restarted.dispose(); }
+  });
+  it('hides an uncommitted enqueue and preserves unrelated records when its save rejects', async () => {
+    const failed = event(); const other = event('b'.repeat(64), 'room-b');
+    let rejectSave!: (error: Error) => void;
+    let saveStarted!: () => void;
+    const started = new Promise<void>(resolve => { saveStarted = resolve; });
+    let rejectOnce = true;
+    const r = rig(records => {
+      if (!rejectOnce || !records.some(record => record.event.id === failed.id)) return Promise.resolve();
+      rejectOnce = false;
+      saveStarted();
+      return new Promise<void>((_resolve, reject) => { rejectSave = reject; });
+    });
+    const owner = r.owner();
+    try {
+      const enqueue = owner.enqueue(failed, row(failed));
+      const rejected = expect(enqueue).rejects.toThrow('Storage unavailable');
+      await started;
+      const visibleWhileSaving = owner.snapshot();
+      const unrelated = owner.enqueue(other, row(other));
+      const reconnect = owner.connectionChanged(true);
+      rejectSave(new Error('Storage unavailable'));
+      await rejected;
+      await Promise.all([unrelated, reconnect]);
+      expect(visibleWhileSaving).toEqual([]);
+      expect(owner.get(failed.id)).toBeUndefined();
+      expect(r.disk().some(record => record.event.id === failed.id)).toBe(false);
+      await owner.flush();
+      expect(r.send.mock.calls.map(([sent]) => sent.id)).toEqual([other.id]);
+      expect(owner.list()).toEqual([]);
+    } finally { owner.dispose(); }
+  });
+  it('keeps a successful enqueue durable when a concurrent save was queued before it committed', async () => {
+    const e = event();
+    let release!: () => void;
+    let saveStarted!: () => void;
+    const started = new Promise<void>(resolve => { saveStarted = resolve; });
+    let holdOnce = true;
+    const r = rig(async records => {
+      if (holdOnce && records.some(record => record.event.id === e.id)) {
+        holdOnce = false;
+        saveStarted();
+        await new Promise<void>(resolve => { release = resolve; });
+      }
+    });
+    const owner = r.owner();
+    try {
+      const enqueue = owner.enqueue(e, row(e));
+      await started;
+      const connection = owner.connectionChanged(false);
+      release();
+      await Promise.all([enqueue, connection]);
+      expect(r.disk().map(record => record.event.id)).toEqual([e.id]);
+    } finally { owner.dispose(); }
+    const restarted = r.owner();
+    try {
+      await restarted.connectionChanged(true);
+      expect(r.send).toHaveBeenCalledExactlyOnceWith(e);
+      expect(restarted.list()).toEqual([]);
+    } finally { restarted.dispose(); }
+  });
   it('keeps disconnected sends Sending, survives restart, and replays once after leaving the Room', async () => {
     const r = rig(); const first = r.owner(); const e = event();
     await first.enqueue(e, row(e)); await first.send(e.id);

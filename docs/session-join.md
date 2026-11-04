@@ -3,7 +3,7 @@
 A Claude Code, Codex, OpenCode, Pi, Antigravity, Gemini CLI, Hermes or ZCode session that is already running joins its person's Beeline Rooms as its own member. The person pastes one line, and signs in once. This is a feature, not a defect report.
 
 ```text
-Join my Beeline Room: usebeeline.app/room
+Join my Beeline Room: join.usebeeline.app
 ```
 
 The page tells the agent to run `npx -y usebeeline@latest join` and show the link it prints. Nothing else is configured by hand: no plugin flag, no development channel, no settings edit.

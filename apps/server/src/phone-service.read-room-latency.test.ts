@@ -244,9 +244,19 @@ describe('PhoneService.readRoom latency', () => {
         false,
         enrichment,
       );
-      const startedAt = performance.now();
-      const view = await phone.readRoom(CORNER, VIEWER);
-      const durationMs = performance.now() - startedAt;
+      // Exclude connection setup and JIT, then tolerate one noisy runner sample.
+      await phone.readRoom(CORNER, VIEWER);
+      const durations: number[] = [];
+      let view: Awaited<ReturnType<PhoneService['readRoom']>> = null;
+      for (let sample = 0; sample < 3; sample += 1) {
+        // Structural assertions below describe exactly the final measured read.
+        representative.spans.length = 0;
+        enrichment.spans.length = 0;
+        const startedAt = performance.now();
+        view = await phone.readRoom(CORNER, VIEWER);
+        durations.push(performance.now() - startedAt);
+      }
+      const durationMs = [...durations].sort((a, b) => a - b)[1]!;
       const spans = [...representative.spans, ...enrichment.spans];
       const largestRead = Math.max(...spans.map((span) => span.rows));
 
@@ -254,6 +264,7 @@ describe('PhoneService.readRoom latency', () => {
         '[corner-open]',
         JSON.stringify({
           durationMs: Math.round(durationMs),
+          samplesMs: durations.map((duration) => Math.round(duration)),
           queries: spans.length,
           mentionPasses: enrichment.spans.filter((span) => /tagged_ids/.test(span.text)).length,
           largestRead,

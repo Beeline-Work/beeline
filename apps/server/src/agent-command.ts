@@ -6,6 +6,7 @@ import { cornerKindSql } from './corner-opening.js';
 import { cornerWaitingReportSql } from './corner-waiting-report.js';
 import { currentIdleReportSql } from './corner-idle.js';
 import { startupWakeAllowedSql } from './startup-wake-backoff.js';
+import { isSilentRetry, stopSilentWakes } from './silent-wake-limit.js';
 import { cornerOwnerSql } from './corner-worker.js';
 import { cornerRunStateSql } from './corner-run.js';
 import { cornerReviewerSql } from './corner-reviewer.js';
@@ -713,6 +714,8 @@ export async function createAgentCommand(
   const opening = member.rows[0]!.opening;
   const lifecycle = input.reason.startsWith('corner_') || input.reason === 'subscribed_event' && Boolean(opening);
   const parent = input.parent ?? (lifecycle ? opening ?? undefined : undefined);
+  if (parent && isSilentRetry(input.reason, input.privatePayload) &&
+      await stopSilentWakes(db, input.roomId, input.agentId, parent.root_source_message_id)) return undefined;
   const reviewSource = input.reason === 'report' ? input.reportSource ?? input.parent : input.parent;
   let reviewContext: Record<string, unknown> | undefined = ['report', 'order', 'agent_tag'].includes(input.reason) && reviewSource?.review_context && reviewSource.review_context.purpose !== 'repair'
     ? { ...reviewSource.review_context, purpose: input.reason === 'report' ? 'verdict' : 'repair' } : undefined;

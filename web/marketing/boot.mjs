@@ -1,3 +1,4 @@
+import './context-art.mjs';
 import {selectPlatform} from '../desktop-download.mjs';
 import {initializeGraph} from './graph.mjs';
 const names={ios:'iOS',android:'Android',macos:'Mac',windows:'Windows',linux:'Linux'};
@@ -12,7 +13,7 @@ for(const group of document.querySelectorAll('.smart-download')){
 // Preserve existing download attribution after the detected controls are set up.
 import('../x-attribution.js');
 const graph=initializeGraph();let ready,initialized=false;
-const load=()=>ready??=(import('./demo.js?v=1').then(m=>{m.start(graph);initialized=true;return m;}));
+const load=()=>ready??=(import('./demo.js?v=feature-shipping').then(m=>{m.start(graph);initialized=true;return m;}));
 const idle=window.requestIdleCallback||((callback)=>setTimeout(callback,0));idle(load,{timeout:1200});
 for(const event of ['focusin','pointerdown'])document.addEventListener(event,e=>{if(e.target.closest('.native-room,.codex-tui'))void load();},{capture:true});
 document.addEventListener('keydown',e=>{if(!initialized&&e.key==='Enter'&&e.target.matches('.native-room textarea,.codex-tui input')){e.preventDefault();load().then(m=>m.submit(e.target));}},{capture:true});

@@ -3426,7 +3426,6 @@ export class DaemonService {
         ...(await commandInbox(this.database, roomId, agentId)),
         ...(closeRequested !== undefined ? { closeRequested } : {}),
       };
-    const commandInboxRead = false;
     if (input.startAtLatest) {
       if (input.after) throw new Error('startAtLatest cannot be combined with after');
       const latest = await this.database.query<{
@@ -3547,9 +3546,8 @@ export class DaemonService {
           : [roomId],
     );
     const page = newestPage ? rows.rows : rows.rows.slice(0, limit);
-    const visiblePage = page;
     const expiredMedia = await this.expiredMediaIds(
-      visiblePage.flatMap((row) => row.attachments ?? []),
+      page.flatMap((row) => row.attachments ?? []),
     );
     const savedNarration =
       name === 'getRoomConversation' && input.narrationRequestId
@@ -3576,8 +3574,7 @@ export class DaemonService {
       input.after,
     );
     return {
-      ...(commandInboxRead ? { dispatchVersion: 1 as const } : {}),
-      items: visiblePage.map((row) => ({
+      items: page.map((row) => ({
         id: row.id,
         cursor: `${row.cursor_ms},${row.id}`,
         authorId: row.author_id,
@@ -4721,8 +4718,6 @@ export class DaemonService {
           | 'result_conflict'
           | 'write_failed';
         row: (Omit<CommittedMessageLiveRow, 'created_at'> & { created_at: string }) | null;
-        recovered_row:
-          (Omit<CommittedMessageLiveRow, 'created_at'> & { created_at: string }) | null;
       };
       // One autocommit statement owns the lock, generation/lease/cancellation
       // decision, attachment drain, terminal turn/failure state, reply insert,
@@ -4764,29 +4759,6 @@ export class DaemonService {
                status='complete',created_at=now()
              WHERE agent_turns.status<>'cancelled'
              RETURNING 1
-           ), recovered AS (
-             UPDATE messages failure SET
-               text=COALESCE($14::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name')||$12::text,
-               system_event=jsonb_set(
-                 jsonb_set(failure.system_event,'{subject,name}',
-                   to_jsonb(COALESCE($14::text||NULLIF(agent.handle,''),failure.system_event->'subject'->>'name'))),
-                 '{verb}',to_jsonb($13::text)
-               ),
-               card=jsonb_set(failure.card,'{state}',to_jsonb('recovered'::text))
-             FROM settled,identities agent
-             WHERE agent.id=$3 AND failure.room_id=$2 AND failure.card_type='turn-failed'
-               AND failure.card->>'requestId'=$6 AND failure.card->>'agentId'=$3
-               AND failure.card->>'state'='failed' AND false
-             RETURNING failure.*
-           ), recovered_public AS (
-             SELECT recovered.*,author.kind author_kind,author.name author_name,
-               author.handle author_handle,author.avatar author_avatar,author.face_id author_face,
-               ${taggedIdentityIdsSql('recovered')} tagged_ids
-             FROM recovered JOIN identities author ON author.id=recovered.author_id
-           ), recovery_barrier AS (
-             SELECT count(*) recovered_count,
-               (jsonb_agg(to_jsonb(recovered_public))->0) recovered_row
-             FROM recovered_public
            ), new_messages AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
@@ -4794,7 +4766,7 @@ export class DaemonService {
              ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,
                  writable.agent_depth,attachment_payload.attachments,$11::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3)
-               FROM writable,settled,attachment_payload,recovery_barrier
+               FROM writable,settled,attachment_payload
              ON CONFLICT(id) DO NOTHING
              RETURNING *
            ), inserted AS (
@@ -4842,8 +4814,7 @@ export class DaemonService {
            ), committed AS (
              SELECT * FROM inserted_public UNION ALL SELECT * FROM existing_public
            )
-           SELECT 'committed'::text outcome,to_jsonb(committed) row,
-             (SELECT recovered_row FROM recovery_barrier) recovered_row
+           SELECT 'committed'::text outcome,to_jsonb(committed) row
            FROM committed
            UNION ALL
            SELECT CASE
@@ -4854,7 +4825,7 @@ export class DaemonService {
                AND (SELECT result_message_id FROM candidate) IS NULL THEN 'already_completed'
              WHEN (SELECT state FROM candidate)='complete' THEN 'result_conflict'
              ELSE 'write_failed'
-           END outcome,NULL::jsonb row,NULL::jsonb recovered_row
+           END outcome,NULL::jsonb row
            WHERE NOT EXISTS(SELECT 1 FROM committed)
            LIMIT 1`,
         [
@@ -4869,9 +4840,6 @@ export class DaemonService {
           rootMessageId,
           input.generationId,
           steps,
-          systemMessage("daemon-service.retry-suffix"),
-          systemMessage("daemon-service.answered-after-a-retry"),
-          systemMessage("system-line.mention-prefix"),
         ],
       );
       if (this.livePaintDiagnostics) databaseAwaitResolvedAt = Date.now();
@@ -4886,20 +4854,6 @@ export class DaemonService {
       if (result.outcome === 'result_conflict') throw new Error('command result conflict');
       if (!result.row) throw new Error('command output authority rejected');
       saved = { ...result.row, created_at: new Date(result.row.created_at) };
-      if (result.recovered_row) {
-        const recovered = {
-          ...result.recovered_row,
-          created_at: new Date(result.recovered_row.created_at),
-        };
-        this.live.publish({
-          type: 'invalidate',
-          roomId: input.roomId,
-          reason: 'message',
-          agentId,
-          messageId: recovered.id,
-          committedRow: { type: 'message', row: recovered },
-        });
-      }
       if (this.livePaintDiagnostics) projectionCompletedAt = Date.now();
     } else {
       saved = await this.database.transaction(saveCompatibilityReply);

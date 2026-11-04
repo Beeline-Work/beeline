@@ -1737,13 +1737,7 @@ export class PhoneService {
   }
 
   async completeWelcomeCards(viewerId: string): Promise<WelcomeCardsView> {
-    const result = await this.database.query<{ welcome_cards_due: boolean | null }>(
-      `UPDATE identities SET welcome_cards_due=false WHERE id=$1 AND kind='human'
-       RETURNING welcome_cards_due`,
-      [viewerId],
-    );
-    if (!result.rows[0]) throw new Error('human identity required');
-    return { due: false };
+    return this.readWelcomeCards(viewerId);
   }
 
   async readWorkspaces(viewerId: string): Promise<WorkspaceListView> {

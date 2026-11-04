@@ -1355,12 +1355,13 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('reconnects the socket when a read finds a message the silent socket never delivered', async () => {
+  it('paints a covering read with a previously missed message while retaining the socket', async () => {
     controls.cached = roomView('room-a');
     let renderer!: ReactTestRenderer;
+    let current!: UseRoomSurfaceSessionResult;
     await act(async () => {
       renderer = create(
-        React.createElement(Harness, { channelId: 'room-a', capture: () => undefined }),
+        React.createElement(Harness, { channelId: 'room-a', capture: (result: UseRoomSurfaceSessionResult) => (current = result) }),
       );
     });
     await flushEffects();
@@ -1377,7 +1378,8 @@ describe('useRoomSurfaceSession', () => {
     await act(async () =>
       controls.schedulers[0]!.apply({ ...roomView('room-a'), messages: [missed] }),
     );
-    expect(controls.reconnects).toBe(1);
+    expect(controls.reconnects).toBe(0);
+    expect(current.roomSurface?.messages).toContainEqual(missed);
     await act(async () => renderer.unmount());
   });
 

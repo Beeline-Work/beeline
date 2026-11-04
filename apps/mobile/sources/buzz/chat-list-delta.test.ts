@@ -6,7 +6,6 @@ import {
   chatListDeltaNeedsRead,
   chatWatchFiltersKey,
   keepUnavailableChatFacts,
-  roomsMissedByLive,
   withCornerFacts,
   withoutCornerFacts,
 } from './chat-list-delta';
@@ -248,22 +247,7 @@ describe('chat list deltas', () => {
     expect(applyChatListDelta(needsYou, working)).toBe(needsYou);
   });
 
-  it('detects a newer read row the socket never announced', () => {
-    const held = deck(item('a', 20), item('b', 10));
-    const read = deck(item('a', 40), item('b', 30), item('fresh', 50));
 
-    expect(roomsMissedByLive(held, read, new Set(['a']))).toBe(true);
-    expect(roomsMissedByLive(held, held, new Set())).toBe(false);
-  });
-
-  it('detects a different latest message in the same second', () => {
-    const held = deck(item('a', 20));
-    const sameSecond = item('a', 20);
-    const read = deck({ ...sameSecond, latestMessage: { ...sameSecond.latestMessage!, id: 'a-other' } });
-
-    expect(roomsMissedByLive(held, read, new Set())).toBe(true);
-    expect(roomsMissedByLive(held, read, new Set(['a']))).toBe(false);
-  });
 });
 
 describe('keepUnavailableChatFacts', () => {

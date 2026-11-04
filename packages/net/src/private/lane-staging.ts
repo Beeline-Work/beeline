@@ -1,7 +1,7 @@
 import type { LaneBatch, LaneFact } from './read-lanes.js';
-import { jsonBytes, stagingWithinBudget } from './staging-bounds.js';
+import { jsonBytes } from './staging-bounds.js';
 
-type Record = { header: Omit<LaneBatch, 'facts'>; bytes: number; order:number };
+type Record = { header: Omit<LaneBatch, 'facts'>; bytes: number };
 type Reference = { record: Record; facts: readonly LaneFact[] };
 export type StagedInterval = { batch: LaneBatch; bytes: number };
 export const intervalId = (batch: LaneBatch): string => JSON.stringify([
@@ -18,27 +18,14 @@ export const sameStream=(a:LaneBatch['to'],b:LaneBatch['to']):boolean=>a.stream=
  * This is staging inside ReadLanes' serial owner, not another state executor. */
 export class LaneStaging {
   private readonly sources = new WeakMap<LaneBatch,Record>();
-  private order=0;
   private readonly stages = new Set<IntervalStage>();
   stage(future = false): IntervalStage { return new IntervalStage(this, future); }
   attach(stage: IntervalStage, batch: LaneBatch, facts: readonly LaneFact[], size: number): Reference {
     const { facts: _facts, ...header } = batch;
     let record = this.sources.get(batch);
     if (record && !equal(record.header, header)) throw new Error('Conflicting projection interval');
-    const previous = record?.bytes;
-    if (!record) this.sources.set(batch, record = { header, bytes: size,order:0 });
+    if (!record) this.sources.set(batch, record = { header, bytes: size });
     else record.bytes = Math.max(record.bytes, size);
-    // Check original logical bytes, never the smaller selected fact subset.
-    const held=new Set<Record>();
-    for(const owner of this.stages)for(const value of owner.records())if(value.header.to.stream===batch.to.stream)held.add(value);
-    // Iterating consumers is not source arrival order. A reattached released
-    // body is a new arrival; the oldest still-held source remains primary.
-    if(!held.has(record))record.order=this.order++;
-    held.add(record);
-    if (!stagingWithinBudget(held, item => item.bytes,item=>item.order)) {
-      if (previous !== undefined) record.bytes = previous;
-      throw new Error('Projection staging overflow');
-    }
     this.stages.add(stage);
     return { record, facts };
   }
@@ -69,8 +56,6 @@ export class IntervalStage implements Iterable<[string, StagedInterval]> {
       if (!equal(prior.record.header, header) || !equal(prior.facts, facts)) throw new Error('Conflicting projection interval');
       return;
     }
-    if (future && (this.size >= 16 || [...this.values()].reduce((sum, item) => sum + item.bytes, size) > 256 * 1024))
-      throw new Error('Projection gap overflow');
     const ref = this.store.attach(this, batch, facts, size);
     this.refs.set(id, ref);
   }

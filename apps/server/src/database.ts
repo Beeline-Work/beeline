@@ -99,7 +99,7 @@ import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { cornerWaitingFunctionSql } from './corner-waiting-report.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
-import { alreadySatisfied, logLockHolders, triggerAlreadyCurrent, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
+import { alreadyNoOp, alreadySatisfied, logLockHolders, triggerAlreadyCurrent, runMigrationStep, splitMigrationStatements } from './migration-steps.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 import { QueryProfiler } from './query-profile.js';
 import { DatabaseBackgroundWork } from './database-background-work.js';
@@ -3220,7 +3220,7 @@ export async function migrate(
     const statements = splitMigrationStatements(sql);
     for (let index = 0; index < statements.length; index++) {
       const statement = statements[index]!;
-      if (await alreadySatisfied(database, statement)) continue;
+      if (await alreadySatisfied(database, statement) || await alreadyNoOp(database, statement)) continue;
       const next = statements[index + 1];
       if (next && await triggerAlreadyCurrent(database, statement, next)) { index++; continue; }
       await ddl(`${name} ${index + 1}/${statements.length}`, statement);

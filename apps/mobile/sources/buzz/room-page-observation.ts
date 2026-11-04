@@ -9,7 +9,7 @@ export async function reportRoomPageObservation(
   try {
     await sharedLiveConnection().request('reportPageLoad',
       { durationMs, failed, ...(network ? { network } : {}) },
-      { timeoutMs: 5_000, afterRoomDraw: !failed },
+      { timeoutMs: 5_000 },
     );
   } catch {
     // Metrics never gate navigation or paint.

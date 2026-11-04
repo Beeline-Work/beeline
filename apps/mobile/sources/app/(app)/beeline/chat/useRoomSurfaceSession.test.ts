@@ -402,14 +402,6 @@ vi.mock('@beeline/buzz-client', async () => {
 
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { READ_CURSOR_DEBOUNCE_MS } from '@/buzz/read-cursor-advance';
-import {
-  abandonRoomDraw,
-  beginRoomDraw,
-  finishRoomDraw,
-  observeVisibleRoomRows,
-  waitForRoomDraw,
-  roomDrawGeneration,
-} from '@/buzz/room-draw-barrier';
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import { useRoomMessageStore } from '@/buzz/room-message-store';
 import {
@@ -547,7 +539,6 @@ beforeEach(() => {
   controls.routerValue = null;
   vi.useRealTimers();
   vi.unstubAllGlobals();
-  abandonRoomDraw(roomDrawGeneration());
   roomTransitionWork.flush();
   controls.focused = true;
   controls.focusListeners.clear();
@@ -683,7 +674,7 @@ describe('reopening a dismissed Room', () => {
 });
 
 describe('useRoomSurfaceSession', () => {
-  it('keeps tap-owned cached Room setup behind its visible-row draw, without delaying the first DTO', async () => {
+  it('paints a tap-owned cached Room and completes setup without a visible-row handshake', async () => {
     controls.hotViewer = true;
     controls.cached = { ...roomView('room-a'), messages: [{ id: 'target', text: 'Already received', createdAt: 10,
       presentation: 'message', author: { pubkey: 'viewer', kind: 'human', name: 'Viewer' } }] };
@@ -696,12 +687,6 @@ describe('useRoomSurfaceSession', () => {
     })); });
     await flushEffects();
     expect(session.roomSurface?.messages[0]?.id).toBe('target');
-    expect(controls.transportCount).toBe(0);
-    await act(async () => {
-      observeVisibleRoomRows('room-a', ['target']);
-      finishRoomDraw('target', 'room-a');
-    });
-    await flushEffects();
     expect(controls.transportCount).toBe(1);
     await act(async () => renderer.unmount());
   });
@@ -1801,44 +1786,24 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('Corner: a direct open keeps optional requests behind the fresh response, past stale cache paint', async () => {
-    beginRoomDraw('room-a');
+  it('opens a cached corner and applies its fresh response without a draw handshake', async () => {
     controls.cached = roomView('room-a');
+    let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
-    await act(async () => {
-      renderer = create(
-        React.createElement(Harness, {
-          channelId: 'room-a',
-          capture: () => undefined,
-        }),
-      );
-    });
+    await act(async () => { renderer = create(React.createElement(Harness, {
+      channelId: 'room-a', capture: value => { current = value; },
+    })); });
     await flushEffects();
-    const sent = vi.fn();
-    const waiting = waitForRoomDraw()?.then(sent);
-    observeVisibleRoomRows('room-a', ['old-row']);
-    finishRoomDraw('old-row', 'room-a');
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 150));
-    });
-    expect(sent).not.toHaveBeenCalled();
-    const fresh = {
-      ...roomView('room-a'),
-      messages: [
-        {
-          id: 'fresh-row',
-          createdAt: 2,
-          text: 'new corner contents',
-          presentation: 'message',
-          author: { pubkey: 'viewer', kind: 'human' as const, name: 'Viewer' },
-        },
-      ],
-    };
+    await act(async () => controls.subscriptions[0]!.emit({
+      monolithLive: { type: 'subscribed', roomId: 'room-a' },
+    }));
+    await flushEffects();
+    expect(controls.schedulers[0]!.refreshNowCalls).toBe(1);
+    const fresh = { ...roomView('room-a'), messages: [{ id: 'fresh-row', createdAt: 2,
+      text: 'new corner contents', presentation: 'message' as const,
+      author: { pubkey: 'viewer', kind: 'human' as const, name: 'Viewer' } }] };
     await act(async () => controls.schedulers[0]!.apply(fresh));
-    observeVisibleRoomRows('room-a', ['fresh-row']);
-    finishRoomDraw('fresh-row', 'room-a');
-    await waiting;
-    expect(sent).toHaveBeenCalledOnce();
+    expect(current.roomSurface).toEqual(fresh);
     await act(async () => renderer.unmount());
   });
 
@@ -2285,10 +2250,8 @@ describe('useRoomSurfaceSession', () => {
     expect(session.roomSurface?.room.id).toBe('room-a');
     expect(controls.roomReads).toBe(1);
     expect(controls.subscriptions).toHaveLength(0);
-    // The headless harness has no native viewport. Supply its empty-Room draw
-    // and settle navigation before the optional watch can cover the read gap.
+    // Settle navigation before the watch covers the read gap.
     await act(async () => {
-      finishRoomDraw(undefined, 'room-a');
       const tasks = [...controls.interactionTasks];
       controls.interactionTasks.clear();
       tasks.forEach((work) => work());

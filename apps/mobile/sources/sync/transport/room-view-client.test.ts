@@ -23,7 +23,7 @@ describe('Room view socket reads', () => {
     request.mockRejectedValue(new Error('stop after dispatch'));
     await client().chats({} as ReadAuthority, 'w').catch(() => {});
     expect(request).toHaveBeenCalledExactlyOnceWith('readChats', { workspaceId: 'w' },
-      { timeoutMs: 15_000, signal: undefined, afterRoomDraw: false });
+      { timeoutMs: 15_000, signal: undefined });
   });
   it('shares identical in-flight reads until a newer live frame arrives', async () => {
     let resolve!: (value: unknown) => void;

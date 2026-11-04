@@ -6,7 +6,6 @@ import { RouteObservation } from './route-observation';
 import { PHONE_SOCKET_MAX_IN_FLIGHT, PHONE_SOCKET_MAX_FRAME_BYTES, type PhoneOperationMap } from '@beeline/api-contract/phone';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { MonolithRequestTimeoutError, MonolithSessionChangedError } from '@/auth/monolith-session';
-import { waitForRoomDraw } from '@/buzz/room-draw-barrier';
 import { PhoneSocketError, PhoneSocketDisconnectedError } from './phone-socket-error';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 import { readSidebarPreview } from '@beeline/api-contract/phone';
@@ -41,7 +40,6 @@ type PendingRequest = {
 type SocketRequestOptions = {
   timeoutMs?: number;
   signal?: AbortSignal;
-  afterRoomDraw?: boolean;
 };
 
 type SurfaceFilters = readonly {
@@ -249,14 +247,7 @@ export class LiveConnection {
   ): Promise<PhoneOperationMap[Name]['output']> {
     if (['readRouterSnapshot', 'readRoomTools', 'readMediaMetadata', 'readMediaLink', 'readMediaPlayback'].includes(op)) return Promise.reject(
       new PhoneSocketError('owner_required', 'This read requires the local router owner', false));
-    const generation = this.generation;
-    const start = () => {
-      if (generation !== this.generation) return Promise.reject(new MonolithSessionChangedError());
-      return this.startRequest(op, args, options) as Promise<PhoneOperationMap[Name]['output']>;
-    };
-    const optional = ['readWorkspace', 'readChats', 'markRead', 'readStarPrompt', 'reportPageLoad', 'listRoomWorkflowRuns', 'readHistory'].includes(op);
-    const draw = (options.afterRoomDraw ?? optional) ? waitForRoomDraw(options.signal) : undefined;
-    return draw ? draw.then(start) : start();
+    return this.startRequest(op, args, options) as Promise<PhoneOperationMap[Name]['output']>;
   }
 
   commandState(): { generation: number; commandDedupV1: boolean; ready: boolean } {

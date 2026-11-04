@@ -39,10 +39,8 @@ vi.mock('@/sync/transport/room-view-client', () => ({
 
 import { resetClientState } from '@/sync/client-reset';
 import { prefetchPushRoom, takePrefetchedPushRoom } from './push-room-prefetch';
-import { abandonRoomDraw, finishRoomDraw, observeVisibleRoomRows, roomDrawGeneration } from '@/buzz/room-draw-barrier';
 
 beforeEach(() => {
-  abandonRoomDraw(roomDrawGeneration());
   fixture.viewer = 'viewer-a';
   fixture.mode = 'legacy';
   fixture.monolithUrl = 'https://server.test';
@@ -106,12 +104,10 @@ describe('received versus missing pushed rows', () => {
     expect(fixture.cached?.messages).toHaveLength(30);
     expect(fixture.reads).toEqual([]);
     const pending = takePrefetchedPushRoom('stored', 'room-a');
-    finishRoomDraw('message-29', 'room-a');
-    observeVisibleRoomRows('room-a', ['message-29']);
     await pending;
     expect(fixture.reads).toEqual(['room-a']);
   });
-  it('starts no network read while a received target waits to paint', async () => {
+  it('starts the received-target refresh when the mounted Room consumes its prefetch', async () => {
     fixture.cached = { room: { id: 'room-a' }, members: [], messages: [{ id: 'target' }] } as unknown as RoomView;
     prefetchPushRoom('received', 'room-a', 'target');
     await Promise.resolve();
@@ -120,9 +116,6 @@ describe('received versus missing pushed rows', () => {
     const pending = takePrefetchedPushRoom('received', 'room-a');
     await Promise.resolve();
     await Promise.resolve();
-    expect(fixture.reads).toEqual([]);
-    finishRoomDraw('target', 'room-a');
-    observeVisibleRoomRows('room-a', ['target']);
     await pending;
     expect(fixture.reads).toEqual(['room-a']);
   });

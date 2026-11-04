@@ -28,11 +28,6 @@ import { TokenAuth } from '../../../server/src/auth';
 import { migrate } from '../../../server/src/database';
 import { PgliteDatabase } from '../../../server/src/test-support';
 import { markRoomOpen } from '@/buzz/room-open-trace';
-import {
-  abandonRoomDraw,
-  observeVisibleRoomRows,
-  roomDrawGeneration,
-} from '@/buzz/room-draw-barrier';
 
 const tokens = (generation: number) => ({
   accessToken: `access-${generation}`,
@@ -45,58 +40,23 @@ const tokens = (generation: number) => ({
 describe('monolith phone session', () => {
   beforeEach(() => secure.clear());
 
-  it('dispatches the opening Room read before draw and optional requests only after its frame', async () => {
-    const frames: FrameRequestCallback[] = [];
-    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
-      frames.push(callback);
-      return frames.length;
-    });
+  it('dispatches Room and Room-list reads without waiting for a screen frame', async () => {
+    const frames = vi.fn();
+    vi.stubGlobal('requestAnimationFrame', frames);
     const fetcher = vi.fn(async () => Response.json(tokens(1)));
     const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
     try {
       await session.exchangeGitHubTicket('ticket');
       fetcher.mockClear();
       markRoomOpen('nav-dispatch', 'room-a');
-      const optional = [
-        '/v1/phone/operations/readStarPrompt',
-        '/v1/phone/workspaces/w',
-        '/v1/phone/workspaces/w/chats',
-        '/v1/phone/rooms/room-a/read',
-        '/v1/phone/observations/page-load',
-      ];
-      const requests = optional.map((path) => session.fetch(`https://server.example${path}`));
       await session.fetch('https://server.example/v1/phone/rooms/room-a');
-      await session.fetch('https://server.example/v1/phone/workspaces');
-      await session.fetch(
-        'https://server.example/v1/phone/observations/page-load',
-        {
-          method: 'POST',
-          body: JSON.stringify({ failed: true, durationMs: 1 }),
-        },
-        { afterRoomDraw: false },
-      );
-      const required = [
+      await session.fetch('https://server.example/v1/phone/workspaces/w/chats');
+      expect(fetcher.mock.calls.map(call => call[0])).toEqual([
         'https://server.example/v1/phone/rooms/room-a',
-        'https://server.example/v1/phone/workspaces',
-        'https://server.example/v1/phone/observations/page-load',
-      ];
-      expect(fetcher.mock.calls.map((call) => call[0])).toEqual(required);
-      markRoomOpen('newest-frame', 'newest-row');
-      expect(frames).toHaveLength(0);
-      observeVisibleRoomRows('room-a', ['newest-row']);
-      frames.shift()!(0);
-      await Promise.resolve();
-      expect(fetcher).toHaveBeenCalledTimes(3);
-      frames.shift()!(16);
-      await Promise.all(requests);
-      expect(fetcher.mock.calls.map((call) => call[0])).toEqual([
-        ...required,
-        ...optional.map((path) => `https://server.example${path}`),
+        'https://server.example/v1/phone/workspaces/w/chats',
       ]);
-    } finally {
-      abandonRoomDraw(roomDrawGeneration());
-      vi.unstubAllGlobals();
-    }
+      expect(frames).not.toHaveBeenCalled();
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it.each(['github', 'google'] as const)(

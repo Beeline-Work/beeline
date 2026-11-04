@@ -38,13 +38,6 @@ vi.mock('@/buzz/router-owner', () => ({
 }));
 
 import { AppState } from 'react-native';
-import {
-  abandonRoomDraw,
-  roomDrawGeneration,
-  beginRoomDraw,
-  finishRoomDraw,
-  observeVisibleRoomRows,
-} from '@/buzz/room-draw-barrier';
 import { LiveConnection, resetSharedLiveConnection, sharedLiveConnection } from './live-connection';
 import {
   MonolithSession,
@@ -2661,47 +2654,17 @@ describe('phone socket request/reply', () => {
     await Promise.all([...pending, next]);
     expect(vi.getTimerCount()).toBe(0);
   });
-  it('sends the opening Room before optional socket reads and starts their deadline after draw', async () => {
-    const sockets = stubSockets(),
-      { connection } = createConnection();
+  it('sends Room and Room-list reads independently of screen paint', async () => {
+    const sockets = stubSockets(), { connection } = createConnection();
     await connection.register([], () => {});
     sockets[0]!.open();
-    beginRoomDraw('r');
-    const required = connection.request('readRoom', { roomId: 'r' });
-    const optional = connection.request('readChats', { workspaceId: 'w' });
-    const frames = () => sockets[0]!.sent.map((v) => JSON.parse(v)).filter((v) => v.t === 'req');
-    expect(frames().map((v) => v.op)).toEqual(['readRoom']);
-    sockets[0]!.emit({ t: 'res', id: frames()[0].id, ok: true, result: {} });
-    await required;
-    await vi.advanceTimersByTimeAsync(10_000);
-    expect(frames().map((v) => v.op)).toEqual(['readRoom']);
-    observeVisibleRoomRows('r', ['newest']);
-    finishRoomDraw('newest', 'r');
-    await vi.advanceTimersByTimeAsync(0);
-    expect(frames().map((v) => v.op)).toEqual(['readRoom', 'readChats']);
-    sockets[0]!.emit({ t: 'res', id: frames()[1].id, ok: true, result: {} });
-    await optional;
+    const reads = [connection.request('readRoom', { roomId: 'r' }),
+      connection.request('readChats', { workspaceId: 'w' })];
+    const frames = sockets[0]!.sent.map(v => JSON.parse(v)).filter(v => v.t === 'req');
+    expect(frames.map(v => v.op)).toEqual(['readRoom', 'readChats']);
+    for (const frame of frames) sockets[0]!.emit({ t: 'res', id: frame.id, ok: true, result: {} });
+    await Promise.all(reads);
     connection.dispose();
-  });
-  it('corner open sends only its covering Room request before paint', async () => {
-    const sockets = stubSockets(),
-      { connection } = createConnection();
-    await connection.register([], () => {});
-    sockets[0]!.open();
-    beginRoomDraw('corner');
-    const reads = [
-      connection.request('readRoom', { roomId: 'corner' }),
-      connection.request('listRoomWorkflowRuns', { roomId: 'corner' }),
-      connection.request('readHistory', { roomId: 'corner' }),
-    ];
-    const frames = () => sockets[0]!.sent.map((v) => JSON.parse(v)).filter((v) => v.t === 'req');
-    try {
-      expect(frames().map((v) => v.op)).toEqual(['readRoom']);
-    } finally {
-      connection.dispose();
-      abandonRoomDraw(roomDrawGeneration());
-      await Promise.allSettled(reads);
-    }
   });
 
   it('rejects oversized UTF-8 frames before opening a socket', async () => {

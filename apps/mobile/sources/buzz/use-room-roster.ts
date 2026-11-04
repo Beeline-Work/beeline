@@ -1,3 +1,4 @@
+import {yieldToNextPaint} from './host-scheduler';
 import {useCallback,useEffect,useMemo,useRef,useState,useSyncExternalStore} from 'react';
 import {isWorkspaceView,type WorkspaceView,type SurfaceCacheAddress} from '@beeline/buzz-client';
 import {getEffectiveRelayUrl} from '@/auth/buzz-identity-storage';
@@ -43,11 +44,13 @@ export function useRoomRoster(workspaceId:string|null|undefined,viewer:string|nu
   },[workspaceId,viewer,generation,routed.mode]);
   useEffect(()=>{
     if(routed.mode!=='legacy'||!read||!workspaceId||!address||!shouldReadWorkspaceRoster({activeWorkspaceId:workspaceId,cachedWorkspaceId:cached.current,rosterSurfaceVisible:visible}))return;
-    let cancelled=false;
-    void mobileSurfaceCache.fetch(address,isWorkspaceView,()=>read(workspaceId)).then(()=>{
-      if(!cancelled)cached.current=workspaceId;
-    }).catch(reason=>{if(!cancelled&&visible)error.current(appErrorCopy(reason,'Could not read the Workspace roster.'));});
-    return()=>{cancelled=true;};
+    const cancel=new AbortController();
+    void yieldToNextPaint().then(async()=>{
+      if(cancel.signal.aborted)return;
+      await mobileSurfaceCache.fetch(address,isWorkspaceView,()=>read(workspaceId));
+      if(!cancel.signal.aborted)cached.current=workspaceId;
+    }).catch(reason=>{if(!cancel.signal.aborted&&visible)error.current(appErrorCopy(reason,'Could not read the Workspace roster.'));});
+    return()=>cancel.abort();
   },[workspaceId,visible,read,address,routed.mode]);
   // The records version re-selects canonical rows after another surface writes.
   const cachedValue=useMemo(()=>held&&scoped?{...held,members:workspaceRows<WorkspaceView['members'][number]>(scoped,held.members.map(row=>row.identity.pubkey)),

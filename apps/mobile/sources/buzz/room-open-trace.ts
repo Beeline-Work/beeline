@@ -11,7 +11,6 @@
  * exactly as before.
  */
 import { markLatencyRouteFrame } from './latency-frame-trace';
-import { beginRoomDraw, ensureRoomDraw, finishRoomDraw } from './room-draw-barrier';
 
 /** Build-time opt-in. Expo inlines EXPO_PUBLIC_* at bundle time. */
 const RELEASE_TRACE_ENABLED =
@@ -95,9 +94,6 @@ export function roomOpenTraceEnabled(): boolean {
 
 export function markRoomOpen(phase: string, detail?: string, roomId?: string): void {
   if (phase === 'newest-frame' && roomId !== undefined && pageRoomId !== undefined && roomId !== pageRoomId) return;
-  if (phase === RUN_START_PHASE) beginRoomDraw(detail);
-  else if (phase === 'route-mount') ensureRoomDraw(detail);
-  else if (phase === 'newest-frame') finishRoomDraw(detail, roomId);
   if (phase === 'newest-frame') markLatencyRouteFrame('/beeline/chat/[channelId]');
   // Operational page timing is independent of the optional diagnostic trace.
   // Only the navigation and first painted frame matter; no Room identifier or

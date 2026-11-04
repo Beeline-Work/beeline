@@ -162,6 +162,35 @@ describe('local read lanes (P2)', () => {
     expect(lanes.peek(request).value).toEqual({ count: 2 });
     expect(reads).toBe(1);
   });
+  it('advances a covered Room across unrelated intervals before accepting the sent head', async () => {
+    const room = { family: 'room-head', roomId: 'room-a', workspaceId: 'w' } as const;
+    let reads = 0;
+    const lanes = new ReadLanes(identity, () => true);
+    const initial = { ...snapshot(51), atomicGroup: 'room-head:room-a:ada', value: { messages: [] } };
+    lanes.connected(1, ['room-head'], async () => { reads++; return initial; });
+    lanes.demand(room, {}, permit); await drain();
+    await lanes.accept({ from: snapshot(51).cut, to: snapshot(52).cut, facts: [] });
+    const value = { messages: [{ id: 'prepared-event', text: 'router90-send-repro' }] };
+    await lanes.accept({ from: snapshot(52).cut, to: snapshot(54).cut, facts: [{
+      atomicGroup: initial.atomicGroup, authority, payload: { kind: 'scope-replace', family: 'room-head', scope: 'room-a', value },
+    }] });
+    expect(lanes.peek(room)).toMatchObject({ state: 'LIVE', value, cut: { through: 54 } });
+    expect(reads).toBe(1);
+  });
+
+  it('does not bridge a missing Room interval with unrelated progress', async () => {
+    const room = { family: 'room-head', roomId: 'room-a', workspaceId: 'w' } as const;
+    const lanes = new ReadLanes(identity, () => true);
+    const initial = { ...snapshot(), atomicGroup: 'room-head:room-a:ada', value: { messages: [] } };
+    lanes.connected(1, ['room-head'], async () => initial);
+    lanes.demand(room, {}, permit); await drain();
+    await lanes.accept({ from: snapshot(2).cut, to: snapshot(3).cut, facts: [] });
+    await lanes.accept({ from: snapshot(3).cut, to: snapshot(4).cut, facts: [{
+      atomicGroup: initial.atomicGroup, authority, payload: { kind: 'scope-replace', family: 'room-head', scope: 'room-a', value: { messages: ['future'] } },
+    }] });
+    expect(lanes.peek(room).value).toEqual({ messages: [] });
+  });
+
   it('stages future complete batches until continuity arrives without rereading', async () => {
     let reads = 0;
     const lanes = setup(async () => { reads++; return snapshot(); });

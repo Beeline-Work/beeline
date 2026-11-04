@@ -378,6 +378,29 @@ describe('negotiated Tray consumer', () => {
     expect(trayProtocol.retry).not.toHaveBeenCalled();
   });
 
+  it.each([390, 1200])('opens a bookmark source through the Room route at width %s', async width => {
+    layout.width = width;
+    trayProtocol.value = { needs: { items: [] }, saved: { windowId: 'window', rows: [
+      { bookmarkId: 'incarnation', order: '1,msg-1', before: 'anchor', value: bookmark() },
+    ] } };
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'bookmark-msg-1' }).props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/chat/[channelId]', params: {
+      channelId: 'corner-1', notificationMessageId: 'msg-1', notificationResponseId: 'bookmark:msg-1', communityId: 'ws',
+    } });
+    expect(roomRead).not.toHaveBeenCalled();
+    expect(phoneOperation).not.toHaveBeenCalled();
+  });
+
+  it('opens a desktop Needs-you source through the Room route', async () => {
+    trayProtocol.value = { needs: { items: [need()] }, saved: { windowId: 'window', rows: [] } };
+    const tree = await renderTray();
+    await act(async () => tree.root.findByProps({ testID: 'needs-you-ask-1' }).props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/chat/[channelId]', params: {
+      channelId: 'room-1', notificationMessageId: 'ask-1', notificationResponseId: 'needs-you:ask-1', communityId: 'ws',
+    } });
+  });
+
   it('uses the existing Load More Saved button for one owned continuation and no legacy read',async()=>{
     trayProtocol.mode='router';trayProtocol.continuation.mockClear();
     trayProtocol.value={needs:{items:[]},saved:{windowId:'window',rows:[],next:'saved1.Y3Vyc29y'}};

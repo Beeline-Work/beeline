@@ -139,7 +139,7 @@ export class ProjectionGroups<T extends GroupCell>{
       const facts=batch.facts.filter(fact=>fact.payload.kind===REPLACE&&fact.payload.family===cell.request.family&&fact.payload.scope===scope(cell.request,this.reader));
       const fact=facts.at(-1);
       if(!fact){
-        if(scheduled&&batch.scheduledWorkClassification&&cell.request.family==='room-scheduled-work'&&cell.snapshot&&cell.covered&&
+        if((cell.request.family==='room-head'||scheduled&&batch.scheduledWorkClassification&&cell.request.family==='room-scheduled-work')&&cell.snapshot&&cell.covered&&
           cell.connection===generation&&(cell.view.state==='LIVE'||cell.view.state==='INACTIVE_CACHED')&&this.authorized(cell.snapshot.authority)&&
           !batch.facts.some(record=>record.atomicGroup===held.atomicGroup)&&batch.from.through<=progress.through&&batch.to.through>progress.through)cell.classified=batch.to;
         continue;

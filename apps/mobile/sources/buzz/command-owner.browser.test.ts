@@ -41,9 +41,15 @@ const saved = (): CommandIntent[] => JSON.parse([...fixture.disk.values()][0] ??
 beforeEach(() => {
   fixture.disk.clear(); fixture.random = 1; fixture.quota = false;
   const locks = new Map<string, Promise<unknown>>();
+  const held = new Set<string>();
   vi.stubGlobal('navigator', { locks: {
-    request: (name: string, _options: unknown, work: () => unknown) => {
-      const next = (locks.get(name) ?? Promise.resolve()).then(work);
+    request: (name: string, options: { ifAvailable?: boolean }, work: (lock: object | null) => unknown) => {
+      if (options.ifAvailable) {
+        if (held.has(name)) return Promise.resolve(work(null));
+        held.add(name);
+        return Promise.resolve().then(() => work({ name })).finally(() => { held.delete(name); });
+      }
+      const next = (locks.get(name) ?? Promise.resolve()).then(() => work({ name }));
       locks.set(name, next.catch(() => undefined));
       return next;
     },
@@ -93,6 +99,34 @@ describe('browser command persistence across tabs', () => {
     await first.cancel(record.id);
     await expect(second.deliver(record.id)).rejects.toBeInstanceOf(CommandAwaitingConfirmation);
     expect(send).not.toHaveBeenCalled(); expect(saved()[0]?.state).toBe('cancelled');
+  });
+
+  it('recovers an abandoned prepared Tray command with its original identity and bytes', async () => {
+    const first = owner(), record = await first.prepare(admitted('workspace-a'));
+    const send = vi.fn(async (...args: Parameters<typeof committed>) => committed(...args));
+    const replacement = owner(send);
+    await replacement.negotiated();
+    expect(send).not.toHaveBeenCalled();
+    first.suspend();
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    await replacement.negotiated();
+    expect(send).toHaveBeenCalledExactlyOnceWith(record.operation, JSON.parse(record.bytes), { v: 1, id: record.id });
+    expect(saved()[0]).toMatchObject({ id: record.id, bytes: record.bytes, state: 'committed' });
+    await replacement.negotiated();
+    expect(send).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a live tabs delayed dispatch when a replacement negotiates', async () => {
+    const send = vi.fn(async (...args: Parameters<typeof committed>) => committed(...args));
+    const first = owner(send), record = await first.prepare(admitted('workspace-a'));
+    const replacementSend = vi.fn(async (...args: Parameters<typeof committed>) => committed(...args));
+    const replacement = owner(replacementSend);
+    await replacement.negotiated();
+    await first.deliver(record.id);
+    await replacement.negotiated();
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(replacementSend).not.toHaveBeenCalled();
+    expect(saved()[0]?.state).toBe('committed');
   });
 
   it('refuses before sending when atomic storage is unavailable or full', async () => {

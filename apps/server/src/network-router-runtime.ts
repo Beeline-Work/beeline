@@ -1,15 +1,11 @@
 import { ROUTER_FAMILIES } from '@beeline/api-contract/router-protocol';
-import type { SqlDatabase } from './database.js';
-import type { LiveHub } from './live.js';
 import { networkRouterEnabled } from './network-router-rollout.js';
 import { RouterBuildCoordinator } from './router-build-coordinator.js';
 import type { RouterProjectionPolicy } from './router-socket.js';
 
 /** Production composition, shared by all sockets. No cohort or identity filter.
- * The existing leader, aggregate lease and committed listener own its lifetime. */
+ * Committed listener health gates the existing socket owners. */
 export function createNetworkRouterRuntime(options: {
-  database: SqlDatabase;
-  live: LiveHub;
   instanceId: string;
   publicOrigin: string;
   listenerReady: () => boolean;

@@ -29,7 +29,6 @@ export interface RouterProjectionPolicy {
   readonly needsYouRoomsV1?:boolean;
   readonly families: readonly RouterFamily[];
   readonly listenerReady: () => boolean;
-  /** Installed shared control consumer, not a separate rollout switch. */
   readonly commandDedupV1?: boolean;
   readonly roomHeadContinuityV1?:boolean;
   /** Closed compact classification needs its independent complete control

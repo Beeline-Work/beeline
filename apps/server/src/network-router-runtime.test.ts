@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ROUTER_FAMILIES } from '@beeline/api-contract/router-protocol';
-import type { SqlDatabase } from './database.js';
-import { LiveHub } from './live.js';
 import { createNetworkRouterRuntime } from './network-router-runtime.js';
 import { networkRouterEnabled } from './network-router-rollout.js';
 import { helperActivationEnabled } from './helper-activation.js';
@@ -15,10 +13,8 @@ describe('universal production router admission', () => {
     vi.stubEnv('BEELINE_NETWORK_ROUTER_V1', setting);
     const enabled = setting !== '0';
     for (const read of [networkRouterEnabled, helperActivationEnabled, helperOverlayEnabled, helperUsageEnabled, turnOwnershipEnabled, memberStreamEnabled]) expect(read()).toBe(enabled);
-    const query = vi.fn(async () => { throw new Error('Composition must not access data'); });
-    const database = { query, transaction: vi.fn() } as unknown as SqlDatabase;
     let ready = false;
-    const router = createNetworkRouterRuntime({ database, live: new LiveHub(),
+    const router = createNetworkRouterRuntime({
       instanceId: 'activation-test', publicOrigin: 'https://synthetic.invalid', listenerReady: () => ready });
     if (enabled) {
       expect(router?.policy.families).toEqual(ROUTER_FAMILIES);
@@ -29,6 +25,5 @@ describe('universal production router admission', () => {
       ready = true; expect(router?.policy.listenerReady()).toBe(true);
       await router?.close();
     } else expect(router).toBeUndefined();
-    expect(query).not.toHaveBeenCalled();
   });
 });

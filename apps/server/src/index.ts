@@ -407,7 +407,7 @@ async function main() {
   const operationOutcomes = new OperationOutcomes();
   const sentryWakeAgentId = sentryWakeAgentFromEnv();
   const router = createNetworkRouterRuntime({
-    database, live, instanceId: connectionPresence.instanceId, publicOrigin,
+    instanceId: connectionPresence.instanceId, publicOrigin,
     listenerReady: () => liveListener.projectionHealth().connected,
   });
   liveListener.setServerLeaseEvidence((instance, renewedAt, removed) => {

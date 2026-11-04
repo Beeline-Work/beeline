@@ -20,7 +20,7 @@ describe.skipIf(!url)('production router composition on migrated PostgreSQL', ()
       options: `-c search_path=${schema},public` }) });
     const live = new LiveHub(), viewer = 'a'.repeat(64), workspace = '11111111-1111-4111-8111-111111111111';
     let ready = true;
-    const runtime = createNetworkRouterRuntime({ database: db, live, instanceId: 'activation-proof',
+    const runtime = createNetworkRouterRuntime({ instanceId: 'activation-proof',
       publicOrigin: 'https://synthetic.invalid', listenerReady: () => ready })!;
     let lock: Awaited<ReturnType<typeof db.connectDedicated>> | undefined;
     let protocol: ReturnType<typeof routerSocketProtocol> | undefined;

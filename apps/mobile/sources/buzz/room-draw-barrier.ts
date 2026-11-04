@@ -11,12 +11,18 @@ let drawnNewest: string | undefined;
 let roomId: string | undefined;
 let visibleIds = new Set<string>();
 let releaseScheduled = false;
+let visitDeadline: ReturnType<typeof setTimeout> | undefined;
 let drawDeadline: ReturnType<typeof setTimeout> | undefined;
 
 export function beginRoomDraw(id?: string): void {
+  clearTimeout(visitDeadline);
   clearTimeout(drawDeadline);
   drawDeadline = undefined;
   generation += 1;
+  const visit = generation;
+  // Rendering is an optimization gate, never an indefinite prerequisite for
+  // Workspace reads after an interrupted or failed Room navigation.
+  visitDeadline = setTimeout(() => abandonRoomDraw(visit), 15_000);
   awaitingResponse = false;
   expectedNewest = undefined;
   sawDraw = false;
@@ -54,6 +60,8 @@ export function abandonRoomDraw(visit: number): void {
   if (visit !== generation) return;
   clearTimeout(drawDeadline);
   drawDeadline = undefined;
+  clearTimeout(visitDeadline);
+  visitDeadline = undefined;
   const resolve = release;
   pending = undefined;
   release = undefined;
@@ -80,10 +88,7 @@ export function finishRoomDraw(newest?: string, id?: string): void {
     drawDeadline = globalThis.setTimeout(() => {
       drawDeadline = undefined;
       if (visit !== generation || !pending || !firstFrameReady()) return;
-      const resolve = release;
-      pending = undefined;
-      release = undefined;
-      resolve?.();
+      abandonRoomDraw(visit);
     }, 500);
   }
   if (releaseScheduled || !ready()) return;
@@ -94,10 +99,7 @@ export function finishRoomDraw(newest?: string, id?: string): void {
     if (!ready()) { releaseScheduled = false; return; }
     clearTimeout(drawDeadline);
     drawDeadline = undefined;
-    const resolve = release;
-    pending = undefined;
-    release = undefined;
-    resolve?.();
+    abandonRoomDraw(current);
   };
   // Visible rows establish readiness; leave a frame-commit margin without
   // waiting on interaction handles that can survive an interrupted transition.

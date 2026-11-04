@@ -18,7 +18,8 @@ import {
   routeSystemCommand,
   readAgentCommands,
 } from './agent-command.js';
-import { systemLine } from './system-line.js';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { ensureSystemIdentity, systemLine } from './system-line.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 const H = 'a'.repeat(64),
@@ -2762,7 +2763,9 @@ it('Reproduction stuck-turn-1: superseded review output completes its command an
 });
 
 
-it('SILENT-END-1: late silent-tool results do not wake again; other completions and later triggers survive', async () => {
+it.each(['no_reply_needed', 'mcp__beeline-agent__no_reply_needed', 'mcp__beeline_agent__no_reply_needed',
+  'beeline-agent__no_reply_needed', 'beeline_agent__no_reply_needed', 'mcp.beeline-agent.no_reply_needed'])(
+  'SILENT-END-1 (%s): late silent-tool results do not wake again; other completions and later triggers survive', async title => {
   const queued = await createAgentCommand(db, { roomId: C, agentId: A, sourceMessageId: null, reason: 'system' });
   const command = (await commands(A, C)).find(c => c.id === queued!.id)!;
   await claim(command);
@@ -2771,10 +2774,12 @@ it('SILENT-END-1: late silent-tool results do not wake again; other completions 
   await daemon.execute('postAgentTurnReceipt', { ...turn, status: 'complete', completionKind: 'no-reply' }, A);
   for (const status of ['completed', 'failed'] as const) {
     await daemon.execute('postBackgroundToolCompletion', {
-      ...turn, toolCallId: 'silent', title: 'mcp__beeline-agent__no_reply_needed', status,
+      ...turn, toolCallId: 'silent', title, status,
     }, A);
   }
   expect((await commands(A, C)).filter(c => c.reason === 'corner_background_tool')).toEqual([]);
+  expect((await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1 AND status='failed'`, [C])).rowCount).toBe(0);
+  expect((await db.query(`SELECT 1 FROM messages WHERE card_type='turn-failed' AND room_id=$1`, [C])).rowCount).toBe(0);
   await daemon.execute('postBackgroundToolCompletion', {
     ...turn, toolCallId: 'build', title: 'Run build', status: 'completed',
   }, A);
@@ -2845,3 +2850,67 @@ it.each(['production', 'ordinary-background-job'])('Reproduction wake-storm-83 (
   console.log(`Demonstrated wake-storm-83: replayed production sequence; (${turns}) turns, one visible notice, fresh human request accepted`);
   await db.query('DELETE FROM free_agents WHERE agent_id=$1', [A]);
 }, 60_000);
+
+// Command-only roots are server-authored private work, never synthetic messages.
+it.each(['replay', 'idle'] as const)('command-only requester: System %s survives a cold repository read and delegation', async kind => {
+  await ensureSystemIdentity(db);
+  const root = (await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: null,
+    reason: kind === 'replay' ? 'order' : 'report', privatePayload: {
+      kind: kind === 'replay' ? 'order' : 'report', authorId: SYSTEM_IDENTITY_ID, fromRoomId: R,
+      text: kind === 'replay' ? 'Automatic prompt replay for a verified head.' : 'blocked: Corner is idle.',
+      ...(kind === 'idle' ? { automatic: true, idleSince: new Date().toISOString(), originCornerId: C } : {}),
+    } }))!;
+  expect(root.root_source_message_id).toBe(root.id);
+  expect(await daemon['grantRequester'](root)).toMatchObject({ id: SYSTEM_IDENTITY_ID });
+  const command = (await commands()).find(c => c.id === root.id)!;
+  await claim(command);
+  await expect(daemon.execute('getRoomRepositoryState', {
+    roomId: R, requestId: command.turnRequestId, generationId: 'g1',
+  }, A)).resolves.toMatchObject({ resolution: 'none', repositoryOnboarding: true });
+  const child = (await createAgentCommand(db, { roomId: R, agentId: B, sourceMessageId: null,
+    parent: root, reason: 'order', privatePayload: { kind: 'order', authorId: A, fromRoomId: R, text: 'Delegated replay' } }))!;
+  expect(await daemon['grantRequester'](child)).toMatchObject({ id: SYSTEM_IDENTITY_ID });
+  expect((await db.query('SELECT 1 FROM messages WHERE id=$1', [root.id])).rowCount).toBe(0);
+});
+
+it('command-only requester: delegation retains the original human message requester', async () => {
+  const sent = await send('@hoots Do this');
+  const root = (await db.query<import('./agent-command.js').CommandRow>(
+    'SELECT * FROM agent_commands WHERE source_message_id=$1', [sent.messageId])).rows[0]!;
+  const child = (await createAgentCommand(db, { roomId: R, agentId: B, sourceMessageId: null,
+    parent: root, reason: 'order', privatePayload: { kind: 'order', authorId: A, fromRoomId: R, text: 'Delegated task' } }))!;
+  expect(await daemon['grantRequester'](child)).toMatchObject({ id: H });
+});
+
+it.each(['rootless', 'human-author', 'agent-author', 'wrong-root', 'wrong-source', 'parented', 'missing-message', 'checkin', 'ordinary-report'])(
+  'command-only requester refuses %s provenance', async shape => {
+    await ensureSystemIdentity(db);
+    const root = (await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: null,
+      reason: 'order', privatePayload: { kind: 'order', authorId: SYSTEM_IDENTITY_ID, fromRoomId: R, text: 'Automatic replay' } }))!;
+    const command = { ...root };
+    if (shape === 'rootless') command.root_command_id = id();
+    if (shape === 'wrong-root') await db.query('UPDATE agent_commands SET root_command_id=$2 WHERE id=$1', [root.id, id()]);
+    if (shape === 'wrong-source') await db.query('UPDATE agent_commands SET root_source_message_id=$2 WHERE id=$1', [root.id, id()]);
+    if (shape === 'parented') await db.query('UPDATE agent_commands SET parent_command_id=$1 WHERE id=$1', [root.id]);
+    if (shape === 'missing-message') {
+      const sent = await send('Message-backed root');
+      await db.query('UPDATE agent_commands SET source_message_id=$2 WHERE id=$1', [root.id, sent.messageId]);
+    }
+    if (shape === 'human-author' || shape === 'agent-author')
+      await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($2::text)) WHERE id=$1`,
+        [root.id, shape === 'human-author' ? H : A]);
+    if (shape === 'checkin') await db.query("UPDATE agent_commands SET reason='free_agent_checkin',private_payload=NULL WHERE id=$1", [root.id]);
+    if (shape === 'ordinary-report') await db.query(`UPDATE agent_commands SET reason='report',private_payload=$2::jsonb WHERE id=$1`,
+      [root.id, JSON.stringify({ kind: 'report', authorId: SYSTEM_IDENTITY_ID, fromRoomId: R, text: 'Ordinary report' })]);
+    await expect(daemon['grantRequester'](command)).rejects.toThrow('resource requester');
+  },
+);
+
+it('command-only requester: workflow gate requester override stays authoritative', async () => {
+  const handoffId = id(), runId = id();
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card)
+    VALUES($1,$2,$3,'Workflow wake','workflow-handoff',$4::jsonb)`,
+    [handoffId, R, B, JSON.stringify({ runId, seq: 1, receipt: { exit: { actorId: P } } })]);
+  const root = (await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: handoffId, reason: 'workflow_handoff' }))!;
+  expect(await daemon['grantRequester'](root)).toMatchObject({ id: P });
+});

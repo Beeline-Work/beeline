@@ -1974,7 +1974,8 @@ export class GitHubOperations {
    * mainline check results are not Room conversation. Corner PRs use the
    * same repository events; CI stays on processCornerEvent.
    */
-  private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number, database: SqlDatabase = this.database) {
+  private async processRepositoryEvent(event: string, body: GitHubRecord, installationId: number) {
+    const database = this.database;
     if (event !== 'issues' && event !== 'pull_request') return;
     const repository = repositoryName(body);
     if (!repository) return;
@@ -2792,19 +2793,23 @@ export class GitHubOperations {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
       });
-      // Direct landings and missed-webhook recovery publish the same PR event.
-      // The repository event id deduplicates this against the normal webhook.
-      await this.processRepositoryEvent('pull_request', {
-        action: 'closed', repository: { full_name: pullRequest.repository },
-        ...(pullRequest.mergedBy ? { sender: { login: pullRequest.mergedBy } } : {}),
-        pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
-          head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },
-      }, Number(target.installation_id), database);
     });
-    if (!updated) return;
-    this.onRoomChanged?.(target.corner_id);
-    this.onRoomChanged?.(target.parent_id);
-    if (archived) await this.deleteCornerBranch(target.corner_id);
+    // The webhook inserts this deterministic message before its AFTER trigger
+    // locks the Workspace journal. Do not wait for that message ID while the
+    // archival transaction still owns the journal (message -> journal versus
+    // journal -> message). Each repository note now has its own transaction.
+    // Reconciliation also repairs the note when archival already committed.
+    await this.processRepositoryEvent('pull_request', {
+      action: 'closed', repository: { full_name: pullRequest.repository },
+      ...(pullRequest.mergedBy ? { sender: { login: pullRequest.mergedBy } } : {}),
+      pull_request: { merged: true, title: pullRequest.title, html_url: pullRequest.url,
+        head: { ref: pullRequest.branch }, base: { ref: pullRequest.targetBranch } },
+    }, Number(target.installation_id));
+    if (updated) {
+      this.onRoomChanged?.(target.corner_id);
+      this.onRoomChanged?.(target.parent_id);
+      if (archived) await this.deleteCornerBranch(target.corner_id);
+    }
   }
 
   /** One post-commit attempt; no persistent branch cleanup queue or retry. */

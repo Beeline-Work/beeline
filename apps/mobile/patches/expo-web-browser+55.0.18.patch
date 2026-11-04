@@ -2,7 +2,7 @@ diff --git a/node_modules/expo-web-browser/ios/WebAuthSession.swift b/node_modul
 index acd6fb2..b5e2195 100644
 --- a/node_modules/expo-web-browser/ios/WebAuthSession.swift
 +++ b/node_modules/expo-web-browser/ios/WebAuthSession.swift
-@@ -28,7 +28,9 @@ final internal class WebAuthSession {
+@@ -28,6 +28,8 @@ final internal class WebAuthSession {
        self.finish(with: [
          "type": callbackUrl != nil ? "success" : "cancel",
          "url": callbackUrl?.absoluteString,
@@ -12,4 +12,3 @@ index acd6fb2..b5e2195 100644
 +        "errorCode": (error as NSError?).map { String($0.code) }
        ])
      }
- 

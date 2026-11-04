@@ -533,11 +533,12 @@ it('uses first welcome per person, exclusive period end, mature denominators and
 
 });
 
-it('stores native cancellation diagnostics even when a server outcome supersedes the client', async () => {
+it.each([true, false])('stores native cancellation diagnostics without changing server authority (client first: %s)', async (clientFirst) => {
   const event = make({ event: 'callback_result', provider: 'github', outcome: 'cancelled',
     authSession: { resultType: 'cancel', errorDomain: 'com.apple.AuthenticationServices.WebAuthenticationSession', errorCode: '2', updateId: 'embedded' } });
-  await recordSigninFunnelEvent(db, event, 'client');
-  await recordSigninFunnelEvent(db, { ...event, outcome: 'success', authSession: undefined }, 'server');
-  const stored = await db.query<{ auth_session: unknown }>('SELECT auth_session FROM signin_funnel_events WHERE attempt_id=$1', [event.attemptId]);
-  expect(stored.rows[0]?.auth_session).toEqual(event.authSession);
+  const client = () => recordSigninFunnelEvent(db, event, 'client');
+  const server = () => recordSigninFunnelEvent(db, { ...event, outcome: 'success', authSession: undefined }, 'server');
+  if (clientFirst) { await client(); await server(); } else { await server(); await client(); }
+  const stored = await db.query<{ auth_session: unknown; outcome: string; source: string }>('SELECT auth_session,outcome,source FROM signin_funnel_events WHERE attempt_id=$1', [event.attemptId]);
+  expect(stored.rows[0]).toEqual({ auth_session: event.authSession, outcome: 'success', source: 'server' });
 });

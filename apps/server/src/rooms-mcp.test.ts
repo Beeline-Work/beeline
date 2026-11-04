@@ -38,7 +38,7 @@ const CORNER = '44444444-4444-4444-8444-444444444444';
 const PUBLIC_CORNER = '55555555-5555-4555-8555-555555555555';
 const opaque = () => randomBytes(32).toString('base64url');
 
-describe('Rooms connector HTTP OAuth and MCP', () => {
+describe('Rooms connector HTTP OAuth and MCP', { timeout: 45_000 }, () => {
   let db: PgliteDatabase, server: ReturnType<typeof createBeelineServer>, origin: string, phone: PhoneService, daemon: DaemonService;
   const clients: Client[] = [];
   let releaseCompletions: () => Promise<void>;

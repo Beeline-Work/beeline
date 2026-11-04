@@ -228,3 +228,29 @@ selectors still bind exact production JSX. No assertion or budget changed.
 Per instruction014, this composition is pushed once and receives one fresh
 remote CI run. Whole-finding/cohort closure remains Open, and remote completion
 is reported separately as green checks or a concrete failed-job result.
+
+## Main-landing hold: exact-head CI diagnosis
+
+Checks run `41750860991` at `973daf49a` failed four jobs, comprising two leaf
+suites and two aggregate gates. Shard4 has three failing MCP negotiation
+assertions: the synthetic OAuth fixture omits `resource`, and the joined-stream
+route throws before its capability refusal. The pending router integration
+already repairs that fixture in `1c559d844` using the production OAuth
+constructor. Applying that upstream file temporarily makes all four negotiation
+cases pass, including the unchanged zero-application-read assertion; the local
+file was then restored rather than duplicating the inherited repair.
+
+Shard7 has one failing Tray mutable-source assertion. An agent shared with a
+second Workspace exposes its owner in that Workspace's public roster as well
+as its profile. Group A's dedicated roster source correctly adds the exact
+`roster-projection` fact on ownership transfer; the older test expected only
+`profile-projection`. The assertion now requires exactly those two facts in
+order, retaining rejection of every unrelated Tray or other source fact. The
+whole 16-case Tray suite passes. No production code, limits or authority checks
+changed. Both suites were run separately with `--maxWorkers=2`.
+
+At diagnosis, current main `5547a106b` contains neither router proof suite;
+the router PR has not landed there yet. Firstmate instruction015 holds all
+pushes and combined-branch merges until that landing and an explicit release
+to retarget this continuation to main. The two downstream aggregate failures
+are consequences of the failing server shards, not additional test failures.

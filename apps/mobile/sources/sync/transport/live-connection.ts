@@ -397,8 +397,7 @@ export class LiveConnection {
   }
 
   private rejectRequests(reason: unknown = new PhoneSocketDisconnectedError(), onlySent = false): void {
-    for (const request of this.requests.values())
-      if (!onlySent || request.socket) request.reject(reason);
+    for (const request of this.requests.values()) if (!onlySent || request.socket) request.reject(reason);
   }
 
   /** Safe transport metadata for a recovery receipt; no URL or authorization. */
@@ -567,12 +566,15 @@ export class LiveConnection {
   }
 
   private handleForeground(): void {
+    this.recoverySpent = false;
     // Android owns the socket while the app is away. Returning alone is no
     // evidence of a broken connection, including a handshake still opening.
     if (!this.socket) this.reconnectNow();
   }
 
   private handleNetworkChange(): void {
+    if (AppState.currentState !== 'active') return;
+    this.recoverySpent = false;
     // A native close/error or a request deadline proves an existing socket
     // failed. Connectivity notifications must not tear down a healthy one.
     if (!this.socket) this.reconnectNow();
@@ -656,7 +658,7 @@ export class LiveConnection {
     if (this.authorizationRecoveryUsed || AppState.currentState !== 'active' || !this.hasDemand())
       return false;
     this.authorizationRecoveryUsed = true;
-    this.recoverOpenedSocket();
+    this.recoverOpenedSocket(false);
     return true;
   }
 
@@ -688,8 +690,8 @@ export class LiveConnection {
   }
 
   /**
-   * Opens one socket. A handshake that never opens waits for foreground, a
-   * network change, a push, or an explicit Retry. A socket that had opened
+   * Opens one socket. An opening handshake has no transport cutoff; an
+   * existing request deadline can replace it. A socket that had opened
    * and then closes or errors starts one new attempt immediately, with no
    * timer. Authorization failure and a rejected token each get one bounded
    * immediate retry; an unsuccessful replacement never starts a retry loop.
@@ -802,9 +804,9 @@ export class LiveConnection {
    * a handshake that never opens or the last holder leaving does not start
    * another. Unsent requests also hold the connection until their own deadline.
    */
-  private recoverOpenedSocket(): void {
-    if (AppState.currentState !== 'active' || this.recoverySpent || !this.hasDemand()) return;
-    this.recoverySpent = true;
+  private recoverOpenedSocket(consumeSocketRecovery = true): void {
+    if (AppState.currentState !== 'active' || (consumeSocketRecovery && this.recoverySpent) || !this.hasDemand()) return;
+    if (consumeSocketRecovery) this.recoverySpent = true;
     const generation = this.generation;
     const flight = this.connectInFlight;
     // Register resolves before its socket attempt finishes. A close in that
@@ -814,8 +816,12 @@ export class LiveConnection {
       return;
     }
     void flight.finally(() => {
-      if (generation !== this.generation || this.socket || this.connectInFlight ||
-          !this.hasDemand())
+      if (
+        generation !== this.generation ||
+        this.socket ||
+        this.connectInFlight ||
+        !this.hasDemand()
+      )
         return;
       void this.ensureSocket();
     });

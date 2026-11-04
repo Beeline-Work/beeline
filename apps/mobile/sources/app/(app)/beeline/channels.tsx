@@ -398,7 +398,12 @@ export default function BuzzChannels() {
     const identityGeneration = clientResetGeneration();
     deckMissedRef.current = { workspaces: false };
     const activation = AppState.addEventListener('change', (state) => {
-      if (state === 'active' && !cancelled && identityGeneration === clientResetGeneration() && deckVisible())
+      if (
+        state === 'active' &&
+        !cancelled &&
+        identityGeneration === clientResetGeneration() &&
+        deckVisible()
+      )
         refreshMissed();
     });
     let unsubscribeWorkspaces: (() => void) | undefined;
@@ -451,7 +456,9 @@ export default function BuzzChannels() {
       workspaceRefresh = new SurfaceRefreshScheduler({
         fetch: () => {
           deckMissedRef.current.workspaces = false;
-          return mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () => http.workspaces());
+          return mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () =>
+            http.workspaces(),
+          );
         },
         apply: (value) => {
           // Null: an eviction overtook the read; there is nothing to paint.
@@ -546,7 +553,12 @@ export default function BuzzChannels() {
             { kinds: [9000, 9001, 9007], '#p': [nextIdentity.publicKey] },
           ],
           (event) => {
-            if (cancelled || identityGeneration !== clientResetGeneration() || !invalidatesWorkspaceList(event)) return;
+            if (
+              cancelled ||
+              identityGeneration !== clientResetGeneration() ||
+              !invalidatesWorkspaceList(event)
+            )
+              return;
             if (deckVisible()) workspaceRefresh?.signal();
             else deckMissedRef.current.workspaces = true;
           },

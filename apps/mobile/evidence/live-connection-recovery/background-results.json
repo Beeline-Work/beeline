@@ -6,10 +6,7 @@
     "socketOpenAt": 1793760060959,
     "foregroundToOpenMs": 4212,
     "tapToAckMs": 663,
-    "postReturnRequestOperations": [
-      "readNeedsYou",
-      "sendRoomMessage"
-    ],
+    "postReturnRequestOperations": ["readNeedsYou", "sendRoomMessage"],
     "lifecycleEvents": [
       {
         "event": "websocketFailed",
@@ -47,10 +44,7 @@
     "socketOpenAt": 1793760353316,
     "foregroundToOpenMs": 54860,
     "tapToAckMs": 49930,
-    "postReturnRequestOperations": [
-      "readNeedsYou",
-      "sendRoomMessage"
-    ],
+    "postReturnRequestOperations": ["readNeedsYou", "sendRoomMessage"],
     "lifecycleEvents": [
       {
         "event": "websocketFailed",

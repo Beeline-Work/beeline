@@ -105,11 +105,11 @@ wire dispatch. It does not measure the final display scanout or another phone's
 paint. There are two samples per cell; these are scenario observations, not a
 statistical latency guarantee.
 
-| Build in native44 shell | Warm send, ms | Send just after app return, ms |
-| --- | --- | --- |
-| Original shipped v142 | 755, 574 | 2034, 1357 |
-| Pre-fix v141 source baseline | 627, 546 | 1419, 1975 |
-| Fixed source | 619, 547 | 827, 550 |
+| Build in native44 shell      | Warm send, ms | Send just after app return, ms |
+| ---------------------------- | ------------- | ------------------------------ |
+| Original shipped v142        | 755, 574      | 2034, 1357                     |
+| Pre-fix v141 source baseline | 627, 546      | 1419, 1975                     |
+| Fixed source                 | 619, 547      | 827, 550                       |
 
 The fixed quick returns produce **zero** new sockets, reconnect requests or
 Connecting transitions. Sends do not wait for a foreground check or a covering

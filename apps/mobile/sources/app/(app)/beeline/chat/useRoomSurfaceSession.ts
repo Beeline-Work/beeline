@@ -651,7 +651,11 @@ export function useRoomSurfaceSession({
     let scheduler: SurfaceRefreshScheduler<RoomView> | undefined;
     let incompleteDelivery = false;
     const visibleScheduler = () => {
-      if (!isFocusedRef.current || AppState.currentState === 'background' || AppState.currentState === 'inactive') {
+      if (
+        !isFocusedRef.current ||
+        AppState.currentState === 'background' ||
+        AppState.currentState === 'inactive'
+      ) {
         incompleteDelivery = true;
         return undefined;
       }

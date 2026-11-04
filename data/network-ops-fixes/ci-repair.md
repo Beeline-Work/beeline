@@ -86,3 +86,20 @@ Full root typecheck and the20-rule base-aware architecture check pass.
 [Selections and log hashes](group-e-integration-validation.json) retain the exact
 scope. Its [proof report](group-e-proof-report.md) preserves the remaining
 provider/installed-adapter/workload boundaries; no additional finding closes.
+
+## Main integration after the shared timer fix
+
+Main `10b558dd48e998c3fd2b0e0527fd9525d56418ab` is merged with the
+combined candidate. The upstream fake-clock fix preserves native Immediate
+cleanup and event-loop progress. Join-host discovery and first-workspace creation
+compose with router completion readiness; the member stream retains its bearer
+challenge instead of serving the new HTML join page. Two regression cases cover
+plain and SSE requests on both the canonical and short host.
+
+[Merge validation](main-integration-validation.json) records **180 passing server
+cases across six serial suites**, including the full MCP suite and isolated
+PostgreSQL stream/OAuth proofs. All10 CI-sharding/timer regressions, all3 bundle
+gates, all8 workspace builds, full root typecheck, the20-rule base-aware
+architecture guard, phone/router inventories and138 workflow-path references
+pass. No deadlines, byte budgets or scanners changed. Remote CI on the pushed
+merge remains required; router activation and whole-finding closure are unchanged.

@@ -71,3 +71,45 @@ normal concurrent telemetry writes may appear on a later independent read.
 A Neon branch of beeline-prod is required as the restore point before applying.
 The initial `b1-dry-run.json` is historical: its two telemetry counts are retained
 classes, not approved deletions. All other listed D1 predicates remain approved.
+
+## B1 lock-boundary correction
+
+The first attempt was cancelled and fully rolled back after 51 clients were
+observed blocked. The FK was still CASCADE afterwards, all deletion classes
+were restored, and all 228 versions/18 links remained. No client remained blocked
+by that cancelled backend. `b1-lock-rollback.json` records this evidence.
+
+Root cause: the outer transaction held both the FK DDL lock and journal stream
+row locks through every card batch (`durable-live.ts` upserts the stream row on
+each notification). Statement limits do not release transaction locks. The
+corrected script commits the short FK change first, autocommits ledger batches
+and 25-row keyset card batches, and yields between card batches. A regression
+test fails on the preceding script and passes with 1,002 card rows on this one.
+Telemetry comparisons use a fixed created_at cohort, so concurrent new audit
+rows do not obscure preservation of the rows present before cleanup.
+
+## B1 low-traffic execution plan (firstmate inbox 003)
+
+No further apply before **2026-11-04 08:00:00 UTC**. At or after that window:
+
+1. Create a fresh ready Neon branch from beeline-prod/main and record its name/LSN.
+2. Rerun the dry run and compare the approved classes, all skill versions and
+   retained telemetry cohorts with the recorded counts; allow ordinary growth.
+3. Use the CLI's monitored apply: `lock_timeout=2s`, a 5s FK statement deadline
+   and a 60s deadline for each data statement. Commit the FK switch alone. Its
+   immediate pg_stat_activity/pg_locks read-back must show no blocked clients
+   or waiting locks.
+4. Delete dead ledgers in autocommitted batches of at most 1,000; strip the
+   fixed card cohort in 25-row keyset batches. Pause 25ms between batches.
+   A second connection monitors this cleanup backend every 100ms and before
+   each write, cancelling on the first observed blocked client or waiting lock.
+   Any error stops the runner; do not blindly repeat partially committed work.
+5. Read back all deletion classes, the approved value/card cohort, all 228
+   original skill versions, and both retained telemetry cohorts. New telemetry
+   rows may grow the live total; pre-cleanup cohort counts must stay equal.
+6. Commit before/after evidence and the fresh snapshot name, update the PR body,
+   and wait for CI green. B8 column drops remain outside this apply.
+
+The monitor regression proves a blocking observation refuses any write.
+The transaction regression proves the hot card updates run outside the FK
+transaction and reaches zero keys across more than 1,000 fixture rows.

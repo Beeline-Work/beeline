@@ -1,0 +1,19 @@
+{
+  "observedBlockedClients": 51,
+  "cancelledOwnCleanupBackend": true,
+  "rollbackConfirmed": true,
+  "clientsStillBlockedByCancelledBackend": 0,
+  "cancelledBackendPresent": false,
+  "jobFkDeleteActionAfterRollback": "CASCADE",
+  "skillVersionsAfterRollback": 228,
+  "linkedSkillVersionsAfterRollback": 18,
+  "deletionClassCountsRestored": true,
+  "cardKeyRowsAfterRollback": 191267,
+  "rootCause": "One outer transaction held the FK DDL and live_streams journal row locks across every card-update batch.",
+  "fix": "Commit the short FK switch first; ledger deletes and small keyset card updates autocommit. Retained telemetry is checked in a fixed created_at cohort.",
+  "regressionBefore": "Previous script fails hot-card transaction-boundary assertion.",
+  "regressionAfter": "1002 card rows processed, other card preserved, all versions and both telemetry cohorts retained.",
+  "nextAuthorizedApplyNotBefore": "2026-11-04T08:00:00Z",
+  "plannedLockTimeout": "2s",
+  "plannedMonitoring": "Dedicated observer checks pg_stat_activity/pg_locks every 100ms and before each write; cancels on first observed blocked client/waiting lock."
+}

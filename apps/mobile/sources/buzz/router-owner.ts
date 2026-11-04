@@ -146,10 +146,10 @@ const assembly = new RouterBatchAssembly(hash, batch => {
     return;
   }
   if(!negotiation?.scheduledWorkCoverageV1||!scheduledAuthority){lanes?.hideFamily('room-scheduled-work','Unnegotiated coverage; Retry.');return;}
-  const scheduled=facts.filter(fact=>fact.atomicGroup.startsWith('room-scheduled-work:'));
-  const independent=facts.filter(fact=>!fact.atomicGroup.startsWith('room-scheduled-work:'));
-  if(independent.length)void lanes?.accept({...batch,facts:independent});
-  const deferred={...batch,facts:scheduled};
+  // One verified interval has one body in ReadLanes. Splitting its facts
+  // creates conflicting deliveries at the same cut, including when the
+  // Scheduled Work portion contains only its classification marker.
+  const deferred={...batch,facts};
   scheduledAuthority.defer(negotiation.generation,{id:hash(deferred),kind:'batch',barrier:marker.authorityBarrier,
     bytes:utf8ToBytes(JSON.stringify(deferred)).length,apply:()=>{void lanes?.accept(deferred);},
     discard:()=>lanes?.unavailable(batch.to.stream,'room-scheduled-work','Projection unavailable; Retry.')});

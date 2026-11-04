@@ -121,8 +121,6 @@ export async function buildTrayProjection(database: SqlDatabase, workspaceId: st
   // Legacy question selection caps its rows. Never certify that truncated
   // result, or a count/cell disagreement, as a complete canonical projection.
   if (needs.items.length !== count) throw new RouterProjectionUnavailable('dependency');
-  if(needs.items.length>30)throw new RouterProjectionUnavailable('budget');
   const value = { needs, saved };
-  if (Buffer.byteLength(JSON.stringify(value)) > 64 * 1024) throw new RouterProjectionUnavailable('budget');
   return value;
 }

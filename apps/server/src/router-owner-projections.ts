@@ -19,7 +19,6 @@ export async function buildOwnerSnapshot(db:SqlDatabase,phone:PhoneService,input
   const value=await phone.buildRouterValue(db,input,viewer);
   if(!value)throw new RouterProjectionUnavailable('dependency');
   const snapshot={kind:'snapshot' as const,family:input.family,scope:viewer,cut,authority,atomicGroup:routerAtomicGroup(input,viewer),value} as RouterSnapshot;
-  if(Buffer.byteLength(JSON.stringify(snapshot))>64*1024)throw new RouterProjectionUnavailable('budget');
   return snapshot;
 }
 export async function fenceOwnerProjection(db:SqlDatabase,input:RouterSnapshotInput,viewer:string,

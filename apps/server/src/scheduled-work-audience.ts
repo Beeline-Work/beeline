@@ -20,7 +20,6 @@ export async function scheduledWorkAudience(db:SqlDatabase,workspace:string,view
     ), causes AS(SELECT * FROM jsonb_to_recordset($3::jsonb) AS source("roomId" uuid,readers jsonb)), candidates AS(
       ${currentAudience}SELECT causes."roomId" AS id FROM causes CROSS JOIN manager WHERE causes.readers IS NULL AND manager.allowed OR causes.readers ? $2
     ) SELECT id::text FROM candidates ORDER BY id LIMIT $4`,[workspace,viewer,JSON.stringify(plan.scheduledWorkCauses),ROUTER_ROOM_AUDIENCE_LIMIT+1])).rows;
-  if(candidates.length>ROUTER_ROOM_AUDIENCE_LIMIT)throw new RouterProjectionUnavailable('budget');
   // The same authority statement covers existing and removed Room IDs. A
   // removed Room uses only the current principal certificate, never a second
   // audience-side authority query or a stored client inventory.

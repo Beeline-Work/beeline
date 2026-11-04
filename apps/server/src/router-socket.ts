@@ -178,13 +178,11 @@ export function routerSocketProtocol(database: SqlDatabase, viewer: string,
               UNION SELECT room.workspace_id FROM rooms room JOIN memberships member ON member.room_id=room.id AND member.identity_id=$1
                 AND member.removed_at IS NULL JOIN identities person ON person.id=$1 AND person.kind='human' AND NOT person.hidden_from_roster
                 WHERE room.parent_id IS NULL AND room.archived_at IS NULL AND room.direct_participants ? $1
-            ) scopes ORDER BY workspace_id LIMIT 129`:
-            `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id LIMIT 129`, [viewer]);
+            ) scopes ORDER BY workspace_id`:
+            `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL ORDER BY workspace_id`, [viewer]);
           if(stopped||generation!==currentGeneration)return;
-          if(workspaces.rows.length>128)throw new RouterProjectionUnavailable('budget');
         for (const {workspace_id:workspace} of workspaces.rows) {
           if(subscribedWorkspaces.has(workspace))continue;
-          if(subscribedWorkspaces.size>=128)throw new RouterProjectionUnavailable('budget');
           const release = await new RouterProjectionDrain(database,sources.live).subscribe(workspace,async (db,from,to,causes) => {
             if (stopped||generation!==currentGeneration) return;
             const coverageOwner=scheduledCoverage,coverageSegment=coverageOwner?.segment;

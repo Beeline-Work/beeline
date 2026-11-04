@@ -2,6 +2,9 @@ import { BACKGROUND_OWNERSHIP_SCHEMA } from './background-ownership.js';
 import { TRAY_CLOCK_SOURCE_SCHEMA } from './tray-clock-source.js';
 import { TRAY_CLOCK_OWNER_SCHEMA } from './tray-clock-owner.js';
 import { TRAY_CLOCK_WORK_SCHEMA } from './tray-clock-work.js';
+import { TRAY_SAVED_WINDOW_SCHEMA } from './tray-saved-window.js';
+import { TRAY_SAVED_SOURCE_SCHEMA } from './tray-saved-source.js';
+import { TRAY_MUTABLE_SOURCE_SCHEMA } from './tray-mutable-source.js';
 import { DISPLAY_DEADLINE_SOURCE_SCHEMA } from './deadline-expiry-source.js';
 import { SENTRY_WAKE_SOURCE_SCHEMA } from './sentry-wake-source.js';
 import { CONNECTOR_OFFER_EXPIRY_SCHEMA } from './connector-offer-expiry.js';
@@ -3594,6 +3597,9 @@ export async function migrate(
   await ddlScript('Tray clock sources and readiness', TRAY_CLOCK_SOURCE_SCHEMA);
   await ddlScript('Tray clock commit ownership', TRAY_CLOCK_OWNER_SCHEMA);
   await ddlScript('Tray clock work streams', TRAY_CLOCK_WORK_SCHEMA);
+  await ddlScript('Tray saved window identities', TRAY_SAVED_WINDOW_SCHEMA);
+  await ddlScript('Tray saved content and access sources', TRAY_SAVED_SOURCE_SCHEMA);
+  await ddlScript('Tray mutable sources', TRAY_MUTABLE_SOURCE_SCHEMA);
   if (!options.deferData) await migrateData(database);
 }
 

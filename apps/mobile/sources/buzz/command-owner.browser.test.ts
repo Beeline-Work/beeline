@@ -110,7 +110,8 @@ describe('browser command persistence across tabs', () => {
     first.suspend();
     for (let i = 0; i < 5; i++) await Promise.resolve();
     await replacement.negotiated();
-    expect(send).toHaveBeenCalledExactlyOnceWith(record.operation, JSON.parse(record.bytes), { v: 1, id: record.id });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).toHaveBeenCalledWith(record.operation, JSON.parse(record.bytes), { v: 1, id: record.id });
     expect(saved()[0]).toMatchObject({ id: record.id, bytes: record.bytes, state: 'committed' });
     await replacement.negotiated();
     expect(send).toHaveBeenCalledTimes(1);

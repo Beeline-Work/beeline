@@ -1706,6 +1706,8 @@ it('isolates transcript windows, outbox and late send completion when a route ch
   const sourceOutbox = current.session.outbox.current();
   controls.routeChannelId = '22222222-2222-4222-8222-222222222222';
   controls.initialView = null;
+  // The destination lane has no answer yet; do not replay the source fixture.
+  controls.routerValue = null;
   await act(async () => renderer.update(React.createElement(BuzzChat)));
   // Even before the destination responds, it must not draw the source tail.
   expect(visible()).toEqual([]);

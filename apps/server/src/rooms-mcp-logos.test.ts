@@ -18,7 +18,7 @@ vi.mock('node:https', () => ({
     return req;
   },
 }));
-import { bundledMcpLogo, fetchMcpLogo, mcpMemberAvatar } from './rooms-mcp-logos.js';
+import { bundledMcpLogo, fetchMcpLogo, mcpClientName, mcpMemberAvatar, mcpVendorDisplay, redirectTrust } from './rooms-mcp-logos.js';
 afterEach(() => { state.answers = [{ address: '93.184.216.34', family: 4 }]; state.status = 200; state.type = 'image/png'; state.calls = 0; });
 it('rejects unsafe URL schemes and any private DNS answer before connecting', async () => {
   for (const url of ['http://example.com/a', 'file:///etc/passwd', 'https://user:password@example.com/a', 'https://example.com:8443/a'])
@@ -42,6 +42,20 @@ it('rejects redirects, active content, spoofed images and oversized responses', 
   state.status = 200; state.type = 'image/svg+xml'; await expect(fetchMcpLogo('https://example.com/a')).rejects.toThrow();
   state.type = 'image/png'; state.bytes = Buffer.from('<html>not pixels</html>'); await expect(fetchMcpLogo('https://example.com/a')).rejects.toThrow();
   state.bytes = Buffer.alloc(262145); await expect(fetchMcpLogo('https://example.com/a')).rejects.toThrow('too large');
+});
+it('wears a bundled name only for that vendor callback', () => {
+  const grok = 'https://www.cursor.com/agents/mcp/oauth/callback';
+  expect(mcpVendorDisplay('Cursor', grok)).toBe('Grok Bot');
+  expect(mcpVendorDisplay('Cursor', 'https://www.cursor.com/callback')).toBeUndefined();
+  expect(mcpVendorDisplay('Claude', 'https://evil.example/cb')).toBeUndefined();
+  expect(mcpClientName('Cursor', [grok, 'http://localhost:8787/callback'])).toBe('Grok Bot');
+  expect(mcpClientName('Cursor', [grok, 'https://evil.example/cb'])).toBe('Cursor');
+  expect(mcpClientName('Claude', ['https://evil.example/cb'])).toBe('Claude');
+  const handoff = 'https://beeline.example/mcp/oauth/handoff';
+  expect(redirectTrust('Claude', 'https://evil.example/phish/callback', handoff)).toMatchObject({ kind: 'confirm', host: 'evil.example', display: 'Claude' });
+  expect(redirectTrust('Cursor', grok, handoff)).toMatchObject({ kind: 'vendor', display: 'Grok Bot', host: 'www.cursor.com' });
+  expect(redirectTrust('Claude Code', 'http://127.0.0.1:9876/callback', handoff).kind).toBe('loopback');
+  expect(redirectTrust('Claude Code', handoff, handoff).kind).toBe('handoff');
 });
 it('bundles the official client marks and leaves unknown clients to the monogram', async () => {
   expect(await bundledMcpLogo('Grok')).toMatch(/^data:image\/png;base64,/);

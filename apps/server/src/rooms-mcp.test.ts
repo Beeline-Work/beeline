@@ -18,7 +18,7 @@ import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { createBeelineServer } from './server.js';
-import { BROWSER_REFUSALS, RoomsMcpOAuth } from './rooms-mcp-oauth.js';
+import { BROWSER_REFUSALS, MCP_REGISTER_PER_MINUTE, RoomsMcpOAuth } from './rooms-mcp-oauth.js';
 import { RoomsMcp } from './rooms-mcp.js';
 import { MCP_AGENT_EXCLUSIONS, MCP_AGENT_TOOLS, MCP_APP_ROUTE_OPERATIONS, pendingMcpWakes } from './rooms-mcp-agent.js';
 import { claimAgentCommand, createAgentCommand, routeHumanMessage, routeAgentResult } from './agent-command.js';
@@ -113,7 +113,8 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   async function authorize(scope = 'rooms:read rooms:write', decision = 'allow', clientId?: string, redirectUri = 'http://127.0.0.1:9876/callback', wake: Record<string, unknown> = {}, resource = origin + '/mcp') {
     const prepared = await prepareAuthorization(scope, clientId, redirectUri, undefined, resource);
     const { flow, cookie } = prepared;
-    const result = await post('/mcp/oauth/consent', { flow, decision, workspace_selection: '1', workspace_ids: [WORKSPACE], ...wake }, { cookie, origin });
+    const redirectHost = (() => { try { const url = new URL(redirectUri); return url.host || url.protocol.replace(/:$/, ''); } catch { return ''; } })();
+    const result = await post('/mcp/oauth/consent', { flow, decision, workspace_selection: '1', workspace_ids: [WORKSPACE], confirm_host: redirectHost, ...wake }, { cookie, origin });
     expect(result.status).toBe(302);
     const target = new URL(result.headers.get('location')!);
     expect(target.href.startsWith(redirectUri + '?')).toBe(true);
@@ -711,7 +712,7 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       const refused = [
         ['javascript:alert(1)', 'invalid_redirect_uri'], ['data:text/html,x', 'invalid_redirect_uri'], ['file:///tmp/cb', 'invalid_redirect_uri'],
         ['vbscript:x', 'invalid_redirect_uri'], ['http://client.example/cb', 'invalid_redirect_uri'], ['https://client.example/cb#x', 'invalid_redirect_uri'],
-        ['https://user:pw@client.example/cb', 'invalid_redirect_uri'], ['cursor://anysphere.cursor-mcp/cb#x', 'invalid_redirect_uri'], ['not a uri', 'invalid_redirect_uri'],
+        ['https://user:pw@client.example/cb', 'invalid_redirect_uri'], ['https://good.example%2eevil.example/cb', 'invalid_redirect_uri'], ['cursor://anysphere.cursor-mcp/cb#x', 'invalid_redirect_uri'], ['not a uri', 'invalid_redirect_uri'],
         ...['blob:https://x/y', 'about:blank', 'filesystem:https://x/y', 'ftp://x/cb', 'mailto:a@b', 'intent://cb', 'cursor://user:pw@host/cb', 'cursor://host/cb#', ' cursor://host/cb', 'cursor://host/\ncb'].map(uri => [uri, 'invalid_redirect_uri']),
       ];
       for (const [uri, error] of refused) {
@@ -759,6 +760,72 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
         client_auth: 'basic', content_type: 'application/x-www-form-urlencoded' }));
     } finally { warn.mockRestore(); }
   });
+  it('rate-limits anonymous registration separately from other OAuth calls', async () => {
+    await db.query('INSERT INTO rooms_mcp_admission(key,calls) VALUES($1,$2)', [tokenHash('register:127.0.0.1'), MCP_REGISTER_PER_MINUTE]);
+    const refused = await post('/mcp/oauth/register', { client_name: 'Claude', redirect_uris: ['https://evil.example/cb'] });
+    expect([refused.status, await refused.json()]).toEqual([429, { error: 'temporarily_unavailable' }]);
+    expect((await fetch(origin + '/.well-known/oauth-authorization-server')).status).toBe(200);
+  });
+  it('shows a fake Claude as unverified, with its redirect host and no vendor mark', async () => {
+    const registered = await post('/mcp/oauth/register', { client_name: 'Claude', redirect_uris: ['https://evil.example/phish/callback'] });
+    expect(registered.status).toBe(201);
+    const { client_id } = await registered.json() as { client_id: string };
+    const verifier = opaque();
+    const redirectUri = 'https://evil.example/phish/callback';
+    const query = new URLSearchParams({ client_id, redirect_uri: redirectUri, response_type: 'code', resource: origin + '/mcp',
+      code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', scope: 'rooms:read rooms:write', state: 'phish' });
+    const start = await fetch(origin + '/mcp/oauth/authorize?' + query, { redirect: 'manual' });
+    const cookie = start.headers.get('set-cookie')!.split(';')[0]!;
+    const flow = new URL(start.headers.get('location')!, origin).searchParams.get('flow')!;
+    await fetch(`${origin}/mcp/oauth/login?flow=${flow}&provider=google`, { headers: { cookie }, redirect: 'manual' });
+    await fetch(`${origin}/mcp/oauth/callback/google?state=${flow}&ticket=local-demo-ticket`, { headers: { cookie }, redirect: 'manual' });
+    const page = await (await fetch(`${origin}/mcp/oauth/consent?flow=${flow}`, { headers: { cookie } })).text();
+    expect(page).toContain('Add Claude to your team');
+    expect(page).toContain('Unverified name');
+    expect(page).toContain('>evil.example</p>');
+    expect(page).toContain('Type evil.example to confirm');
+    expect(page).toContain('If someone sent you this link, close this page.');
+    expect(page).not.toMatch(/<img class="mark client"/);
+    expect(page).toContain('class="mark client initial"');
+    expect(page).not.toContain('Anthropic');
+    expect(page).toContain('Read and post only');
+    expect(page).not.toContain('Act like your other agents');
+    const allow = (confirm_host?: string) => post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE], ...(confirm_host === undefined ? {} : { confirm_host }) }, { cookie, origin });
+    expect((await allow()).status).toBe(400);
+    expect((await allow('claude.ai')).status).toBe(400);
+    expect((await db.query('SELECT 1 FROM rooms_mcp_codes WHERE client_id=$1', [client_id])).rowCount).toBe(0);
+    const allowed = await allow('evil.example');
+    expect(allowed.status).toBe(302);
+    const code = new URL(allowed.headers.get('location')!).searchParams.get('code')!;
+    const token = await post('/mcp/oauth/token', { grant_type: 'authorization_code', client_id, code, code_verifier: verifier, redirect_uri: redirectUri, resource: origin + '/mcp' });
+    expect(token.status).toBe(200);
+    const issued = await token.json() as { access_token: string; refresh_token: string; scope: string };
+    expect(issued.scope).toBe('rooms:read rooms:write rooms:limited');
+    const client = new Client({ name: 'fake-claude', version: '1.0.0' }); clients.push(client);
+    await client.connect(new StreamableHTTPClientTransport(new URL(origin + '/mcp'), { requestInit: { headers: { authorization: `Bearer ${issued.access_token}` } } }));
+    const names = (await client.listTools()).tools.map(tool => tool.name);
+    expect(names).toContain('send_message');
+    expect(names).not.toContain('order');
+    expect(names).not.toContain('merge_corner');
+    expect(names).not.toContain('approve_merge');
+    const ordered = await client.callTool({ name: 'order', arguments: { address: ROOM, text: 'take the room' } });
+    expect(ordered.isError).toBe(true);
+    expect(JSON.stringify(ordered)).toContain('cannot order agents or merge');
+    const refreshed = await post('/mcp/oauth/token', { grant_type: 'refresh_token', refresh_token: issued.refresh_token, client_id, resource: origin + '/mcp' });
+    expect(refreshed.status).toBe(200);
+    expect((await refreshed.json() as { scope: string }).scope).toBe('rooms:read rooms:write rooms:limited');
+  });
+  it('refuses a same-host redirect whose path differs at authorize and token exchange', async () => {
+    const redirectUri = 'https://client.example/callback';
+    const registered = await (await post('/mcp/oauth/register', { client_name: 'Path', redirect_uris: [redirectUri] })).json() as { client_id: string };
+    const start = (redirect: string) => fetch(origin + '/mcp/oauth/authorize?' + new URLSearchParams({ client_id: registered.client_id, redirect_uri: redirect,
+      response_type: 'code', resource: origin + '/mcp', code_challenge_method: 'S256', code_challenge: createHash('sha256').update(opaque()).digest('base64url') }), { redirect: 'manual' });
+    for (const redirect of [`${redirectUri}/extra`, 'https://client.example/callback2', 'https://client.example/other', `${redirectUri}?next=1`])
+      expect([redirect, (await start(redirect)).status]).toEqual([redirect, 400]);
+    const grant = await authorize(undefined, 'allow', registered.client_id, redirectUri);
+    expect((await exchange(grant, { redirect_uri: `${redirectUri}/extra` })).status).toBe(400);
+    expect((await exchange(grant, { redirect_uri: redirectUri })).status).toBe(200);
+  });
   it.each(['https://example.com/cb', 'http://127.0.0.1:9876/cb', 'http://[::1]:9876/cb', 'http://localhost:9876/cb'])(
     'keeps accepting web and loopback redirect %s without issuing a secret', async redirect => {
       const response = await post('/mcp/oauth/register', { redirect_uris: [redirect] });
@@ -768,9 +835,13 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
   it('registers a client whose logo cannot be loaded and keeps the bundled logo', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
-      for (const [name, logo_uri, stored] of [['Cursor', 'https://127.0.0.1/favicon.svg', 'data:image/png;base64,'], ['Grok Bot', 'http://grok.example/logo.png', 'data:image/png;base64,'], ['Cursor', 42, 'data:image/png;base64,']] as const) {
+      for (const [name, logo_uri, redirect, stored] of [
+        ['Cursor', 'https://127.0.0.1/favicon.svg', 'https://www.cursor.com/agents/mcp/oauth/callback', true],
+        ['Grok Bot', 'http://grok.example/logo.png', 'https://www.cursor.com/agents/mcp/oauth/callback', false],
+        ['Cursor', 42, 'https://www.cursor.com/callback', false],
+      ] as const) {
         warn.mockClear();
-        const response = await post('/mcp/oauth/register', { client_name: name, logo_uri, redirect_uris: ['https://www.cursor.com/callback'], token_endpoint_auth_method: 'none' });
+        const response = await post('/mcp/oauth/register', { client_name: name, logo_uri, redirect_uris: [redirect], token_endpoint_auth_method: 'none' });
         expect(response.status).toBe(201);
         const { client_id } = await response.json() as { client_id: string };
         const { logo } = (await db.query<{ logo: string | null }>('SELECT logo FROM rooms_mcp_clients WHERE id=$1', [client_id])).rows[0]!;
@@ -968,26 +1039,28 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
       await page('Signing in with Google', 'callback', 'ticket_exchange_failed', await callback('google', 'ticket-sentinel-123'));
       expect((await callback('google', 'local-demo-ticket')).status).toBe(302);
       await page('Signing in with Google', 'callback', 'flow_already_signed_in', await callback('google', 'local-demo-ticket'));
+      await page('Saving your choice', 'consent submit', 'redirect_host_unconfirmed',
+        await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE], confirm_host: 'not-the-host' }, { cookie, origin }));
       await page('Saving your choice', 'consent submit', 'joiner_invalid', await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Shown', joiner_handle: 'Bad Handle!' }, { cookie, origin }));
       await page('Saving your choice', 'consent submit', 'decision_invalid', await post('/mcp/oauth/consent', { flow, decision: 'maybe' }, { cookie, origin }));
       await page('Saving your choice', 'consent submit', 'wake_invalid',
-        await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE], wake_url: 'http://localhost', wake_key: 'private-wake-sentinel' }, { cookie, origin }));
+        await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE], confirm_host: 'client.example', wake_url: 'http://localhost', wake_key: 'private-wake-sentinel' }, { cookie, origin }));
       const previousKey = process.env.BEELINE_MCP_WEBHOOK_KEY;
       delete process.env.BEELINE_MCP_WEBHOOK_KEY;
       try {
         await page('Saving your choice', 'consent submit', 'wake_unavailable',
-          await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE], wake_url: 'https://hooks.example/wake', wake_key: 'private-wake-sentinel' }, { cookie, origin }));
+          await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE], confirm_host: 'client.example', wake_url: 'https://hooks.example/wake', wake_key: 'private-wake-sentinel' }, { cookie, origin }));
         expect((await db.query('SELECT 1 FROM rooms_mcp_members WHERE client_id=$1', [registered.client_id])).rowCount).toBe(0);
       } finally {
         if (previousKey === undefined) delete process.env.BEELINE_MCP_WEBHOOK_KEY;
         else process.env.BEELINE_MCP_WEBHOOK_KEY = previousKey;
       }
       await page('Saving your choice', 'consent submit', 'workspaces_invalid',
-        await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [] }, { cookie, origin }));
+        await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [], confirm_host: 'client.example' }, { cookie, origin }));
       const takenHandle = (await db.query<{ handle: string }>('SELECT handle FROM identities WHERE id=$1', [USER])).rows[0]!.handle;
       expect((await post('/mcp/oauth/consent', { flow, decision: 'save', joiner_name: 'Shown', joiner_handle: takenHandle }, { cookie, origin })).status).toBe(302);
       await page('Saving your choice', 'consent submit', 'handle_taken',
-        await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE] }, { cookie, origin }));
+        await post('/mcp/oauth/consent', { flow, decision: 'allow', workspace_selection: '1', workspace_ids: [WORKSPACE], confirm_host: 'client.example' }, { cookie, origin }));
       await page('Returning to your session', 'handoff', 'handoff_invalid', await fetch(`${origin}/mcp/oauth/handoff?state=state-sentinel-123&code=x`));
       // Every sentence is driven by a real refusal, and each reason reads differently.
       expect([...shown].sort()).toEqual(Object.keys(BROWSER_REFUSALS).sort());
@@ -1844,18 +1917,31 @@ describe('Rooms connector HTTP OAuth and MCP', () => {
     expect((await db.query('SELECT 1 FROM rooms_mcp_clients WHERE id=$1 AND preregistered', [muse.id])).rowCount).toBe(1);
   });
   it.each([
-    ['Cursor', ['https://www.cursor.com/agents/mcp/oauth/callback', 'http://localhost:8787/callback'], 'Grok Bot'],
-    ['Cursor', ['cursor://anysphere.cursor-mcp/oauth/callback'], 'Cursor'],
-    ['Cursor', ['https://cursor.com/agents/oauth/callback'], 'Cursor'],
-    ['Meta Muse', ['https://agent.meta.ai/api/hatch/oauth/callback'], 'Meta Muse'],
-    ['Codex', ['http://127.0.0.1:9876/callback'], 'Codex'],
-    ['Claude Code', ['http://127.0.0.1:9876/callback'], 'Claude Code'],
-    ['Dots', ['http://127.0.0.1:9876/callback'], 'Dots'],
-  ])('R-MCP-DEFAULT-PICTURES: %s %j shows app pictures on Allow and its member', async (name, redirects, display) => {
+    ['Cursor', ['https://www.cursor.com/agents/mcp/oauth/callback', 'http://localhost:8787/callback'], 'Grok Bot', true],
+    ['Cursor', ['cursor://anysphere.cursor-mcp/oauth/callback'], 'Cursor', true],
+    ['Cursor', ['https://cursor.com/agents/oauth/callback'], 'Cursor', true],
+    ['Meta Muse', ['https://agent.meta.ai/api/hatch/oauth/callback'], 'Meta Muse', true],
+    ['Codex', ['http://127.0.0.1:9876/callback'], 'Codex', false],
+    ['Claude Code', ['http://127.0.0.1:9876/callback'], 'Claude Code', false],
+    ['Dots', ['http://127.0.0.1:9876/callback'], 'Dots', false],
+  ])('R-MCP-DEFAULT-PICTURES: %s %j shows a known callback picture and leaves other names unverified', async (name, redirects, display, branded) => {
     const registered = await (await post('/mcp/oauth/register', { client_name: name, redirect_uris: redirects })).json() as { client_id: string };
     const grant = await authorize('rooms:read rooms:write', 'allow', registered.client_id, redirects[0]);
     const html = grant.consentHtml;
     expect(html).toContain(`Add ${display} to your team`);
+    if (!branded) {
+      expect(html).toContain('Unverified name');
+      expect(html).toContain('127.0.0.1:9876');
+      expect(html).toContain('Allowed because it returns to an app on this computer.');
+      expect(html).not.toMatch(/<img class="mark client"/);
+      expect(html).toContain('class="mark client initial"');
+      const plain = (await db.query<{ name: string; avatar: string | null }>(
+        'SELECT i.name,i.avatar FROM rooms_mcp_members m JOIN identities i ON i.id=m.member_id WHERE m.client_id=$1 AND m.owner_id=$2', [registered.client_id, USER])).rows[0]!;
+      expect(plain).toEqual({ name: display, avatar: null });
+      return;
+    }
+    expect(html).toContain('known callback');
+    expect(html).not.toContain('Unverified name');
     expect(html).toMatch(/<img class="mark client" src="data:image/);
     expect(html).toMatch(/<img class="plate" src="data:image/);
     expect(html).not.toContain('class="mark client initial"');

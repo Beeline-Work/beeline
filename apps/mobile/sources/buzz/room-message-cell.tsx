@@ -22,6 +22,8 @@ import {
 } from '@/components/buzz/transcript-card-motion-context';
 
 export type RoomMessagePresentation = {
+  /** Width-class changes must cross the memo boundary to repaint row controls. */
+  desktopLayout?: boolean;
   sendState?: MessageSendState;
   firstBylineOfDay?: boolean;
   untaggedHint?: boolean;

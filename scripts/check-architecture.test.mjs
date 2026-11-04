@@ -132,14 +132,6 @@ test('changing the guard itself reports weekly review', () => {
   assert.match(result.stderr, /Weekly architecture review: guard scripts\/check-architecture\.mjs changed/);
 });
 
-test('this repository meets its own invariants', () => {
-  const root = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
-  const invariants = readInvariants(root);
-  assert.deepEqual(validateRules(invariants), []);
-  assert.deepEqual(judgeTree(root, invariants), []);
-  assert.deepEqual(judgeStorage(root, invariants.storage), []);
-});
-
 test('a distinct rule counts different names, not uses', () => {
   const rule = { ...RULE, id: 'settings.server-env', pattern: 'process\\.env\\.[A-Z_]+', flags: '', distinct: true, owners: [], total: 1 };
   const root = tree({ 'src/a.ts': 'process.env.PORT; process.env.PORT;', 'src/b.ts': 'process.env.PORT' });

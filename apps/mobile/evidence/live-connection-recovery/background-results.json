@@ -1,0 +1,79 @@
+{
+  "fixed": {
+    "backgroundAt": 1793759916994,
+    "foregroundAt": 1793760056747,
+    "durationMs": 139753,
+    "socketOpenAt": 1793760060959,
+    "foregroundToOpenMs": 4212,
+    "tapToAckMs": 663,
+    "postReturnRequestOperations": ["readNeedsYou", "sendRoomMessage"],
+    "lifecycleEvents": [
+      {
+        "event": "websocketFailed",
+        "at": 1793759922676,
+        "reason": "Software caused connection abort"
+      },
+      {
+        "event": "connect",
+        "at": 1793759922720,
+        "id": 5,
+        "live": true
+      },
+      {
+        "event": "websocketFailed",
+        "at": 1793759922727,
+        "reason": "Unable to resolve host \"server.usebeeline.app\": No address associated with hostname"
+      },
+      {
+        "event": "connect",
+        "at": 1793760059218,
+        "id": 6,
+        "live": true
+      },
+      {
+        "event": "websocketOpen",
+        "at": 1793760060959
+      }
+    ],
+    "automaticRecovery": true
+  },
+  "v142": {
+    "backgroundAt": 1793760147604,
+    "foregroundAt": 1793760298456,
+    "durationMs": 150852,
+    "socketOpenAt": 1793760353316,
+    "foregroundToOpenMs": 54860,
+    "tapToAckMs": 49930,
+    "postReturnRequestOperations": ["readNeedsYou", "sendRoomMessage"],
+    "lifecycleEvents": [
+      {
+        "event": "websocketFailed",
+        "at": 1793760153282,
+        "reason": "Software caused connection abort"
+      },
+      {
+        "event": "connect",
+        "at": 1793760153331,
+        "id": 1,
+        "live": true
+      },
+      {
+        "event": "websocketFailed",
+        "at": 1793760153333,
+        "reason": "Unable to resolve host \"server.usebeeline.app\": No address associated with hostname"
+      },
+      {
+        "event": "connect",
+        "at": 1793760352218,
+        "id": 2,
+        "live": true
+      },
+      {
+        "event": "websocketOpen",
+        "at": 1793760353316
+      }
+    ],
+    "result": "First long-background return left the text queued; a second manual app switch recovered it. The 49930ms acknowledgement time includes that deliberate manual-recovery wait.",
+    "automaticRecovery": false
+  }
+}

@@ -52,6 +52,7 @@ import { Button } from '@/components/buzz/Button';
 import { ConnectionStatus } from '@/components/buzz/ConnectionStatus';
 import { RoomDeckUnavailableView } from '@/components/buzz/RoomDeckUnavailableView';
 import { reconnectNow } from '@/sync/transport/live-connection';
+import { clientResetGeneration } from '@/sync/client-reset';
 import { InlineRow } from '@/components/buzz/IndexRow';
 import { NoMatchingConversationsEmpty } from '@/components/buzz/NoMatchingConversationsEmpty';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
@@ -233,11 +234,9 @@ export default function BuzzChannels() {
   const handledNewRoomRequest = useRef<string | null>(null);
   const chatStore = useRef<ChatListHandle | null>(null);
   const workspaceScheduler = useRef<SurfaceRefreshScheduler<WorkspaceListView | null> | null>(null);
-  // A deck under a pushed Room, or in a backgrounded app, reads nothing; its
-  // focus and the foreground socket's resubscribe are the covering reads.
   const deckFocusedRef = useRef(true);
   const deckVisible = useCallback(
-    () => deckFocusedRef.current && AppState.currentState !== 'background',
+    () => deckFocusedRef.current && AppState.currentState === 'active',
     [],
   );
   /** Reads the hidden deck skipped; returning to it makes exactly those. */
@@ -340,11 +339,6 @@ export default function BuzzChannels() {
     else chatStore.current?.force();
   }, [activeCommunityId]);
 
-  /**
-   * Returning to the deck reads only what it skipped while hidden: a change
-   * its socket heard but did not read. Coming back to the foreground needs
-   * nothing here, because the replaced socket's resubscribe is that read.
-   */
   const refreshMissed = useCallback(() => {
     if (deckMissedRef.current.workspaces) workspaceScheduler.current?.force();
     chatStore.current?.catchUp();
@@ -401,6 +395,17 @@ export default function BuzzChannels() {
     if (deckWorkspaceId === undefined) return;
     setConfirmedWorkspaceCount(null);
     let cancelled = false;
+    const identityGeneration = clientResetGeneration();
+    deckMissedRef.current = { workspaces: false };
+    const activation = AppState.addEventListener('change', (state) => {
+      if (
+        state === 'active' &&
+        !cancelled &&
+        identityGeneration === clientResetGeneration() &&
+        deckVisible()
+      )
+        refreshMissed();
+    });
     let unsubscribeWorkspaces: (() => void) | undefined;
     let unsubscribeChats: (() => void) | undefined;
     let workspaceRefresh: SurfaceRefreshScheduler<WorkspaceListView | null> | undefined;
@@ -449,11 +454,15 @@ export default function BuzzChannels() {
       let startupTimeoutRetried = false;
 
       workspaceRefresh = new SurfaceRefreshScheduler({
-        fetch: () => mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () => http.workspaces()),
+        fetch: () => {
+          deckMissedRef.current.workspaces = false;
+          return mobileSurfaceCache.fetch(workspaceCacheAddress, isWorkspaceListView, () =>
+            http.workspaces(),
+          );
+        },
         apply: (value) => {
           // Null: an eviction overtook the read; there is nothing to paint.
           if (!value) return;
-          deckMissedRef.current.workspaces = false;
           workspaceReadConfirmed = true;
           setConfirmedWorkspaceCount(value.workspaces.length);
           if (value.deletedNotices?.length) {
@@ -544,7 +553,12 @@ export default function BuzzChannels() {
             { kinds: [9000, 9001, 9007], '#p': [nextIdentity.publicKey] },
           ],
           (event) => {
-            if (!invalidatesWorkspaceList(event)) return;
+            if (
+              cancelled ||
+              identityGeneration !== clientResetGeneration() ||
+              !invalidatesWorkspaceList(event)
+            )
+              return;
             if (deckVisible()) workspaceRefresh?.signal();
             else deckMissedRef.current.workspaces = true;
           },
@@ -559,6 +573,7 @@ export default function BuzzChannels() {
     });
     return () => {
       cancelled = true;
+      activation.remove();
       unsubscribeWorkspaces?.();
       unsubscribeChats?.();
       workspaceRefresh?.dispose();
@@ -566,7 +581,7 @@ export default function BuzzChannels() {
       workspaceScheduler.current = null;
       chatStore.current = null;
     };
-  }, [deckVisible, deckWorkspaceId, retryGeneration]);
+  }, [deckVisible, deckWorkspaceId, refreshMissed, retryGeneration]);
 
   // Cover local identity/selection/cache reads as well as socket RPCs. Those
   // native promises can stall before any individual request deadline starts.

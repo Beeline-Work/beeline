@@ -258,7 +258,7 @@ describe('monolith Room send path', () => {
     stopSecond();
   });
 
-  it('reconnects after an authorization failure only when asked, not on a timer', async () => {
+  it('retries authorization once immediately, then waits for explicit recovery without polling', async () => {
     vi.useFakeTimers();
     const sockets: Array<{
       sent: string[];
@@ -282,17 +282,24 @@ describe('monolith Room send path', () => {
       close() {}
     }
     vi.stubGlobal('WebSocket', TestWebSocket);
-    controls.authorization.mockRejectedValueOnce(new Error('session refresh failed'));
+    controls.authorization
+      .mockRejectedValueOnce(new Error('session refresh failed'))
+      .mockRejectedValueOnce(new Error('session refresh retry failed'));
 
     const stop = await new MonolithRigTransport(identity).surfaceSubscribe(
       [{ '#h': [ROOM] }],
       () => {},
     );
     expect(sockets).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(controls.authorization).toHaveBeenCalledTimes(2);
+    expect(sockets).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(60_000);
+    expect(controls.authorization).toHaveBeenCalledTimes(2);
     expect(sockets).toHaveLength(0);
     sharedLiveConnection().reconnectNow();
     await vi.advanceTimersByTimeAsync(0);
+    expect(controls.authorization).toHaveBeenCalledTimes(3);
     await vi.waitFor(() => expect(sockets).toHaveLength(1));
     sockets[0]!.onopen?.();
     sockets[0]!.onclose?.();

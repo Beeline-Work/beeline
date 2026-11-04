@@ -1,0 +1,174 @@
+[
+  {
+    "event": "ready",
+    "at": 1793760134526
+  },
+  {
+    "event": "write",
+    "at": 1793760134769,
+    "id": 0,
+    "t": "req",
+    "request": "phone-7",
+    "op": "readRoom"
+  },
+  {
+    "event": "write",
+    "at": 1793760134770,
+    "id": 0,
+    "t": "req",
+    "request": "phone-8",
+    "op": "readWorkspace"
+  },
+  {
+    "event": "write",
+    "at": 1793760134770,
+    "id": 0,
+    "t": "req",
+    "request": "phone-9",
+    "op": "readHistory"
+  },
+  {
+    "event": "write",
+    "at": 1793760134770,
+    "id": 0,
+    "t": "req",
+    "request": "phone-10",
+    "op": "markRead",
+    "messageId": "58146ce7ca81f49c685aa104c9795b8408eab69fbda0d7bdc886eec203022a63"
+  },
+  {
+    "event": "write",
+    "at": 1793760134770,
+    "id": 0,
+    "t": "req",
+    "request": "phone-11",
+    "op": "readStarPrompt"
+  },
+  {
+    "event": "read",
+    "at": 1793760135259,
+    "t": "res",
+    "request": "phone-10",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793760135274,
+    "t": "res",
+    "request": "phone-8",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793760135303,
+    "t": "res",
+    "request": "phone-7",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793760135304,
+    "t": "res",
+    "request": "phone-11",
+    "ok": true
+  },
+  {
+    "event": "write",
+    "at": 1793760135369,
+    "id": 0,
+    "t": "req",
+    "request": "phone-12",
+    "op": "readRoom"
+  },
+  {
+    "event": "read",
+    "at": 1793760135565,
+    "t": "res",
+    "request": "phone-9",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793760136084,
+    "t": "res",
+    "request": "phone-12",
+    "ok": true
+  },
+  {
+    "event": "websocketFailed",
+    "at": 1793760153282,
+    "reason": "Software caused connection abort"
+  },
+  {
+    "event": "connect",
+    "at": 1793760153331,
+    "id": 1,
+    "live": true
+  },
+  {
+    "event": "websocketFailed",
+    "at": 1793760153333,
+    "reason": "Unable to resolve host \"server.usebeeline.app\": No address associated with hostname"
+  },
+  {
+    "event": "refresh",
+    "at": 1793760153379
+  },
+  {
+    "event": "touch",
+    "at": 1793760300856,
+    "x": 491,
+    "y": 2259
+  },
+  {
+    "event": "touch",
+    "at": 1793760303716,
+    "x": 981,
+    "y": 1439
+  },
+  {
+    "event": "refresh",
+    "at": 1793760351283
+  },
+  {
+    "event": "connect",
+    "at": 1793760352218,
+    "id": 2,
+    "live": true
+  },
+  {
+    "event": "websocketOpen",
+    "at": 1793760353316
+  },
+  {
+    "event": "write",
+    "at": 1793760353380,
+    "id": 2,
+    "t": "req",
+    "request": "phone-13",
+    "op": "readNeedsYou"
+  },
+  {
+    "event": "write",
+    "at": 1793760353508,
+    "id": 2,
+    "t": "req",
+    "request": "phone-14",
+    "op": "sendRoomMessage",
+    "messageId": "f6afe94dd91bfd27c654fa1958871708494532429ba57c6f1f72bf5baf4b8555"
+  },
+  {
+    "event": "read",
+    "at": 1793760353571,
+    "t": "res",
+    "request": "phone-13",
+    "ok": true
+  },
+  {
+    "event": "read",
+    "at": 1793760353646,
+    "t": "res",
+    "request": "phone-14",
+    "ok": true
+  }
+]

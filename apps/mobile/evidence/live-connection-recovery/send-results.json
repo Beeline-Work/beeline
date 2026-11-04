@@ -1,0 +1,128 @@
+{
+  "v142": [
+    {
+      "mode": "warm",
+      "touchAt": 1793759247330,
+      "request": "phone-34",
+      "dispatchAt": 1793759247574,
+      "ackAt": 1793759248085,
+      "tapToAckMs": 755,
+      "tapToDispatchMs": 244,
+      "newSocketsAroundSend": 0
+    },
+    {
+      "mode": "return",
+      "touchAt": 1793759254682,
+      "request": "phone-36",
+      "dispatchAt": 1793759256074,
+      "ackAt": 1793759256716,
+      "tapToAckMs": 2034,
+      "tapToDispatchMs": 1392,
+      "newSocketsAroundSend": 1
+    },
+    {
+      "mode": "return",
+      "touchAt": 1793759261963,
+      "request": "phone-38",
+      "dispatchAt": 1793759262896,
+      "ackAt": 1793759263320,
+      "tapToAckMs": 1357,
+      "tapToDispatchMs": 933,
+      "newSocketsAroundSend": 1
+    },
+    {
+      "mode": "warm",
+      "touchAt": 1793759268529,
+      "request": "phone-39",
+      "dispatchAt": 1793759268776,
+      "ackAt": 1793759269103,
+      "tapToAckMs": 574,
+      "tapToDispatchMs": 247,
+      "newSocketsAroundSend": 0
+    }
+  ],
+  "pre3424": [
+    {
+      "mode": "warm",
+      "touchAt": 1793759521757,
+      "request": "phone-12",
+      "dispatchAt": 1793759522051,
+      "ackAt": 1793759522384,
+      "tapToAckMs": 627,
+      "tapToDispatchMs": 294,
+      "newSocketsAroundSend": 0
+    },
+    {
+      "mode": "return",
+      "touchAt": 1793759528851,
+      "request": "phone-14",
+      "dispatchAt": 1793759529808,
+      "ackAt": 1793759530270,
+      "tapToAckMs": 1419,
+      "tapToDispatchMs": 957,
+      "newSocketsAroundSend": 1
+    },
+    {
+      "mode": "return",
+      "touchAt": 1793759535958,
+      "request": "phone-16",
+      "dispatchAt": 1793759537004,
+      "ackAt": 1793759537933,
+      "tapToAckMs": 1975,
+      "tapToDispatchMs": 1046,
+      "newSocketsAroundSend": 1
+    },
+    {
+      "mode": "warm",
+      "touchAt": 1793759542516,
+      "request": "phone-17",
+      "dispatchAt": 1793759542730,
+      "ackAt": 1793759543062,
+      "tapToAckMs": 546,
+      "tapToDispatchMs": 214,
+      "newSocketsAroundSend": 0
+    }
+  ],
+  "fixed": [
+    {
+      "mode": "warm",
+      "touchAt": 1793759740547,
+      "request": "phone-12",
+      "dispatchAt": 1793759740818,
+      "ackAt": 1793759741166,
+      "tapToAckMs": 619,
+      "tapToDispatchMs": 271,
+      "newSocketsAroundSend": 0
+    },
+    {
+      "mode": "return",
+      "touchAt": 1793759747478,
+      "request": "phone-13",
+      "dispatchAt": 1793759747694,
+      "ackAt": 1793759748305,
+      "tapToAckMs": 827,
+      "tapToDispatchMs": 216,
+      "newSocketsAroundSend": 0
+    },
+    {
+      "mode": "return",
+      "touchAt": 1793759754382,
+      "request": "phone-14",
+      "dispatchAt": 1793759754601,
+      "ackAt": 1793759754932,
+      "tapToAckMs": 550,
+      "tapToDispatchMs": 219,
+      "newSocketsAroundSend": 0
+    },
+    {
+      "mode": "warm",
+      "touchAt": 1793759760635,
+      "request": "phone-15",
+      "dispatchAt": 1793759760832,
+      "ackAt": 1793759761182,
+      "tapToAckMs": 547,
+      "tapToDispatchMs": 197,
+      "newSocketsAroundSend": 0
+    }
+  ]
+}

@@ -21,7 +21,8 @@ describe('complete Scheduled Work source/clock closure',()=>{
     await db.query(`INSERT INTO rooms(id,workspace_id,created_by,name) VALUES($1,$3,$5,'Parent'),($2,$4,$5,'Other parent')`,[PARENT,OTHER_PARENT,WS,OTHER,OWNER]);
     await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$3,$5,$7,'Child'),($2,$4,$6,$7,'Other child')`,[ROOM,OTHER_ROOM,WS,OTHER,PARENT,OTHER_PARENT,OWNER]);
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions) VALUES
-      ($1,NULL,$5,'owner','[]'),($2,NULL,$5,'owner','[]'),($1,$3,$6,'member','[]'),($2,$4,$6,'member','[]')`,[WS,OTHER,PARENT,OTHER_PARENT,OWNER,AGENT]);
+      ($1,NULL,$5,'owner','[]'),($2,NULL,$5,'owner','[]'),($1,$3,$5,'owner','[]'),($2,$4,$5,'owner','[]'),
+      ($1,$3,$6,'member','[]'),($2,$4,$6,'member','[]')`,[WS,OTHER,PARENT,OTHER_PARENT,OWNER,AGENT]);
     await db.query(`INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,connector_type,helper_agent_id,status)
       VALUES($1,$2,$3,'registry-mcp',$4,'connected')`,[CONNECTOR,WS,OWNER,AGENT]);
     await db.query(`INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route,connector_id)

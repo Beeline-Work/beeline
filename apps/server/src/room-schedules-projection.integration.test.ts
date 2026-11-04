@@ -4,7 +4,7 @@ import {PhoneService} from './phone-service.js';
 import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 const OWNER='a'.repeat(64),MEMBER='b'.repeat(64),AGENT='c'.repeat(64);
 const WORKSPACE='11111111-1111-4111-8111-111111111111',ROOM='22222222-2222-4222-8222-222222222222';
-describe('bounded pure full Scheduled Work projection',()=>{
+describe('pure complete Scheduled Work projection',()=>{
   let db:PgliteDatabase;
   beforeEach(async()=>{
     db=await migratedDatabase();
@@ -15,9 +15,9 @@ describe('bounded pure full Scheduled Work projection',()=>{
       ($1,NULL,$3,'owner','[]'),($1,$2,$3,'owner','[]'),($1,NULL,$4,'member','[]'),($1,$2,$4,'member','[]'),($1,$2,$5,'member','[]')`,[WORKSPACE,ROOM,OWNER,MEMBER,AGENT]);
   });
   afterEach(async()=>{await db.close();});
-  const build=()=>db.transaction(async tx=>{
+  const build=(viewer=OWNER)=>db.transaction(async tx=>{
     await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    return buildRoomSchedulesProjection(tx,ROOM,OWNER,'https://example.test');
+    return buildRoomSchedulesProjection(tx,ROOM,viewer,'https://example.test');
   });
   async function schedules(count:number,text='Do the scheduled task'){
     await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
@@ -35,30 +35,33 @@ describe('bounded pure full Scheduled Work projection',()=>{
     expect(actual.subscriptions[0]).toMatchObject({id:subscription,webhook:{tokenSuffix:'stub'},recentCalls:[{id:call,outcome:'refused'}]});
     expect((await db.query(`SELECT sum(sequence)::text head FROM live_streams`)).rows[0]!.head).toBe(before);
   });
-  it('requires the actual Workspace manager even when a Room member can read the transcript',async()=>{
-    await expect(buildRoomSchedulesProjection(db,ROOM,MEMBER,'https://example.test')).rejects.toThrow('workspace admins only');
+  it('lets an ordinary Room member read the complete display and rejects revoked membership',async()=>{
+    await schedules(1);await expect(build(MEMBER)).resolves.toEqual(await build());
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,[ROOM,MEMBER]);
+    await expect(build(MEMBER)).rejects.toMatchObject({reason:'authority'});
   });
-  it('refuses fifty-one entries without returning a silently incomplete list',async()=>{
-    await schedules(51);await expect(build()).rejects.toMatchObject({reason:'budget'});
+  it('returns all fifty-one schedules beyond the former row limit',async()=>{
+    await schedules(51);expect((await build()).schedules).toHaveLength(51);
   });
-  it('accepts fifty small entries at the declared bound',async()=>{
+  it('returns all fifty small schedules',async()=>{
     await schedules(50);expect((await build()).schedules).toHaveLength(50);
   });
-  it('refuses a single oversized prompt rather than sending more than sixty-four KiB',async()=>{
-    await schedules(1,'x'.repeat(65*1024));await expect(build()).rejects.toMatchObject({reason:'budget'});
+  it('preserves a complete prompt beyond sixty-four KiB',async()=>{
+    const prompt='x'.repeat(65*1024);await schedules(1,prompt);const value=await build();
+    expect(value.schedules[0]!.message).toBe(prompt);expect(Buffer.byteLength(JSON.stringify(value))).toBeGreaterThan(64*1024);
   });
-  it('refuses the complete display when its separate agent-name list exceeds one hundred',async()=>{
+  it('returns every agent name beyond the former hundred-agent limit',async()=>{
     await db.query(`INSERT INTO identities(id,kind,name) SELECT md5('helper:'||n)||md5('helper:'||n),'agent','Helper '||n FROM generate_series(1,100)n`);
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
       SELECT $1,$2,md5('helper:'||n)||md5('helper:'||n),'member' FROM generate_series(1,100)n`,[WORKSPACE,ROOM]);
-    await expect(build()).rejects.toMatchObject({reason:'budget'});
+    expect((await build()).agentNames).toHaveLength(101);
   });
-  it('bounds displayed webhook calls across subscriptions rather than silently trimming the complete surface',async()=>{
+  it('returns all fifty-one webhook calls across subscriptions',async()=>{
     const first='33333333-3333-4333-8333-333333333333',second='44444444-4444-4444-8444-444444444444';
     await db.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt,webhook_suffix,webhook_token_created_at,service_channel_id)
       VALUES($1,$3,$4,$5,'webhook','webhook.called','First','stub','2026-01-01',$6),($2,$3,$4,$5,'webhook','webhook.called','Second','stub','2026-01-01',$7)`,[first,second,WORKSPACE,ROOM,AGENT,first,second]);
     await db.query(`INSERT INTO subscription_webhook_calls(id,subscription_id,outcome,byte_size)
       SELECT md5('bounded-call:'||n)::uuid,CASE WHEN n<=30 THEN $1::uuid ELSE $2::uuid END,'skipped',1 FROM generate_series(1,51)n`,[first,second]);
-    await expect(build()).rejects.toMatchObject({reason:'budget'});
+    expect((await build()).subscriptions.flatMap(subscription=>subscription.recentCalls??[])).toHaveLength(51);
   });
 });

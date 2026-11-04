@@ -40,12 +40,14 @@ const agent = 'a'.repeat(64);
 const transcript = text => console.log(`[ROOMS-MCP-1] ${text}`);
 try {
   await migrate(db); await new AuthStore(db).migrate();
-  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Connector Reviewer','connector-reviewer'),($2,'agent','Demo Agent','demo-agent')`, [person, agent]);
-  await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [agent, person]);
-  await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Connector Review')`, [workspace]);
-  await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'connector-demo','invite-only')`, [room, workspace]);
-  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'owner'),($1,NULL,$4,'member'),($1,$2,$3,'owner'),($1,$2,$4,'member')`, [workspace, room, person, agent]);
-  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Today I prepared the connector review. This is synthetic demo content.')`, ['b'.repeat(64), room, agent]);
+  if (!process.argv.includes('--new-user')) {
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Connector Reviewer','connector-reviewer'),($2,'agent','Demo Agent','demo-agent')`, [person, agent]);
+    await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [agent, person]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Connector Review')`, [workspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,visibility) VALUES($1,$2,'connector-demo','invite-only')`, [room, workspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$3,'owner'),($1,NULL,$4,'member'),($1,$2,$3,'owner'),($1,$2,$4,'member')`, [workspace, room, person, agent]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Today I prepared the connector review. This is synthetic demo content.')`, ['b'.repeat(64), room, agent]);
+  }
   const tokenAuth = new TokenAuth(db, ticket => mount.verifyGitHubTicket(ticket), () => new Date(), ticket => mount.verifyGoogleTicket(ticket));
   const live = new LiveHub();
   const options = { database: db, auth: tokenAuth, live, mediaMaximumBytes: 1024,

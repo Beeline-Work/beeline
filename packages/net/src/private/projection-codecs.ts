@@ -2,9 +2,6 @@ import {ownerInputShapes,ownerResults} from './generated-owner-input-shapes.js';
 import {jsonCodec} from '../wire-codec.js';
 
 
-export function validateScheduledWorkProjection(value:unknown):boolean{
-  try{jsonCodec(ownerInputShapes,ownerResults['phone.readScheduledWork'],64*1024).parse(value);return true;}catch{return false;}
-}
 /** Reuse the existing bounded DTO leaf schemas, independently of window
  * metadata. These functions grant neither route nor group coverage. */
 export function validateBookmarkRows(bookmarks:unknown):boolean{

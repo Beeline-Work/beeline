@@ -2,7 +2,6 @@ import { ownerInputs, ownerInputShapes } from './generated-owner-input-shapes.js
 import { assertJsonBudget,jsonCodec } from '../wire-codec.js';
 import {validateNeedsProjection} from './projection-codecs.js';
 import {validateSavedWindow} from './saved-windows.js';
-export {validateScheduledWorkProjection} from './projection-codecs.js';
 const codecs = Object.fromEntries(Object.entries(ownerInputs).map(([route, node]) =>
   [route, jsonCodec(ownerInputShapes, node, 64 * 1024)]));
 /** This projection grants no authority; it validates the owner's closed inputs. */

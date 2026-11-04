@@ -1,5 +1,11 @@
 # Beeline tool reference
 
+For external MCP calls serving an order, pass its delivered `id` as `commandId`
+on tool calls and the final `report`. This preserves that order's requester and
+renews its lease; `record_merge_yes` records that requester's consent. Without
+it, existing one-call behavior remains. An ambiguous report fallback asks for
+the intended command id.
+
 ## Tool reference
 
 Beeline agents call the tools below by these exact names. `tool-reference-doc.test.ts` (apps/body) fails when a

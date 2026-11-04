@@ -240,3 +240,18 @@ test('display resource authority stays within its four declared consumer adapter
   for (const name of ['use-room-workflow-run', 'workbench-surface', 'wallet-surface'])
     assert.ok(inspectSource(`apps/mobile/sources/buzz/${name}.ts`, owner).errors.length);
 });
+
+
+test('roster query and Room picker gestures stay in their declared adapters and screens',()=>{
+  for(const [name,adapter] of [['acquireRouterRosterQuery','use-routed-roster'],['acquireRouterRoomRoster','use-room-roster']]){
+    const source=`import { ${name} } from './router-owner';`;
+    assert.deepEqual(inspectSource(`apps/mobile/sources/buzz/${adapter}.ts`,source).errors,[]);
+    assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts',source).errors.length);
+  }
+  for(const [hook,module,screen] of [['useRoutedRoster','use-routed-roster','members.tsx'],['useRoomRoster','use-room-roster','chat/_chat-surface.tsx']]){
+    const source=`import { ${hook} } from '@/buzz/${module}';`;
+    assert.deepEqual(inspectSource(`apps/mobile/sources/app/(app)/beeline/${screen}`,source).errors,[]);
+    assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts',source).errors.length);
+    assert.ok(inspectSource('apps/mobile/sources/buzz/feature.ts',`export * from '@/buzz/${module}';`).errors.length);
+  }
+});

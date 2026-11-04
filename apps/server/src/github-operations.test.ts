@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cornerRunStateSql } from './corner-run.js';
 import { generateKeyPair, exportPKCS8 } from 'jose';
@@ -137,7 +138,7 @@ describe('GitHub phone operations', () => {
       room.archived_at FROM corner_facts fact JOIN rooms room ON room.id=fact.corner_id
       WHERE fact.corner_id=$1`, [corner])).rows[0]).toEqual(state);
     expect((await database.query(`SELECT 1 FROM messages WHERE room_id=$1
-      AND card_type='github-corner-note' AND card->>'dedupe' LIKE 'github:pull-request:merged:%'`, [corner])).rows).toHaveLength(1);
+      AND card_type='github-corner-note' AND id=$2`, [corner, createHash('sha256').update(`beeline:${corner}:github:pull-request:merged:https://github.com/owner/widgets/pull/1`).digest('hex')])).rows).toHaveLength(1);
     expect(app.deleteBranch).toHaveBeenCalledTimes(1);
     expect(app.mergePullRequest).not.toHaveBeenCalled();
     expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
@@ -931,6 +932,24 @@ describe('GitHub phone operations', () => {
     )).rowCount).toBe(1);
   });
 
+  it('B3: records no started or individual passed notes while retaining the green rollup', async () => {
+    const { corners, app, payload } = await checksFixture();
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    app.readCommitCheckRollup.mockResolvedValue({ state: 'pending', total: 2, failing: [], checks: [
+      { name: 'tests', status: 'passed' }, { name: 'lint', status: 'pending' },
+    ] });
+    await operations.processWebhook('check_run', { ...payload, action: 'in_progress',
+      check_run: { ...payload.check_run, status: 'in_progress', conclusion: null } });
+    await operations.processWebhook('check_run', payload);
+    expect((await database.query(`SELECT text FROM messages WHERE room_id=$1 AND card_type='github-corner-note'`, [corners[0]])).rows).toHaveLength(0);
+    app.readCommitCheckRollup.mockResolvedValue({ state: 'passed', total: 2, failing: [], checks: [
+      { name: 'tests', status: 'passed' }, { name: 'lint', status: 'passed' },
+    ] });
+    await operations.processWebhook('check_run', payload);
+    expect((await database.query(`SELECT card,system_event->>'kind' kind FROM messages WHERE room_id=$1 AND card_type='github-corner-note'`, [corners[0]])).rows)
+      .toEqual([{ card: null, kind: 'check-passed' }]);
+  });
+
   it('gives a check suite a browser card URL even when GitHub sends only its API URL', async () => {
     const { corners, headSha, app, payload } = await checksFixture();
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
@@ -949,7 +968,7 @@ describe('GitHub phone operations', () => {
     )).rows[0];
     expect(row).toMatchObject({
       card_type: 'github-corner-note',
-      card: { source: 'github' },
+      card: null,
       system_event: { object: { url: `https://github.com/owner/widgets/commit/${headSha}/checks` } },
     });
   });

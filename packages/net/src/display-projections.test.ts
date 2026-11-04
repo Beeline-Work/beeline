@@ -21,7 +21,8 @@ describe('screen result codec projection',()=>{
       }
       expected[next]=node;return next;
     };
-    expect(displayResults).toEqual({'phone.listRoomWorkflowRuns':project(operationShapes['phone.listRoomWorkflowRuns'].output)});
+    expect(displayResults).toEqual({'phone.listRoomWorkflowRuns':project(operationShapes['phone.listRoomWorkflowRuns'].output),
+      'phone.readScheduledWork':project(operationShapes['phone.readScheduledWork'].output)});
     expect(displayShapes).toEqual(expected);
   });
   it('retains exact schema and row limits',()=>{

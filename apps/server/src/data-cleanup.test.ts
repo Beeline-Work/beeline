@@ -1,3 +1,5 @@
+import { pruneArchivedToolActivity, runMaintenance } from './background.js';
+import { EXPIRE_PUSH_CLAIMS_SQL, TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { BackgroundWork } from './background-work.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { compactPushClaims, compactWebhookDeliveries } from './database.js';
@@ -58,6 +60,47 @@ describe('release data cleanup', () => {
     expect(await sweepPendingAttachments(db)).toBe(0);
   });
 
+  it('B2: retains 200 newest archived tools and all live, prose and durable rows', async () => {
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Agent')`, [AGENT]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Space')`, [WORKSPACE]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [ROOM, WORKSPACE]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,archived_at) VALUES($1,$2,$3,'Closed',now())`, [CORNER, WORKSPACE, ROOM]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,activity,created_at)
+      SELECT 'tool-'||lpad(n::text,4,'0'),$1,$2,'','activity','[{"kind":"tool","title":"read"}]',now()
+      FROM generate_series(1,205) n`, [CORNER, AGENT]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,activity) VALUES
+      ('prose',$1,$3,'Keep prose','activity','[]'),('live-tool',$2,$3,'','activity','[{"kind":"tool"}]')`, [CORNER, ROOM, AGENT]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,activity,durable_fact)
+      VALUES('durable-tool',$1,$2,'','activity','[{"kind":"tool"}]','failure')`, [CORNER, AGENT]);
+    await pruneArchivedToolActivity(db);
+    expect((await db.query(`SELECT count(*)::int count,min(id) first FROM messages WHERE id LIKE 'tool-%'`)).rows[0])
+      .toEqual({ count: 200, first: 'tool-0006' });
+    expect((await db.query(`SELECT id FROM messages WHERE id IN ('prose','live-tool','durable-tool') ORDER BY id`)).rows).toHaveLength(3);
+  });
+  it('B4: expired crashed claims become uncertain, retries fail, active windows survive and joins expire', async () => {
+    await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Human')`, [HUMAN]);
+    await db.query(`INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('cleanup-device',$1,'ios','physical')`, [HUMAN]);
+    await db.query(`INSERT INTO push_delivery_claims(message_id,device_token,status,claimed_at) VALUES
+      ('crashed','cleanup-device','claimed',now()-interval '2 hours'),
+      ('retry','cleanup-device','retryable',now()-interval '2 hours'),
+      ('active','cleanup-device','claimed',now()-interval '2 hours')`);
+    await db.query(`INSERT INTO push_outbox(message_id,device_token,expires_at) VALUES('active','cleanup-device',now()+interval '1 hour')`);
+    await db.query(EXPIRE_PUSH_CLAIMS_SQL, [1000]);
+    expect((await db.query(`SELECT message_id,status FROM push_delivery_claims ORDER BY message_id`)).rows).toEqual([
+      { message_id: 'active', status: 'claimed' }, { message_id: 'crashed', status: 'uncertain' }, { message_id: 'retry', status: 'failed' }]);
+    await db.query(TERMINAL_PUSH_CLAIMS_SQL, [1000]);
+    expect((await db.query(`SELECT 1 FROM push_delivery_claims WHERE status='uncertain'`)).rows).toHaveLength(1);
+    await db.query(`UPDATE push_delivery_claims SET completed_at=now()-interval '2 hours' WHERE status='uncertain'`);
+    await db.query(TERMINAL_PUSH_CLAIMS_SQL, [1000]);
+    expect((await db.query(`SELECT 1 FROM push_delivery_claims WHERE status='uncertain'`)).rows).toHaveLength(0);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Space')`, [WORKSPACE]);
+    await db.query(`INSERT INTO workspace_join_notifications(id,workspace_id,joining_identity_id,text,created_at) VALUES
+      ('old',$1,$2,'join',now()-interval '2 hours'),('fresh',$1,$2,'join',now())`, [WORKSPACE, HUMAN]);
+    await db.query(`INSERT INTO workspace_join_notification_devices(notification_id,device_token) VALUES('old','cleanup-device'),('fresh','cleanup-device')`);
+    await runMaintenance(db);
+    expect((await db.query(`SELECT id FROM workspace_join_notifications ORDER BY id`)).rows).toEqual([{ id: 'fresh' }]);
+    expect((await db.query(`SELECT notification_id FROM workspace_join_notification_devices`)).rows).toEqual([{ notification_id: 'fresh' }]);
+  });
   it('ATTACHMENT-DEADLINE: empty and active queues park until a real eligibility change', async () => {
     const loop = new PendingAttachmentCleanupLoop(db);
     let clock = 0;

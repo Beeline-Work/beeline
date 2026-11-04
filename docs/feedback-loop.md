@@ -63,7 +63,7 @@ reads the steps. An agent starts a run with `start_workflow`, binding
 | `verify` | triager | Checks earlier fixes against their signal after release: not yet released, still occurring, stopped, or not enough evidence yet. Never claims a fix held from a missing or incomplete reading. |
 | `pull` | triager | Reads new `feedback_items` and each report's `message_ids` context through the vaulted database credential, groups them by problem, and ranks the groups. It also reads the other fix-loop inputs (below). It judges which problems are prompt defects (no label marks them) and drafts a saved case for each (`docs/prompts/cases/`). |
 | `adapters` | triager | Runs `scripts/check-acp-adapters.mjs` against the installed harness programs: latest adapters in temp directories, no credentials, ACP initialize/session/new only. |
-| `present` | triager | Merges every source into one ranked list with a verdict per group (build, hold, drop) and hands it to the team's approval point. Fix corners are opened after a person's yes, outside the run, with the brief carrying the group's item ids or signature. |
+| `present` | triager | Merges every source into one ranked list with a verdict per group (build, hold, drop) and hands it to the fix loop. Routine fix corners open without per-item pre-approval, outside the run; reviewer PASS plus green checks lands them and the owner keeps a hold as veto, with the brief carrying the group's item ids or signature. |
 | `done` | | The run ends. |
 
 Feedback is written by people across all of Beeline, so the procedure treats

@@ -50,17 +50,14 @@ each app so a module cannot grow a second path for the same job.
 
 | Change | Review |
 | --- | --- |
-| Lower a `total`, add a rule, reword `invariant`/`fix`/`module`, register storage or mark it for deletion, lower `bootstrapTotal`/`unusedTotal` | None. Merge it. |
+| Lower a `total`, add a rule, reword `invariant`/`fix`/`module`, register storage or mark it for deletion, lower `bootstrapTotal`/`unusedTotal` | Normal CI and merge authority. |
 | Remove a rule whose pattern matches nothing any more | None. |
-| Raise a `total`, `bootstrapTotal` or `unusedTotal`, remove a live rule, change `pattern`/`flags`/`scope`/`owners`/`distinct` or the storage `scope`, or change the guard scripts | Check stays red; owner merges by hand. |
+| Raise a `total`, `bootstrapTotal` or `unusedTotal`, remove a live rule, change `pattern`/`flags`/`scope`/`owners`/`distinct` or the storage `scope`, or change the guard scripts | Candidate invariants must pass CI; owner reviews the diff weekly after merging. |
 
-A relaxing PR always fails the architecture check. It stays red, so no
-auto-merge path can merge it. The repository owner (`lunchboxfortwo`) merges
-it by hand with an admin override when desired. GitHub review approval does
-not make the check pass.
-
-CI runs the base commit's copy of the guard, so a PR cannot weaken the check
-that judges it.
+Invariant changes, including approved relaxations, pass CI when the candidate
+satisfies its declared rules. `--base` reports those changes for the weekly audit;
+it adds no approval or merge gate. CI executes the candidate guard. The owner
+reviews invariant and guard diffs weekly after merging.
 
 System message wording is not a rule here: it lives in one catalog file and
 never blocks a PR.
@@ -72,4 +69,4 @@ remaining exceptions and why their callers still need them.
 
 A scheduled Beeline agent turn (a due-time wake, not a polling loop) reviews
 the week's merged PRs. The prompt is [weekly-audit.md](weekly-audit.md). It
-opens tightening PRs on its own and reaches the owner only to relax a rule.
+opens tightening PRs on its own and reports invariant, System catalog and corner reference changes to the owner weekly.

@@ -1,15 +1,11 @@
-import type { SavedRowPayload, TrayGroupPayload, NeedsYouRoomsPayload } from '@beeline/api-contract/router-protocol';
+import type { SavedRowPayload, TrayGroupPayload, NeedsYouRoomsPayload,RouterFamily,RouterSnapshotInput } from '@beeline/api-contract/router-protocol';
 import { trayFamily } from './tray-group.js';
 import { ProjectionGroups, type GroupCell, type GroupProposal } from './projection-groups.js';
 import { jsonBytes as bytes, stagingWithinBudget } from './staging-bounds.js';
 import { LaneStaging, sameStream } from './lane-staging.js';
 /** Local state only. No transport, clock, scheduler, native module or server inventory. */
-export type LaneFamily = 'room-list' | 'needs-you' | 'needs-you-tray' | 'needs-you-count' | 'room-head'|'room-scheduled-work'|'needs-you-saved-page'|'workspace-roster'|'room-workflows'|'agent-profile'|'owner-workbench'|'owner-wallet';
-export type LaneRequest = Readonly<{ family: 'room-head'|'room-scheduled-work'|'room-workflows'; roomId: string; workspaceId?: string;agentId?:never }> |
-  Readonly<{ family: Exclude<LaneFamily, 'room-head'|'room-scheduled-work'|'room-workflows'|'needs-you-saved-page'|'agent-profile'|'owner-workbench'|'owner-wallet'>; workspaceId: string; roomId?: never;agentId?:never }>|
-  Readonly<{family:'needs-you-saved-page';workspaceId:string;before?:string;roomId?:never;agentId?:never}>|
-  Readonly<{family:'agent-profile';workspaceId:string;agentId:string;roomId?:never}>|
-  Readonly<{family:'owner-workbench'|'owner-wallet';workspaceId?:never;agentId?:never;roomId?:never}>;
+export type LaneFamily=RouterFamily;
+export type LaneRequest=RouterSnapshotInput;
 export type LaneCut = Readonly<{ stream: string; epoch: string; through: number; protocol: 1 }>;
 export type LaneAuthority = Readonly<{ digest: string; scopes: readonly Readonly<{ authorityScope: string; epoch: string }>[] }>;
 export type LaneSnapshot = Readonly<{ kind: 'snapshot'; value: unknown; cut: LaneCut; atomicGroup: string; authority: LaneAuthority;clockVersion?:string }>;
@@ -78,7 +74,7 @@ export class ReadLanes {
   key(request: LaneRequest): string {
     return JSON.stringify([this.identity.origin, this.identity.principal, this.identity.sessionEpoch,
       request.family, roomFamily(request.family) ? '' : request.workspaceId,
-      request.family==='needs-you-saved-page'?request.before??'':request.agentId??request.roomId??'',1]);
+      request.family==='workspace-roster'&&request.query?JSON.stringify(request.query):request.family==='needs-you-saved-page'?request.before??'':request.agentId??request.roomId??'',1]);
   }
   /** Optional caller-known Workspace is a constraint on the canonical Room
    * identity, never another Room-head cache address or read budget.
@@ -240,6 +236,7 @@ export class ReadLanes {
         const roomFits = targetDomain === `room:${logicalScope}` && readerFits;
         const domainFits = roomFits || batch.to.stream === `workspace:${logicalScope}`&&
           (targetDomain === `reader:${this.identity.principal}:workspace:${logicalScope}`||
+            targetDomain===`roster:${logicalScope}`&&fact.atomicGroup.startsWith('workspace-roster:')||
             mode==='advance'&&targetDomain===`reader:${this.identity.principal}:workspace:${logicalScope}:visibility`);
         const scheduledFits=fact.atomicGroup.startsWith('room-scheduled-work:')&&fact.atomicGroup.endsWith(`:${this.identity.principal}`)&&(
           targetDomain===`scheduled-work-principal:${this.identity.principal}`&&logicalScope===this.identity.principal||
@@ -374,11 +371,12 @@ export class ReadLanes {
       }else if(!installed||/^\d+$/.test(installed.epoch)&&BigInt(installed.epoch)>=next)continue;
       const group=snapshot?.atomicGroup??`needs-you:${entry.request.workspaceId}:${this.identity.principal}`;
       this.groups.clear(group,snapshot?.cut.stream??(entry.request.workspaceId?`workspace:${entry.request.workspaceId}`:undefined));
-      const future=this.groups.salvage(entry,snapshot?.atomicGroup??'');
+      const sealed=entry.request.family==='workspace-roster'&&!!entry.request.query;
+      const future=sealed?undefined:this.groups.salvage(entry,snapshot?.atomicGroup??'');
       const joint=this.joint(entry);
       const view:LaneView=deny?{...absent(),state:'REVOKED',error:ACCESS_REMOVED}:
         {state:future&&!joint?(liveOwner(entry)?'OPENING':'INACTIVE_CACHED'):'PARKED',value:null,
-          error:joint?UNAVAILABLE:future?null:'Projection queue overflow; Retry.',cut:snapshot!.cut};
+          error:sealed?'Roster changed; Retry.':joint?UNAVAILABLE:future?null:'Projection queue overflow; Retry.',cut:snapshot!.cut};
       this.transition(entry,view,'baseline',future,true);changed.push(entry);
     }
     this.pruneQueued();

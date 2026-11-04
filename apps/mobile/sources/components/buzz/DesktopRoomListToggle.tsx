@@ -2,11 +2,14 @@ import React from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { useUnistyles } from 'react-native-unistyles';
 import { useDesktopLayout, toggleDesktopRoomList } from '@/buzz/desktop-layout-state';
+import { useIsTablet } from '@/utils/responsive';
 import { Button } from './Button';
 
 export function DesktopRoomListToggle() {
+  const hasPermanentFrame = useIsTablet();
   const { showRoomList } = useDesktopLayout();
   const { theme } = useUnistyles();
+  if (!hasPermanentFrame) return null;
   return (
     <Button
       label=""

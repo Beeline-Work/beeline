@@ -24,6 +24,8 @@ export function routerAuthority(scopes: RouterAuthorityCertificate['scopes']): R
   return { digest: createHash('sha256').update(JSON.stringify(ordered)).digest('hex'), scopes: ordered };
 }
 export function routerAtomicGroup(input: RouterSnapshotInput, viewer: string): string {
+  if(input.family==='workspace-roster'&&input.query)return `workspace-roster:${input.workspaceId}:${viewer}:query:${createHash('sha256')
+    .update(JSON.stringify([input.query.revision,input.query.q??'',input.query.kind??'',input.query.offset??0])).digest('hex')}`;
   if(input.family.startsWith('owner-'))return `${input.family}:${viewer}`;
   if(input.family==='agent-profile')return `agent-profile:${input.workspaceId}:${input.agentId}:${viewer}`;
   return input.family.startsWith('needs-you') ? `needs-you:${input.workspaceId}:${viewer}`
@@ -42,7 +44,7 @@ export async function readRouterCertificate(db: SqlDatabase, args: RouterSnapsho
   if(input.family==='room-scheduled-work')return (await scheduledWorkAuthority(db,input.roomId!,viewer)).authority;
   const parent=input.roomId?(await db.query<{parent_id:string|null}>(`SELECT parent_id FROM rooms WHERE id=$1`,[input.roomId])).rows[0]?.parent_id:undefined;
   const scopes = [`reader:${viewer}:workspace:${input.workspaceId}`,
-    ...(!input.roomId?[`reader:${viewer}:workspace:${input.workspaceId}:visibility`]:[]),
+    ...(input.family==='workspace-roster'?[`roster:${input.workspaceId}`]:!input.roomId?[`reader:${viewer}:workspace:${input.workspaceId}:visibility`]:[]),
     ...(input.agentId?[profileDomain(input.workspaceId,input.agentId)]:[]),
     ...(input.roomId ? [`room:${input.roomId}`] : []),...(parent?[`room:${parent}`]:[])];
   const rows = await db.query<{ scope: string; epoch: string }>(
@@ -254,7 +256,7 @@ function validGroupCertificate(authority:RouterAuthorityCertificate,readerScope:
     const domains=authority.scopes.map(scope=>scope.authorityScope);
     if(!domains.includes(readerScope))return false;
     if(input.agentId)return domains.length===3&&domains.includes(`${readerScope}:visibility`)&&domains.includes(profileDomain(input.workspaceId,input.agentId));
-    if(!input.roomId)return domains.length===2&&domains.includes(`${readerScope}:visibility`);
+    if(!input.roomId)return domains.length===2&&domains.includes(input.family==='workspace-roster'?`roster:${input.workspaceId}`:`${readerScope}:visibility`);
     return domains.length>=2&&domains.length<=3&&domains.includes(`room:${input.roomId}`)&&
       domains.every(domain=>domain===readerScope||domain.startsWith('room:')&&ROOM_SCOPE.test(domain.slice(5)));
   }catch{return false;}
@@ -283,7 +285,7 @@ function validProjectedMember(fact:RouterFact,input:ResolvedRouterSnapshotInput,
   if(payload.kind==='authority-fence')return payload.mode==='advance'&&(input.roomId
     ?payload.scope===input.roomId&&payload.authorityScope===`room:${input.roomId}`
     :input.agentId?payload.scope===input.agentId&&payload.authorityScope===profileDomain(workspace,input.agentId)
-    :payload.scope===workspace&&payload.authorityScope===`${readerScope}:visibility`);
+    :payload.scope===workspace&&payload.authorityScope===(input.family==='workspace-roster'?`roster:${workspace}`:`${readerScope}:visibility`));
   return payload.kind==='scope-replace'&&payload.scope===scope&&
     routerAtomicGroup({family:payload.family,workspaceId:workspace,...(payload.family==='agent-profile'?{agentId:scope}:['room-head','room-workflows'].includes(payload.family)?{roomId:scope}:{})} as RouterSnapshotInput,viewer)===fact.atomicGroup;
 }
@@ -329,6 +331,7 @@ export async function fenceRouterBatchInTransaction(db:SqlDatabase,workspace:str
     const rooms=new Map(access.rooms.map(room=>[room.id,room]));
     const readerScope=`reader:${viewer}:workspace:${workspace}`;
     const domains=new Set([readerScope,`${readerScope}:visibility`]);
+    if([...inputs.values()].some(input=>input?.family==='workspace-roster'))domains.add(`roster:${workspace}`);
     for(const id of roomIds){domains.add(`room:${id}`);const parent=rooms.get(id)?.parent_id;if(parent)domains.add(`room:${parent}`);}
     for(const id of profileIds)domains.add(profileDomain(workspace,id));
     if(domains.size>512)throw new RouterProjectionUnavailable('budget');
@@ -370,7 +373,7 @@ export async function fenceRouterBatchInTransaction(db:SqlDatabase,workspace:str
       }
       const current=input?certificate([readerScope,...(input.roomId
         ?[`room:${input.roomId}`,...(rooms.get(input.roomId)?.parent_id?[`room:${rooms.get(input.roomId)!.parent_id}`]:[])]
-        :[`${readerScope}:visibility`,...(input.agentId?[profileDomain(workspace,input.agentId)]:[])])]):undefined;
+        :input.family==='workspace-roster'?[`roster:${workspace}`]:[`${readerScope}:visibility`,...(input.agentId?[profileDomain(workspace,input.agentId)]:[])])]):undefined;
       const unavailable=(reason:'authority'|'dependency'='authority')=>safe.push({atomicGroup:group,authority:current??readerCertificate,
         payload:{kind:'group-unavailable',scope,reason}});
       if(!input||!current){unavailable();continue;}

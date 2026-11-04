@@ -12,7 +12,7 @@ export { MediaDemandOwner } from './media-demand-owner.js';
 export { UsageDemandOwner } from './usage-demand-owner.js';
 export { ScheduledWorkAuthority } from './scheduled-work-authority.js';
 export type { ScheduledAuthorityCallbacks, ScheduledAuthorityDeferred, ScheduledAuthorityFault, ScheduledAuthorityFence } from './scheduled-work-authority.js';
-export {validateScheduledWorkProjection,validateTrayProjection} from './owner-inputs.js';
+export {validateTrayProjection} from './owner-inputs.js';
 export {validateNeedsRoomsPayload} from './needs-you-rooms.js';
 export type { CommandIntent, CommandIntentStorage, CommandPartition, CommandAttempt, AdmittedCommand, IntentOperation, IntentState } from './command-intents.js';
 

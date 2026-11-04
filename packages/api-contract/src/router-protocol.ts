@@ -84,7 +84,7 @@ export type ScheduledWorkAuthorityFrame={
 export type RouterValues = {
   readonly 'owner-workbench':WorkbenchDisplayView;
   readonly 'owner-wallet':{readonly wallet:WalletView|null;readonly summary:WorkbenchView['wallet']|null;readonly observedAt:number|null};
-  readonly 'workspace-roster': WorkspaceView;
+  readonly 'workspace-roster': WorkspaceView&{readonly revision:string};
   readonly 'room-workflows': WorkflowRunListResult;
   readonly 'agent-profile': AgentDetailView&{readonly canRemove:boolean;readonly voiceRevision:string};
   readonly 'room-list': ChatListView;
@@ -96,11 +96,14 @@ export type RouterValues = {
   readonly 'needs-you-saved-page':SavedWindow;
 };
 export type RouterSnapshotInput = {
-  readonly family: Exclude<RouterFamily,'room-head'|'room-scheduled-work'|'room-workflows'|'needs-you-saved-page'|'agent-profile'|'owner-workbench'|'owner-wallet'>; readonly workspaceId: string; readonly roomId?: never;readonly agentId?:never;
+  readonly family: Exclude<RouterFamily,'room-head'|'room-scheduled-work'|'room-workflows'|'needs-you-saved-page'|'agent-profile'|'owner-workbench'|'owner-wallet'|'workspace-roster'>; readonly workspaceId: string; readonly roomId?: never;readonly agentId?:never;
 } | { readonly family:'room-head'|'room-scheduled-work'|'room-workflows'; readonly roomId:string; readonly workspaceId?:string;readonly agentId?:never }
   |{readonly family:'needs-you-saved-page';readonly workspaceId:string;readonly before?:string;readonly roomId?:never;readonly agentId?:never}
   |{readonly family:'agent-profile';readonly workspaceId:string;readonly agentId:string;readonly roomId?:never}
-  |{readonly family:'owner-workbench'|'owner-wallet';readonly workspaceId?:never;readonly agentId?:never;readonly roomId?:never};
+  |{readonly family:'owner-workbench'|'owner-wallet';readonly workspaceId?:never;readonly agentId?:never;readonly roomId?:never}
+  |{readonly family:'workspace-roster';readonly workspaceId:string;readonly roomId?:never;readonly agentId?:never;
+    /** An ordinary sealed search/page anchor, never permission or a read pass. */
+    readonly query?:{readonly revision:string;readonly q?:string;readonly kind?:'human'|'agent';readonly offset?:number}};
 export type RouterSnapshot<F extends RouterFamily = RouterFamily> = { [K in F]: {
   readonly kind: 'snapshot'; readonly family: K; readonly scope: string;
   readonly value: RouterValues[K]; readonly cut: RouterCut;

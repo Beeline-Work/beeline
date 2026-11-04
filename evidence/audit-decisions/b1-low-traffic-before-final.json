@@ -1,0 +1,147 @@
+{
+  "ok": true,
+  "sourceHash": "1c4ff6217de725cac1213997ef4676e2d9029db1f5c9f9ce53c59515a88adec0",
+  "connection": {
+    "directEndpoint": true,
+    "pidAuthority": "SQL pg_backend_pid()",
+    "monitoringPid": 882076
+  },
+  "cancelProof": {
+    "observedSleep": true,
+    "cancelled": true,
+    "errorCode": "57014",
+    "receivedWithinMs": 3,
+    "limitMs": 2000
+  },
+  "result": {
+    "mode": "dry-run",
+    "cutoff": "2026-11-04 08:16:54.404103+00",
+    "counts": [
+      {
+        "table": "institutional_memory_outcomes",
+        "predicate": "TRUE",
+        "count": 26111
+      },
+      {
+        "table": "institutional_history_searches",
+        "predicate": "TRUE",
+        "count": 3347
+      },
+      {
+        "table": "workspace_skill_uses",
+        "predicate": "TRUE",
+        "count": 9580
+      },
+      {
+        "table": "institutional_memory_fact_events",
+        "predicate": "TRUE",
+        "count": 171
+      },
+      {
+        "table": "institutional_review_findings",
+        "predicate": "TRUE",
+        "count": 54
+      },
+      {
+        "table": "institutional_memory_jobs",
+        "predicate": "TRUE",
+        "count": 528
+      },
+      {
+        "table": "beeline_github_webhook_deliveries",
+        "predicate": "received_at<now()-interval '30 days'",
+        "count": 22352
+      },
+      {
+        "table": "beeline_github_repo_events",
+        "predicate": "received_at<now()-interval '30 days'",
+        "count": 685
+      },
+      {
+        "table": "operator_finance_snapshots",
+        "predicate": "source='entered' AND scope='fixed-plan'",
+        "count": 1128
+      },
+      {
+        "table": "corner_attention_flags",
+        "count": 0,
+        "absent": true
+      },
+      {
+        "table": "service_review_rollout",
+        "predicate": "TRUE",
+        "count": 1
+      },
+      {
+        "table": "google_oauth_grants",
+        "predicate": "TRUE",
+        "count": 1
+      },
+      {
+        "table": "push_level_migration_counts",
+        "predicate": "TRUE",
+        "count": 4
+      },
+      {
+        "table": "wallet_balance_snapshots",
+        "predicate": "TRUE",
+        "count": 2
+      },
+      {
+        "table": "messages",
+        "predicate": "card_type='github-corner-note' AND (card ? 'source' OR card ? 'dedupe')",
+        "count": 192016
+      },
+      {
+        "table": "identities",
+        "predicate": "welcome_cards_due IS NOT NULL",
+        "count": 118
+      },
+      {
+        "table": "room_read_marks",
+        "predicate": "read_at IS NOT NULL",
+        "count": 4
+      },
+      {
+        "table": "needs_you_marks",
+        "predicate": "reminder_dismissed_at IS NOT NULL",
+        "count": 2
+      },
+      {
+        "table": "github_star_prompts",
+        "predicate": "reached_at IS NOT NULL OR last_win_at IS NOT NULL",
+        "count": 23
+      }
+    ],
+    "skillVersions": 228,
+    "linkedVersionsPreserved": 18,
+    "retainedTelemetry": {
+      "cutoff": "2026-11-04 08:16:54.404103+00",
+      "before": {
+        "rooms_mcp_audit": 55908,
+        "agent_turn_traces": 11700
+      },
+      "after": {
+        "rooms_mcp_audit": 55908,
+        "agent_turn_traces": 11700
+      }
+    }
+  },
+  "originalSkillVersions": 228,
+  "preservedOriginalSkillVersions": 228,
+  "statistics": {
+    "globalSamples": 0,
+    "maxObservedLockWaitMs": 0,
+    "maxObservedWaitingClients": 0,
+    "acknowledgedChanges": {},
+    "completedBatches": 0,
+    "cancelRequests": 1,
+    "cancelProof": {
+      "observedSleep": true,
+      "cancelled": true,
+      "errorCode": "57014",
+      "receivedWithinMs": 3,
+      "limitMs": 2000
+    }
+  }
+}

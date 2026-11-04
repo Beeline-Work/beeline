@@ -1,20 +1,21 @@
 # Accepted audit decisions
 
-This batch implements the captain's accepted recommendations. L1 is the only
-committed production change, made after
-https://github.com/Beeline-Work/beeline/pull/3447 existed. The four schedule rows
-remain stored; `l1-stop-and-readback.json` records the independent read-back.
-B1's first attempt was cancelled and fully rolled back after lock contention.
-The post-window operator stopped before any cleanup write; the current local
-correction and stop evidence are recorded below. Dry-run counts are in `b1-dry-run.json` and
-`b1-before-apply.json`.
+This batch implements the captain's accepted recommendations. The code batch
+https://github.com/Beeline-Work/beeline/pull/3447 merged after green CI. L1's four
+schedule stops remain stored and independently verified. B1's first outer
+transaction rolled back; the post-08:00Z small-batch run partially committed the
+SET NULL FK and **38,458 approved ledger deletions**, then stopped at the first
+observed production backend lock wait (**9.745 ms**). No retry was made. The
+current read-back, remaining counts and retained telemetry are recorded in
+`b1-partial-apply-lock-stop.json`; the ready 08:00Z restore point is recorded in
+`b1-low-traffic-restore-point.json`. B8 column drops remain staged and unapplied.
 
 | Decision | Implementation |
 | --- | --- |
 | G1 | `scripts/check-architecture.mjs` reports relaxations for weekly review; candidate rules still must pass. `scripts/ci-workspace-tasks.sh` runs the candidate guard. |
 | G2 | System catalog shape and source-use guards remain; phrase changes are reviewed weekly without a wording hash approval gate. |
 | G3 | The old System fingerprint lock was already removed. The wording-hash approval gate and corner declaration lock are retired; the catalog guard and exhaustive corner reference replace them. |
-| B1 | `scripts/audit-decisions-cleanup.mjs` defaults to `BEGIN READ ONLY`, counts exact D1 classes, and rolls back. `--apply` changes the skill-version job FK to `ON DELETE SET NULL` before deleting jobs, and checks that every skill version survived. Never called by deployment. No successful production apply; corrected execution held until 08:00Z. |
+| B1 | `scripts/audit-decisions-cleanup.mjs` defaults to `BEGIN READ ONLY`, counts exact D1 classes, and rolls back. `--apply` changes the skill-version job FK to `ON DELETE SET NULL` before deleting jobs, and checks that every skill version survived. Never called by deployment. Partial apply committed SET NULL FK and 38,458 ledger deletions; stopped on a 9.745 ms observed wait. Remaining classes were not retried. |
 | B2 | Maintenance keeps the latest 200 tool/output activity rows per archived corner, matching `ROOM_VIEW_TOOL_ROW_LIMIT`; leaves open corners, prose and durable facts alone. Scans at most 20 archived corners and deletes at most 1,000 rows per pass; an ephemeral cursor rotates completed slices. |
 | B3 | Check-start and individual check-pass notes stop. Whole-head green, failure, conflict and merge notes remain; note IDs retain their dedupe formulas. |
 | B4 | Expired claims become terminal `uncertain` after a crashed send, or `failed` for exhausted retries. Active outbox windows survive. Uncertain rows retain an hour before deletion. Expired join devices and notifications are swept in bounded batches after the existing one-hour delivery window. |
@@ -234,3 +235,37 @@ where a deleted original key is masked by a replacement at unchanged total count
 maximum lock wait is **not measured** because the lock monitor never started.
 No further production retry was made after this anomaly. The ready 08:00Z restore
 point remains available. B8 remains staged and unapplied.
+
+## B1 partial apply, stopped on observed lock wait (inbox 012)
+
+The corrected dry run matched every preceding cleanup count and verified all 228
+original `(skill_id,version)` keys. SQL sleep cancellation completed in 3 ms in
+that session and 8 ms in the apply session. Both satisfy the 2,000 ms limit.
+The original ready restore branch from 08:00:17Z was retained as directed.
+
+The separate FK transaction committed as `ON DELETE SET NULL`; its immediate
+post-commit monitor sample was clear. The script then autocommitted 40 ledger
+batches. The all-backend monitor stopped the run before another batch when it
+observed one waiting backend, with **9.745 ms** maximum observed wait over 63
+samples. This global observation does not establish that cleanup caused the
+wait. No retry, card update, value update, or B8 contract was performed.
+
+| Ledger | Deleted | Remaining |
+| --- | ---: | ---: |
+| institutional_memory_outcomes | 26,111 | 0 |
+| institutional_history_searches | 3,347 | 0 |
+| workspace_skill_uses | 9,000 | 580 |
+| All other approved ledgers | 0 | 24,926 |
+| **Total** | **38,458** | **25,506** |
+
+Read-back confirms all 228 skill versions and all 18 source-job links remain
+(the 528 jobs were not deleted). Both retained cohorts are identical before/after:
+rooms_mcp_audit **55,908**, agent_turn_traces **11,700**. Later total counts
+55,924/11,702 reflect ordinary new writes. All 192,016 note-card updates and 147
+other field updates remain pending. The cleanup backend is absent, holds zero
+locks and blocks zero clients.
+
+`b1-partial-apply-lock-stop.json` holds the acknowledged per-table changes,
+monitor statistics and independent read-back. `b1-low-traffic-before-final.json`
+holds the corrected dry run. No further production write is authorized by this
+stopped run; firstmate must direct continuation.

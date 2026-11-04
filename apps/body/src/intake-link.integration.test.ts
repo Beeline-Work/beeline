@@ -39,6 +39,7 @@ it.each(['registration', 'subscription', 'commands'] as const)(
         return { commandProtocol: 1, commands };
       }
       if (name === 'getRoomInbox') return { items: [] };
+      if (name === 'claimAgentCommand') return { id: 'queued' };
       throw new Error(`unexpected socket operation ${name}`);
     });
     const query = vi.fn();
@@ -87,7 +88,10 @@ it.each(['registration', 'subscription', 'commands'] as const)(
       const reads = execute.mock.calls.length;
       await new Promise(resolve => setTimeout(resolve, 600));
       expect(sockets).toHaveLength(1);
-      expect(requests).toEqual(['getAgentCommands']);
+      // The startup read now shares the machine owner with subscription
+      // snapshots. Checkpoint traffic must add neither reads nor HTTP calls.
+      expect(requests).toEqual([]);
+      expect(execute.mock.calls.filter(([name]) => name === 'getAgentCommands')).toHaveLength(2);
       expect(execute).toHaveBeenCalledTimes(reads);
       expect(query).not.toHaveBeenCalled();
       // Transcript traffic does not admit inbox reads for command-only intake.
@@ -119,7 +123,8 @@ it.each(['registration', 'subscription', 'commands'] as const)(
       expect(warn).toHaveBeenCalled();
       await vi.waitFor(() => expect(run).toHaveBeenCalledOnce(), { timeout: 1_500 });
       expect(run.mock.calls[0]![0].id).toBe('queued');
-      expect(requests).toContain('claimAgentCommand');
+      expect(execute.mock.calls.some(([name]) => name === 'claimAgentCommand')).toBe(true);
+      expect(requests).toEqual([]);
       expect(claimConnection.mock.calls.length).toBeGreaterThan(1);
       expect(releaseConnection).toHaveBeenCalled();
       unblock(); // A late result on the obsolete session must not redeliver.

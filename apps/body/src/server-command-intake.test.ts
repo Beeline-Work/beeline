@@ -320,6 +320,9 @@ describe('command intake mechanics', () => {
     await vi.waitFor(() => expect(socket.onopen).toBeDefined());
     socket.readyState = 1;
     socket.onopen?.();
+    // Opening now completes the startup read first. Deliver pushed work only
+    // after the subsequent Room subscription exists, as a real server does.
+    await vi.waitFor(() => expect(api.metrics().subscriptionsSent).toBe(1));
     const frame = { type: 'commands', roomId: 'room', commandProtocol: 1, commands: [command()] };
     socket.message(frame);
     await vi.waitFor(() => expect(run).toHaveBeenCalledOnce());

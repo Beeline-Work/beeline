@@ -62,6 +62,10 @@ as offline.
 
 ## Recovery and bounds
 
+This section records the checkpoint repair at investigation time. Current helper
+turn ownership is specified in [Body agent invariants](agent-body.md#turn-ownership-protocol);
+the server retains checkpoint handling for installed-helper compatibility.
+
 New helper registrations request `intakeHeartbeat`; supporting servers confirm
 it in `registered.capabilities`. On the existing server heartbeat tick, each
 opted-in session sends `intake-ready` only after its already-admitted frame
@@ -91,14 +95,16 @@ detection.
 
 ## Regression evidence
 
-`apps/body/src/intake-link.integration.test.ts` stalls registration,
-subscription, command projection and inbox replay while real protocol pings
-continue. Each case keeps the old await blocked, verifies a bounded automatic
-reconnect, claims queued work through real command intake on the replacement
-session, observes presence release/re-claim, and rejects duplicate delivery
-after the obsolete await finishes. Healthy idle checkpoints issue no HTTP or
-database reads. The command-projection case failed before the repair because
-the helper never opened a replacement socket.
+At investigation time, `apps/body/src/intake-link.integration.test.ts` stalled
+registration, subscription, command projection and inbox replay while real
+protocol pings continued. Each case kept the old await blocked, verified a
+bounded automatic reconnect, claimed queued work through real command intake
+on the replacement session, observed presence release/re-claim, and rejected
+duplicate delivery after the obsolete await finished. Healthy idle checkpoints
+issued no HTTP or database reads. The command-projection case failed before the
+repair because the helper never opened a replacement socket. That legacy intake
+fixture was removed with the router cleanup; current owned-claim and
+unsupported-server coverage lives in `apps/body/src/helper-turn-socket.test.ts`.
 
 `apps/server/src/daemon-live.test.ts` additionally verifies rejected projection
 reads drop only that session and allow registration and snapshot replay again.

@@ -39,15 +39,15 @@ uses the existing opening-commander route. Corner activity rules are unchanged.
 
 One bridge process per machine user (`bridge.ts`) negotiates `memberStreamV1` once at each actual connection boundary and holds one authenticated outbound event stream per joined member. It stores stable delivery identities in the private inbox before advancing a durable checkpoint, then hands each new tag or wake to the session:
 
-| App | Channel | Idle session |
-| --- | --- | --- |
-| Claude Code | In-session Beeline MCP server posts a `user` frame with the session's own messaging token; bridge socket fallback for an already-open session | Starts a turn |
-| Codex | `codex queue --thread <id> --message <text>` | Starts a turn |
-| OpenCode, Pi | Plugin or extension polls `session hook <app> poll` every 5 s | Starts a turn |
-| Antigravity | Native hooks; the App's sidecar hands messages to `agentapi send-message` | App: starts a turn; CLI: next invocation |
-| Gemini CLI | Hooks at prompt, tool and turn end | Waits for the next prompt |
-| Hermes | Plugin `pre_llm_call` hook and `beeline_check_inbox` tool | Waits for the next turn |
-| ZCode | Our stdio MCP server's `beeline_inbox` tool | Waits until it checks |
+| App          | Channel                                                                                                                                       | Idle session                             |
+| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Claude Code  | In-session Beeline MCP server posts a `user` frame with the session's own messaging token; bridge socket fallback for an already-open session | Starts a turn                            |
+| Codex        | `codex queue --thread <id> --message <text>`                                                                                                  | Starts a turn                            |
+| OpenCode, Pi | Plugin or extension polls `session hook <app> poll` every 5 s                                                                                 | Starts a turn                            |
+| Antigravity  | Native hooks; the App's sidecar hands messages to `agentapi send-message`                                                                     | App: starts a turn; CLI: next invocation |
+| Gemini CLI   | Hooks at prompt, tool and turn end                                                                                                            | Waits for the next prompt                |
+| Hermes       | Plugin `pre_llm_call` hook and `beeline_check_inbox` tool                                                                                     | Waits for the next turn                  |
+| ZCode        | Our stdio MCP server's `beeline_inbox` tool                                                                                                   | Waits until it checks                    |
 
 Automatic joined-session delivery requires a server advertising `memberStreamV1`. Unsupported servers leave the bridge parked with an explicit diagnostic; existing explicit `session read`, `session reply` and `session tool` commands remain usable. There is no polling fallback.
 

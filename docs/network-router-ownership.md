@@ -10,19 +10,19 @@ Wire shape parsing belongs to the generated dispatcher codecs. The local admissi
 
 The following checks remain in `packages/net/src/private/admission.ts` because the server and wire codec cannot enforce these local rules:
 
-| Check | Reason it remains |
-| --- | --- |
-| Owner identity, session epoch and canonical operation/input key | A local pass must not move between accounts, operations or targets. Server authorization alone cannot bind a local deferred callback to its originating session. |
-| Unforgeable pass and atomic single spend | Prevent repeated effects or fabricated feature callbacks from dispatching the same local opportunity twice. |
-| Foreground and lifetime revocation | Stop private reads and late completions after blur, background or reset. These UI transitions are not server facts. |
-| Navigation generation and stable owner signature | React attachment and repeated rendering cannot manufacture a new read. A changed route owns a new generation. |
-| Screen/family and action/operation binding | A visible badge, Room, Tray, agent profile or user gesture can demand only its own declared operations. Shape validity does not establish user intent. |
-| Recovery generation | Admit at most one recovery batch for an actual negotiated connection; errors and elapsed time cannot renew it. |
-| Media focus, visible object set and residency budget | Only the displayed Room and its visible files or explicit file actions can demand metadata, links or playback. The server cannot observe a local viewport. |
-| Usage profile generation | Only the committed profile or desktop profile pane owns its usage demand. |
-| Tray paint IDs, per-residency deduplication and capacity | Mark only questions actually painted, once per residency, without a timer or a repeated command on rendering. |
-| Saved continuation and explicit Retry lifetime/key binding | A continuation belongs to the focused Tray's current server DTO; Retry belongs to an existing lane. Neither attaching an observer nor a late callback creates an action. |
-| Local owner/key/byte quotas and bounded diagnostics | Bound local retained authority and work; remote request size limits do not bound local residency state. |
+| Check                                                           | Reason it remains                                                                                                                                                        |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Owner identity, session epoch and canonical operation/input key | A local pass must not move between accounts, operations or targets. Server authorization alone cannot bind a local deferred callback to its originating session.         |
+| Unforgeable pass and atomic single spend                        | Prevent repeated effects or fabricated feature callbacks from dispatching the same local opportunity twice.                                                              |
+| Foreground and lifetime revocation                              | Stop private reads and late completions after blur, background or reset. These UI transitions are not server facts.                                                      |
+| Navigation generation and stable owner signature                | React attachment and repeated rendering cannot manufacture a new read. A changed route owns a new generation.                                                            |
+| Screen/family and action/operation binding                      | A visible badge, Room, Tray, agent profile or user gesture can demand only its own declared operations. Shape validity does not establish user intent.                   |
+| Recovery generation                                             | Admit at most one recovery batch for an actual negotiated connection; errors and elapsed time cannot renew it.                                                           |
+| Media focus, visible object set and residency budget            | Only the displayed Room and its visible files or explicit file actions can demand metadata, links or playback. The server cannot observe a local viewport.               |
+| Usage profile generation                                        | Only the committed profile or desktop profile pane owns its usage demand.                                                                                                |
+| Tray paint IDs, per-residency deduplication and capacity        | Mark only questions actually painted, once per residency, without a timer or a repeated command on rendering.                                                            |
+| Saved continuation and explicit Retry lifetime/key binding      | A continuation belongs to the focused Tray's current server DTO; Retry belongs to an existing lane. Neither attaching an observer nor a late callback creates an action. |
+| Local owner/key/byte quotas and bounded diagnostics             | Bound local retained authority and work; remote request size limits do not bound local residency state.                                                                  |
 
 Helper source epochs, current connection ownership, turn bindings and dispatch-time fences also remain. They prevent stale helpers from executing work or borrowing another turn's authority. Authentication, membership, permission checks, committed-source readiness and final enqueue fences remain with their existing server owners. Installed old helper/phone wire adapters are compatibility at the same dispatcher, rather than a second connection lifecycle.
 

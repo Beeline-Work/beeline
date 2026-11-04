@@ -572,6 +572,7 @@ export type ReportMessageIssueInput = RoomInput & {
 /** `duplicate` is true when this message was already reported. */
 export type ReportMessageIssueResult = { readonly itemId: string; readonly duplicate: boolean };
 export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[]; readonly next?: string };
+/** These reads include the next display expiry in epoch milliseconds. */
 export type NeedsYouListResult = {
   readonly nextExpiry?: number; readonly items: readonly NeedsYouItemView[] };
 export type NeedsYouCountResult = {

@@ -2249,20 +2249,16 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => controls.schedulers[0]!.apply(await controls.schedulers[0]!.fetch()));
     expect(session.roomSurface?.room.id).toBe('room-a');
     expect(controls.roomReads).toBe(1);
-    expect(controls.subscriptions).toHaveLength(0);
-    // Settle navigation before the watch covers the read gap.
-    await act(async () => {
-      const tasks = [...controls.interactionTasks];
-      controls.interactionTasks.clear();
-      tasks.forEach((work) => work());
-    });
     await flushEffects();
+    expect(controls.subscriptions).toHaveLength(1);
     await act(async () =>
       controls.subscriptions[0]!.emit({
         monolithLive: { type: 'subscribed', roomId: 'room-a' },
       }),
     );
     expect(controls.schedulers[0]!.followUpCalls).toBe(1);
+    expect(controls.roomReads).toBe(1);
+    expect(controls.subscriptions).toHaveLength(1);
     await act(async () => renderer.unmount());
   });
 
@@ -2651,7 +2647,10 @@ describe('useRoomSurfaceSession', () => {
     });
     await flushEffects();
 
-    expect(current.roomSurface).toBe(controls.cached);
+    expect(current.roomSurface).toMatchObject({
+      room: controls.cached.room,
+      messages: controls.cached.messages,
+    });
     expect(controls.subscriptions).toHaveLength(1);
     expect(controls.subscriptions[0]!.filters).toEqual([{ '#h': ['room-a'] }]);
     const firstStop = controls.subscriptions[0]!.stop;

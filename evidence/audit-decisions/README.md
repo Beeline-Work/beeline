@@ -113,3 +113,24 @@ No further apply before **2026-11-04 08:00:00 UTC**. At or after that window:
 The monitor regression proves a blocking observation refuses any write.
 The transaction regression proves the hot card updates run outside the FK
 transaction and reaches zero keys across more than 1,000 fixture rows.
+
+## CI regression corrections (firstmate inbox 004)
+
+All three reported failures reproduced locally before the corrections:
+
+- HEADER-STATE-6 looked for the retired card.dedupe metadata. It now asserts
+  the unchanged deterministic merge-note id, absent redundant card, merged event
+  and one identical receipt after reconciliation. Locked-corner/close assertions
+  remain unchanged.
+- The readable L3 procedure had changed while FEEDBACK_TRIAGE_STEPS still
+  carried the old pre-approval instruction. The runtime seed now matches the
+  readable copy. Saved-procedure coverage checks routine dispatch without
+  per-item pre-approval, reviewer PASS plus green checks, and the owner's veto.
+- The signed-webhook integration expected a check-start note that B3 retires.
+  It now requires its absence and individual-pass suppression, while preserving
+  positive failure and whole-head green notes, PR/check facts, and merge closure.
+
+Validation: both targeted corner/webhook reproductions passed; the full
+feedback-triage-workflow suite passed (23 tests). Root typecheck, architecture
+and workflow-path checks passed. No production mutation was performed; the
+08:00Z B1 hold remains in effect.

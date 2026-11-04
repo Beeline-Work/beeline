@@ -1,6 +1,6 @@
 import { cornerKindSql } from './corner-opening.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
 import { validateCornerWorkflow } from '@beeline/api-contract/daemon';
@@ -577,10 +577,15 @@ describe('corner lock', () => {
     expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1
       AND card->>'type'='corner-complete' AND card->>'cornerId'=$2
       AND card->>'sourceMessageId' IS NULL`, [R, cornerId])).rowCount).toBe(0);
-    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1
-      AND card_type='github-corner-note' AND card->>'dedupe' LIKE 'github:pull-request:merged:%'`, [cornerId])).rowCount).toBe(1);
+    const mergedNoteId = createHash('sha256').update(
+      `beeline:${cornerId}:github:pull-request:merged:https://github.com/owner/widgets/pull/7`,
+    ).digest('hex');
+    const mergedNote = () => db.query(`SELECT id,card,system_event->>'kind' kind FROM messages
+      WHERE room_id=$1 AND card_type='github-corner-note' AND id=$2`, [cornerId, mergedNoteId]);
+    expect((await mergedNote()).rows).toEqual([{ id: mergedNoteId, card: null, kind: 'merged' }]);
     expect(githubApp.deleteBranch).not.toHaveBeenCalled();
     await github.reconcileMergedCorners();
+    expect((await mergedNote()).rows).toEqual([{ id: mergedNoteId, card: null, kind: 'merged' }]);
     expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]?.archived_at).toBeNull();
     await new PhoneService(db, 'http://test', github).execute('requestCornerClose', { roomId: cornerId }, H);
     expect(githubApp.closePullRequest).not.toHaveBeenCalled();

@@ -7533,16 +7533,13 @@ describe('monolith integration', () => {
           text: expect.stringMatching(/^@GitHub pushed 2 commits to feature\/corner-[0-9a-f]{12} · at [0-9a-f]{12}$/),
         }),
         expect.objectContaining({
-          text: '@GitHub started a check typecheck',
-          systemEvent: expect.objectContaining({ verb: 'started a check' }),
-        }),
-        expect.objectContaining({
           text: '@GitHub found failing checks on Ship the widget · failing typecheck',
           systemEvent: expect.objectContaining({ verb: 'found failing checks on' }),
         }),
         expect.objectContaining({
           text: '@GitHub passed a check Beeline CI check suite',
           systemEvent: expect.objectContaining({
+            kind: 'check-passed',
             verb: 'passed a check',
             object: expect.objectContaining({
               text: 'Beeline CI check suite',
@@ -7552,6 +7549,9 @@ describe('monolith integration', () => {
         }),
       ]),
     );
+    // B3 retains whole-head green/failure notes and suppresses per-check chatter.
+    expect(cornerBeforeMerge.messages.some(message => message.text.startsWith('@GitHub started a check'))).toBe(false);
+    expect(cornerBeforeMerge.messages.some(message => message.text === '@GitHub passed a check typecheck')).toBe(false);
     // No system line carries a colon, an em dash, a trailing period, or a URL.
     for (const message of cornerBeforeMerge.messages.filter((m) => m.presentation === 'system')) {
       expect(message.text).not.toMatch(/[:—]|\.$|https?:\/\//);

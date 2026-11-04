@@ -21,11 +21,11 @@ function row(value:unknown,workspace:string):value is SavedRow{
  * This validator grants no authority and decodes no cursor into a query. */
 export function validateSavedWindow(value:unknown,workspace:string):value is SavedWindow{
   try{
-    assertJsonBudget(value,64*1024);
+    assertJsonBudget(value,Infinity);
     if(typeof workspace!=='string'||!workspace||workspace.length>128||!record(value)||!keys(value,['windowId','before','rows','next'])||
         typeof value.windowId!=='string'||!/^saved1:[a-f0-9]{64}$/.test(value.windowId)||
         value.before!==undefined&&!cursor(value.before)||value.next!==undefined&&!cursor(value.next)||
-        !Array.isArray(value.rows)||value.rows.length>30)return false;
+        !Array.isArray(value.rows))return false;
     const seen=new Set<string>(),messages=new Set<string>();
     let previous:SavedRow|undefined;
     for(const entry of value.rows){

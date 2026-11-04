@@ -18,6 +18,7 @@ const policies = {
   'phone.setMessageBookmark':{mode:'command',action:'EditTray'},
   'phone.decideAgentGrant':{mode:'command',action:'EditTray'},
   'phone.decideWritePermission':{mode:'command',action:'EditTray'},
+  'phone.answerChoice':{mode:'command',action:'EditTray'},
   'phone.skipChoice':{mode:'command',action:'EditTray'},
   'phone.markNeedsYouSeen':{mode:'command',action:'PaintTray'},
   'phone.deleteRoomSchedule':{mode:'command',action:'StopScheduledWork'},

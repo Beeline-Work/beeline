@@ -10,7 +10,7 @@ import { InvalidCommandArguments, type RouterCommandLedger } from './router-comm
 import { ROUTER_AUTHORITY_LOCK } from './router-authority-lock.js';
 import { workflowRunLockKey } from './workflow-runs.js';
 
-const OPERATIONS = ['decideAgentGrant', 'decideWritePermission', 'skipChoice'] as const;
+const OPERATIONS = ['decideAgentGrant', 'decideWritePermission', 'answerChoice', 'skipChoice'] as const;
 export type TrayDecisionOperation = typeof OPERATIONS[number];
 export function isTrayDecisionCommand(operation: string): operation is TrayDecisionOperation {
   return (OPERATIONS as readonly string[]).includes(operation);
@@ -18,6 +18,7 @@ export function isTrayDecisionCommand(operation: string): operation is TrayDecis
 const FIELDS = {
   decideAgentGrant: { grantId: true, decision: true },
   decideWritePermission: { roomId: true, permissionId: true, requestId: true, agentId: true, repository: true, decision: true },
+  answerChoice: { choiceId: true, optionId: true, note: true },
   skipChoice: { choiceId: true },
 } as const satisfies { [K in TrayDecisionOperation]: Record<keyof PhoneOperationMap[K]['input'], true> };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -27,12 +28,15 @@ function validateInput(operation: TrayDecisionOperation, input: Record<string, u
     throw new InvalidCommandArguments();
   const descriptors = Object.getOwnPropertyDescriptors(input);
   const fields = Object.keys(FIELDS[operation]);
-  if (Object.keys(descriptors).length !== fields.length || Object.keys(descriptors).some(key => !fields.includes(key)) ||
-      fields.some(key => !descriptors[key] || !descriptors[key].enumerable || !('value' in descriptors[key]) || typeof descriptors[key].value !== 'string' ||
+  const required = fields.filter(key => operation !== 'answerChoice' || key !== 'note');
+  if (Object.keys(descriptors).some(key => !fields.includes(key)) || required.some(key => !descriptors[key]) ||
+      operation === 'answerChoice' && descriptors.note && (!('value' in descriptors.note) || !descriptors.note.enumerable ||
+        descriptors.note.value !== undefined && typeof descriptors.note.value !== 'string') ||
+      required.some(key => !descriptors[key] || !descriptors[key].enumerable || !('value' in descriptors[key]) || typeof descriptors[key].value !== 'string' ||
         !descriptors[key].value.length || descriptors[key].value.length > 1024)) throw new InvalidCommandArguments();
-  const values = Object.fromEntries(fields.map(key => [key, descriptors[key]!.value])) as Record<string, string>;
+  const values = Object.fromEntries(required.map(key => [key, descriptors[key]!.value])) as Record<string, string>;
   if (operation === 'decideAgentGrant' && (!UUID.test(values.grantId!) || !['always', 'once', 'deny'].includes(values.decision!)) ||
-      operation === 'skipChoice' && !UUID.test(values.choiceId!) ||
+      (operation === 'skipChoice' || operation === 'answerChoice') && !UUID.test(values.choiceId!) ||
       operation === 'decideWritePermission' && (!UUID.test(values.roomId!) || !/^[0-9a-f]{64}$/.test(values.agentId!) ||
         !['allow', 'deny'].includes(values.decision!))) throw new InvalidCommandArguments();
 }
@@ -51,12 +55,12 @@ async function scope(database: SqlDatabase, operation: TrayDecisionOperation, in
     ? `SELECT g.room_id,r.workspace_id,r.parent_id,NULL::text message_id,NULL::text run_id
        FROM agent_grants g JOIN rooms r ON r.id=g.room_id
        WHERE g.id::text=$1 AND g.workspace_id=r.workspace_id`
-    : operation === 'skipChoice'
+    : (operation === 'skipChoice' || operation === 'answerChoice')
       ? `SELECT c.room_id,r.workspace_id,r.parent_id,c.message_id,m.card->>'runId' run_id
          FROM room_choices c JOIN rooms r ON r.id=c.room_id JOIN messages m ON m.id=c.message_id
          WHERE c.id::text=$1 AND c.workspace_id=r.workspace_id`
       : `SELECT r.id room_id,r.workspace_id,r.parent_id,NULL::text message_id,NULL::text run_id FROM rooms r WHERE r.id=$1`;
-  const id = operation === 'decideAgentGrant' ? input.grantId : operation === 'skipChoice' ? input.choiceId : input.roomId;
+  const id = operation === 'decideAgentGrant' ? input.grantId : (operation === 'skipChoice' || operation === 'answerChoice') ? input.choiceId : input.roomId;
   const result = (await database.query<Scope>(source, [id])).rows[0];
   if (!result) throw new CommandRefusalError('Tray decision not found', 404);
   return result;
@@ -116,7 +120,7 @@ async function lockDecision(database: SqlDatabase, operation: TrayDecisionOperat
     await database.query('SELECT agent_id FROM agents WHERE agent_id=$1 FOR SHARE NOWAIT', [input.agentId]);
   } else {
     const choice = (await database.query<{ current: boolean }>(`SELECT closes_at IS NULL OR closes_at>clock_timestamp() current
-      FROM room_choices WHERE id::text=$1 AND status='open' AND mode='question' FOR UPDATE NOWAIT`, [input.choiceId])).rows[0];
+      FROM room_choices WHERE id::text=$1 AND status='open' AND ($2::boolean OR mode='question') FOR UPDATE NOWAIT`, [input.choiceId, operation === 'answerChoice'])).rows[0];
     if (!choice?.current) throw new CommandRefusalError('Choice is no longer open for a decision', 409);
     // The source lock is the action-versus-expiry linearization. A worker
     // cannot settle this same choice while the admitted skip is in flight.

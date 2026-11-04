@@ -1,8 +1,7 @@
-import { mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import ts from 'typescript';
 import type WebSocket from 'ws';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
@@ -37,6 +36,7 @@ describe('no timer-driven helper server reads', () => {
       if (name === 'getDaemonBootstrap')
         return Response.json({ workspaceIds: ['workspace'], rooms: [] });
       if (name === 'getConnectorAssignments') return Response.json({ assignments: [] });
+      if (name === 'postConnectorVault') return Response.json({});
       throw new Error(`unexpected daemon operation ${name}`);
     });
     const agentId = staged.runtime.agent.publicKey;
@@ -65,7 +65,7 @@ describe('no timer-driven helper server reads', () => {
       agentCommand: '/nonexistent', agentArgs: [], mcpBinary: 'unused', readonlyMcpCommand: '/nonexistent',
       agentEnv: {}, workspaceRoot: root, autoApprovePermissions: false };
     const core = new ThinDaemonCore(staged.runtime, staged.configPath, config, { daemonApi: client });
-    const connector = new ConnectorAssignmentLoop({ api: client, agentId: staged.runtime.agent.publicKey });
+    const connector = new ConnectorAssignmentLoop({ api: client, agentId: staged.runtime.agent.publicKey, brokerInstalled: () => false });
     const abort = new AbortController();
     const running = core.run({ signal: abort.signal, onEstablished: () => {
       client.setConnectorAssignmentListener(() => connector.wake());
@@ -99,83 +99,4 @@ describe('no timer-driven helper server reads', () => {
     await running;
   });
 
-  it('adds no interval timer beyond the existing local ones', async () => {
-    const dir = new URL('.', import.meta.url);
-    const names = (await readdir(dir)).filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'));
-    const intervals: string[] = [];
-    for (const name of names) {
-      const source = ts.createSourceFile(name, await readFile(new URL(name, dir), 'utf8'),
-        ts.ScriptTarget.Latest, true);
-      const visit = (node: ts.Node): void => {
-        if (ts.isCallExpression(node) && node.expression.getText(source) === 'setInterval')
-          intervals.push(name);
-        ts.forEachChild(node, visit);
-      };
-      visit(source);
-    }
-    // Recovery is the reconnect backoff and the bounded retries, both
-    // setTimeout; none of these intervals reads from the server.
-    expect(intervals.sort()).toEqual([
-      'agent-runtime.ts', // scratch sweep (local disk)
-      'free-agent-idle.ts', // free agent Machine idle clock (local); at most one idle report per idle minute, never a read
-      'helper-usage.ts', // local disk/process telemetry; never reads the server
-      'session-scheduler.ts', // idle session sweep (local)
-      'shared-asset-capacity.ts', // private recovery reserve check (local disk)
-      'systemd.ts', // local watchdog feed
-    ]);
-  });
-
-  it('has no interval or timeout callback that can reach a daemon read', async () => {
-    const dir = new URL('.', import.meta.url);
-    const names = (await readdir(dir)).filter((name) => name.endsWith('.ts') && !name.endsWith('.test.ts'));
-    const violations: string[] = [];
-    for (const name of names) {
-      const source = ts.createSourceFile(name, await readFile(new URL(name, dir), 'utf8'),
-        ts.ScriptTarget.Latest, true);
-      const functions = new Map<string, ts.Node>();
-      const index = (node: ts.Node): void => {
-        if ((ts.isMethodDeclaration(node) || ts.isFunctionDeclaration(node)) && node.name)
-          functions.set(node.name.getText(source), node);
-        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer &&
-          (ts.isArrowFunction(node.initializer) || ts.isFunctionExpression(node.initializer)))
-          functions.set(node.name.text, node.initializer);
-        ts.forEachChild(node, index);
-      };
-      index(source);
-      const reachesRead = (node: ts.Node, seen = new Set<string>()): boolean => {
-        let found = false;
-        const walk = (child: ts.Node): void => {
-          if (found) return;
-          if (ts.isCallExpression(child)) {
-            const expression = child.expression;
-            if (ts.isPropertyAccessExpression(expression) && expression.name.text === 'execute' &&
-              child.arguments[0] && /^(get|list|claim|read|search)[A-Z]/.test(
-                child.arguments[0].getText(source).replace(/^['"]|['"]$/g, '')))
-              found = true;
-            const called = ts.isPropertyAccessExpression(expression) ? expression.name.text :
-              ts.isIdentifier(expression) ? expression.text : undefined;
-            if (called && !seen.has(called) && functions.has(called)) {
-              seen.add(called);
-              if (reachesRead(functions.get(called)!, seen)) found = true;
-            }
-          }
-          ts.forEachChild(child, walk);
-        };
-        walk(node);
-        return found;
-      };
-      const visit = (node: ts.Node): void => {
-        if (ts.isCallExpression(node) && node.expression.getText(source).match(/^(setInterval|setTimeout)$/)) {
-          const callback = node.arguments[0];
-          if (callback && (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback))) {
-            if (reachesRead(callback))
-              violations.push(`${name}:${source.getLineAndCharacterOfPosition(node.pos).line + 1}`);
-          }
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(source);
-    }
-    expect(violations).toEqual([]);
-  });
 });

@@ -3,7 +3,7 @@ import { canonical } from './canonical.js';
 
 const OPERATIONS = ['sendRoomMessage','sendRoomReply','markRead','markUnread','reactToMessage',
   'deleteRoomMessage','setMessageBookmark','clearMessageBookmarks','markNeedsYouSeen','clearNeedsYou','clearNeedsYouSection',
-  'deleteRoomSchedule','deleteRoomSubscription','decideAgentGrant','decideWritePermission','skipChoice'] as const;
+  'deleteRoomSchedule','deleteRoomSubscription','decideAgentGrant','decideWritePermission','answerChoice','skipChoice'] as const;
 export type IntentOperation = typeof OPERATIONS[number];
 export type IntentState = 'prepared' | 'sending' | 'pending' | 'unknown' | 'committed' | 'refused' | 'cancelled';
 export type CommandPartition = Readonly<{ origin: string; principal: string }>;

@@ -1,3 +1,7 @@
+import * as React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create } from 'react-test-renderer';
+import { useRoutedTray } from './router-tray';
 import { usageCellSnapshot } from './agent-usage-cell';
 import { mediaMetadataFor, mediaCertificateCurrent } from './media-cache-connection';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -15,12 +19,13 @@ vi.mock('react-native', () => ({ AppState: { get currentState() { return fixture
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: async () => ({ publicKey: 'ada' }), getEffectiveRelayUrl: async () => 'https://example.test',
 }));
+vi.mock('./command-owner', () => ({ activeCommandOwner: () => undefined }));
 vi.mock('./surface-storage', () => ({ routerLaneStorage: () => fixture.storage, routerAuthorityStorageReady: () => fixture.authorityReady,routerCommandStorageReady:()=>fixture.commandsReady }));
-vi.mock('./router-family', () => ({holdRouterConnection: () => () => {}, useRouterFamily: () => 'router'}));
+vi.mock('./router-family', () => ({holdRouterConnection: () => () => {}, useRouterFamily: (family: Parameters<typeof routerFamilyMode>[0]) => React.useSyncExternalStore(subscribeRouterOwner, () => routerFamilyMode(family), () => 'pending')}));
 import { acquireChatList } from './chat-list-store';
 import { resetClientState } from '@/sync/client-reset';
 import { acquireRouterLane, acquireRouterSavedContinuation, acquireRouterRosterQuery, acquireRouterRoomRoster, routerOwnerNegotiated, routerOwnerNavigation, routerOwnerDisconnected,
-  readRouterToolPage, admitRouterTrayCommand, admitRouterTrayPaint, routerOwnerListPanel, routerOwnerCapabilities, routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport, routerOwnerUsageProfile } from './router-owner';
+  routerLaneSnapshot, subscribeRouterOwner, readRouterToolPage, admitRouterTrayCommand, admitRouterTrayPaint, routerOwnerListPanel, routerOwnerCapabilities, routerFamilyMode, routerOwnerReceive, retryRouterLane, routerOwnerArtifactViewport, routerOwnerUsageProfile } from './router-owner';
 const request = { family: 'needs-you-count' as const, workspaceId: 'w' };
 const hash = (value: unknown) => bytesToHex(sha256(utf8ToBytes(JSON.stringify(value))));
 const scopes = [{ authorityScope: 'reader:ada:workspace:w', epoch: '1' }];
@@ -423,6 +428,34 @@ it('negotiated Room continuity resumes the same owner after an inactive authorit
 });
 
 
+it('retains focused Tray demand through pending negotiation and restores the real lane once per connection',async()=>{
+  const tray={family:'needs-you-tray' as const,workspaceId:'w'};
+  const items=Array.from({length:31},(_,n)=>({messageId:`q${n}`,workspaceId:'w',roomId:'r',roomName:'Room',roomKind:'room' as const,text:'Question',createdAt:1}));
+  const value={needs:{items},saved:{windowId:`saved1:${'a'.repeat(64)}`,rows:[]}};
+  const execute=vi.fn(async()=>({...snapshot(),family:'needs-you-tray' as const,value,atomicGroup:'needs-you:w:ada'}));
+  let latest!:ReturnType<typeof useRoutedTray>;
+  function Probe({focused=true}:{focused?:boolean}){latest=useRoutedTray('w',focused);return React.createElement('tray-value',null,latest.needs?.map(item=>item.text).join('|')??'hidden');}
+  routerOwnerNavigation({routes:[{key:'tray',name:'beeline/tray',params:{communityId:'w'}}]});
+  let tree!:ReturnType<typeof create>;
+  await act(async()=>{tree=create(React.createElement(Probe));await settle();});
+  try{
+    expect(latest.value).toBeNull();
+    await act(async()=>{await routerOwnerNegotiated({generation:1,families:[tray.family],authorityFencesV1:true,execute});await settle();});
+    expect(latest.value).toEqual(value);expect(execute).toHaveBeenCalledTimes(1);
+    await act(async()=>{routerOwnerDisconnected();await settle();});
+    expect(latest.value).toBeNull();expect(tree.root.findByType('tray-value').props.children).toBe('hidden');
+    await act(async()=>{await routerOwnerNegotiated({generation:2,families:[tray.family],authorityFencesV1:true,execute});await settle();});
+    expect(latest.value).toEqual(value);expect(routerLaneSnapshot(tray).state).toBe('LIVE');
+    expect(tree.root.findByType('tray-value').props.children).toBe(items.map(item=>item.text).join('|'));
+    expect(execute).toHaveBeenCalledTimes(2);
+    await act(async()=>{tree.update(React.createElement(Probe));await settle();});
+    expect(execute).toHaveBeenCalledTimes(2);
+    await act(async()=>{tree.update(React.createElement(Probe,{focused:false}));routerOwnerDisconnected();await settle();});
+    await act(async()=>{await routerOwnerNegotiated({generation:3,families:[tray.family],authorityFencesV1:true,execute});await settle();});
+    expect(latest.value).toBeNull();expect(execute).toHaveBeenCalledTimes(2);
+  }finally{await act(async()=>tree.unmount());}
+});
+
 describe('actual Tray gesture and painted ownership',()=>{
   it('correlates commands/paint with the held canonical Workspace and never reads after commands or hidden paint',async()=>{
     const tray={family:'needs-you-tray' as const,workspaceId:'w'};
@@ -572,10 +605,11 @@ it('a compact shared authority-source loss hides retained count and media, and a
   expect(execute).toHaveBeenCalledTimes(1);expect(executeMetadata).toHaveBeenCalledTimes(1);lane.release();
 });
 
-it('admits only the exact three DB decision actions offered in the held canonical Tray, with no follow-up read',async()=>{
+it('admits only the exact offered DB decision actions offered in the held canonical Tray, with no follow-up read',async()=>{
   const agentId='c'.repeat(64),grantId='44444444-4444-4444-8444-444444444444',choiceId='55555555-5555-4555-8555-555555555555';
   const actions=[{kind:'grant' as const,label:'Allow once',grantId,decision:'once' as const},
     {kind:'write-access' as const,label:'Allow',permissionId:'permission',requestId:'request',agentId,repository:'repo',decision:'allow' as const},
+    {kind:'choice' as const,label:'Choose',choiceId,optionId:'B'},
     {kind:'skip-choice' as const,label:'Skip',choiceId}];
   const value={needs:{items:[{messageId:'q',workspaceId:'w',roomId:'r',roomName:'Room',roomKind:'room' as const,text:'Decision',createdAt:1,
     approval:{kind:'grant' as const,actor:'Helper',ask:'asks',subject:'Decision',literal:false,actions}}]},saved:{windowId:`saved1:${'a'.repeat(64)}`,rows:[]}};
@@ -587,6 +621,7 @@ it('admits only the exact three DB decision actions offered in the held canonica
   expect(lane.current().state).toBe('LIVE');
   for(const command of [{operation:'decideAgentGrant' as const,input:{grantId,decision:'once' as const}},
     {operation:'decideWritePermission' as const,input:{roomId:'r',permissionId:'permission',requestId:'request',agentId,repository:'repo',decision:'allow' as const}},
+    {operation:'answerChoice' as const,input:{choiceId,optionId:'B'}},
     {operation:'skipChoice' as const,input:{choiceId}}]){
     const admitted=admitRouterTrayCommand('w',command);expect(admitted.wire.operation).toBe(command.operation);expect(JSON.parse(admitted.wire.input)).toEqual(command.input);
   }

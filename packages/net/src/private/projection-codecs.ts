@@ -6,10 +6,10 @@ import {jsonCodec} from '../wire-codec.js';
  * metadata. These functions grant neither route nor group coverage. */
 export function validateBookmarkRows(bookmarks:unknown):boolean{
   if(!Array.isArray(bookmarks))return false;
-  try{jsonCodec(ownerInputShapes,ownerResults['phone.readTray'],64*1024).parse({needs:{items:[]},saved:{bookmarks}});return true;}catch{return false;}
+  try{jsonCodec(ownerInputShapes,ownerResults['phone.readTray'],Infinity).parse({needs:{items:[]},saved:{bookmarks}});return true;}catch{return false;}
 }
 export function validateNeedsProjection(needs:unknown):boolean{
   if(!needs||typeof needs!=='object'||Array.isArray(needs)||Object.keys(needs).some(key=>key!=='items')||
-    !Array.isArray((needs as {items?:unknown}).items)||(needs as {items:unknown[]}).items.length>30)return false;
-  try{jsonCodec(ownerInputShapes,ownerResults['phone.readTray'],64*1024).parse({needs,saved:{bookmarks:[]}});return true;}catch{return false;}
+    !Array.isArray((needs as {items?:unknown}).items))return false;
+  try{jsonCodec(ownerInputShapes,ownerResults['phone.readTray'],Infinity).parse({needs,saved:{bookmarks:[]}});return true;}catch{return false;}
 }

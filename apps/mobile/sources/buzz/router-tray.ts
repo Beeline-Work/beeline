@@ -28,12 +28,12 @@ export function useRoutedTray(workspaceId: string, focused: boolean) {
     ? { family: 'needs-you-tray' as const, workspaceId } : undefined, [workspaceId]);
   const [lane, setLane] = useState<{ workspaceId: string; handle: ReturnType<typeof acquireRouterLane> }>();
   useEffect(() => {
-    if (mode !== 'router' || !focused || !request) { setLane(undefined); return; }
+    if (!focused || !request) { setLane(undefined); return; }
     const handle = acquireRouterLane(request,
       () => visible.current && AppState.currentState === 'active', noop);
     setLane({ workspaceId: request.workspaceId, handle });
     return handle.release;
-  }, [mode, focused, request]);
+  }, [focused, request]);
   const pages=useRef<{workspaceId:string;handles:ReturnType<typeof acquireRouterLane>[];cursors:Set<string>} >({workspaceId,handles:[],cursors:new Set()});
   const [,publishPages]=useState(0);
   useEffect(()=>{

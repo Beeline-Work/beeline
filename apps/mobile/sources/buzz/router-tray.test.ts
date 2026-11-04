@@ -112,7 +112,7 @@ describe('Tray canonical observation', () => {
   });
   it('parks an unsupported connection without installing a fallback', () => {
     fixture.mode = 'legacy'; act(() => { tree = create(React.createElement(Probe)); });
-    expect(fixture.acquire).not.toHaveBeenCalled(); expect(latest.value).toBe(null);
+    expect(fixture.acquire).toHaveBeenCalledTimes(1); expect(latest.value).toBe(null);
     expect(latest.needs).toBeNull();
     expect(latest.bookmarks).toEqual([]);
     fixture.mode = 'pending'; act(() => { tree.update(React.createElement(Probe)); });

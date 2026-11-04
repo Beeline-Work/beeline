@@ -10,13 +10,13 @@ const replace=(value:SavedRow):SavedRowPayload=>({kind:'saved-row-replace',scope
 const remove=(value:SavedRow):SavedRowPayload=>({kind:'saved-row-remove',scope:workspace,bookmarkId:value.bookmarkId,messageId:value.value.messageId});
 
 describe('mechanical sealed Saved windows',()=>{
-  it('validates exact bigint ordering, bounds, duplicates and unavailable-pointer privacy',()=>{
+  it('validates exact bigint ordering, duplicates and unavailable-pointer privacy',()=>{
     expect(validateSavedWindow(window(),workspace)).toBe(true);
     expect(validateSavedWindow(window([row(1,'10413792000123457'),row(2)]),workspace)).toBe(true);
     expect(validateSavedWindow(window([row(1),row(2,'10413792000123457')]),workspace)).toBe(false);
     expect(validateSavedWindow(window([row(2),row(1)]),workspace)).toBe(false);
     expect(validateSavedWindow(window([row(1),row(1)]),workspace)).toBe(false);
-    expect(validateSavedWindow(window(Array.from({length:31},(_,n)=>row(n))),workspace)).toBe(false);
+    expect(validateSavedWindow(window(Array.from({length:31},(_,n)=>row(n))),workspace)).toBe(true);
     const hidden=row(1);hidden.value={...hidden.value,available:false};
     expect(validateSavedWindow(window([hidden]),workspace)).toBe(false);
     const {text:_text,...pointer}=hidden.value;hidden.value=pointer;
@@ -64,11 +64,11 @@ describe('mechanical sealed Saved windows',()=>{
     expect(()=>replaceSavedWindowRows(window(),workspace,[{...remove(row(1)),scope:room}])).toThrow('Invalid Saved scope');
     expect(()=>replaceSavedWindowRows(window(),workspace,[{kind:'saved-row-remove',scope:workspace,bookmarkId:row(1).bookmarkId,messageId:'other'}])).toThrow('Saved incarnation changed');
   });
-  it('rejects accessors before reading them and enforces logical and per-window byte bounds',()=>{
+  it('rejects accessors before reading them and accepts large valid display rows',()=>{
     let calls=0;const malicious={...row(1),get before(){calls++;return 'saved1.x';}};
     expect(validateSavedWindow(window([malicious]),workspace)).toBe(false);expect(calls).toBe(0);
     const oversized=row(1);oversized.value={...oversized.value,text:'x'.repeat(65536)};
-    expect(()=>replaceSavedWindowRows(window(),workspace,[replace(oversized)])).toThrow();
+    expect(replaceSavedWindowRows(window(),workspace,[replace(oversized)]).rows[0]!.value.text).toBe(oversized.value.text);
     expect(()=>replaceSavedWindowRows(window(),workspace,Array.from({length:257},()=>remove(row(1))))).toThrow('Invalid Saved window');
   });
 });

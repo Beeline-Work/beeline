@@ -564,6 +564,39 @@ describe('negotiated Tray consumer', () => {
     expect(phoneOperation).not.toHaveBeenCalled();
   });
 
+  it('answers the offered choice from its Tray button through the canonical command', async () => {
+    const choiceId = '11111111-1111-4111-8111-111111111111';
+    trayProtocol.value = {
+      needs: {
+        items: [
+          need({
+            approval: {
+              kind: 'choice',
+              actor: 'Helper',
+              ask: 'asks',
+              subject: 'Choose',
+              literal: false,
+              actions: [{ kind: 'choice', label: 'Use two', choiceId, optionId: 'B' }],
+            },
+          }),
+        ],
+      },
+      saved: { windowId: 'window', rows: [] },
+    };
+    const tree = await renderTray();
+    await act(async () => {
+      await tree.root.findByProps({ testID: 'needs-you-action-ask-1-0' }).props.onPress();
+    });
+    expect(trayProtocol.admit).toHaveBeenCalledWith('ws', {
+      operation: 'answerChoice',
+      input: { choiceId, optionId: 'B' },
+    });
+    expect(trayProtocol.prepare).toHaveBeenCalledTimes(1);
+    expect(trayProtocol.deliver).toHaveBeenCalledWith('prepared-tray');
+    expect(AccessibilityInfo.announceForAccessibility).toHaveBeenCalledWith('Decision sent');
+    expect(phoneOperation).not.toHaveBeenCalled();
+  });
+
   it('routes a painted viewport through the screen command and never the legacy seen reducer', async () => {
     trayProtocol.mode = 'router';
     const unseen = need({ expiresAt: undefined });

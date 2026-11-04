@@ -1,5 +1,5 @@
 import {afterEach,beforeEach,describe,expect,it} from 'vitest';
-import {countNeedsYouItems,countNeedsYouProjection,readNeedsYouCountSnapshot,needsYouItems} from './needs-you.js';
+import {countNeedsYouItems,readNeedsYouCountSnapshot,needsYouItems} from './needs-you.js';
 import {readRouterCut,readRouterAuthority} from './router-projections.js';
 import {migratedDatabase,type PgliteDatabase} from './test-support.js';
 import {PhoneService} from './phone-service.js';
@@ -28,7 +28,7 @@ describe('pure count-only Needs-you projection at one database cut',()=>{
   };
   const differential=async(expected:number)=>db.transaction(async tx=>{
     await tx.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    const before=await readRouterCut(tx,WORKSPACE),count=await countNeedsYouProjection(tx,WORKSPACE,VIEWER);
+    const before=await readRouterCut(tx,WORKSPACE),count=(await countNeedsYouItems(tx,WORKSPACE,VIEWER)).count;
     const {items}=await needsYouItems(tx,WORKSPACE,VIEWER,row=>({id:row.id,kind:row.kind,name:row.name}),false);
     expect(count).toBe(expected);expect(items).toHaveLength(count);expect(await readRouterCut(tx,WORKSPACE)).toEqual(before);
     return items;
@@ -68,7 +68,7 @@ describe('pure count-only Needs-you projection at one database cut',()=>{
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,[ROOM,VIEWER]);await differential(0);
     await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,[ROOM,VIEWER]);await differential(1);
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IS NULL AND workspace_id=$1 AND identity_id=$2`,[WORKSPACE,VIEWER]);
-    await expect(countNeedsYouProjection(db,WORKSPACE,VIEWER)).rejects.toThrow('workspace membership required');
+    await expect(countNeedsYouItems(db,WORKSPACE,VIEWER)).rejects.toThrow('workspace membership required');
   });
   it('returns only one scalar result and never transfers full cell rows or starts seen marks',async()=>{
     await message('large','@reader please review '+'x'.repeat(100*1024));
@@ -114,7 +114,7 @@ describe('pure count-only Needs-you projection at one database cut',()=>{
       expect(statements).toBe(1);
       expect(snapshot).toMatchObject({family:'needs-you-count',value:{count:1},cut:await readRouterCut(tx,WORKSPACE),
         authority:await readRouterAuthority(tx,{family:'needs-you-count',workspaceId:WORKSPACE},VIEWER)});
-      expect(snapshot.value).toEqual({count:await countNeedsYouProjection(tx,WORKSPACE,VIEWER)});
+      expect(snapshot.value).toEqual({count:(await countNeedsYouItems(tx,WORKSPACE,VIEWER)).count});
     });
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IS NULL AND workspace_id=$1 AND identity_id=$2`,[WORKSPACE,VIEWER]);
     await expect(readNeedsYouCountSnapshot(db,WORKSPACE,VIEWER)).rejects.toMatchObject({reason:'authority'});

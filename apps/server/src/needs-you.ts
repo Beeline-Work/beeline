@@ -64,10 +64,8 @@ export function isNeedsYouAsk(text: string): boolean {
 }
 
 /**
- * `isNeedsYouAsk` in SQL, applied BEFORE the candidate limit so the limit only
- * ever counts messages that really ask. The two readings must agree
- * (`needs-you.test.ts` holds them to one table); the TypeScript twin still
- * re-checks every row the query returns.
+ * `isNeedsYouAsk` in SQL. The two readings must agree (`needs-you.test.ts`);
+ * the TypeScript twin still re-checks every row the query returns.
  */
 export function askSql(textExpr: string): string {
   return `(${textExpr} ~ '^(blocked|needs-decision|failed):[[:space:]]*[^[:space:]]'
@@ -471,25 +469,14 @@ export async function countNeedsYouItems(
   return {count:Number(row.count),...(row.next_expiry!==null?{nextExpiry:row.next_expiry}:{})};
 }
 
-/** Pure badge using the same eligibility as the Tray. */
-export async function countNeedsYouProjection(database:SqlDatabase,workspaceId:string,viewerId:string):Promise<number>{
-  const result=await database.query<{count:string;questions:number;authorized:boolean}>(`${NEEDS_YOU_COUNT_CANDIDATES}
-    SELECT count(*)::text count,count(*) FILTER(WHERE approval_kind IS NULL)::int questions,
-      ${VIEWER_MEMBER} authorized FROM candidates WHERE ${VISIBLE_CANDIDATE}`,[workspaceId,viewerId]);
-  const row=result.rows[0];if(!row?.authorized)throw new Error('workspace membership required');
-  const count=Number(row.count);
-  if(!Number.isSafeInteger(count)||count<0)throw new RouterProjectionUnavailable('budget');
-  return count;
-}
-
 /** The existing aggregate count boundary returns only the complete server
  * order, never unaffected Room cell bodies. Cells are read by exact scope. */
 export async function readNeedsYouOrder(database:SqlDatabase,workspaceId:string,viewerId:string){
-  const result=await database.query<{ids:string[];questions:number;authorized:boolean}>(
+  const result=await database.query<{ids:string[];authorized:boolean}>(
     `${needsYouCandidates('order')}
      SELECT COALESCE(array_agg(message_id ORDER BY (approval_kind IS NULL),
        floor(extract(epoch FROM CASE WHEN approval_kind IS NULL THEN first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours' ELSE approval_expires_at END)) NULLS LAST,
-       floor(extract(epoch FROM created_at)*1000),message_id COLLATE "C"),'{}'::text[]) ids,count(*) FILTER(WHERE approval_kind IS NULL)::int questions,
+       floor(extract(epoch FROM created_at)*1000),message_id COLLATE "C"),'{}'::text[]) ids,
        ${VIEWER_MEMBER} authorized FROM candidates WHERE ${VISIBLE_CANDIDATE}`,[workspaceId,viewerId]);
   const row=result.rows[0];
   if(!row?.authorized)throw new Error('workspace membership required');
@@ -504,10 +491,10 @@ export async function readNeedsYouCountSnapshot(database: SqlDatabase, workspace
   const input = { family: 'needs-you-count' as const, workspaceId };
   const domains = [`reader:${viewerId}:workspace:${workspaceId}`, `reader:${viewerId}:workspace:${workspaceId}:visibility`];
   const stream = `workspace:${workspaceId}`;
-  const result = await database.query<{ count: string; questions: number; authorized: boolean;
+  const result = await database.query<{ count: string; authorized: boolean;
     next_expiry: number | null; epoch: string | null; through: string | null; scopes: { authorityScope: string; epoch: string }[] | null }>(
     `${NEEDS_YOU_COUNT_CANDIDATES}, counted AS (
-      SELECT count(*)::text count,count(*) FILTER(WHERE approval_kind IS NULL)::int questions,
+      SELECT count(*)::text count,
         min(extract(epoch FROM CASE WHEN approval_kind IS NULL THEN first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours'
           ELSE approval_expires_at END)*1000)::double precision next_expiry,${VIEWER_MEMBER} authorized FROM candidates WHERE ${VISIBLE_CANDIDATE}
     ) SELECT counted.*,head.epoch,head.sequence::text through,authority.scopes

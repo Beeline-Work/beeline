@@ -33,3 +33,13 @@ Two new CI failures were handled under instruction 068:
 
 - DEAD CODE reported three one-off proof scripts. All three were removed from the PR, with evidence retained in the reports and PR body. The original baseline now passes with five existing findings and zero introduced findings; it was not rewritten.
 - SERVER SUITE SHARD 6 passed all 643 tests but reported an unhandled Node 22.23.4 bundled-Undici `onParserTimeout` error while `daemon-storage-lifecycle.test.ts` was the last file. Exactly one local router-on run of that file passed (one test, 5.301 seconds), with no unhandled error on Node 24.16. Per instruction, no speculative runtime/test change or further chase was made. The next CI head must confirm it. Local logs are under `.beeline-proof/activation-*.log` and contain synthetic fixture data. No additional audit finding is declared closed by this activation follow-up.
+
+## Replay WAL attribution follow-up
+
+Head `2abed8fdc` passed typecheck, dead code, shared packages, Body, native acceptance and corpus replay. Its claim-latency job stopped earlier than the latency budget, in `router-group-c-replay.postgres.test.ts`: the cluster-wide WAL insert position advanced 56 bytes during delivery. The unchanged test passed locally (340 ms). An isolated 20-second observation with no application work recorded 232 bytes: two `Standby/RUNNING_XACTS` records and one `XLOG/CHECKPOINT_ONLINE` record. The CI container's WAL is unavailable, so its exact record type cannot be retrospectively established; the counter's background attribution defect is independently reproduced.
+
+The proof now inspects the captured WAL interval with PostgreSQL's `pg_walinspect`. It excludes only those two background record types with transaction ID zero and no relation block references. Every other record still fails the zero-reader-write assertion. A committed test marker after the captured interval ensures the inspector sees flushed WAL; the marker is outside the measurement and changes no application rows. A forced checkpoint reproduces the old counter's false positive deterministically, and a deliberate table insert must fail specifically with a Heap WAL record. The 32-reader/two-pool build, authority, real LISTEN delivery, payload and frame assertions are unchanged. This is a test-only correction, not a production behavior change or additional audit closure.
+
+Reference: [PostgreSQL 16 WAL inspection](https://www.postgresql.org/docs/16/pgwalinspect.html). Local evidence: `.beeline-proof/replay-idle-wal.log` and `../activation-replay-attributed-final.log`.
+
+Validation: both replay cases pass against isolated PostgreSQL (672 ms total); server TypeScript check passes. No production file changed.
